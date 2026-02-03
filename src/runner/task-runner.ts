@@ -504,7 +504,7 @@ export class TaskRunner {
       return result;
     }
 
-    // Update stats
+    // Update stats and task status in brain
     if (result.status === "completed") {
       this.stats.completed++;
       this.emitEvent({ type: "task_completed", result });
@@ -522,6 +522,20 @@ export class TaskRunner {
         status: result.status,
         exitCode: result.exitCode,
       });
+
+      // Update task status to blocked in the brain (failed tasks are marked as blocked)
+      try {
+        await this.apiClient.updateTaskStatus(info.task.path, "blocked");
+
+        // Append failure reason to task
+        const failureNote = this.buildFailureNote(result);
+        await this.apiClient.appendToTask(info.task.path, failureNote);
+      } catch (error) {
+        this.logger.error("Failed to update task failure status", {
+          taskId,
+          error: String(error),
+        });
+      }
     }
 
     this.stats.totalRuntime += result.duration;
@@ -538,6 +552,9 @@ export class TaskRunner {
 
     // Cleanup executor files
     await this.executor.cleanup(taskId, this.projectId);
+
+    // Clean up tmux window/pane (TUI mode or fallback)
+    await this.cleanupTaskTmux(info.task);
 
     // Handle dashboard task pane removal
     await this.handleDashboardTaskComplete(taskId);
@@ -700,20 +717,14 @@ export class TaskRunner {
   private async handleDashboardTaskStart(task: RunningTask): Promise<void> {
     if (!this.tmuxManager) return;
 
-    try {
-      // Build the command to run for this task
-      const promptFile = `${this.config.stateDir}/prompt_${this.projectId}_${task.id}.txt`;
-      const command = `${this.config.opencode.bin} run --agent ${this.config.opencode.agent} --model ${this.config.opencode.model} "$(cat '${promptFile}')"`;
-      
-      const paneId = await this.tmuxManager.addTaskPane(task.id, task.title, command);
-      this.logger.debug("Created dashboard pane for task", {
+    // Note: The pane is already created by OpencodeExecutor.spawnDashboard().
+    // This method only registers the pane for tracking (for removal on completion).
+    // The pane ID is stored in task.paneId from executor.spawn() result.
+    if (task.paneId) {
+      this.tmuxManager.registerTaskPane(task.id, task.paneId, task.title);
+      this.logger.debug("Registered dashboard pane for task", {
         taskId: task.id,
-        paneId,
-      });
-    } catch (error) {
-      this.logger.debug("Failed to create dashboard pane for task", {
-        taskId: task.id,
-        error: String(error),
+        paneId: task.paneId,
       });
     }
   }
@@ -722,6 +733,35 @@ export class TaskRunner {
     if (!this.tmuxManager) return;
 
     await this.tmuxManager.removeTaskPane(taskId);
+  }
+
+  /**
+   * Clean up tmux window/pane when a task completes.
+   * Handles both TUI mode (standalone windows) and dashboard mode (panes).
+   */
+  private async cleanupTaskTmux(task: RunningTask): Promise<void> {
+    // For TUI mode: close the standalone window
+    if (task.windowName) {
+      try {
+        this.logger.debug("Closing tmux window", {
+          taskId: task.id,
+          windowName: task.windowName,
+        });
+        await Bun.$`tmux kill-window -t ${task.windowName}`.quiet();
+      } catch {
+        // Window might already be closed
+        this.logger.debug("Window already closed", { windowName: task.windowName });
+      }
+    }
+
+    // Fallback for panes without tmuxManager
+    if (task.paneId && !this.tmuxManager) {
+      try {
+        await Bun.$`tmux kill-pane -t ${task.paneId}`.quiet();
+      } catch {
+        // Pane might already be closed
+      }
+    }
   }
 
   // ========================================
@@ -777,6 +817,28 @@ export class TaskRunner {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Build a markdown failure note for appending to a task.
+   */
+  private buildFailureNote(result: TaskResult): string {
+    const timestamp = new Date().toISOString();
+    let note = `\n\n## Failure\n\n**Status:** ${result.status}\n**Time:** ${timestamp}\n`;
+
+    if (result.exitCode !== undefined) {
+      note += `**Exit Code:** ${result.exitCode}\n`;
+    }
+
+    if (result.status === "timeout") {
+      note += `\nTask exceeded the configured timeout limit.\n`;
+    } else if (result.status === "crashed") {
+      note += `\nTask process crashed unexpectedly.\n`;
+    } else if (result.status === "blocked") {
+      note += `\nTask was marked as blocked.\n`;
+    }
+
+    return note;
   }
 }
 

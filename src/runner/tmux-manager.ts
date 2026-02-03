@@ -340,10 +340,14 @@ while true; do sleep 60; done
   }
 
   /**
-   * Add a pane for a task in the dashboard.
+   * Add a pane for a task in the dashboard (creates the pane).
    * Matches do-work's create_task_pane function:
    * - First task: replaces placeholder pane (split above logs, takes 80%)
    * - Additional tasks: split horizontally from last task pane
+   * 
+   * NOTE: When using OpencodeExecutor in dashboard mode, the executor creates
+   * panes directly via spawnDashboard(). Use registerTaskPane() instead to
+   * track those panes without creating duplicates.
    */
   async addTaskPane(taskId: string, title: string, command: string): Promise<string> {
     if (!this.layout) {
@@ -395,6 +399,28 @@ while true; do sleep 60; done
     }
 
     return paneId;
+  }
+
+  /**
+   * Register an existing task pane for tracking (without creating it).
+   * Used when OpencodeExecutor creates the pane directly.
+   */
+  registerTaskPane(taskId: string, paneId: string, title: string): void {
+    if (!this.layout) {
+      return;
+    }
+
+    // Check if already registered
+    if (this.layout.taskPanes.some(p => p.taskId === taskId)) {
+      return;
+    }
+
+    const paneInfo: PaneInfo = { taskId, paneId, title };
+    this.layout.taskPanes.push(paneInfo);
+
+    if (isDebugEnabled()) {
+      console.log(`[TmuxManager] Registered task pane: ${paneId} for ${taskId}`);
+    }
   }
 
   /**

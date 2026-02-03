@@ -120,8 +120,9 @@ export class TaskRunner {
     this.startedAt = new Date().toISOString();
     this.stats = { completed: 0, failed: 0, totalRuntime: 0 };
 
-    // Initialize dashboard if in dashboard mode
-    if (this.mode === "dashboard") {
+    // Initialize dashboard if in dashboard or TUI mode
+    // Note: TUI mode implies dashboard (like do-work script where --tui sets USE_DASHBOARD=true)
+    if (this.mode === "dashboard" || this.mode === "tui") {
       await this.initializeDashboard();
     }
 

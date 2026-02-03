@@ -276,6 +276,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   }
 
   // Determine execution mode
+  // Note: --tui implies dashboard creation (like do-work script)
   let mode: ExecutionMode = "background";
   if (options.tui) mode = "tui";
   else if (options.dashboard) mode = "dashboard";

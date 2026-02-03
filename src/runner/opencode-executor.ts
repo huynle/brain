@@ -27,6 +27,8 @@ export interface SpawnOptions {
   isResume?: boolean;
   paneId?: string;
   windowName?: string;
+  /** When true, use interactive TUI command even in dashboard mode */
+  useTui?: boolean;
 }
 
 export interface SpawnResult {
@@ -167,7 +169,8 @@ Start now.`;
           projectId,
           workdir,
           promptFile,
-          options.paneId
+          options.paneId,
+          options.useTui ?? false
         );
 
       default:
@@ -303,16 +306,21 @@ exit 0
     projectId: string,
     workdir: string,
     promptFile: string,
-    targetPane?: string
+    targetPane?: string,
+    useTui: boolean = false
   ): Promise<SpawnResult> {
     // Build runner script
+    // When useTui is true, use interactive command (--port 0 --prompt) instead of headless (run)
     const runnerScript = join(
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
+    const opencodeCmd = useTui
+      ? `"${this.config.opencode.bin}" --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" --port 0 --prompt "$(cat '${promptFile}')"`
+      : `"${this.config.opencode.bin}" run --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
-"${this.config.opencode.bin}" run --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" "$(cat '${promptFile}')"
+${opencodeCmd}
 exit_code=$?
 echo ""
 if [[ $exit_code -eq 0 ]]; then

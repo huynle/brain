@@ -395,10 +395,16 @@ export class TaskRunner {
     }
 
     // Step 3: Spawn OpenCode process
+    // When dashboard is active (TUI mode), spawn as panes not windows
+    // But preserve TUI flag to use interactive command
+    const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
+    const useTui = this.mode === "tui";
     try {
       const result = await this.executor.spawn(task, this.projectId, {
-        mode: this.mode,
+        mode: effectiveMode,
+        paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: false,
+        useTui,
       });
 
       // Step 4: Track the process
@@ -613,10 +619,16 @@ export class TaskRunner {
     }
 
     // Spawn with resume flag
+    // When dashboard is active (TUI mode), spawn as panes not windows
+    // But preserve TUI flag to use interactive command
+    const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
+    const useTui = this.mode === "tui";
     try {
       const result = await this.executor.spawn(task, this.projectId, {
-        mode: this.mode,
+        mode: effectiveMode,
+        paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: true,
+        useTui,
       });
 
       const newRunningTask: RunningTask = {

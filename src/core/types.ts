@@ -248,3 +248,79 @@ export interface Config {
   brain: BrainConfig;
   server: ServerConfig;
 }
+
+// =============================================================================
+// Task Classification (for dependency resolution)
+// =============================================================================
+
+export const TASK_CLASSIFICATIONS = [
+  "ready", // Pending, all deps satisfied
+  "waiting", // Pending, waiting on incomplete deps
+  "waiting_on_parent", // Pending, parent not active/in_progress
+  "blocked", // Blocked by blocked/cancelled deps
+  "blocked_by_parent", // Parent is blocked/cancelled
+  "not_pending", // Task is not in pending status
+] as const;
+
+export type TaskClassification = (typeof TASK_CLASSIFICATIONS)[number];
+
+// =============================================================================
+// Task Types
+// =============================================================================
+
+// Raw task from zk query (before dependency resolution)
+export interface Task {
+  id: string;
+  path: string;
+  title: string;
+  priority: Priority;
+  status: EntryStatus;
+  depends_on: string[];
+  parent_id: string | null;
+  created: string;
+  workdir: string | null;
+  worktree: string | null;
+  git_remote: string | null;
+  git_branch: string | null;
+}
+
+// Task with resolved dependencies
+export interface ResolvedTask extends Task {
+  resolved_deps: string[]; // IDs of resolved dependencies
+  unresolved_deps: string[]; // References that couldn't be resolved
+  parent_chain: string[]; // IDs of all ancestors
+  classification: TaskClassification;
+  blocked_by: string[]; // IDs of blocking deps
+  blocked_by_reason?: string; // "circular_dependency" | "dependency_blocked" | "parent_blocked"
+  waiting_on: string[]; // IDs of incomplete deps
+  in_cycle: boolean;
+  resolved_workdir: string | null; // Absolute path after resolution
+}
+
+// Dependency resolution result
+export interface DependencyResult {
+  tasks: ResolvedTask[];
+  cycles: string[][]; // Groups of task IDs in cycles
+  stats: {
+    total: number;
+    ready: number;
+    waiting: number;
+    blocked: number;
+    not_pending: number;
+  };
+}
+
+// =============================================================================
+// Task API Request/Response Types
+// =============================================================================
+
+export interface TaskListResponse {
+  tasks: ResolvedTask[];
+  count: number;
+  stats?: DependencyResult["stats"];
+}
+
+export interface TaskNextResponse {
+  task: ResolvedTask | null;
+  message?: string;
+}

@@ -13,6 +13,7 @@ import { createGraphRoutes } from "./api/graph";
 import { createHealthRoutes, getHealthStatus } from "./api/health";
 import { createSearchRoutes } from "./api/search";
 import { createSectionRoutes } from "./api/sections";
+import { createTaskRoutes } from "./api/tasks";
 
 export function createApp(config: Config): Hono {
   const app = new Hono();
@@ -47,6 +48,9 @@ export function createApp(config: Config): Hono {
   // NOTE: Must be registered BEFORE entry CRUD routes because the entries
   // routes use /:id{.+} which would catch /id/backlinks etc.
   api.route("/entries", createGraphRoutes());
+
+  // Task routes (specific paths first)
+  api.route("/tasks", createTaskRoutes());
 
   // Entry CRUD routes
   api.route("/entries", createEntriesRoutes());

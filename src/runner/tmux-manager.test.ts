@@ -214,7 +214,8 @@ describe("TmuxManager Integration", () => {
       expect(layout).toBeDefined();
       expect(layout.sessionName).toBe(testSessionName);
       expect(layout.windowName).toBe(`dashboard-${testSessionName}`);
-      expect(layout.statusPaneId).toBeTruthy();
+      expect(layout.taskListPaneId).toBeTruthy();
+      expect(layout.taskAreaPaneId).toBeTruthy();
       expect(layout.logPaneId).toBeTruthy();
       expect(layout.taskPanes).toEqual([]);
     });
@@ -329,7 +330,7 @@ describe("TmuxManager Integration", () => {
       await manager.createDashboard(testSessionName);
       const layout = manager.getLayout();
 
-      const alive = await manager.isPaneAlive(layout!.statusPaneId);
+      const alive = await manager.isPaneAlive(layout!.taskListPaneId);
 
       expect(alive).toBe(true);
     });

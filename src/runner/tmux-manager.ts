@@ -3,9 +3,22 @@
  *
  * Manages tmux dashboard layout for dashboard mode execution.
  * Provides visual interface showing task status and OpenCode panes.
+ *
+ * Layout matches do-work script:
+ * +------------------+---------------------------+
+ * |                  |                           |
+ * |   Task List      |    OpenCode/Tasks         |
+ * |   (25% width)    |    (75% width)            |
+ * |   Live refresh   |                           |
+ * |                  +---------------------------+
+ * |                  |   Logs (20% height)       |
+ * +------------------+---------------------------+
  */
 
 import { isDebugEnabled } from "./config";
+import { mkdir, writeFile, chmod, rm } from "fs/promises";
+import { join } from "path";
+import { homedir } from "os";
 
 // =============================================================================
 // Types
@@ -20,9 +33,10 @@ export interface PaneInfo {
 export interface DashboardLayout {
   sessionName: string;
   windowName: string;
-  statusPaneId: string;
-  logPaneId: string;
-  taskPanes: PaneInfo[];
+  taskListPaneId: string;  // Left pane with live task list
+  taskAreaPaneId: string;  // Main area for OpenCode task panes (placeholder)
+  logPaneId: string;       // Bottom right for logs
+  taskPanes: PaneInfo[];   // Active task panes
 }
 
 export interface StatusInfo {
@@ -44,6 +58,13 @@ export class TmuxManager {
   private layout: DashboardLayout | null = null;
   private statusUpdateInterval: ReturnType<typeof setInterval> | null = null;
   private currentStatus: StatusInfo | null = null;
+  private stateDir: string;
+  private taskListScriptPath: string | null = null;
+  private logsScriptPath: string | null = null;
+
+  constructor() {
+    this.stateDir = join(homedir(), ".local", "state", "brain-runner");
+  }
 
   /**
    * Check if tmux is available on the system.
@@ -65,7 +86,187 @@ export class TmuxManager {
   }
 
   /**
-   * Create the dashboard layout with status and log panes.
+   * Create the task list script that refreshes every 10 seconds.
+   * Curls the brain-api for task list with dependency resolution.
+   */
+  private async createTaskListScript(projectId: string): Promise<string> {
+    await mkdir(this.stateDir, { recursive: true });
+    const scriptPath = join(this.stateDir, `task_list_${projectId}.sh`);
+    
+    // Get API URL from environment or use default
+    const apiUrl = process.env.BRAIN_API_URL ?? "http://localhost:3000";
+    
+    const script = `#!/bin/bash
+# Task List Refresh Script
+# Curls brain-api for task list with dependency resolution
+# Refreshes every 10 seconds
+
+PROJECT_ID="${projectId}"
+API_URL="${apiUrl}"
+
+show_tasks() {
+  clear
+  
+  local display_id="\${PROJECT_ID:0:20}"
+  [[ \${#PROJECT_ID} -gt 20 ]] && display_id="\${display_id}..."
+  
+  echo -e "\\033[1m=== \$display_id ===\\033[0m"
+  echo ""
+  
+  # Curl the brain-api for task list
+  local response
+  response=$(curl -s "\${API_URL}/api/v1/tasks/\${PROJECT_ID}" 2>/dev/null)
+  
+  if [[ $? -ne 0 ]] || [[ -z "\$response" ]] || echo "\$response" | jq -e '.error' >/dev/null 2>&1; then
+    echo -e "\\033[31mError: Could not fetch tasks from API\\033[0m"
+    echo ""
+    echo "Last updated: $(date +%H:%M:%S)"
+    return 1
+  fi
+  
+  # Extract stats from API response
+  local ready_count waiting_count blocked_count completed_count in_progress_count
+  ready_count=$(echo "\$response" | jq -r '.stats.ready // 0' 2>/dev/null)
+  waiting_count=$(echo "\$response" | jq -r '.stats.waiting // 0' 2>/dev/null)
+  blocked_count=$(echo "\$response" | jq -r '.stats.blocked // 0' 2>/dev/null)
+  completed_count=$(echo "\$response" | jq -r '.stats.completed // 0' 2>/dev/null)
+  in_progress_count=$(echo "\$response" | jq -r '.stats.in_progress // 0' 2>/dev/null)
+  
+  # Display Ready tasks
+  echo -e "\\033[32mReady (\$ready_count):\\033[0m"
+  local ready_output
+  ready_output=$(echo "\$response" | jq -r '.tasks[] | select(.state == "ready") | "  - " + .title' 2>/dev/null | head -10)
+  if [[ -n "\$ready_output" ]]; then
+    echo "\$ready_output"
+  else
+    echo "  (none)"
+  fi
+  echo ""
+  
+  # Display In Progress tasks
+  echo -e "\\033[34mIn Progress (\$in_progress_count):\\033[0m"
+  local progress_output
+  progress_output=$(echo "\$response" | jq -r '.tasks[] | select(.status == "in_progress") | "  - " + .title' 2>/dev/null)
+  if [[ -n "\$progress_output" ]]; then
+    echo "\$progress_output"
+  else
+    echo "  (none)"
+  fi
+  echo ""
+  
+  # Display Waiting tasks (with dependencies)
+  echo -e "\\033[33mWaiting (\$waiting_count):\\033[0m"
+  local waiting_output
+  waiting_output=$(echo "\$response" | jq -r '.tasks[] | select(.state == "waiting") | "  - " + .title + " (needs: " + ((.blocking_deps // []) | join(", ")) + ")"' 2>/dev/null | head -5)
+  if [[ -n "\$waiting_output" ]]; then
+    echo "\$waiting_output"
+  else
+    echo "  (none)"
+  fi
+  echo ""
+  
+  # Display Blocked tasks
+  echo -e "\\033[31mBlocked (\$blocked_count):\\033[0m"
+  local blocked_output
+  blocked_output=$(echo "\$response" | jq -r '.tasks[] | select(.state == "blocked" or .status == "blocked") | "  - " + .title' 2>/dev/null | head -3)
+  if [[ -n "\$blocked_output" ]]; then
+    echo "\$blocked_output"
+  else
+    echo "  (none)"
+  fi
+  echo ""
+  
+  # Display Completed count
+  echo -e "\\033[32mCompleted (\$completed_count)\\033[0m"
+  echo ""
+  
+  echo "Last updated: $(date +%H:%M:%S)"
+}
+
+# Main loop - refresh every 10 seconds
+while true; do
+  show_tasks
+  sleep 10
+done
+`;
+    
+    await writeFile(scriptPath, script);
+    await chmod(scriptPath, 0o755);
+    return scriptPath;
+  }
+
+  /**
+   * Create the logs watch script.
+   */
+  private async createLogsScript(): Promise<string> {
+    await mkdir(this.stateDir, { recursive: true });
+    const scriptPath = join(this.stateDir, "logs_watch.sh");
+    
+    const logFile = join(homedir(), ".local", "log", "brain-runner.log");
+    
+    const script = `#!/bin/bash
+LOG_FILE="${logFile}"
+echo -e "\\033[1mLogs\\033[0m"
+echo -e "\\033[2m---------------------------------------\\033[0m"
+if [[ -f "\$LOG_FILE" ]]; then
+  tail -f "\$LOG_FILE" 2>/dev/null | while read -r line; do
+    if [[ "\$line" == *"[ERROR]"* ]]; then
+      echo -e "\\033[31m\$line\\033[0m"
+    elif [[ "\$line" == *"[WARN]"* ]]; then
+      echo -e "\\033[33m\$line\\033[0m"
+    elif [[ "\$line" == *"[INFO]"* ]]; then
+      echo -e "\\033[32m\$line\\033[0m"
+    elif [[ "\$line" == *"[DEBUG]"* ]]; then
+      echo -e "\\033[2m\$line\\033[0m"
+    else
+      echo "\$line"
+    fi
+  done
+else
+  echo "Waiting for log file..."
+  while [[ ! -f "\$LOG_FILE" ]]; do sleep 1; done
+  exec "\$0"
+fi
+`;
+    
+    await writeFile(scriptPath, script);
+    await chmod(scriptPath, 0o755);
+    return scriptPath;
+  }
+
+  /**
+   * Create a placeholder script for the task area.
+   */
+  private async createPlaceholderScript(): Promise<string> {
+    await mkdir(this.stateDir, { recursive: true });
+    const scriptPath = join(this.stateDir, "task_placeholder.sh");
+    
+    const script = `#!/bin/bash
+clear
+echo ""
+echo -e "\\033[1m  Waiting for tasks...\\033[0m"
+echo ""
+echo -e "\\033[2m  Tasks will appear here when processing starts.\\033[0m"
+echo ""
+# Keep the pane alive
+while true; do sleep 60; done
+`;
+    
+    await writeFile(scriptPath, script);
+    await chmod(scriptPath, 0o755);
+    return scriptPath;
+  }
+
+  /**
+   * Create the dashboard layout matching do-work:
+   * +------------------+---------------------------+
+   * |                  |                           |
+   * |   Task List      |    OpenCode/Tasks         |
+   * |   (25% width)    |    (75% width)            |
+   * |   Live refresh   |                           |
+   * |                  +---------------------------+
+   * |                  |   Logs (20% height)       |
+   * +------------------+---------------------------+
    */
   async createDashboard(sessionName: string): Promise<DashboardLayout> {
     if (!await this.isTmuxAvailable()) {
@@ -78,70 +279,61 @@ export class TmuxManager {
       console.log(`[TmuxManager] Creating dashboard: ${windowName}`);
     }
 
+    // Create scripts for dashboard panes
+    this.taskListScriptPath = await this.createTaskListScript(sessionName);
+    this.logsScriptPath = await this.createLogsScript();
+    const placeholderScriptPath = await this.createPlaceholderScript();
+
     // Check if we're inside tmux
     const insideTmux = await this.isInsideTmux();
 
     if (insideTmux) {
-      // Create a new window in the current session
-      await Bun.$`tmux new-window -d -n ${windowName}`.quiet();
+      // Create a new window with the task list script
+      await Bun.$`tmux new-window -d -n ${windowName} ${this.taskListScriptPath}`.quiet();
     } else {
-      // Create a new session with the dashboard window
+      // Create a new session with the task list script
       try {
-        await Bun.$`tmux new-session -d -s ${sessionName} -n ${windowName}`.quiet();
+        await Bun.$`tmux new-session -d -s ${sessionName} -n ${windowName} ${this.taskListScriptPath}`.quiet();
       } catch {
         // Session might already exist, try to create window
-        await Bun.$`tmux new-window -d -t ${sessionName} -n ${windowName}`.quiet();
+        await Bun.$`tmux new-window -d -t ${sessionName} -n ${windowName} ${this.taskListScriptPath}`.quiet();
       }
     }
 
-    // Get the base pane ID
-    const basePaneResult = await Bun.$`tmux list-panes -t ${windowName} -F '#{pane_id}'`.text();
-    const basePaneId = basePaneResult.trim();
+    // Small delay for window creation
+    await Bun.sleep(300);
 
-    // Split horizontally: left side for status/log, right side for tasks
-    // Left pane (30%) - will be split vertically for status and log
-    // Right pane (70%) - for task panes
-    const leftPaneResult = await Bun.$`tmux split-window -t ${basePaneId} -h -d -p 70 -P -F '#{pane_id}'`.text();
-    const taskAreaPaneId = leftPaneResult.trim();
+    // Get the task list pane ID (the initial pane)
+    const taskListPaneResult = await Bun.$`tmux list-panes -t ${windowName} -F '#{pane_id}'`.text();
+    const taskListPaneId = taskListPaneResult.trim().split('\n')[0];
 
-    // The original pane becomes the left side (status area)
-    // Split left pane vertically: top for status, bottom for log
-    const logPaneResult = await Bun.$`tmux split-window -t ${basePaneId} -v -d -p 50 -P -F '#{pane_id}'`.text();
+    // Split horizontally: right side gets 75% for task area
+    const taskAreaResult = await Bun.$`tmux split-window -t ${taskListPaneId} -h -d -P -F '#{pane_id}' -l 75% ${placeholderScriptPath}`.text();
+    const taskAreaPaneId = taskAreaResult.trim();
+
+    // Small delay for split
+    await Bun.sleep(200);
+
+    // Split the task area vertically: bottom 20% for logs
+    const logPaneResult = await Bun.$`tmux split-window -t ${taskAreaPaneId} -v -d -P -F '#{pane_id}' -l 20% ${this.logsScriptPath}`.text();
     const logPaneId = logPaneResult.trim();
 
-    // basePaneId is now the status pane (top-left)
-    const statusPaneId = basePaneId;
-
     // Set pane titles
-    await Bun.$`tmux select-pane -t ${statusPaneId} -T "Status"`.quiet();
+    await Bun.$`tmux select-pane -t ${taskListPaneId} -T "Tasks"`.quiet();
+    await Bun.$`tmux select-pane -t ${taskAreaPaneId} -T "OpenCode"`.quiet();
     await Bun.$`tmux select-pane -t ${logPaneId} -T "Logs"`.quiet();
-    await Bun.$`tmux select-pane -t ${taskAreaPaneId} -T "Tasks"`.quiet();
-
-    // Close the task area placeholder pane - we'll create task panes dynamically
-    await Bun.$`tmux kill-pane -t ${taskAreaPaneId}`.quiet();
 
     this.layout = {
       sessionName,
       windowName,
-      statusPaneId,
+      taskListPaneId,
+      taskAreaPaneId,
       logPaneId,
       taskPanes: [],
     };
 
-    // Initial status display
-    await this.updateStatusPane({
-      projectId: sessionName,
-      status: "initializing",
-      ready: 0,
-      running: 0,
-      waiting: 0,
-      blocked: 0,
-      completed: 0,
-      recentCompletions: [],
-    });
-
     if (isDebugEnabled()) {
-      console.log(`[TmuxManager] Dashboard created: status=${statusPaneId}, log=${logPaneId}`);
+      console.log(`[TmuxManager] Dashboard created: taskList=${taskListPaneId}, taskArea=${taskAreaPaneId}, log=${logPaneId}`);
     }
 
     return this.layout;
@@ -149,6 +341,9 @@ export class TmuxManager {
 
   /**
    * Add a pane for a task in the dashboard.
+   * Matches do-work's create_task_pane function:
+   * - First task: replaces placeholder pane (split above logs, takes 80%)
+   * - Additional tasks: split horizontally from last task pane
    */
   async addTaskPane(taskId: string, title: string, command: string): Promise<string> {
     if (!this.layout) {
@@ -159,14 +354,34 @@ export class TmuxManager {
       console.log(`[TmuxManager] Adding task pane: ${taskId} - ${title}`);
     }
 
-    // Find where to split - use status pane as reference and split to the right
-    const targetPane = this.layout.taskPanes.length > 0
-      ? this.layout.taskPanes[this.layout.taskPanes.length - 1].paneId
-      : this.layout.logPaneId;
+    let paneId: string;
 
-    // Split vertically (new pane below) within the task area
-    const paneResult = await Bun.$`tmux split-window -t ${targetPane} -h -d -P -F '#{pane_id}' ${command}`.text();
-    const paneId = paneResult.trim();
+    if (this.layout.taskPanes.length === 0) {
+      // First task: kill placeholder and split above logs pane
+      // First, check if taskAreaPaneId (placeholder) still exists
+      const placeholderAlive = await this.isPaneAlive(this.layout.taskAreaPaneId);
+      
+      if (placeholderAlive) {
+        // Kill the placeholder pane
+        try {
+          await Bun.$`tmux kill-pane -t ${this.layout.taskAreaPaneId}`.quiet();
+        } catch {
+          // Placeholder might already be gone
+        }
+      }
+
+      // Split above logs pane, take 80% of the space
+      const paneResult = await Bun.$`tmux split-window -t ${this.layout.logPaneId} -v -d -P -F '#{pane_id}' -b -l 80% ${command}`.text();
+      paneId = paneResult.trim();
+    } else {
+      // Additional task: split horizontally from the last task pane
+      const lastTaskPane = this.layout.taskPanes[this.layout.taskPanes.length - 1];
+      const paneResult = await Bun.$`tmux split-window -t ${lastTaskPane.paneId} -h -d -P -F '#{pane_id}' ${command}`.text();
+      paneId = paneResult.trim();
+    }
+
+    // Small delay for pane creation
+    await Bun.sleep(200);
 
     // Set pane title
     const shortTitle = title.length > 25 ? title.substring(0, 22) + "..." : title;
@@ -174,9 +389,6 @@ export class TmuxManager {
 
     const paneInfo: PaneInfo = { taskId, paneId, title };
     this.layout.taskPanes.push(paneInfo);
-
-    // Rebalance panes
-    await this.rebalancePanes();
 
     if (isDebugEnabled()) {
       console.log(`[TmuxManager] Task pane added: ${paneId} for ${taskId}`);
@@ -224,45 +436,18 @@ export class TmuxManager {
   }
 
   /**
-   * Update the status pane with current runner information.
+   * Update the status information.
+   * Note: The task list pane refreshes automatically via its script.
+   * This method stores the status for reference but doesn't need to
+   * update the pane directly since the script handles refresh.
    */
   async updateStatusPane(status: StatusInfo): Promise<void> {
-    if (!this.layout) {
-      return;
-    }
-
     this.currentStatus = status;
-
-    const now = new Date().toLocaleTimeString();
-    const statusText = `
-+==================================+
-|       BRAIN RUNNER STATUS        |
-+==================================+
-| Project: ${status.projectId.padEnd(23)}|
-| Status:  ${status.status.padEnd(23)}|
-+----------------------------------+
-| Ready:     ${String(status.ready).padStart(5)}                |
-| Running:   ${String(status.running).padStart(5)}                |
-| Waiting:   ${String(status.waiting).padStart(5)}                |
-| Blocked:   ${String(status.blocked).padStart(5)}                |
-| Completed: ${String(status.completed).padStart(5)}                |
-+----------------------------------+
-| Recent Completions:              |
-${status.recentCompletions.slice(0, 3).map(c => `|  - ${c.substring(0, 28).padEnd(28)}|`).join('\n') || '|  (none)                          |'}
-+----------------------------------+
-| Updated: ${now.padEnd(23)}|
-+==================================+
-`.trim();
-
-    try {
-      // Clear the pane and write status
-      const escapedStatus = statusText.replace(/'/g, "'\\''");
-      await Bun.$`tmux send-keys -t ${this.layout.statusPaneId} "clear" Enter`.quiet();
-      await Bun.$`tmux send-keys -t ${this.layout.statusPaneId} "cat << 'EOF'\n${statusText}\nEOF" Enter`.quiet();
-    } catch (error) {
-      if (isDebugEnabled()) {
-        console.log(`[TmuxManager] Failed to update status pane:`, error);
-      }
+    
+    // The task list pane now handles its own refresh via the script
+    // that reads from the brain API. No need to send keys to the pane.
+    if (isDebugEnabled()) {
+      console.log(`[TmuxManager] Status updated: ready=${status.ready}, running=${status.running}, waiting=${status.waiting}`);
     }
   }
 
@@ -337,7 +522,7 @@ ${status.recentCompletions.slice(0, 3).map(c => `|  - ${c.substring(0, 28).padEn
   }
 
   /**
-   * Cleanup all dashboard panes and close the window.
+   * Cleanup all dashboard panes, scripts, and close the window.
    */
   async cleanup(): Promise<void> {
     if (isDebugEnabled()) {
@@ -368,20 +553,44 @@ ${status.recentCompletions.slice(0, 3).map(c => `|  - ${c.substring(0, 28).padEn
       }
     }
 
+    // Clean up script files
+    try {
+      if (this.taskListScriptPath) {
+        await rm(this.taskListScriptPath, { force: true });
+      }
+      if (this.logsScriptPath) {
+        await rm(this.logsScriptPath, { force: true });
+      }
+      // Also clean up placeholder script
+      const placeholderPath = join(this.stateDir, "task_placeholder.sh");
+      await rm(placeholderPath, { force: true });
+    } catch {
+      // Ignore cleanup errors for scripts
+    }
+
     this.layout = null;
+    this.taskListScriptPath = null;
+    this.logsScriptPath = null;
   }
 
   /**
-   * Rebalance pane sizes for even distribution.
+   * Rebalance task panes for even horizontal distribution.
+   * Only rebalances the task panes, not the sidebar or logs.
    */
   private async rebalancePanes(): Promise<void> {
-    if (!this.layout) {
+    if (!this.layout || this.layout.taskPanes.length < 2) {
       return;
     }
 
     try {
-      // Select the window and rebalance
-      await Bun.$`tmux select-layout -t ${this.layout.windowName} tiled`.quiet();
+      // Even out horizontal space among task panes
+      // Use select-layout with even-horizontal for just the task area
+      // Note: This is a best-effort rebalance
+      for (const pane of this.layout.taskPanes) {
+        if (await this.isPaneAlive(pane.paneId)) {
+          await Bun.$`tmux resize-pane -t ${pane.paneId} -x 50%`.quiet();
+        }
+      }
     } catch {
       // Layout adjustment might fail if panes are in odd states
       if (isDebugEnabled()) {

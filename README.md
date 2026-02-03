@@ -1,104 +1,107 @@
-# brain-api-tasks Experiment
+# Brain API
 
-## Objective
+REST API service for AI agent memory and knowledge management, with integrated task queue processing.
 
-Integrate the `do-work` task queue processor with `brain-api` by adding a dedicated TaskService that handles:
+Built with [Bun](https://bun.sh) and [Hono](https://hono.dev).
 
-1. **Task Query Endpoints** - List tasks with dependency resolution
-2. **Task Classification** - Ready/waiting/blocked status based on dependencies
-3. **Task Lifecycle** - Start/complete/block operations
-4. **Workdir Resolution** - Resolve $HOME-relative paths for task execution
-5. **Project Discovery** - Find all projects with task directories
+## Features
 
-## Current State
+- Knowledge graph storage with Zettelkasten-style linking
+- Full-text search across entries
+- Task management with dependency tracking and resolution
+- Graph traversal (backlinks, outlinks, related entries)
+- Integration with `do-work` task queue processor
 
-### Files Copied
+## Installation
 
-- `src/` - Full brain-api source (TypeScript/Hono)
-- `scripts/do-work-original` - Original bash script (~1600 lines)
+```bash
+# Clone the repository
+git clone https://github.com/huynle/brain.git
+cd brain
 
-### What do-work Does (that brain-api doesn't)
+# Install dependencies
+bun install
+```
 
-| Feature | do-work (bash) | brain-api |
-|---------|---------------|-----------|
-| List tasks by project | zk CLI + jq | GET /entries (no project filter) |
-| Dependency resolution | Complex jq logic | Not implemented |
-| Cycle detection | In jq | Not implemented |
-| Task classification | ready/waiting/blocked | Not implemented |
-| Parent hierarchy | jq traversal | Not implemented |
-| Workdir resolution | bash function | Stores fields only |
-| Running task state | JSON files | Not implemented |
+## Usage
 
-## Implementation Plan
+### Development Server
 
-### Phase 1: Task Query Endpoints
+```bash
+# Start with hot reload
+bun run dev
+```
 
-Add to brain-api:
+### Production
+
+```bash
+# Start the server
+bun run start
+
+# Or build first
+bun run build
+```
+
+### Testing
+
+```bash
+# Run tests
+bun test
+
+# Type checking
+bun run typecheck
+
+# Linting
+bun run lint
+```
+
+### API Endpoints
+
+#### Core Endpoints
+- `GET /health` - Health check
+- `/api/v1/entries` - CRUD operations for brain entries
+- `/api/v1/search` - Full-text search
+- `/api/v1/graph` - Graph traversal operations
+
+#### Task Endpoints
 - `GET /api/v1/tasks/:projectId` - List all tasks for project
-- `GET /api/v1/tasks/:projectId/ready` - Ready tasks (deps satisfied)
+- `GET /api/v1/tasks/:projectId/ready` - Ready tasks (dependencies satisfied)
 - `GET /api/v1/tasks/:projectId/waiting` - Waiting on dependencies
 - `GET /api/v1/tasks/:projectId/blocked` - Blocked tasks
 - `GET /api/v1/tasks/:projectId/next` - Next task to execute
+- `POST /api/v1/tasks/:taskId/start` - Mark task in_progress
+- `POST /api/v1/tasks/:taskId/complete` - Mark task completed
+- `POST /api/v1/tasks/:taskId/block` - Mark task blocked
 
-### Phase 2: Dependency Resolution
+### Example
 
-Port jq logic to TypeScript:
-- Build task lookup maps
-- Resolve dependency references (by ID or title)
-- Detect cycles (iterative reachability)
-- Classify tasks based on dependency status
-- Handle parent hierarchy
+```bash
+# Start the API server
+bun run start
 
-### Phase 3: Task Lifecycle
+# Get ready tasks for a project
+curl http://localhost:3333/api/v1/tasks/myproject/ready
 
-Add endpoints:
-- `POST /api/v1/tasks/:taskId/start` - Mark in_progress
-- `POST /api/v1/tasks/:taskId/complete` - Mark completed
-- `POST /api/v1/tasks/:taskId/block` - Mark blocked with reason
-
-### Phase 4: Workdir Resolution
-
-Add to TaskService:
-- Resolve $HOME-relative workdir/worktree paths
-- Fall back to git remote search
-- Return absolute path for task execution
-
-### Phase 5: Simplified do-work
-
-Rewrite do-work to use brain-api:
-- Replace zk calls with HTTP calls
-- Remove jq dependency resolution
-- Keep only OpenCode spawning logic
-- Target: ~100 lines instead of ~1600
+# Start a task
+curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
+```
 
 ## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐     ┌──────────────┐
-│   do-work       │────▶│   brain-api     │────▶│  ~/docs/brain│
-│   (simplified)  │     │   TaskService   │     │  (markdown)  │
-└─────────────────┘     └─────────────────┘     └──────────────┘
-        │                       │
-        │ (spawns)              │ (uses)
-        ▼                       ▼
-┌─────────────────┐     ┌─────────────────┐
-│   OpenCode      │     │   zk CLI        │
-│   (task exec)   │     │                 │
-└─────────────────┘     └─────────────────┘
++------------------+     +------------------+     +--------------+
+|   do-work        |---->|   brain-api      |---->| ~/docs/brain |
+|   (task runner)  |     |   TaskService    |     | (markdown)   |
++------------------+     +------------------+     +--------------+
+        |                        |
+        | (spawns)               | (uses)
+        v                        v
++------------------+     +------------------+
+|   OpenCode       |     |   zk CLI         |
+|   (task exec)    |     |                  |
++------------------+     +------------------+
 ```
 
-## Running
+## License
 
-```bash
-# Start brain-api (in this experiment)
-bun run src/index.ts
-
-# Test endpoints
-curl http://localhost:3333/api/v1/tasks/test/ready
-```
-
-## Testing
-
-```bash
-bun test
-```
+MIT

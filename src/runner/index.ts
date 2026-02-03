@@ -24,6 +24,7 @@ import { getRunnerConfig, loadConfig } from "./config";
 import { ApiClient, getApiClient } from "./api-client";
 import { StateManager } from "./state-manager";
 import { getLogger, type LogLevel } from "./logger";
+import { TaskRunner, getTaskRunner, resetTaskRunner } from "./task-runner";
 import type { ExecutionMode, RunnerConfig, RunnerState } from "./types";
 import type { ResolvedTask } from "../core/types";
 
@@ -293,14 +294,45 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
     return 0;
   }
 
-  // For now, log that runner core is not yet implemented
-  // In a future task, this will spawn the actual runner loop
-  logger.warn("Runner core not yet implemented - start command registered");
+  // Build config overrides from CLI options
+  const configOverrides: Partial<RunnerConfig> = {};
+  if (options.maxParallel > 0) configOverrides.maxParallel = options.maxParallel;
+  if (options.pollInterval > 0) configOverrides.pollInterval = options.pollInterval;
+  if (options.workdir) configOverrides.workDir = options.workdir;
 
-  // Save PID for future stop commands
-  stateManager.savePid(process.pid);
+  // Create and start TaskRunner
+  try {
+    const runner = getTaskRunner({
+      projectId,
+      mode,
+      config: { ...config, ...configOverrides },
+    });
 
-  return 0;
+    // Set up graceful shutdown handler
+    const shutdown = async () => {
+      logger.info("Received shutdown signal");
+      await runner.stop();
+      process.exit(0);
+    };
+
+    process.on("SIGINT", shutdown);
+    process.on("SIGTERM", shutdown);
+
+    // Start the runner
+    await runner.start();
+
+    // If in foreground mode, keep running
+    if (options.foreground || mode === "dashboard") {
+      logger.info("Runner started in foreground mode. Press Ctrl+C to stop.");
+      // Keep the process alive
+      await new Promise(() => {}); // Never resolves - process runs until signal
+    }
+
+    return 0;
+  } catch (error) {
+    logger.error("Failed to start runner", { error: String(error) });
+    return 1;
+  }
 }
 
 async function handleStop(projectId: string, options: CLIOptions): Promise<number> {

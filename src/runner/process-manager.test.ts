@@ -3,14 +3,15 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test";
-import { spawn, ChildProcess } from "child_process";
 import {
   ProcessManager,
   CompletionStatus,
   resetProcessManager,
   type ProcessState,
+  type BunSubprocess,
 } from "./process-manager";
 import type { RunningTask } from "./types";
+import type { Subprocess } from "bun";
 
 // =============================================================================
 // Test Helpers
@@ -31,17 +32,17 @@ function createMockTask(id: string, overrides: Partial<RunningTask> = {}): Runni
   };
 }
 
-function createLongRunningProcess(): ChildProcess {
+function createLongRunningProcess(): Subprocess {
   // Spawn a process that will stay alive until killed
-  return spawn("sleep", ["60"], { detached: false });
+  return Bun.spawn(["sleep", "60"]);
 }
 
-function createShortProcess(exitCode: number = 0): ChildProcess {
+function createShortProcess(exitCode: number = 0): Subprocess {
   // Spawn a process that exits immediately with the given code
   if (exitCode === 0) {
-    return spawn("true", []);
+    return Bun.spawn(["true"]);
   } else {
-    return spawn("false", []);
+    return Bun.spawn(["false"]);
   }
 }
 
@@ -51,7 +52,7 @@ function createShortProcess(exitCode: number = 0): ChildProcess {
 
 describe("ProcessManager", () => {
   let manager: ProcessManager;
-  let spawnedProcesses: ChildProcess[] = [];
+  let spawnedProcesses: Subprocess[] = [];
 
   beforeEach(() => {
     resetProcessManager();
@@ -63,7 +64,7 @@ describe("ProcessManager", () => {
     // Clean up any spawned processes
     for (const proc of spawnedProcesses) {
       try {
-        proc.kill("SIGKILL");
+        proc.kill();
       } catch {
         // Process may already be dead
       }

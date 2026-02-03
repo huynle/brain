@@ -18,7 +18,7 @@ import {
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { spawn, type ChildProcess } from "child_process";
+import type { Subprocess } from "bun";
 
 // Components under test
 import { TaskRunner, resetTaskRunner } from "./task-runner";
@@ -197,7 +197,7 @@ describe("Integration: Component Interactions", () => {
       expect(tasks[0].id).toBe("task1");
 
       // Track a process for the task
-      const proc = spawn("sleep", ["0.1"]);
+const proc = Bun.spawn(["sleep", "0.1"]);
       const runningTask = createRunningTask("task1", proc.pid!);
 
       processManager.add("task1", runningTask, proc);
@@ -283,8 +283,8 @@ describe("Integration: Component Interactions", () => {
       const processManager = new ProcessManager(config);
 
       // Spawn a real process
-      const proc = spawn("sleep", ["10"]);
-      const task = createRunningTask("task1", proc.pid!);
+      const proc = Bun.spawn(["sleep", "10"]);
+      const task = createRunningTask("task1", proc.pid);
 
       // Simulate saved state
       const states = [
@@ -487,8 +487,8 @@ describe("Integration: Process Lifecycle", () => {
     const task = createRunningTask("task1", 0);
 
     // Spawn a quick process
-    const proc = spawn("sleep", ["0.1"]);
-    task.pid = proc.pid!;
+    const proc = Bun.spawn(["sleep", "0.1"]);
+    task.pid = proc.pid;
 
     processManager.add("task1", task, proc);
     expect(processManager.isRunning("task1")).toBe(true);
@@ -508,8 +508,8 @@ describe("Integration: Process Lifecycle", () => {
     const task = createRunningTask("task1", 0);
 
     // Spawn a long process
-    const proc = spawn("sleep", ["60"]);
-    task.pid = proc.pid!;
+    const proc = Bun.spawn(["sleep", "60"]);
+    task.pid = proc.pid;
 
     processManager.add("task1", task, proc);
     expect(processManager.runningCount()).toBe(1);
@@ -524,11 +524,11 @@ describe("Integration: Process Lifecycle", () => {
     const processManager = new ProcessManager(config);
 
     // Spawn multiple processes
-    const proc1 = spawn("sleep", ["60"]);
-    const proc2 = spawn("sleep", ["60"]);
+    const proc1 = Bun.spawn(["sleep", "60"]);
+    const proc2 = Bun.spawn(["sleep", "60"]);
 
-    processManager.add("task1", createRunningTask("task1", proc1.pid!), proc1);
-    processManager.add("task2", createRunningTask("task2", proc2.pid!), proc2);
+    processManager.add("task1", createRunningTask("task1", proc1.pid), proc1);
+    processManager.add("task2", createRunningTask("task2", proc2.pid), proc2);
 
     expect(processManager.runningCount()).toBe(2);
 
@@ -541,8 +541,8 @@ describe("Integration: Process Lifecycle", () => {
     const processManager = new ProcessManager(config);
     const task = createRunningTask("task1", 0);
 
-    const proc = spawn("sleep", ["0.1"]);
-    task.pid = proc.pid!;
+    const proc = Bun.spawn(["sleep", "0.1"]);
+    task.pid = proc.pid;
 
     processManager.add("task1", task, proc);
 

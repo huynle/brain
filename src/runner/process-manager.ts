@@ -5,7 +5,7 @@
  * This is the core of parallel task execution.
  */
 
-import type { ChildProcess } from "child_process";
+import type { Subprocess } from "bun";
 import type { RunningTask, TaskResult, RunnerConfig } from "./types";
 import type { EntryStatus } from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
@@ -24,9 +24,12 @@ export enum CompletionStatus {
   Crashed = "crashed",
 }
 
+// Bun's Subprocess type - we use a minimal interface to support both Bun.spawn result and mocks
+export type BunSubprocess = Pick<Subprocess, "pid" | "exited" | "kill" | "exitCode">;
+
 export interface ProcessInfo {
   task: RunningTask;
-  proc: ChildProcess;
+  proc: BunSubprocess;
   exitCode: number | null;
   exited: boolean;
   exitedAt?: string;
@@ -61,8 +64,9 @@ export class ProcessManager {
 
   /**
    * Track a new process with exit handler.
+   * Uses Bun's Subprocess which has .exited Promise instead of event emitters.
    */
-  add(taskId: string, task: RunningTask, proc: ChildProcess): void {
+  add(taskId: string, task: RunningTask, proc: BunSubprocess): void {
     if (this.processes.has(taskId)) {
       throw new Error(`Task ${taskId} is already being tracked`);
     }
@@ -74,20 +78,18 @@ export class ProcessManager {
       exited: false,
     };
 
-    // Set up exit handler
-    proc.on("exit", (code, signal) => {
-      info.exitCode = code ?? (signal ? -1 : 0);
+    // Set up exit handler using Bun's Promise-based .exited
+    proc.exited.then((exitCode) => {
+      info.exitCode = exitCode ?? 0;
       info.exited = true;
       info.exitedAt = new Date().toISOString();
 
       if (isDebugEnabled()) {
         console.log(
-          `[ProcessManager] Process exited: ${taskId} with code ${code}, signal ${signal}`
+          `[ProcessManager] Process exited: ${taskId} with code ${exitCode}`
         );
       }
-    });
-
-    proc.on("error", (error) => {
+    }).catch((error: Error) => {
       info.exitCode = -1;
       info.exited = true;
       info.exitedAt = new Date().toISOString();

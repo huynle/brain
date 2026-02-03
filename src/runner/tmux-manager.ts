@@ -132,10 +132,13 @@ show_tasks() {
   completed_count=$(echo "\$response" | jq -r '.stats.completed // 0' 2>/dev/null)
   in_progress_count=$(echo "\$response" | jq -r '.stats.in_progress // 0' 2>/dev/null)
   
-  # Display Ready tasks
+  # Display Ready tasks (with priority indicator)
   echo -e "\\033[32mReady (\$ready_count):\\033[0m"
   local ready_output
-  ready_output=$(echo "\$response" | jq -r '.tasks[] | select(.state == "ready") | "  - " + .title' 2>/dev/null | head -10)
+  ready_output=$(echo "\$response" | jq -r '
+    .tasks[] | select(.state == "ready") |
+    "  ● " + .title + " [" + (.priority // "medium") + "]"
+  ' 2>/dev/null | head -10)
   if [[ -n "\$ready_output" ]]; then
     echo "\$ready_output"
   else
@@ -154,10 +157,20 @@ show_tasks() {
   fi
   echo ""
   
-  # Display Waiting tasks (with dependencies)
+  # Display Waiting tasks (with dependency tree)
   echo -e "\\033[33mWaiting (\$waiting_count):\\033[0m"
   local waiting_output
-  waiting_output=$(echo "\$response" | jq -r '.tasks[] | select(.state == "waiting") | "  - " + .title + " (needs: " + ((.blocking_deps // []) | join(", ")) + ")"' 2>/dev/null | head -5)
+  waiting_output=$(echo "\$response" | jq -r '
+    .tasks as \$all |
+    .tasks[] | select(.state == "waiting") |
+    "  - " + .title,
+    ((.blocking_deps // [])[] as \$dep_id |
+      (\$all[] | select(.id == \$dep_id)) as \$dep |
+      if \$dep then 
+        "    └─ depends on: " + \$dep.title + " (" + (\$dep.status // "pending") + ")"
+      else empty end
+    )
+  ' 2>/dev/null | head -20)
   if [[ -n "\$waiting_output" ]]; then
     echo "\$waiting_output"
   else

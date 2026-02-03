@@ -74,6 +74,25 @@ MODEL="${DO_WORK_MODEL:-anthropic/claude-opus-4-5}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 DEFAULT_PROJECT="test"
 
+# =============================================================================
+# Brain API Configuration
+# =============================================================================
+
+# API server URL (default: localhost:4444)
+BRAIN_API_URL="${BRAIN_API_URL:-http://localhost:4444}"
+
+# Use API for task queries when available (default: true)
+# Set to "false" to always use legacy jq-based resolution
+USE_API="${USE_API:-true}"
+
+# API request timeout in seconds
+API_TIMEOUT="${API_TIMEOUT:-5}"
+
+# Cache API availability check for this many seconds (avoid hammering health endpoint)
+API_CHECK_CACHE_SECONDS=10
+API_LAST_CHECK=0
+API_AVAILABLE_CACHED=""
+
 # Parallel execution settings
 MAX_PARALLEL="${DO_WORK_MAX_PARALLEL:-3}"           # Max concurrent tasks
 TASK_POLL_INTERVAL="${DO_WORK_TASK_POLL_INTERVAL:-5}"  # Interval to check task completion (seconds)
@@ -81,22 +100,24 @@ TASK_POLL_INTERVAL="${DO_WORK_TASK_POLL_INTERVAL:-5}"  # Interval to check task 
 # Multi-project settings
 EXCLUDE_PATTERNS=()  # Array of glob patterns to exclude projects
 
-# Runtime state (defaults: foreground + opencode run for automatic completion)
-USE_TUI=false       # Default to 'opencode run' mode (auto-exits on completion)
+# Runtime state
+USE_TUI=true        # Use interactive opencode TUI (process terminated automatically on task completion)
+USE_DASHBOARD=false # Create dashboard window with visible panes
 FOREGROUND=true
-BACKGROUND=false    # When true, run completely detached (no pane visibility)
+BACKGROUND=false    # Run completely detached (no pane visibility)
 DRY_RUN=false
 WORK_DIR=""
 CURRENT_PROJECT_ID=""
 DASHBOARD_WINDOW_NAME=""  # Track dashboard window for cleanup
 
 # Associative arrays for tracking running tasks (bash 4+)
-declare -A RUNNING_TASKS_PID      # task_id -> pid
-declare -A RUNNING_TASKS_PANE     # task_id -> pane_id
-declare -A RUNNING_TASKS_PATH     # task_id -> task_path
-declare -A RUNNING_TASKS_TITLE    # task_id -> title
-declare -A RUNNING_TASKS_STARTED  # task_id -> start timestamp
-declare -A RUNNING_TASKS_PROJECT  # task_id -> project_id
+# Initialize with dummy key to avoid "unbound variable" errors with set -u
+declare -A RUNNING_TASKS_PID=()      # task_id -> pid
+declare -A RUNNING_TASKS_PANE=()     # task_id -> pane_id
+declare -A RUNNING_TASKS_PATH=()     # task_id -> task_path
+declare -A RUNNING_TASKS_TITLE=()    # task_id -> title
+declare -A RUNNING_TASKS_STARTED=()  # task_id -> start timestamp
+declare -A RUNNING_TASKS_PROJECT=()  # task_id -> project_id
 
 # Stats
 COMPLETED_COUNT=0
@@ -156,6 +177,271 @@ debug() {
   if [[ "${DEBUG:-}" == "true" ]]; then
     echo -e "${DIM}[DEBUG] $*${RESET}" >&2
   fi
+}
+
+# =============================================================================
+# Brain API Functions
+# =============================================================================
+
+# Check if brain-api is available (with caching)
+check_api_available() {
+  local now
+  now=$(date +%s)
+  
+  # Return cached result if recent enough
+  local cache_age=$((now - API_LAST_CHECK))
+  if [[ $cache_age -lt $API_CHECK_CACHE_SECONDS ]] && [[ -n "$API_AVAILABLE_CACHED" ]]; then
+    [[ "$API_AVAILABLE_CACHED" == "true" ]]
+    return $?
+  fi
+  
+  # Check API health endpoint
+  local response
+  response=$(curl -s --max-time "$API_TIMEOUT" "${BRAIN_API_URL}/health" 2>/dev/null || echo "")
+  
+  API_LAST_CHECK=$now
+  
+  if echo "$response" | jq -e '.status == "healthy" or .status == "degraded"' > /dev/null 2>&1; then
+    API_AVAILABLE_CACHED="true"
+    debug "Brain API available at $BRAIN_API_URL"
+    return 0
+  else
+    API_AVAILABLE_CACHED="false"
+    debug "Brain API not available at $BRAIN_API_URL (response: $response)"
+    return 1
+  fi
+}
+
+# Check if we should use the API (configured AND available)
+should_use_api() {
+  [[ "$USE_API" == "true" ]] && check_api_available
+}
+
+# Generic API GET request
+# Usage: api_get "/api/v1/tasks/project-id/ready"
+api_get() {
+  local endpoint="$1"
+  local response
+  
+  response=$(curl -s --max-time "$API_TIMEOUT" \
+    -H "Accept: application/json" \
+    "${BRAIN_API_URL}${endpoint}" 2>/dev/null) || {
+    debug "API GET failed for $endpoint"
+    return 1
+  }
+  
+  # Check for error response
+  if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
+    local error_msg
+    error_msg=$(echo "$response" | jq -r '.message // .error')
+    debug "API error: $error_msg"
+    return 1
+  fi
+  
+  echo "$response"
+}
+
+# Generic API PATCH request
+# Usage: api_patch "/api/v1/entries/path/to/entry.md" '{"status": "completed"}'
+api_patch() {
+  local endpoint="$1"
+  local body="$2"
+  local response
+  
+  response=$(curl -s --max-time "$API_TIMEOUT" \
+    -X PATCH \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$body" \
+    "${BRAIN_API_URL}${endpoint}" 2>/dev/null) || {
+    debug "API PATCH failed for $endpoint"
+    return 1
+  }
+  
+  # Check for error response
+  if echo "$response" | jq -e '.error' > /dev/null 2>&1; then
+    local error_msg
+    error_msg=$(echo "$response" | jq -r '.message // .error')
+    debug "API error: $error_msg"
+    return 1
+  fi
+  
+  echo "$response"
+}
+
+# =============================================================================
+# API-Based Task Queries (with jq fallback)
+# =============================================================================
+
+# Get all tasks with dependency resolution via API
+# Returns: { tasks: [...], stats: {...}, cycles: [...] }
+api_get_all_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for all tasks: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}") || {
+      debug "API failed, falling back to jq"
+      get_all_tasks_legacy "$project_id"
+      return
+    }
+    echo "$response"
+  else
+    get_all_tasks_legacy "$project_id"
+  fi
+}
+
+# Get ready tasks via API
+# Returns: JSON array of ready tasks sorted by priority
+api_get_ready_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for ready tasks: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}/ready") || {
+      debug "API failed, falling back to jq"
+      get_ready_tasks_legacy "$project_id"
+      return
+    }
+    # API returns { tasks: [...], count: N } - extract just tasks array
+    echo "$response" | jq '.tasks'
+  else
+    get_ready_tasks_legacy "$project_id"
+  fi
+}
+
+# Get waiting tasks via API
+# Returns: JSON array of waiting tasks
+api_get_waiting_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for waiting tasks: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}/waiting") || {
+      debug "API failed, falling back to jq"
+      get_waiting_tasks_legacy "$project_id"
+      return
+    }
+    echo "$response" | jq '.tasks'
+  else
+    get_waiting_tasks_legacy "$project_id"
+  fi
+}
+
+# Get blocked tasks via API
+# Returns: JSON array of blocked tasks
+api_get_blocked_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for blocked tasks: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}/blocked") || {
+      debug "API failed, falling back to jq"
+      get_blocked_tasks_legacy "$project_id"
+      return
+    }
+    echo "$response" | jq '.tasks'
+  else
+    get_blocked_tasks_legacy "$project_id"
+  fi
+}
+
+# Get next ready task via API
+# Returns: single task JSON object or null
+api_get_next_task() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for next task: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}/next") || {
+      debug "API failed, falling back to jq"
+      get_next_ready_task_legacy "$project_id"
+      return
+    }
+    # API returns { task: {...} } or { task: null, message: "..." }
+    echo "$response" | jq '.task'
+  else
+    get_next_ready_task_legacy "$project_id"
+  fi
+}
+
+# Get circular tasks via API
+# Returns: JSON array of tasks in cycles
+api_get_circular_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  if should_use_api; then
+    debug "Using API for circular tasks: $project_id"
+    local response
+    response=$(api_get "/api/v1/tasks/${project_id}") || {
+      debug "API failed, falling back to jq"
+      get_circular_tasks_legacy "$project_id"
+      return
+    }
+    # Filter tasks with classification == "circular" or extract from cycles
+    echo "$response" | jq '[.tasks[] | select(.classification == "circular" or .in_cycle == true)]'
+  else
+    get_circular_tasks_legacy "$project_id"
+  fi
+}
+
+# Update task status via API
+# Usage: api_update_task_status "projects/test/task/task-a.md" "completed"
+api_update_task_status() {
+  local task_path="$1"
+  local new_status="$2"
+  
+  if should_use_api; then
+    debug "Using API to update task status: $task_path -> $new_status"
+    local response
+    # URL-encode the path for the API endpoint
+    local encoded_path
+    encoded_path=$(echo "$task_path" | sed 's|/|%2F|g')
+    response=$(api_patch "/api/v1/entries/${encoded_path}" "{\"status\": \"${new_status}\"}") || {
+      debug "API failed, falling back to direct file update"
+      update_task_status_file "$task_path" "$new_status"
+      return
+    }
+    # Verify the response indicates success
+    if echo "$response" | jq -e '.status == "'"$new_status"'"' > /dev/null 2>&1; then
+      debug "Task status updated via API"
+      return 0
+    else
+      debug "API response did not confirm status change, falling back"
+      update_task_status_file "$task_path" "$new_status"
+    fi
+  else
+    update_task_status_file "$task_path" "$new_status"
+  fi
+}
+
+# Update task status directly in file (legacy/fallback)
+update_task_status_file() {
+  local task_path="$1"
+  local new_status="$2"
+  local full_path="${BRAIN_DIR}/${task_path}"
+  
+  if [[ ! -f "$full_path" ]]; then
+    log WARN "Cannot update task status: file not found: $full_path"
+    return 1
+  fi
+  
+  # Update status in frontmatter
+  if grep -q "^status:" "$full_path" 2>/dev/null; then
+    sed -i '' "s/^status:.*/status: $new_status/" "$full_path"
+  else
+    # Add status after the first ---
+    sed -i '' "/^---$/a\\
+status: $new_status
+" "$full_path"
+  fi
+  
+  debug "Task status updated in file: $task_path -> $new_status"
 }
 
 ensure_dirs() {
@@ -393,17 +679,22 @@ remove_running_task() {
   
   persist_running_tasks
   
-  log INFO "Removed running task: $title (id: $task_id)"
+  log INFO "Removed from active tracking: $title (id: $task_id)"
 }
 
 # Get count of currently running tasks
 get_running_task_count() {
-  echo "${#RUNNING_TASKS_PID[@]}"
+  # Safe count that works with set -u and empty arrays
+  local count="${#RUNNING_TASKS_PID[@]}"
+  echo "${count:-0}"
 }
 
 # Get list of running task IDs
 get_running_task_ids() {
-  echo "${!RUNNING_TASKS_PID[@]}"
+  # Safe access that works with set -u and empty arrays
+  local keys
+  keys="${!RUNNING_TASKS_PID[*]}"
+  echo "$keys"
 }
 
 # Check if a task is currently running
@@ -423,6 +714,9 @@ persist_running_tasks() {
   local tasks_json="["
   local first=true
   
+  # Safe iteration - get count first
+  local count="${#RUNNING_TASKS_PID[@]}"
+  if [[ "$count" -gt 0 ]]; then
   for task_id in "${!RUNNING_TASKS_PID[@]}"; do
     if [[ "$first" != "true" ]]; then
       tasks_json+=","
@@ -442,6 +736,7 @@ persist_running_tasks() {
 EOF
 )
   done
+  fi
   
   tasks_json+="]"
   echo "$tasks_json" > "$running_file"
@@ -521,6 +816,9 @@ get_running_tasks_json() {
   local tasks_json="["
   local first=true
   
+  # Safe iteration - get count first
+  local count="${#RUNNING_TASKS_PID[@]}"
+  if [[ "$count" -gt 0 ]]; then
   for task_id in "${!RUNNING_TASKS_PID[@]}"; do
     if [[ "$first" != "true" ]]; then
       tasks_json+=","
@@ -552,6 +850,7 @@ get_running_tasks_json() {
 EOF
 )
   done
+  fi
   
   tasks_json+="]"
   echo "$tasks_json"
@@ -850,7 +1149,14 @@ get_cycles() {
 
 # Get ready tasks (pending with all dependencies completed)
 # Returns JSON array sorted by priority
+# Uses API when available, falls back to jq-based resolution
 get_ready_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  api_get_ready_tasks "$project_id"
+}
+
+# Legacy jq-based ready tasks (fallback when API unavailable)
+get_ready_tasks_legacy() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
   local tasks
@@ -871,8 +1177,29 @@ get_ready_tasks() {
   '
 }
 
+# Legacy jq-based all tasks with resolution (fallback when API unavailable)
+get_all_tasks_legacy() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  
+  local tasks
+  tasks=$(build_task_list "$project_id")
+  
+  local resolved
+  resolved=$(resolve_dependencies "$tasks")
+  
+  # Return full resolution result with tasks, stats, and cycles
+  echo "$resolved"
+}
+
 # Get waiting tasks (including those waiting on parent)
+# Uses API when available, falls back to jq-based resolution
 get_waiting_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  api_get_waiting_tasks "$project_id"
+}
+
+# Legacy jq-based waiting tasks (fallback when API unavailable)
+get_waiting_tasks_legacy() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
   local tasks
@@ -885,7 +1212,14 @@ get_waiting_tasks() {
 }
 
 # Get blocked tasks (including those blocked by parent)
+# Uses API when available, falls back to jq-based resolution
 get_blocked_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  api_get_blocked_tasks "$project_id"
+}
+
+# Legacy jq-based blocked tasks (fallback when API unavailable)
+get_blocked_tasks_legacy() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
   local tasks
@@ -898,7 +1232,14 @@ get_blocked_tasks() {
 }
 
 # Get circular tasks
+# Uses API when available, falls back to jq-based resolution
 get_circular_tasks() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  api_get_circular_tasks "$project_id"
+}
+
+# Legacy jq-based circular tasks (fallback when API unavailable)
+get_circular_tasks_legacy() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
   local tasks
@@ -911,12 +1252,19 @@ get_circular_tasks() {
 }
 
 # Get first ready task (highest priority ready task)
-# Returns single JSON object or empty
+# Returns single JSON object or null
+# Uses API when available, falls back to jq-based resolution
 get_next_ready_task() {
+  local project_id="${1:-$DEFAULT_PROJECT}"
+  api_get_next_task "$project_id"
+}
+
+# Legacy jq-based next task (fallback when API unavailable)
+get_next_ready_task_legacy() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
   local ready
-  ready=$(get_ready_tasks "$project_id")
+  ready=$(get_ready_tasks_legacy "$project_id")
   
   # Return first task or null
   echo "$ready" | jq '.[0] // null'
@@ -1077,14 +1425,12 @@ display_tasks() {
 display_graph() {
   local project_id="${1:-$DEFAULT_PROJECT}"
   
-  local tasks
-  tasks=$(build_task_list "$project_id")
-  
+  # Use API when available for better performance
   local resolved
-  resolved=$(resolve_dependencies "$tasks")
+  resolved=$(api_get_all_tasks "$project_id")
   
   local resolved_tasks
-  resolved_tasks=$(get_resolved_tasks "$resolved")
+  resolved_tasks=$(echo "$resolved" | jq '.tasks')
   
   echo ""
   echo -e "${BOLD}Task Dependency Graph - Project: ${CYAN}${project_id}${RESET}"
@@ -1584,9 +1930,9 @@ show_tasks() {
     fi
     
     echo ""
-    echo -e "\033[32m✅ Completed (recent):\033[0m"
+    echo -e "\033[32m✅ Completed:\033[0m"
     local completed
-    completed=\$(echo "\$all_tasks" | jq -r '[.[] | select(.status == "completed")] | sort_by(.created) | reverse | .[0:3] | .[] | "  ✓ \(.title)"' 2>/dev/null)
+    completed=\$(echo "\$all_tasks" | jq -r '[.[] | select(.status == "completed")] | sort_by(.created) | reverse | .[] | "  ✓ \(.title)"' 2>/dev/null)
     if [[ -n "\$completed" ]]; then
       echo "\$completed"
     else
@@ -1738,23 +2084,7 @@ Start now."
     workdir="${WORK_DIR:-$HOME}"
   fi
   
-  if [[ "$BACKGROUND" == "true" ]]; then
-    # Background mode: completely detached, no pane visibility
-    log DEBUG "Starting OpenCode run in background (model: $MODEL)"
-    
-    local output_file="${STATE_DIR}/output_${CURRENT_PROJECT_ID}_${task_id}.log"
-    
-    (cd "$workdir" && "$OPENCODE_BIN" run --agent "$AGENT" --model "$MODEL" "$(cat "$prompt_file")" > "$output_file" 2>&1) &
-    local pid=$!
-    
-    # Track spawned PID for cleanup
-    local spawned_pids_file
-    spawned_pids_file=$(get_spawned_pids_file "$CURRENT_PROJECT_ID")
-    echo "$pid" >> "$spawned_pids_file"
-    
-    echo "{\"pid\": ${pid}, \"pane_id\": \"\"}"
-    
-  elif [[ "$USE_TUI" == "true" ]]; then
+  if [[ "$USE_TUI" == "true" ]]; then
     # TUI mode: interactive opencode TUI in pane (requires manual close)
     log DEBUG "Starting OpenCode TUI in tmux pane (model: $MODEL)"
     
@@ -1809,9 +2139,9 @@ RUNNER_EOF
     
     echo "{\"pid\": ${pid}, \"pane_id\": \"${pane_id}\"}"
     
-  else
-    # Default mode: opencode run in visible tmux pane (auto-exits on completion)
-    log DEBUG "Starting OpenCode run in tmux pane (model: $MODEL)"
+  elif [[ "$USE_DASHBOARD" == "true" ]]; then
+    # Dashboard mode: visible tmux panes using 'opencode run' (auto-exits on completion)
+    log DEBUG "Starting OpenCode run in dashboard pane (model: $MODEL)"
     
     local window_name="do-work-deps_${CURRENT_PROJECT_ID}"
     local pane_id
@@ -1863,6 +2193,22 @@ RUNNER_EOF
     echo "$pid" >> "$spawned_pids_file"
     
     echo "{\"pid\": ${pid}, \"pane_id\": \"${pane_id}\"}"
+    
+  else
+    # Default mode: run in background (no pane visibility, logs to file)
+    log DEBUG "Starting OpenCode run in background (model: $MODEL)"
+    
+    local output_file="${STATE_DIR}/output_${CURRENT_PROJECT_ID}_${task_id}.log"
+    
+    (cd "$workdir" && "$OPENCODE_BIN" run --agent "$AGENT" --model "$MODEL" "$(cat "$prompt_file")" > "$output_file" 2>&1) &
+    local pid=$!
+    
+    # Track spawned PID for cleanup
+    local spawned_pids_file
+    spawned_pids_file=$(get_spawned_pids_file "$CURRENT_PROJECT_ID")
+    echo "$pid" >> "$spawned_pids_file"
+    
+    echo "{\"pid\": ${pid}, \"pane_id\": \"\"}"
   fi
 }
 
@@ -1884,9 +2230,11 @@ create_task_pane() {
   
   # Find existing task panes (titled "Task:*")
   local task_panes
-  task_panes=$(tmux list-panes -t "$window_name" -F '#{pane_id} #{pane_title}' 2>/dev/null | grep "Task:" | awk '{print $1}')
-  local task_pane_count
-  task_pane_count=$(echo "$task_panes" | grep -c '%' || echo "0")
+  task_panes=$(tmux list-panes -t "$window_name" -F '#{pane_id} #{pane_title}' 2>/dev/null | grep "Task:" | awk '{print $1}' || true)
+  local task_pane_count=0
+  if [[ -n "$task_panes" ]]; then
+    task_pane_count=$(echo "$task_panes" | wc -l | tr -d ' ')
+  fi
   
   # Find the logs pane (we'll split above it)
   local logs_pane
@@ -2319,8 +2667,8 @@ cleanup_task() {
     fi
   fi
   
-  # Close tmux pane if exists
-  if [[ -n "$pane_id" ]] && [[ "$USE_TUI" == "true" ]]; then
+  # Close tmux pane if exists (in TUI or dashboard mode)
+  if [[ -n "$pane_id" ]] && { [[ "$USE_TUI" == "true" ]] || [[ "$USE_DASHBOARD" == "true" ]]; }; then
     log DEBUG "Closing pane $pane_id for task $title"
     tmux kill-pane -t "$pane_id" 2>/dev/null || true
   fi
@@ -2350,7 +2698,7 @@ run_monitor() {
   fi
   log INFO "Poll interval: ${POLL_INTERVAL}s"
   log INFO "Brain directory: $BRAIN_DIR"
-  log INFO "Mode: $(if [[ "$USE_TUI" == "true" ]]; then echo "TUI"; else echo "run (non-TUI)"; fi)"
+  log INFO "Mode: $(if [[ "$USE_TUI" == "true" ]]; then echo "TUI"; elif [[ "$USE_DASHBOARD" == "true" ]]; then echo "dashboard (opencode run)"; else echo "background"; fi)"
   log INFO "Dependency resolution: ENABLED"
   
   MONITOR_STARTED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -2361,8 +2709,8 @@ run_monitor() {
   
   trap 'shutdown_monitor' SIGTERM SIGINT
   
-  # Create dashboard window in TUI mode
-  if [[ "$USE_TUI" == "true" ]]; then
+  # Create dashboard window in TUI or dashboard mode
+  if [[ "$USE_TUI" == "true" ]] || [[ "$USE_DASHBOARD" == "true" ]]; then
     local window_name="do-work-deps_${project_id}"
     DASHBOARD_WINDOW_NAME="$window_name"  # Track for cleanup on exit
     if ! tmux list-windows -F '#{window_name}' 2>/dev/null | grep -q "^${window_name}$"; then
@@ -2403,8 +2751,10 @@ PLACEHOLDER_EOF
   interrupted_json=$(query_interrupted_tasks "$project_id")
   
   if [[ -n "$interrupted_json" ]] && [[ "$interrupted_json" != "null" ]]; then
-    local interrupted_count
-    interrupted_count=$(echo "$interrupted_json" | grep -c '^{' || echo "0")
+    local interrupted_count=0
+    interrupted_count=$(echo "$interrupted_json" | grep -c '^{' 2>/dev/null || echo "0")
+    # Ensure it's a valid number
+    [[ "$interrupted_count" =~ ^[0-9]+$ ]] || interrupted_count=0
     
     if [[ "$interrupted_count" -gt 0 ]]; then
       log WARN "Found $interrupted_count interrupted task(s), will resume before processing new tasks"
@@ -2715,10 +3065,17 @@ cmd_start() {
         ;;
       --tui)
         USE_TUI=true
+        USE_DASHBOARD=true  # TUI implies dashboard
         shift
         ;;
-      --no-tui)
+      --dashboard)
+        USE_DASHBOARD=true
+        USE_TUI=false  # Dashboard with opencode run, not TUI
+        shift
+        ;;
+      --no-tui|--no-dashboard)
         USE_TUI=false
+        USE_DASHBOARD=false
         shift
         ;;
       --background-tasks)
@@ -2823,7 +3180,7 @@ cmd_start() {
   fi
   echo -e "  Brain: ${DIM}${BRAIN_DIR}${RESET}"
   echo -e "  Workdir: ${DIM}${WORK_DIR}${RESET}"
-  echo -e "  Mode: $(if [[ "$USE_TUI" == "true" ]]; then echo "TUI"; else echo "run (silent)"; fi)"
+  echo -e "  Mode: $(if [[ "$USE_TUI" == "true" ]]; then echo "TUI"; elif [[ "$USE_DASHBOARD" == "true" ]]; then echo "dashboard"; else echo "background"; fi)"
   echo -e "  ${BOLD}Parallel:${RESET} max ${CYAN}${MAX_PARALLEL}${RESET} concurrent tasks"
   echo -e "  Task poll: ${DIM}${TASK_POLL_INTERVAL}s${RESET}"
   echo ""
@@ -2975,6 +3332,17 @@ show_project_status() {
     echo -e "State: ${DIM}STOPPED${RESET}"
   fi
   
+  # Show API status
+  if [[ "$USE_API" == "true" ]]; then
+    if check_api_available; then
+      echo -e "API: ${GREEN}connected${RESET} (${BRAIN_API_URL})"
+    else
+      echo -e "API: ${YELLOW}unavailable${RESET} - using jq fallback"
+    fi
+  else
+    echo -e "API: ${DIM}disabled${RESET} - using jq"
+  fi
+  
   if [[ -f "$state_file" ]]; then
     local state
     state=$(cat "$state_file")
@@ -3105,14 +3473,12 @@ cmd_list() {
     esac
   done
   
-  local tasks
-  tasks=$(build_task_list "$project_id")
-  
+  # Use API when available for better performance
   local resolved
-  resolved=$(resolve_dependencies "$tasks")
+  resolved=$(api_get_all_tasks "$project_id")
   
   local resolved_tasks
-  resolved_tasks=$(get_resolved_tasks "$resolved")
+  resolved_tasks=$(echo "$resolved" | jq '.tasks')
   
   # JSON output mode - return all resolved tasks
   if [[ "$json_output" == "true" ]]; then
@@ -3404,12 +3770,11 @@ cmd_waiting() {
     echo -e "${BOLD}Waiting on Dependencies (${count}):${RESET}"
     echo ""
     
-    local tasks
-    tasks=$(build_task_list "$project_id")
+    # Use API when available for better performance
     local resolved
-    resolved=$(resolve_dependencies "$tasks")
+    resolved=$(api_get_all_tasks "$project_id")
     local resolved_tasks
-    resolved_tasks=$(get_resolved_tasks "$resolved")
+    resolved_tasks=$(echo "$resolved" | jq '.tasks')
     
     echo "$waiting" | jq -r --argjson all "$resolved_tasks" '.[] |
       (if .priority == "high" then "🔴"
@@ -3970,6 +4335,16 @@ cmd_help() {
   echo "    DO_WORK_TASK_POLL_INTERVAL  Task completion check interval (default: 5)"
   echo "    DO_WORK_BRAIN_DIR           Brain directory"
   echo "    DO_WORK_MODEL               Model to use"
+  echo ""
+  echo -e "${BOLD}BRAIN API:${RESET}"
+  echo "    BRAIN_API_URL               API server URL (default: http://localhost:4444)"
+  echo "    USE_API                     Use API for task queries (default: true)"
+  echo "                                Set to 'false' to use legacy jq-based resolution"
+  echo "    API_TIMEOUT                 API request timeout in seconds (default: 5)"
+  echo ""
+  echo "    When the brain-api server is running, task queries use the API for"
+  echo "    faster dependency resolution. If the API is unavailable, queries"
+  echo "    automatically fall back to the local jq-based resolution."
   echo ""
   echo -e "${BOLD}VERSION:${RESET}"
   echo "    ${VERSION}"

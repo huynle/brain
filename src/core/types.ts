@@ -324,3 +324,46 @@ export interface TaskNextResponse {
   task: ResolvedTask | null;
   message?: string;
 }
+
+// =============================================================================
+// Task Claiming Types
+// =============================================================================
+
+export interface TaskClaim {
+  runnerId: string;
+  claimedAt: number; // Unix timestamp in milliseconds
+}
+
+export interface ClaimRequest {
+  runnerId: string;
+}
+
+export interface ClaimResponse {
+  success: boolean;
+  taskId: string;
+  runnerId: string;
+  claimedAt?: string; // ISO timestamp
+}
+
+export interface ClaimConflictResponse {
+  success: false;
+  error: "conflict";
+  message: string;
+  taskId: string;
+  claimedBy: string;
+  claimedAt: string; // ISO timestamp
+  isStale: boolean;
+}
+
+export interface ReleaseResponse {
+  success: boolean;
+  taskId?: string;
+  message?: string;
+}
+
+export interface ClaimStatusResponse {
+  claimed: boolean;
+  claimedBy?: string;
+  claimedAt?: string; // ISO timestamp
+  isStale?: boolean;
+}

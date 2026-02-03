@@ -7,7 +7,34 @@
 
 import { Hono } from "hono";
 import { getTaskService } from "../core/task-service";
-import type { TaskListResponse, TaskNextResponse } from "../core/types";
+import type {
+  TaskListResponse,
+  TaskNextResponse,
+  TaskClaim,
+  ClaimRequest,
+  ClaimResponse,
+  ClaimConflictResponse,
+  ReleaseResponse,
+  ClaimStatusResponse,
+} from "../core/types";
+
+// =============================================================================
+// Claim Tracking (In-Memory)
+// =============================================================================
+
+// Key: "projectId:taskId", Value: { runnerId, claimedAt }
+const claims = new Map<string, TaskClaim>();
+
+// Stale claim threshold: 5 minutes in milliseconds
+const STALE_CLAIM_MS = 5 * 60 * 1000;
+
+function getClaimKey(projectId: string, taskId: string): string {
+  return `${projectId}:${taskId}`;
+}
+
+function isClaimStale(claim: TaskClaim): boolean {
+  return Date.now() - claim.claimedAt > STALE_CLAIM_MS;
+}
 
 // =============================================================================
 // Validation Helpers
@@ -184,6 +211,143 @@ export function createTaskRoutes(): Hono {
       }
       throw error;
     }
+  });
+
+  // ==========================================================================
+  // Task Claiming Endpoints
+  // ==========================================================================
+
+  // POST /:projectId/:taskId/claim - Claim a task
+  tasks.post("/:projectId/:taskId/claim", async (c) => {
+    const projectId = c.req.param("projectId");
+    const taskId = c.req.param("taskId");
+
+    const validationError = validateProjectId(projectId);
+    if (validationError) {
+      return c.json({ error: "Bad Request", message: validationError }, 400);
+    }
+
+    if (!taskId || !/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+      return c.json({ error: "Bad Request", message: "Invalid task ID format" }, 400);
+    }
+
+    let body: ClaimRequest;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "Bad Request", message: "Invalid JSON body" }, 400);
+    }
+
+    if (!body.runnerId || typeof body.runnerId !== "string") {
+      return c.json({ error: "Bad Request", message: "runnerId is required" }, 400);
+    }
+
+    const claimKey = getClaimKey(projectId, taskId);
+    const existingClaim = claims.get(claimKey);
+
+    // Check if already claimed
+    if (existingClaim) {
+      const stale = isClaimStale(existingClaim);
+      
+      // If same runner, refresh the claim
+      if (existingClaim.runnerId === body.runnerId) {
+        const now = Date.now();
+        claims.set(claimKey, { runnerId: body.runnerId, claimedAt: now });
+        const response: ClaimResponse = {
+          success: true,
+          taskId,
+          runnerId: body.runnerId,
+          claimedAt: new Date(now).toISOString(),
+        };
+        return c.json(response);
+      }
+
+      // If not stale, return conflict
+      if (!stale) {
+        const response: ClaimConflictResponse = {
+          success: false,
+          error: "conflict",
+          message: "Task is already claimed by another runner",
+          taskId,
+          claimedBy: existingClaim.runnerId,
+          claimedAt: new Date(existingClaim.claimedAt).toISOString(),
+          isStale: false,
+        };
+        return c.json(response, 409);
+      }
+
+      // Stale claim can be overridden - fall through to create new claim
+    }
+
+    // Create new claim
+    const now = Date.now();
+    claims.set(claimKey, { runnerId: body.runnerId, claimedAt: now });
+
+    const response: ClaimResponse = {
+      success: true,
+      taskId,
+      runnerId: body.runnerId,
+      claimedAt: new Date(now).toISOString(),
+    };
+    return c.json(response);
+  });
+
+  // POST /:projectId/:taskId/release - Release a claim
+  tasks.post("/:projectId/:taskId/release", async (c) => {
+    const projectId = c.req.param("projectId");
+    const taskId = c.req.param("taskId");
+
+    const validationError = validateProjectId(projectId);
+    if (validationError) {
+      return c.json({ error: "Bad Request", message: validationError }, 400);
+    }
+
+    if (!taskId || !/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+      return c.json({ error: "Bad Request", message: "Invalid task ID format" }, 400);
+    }
+
+    const claimKey = getClaimKey(projectId, taskId);
+    const existed = claims.delete(claimKey);
+
+    const response: ReleaseResponse = {
+      success: true,
+      taskId,
+      message: existed ? "Claim released" : "No claim existed",
+    };
+    return c.json(response);
+  });
+
+  // GET /:projectId/:taskId/claim-status - Get claim status
+  tasks.get("/:projectId/:taskId/claim-status", async (c) => {
+    const projectId = c.req.param("projectId");
+    const taskId = c.req.param("taskId");
+
+    const validationError = validateProjectId(projectId);
+    if (validationError) {
+      return c.json({ error: "Bad Request", message: validationError }, 400);
+    }
+
+    if (!taskId || !/^[a-zA-Z0-9_-]+$/.test(taskId)) {
+      return c.json({ error: "Bad Request", message: "Invalid task ID format" }, 400);
+    }
+
+    const claimKey = getClaimKey(projectId, taskId);
+    const claim = claims.get(claimKey);
+
+    if (!claim) {
+      const response: ClaimStatusResponse = {
+        claimed: false,
+      };
+      return c.json(response);
+    }
+
+    const response: ClaimStatusResponse = {
+      claimed: true,
+      claimedBy: claim.runnerId,
+      claimedAt: new Date(claim.claimedAt).toISOString(),
+      isStale: isClaimStale(claim),
+    };
+    return c.json(response);
   });
 
   return tasks;

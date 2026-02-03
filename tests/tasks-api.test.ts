@@ -161,6 +161,246 @@ describe("GET /api/v1/tasks/:projectId/next", () => {
 // Response Schema Tests
 // =============================================================================
 
+// =============================================================================
+// Task Claiming Tests
+// =============================================================================
+
+describe("POST /api/v1/tasks/:projectId/:taskId/claim", () => {
+  const projectId = "test-project";
+  const taskId = "task123";
+
+  test("claims unclaimed task successfully", async () => {
+    // First release to ensure clean state
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.taskId).toBe(taskId);
+    expect(data.runnerId).toBe("runner-1");
+    expect(data.claimedAt).toBeDefined();
+  });
+
+  test("returns 409 when task already claimed by different runner", async () => {
+    // First claim the task
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    // Try to claim with different runner
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-2" }),
+    });
+
+    expect(res.status).toBe(409);
+    const data = await res.json();
+    expect(data.success).toBe(false);
+    expect(data.error).toBe("conflict");
+    expect(data.claimedBy).toBe("runner-1");
+    expect(data.isStale).toBe(false);
+  });
+
+  test("same runner can refresh claim", async () => {
+    // First claim
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    // Same runner claims again
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.runnerId).toBe("runner-1");
+  });
+
+  test("returns 400 for missing runnerId", async () => {
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+
+    expect(res.status).toBe(400);
+    const data = await res.json();
+    expect(data.message).toContain("runnerId");
+  });
+
+  test("returns 400 for invalid project ID", async () => {
+    const res = await app.request(`/api/v1/tasks/invalid@project/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/v1/tasks/:projectId/:taskId/release", () => {
+  const projectId = "test-project";
+  const taskId = "task456";
+
+  test("releases existing claim", async () => {
+    // First claim
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-1" }),
+    });
+
+    // Release
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.message).toBe("Claim released");
+
+    // Verify claim is gone
+    const statusRes = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim-status`);
+    const statusData = await statusRes.json();
+    expect(statusData.claimed).toBe(false);
+  });
+
+  test("succeeds even if no claim exists", async () => {
+    // Release without claiming first
+    const res = await app.request(`/api/v1/tasks/${projectId}/nonexistent-task/release`, {
+      method: "POST",
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.message).toBe("No claim existed");
+  });
+});
+
+describe("GET /api/v1/tasks/:projectId/:taskId/claim-status", () => {
+  const projectId = "test-project";
+  const taskId = "task789";
+
+  test("returns claimed: false for unclaimed task", async () => {
+    // Ensure unclaimed
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim-status`);
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.claimed).toBe(false);
+    expect(data.claimedBy).toBeUndefined();
+  });
+
+  test("returns claim info for claimed task", async () => {
+    // Claim first
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "status-runner" }),
+    });
+
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim-status`);
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.claimed).toBe(true);
+    expect(data.claimedBy).toBe("status-runner");
+    expect(data.claimedAt).toBeDefined();
+    expect(data.isStale).toBe(false);
+  });
+
+  test("reports isStale accurately", async () => {
+    // This is harder to test without mocking time, but we verify the field exists
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/release`, {
+      method: "POST",
+    });
+    await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "fresh-runner" }),
+    });
+
+    const res = await app.request(`/api/v1/tasks/${projectId}/${taskId}/claim-status`);
+    const data = await res.json();
+
+    // Fresh claim should not be stale
+    expect(data.isStale).toBe(false);
+  });
+});
+
+describe("claims are per project+task", () => {
+  test("same taskId in different projects are independent", async () => {
+    const taskId = "shared-task-id";
+
+    // Claim in project-a
+    await app.request(`/api/v1/tasks/project-a/${taskId}/release`, { method: "POST" });
+    await app.request(`/api/v1/tasks/project-a/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-a" }),
+    });
+
+    // Claim same taskId in project-b should succeed
+    await app.request(`/api/v1/tasks/project-b/${taskId}/release`, { method: "POST" });
+    const res = await app.request(`/api/v1/tasks/project-b/${taskId}/claim`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ runnerId: "runner-b" }),
+    });
+
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.success).toBe(true);
+    expect(data.runnerId).toBe("runner-b");
+
+    // Verify both claims exist independently
+    const statusA = await app.request(`/api/v1/tasks/project-a/${taskId}/claim-status`);
+    const dataA = await statusA.json();
+    expect(dataA.claimedBy).toBe("runner-a");
+
+    const statusB = await app.request(`/api/v1/tasks/project-b/${taskId}/claim-status`);
+    const dataB = await statusB.json();
+    expect(dataB.claimedBy).toBe("runner-b");
+  });
+});
+
+// =============================================================================
+// Response Schema Tests
+// =============================================================================
+
 describe("response schema", () => {
   test("task includes all required fields", async () => {
     const res = await app.request("/api/v1/tasks/test-project");

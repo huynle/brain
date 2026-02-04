@@ -10,7 +10,8 @@ import { createHash } from "crypto";
 import { isZkAvailable, getZkVersion, execZk } from "../zk-client";
 import { getDb } from "../db";
 import { ENTRY_TYPES, type EntryType } from "../types";
-import type { Check, CheckStatus, DoctorResult, DoctorOptions } from "./types";
+import type { Check, CheckStatus, DoctorResult, DoctorOptions, VersionCheck } from "./types";
+import { TOOLS, checkToolVersion, type ToolInfo } from "./version-checker";
 
 // =============================================================================
 // Constants
@@ -62,6 +63,12 @@ export class DoctorService {
 
     checks.push(await this.checkDatabaseHealth());
     checks.push(await this.checkDirectoryPermissions());
+
+    // Version checks (can be skipped with --skip-version-check for offline use)
+    if (!this.options.skipVersionCheck) {
+      const versionChecks = await this.checkToolVersions();
+      checks.push(...versionChecks);
+    }
 
     // Calculate summary
     const summary = {
@@ -336,6 +343,84 @@ export class DoctorService {
         name: "database-health",
         status: "fail",
         message: "Database connection failed",
+        fixable: false,
+        details: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
+   * Check versions of external tools (opencode, claude, bun, zk).
+   */
+  async checkToolVersions(): Promise<Check[]> {
+    const checks: Check[] = [];
+
+    for (const tool of TOOLS) {
+      const check = await this.checkSingleToolVersion(tool);
+      checks.push(check);
+    }
+
+    return checks;
+  }
+
+  /**
+   * Check version for a single tool.
+   */
+  async checkSingleToolVersion(tool: ToolInfo): Promise<Check> {
+    try {
+      const result = await checkToolVersion(tool);
+
+      if (!result.isInstalled) {
+        // Tool not installed
+        if (tool.required) {
+          return {
+            name: `version-${tool.name}`,
+            status: "fail",
+            message: `${tool.name} not installed (required)`,
+            fixable: false,
+            details: `Install from: ${tool.installUrl}`,
+          };
+        }
+        return {
+          name: `version-${tool.name}`,
+          status: "skip",
+          message: `${tool.name} not installed (optional)`,
+          fixable: false,
+          details: `Install from: ${tool.installUrl}`,
+        };
+      }
+
+      if (result.isOutdated) {
+        return {
+          name: `version-${tool.name}`,
+          status: "warn",
+          message: `${tool.name} is outdated: ${result.installed} → ${result.latest}`,
+          fixable: false,
+          details: `Update from: ${tool.installUrl}`,
+        };
+      }
+
+      // Could not fetch latest version (network issue)
+      if (!result.latest) {
+        return {
+          name: `version-${tool.name}`,
+          status: "pass",
+          message: `${tool.name} ${result.installed} (could not check latest)`,
+          fixable: false,
+        };
+      }
+
+      return {
+        name: `version-${tool.name}`,
+        status: "pass",
+        message: `${tool.name} ${result.installed} (latest: ${result.latest})`,
+        fixable: false,
+      };
+    } catch (err) {
+      return {
+        name: `version-${tool.name}`,
+        status: "warn",
+        message: `Failed to check ${tool.name} version`,
         fixable: false,
         details: err instanceof Error ? err.message : String(err),
       };

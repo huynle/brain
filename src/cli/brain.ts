@@ -19,7 +19,7 @@
  */
 
 import { spawn, spawnSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, openSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { createDoctorService, type Check, type DoctorResult } from "../core/doctor";
@@ -29,9 +29,22 @@ import { createDoctorService, type Check, type DoctorResult } from "../core/doct
 // =============================================================================
 
 const HOME = homedir();
-const BRAIN_DIR_SRC = process.env.BRAIN_DIR_SRC || join(HOME, "projects/brain");
 const DEFAULT_PORT = "3333";
 const PORT = process.env.BRAIN_PORT || process.env.PORT || DEFAULT_PORT;
+
+// Find brain-server binary: check same directory as this binary, then PATH
+function findBrainServer(): string {
+  const selfPath = process.argv[0];
+  const selfDir = dirname(selfPath);
+  const localServer = join(selfDir, "brain-server");
+  
+  if (existsSync(localServer)) {
+    return localServer;
+  }
+  
+  // Fall back to PATH lookup
+  return "brain-server";
+}
 
 // XDG Base Directory Specification
 const XDG_STATE_HOME = process.env.XDG_STATE_HOME || join(HOME, ".local/state");
@@ -138,6 +151,7 @@ Doctor Options:
   brain doctor --fix        Fix fixable issues
   brain doctor --fix --force  Reset modified files to reference
   brain doctor --fix --dry-run  Show what would be fixed
+  brain doctor --skip-version-check  Skip checking tool versions (offline mode)
 
 Environment:
   BRAIN_PORT      Server port (default: ${DEFAULT_PORT})
@@ -177,20 +191,15 @@ async function cmdStart() {
 
   console.log(`Starting Brain API server on port ${PORT}...`);
 
-  // Start the server
-  const logFile = Bun.file(LOG_FILE);
-  const logWriter = logFile.writer();
-
-  const proc = spawn("bun", ["run", "src/index.ts"], {
-    cwd: BRAIN_DIR_SRC,
+  // Start the server with output redirected to log file
+  const serverBin = findBrainServer();
+  const logFd = openSync(LOG_FILE, "a");
+  
+  const proc = spawn(serverBin, [], {
     env: { ...process.env, PORT },
     detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", logFd, logFd],
   });
-
-  // Write output to log file
-  proc.stdout?.on("data", (data) => logWriter.write(data));
-  proc.stderr?.on("data", (data) => logWriter.write(data));
 
   proc.unref();
 
@@ -294,9 +303,19 @@ function cmdLogs(follow: boolean) {
 }
 
 function cmdDev() {
+  // Dev mode requires source directory - check if we're running from compiled binary
+  const brainDirSrc = process.env.BRAIN_DIR_SRC || join(HOME, "projects/brain");
+  const srcIndex = join(brainDirSrc, "src/index.ts");
+  
+  if (!existsSync(srcIndex)) {
+    console.error(`Dev mode requires source directory at ${brainDirSrc}`);
+    console.error(`Set BRAIN_DIR_SRC environment variable or use 'brain start' instead.`);
+    process.exit(1);
+  }
+  
   console.log(`Starting Brain API in development mode on port ${PORT}...`);
   const proc = spawn("bun", ["run", "--watch", "src/index.ts"], {
-    cwd: BRAIN_DIR_SRC,
+    cwd: brainDirSrc,
     env: { ...process.env, PORT },
     stdio: "inherit",
   });
@@ -370,6 +389,7 @@ function printResult(result: DoctorResult, verbose: boolean): void {
     "Templates": [],
     "Database": [],
     "Permissions": [],
+    "Tool Versions": [],
   };
 
   for (const check of result.checks) {
@@ -381,12 +401,17 @@ function printResult(result: DoctorResult, verbose: boolean): void {
       categories["Templates"].push(check);
     } else if (check.name.startsWith("database-")) {
       categories["Database"].push(check);
+    } else if (check.name.startsWith("version-")) {
+      categories["Tool Versions"].push(check);
     } else {
       categories["Permissions"].push(check);
     }
   }
 
   for (const [category, checks] of Object.entries(categories)) {
+    // Skip empty categories
+    if (checks.length === 0) continue;
+
     const hasOutput = checks.some(
       (c) => verbose || c.status === "fail" || c.status === "warn"
     );
@@ -546,6 +571,7 @@ async function cmdDoctor(args: string[]): Promise<void> {
   const force = args.includes("--force");
   const dryRun = args.includes("--dry-run");
   const verbose = args.includes("-v") || args.includes("--verbose");
+  const skipVersionCheck = args.includes("--skip-version-check") || args.includes("--offline");
 
   // Get BRAIN_DIR from config
   // Import dynamically to avoid circular dependency issues
@@ -554,7 +580,7 @@ async function cmdDoctor(args: string[]): Promise<void> {
   const brainDir = config.brain.brainDir;
 
   // Create doctor service
-  const doctor = createDoctorService(brainDir, { fix, force, dryRun, verbose });
+  const doctor = createDoctorService(brainDir, { fix, force, dryRun, verbose, skipVersionCheck });
 
   // Run diagnosis or fix
   let result: DoctorResult;

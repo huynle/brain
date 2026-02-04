@@ -32,4 +32,15 @@ export interface DoctorOptions {
   force?: boolean;
   dryRun?: boolean;
   verbose?: boolean;
+  skipVersionCheck?: boolean;
+}
+
+export interface VersionCheck {
+  tool: string;
+  installed: string | null;
+  latest: string | null;
+  isOutdated: boolean;
+  isInstalled: boolean;
+  required: boolean;
+  installUrl: string;
 }

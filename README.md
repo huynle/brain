@@ -12,15 +12,23 @@ Built with [Bun](https://bun.sh) and [Hono](https://hono.dev).
 - Graph traversal (backlinks, outlinks, related entries)
 - Integration with `do-work` task queue processor
 
-## Installation
+## Quick Start
 
 ```bash
-# Clone the repository
+# Clone and install dependencies
 git clone https://github.com/huynle/brain.git
 cd brain
-
-# Install dependencies
 bun install
+
+# Build and install CLI tools to ~/.local/bin
+just install
+```
+
+This builds standalone `brain` and `do-work` executables and installs them to `~/.local/bin`. Run `just install` again after pulling updates to replace with the latest version.
+
+Make sure `~/.local/bin` is in your `PATH`:
+```bash
+export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ## Usage

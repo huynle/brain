@@ -194,8 +194,8 @@ export function App({
 
     // Project tab navigation (only in multi-project mode)
     if (isMultiProject) {
-      // Previous tab: [
-      if (input === '[') {
+      // Previous tab: [ or h
+      if (input === '[' || input === 'h') {
         const currentIndex = allProjectTabs.indexOf(activeProject);
         if (currentIndex > 0) {
           setActiveProject(allProjectTabs[currentIndex - 1]);
@@ -204,8 +204,8 @@ export function App({
         return;
       }
 
-      // Next tab: ]
-      if (input === ']') {
+      // Next tab: ] or l
+      if (input === ']' || input === 'l') {
         const currentIndex = allProjectTabs.indexOf(activeProject);
         if (currentIndex < allProjectTabs.length - 1) {
           setActiveProject(allProjectTabs[currentIndex + 1]);

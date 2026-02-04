@@ -136,9 +136,9 @@ curl http://localhost:3333/api/v1/tasks | jq '.projects'
 
 | Key | Action |
 |-----|--------|
+| `h` / `[` | Previous project tab |
+| `l` / `]` | Next project tab |
 | `1-9` | Jump to project tab 1-9 |
-| `[` | Previous project tab |
-| `]` | Next project tab |
 | `j/k` | Navigate tasks |
 | `Tab` | Switch panel focus |
 | `r` | Refresh all projects |

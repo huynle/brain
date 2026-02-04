@@ -932,4 +932,36 @@ describe("TaskRunner - Pause/Resume", () => {
       expect(status.pausedProjects).not.toContain("project-b");
     });
   });
+
+  describe("startPaused option", () => {
+    test("starts with all projects paused when startPaused is true", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+        startPaused: true,
+      });
+
+      // Before start(), nothing is paused yet (startPaused only applies after start)
+      expect(runner.isAllPaused()).toBe(false);
+    });
+
+    test("defaults to not paused when startPaused is not specified", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      expect(runner.isAllPaused()).toBe(false);
+    });
+
+    test("defaults to not paused when startPaused is false", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+        startPaused: false,
+      });
+
+      expect(runner.isAllPaused()).toBe(false);
+    });
+  });
 });

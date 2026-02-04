@@ -37,6 +37,7 @@ export interface TaskRunnerOptions {
   projects?: string[];          // Multiple projects (Phase 2)
   config?: RunnerConfig;
   mode?: ExecutionMode;
+  startPaused?: boolean;        // Start with all projects paused (TUI mode default)
 }
 
 export interface RunnerStatusInfo {
@@ -86,6 +87,7 @@ export class TaskRunner {
 
   // Pause state (non-persistent, resets on restart)
   private pausedProjects: Set<string> = new Set();
+  private readonly startPaused: boolean;
 
   // Event handling
   private eventHandlers: EventHandler[] = [];
@@ -110,6 +112,7 @@ export class TaskRunner {
     this.runnerId = this.generateRunnerId();
     this.mode = options.mode ?? "background";
     this.config = options.config ?? getRunnerConfig();
+    this.startPaused = options.startPaused ?? false;
 
     // Initialize components
     this.apiClient = getApiClient();
@@ -174,6 +177,18 @@ export class TaskRunner {
 
     // Start polling loop
     this.schedulePoll();
+
+    // If configured to start paused, pause all projects immediately
+    if (this.startPaused) {
+      for (const projectId of this.projects) {
+        this.pausedProjects.add(projectId);
+      }
+      this.logger.info("Runner started paused - press 'P' to begin processing", {
+        projectCount: this.projects.length,
+      });
+      this.tuiLog('warn', "Runner started paused - press 'P' to begin processing");
+      this.emitEvent({ type: "all_paused" });
+    }
   }
 
   /**

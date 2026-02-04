@@ -18,7 +18,7 @@ export function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.R
         <Text dimColor>
           {isMultiProject && (
             <>
-              <Text bold>1-9/[/]</Text> Tabs
+              <Text bold>h/l/[/]/1-9</Text> Tabs
               {'  '}
             </>
           )}

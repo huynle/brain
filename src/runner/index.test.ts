@@ -121,6 +121,16 @@ describe("CLI", () => {
       expect(result.options.noResume).toBe(true);
     });
 
+    it("should parse --run flag", () => {
+      const result = parseArgs(argv("start", "--tui", "--run"));
+      expect(result.options.run).toBe(true);
+    });
+
+    it("should default run flag to false", () => {
+      const result = parseArgs(argv("start", "--tui"));
+      expect(result.options.run).toBe(false);
+    });
+
     it("should parse verbose flag", () => {
       const result = parseArgs(argv("start", "-v"));
       expect(result.options.verbose).toBe(true);

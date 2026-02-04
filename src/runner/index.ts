@@ -59,6 +59,7 @@ interface CLIOptions {
   exclude: string[];
   noResume: boolean;
   follow: boolean;
+  run: boolean;
 
   // Misc
   help: boolean;
@@ -91,6 +92,7 @@ Options:
   -b, --background      Run as daemon
   --tui                 Use interactive OpenCode TUI
   --dashboard           Create tmux dashboard
+  --run                 Start processing immediately (TUI starts paused by default)
   -p, --max-parallel N  Max concurrent tasks (default: 3)
   --poll-interval N     Seconds between polls (default: 30)
   -w, --workdir DIR     Working directory
@@ -135,6 +137,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     exclude: [],
     noResume: false,
     follow: false,
+    run: false,
     help: false,
     verbose: false,
   };
@@ -183,6 +186,12 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "--dashboard") {
       options.dashboard = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--run") {
+      options.run = true;
       i++;
       continue;
     }
@@ -357,6 +366,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
       projectId,                       // Legacy single project (backward compat)
       mode,
       config: { ...config, ...configOverrides },
+      startPaused: mode === "tui" && !options.run,  // TUI starts paused unless --run
     });
 
     // Set up graceful shutdown handler

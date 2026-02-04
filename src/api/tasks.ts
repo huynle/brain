@@ -594,6 +594,118 @@ export function createTaskRoutes(): OpenAPIHono {
     }, 200);
   });
 
+  // ==========================================================================
+  // Runner Control Endpoints (Pause/Resume)
+  // ==========================================================================
+
+  // POST /runner/pause/:projectId - Pause a specific project
+  tasks.post("/runner/pause/:projectId", async (c) => {
+    const { getTaskRunnerOrNull } = await import("../runner/task-runner");
+    const runner = getTaskRunnerOrNull();
+    
+    if (!runner) {
+      return c.json({
+        error: "Runner not initialized",
+        message: "The task runner is not currently running",
+      }, 404);
+    }
+    
+    const projectId = c.req.param("projectId");
+    runner.pause(projectId);
+    
+    return c.json({
+      success: true,
+      projectId,
+      paused: true,
+      pausedProjects: runner.getPausedProjects(),
+    }, 200);
+  });
+
+  // POST /runner/resume/:projectId - Resume a specific project
+  tasks.post("/runner/resume/:projectId", async (c) => {
+    const { getTaskRunnerOrNull } = await import("../runner/task-runner");
+    const runner = getTaskRunnerOrNull();
+    
+    if (!runner) {
+      return c.json({
+        error: "Runner not initialized",
+        message: "The task runner is not currently running",
+      }, 404);
+    }
+    
+    const projectId = c.req.param("projectId");
+    runner.resume(projectId);
+    
+    return c.json({
+      success: true,
+      projectId,
+      paused: false,
+      pausedProjects: runner.getPausedProjects(),
+    }, 200);
+  });
+
+  // POST /runner/pause - Pause all projects
+  tasks.post("/runner/pause", async (c) => {
+    const { getTaskRunnerOrNull } = await import("../runner/task-runner");
+    const runner = getTaskRunnerOrNull();
+    
+    if (!runner) {
+      return c.json({
+        error: "Runner not initialized",
+        message: "The task runner is not currently running",
+      }, 404);
+    }
+    
+    runner.pauseAll();
+    
+    return c.json({
+      success: true,
+      paused: true,
+      pausedProjects: runner.getPausedProjects(),
+    }, 200);
+  });
+
+  // POST /runner/resume - Resume all projects
+  tasks.post("/runner/resume", async (c) => {
+    const { getTaskRunnerOrNull } = await import("../runner/task-runner");
+    const runner = getTaskRunnerOrNull();
+    
+    if (!runner) {
+      return c.json({
+        error: "Runner not initialized",
+        message: "The task runner is not currently running",
+      }, 404);
+    }
+    
+    runner.resumeAll();
+    
+    return c.json({
+      success: true,
+      paused: false,
+      pausedProjects: runner.getPausedProjects(),
+    }, 200);
+  });
+
+  // GET /runner/status - Get runner status including pause state
+  tasks.get("/runner/status", async (c) => {
+    const { getTaskRunnerOrNull } = await import("../runner/task-runner");
+    const runner = getTaskRunnerOrNull();
+    
+    if (!runner) {
+      return c.json({
+        error: "Runner not initialized",
+        message: "The task runner is not currently running",
+      }, 404);
+    }
+    
+    const status = runner.getStatus();
+    
+    return c.json({
+      success: true,
+      ...status,
+    }, 200);
+  });
+
   return tasks;
 }
 

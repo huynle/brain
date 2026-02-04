@@ -80,4 +80,14 @@ export interface AppProps {
   onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
   /** Callback to cancel a task by ID and path */
   onCancelTask?: (taskId: string, taskPath: string) => Promise<void>;
+  /** Callback to pause a specific project */
+  onPause?: (projectId: string) => void;
+  /** Callback to resume a specific project */
+  onResume?: (projectId: string) => void;
+  /** Callback to pause all projects */
+  onPauseAll?: () => void;
+  /** Callback to resume all projects */
+  onResumeAll?: () => void;
+  /** Get current paused projects from TaskRunner */
+  getPausedProjects?: () => string[];
 }

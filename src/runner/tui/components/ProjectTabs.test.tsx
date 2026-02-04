@@ -189,4 +189,66 @@ describe('ProjectTabs', () => {
       expect(frame.length).toBeGreaterThan(30); // Should have content
     });
   });
+
+  describe('pause indicators', () => {
+    it('shows ⏸ indicator for paused projects', () => {
+      const pausedProjects = new Set(['brain-api']);
+      const { lastFrame } = render(
+        <ProjectTabs
+          projects={['brain-api', 'opencode']}
+          activeProject="all"
+          onSelectProject={mockOnSelect}
+          pausedProjects={pausedProjects}
+        />
+      );
+      // brain-api is paused, should show ⏸ indicator
+      expect(lastFrame()).toContain('⏸');
+    });
+
+    it('shows ⏸ for All tab when all projects are paused', () => {
+      const pausedProjects = new Set(['brain-api', 'opencode']);
+      const { lastFrame } = render(
+        <ProjectTabs
+          projects={['brain-api', 'opencode']}
+          activeProject="all"
+          onSelectProject={mockOnSelect}
+          pausedProjects={pausedProjects}
+        />
+      );
+      // When all are paused, All tab should show ⏸
+      const frame = lastFrame() || '';
+      // Count occurrences of ⏸ - should be 3 (All + 2 projects)
+      const pauseCount = (frame.match(/⏸/g) || []).length;
+      expect(pauseCount).toBe(3);
+    });
+
+    it('does not show pause indicator for non-paused projects', () => {
+      const pausedProjects = new Set(['brain-api']);
+      const { lastFrame } = render(
+        <ProjectTabs
+          projects={['brain-api', 'opencode']}
+          activeProject="all"
+          onSelectProject={mockOnSelect}
+          pausedProjects={pausedProjects}
+        />
+      );
+      const frame = lastFrame() || '';
+      // Only 1 pause indicator for brain-api
+      const pauseCount = (frame.match(/⏸/g) || []).length;
+      expect(pauseCount).toBe(1);
+    });
+
+    it('works without pausedProjects prop', () => {
+      const { lastFrame } = render(
+        <ProjectTabs
+          projects={['brain-api', 'opencode']}
+          activeProject="all"
+          onSelectProject={mockOnSelect}
+        />
+      );
+      // Should render without crashing and no pause indicators
+      const frame = lastFrame() || '';
+      expect(frame).not.toContain('⏸');
+    });
+  });
 });

@@ -42,6 +42,16 @@ export interface DashboardOptions {
   onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
   /** Callback to cancel a task by ID and path */
   onCancelTask?: (taskId: string, taskPath: string) => Promise<void>;
+  /** Callback to pause a specific project */
+  onPause?: (projectId: string) => void;
+  /** Callback to resume a specific project */
+  onResume?: (projectId: string) => void;
+  /** Callback to pause all projects */
+  onPauseAll?: () => void;
+  /** Callback to resume all projects */
+  onResumeAll?: () => void;
+  /** Get current paused projects from TaskRunner */
+  getPausedProjects?: () => string[];
 }
 
 export interface DashboardHandle {
@@ -107,6 +117,11 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       config={config} 
       onLogCallback={options.onLogCallback}
       onCancelTask={options.onCancelTask}
+      onPause={options.onPause}
+      onResume={options.onResume}
+      onPauseAll={options.onPauseAll}
+      onResumeAll={options.onResumeAll}
+      getPausedProjects={options.getPausedProjects}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

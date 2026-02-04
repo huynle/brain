@@ -112,7 +112,11 @@ export type RunnerEvent =
   | { type: "task_cancelled"; taskId: string; taskPath: string }
   | { type: "poll_complete"; readyCount: number; runningCount: number }
   | { type: "state_saved"; path: string }
-  | { type: "shutdown"; reason: string };
+  | { type: "shutdown"; reason: string }
+  | { type: "project_paused"; projectId: string }
+  | { type: "project_resumed"; projectId: string }
+  | { type: "all_paused" }
+  | { type: "all_resumed" };
 
 export type EventHandler = (event: RunnerEvent) => void;
 

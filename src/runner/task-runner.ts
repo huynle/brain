@@ -46,6 +46,7 @@ export interface RunnerStatusInfo {
   startedAt: string | null;
   runningTasks: RunningTask[];
   stats: RunnerStats;
+  pausedProjects: string[];
 }
 
 // =============================================================================
@@ -82,6 +83,9 @@ export class TaskRunner {
 
   // TUI mode task tracking (tasks spawned in tmux windows without proc handles)
   private tuiTasks: Map<string, RunningTask> = new Map();
+
+  // Pause state (non-persistent, resets on restart)
+  private pausedProjects: Set<string> = new Set();
 
   // Event handling
   private eventHandlers: EventHandler[] = [];
@@ -282,7 +286,87 @@ export class TaskRunner {
       startedAt: this.startedAt,
       runningTasks: allRunningTasks,
       stats: { ...this.stats },
+      pausedProjects: this.getPausedProjects(),
     };
+  }
+
+  // ========================================
+  // Pause/Resume Methods
+  // ========================================
+
+  /**
+   * Pause a specific project.
+   * Running tasks will complete, but no new tasks will be started.
+   */
+  pause(projectId: string): void {
+    if (!this.projects.includes(projectId)) {
+      this.logger.warn("Attempted to pause unknown project", { projectId });
+      return;
+    }
+    if (this.pausedProjects.has(projectId)) {
+      return; // Already paused
+    }
+    this.pausedProjects.add(projectId);
+    this.logger.info("Project paused", { projectId });
+    this.tuiLog('warn', `Project paused: ${projectId}`, undefined, projectId);
+    this.emitEvent({ type: "project_paused", projectId });
+  }
+
+  /**
+   * Resume a paused project.
+   */
+  resume(projectId: string): void {
+    if (!this.pausedProjects.has(projectId)) {
+      return; // Not paused
+    }
+    this.pausedProjects.delete(projectId);
+    this.logger.info("Project resumed", { projectId });
+    this.tuiLog('info', `Project resumed: ${projectId}`, undefined, projectId);
+    this.emitEvent({ type: "project_resumed", projectId });
+  }
+
+  /**
+   * Pause all projects.
+   */
+  pauseAll(): void {
+    for (const projectId of this.projects) {
+      this.pausedProjects.add(projectId);
+    }
+    this.logger.info("All projects paused", { count: this.projects.length });
+    this.tuiLog('warn', `All projects paused (${this.projects.length})`);
+    this.emitEvent({ type: "all_paused" });
+  }
+
+  /**
+   * Resume all paused projects.
+   */
+  resumeAll(): void {
+    const count = this.pausedProjects.size;
+    this.pausedProjects.clear();
+    this.logger.info("All projects resumed", { count });
+    this.tuiLog('info', `All projects resumed (${count})`);
+    this.emitEvent({ type: "all_resumed" });
+  }
+
+  /**
+   * Check if a specific project is paused.
+   */
+  isPaused(projectId: string): boolean {
+    return this.pausedProjects.has(projectId);
+  }
+
+  /**
+   * Get array of all paused project IDs.
+   */
+  getPausedProjects(): string[] {
+    return Array.from(this.pausedProjects);
+  }
+
+  /**
+   * Check if all projects are paused.
+   */
+  isAllPaused(): boolean {
+    return this.pausedProjects.size === this.projects.length && this.projects.length > 0;
   }
 
   // ========================================
@@ -363,9 +447,18 @@ export class TaskRunner {
         return;
       }
 
-      // Step 3: Get ready tasks from ALL projects in parallel
+      // Step 3: Get ready tasks from non-paused projects in parallel
+      const activeProjects = this.projects.filter(p => !this.pausedProjects.has(p));
+      if (activeProjects.length === 0) {
+        // All projects are paused, skip fetching tasks
+        if (isDebugEnabled()) {
+          this.logger.debug("All projects paused, skipping task fetch");
+        }
+        return;
+      }
+
       const readyTasksResults = await Promise.allSettled(
-        this.projects.map(async (projectId) => {
+        activeProjects.map(async (projectId) => {
           const tasks = await this.apiClient.getReadyTasks(projectId);
           // Tag each task with its project ID for tracking
           return tasks.map(task => ({ ...task, _pollProjectId: projectId }));
@@ -965,6 +1058,12 @@ export class TaskRunner {
           this.logger.info("TUI log callback registered");
         },
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
+        // Pause/resume callbacks
+        onPause: (projectId) => this.pause(projectId),
+        onResume: (projectId) => this.resume(projectId),
+        onPauseAll: () => this.pauseAll(),
+        onResumeAll: () => this.resumeAll(),
+        getPausedProjects: () => this.getPausedProjects(),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 
@@ -1325,6 +1424,14 @@ export function getTaskRunner(options?: TaskRunnerOptions): TaskRunner {
       "TaskRunner not initialized. Call with options first."
     );
   }
+  return taskRunnerInstance;
+}
+
+/**
+ * Get the task runner singleton if it exists, or null if not initialized.
+ * Use this for optional access (e.g., API endpoints that may run without a runner).
+ */
+export function getTaskRunnerOrNull(): TaskRunner | null {
   return taskRunnerInstance;
 }
 

@@ -32,7 +32,16 @@ import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'logs';
 
-export function App({ config, onLogCallback, onCancelTask }: AppProps): React.ReactElement {
+export function App({ 
+  config, 
+  onLogCallback, 
+  onCancelTask,
+  onPause,
+  onResume,
+  onPauseAll,
+  onResumeAll,
+  getPausedProjects,
+}: AppProps): React.ReactElement {
   const { exit } = useApp();
 
   // Determine if multi-project mode - memoize to avoid re-creating array on every render
@@ -48,6 +57,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
   const [showHelp, setShowHelp] = useState(false);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
+  const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
 
   // Single-project poller (used when not in multi-project mode)
   const singleProjectPoller = useTaskPoller({
@@ -108,6 +118,23 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
       onLogCallback(addLog);
     }
   }, [onLogCallback, addLog]);
+
+  // Sync pause state from TaskRunner
+  useEffect(() => {
+    if (!getPausedProjects) return;
+    
+    const syncPauseState = () => {
+      const paused = getPausedProjects();
+      setPausedProjects(new Set(paused));
+    };
+    
+    // Initial sync
+    syncPauseState();
+    
+    // Poll for updates every 500ms
+    const interval = setInterval(syncPauseState, 500);
+    return () => clearInterval(interval);
+  }, [getPausedProjects]);
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
@@ -198,6 +225,50 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
       }
     }
 
+    // Pause/Resume handling
+    // 'p' - toggle pause for current project (or all if viewing "all")
+    if (input === 'p') {
+      const targetProject = activeProject === 'all' 
+        ? (isMultiProject ? 'all' : projects[0]) 
+        : activeProject;
+      
+      if (targetProject === 'all') {
+        // Toggle all projects
+        const allPaused = pausedProjects.size === projects.length;
+        if (allPaused && onResumeAll) {
+          onResumeAll();
+          addLog({ level: 'info', message: 'All projects resumed' });
+        } else if (!allPaused && onPauseAll) {
+          onPauseAll();
+          addLog({ level: 'warn', message: 'All projects paused' });
+        }
+      } else {
+        // Toggle single project
+        const isPaused = pausedProjects.has(targetProject);
+        if (isPaused && onResume) {
+          onResume(targetProject);
+          addLog({ level: 'info', message: `Project resumed: ${targetProject}` });
+        } else if (!isPaused && onPause) {
+          onPause(targetProject);
+          addLog({ level: 'warn', message: `Project paused: ${targetProject}` });
+        }
+      }
+      return;
+    }
+
+    // 'P' (shift+p) - toggle pause for ALL projects (only in multi-project mode)
+    if (input === 'P' && isMultiProject) {
+      const allPaused = pausedProjects.size === projects.length;
+      if (allPaused && onResumeAll) {
+        onResumeAll();
+        addLog({ level: 'info', message: 'All projects resumed' });
+      } else if (!allPaused && onPauseAll) {
+        onPauseAll();
+        addLog({ level: 'warn', message: 'All projects paused' });
+      }
+      return;
+    }
+
     // Navigation (only when focused on tasks panel)
     if (focusedPanel === 'tasks') {
       // Use navigationOrder (flattened tree) instead of raw tasks array
@@ -277,6 +348,10 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
         <Text>  <Text bold>q</Text>         - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
         <Text>  <Text bold>x</Text>         - Cancel selected task</Text>
+        <Text>  <Text bold>p</Text>         - Pause/Resume current project</Text>
+        {isMultiProject && (
+          <Text>  <Text bold>P</Text>         - Pause/Resume ALL projects</Text>
+        )}
         <Text>  <Text bold>?</Text>         - Toggle help</Text>
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
@@ -308,6 +383,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
         stats={stats}
         statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
         isConnected={isConnected}
+        pausedProjects={pausedProjects}
       />
 
       {/* Main content area: Tasks (left) + Logs/Details (right) */}

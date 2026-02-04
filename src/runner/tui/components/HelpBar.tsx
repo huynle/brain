@@ -28,6 +28,17 @@ export function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.R
           {'  '}
           <Text bold>x</Text> Cancel
           {'  '}
+          {isMultiProject ? (
+            <>
+              <Text bold>p/P</Text> Pause
+              {'  '}
+            </>
+          ) : (
+            <>
+              <Text bold>p</Text> Pause
+              {'  '}
+            </>
+          )}
           <Text bold>Tab</Text> Panel
           {'  '}
           <Text bold>r</Text> Refresh

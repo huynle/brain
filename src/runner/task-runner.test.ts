@@ -694,3 +694,242 @@ describe("TaskRunner - API interactions", () => {
     expect(claimCount).toBeLessThanOrEqual(2);
   });
 });
+
+describe("TaskRunner - Pause/Resume", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-pause-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("pause()", () => {
+    test("adds project to pausedProjects set", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      expect(runner.isPaused("project-a")).toBe(false);
+      runner.pause("project-a");
+      expect(runner.isPaused("project-a")).toBe(true);
+      expect(runner.isPaused("project-b")).toBe(false);
+    });
+
+    test("ignores unknown projects", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      runner.pause("unknown-project");
+      expect(runner.getPausedProjects()).toEqual([]);
+    });
+
+    test("emits project_paused event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pause("project-a");
+
+      const pauseEvents = events.filter((e) => e.type === "project_paused");
+      expect(pauseEvents.length).toBe(1);
+      expect(pauseEvents[0]).toEqual({ type: "project_paused", projectId: "project-a" });
+    });
+  });
+
+  describe("resume()", () => {
+    test("removes project from pausedProjects set", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      runner.pause("project-a");
+      expect(runner.isPaused("project-a")).toBe(true);
+      
+      runner.resume("project-a");
+      expect(runner.isPaused("project-a")).toBe(false);
+    });
+
+    test("does nothing if project is not paused", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.resume("project-a");
+
+      const resumeEvents = events.filter((e) => e.type === "project_resumed");
+      expect(resumeEvents.length).toBe(0);
+    });
+
+    test("emits project_resumed event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pause("project-a");
+      runner.resume("project-a");
+
+      const resumeEvents = events.filter((e) => e.type === "project_resumed");
+      expect(resumeEvents.length).toBe(1);
+      expect(resumeEvents[0]).toEqual({ type: "project_resumed", projectId: "project-a" });
+    });
+  });
+
+  describe("pauseAll()", () => {
+    test("pauses all projects", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b", "project-c"],
+        config,
+      });
+
+      expect(runner.isAllPaused()).toBe(false);
+      runner.pauseAll();
+      
+      expect(runner.isPaused("project-a")).toBe(true);
+      expect(runner.isPaused("project-b")).toBe(true);
+      expect(runner.isPaused("project-c")).toBe(true);
+      expect(runner.isAllPaused()).toBe(true);
+    });
+
+    test("emits all_paused event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pauseAll();
+
+      const pauseAllEvents = events.filter((e) => e.type === "all_paused");
+      expect(pauseAllEvents.length).toBe(1);
+    });
+  });
+
+  describe("resumeAll()", () => {
+    test("resumes all paused projects", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      runner.pauseAll();
+      expect(runner.isAllPaused()).toBe(true);
+
+      runner.resumeAll();
+      expect(runner.getPausedProjects()).toEqual([]);
+      expect(runner.isAllPaused()).toBe(false);
+    });
+
+    test("emits all_resumed event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pauseAll();
+      runner.resumeAll();
+
+      const resumeAllEvents = events.filter((e) => e.type === "all_resumed");
+      expect(resumeAllEvents.length).toBe(1);
+    });
+  });
+
+  describe("getPausedProjects()", () => {
+    test("returns array of paused project IDs", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b", "project-c"],
+        config,
+      });
+
+      runner.pause("project-a");
+      runner.pause("project-c");
+
+      const paused = runner.getPausedProjects();
+      expect(paused.sort()).toEqual(["project-a", "project-c"].sort());
+    });
+
+    test("returns empty array when nothing is paused", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      expect(runner.getPausedProjects()).toEqual([]);
+    });
+  });
+
+  describe("isAllPaused()", () => {
+    test("returns true when all projects are paused", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      expect(runner.isAllPaused()).toBe(false);
+      runner.pause("project-a");
+      expect(runner.isAllPaused()).toBe(false);
+      runner.pause("project-b");
+      expect(runner.isAllPaused()).toBe(true);
+    });
+  });
+
+  describe("getStatus()", () => {
+    test("includes pausedProjects in status", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config,
+      });
+
+      runner.pause("project-a");
+
+      const status = runner.getStatus();
+      expect(status.pausedProjects).toContain("project-a");
+      expect(status.pausedProjects).not.toContain("project-b");
+    });
+  });
+});

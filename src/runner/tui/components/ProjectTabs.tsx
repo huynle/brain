@@ -25,6 +25,8 @@ export interface ProjectTabsProps {
   onSelectProject: (id: string) => void;
   /** Optional per-project stats for showing activity indicators */
   statsByProject?: Map<string, TaskStats>;
+  /** Set of paused project IDs */
+  pausedProjects?: Set<string>;
 }
 
 /** Maximum characters for a project name before truncation */
@@ -59,20 +61,25 @@ function Tab({
   indicator,
   indicatorColor,
   isLast,
+  isPaused,
 }: {
   label: string;
   isActive: boolean;
   indicator?: string;
   indicatorColor?: string;
   isLast: boolean;
+  isPaused?: boolean;
 }): React.ReactElement {
   const suffix = isLast ? '' : '  ';
+  // When paused, show ⏸ indicator in yellow instead of activity indicator
+  const displayIndicator = isPaused ? '⏸' : indicator;
+  const displayColor = isPaused ? 'yellow' : indicatorColor;
   return (
     <>
-      {indicator && <Text color={indicatorColor}>{indicator}</Text>}
+      {displayIndicator && <Text color={displayColor}>{displayIndicator}</Text>}
       <Text
         backgroundColor={isActive ? 'cyan' : undefined}
-        color={isActive ? 'black' : undefined}
+        color={isPaused && !isActive ? 'yellow' : (isActive ? 'black' : undefined)}
         bold={isActive}
       >[{label}]</Text>
       {suffix && <Text>{suffix}</Text>}
@@ -85,6 +92,7 @@ export function ProjectTabs({
   activeProject,
   onSelectProject,
   statsByProject,
+  pausedProjects,
 }: ProjectTabsProps): React.ReactElement {
   // Don't render tabs if single project
   if (projects.length <= 1) {
@@ -117,6 +125,9 @@ export function ProjectTabs({
   // Get indicator for aggregate stats ("All" tab)
   const aggregateIndicator = getProjectIndicator(aggregateStats);
 
+  // Check if ALL projects are paused (for "All" tab)
+  const allPaused = pausedProjects ? pausedProjects.size === projects.length : false;
+
   return (
     <Box flexDirection="row">
       {/* All tab */}
@@ -126,12 +137,14 @@ export function ProjectTabs({
         indicator={aggregateIndicator?.icon}
         indicatorColor={aggregateIndicator?.color}
         isLast={projects.length === 0}
+        isPaused={allPaused}
       />
 
       {/* Project tabs */}
       {projects.map((projectId, index) => {
         const stats = statsByProject?.get(projectId);
         const indicator = getProjectIndicator(stats);
+        const isPaused = pausedProjects?.has(projectId) ?? false;
         return (
           <Tab
             key={projectId}
@@ -140,6 +153,7 @@ export function ProjectTabs({
             indicator={indicator?.icon}
             indicatorColor={indicator?.color}
             isLast={index === projects.length - 1}
+            isPaused={isPaused}
           />
         );
       })}

@@ -23,6 +23,7 @@ interface StatusBarProps {
   };
   statsByProject?: Map<string, TaskStats>;  // Per-project stats for tab indicators
   isConnected: boolean;
+  pausedProjects?: Set<string>;  // Set of paused project IDs
 }
 
 export function StatusBar({
@@ -33,12 +34,20 @@ export function StatusBar({
   stats,
   statsByProject,
   isConnected,
+  pausedProjects,
 }: StatusBarProps): React.ReactElement {
   // Display title based on multi-project mode
   const isMultiProject = projects && projects.length > 1;
   const displayTitle = isMultiProject && activeProject === 'all'
     ? `[${projects.length} projects]`
     : projectId;
+
+  // Calculate if current view is paused
+  const isPaused = pausedProjects 
+    ? (activeProject === 'all' 
+        ? (pausedProjects.size === (projects?.length ?? 0) && (projects?.length ?? 0) > 0)
+        : pausedProjects.has(activeProject ?? projectId))
+    : false;
 
   // If multi-project mode, render tabs on separate row above stats
   if (isMultiProject && activeProject && onSelectProject) {
@@ -56,6 +65,7 @@ export function StatusBar({
             activeProject={activeProject}
             onSelectProject={onSelectProject}
             statsByProject={statsByProject}
+            pausedProjects={pausedProjects}
           />
         </Box>
         
@@ -68,6 +78,12 @@ export function StatusBar({
           justifyContent="space-between"
         >
           <Box>
+            {isPaused && (
+              <>
+                <Text color="yellow" bold>⏸ PAUSED</Text>
+                <Text>   </Text>
+              </>
+            )}
             <Text color="green">● {stats.ready} ready</Text>
             <Text>   </Text>
             <Text color="yellow">○ {stats.waiting} waiting</Text>
@@ -113,6 +129,12 @@ export function StatusBar({
       </Box>
 
       <Box>
+        {isPaused && (
+          <>
+            <Text color="yellow" bold>⏸ PAUSED</Text>
+            <Text>   </Text>
+          </>
+        )}
         <Text color="green">● {stats.ready} ready</Text>
         <Text>   </Text>
         <Text color="yellow">○ {stats.waiting} waiting</Text>

@@ -1305,29 +1305,75 @@ export class TaskRunner {
   /**
    * Clean up tmux window/pane when a task completes.
    * Handles both TUI mode (standalone windows) and dashboard mode (panes).
+   * 
+   * Sends Ctrl+C to gracefully stop OpenCode before killing the window/pane.
+   * This ensures the OpenCode process has a chance to clean up properly.
    */
   private async cleanupTaskTmux(task: RunningTask): Promise<void> {
     // For TUI mode: close the standalone window
     if (task.windowName) {
-      try {
-        this.logger.debug("Closing tmux window", {
-          taskId: task.id,
-          windowName: task.windowName,
-        });
-        await Bun.$`tmux kill-window -t ${task.windowName}`.quiet();
-      } catch {
-        // Window might already be closed
-        this.logger.debug("Window already closed", { windowName: task.windowName });
-      }
+      await this.gracefulTmuxCleanup(
+        task.id,
+        task.windowName,
+        "window",
+        async (target) => Bun.$`tmux kill-window -t ${target}`.quiet()
+      );
     }
 
     // Fallback for panes without tmuxManager
     if (task.paneId && !this.tmuxManager) {
-      try {
-        await Bun.$`tmux kill-pane -t ${task.paneId}`.quiet();
-      } catch {
-        // Pane might already be closed
-      }
+      await this.gracefulTmuxCleanup(
+        task.id,
+        task.paneId,
+        "pane",
+        async (target) => Bun.$`tmux kill-pane -t ${target}`.quiet()
+      );
+    }
+  }
+
+  /**
+   * Gracefully clean up a tmux window or pane.
+   * Sends Ctrl+C first to allow OpenCode to shut down gracefully,
+   * then kills the window/pane after a brief delay.
+   */
+  private async gracefulTmuxCleanup(
+    taskId: string,
+    target: string,
+    type: "window" | "pane",
+    killFn: (target: string) => Promise<unknown>
+  ): Promise<void> {
+    // Graceful shutdown delay (ms) - time to wait after Ctrl+C before force-killing
+    // 500ms gives OpenCode enough time to handle the interrupt signal
+    const GRACEFUL_SHUTDOWN_DELAY = 500;
+
+    // Step 1: Send Ctrl+C to gracefully stop OpenCode
+    try {
+      this.logger.debug(`Sending Ctrl+C to gracefully stop OpenCode`, {
+        taskId,
+        [type === "window" ? "windowName" : "paneId"]: target,
+      });
+      await Bun.$`tmux send-keys -t ${target} C-c`.quiet();
+      // Wait briefly for graceful shutdown
+      await this.sleep(GRACEFUL_SHUTDOWN_DELAY);
+    } catch {
+      // send-keys might fail if window/pane is already closed, continue to kill
+      this.logger.debug(`Failed to send Ctrl+C, ${type} may already be closed`, {
+        [type === "window" ? "windowName" : "paneId"]: target,
+      });
+    }
+
+    // Step 2: Kill the window/pane
+    try {
+      this.logger.debug(`Closing tmux ${type}`, {
+        taskId,
+        [type === "window" ? "windowName" : "paneId"]: target,
+      });
+      await killFn(target);
+    } catch {
+      // Window/pane might already be closed
+      this.logger.debug(`${type.charAt(0).toUpperCase() + type.slice(1)} already closed`, {
+        [type === "window" ? "windowName" : "paneId"]: target,
+      });
     }
   }
 

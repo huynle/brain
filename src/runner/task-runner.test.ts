@@ -965,3 +965,308 @@ describe("TaskRunner - Pause/Resume", () => {
     });
   });
 });
+
+describe("TaskRunner - TUI Task Cleanup", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cleanup-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("cleanupTaskTmux()", () => {
+    test("sends Ctrl+C to gracefully stop OpenCode before killing window", async () => {
+      // Track tmux commands executed
+      const tmuxCommands: string[] = [];
+      
+      // Mock Bun.$ to capture tmux commands
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        tmuxCommands.push(command);
+        
+        // Return a mock result that has .quiet() method
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+      
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        // Create a mock running task with windowName (TUI mode)
+        const mockTask: RunningTask = {
+          id: "test-task-1",
+          path: "projects/test/task/test-task-1.md",
+          title: "Test Task",
+          priority: "medium",
+          projectId: "test-project",
+          pid: 12345,
+          windowName: "task_test-task-1",
+          startedAt: new Date().toISOString(),
+          isResume: false,
+          workdir: "/tmp/test",
+        };
+
+        // Create runner and access the private cleanupTaskTmux method
+        const runner = new TaskRunner({ projectId: "test-project", config });
+        
+        // Call the cleanup method via stop() which cleans up tuiTasks
+        // First, we need to add the task to tuiTasks
+        // @ts-expect-error - accessing private property for testing
+        runner.tuiTasks.set(mockTask.id, mockTask);
+        
+        // Now stop the runner which should trigger cleanup
+        await runner.stop();
+
+        // Verify that Ctrl+C was sent BEFORE kill-window
+        const sendKeysIndex = tmuxCommands.findIndex(cmd => 
+          cmd.includes('send-keys') && cmd.includes('C-c')
+        );
+        const killWindowIndex = tmuxCommands.findIndex(cmd => 
+          cmd.includes('kill-window')
+        );
+
+        // Both commands should have been executed
+        expect(sendKeysIndex).toBeGreaterThanOrEqual(0);
+        expect(killWindowIndex).toBeGreaterThanOrEqual(0);
+        
+        // Ctrl+C should come BEFORE kill-window
+        expect(sendKeysIndex).toBeLessThan(killWindowIndex);
+      } finally {
+        // Restore original Bun.$
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("waits briefly after sending Ctrl+C for graceful shutdown", async () => {
+      // Track timing of tmux commands
+      const commandTimings: { command: string; time: number }[] = [];
+      const startTime = Date.now();
+      
+      // Mock Bun.$ to capture tmux commands with timing
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        commandTimings.push({ command, time: Date.now() - startTime });
+        
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+      
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        const mockTask: RunningTask = {
+          id: "test-task-2",
+          path: "projects/test/task/test-task-2.md",
+          title: "Test Task 2",
+          priority: "medium",
+          projectId: "test-project",
+          pid: 12346,
+          windowName: "task_test-task-2",
+          startedAt: new Date().toISOString(),
+          isResume: false,
+          workdir: "/tmp/test",
+        };
+
+        const runner = new TaskRunner({ projectId: "test-project", config });
+        
+        // @ts-expect-error - accessing private property for testing
+        runner.tuiTasks.set(mockTask.id, mockTask);
+        
+        await runner.stop();
+
+        // Find the send-keys and kill-window commands
+        const sendKeysCmd = commandTimings.find(ct => 
+          ct.command.includes('send-keys') && ct.command.includes('C-c')
+        );
+        const killWindowCmd = commandTimings.find(ct => 
+          ct.command.includes('kill-window')
+        );
+
+        // Both should exist
+        expect(sendKeysCmd).toBeDefined();
+        expect(killWindowCmd).toBeDefined();
+        
+        // There should be a delay between send-keys and kill-window (at least 100ms)
+        if (sendKeysCmd && killWindowCmd) {
+          const delay = killWindowCmd.time - sendKeysCmd.time;
+          expect(delay).toBeGreaterThanOrEqual(100);
+        }
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("still kills window even if Ctrl+C fails", async () => {
+      const tmuxCommands: string[] = [];
+      let sendKeysCalled = false;
+      
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        tmuxCommands.push(command);
+        
+        // Make send-keys fail
+        if (command.includes('send-keys')) {
+          sendKeysCalled = true;
+          return {
+            quiet: () => Promise.reject(new Error('tmux send-keys failed')),
+            text: () => Promise.reject(new Error('tmux send-keys failed')),
+            then: (_: unknown, reject: (err: Error) => void) => reject(new Error('tmux send-keys failed')),
+          };
+        }
+        
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+      
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        const mockTask: RunningTask = {
+          id: "test-task-3",
+          path: "projects/test/task/test-task-3.md",
+          title: "Test Task 3",
+          priority: "medium",
+          projectId: "test-project",
+          pid: 12347,
+          windowName: "task_test-task-3",
+          startedAt: new Date().toISOString(),
+          isResume: false,
+          workdir: "/tmp/test",
+        };
+
+        const runner = new TaskRunner({ projectId: "test-project", config });
+        
+        // @ts-expect-error - accessing private property for testing
+        runner.tuiTasks.set(mockTask.id, mockTask);
+        
+        // Should not throw even if send-keys fails
+        await runner.stop();
+
+        // Verify send-keys was attempted
+        expect(sendKeysCalled).toBe(true);
+        
+        // Verify kill-window was still called
+        const killWindowCalled = tmuxCommands.some(cmd => cmd.includes('kill-window'));
+        expect(killWindowCalled).toBe(true);
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("handles pane cleanup with Ctrl+C before kill-pane", async () => {
+      const tmuxCommands: string[] = [];
+      
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        tmuxCommands.push(command);
+        
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+      
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        // Create a mock running task with paneId (dashboard mode without tmuxManager)
+        const mockTask: RunningTask = {
+          id: "test-task-4",
+          path: "projects/test/task/test-task-4.md",
+          title: "Test Task 4",
+          priority: "medium",
+          projectId: "test-project",
+          pid: 12348,
+          paneId: "%42",  // Pane ID instead of windowName
+          startedAt: new Date().toISOString(),
+          isResume: false,
+          workdir: "/tmp/test",
+        };
+
+        const runner = new TaskRunner({ projectId: "test-project", config });
+        
+        // @ts-expect-error - accessing private property for testing
+        runner.tuiTasks.set(mockTask.id, mockTask);
+        
+        await runner.stop();
+
+        // Verify that Ctrl+C was sent to the pane BEFORE kill-pane
+        const sendKeysIndex = tmuxCommands.findIndex(cmd => 
+          cmd.includes('send-keys') && cmd.includes('C-c') && cmd.includes('%42')
+        );
+        const killPaneIndex = tmuxCommands.findIndex(cmd => 
+          cmd.includes('kill-pane')
+        );
+
+        // Both commands should have been executed
+        expect(sendKeysIndex).toBeGreaterThanOrEqual(0);
+        expect(killPaneIndex).toBeGreaterThanOrEqual(0);
+        
+        // Ctrl+C should come BEFORE kill-pane
+        expect(sendKeysIndex).toBeLessThan(killPaneIndex);
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+  });
+});

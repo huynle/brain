@@ -4,6 +4,33 @@
  * Common utility functions for string manipulation and logging.
  */
 
+import { getConfig } from "./config";
+
+// =============================================================================
+// App Info Utilities
+// =============================================================================
+
+/**
+ * Get application info (name and version) from config.
+ * @returns Object with appName and version
+ */
+export function getAppInfo(): { appName: string; version: string } {
+  const config = getConfig();
+  return {
+    appName: "brain-api",
+    version: "1.0.0",
+  };
+}
+
+/**
+ * Check if debug mode is enabled.
+ * @returns true if debug mode is enabled
+ */
+export function isDebug(): boolean {
+  const config = getConfig();
+  return config.server.logLevel === "debug";
+}
+
 // =============================================================================
 // String Manipulation Utilities
 // =============================================================================

@@ -22,17 +22,17 @@ export function createApp(config: Config): OpenAPIHono {
   app.use("*", cors());
   app.use("*", logger());
 
-  // Health check (always available, fast)
-  app.get("/health", async (c) => {
+  // API v1 routes
+  const api = new OpenAPIHono();
+
+  // Health check endpoint
+  api.get("/health", async (c) => {
     const health = await getHealthStatus();
     return c.json({
       ...health,
       version: "0.1.0",
     });
   });
-
-  // API v1 routes
-  const api = new OpenAPIHono();
 
   // Health and stats routes (stats, orphans, stale, verify, link)
   // NOTE: Must be registered BEFORE entry CRUD routes to avoid conflicts

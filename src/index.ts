@@ -40,7 +40,7 @@ const server = serve({
 console.log(`🧠 Brain API listening on http://${config.server.host}:${config.server.port}`);
 console.log();
 console.log(`Endpoints:`);
-console.log(`  GET  /health              - Health check`);
+console.log(`  GET  /api/v1/health       - Health check`);
 console.log(`  GET  /api/v1/stats        - Brain statistics`);
 console.log(`  POST /api/v1/entries      - Create entry`);
 console.log(`  GET  /api/v1/entries/:id  - Get entry`);

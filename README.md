@@ -1,4 +1,4 @@
-# Brain API
+# Brain
 
 REST API service for AI agent memory and knowledge management, with integrated task queue processing.
 
@@ -269,13 +269,13 @@ brain-runner logs [-f]
 |----------|---------|-------------|
 | `BRAIN_PORT` | `3333` | API server port |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
-| `BRAIN_API_DIR` | `~/projects/brain-api` | Source directory |
+| `BRAIN_DIR_SRC` | `~/projects/brain` | Source directory |
 
 ## Architecture
 
 ```
 +------------------+     +------------------+     +--------------+
-|   brain-runner   |---->|   brain-api      |---->| ~/docs/brain |
+|   brain-runner   |---->|   brain          |---->| ~/docs/brain |
 |   (task runner)  |     |   TaskService    |     | (markdown)   |
 +------------------+     +------------------+     +--------------+
         |                        |

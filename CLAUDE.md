@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance for AI assistants working with the brain-api codebase.
+This file provides guidance for AI assistants working with the brain codebase.
 
 ## Project Overview
 

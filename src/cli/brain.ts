@@ -29,7 +29,7 @@ import { createDoctorService, type Check, type DoctorResult } from "../core/doct
 // =============================================================================
 
 const HOME = homedir();
-const BRAIN_API_DIR = process.env.BRAIN_API_DIR || join(HOME, "projects/brain-api");
+const BRAIN_DIR_SRC = process.env.BRAIN_DIR_SRC || join(HOME, "projects/brain");
 const DEFAULT_PORT = "3333";
 const PORT = process.env.BRAIN_PORT || process.env.PORT || DEFAULT_PORT;
 
@@ -103,7 +103,7 @@ function printHelp() {
 
 Usage: brain <command> [options]
 
-Commands:
+Server Commands:
   start       Start the API server (background)
   stop        Stop the API server
   restart     Restart the API server
@@ -115,6 +115,23 @@ Commands:
   config      Show current configuration
   doctor      Diagnose and fix brain configuration
 
+Plugin Commands:
+  install <target>     Install brain plugin to an AI coding assistant
+  uninstall <target>   Remove brain plugin from an AI coding assistant
+  plugin-status        Show plugin installation status for all targets
+
+Install Targets:
+  opencode      OpenCode AI coding assistant
+  claude-code   Anthropic Claude Code (MCP server)
+  cursor        Cursor IDE (coming soon)
+  antigravity   Antigravity AI assistant (coming soon)
+
+Install Options:
+  brain install opencode              Install to OpenCode
+  brain install opencode --force      Overwrite existing plugin
+  brain install opencode --dry-run    Show what would be installed
+  brain install --api-url <url>       Use custom API URL
+
 Doctor Options:
   brain doctor              Run diagnostics (show failures only)
   brain doctor -v           Verbose output (show all checks)
@@ -125,10 +142,13 @@ Doctor Options:
 Environment:
   BRAIN_PORT      Server port (default: ${DEFAULT_PORT})
   BRAIN_DIR       Brain data directory (default: ~/.brain)
+  BRAIN_API_URL   API URL for plugins (default: http://localhost:3333)
 
 Examples:
   brain start
   brain status
+  brain install opencode
+  brain install opencode --force
   brain doctor --fix
   BRAIN_PORT=4444 brain start
 `);
@@ -162,7 +182,7 @@ async function cmdStart() {
   const logWriter = logFile.writer();
 
   const proc = spawn("bun", ["run", "src/index.ts"], {
-    cwd: BRAIN_API_DIR,
+    cwd: BRAIN_DIR_SRC,
     env: { ...process.env, PORT },
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],
@@ -276,7 +296,7 @@ function cmdLogs(follow: boolean) {
 function cmdDev() {
   console.log(`Starting Brain API in development mode on port ${PORT}...`);
   const proc = spawn("bun", ["run", "--watch", "src/index.ts"], {
-    cwd: BRAIN_API_DIR,
+    cwd: BRAIN_DIR_SRC,
     env: { ...process.env, PORT },
     stdio: "inherit",
   });
@@ -403,6 +423,123 @@ function printResult(result: DoctorResult, verbose: boolean): void {
   }
 }
 
+// =============================================================================
+// Install Command
+// =============================================================================
+
+async function cmdInstall(args: string[]): Promise<void> {
+  const { installPlugin, getAvailableTargets, getPluginStatus } = await import("../plugins/installer");
+  type InstallTarget = import("../plugins/shared/types").InstallTarget;
+
+  // Parse arguments
+  const target = args[0];
+  const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
+
+  // Extract --api-url value
+  const apiUrlIndex = args.indexOf("--api-url");
+  const apiUrl = apiUrlIndex !== -1 && args[apiUrlIndex + 1] ? args[apiUrlIndex + 1] : undefined;
+
+  // Show available targets if no target specified
+  if (!target || target.startsWith("-")) {
+    console.log(`${COLORS.bold}Available Install Targets${COLORS.reset}\n`);
+    const targets = getAvailableTargets();
+    for (const t of targets) {
+      const status = getPluginStatus(t.id as any);
+      const statusIcon = status.installed
+        ? `${COLORS.green}[installed]${COLORS.reset}`
+        : status.targetExists
+          ? `${COLORS.yellow}[not installed]${COLORS.reset}`
+          : `${COLORS.gray}[target not found]${COLORS.reset}`;
+      console.log(`  ${COLORS.bold}${t.id}${COLORS.reset} - ${t.description} ${statusIcon}`);
+    }
+    console.log(`\nUsage: brain install <target> [--force] [--dry-run] [--api-url <url>]`);
+    return;
+  }
+
+  // Validate target
+  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
+  if (!validTargets.includes(target)) {
+    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
+    console.log(`Available targets: ${validTargets.join(", ")}`);
+    process.exit(1);
+  }
+
+  // Install
+  console.log(`${COLORS.bold}Installing brain plugin for ${target}...${COLORS.reset}\n`);
+
+  const result = await installPlugin({
+    target: target as any,
+    force,
+    dryRun,
+    apiUrl,
+  });
+
+  if (result.success) {
+    console.log(`${COLORS.green}${result.message}${COLORS.reset}`);
+  } else {
+    console.error(`${COLORS.red}${result.message}${COLORS.reset}`);
+    process.exit(1);
+  }
+}
+
+async function cmdUninstall(args: string[]): Promise<void> {
+  const { uninstallPlugin, getAvailableTargets } = await import("../plugins/installer");
+
+  const target = args[0];
+  const dryRun = args.includes("--dry-run");
+
+  if (!target || target.startsWith("-")) {
+    console.log(`Usage: brain uninstall <target> [--dry-run]`);
+    console.log(`\nAvailable targets: opencode, claude-code, cursor, antigravity`);
+    return;
+  }
+
+  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
+  if (!validTargets.includes(target)) {
+    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
+    process.exit(1);
+  }
+
+  console.log(`${COLORS.bold}Uninstalling brain plugin from ${target}...${COLORS.reset}\n`);
+
+  const result = await uninstallPlugin(target as any, dryRun);
+
+  if (result.success) {
+    console.log(`${COLORS.green}${result.message}${COLORS.reset}`);
+  } else {
+    console.error(`${COLORS.yellow}${result.message}${COLORS.reset}`);
+  }
+}
+
+async function cmdPluginStatus(): Promise<void> {
+  const { getAvailableTargets, getPluginStatus, resolveTargetPaths } = await import("../plugins/installer");
+
+  console.log(`${COLORS.bold}Brain Plugin Status${COLORS.reset}\n`);
+
+  const targets = getAvailableTargets();
+  for (const t of targets) {
+    const status = getPluginStatus(t.id as any);
+    const paths = resolveTargetPaths(t.id as any);
+
+    console.log(`${COLORS.bold}${t.name}${COLORS.reset} (${t.id})`);
+
+    if (!status.targetExists) {
+      console.log(`  ${COLORS.gray}Target not found: ${paths.configDir}${COLORS.reset}`);
+    } else if (status.installed) {
+      console.log(`  ${COLORS.green}Installed${COLORS.reset}: ${status.path}`);
+    } else {
+      console.log(`  ${COLORS.yellow}Not installed${COLORS.reset}`);
+      console.log(`  ${COLORS.gray}Would install to: ${status.path}${COLORS.reset}`);
+    }
+    console.log();
+  }
+}
+
+// =============================================================================
+// Doctor Command
+// =============================================================================
+
 async function cmdDoctor(args: string[]): Promise<void> {
   // Parse flags
   const fix = args.includes("--fix");
@@ -472,6 +609,16 @@ async function main() {
       break;
     case "doctor":
       await cmdDoctor(args.slice(1));
+      break;
+    case "install":
+      await cmdInstall(args.slice(1));
+      break;
+    case "uninstall":
+      await cmdUninstall(args.slice(1));
+      break;
+    case "plugin-status":
+    case "plugins":
+      await cmdPluginStatus();
       break;
     case "help":
     case "--help":

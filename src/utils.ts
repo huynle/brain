@@ -17,7 +17,7 @@ import { getConfig } from "./config";
 export function getAppInfo(): { appName: string; version: string } {
   const config = getConfig();
   return {
-    appName: "brain-api",
+    appName: "brain",
     version: "1.0.0",
   };
 }

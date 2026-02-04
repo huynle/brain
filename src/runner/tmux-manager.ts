@@ -91,7 +91,7 @@ export class TmuxManager {
 
   /**
    * Create the task list script that refreshes every 10 seconds.
-   * Curls the brain-api for task list with dependency resolution.
+   * Curls the brain for task list with dependency resolution.
    * 
    * Displays a full dependency tree visualization with:
    * - Status summary header (counts by status)
@@ -110,7 +110,7 @@ export class TmuxManager {
     
     const script = `#!/bin/bash
 # Task List Refresh Script - Full Dependency Tree View
-# Curls brain-api for task list with dependency resolution
+# Curls brain API for task list with dependency resolution
 # Refreshes every 10 seconds
 
 PROJECT_ID="${projectId}"
@@ -189,7 +189,7 @@ show_tasks() {
   term_width=\$(get_width)
   local content_width=\$((term_width - 2))  # Account for left/right borders
   
-  # Curl the brain-api for task list
+  # Curl the brain API for task list
   local response
   response=\$(curl -s "\${API_URL}/api/v1/tasks/\${PROJECT_ID}" 2>/dev/null)
   

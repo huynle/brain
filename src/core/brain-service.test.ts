@@ -15,7 +15,7 @@ import type { BrainConfig } from "./types";
 // Test Setup
 // =============================================================================
 
-const TEST_DIR = join(tmpdir(), `brain-api-test-${Date.now()}`);
+const TEST_DIR = join(tmpdir(), `brain-test-${Date.now()}`);
 const TEST_DB_PATH = join(TEST_DIR, "test.db");
 
 const testConfig: BrainConfig = {

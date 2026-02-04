@@ -1,5 +1,5 @@
 {
-  "name": "brain-api",
+  "name": "brain",
   "version": "0.1.0",
   "description": "REST API service for AI agent memory and knowledge management",
   "type": "module",
@@ -21,7 +21,7 @@
     "bun",
     "hono"
   ],
-  "author": "Brain API Contributors",
+  "author": "Brain Contributors",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/huynle/brain/issues"

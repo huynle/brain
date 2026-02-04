@@ -33,8 +33,8 @@ import { join } from "path";
 const HOME = homedir();
 const DEFAULT_API_URL = "http://localhost:3333";
 const BRAIN_API_URL = process.env.BRAIN_API_URL || DEFAULT_API_URL;
-const BRAIN_API_DIR = process.env.BRAIN_API_DIR || join(HOME, "projects/brain-api");
-const RUNNER_SCRIPT = join(BRAIN_API_DIR, "src/runner/index.ts");
+const BRAIN_DIR_SRC = process.env.BRAIN_DIR_SRC || join(HOME, "projects/brain");
+const RUNNER_SCRIPT = join(BRAIN_DIR_SRC, "src/runner/index.ts");
 
 // =============================================================================
 // API Client
@@ -77,7 +77,7 @@ Commands:
 
 Environment:
   BRAIN_API_URL   API server URL (default: ${DEFAULT_API_URL})
-  BRAIN_API_DIR   Brain API directory (default: ~/projects/brain-api)
+  BRAIN_DIR_SRC   Brain source directory (default: ~/projects/brain)
 
 Examples:
   do-work start myproject
@@ -90,12 +90,12 @@ Examples:
 function runRunner(args: string[]): never {
   if (!existsSync(RUNNER_SCRIPT)) {
     console.error(`Runner script not found: ${RUNNER_SCRIPT}`);
-    console.error("Make sure BRAIN_API_DIR is set correctly.");
+    console.error("Make sure BRAIN_DIR_SRC is set correctly.");
     process.exit(1);
   }
 
   const proc = spawnSync("bun", ["run", RUNNER_SCRIPT, ...args], {
-    cwd: BRAIN_API_DIR,
+    cwd: BRAIN_DIR_SRC,
     env: { ...process.env, BRAIN_API_URL },
     stdio: "inherit",
   });
@@ -106,12 +106,12 @@ function runRunner(args: string[]): never {
 function runRunnerAsync(args: string[]): void {
   if (!existsSync(RUNNER_SCRIPT)) {
     console.error(`Runner script not found: ${RUNNER_SCRIPT}`);
-    console.error("Make sure BRAIN_API_DIR is set correctly.");
+    console.error("Make sure BRAIN_DIR_SRC is set correctly.");
     process.exit(1);
   }
 
   const proc = spawn("bun", ["run", RUNNER_SCRIPT, ...args], {
-    cwd: BRAIN_API_DIR,
+    cwd: BRAIN_DIR_SRC,
     env: { ...process.env, BRAIN_API_URL },
     stdio: "inherit",
   });

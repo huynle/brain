@@ -36,7 +36,7 @@ Brain Runner is a TypeScript-based task execution daemon that replaces the `do-w
 ## Architecture Diagram
 
 ```
-BRAIN-API SERVER (can run anywhere)     BRAIN-RUNNER (local execution)
+BRAIN SERVER (can run anywhere)         BRAIN-RUNNER (local execution)
 +---------------------------+           +-----------------------------+
 |  Task Service             |<-- poll --|  TaskRunner                 |
 |  - /tasks/:project/ready  |           |  - Poll for ready tasks     |
@@ -72,7 +72,7 @@ src/runner/
 +-- task-runner.ts        # Main orchestration class
 +-- process-manager.ts    # Track spawned OpenCode processes
 +-- state-manager.ts      # Persist state to JSON files
-+-- api-client.ts         # HTTP client for brain-api
++-- api-client.ts         # HTTP client for brain
 +-- opencode-executor.ts  # Build prompts, spawn OpenCode
 +-- tmux-manager.ts       # Optional: tmux dashboard
 +-- config.ts             # Configuration with env vars
@@ -140,7 +140,7 @@ brain-runner stop [project-id]            # Stop specific or all
 brain-runner status [project-id]          # Show status
 brain-runner logs [-f]                    # View logs
 
-# Query tasks (uses brain-api)
+# Query tasks (uses brain)
 brain-runner list <project-id>            # List all tasks
 brain-runner ready <project-id>           # List ready tasks
 brain-runner waiting <project-id>         # List waiting tasks
@@ -407,7 +407,7 @@ export function isDebugEnabled(): boolean {
 
 ---
 
-## Task 2: Create brain-api client
+## Task 2: Create brain client
 
 **Priority:** high  
 **Depends on:** Task 1  
@@ -415,7 +415,7 @@ export function isDebugEnabled(): boolean {
 
 ### Objective
 
-Create an HTTP client for interacting with the brain-api server. This handles task queries, status updates, and task claiming.
+Create an HTTP client for interacting with the brain server. This handles task queries, status updates, and task claiming.
 
 ### Files to Create/Modify
 
@@ -2217,7 +2217,7 @@ Create the CLI entry point with commands for start, stop, status, and run-one.
 /**
  * Brain Runner CLI
  * 
- * Task execution daemon for the brain-api.
+ * Task execution daemon for the brain.
  */
 
 import { parseArgs } from "util";
@@ -2482,7 +2482,7 @@ async function cmdList(projectId: string, options: Record<string, any>): Promise
 
 function showHelp(): void {
   console.log(`
-brain-runner - Task execution daemon for brain-api
+brain-runner - Task execution daemon for brain
 
 USAGE:
     brain-runner <command> [options] [project-id]
@@ -3159,7 +3159,7 @@ private async spawnTask(task: ResolvedTask, isResume: boolean): Promise<void> {
 #### 1. Install Brain Runner
 
 ```bash
-# In the brain-api project
+# In the brain project
 bun install
 
 # Or install globally

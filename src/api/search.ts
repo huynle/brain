@@ -2,174 +2,127 @@
  * Brain API - Search Endpoints
  *
  * REST API endpoints for search and context injection operations.
+ * Uses OpenAPIHono for automatic OpenAPI documentation generation.
  */
 
-import { Hono } from "hono";
+import { OpenAPIHono, createRoute } from "@hono/zod-openapi";
 import { getBrainService } from "../core/brain-service";
-import type {
-  SearchRequest,
-  InjectRequest,
-  EntryType,
-  EntryStatus,
-} from "../core/types";
-import { ENTRY_TYPES, ENTRY_STATUSES } from "../core/types";
+import {
+  SearchRequestSchema,
+  SearchResponseSchema,
+  InjectRequestSchema,
+  InjectResponseSchema,
+  ErrorResponseSchema,
+  ServiceUnavailableResponseSchema,
+} from "./schemas";
 
 // =============================================================================
-// Validation Helpers
+// Route Definitions
 // =============================================================================
 
-interface ValidationError {
-  field: string;
-  message: string;
-}
-
-function validateSearchRequest(body: unknown): {
-  valid: boolean;
-  errors: ValidationError[];
-  data?: SearchRequest;
-} {
-  const errors: ValidationError[] = [];
-
-  if (!body || typeof body !== "object") {
-    return { valid: false, errors: [{ field: "body", message: "Request body is required" }] };
-  }
-
-  const req = body as Record<string, unknown>;
-
-  // Required: query
-  if (!req.query || typeof req.query !== "string") {
-    errors.push({ field: "query", message: "query is required and must be a string" });
-  } else if (req.query.trim().length === 0) {
-    errors.push({ field: "query", message: "query cannot be empty" });
-  }
-
-  // Optional: type
-  if (req.type !== undefined) {
-    if (typeof req.type !== "string" || !ENTRY_TYPES.includes(req.type as EntryType)) {
-      errors.push({
-        field: "type",
-        message: `type must be one of: ${ENTRY_TYPES.join(", ")}`,
-      });
-    }
-  }
-
-  // Optional: status
-  if (req.status !== undefined) {
-    if (typeof req.status !== "string" || !ENTRY_STATUSES.includes(req.status as EntryStatus)) {
-      errors.push({
-        field: "status",
-        message: `status must be one of: ${ENTRY_STATUSES.join(", ")}`,
-      });
-    }
-  }
-
-  // Optional: limit
-  if (req.limit !== undefined) {
-    if (typeof req.limit !== "number" || !Number.isInteger(req.limit) || req.limit < 1) {
-      errors.push({ field: "limit", message: "limit must be a positive integer" });
-    }
-  }
-
-  // Optional: global
-  if (req.global !== undefined && typeof req.global !== "boolean") {
-    errors.push({ field: "global", message: "global must be a boolean" });
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
-  return {
-    valid: true,
-    errors: [],
-    data: {
-      query: (req.query as string).trim(),
-      type: req.type as EntryType | undefined,
-      status: req.status as EntryStatus | undefined,
-      limit: req.limit as number | undefined,
-      global: req.global as boolean | undefined,
+const searchRoute = createRoute({
+  method: "post",
+  path: "/search",
+  tags: ["Search"],
+  summary: "Full-text search",
+  description: "Search brain entries by query string with optional filtering by type, status, and scope",
+  request: {
+    body: {
+      content: { "application/json": { schema: SearchRequestSchema } },
+      required: true,
     },
-  };
-}
-
-function validateInjectRequest(body: unknown): {
-  valid: boolean;
-  errors: ValidationError[];
-  data?: InjectRequest;
-} {
-  const errors: ValidationError[] = [];
-
-  if (!body || typeof body !== "object") {
-    return { valid: false, errors: [{ field: "body", message: "Request body is required" }] };
-  }
-
-  const req = body as Record<string, unknown>;
-
-  // Required: query
-  if (req.query === undefined || req.query === null || typeof req.query !== "string") {
-    errors.push({ field: "query", message: "query is required and must be a string" });
-  } else if (req.query.trim().length === 0) {
-    errors.push({ field: "query", message: "query cannot be empty" });
-  }
-
-  // Optional: maxEntries
-  if (req.maxEntries !== undefined) {
-    if (typeof req.maxEntries !== "number" || !Number.isInteger(req.maxEntries) || req.maxEntries < 1) {
-      errors.push({ field: "maxEntries", message: "maxEntries must be a positive integer" });
-    }
-  }
-
-  // Optional: type
-  if (req.type !== undefined) {
-    if (typeof req.type !== "string" || !ENTRY_TYPES.includes(req.type as EntryType)) {
-      errors.push({
-        field: "type",
-        message: `type must be one of: ${ENTRY_TYPES.join(", ")}`,
-      });
-    }
-  }
-
-  if (errors.length > 0) {
-    return { valid: false, errors };
-  }
-
-  return {
-    valid: true,
-    errors: [],
-    data: {
-      query: (req.query as string).trim(),
-      maxEntries: req.maxEntries as number | undefined,
-      type: req.type as EntryType | undefined,
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: SearchResponseSchema } },
+      description: "Search results with snippets",
     },
-  };
-}
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+    503: {
+      content: { "application/json": { schema: ServiceUnavailableResponseSchema } },
+      description: "zk CLI unavailable",
+    },
+  },
+});
+
+const injectRoute = createRoute({
+  method: "post",
+  path: "/inject",
+  tags: ["Search"],
+  summary: "Context injection",
+  description: "Search and format relevant entries as context for AI consumption",
+  request: {
+    body: {
+      content: { "application/json": { schema: InjectRequestSchema } },
+      required: true,
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: InjectResponseSchema } },
+      description: "Formatted context and entry summaries",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error",
+    },
+  },
+});
 
 // =============================================================================
 // Search Routes
 // =============================================================================
 
-export function createSearchRoutes(): Hono {
-  const search = new Hono();
+export function createSearchRoutes(): OpenAPIHono {
+  const search = new OpenAPIHono({
+    defaultHook: (result, c) => {
+      if (!result.success) {
+        const errors = result.error.issues.map((issue) => ({
+          field: issue.path.join("."),
+          message: issue.message,
+        }));
 
-  // POST /search - Full-text search
-  search.post("/search", async (c) => {
-    try {
-      const body = await c.req.json();
-      const validation = validateSearchRequest(body);
+        const fieldNames = errors.map((e) => e.field).filter(Boolean);
+        const message = fieldNames.length > 0
+          ? `Invalid request: ${fieldNames.join(", ")}`
+          : "Invalid request";
 
-      if (!validation.valid) {
         return c.json(
           {
             error: "Validation Error",
-            message: "Invalid request body",
-            details: validation.errors,
+            message,
+            details: errors,
           },
           400
         );
       }
+    },
+  });
+
+  // Handle JSON parsing errors
+  search.onError((err, c) => {
+    if (err instanceof SyntaxError || (err instanceof Error && err.message.includes("JSON"))) {
+      return c.json(
+        {
+          error: "Bad Request",
+          message: "Invalid JSON in request body",
+        },
+        400
+      );
+    }
+    throw err;
+  });
+
+  // POST /search - Full-text search
+  search.openapi(searchRoute, async (c) => {
+    try {
+      const body = c.req.valid("json");
 
       const service = getBrainService();
-      const result = await service.search(validation.data!);
+      const result = await service.search(body);
 
       // Format response per spec: include snippet (first 150 chars of content)
       const formattedResults = result.results.map((entry) => ({
@@ -184,17 +137,8 @@ export function createSearchRoutes(): Hono {
       return c.json({
         results: formattedResults,
         total: result.total,
-      });
+      }, 200);
     } catch (error) {
-      if (error instanceof SyntaxError) {
-        return c.json(
-          {
-            error: "Bad Request",
-            message: "Invalid JSON in request body",
-          },
-          400
-        );
-      }
       if (error instanceof Error && error.message.includes("zk CLI not available")) {
         return c.json(
           {
@@ -209,51 +153,25 @@ export function createSearchRoutes(): Hono {
   });
 
   // POST /inject - Get relevant context for a query
-  search.post("/inject", async (c) => {
-    try {
-      const body = await c.req.json();
-      const validation = validateInjectRequest(body);
+  search.openapi(injectRoute, async (c) => {
+    const body = c.req.valid("json");
 
-      if (!validation.valid) {
-        return c.json(
-          {
-            error: "Validation Error",
-            message: "Invalid request body",
-            details: validation.errors,
-          },
-          400
-        );
-      }
+    const service = getBrainService();
+    const result = await service.inject(body);
 
-      const service = getBrainService();
-      const result = await service.inject(validation.data!);
+    // Format response per spec
+    const formattedEntries = result.entries.map((entry) => ({
+      id: entry.id,
+      path: entry.path,
+      title: entry.title,
+      type: entry.type,
+      status: entry.status,
+    }));
 
-      // Format response per spec
-      const formattedEntries = result.entries.map((entry) => ({
-        id: entry.id,
-        path: entry.path,
-        title: entry.title,
-        type: entry.type,
-        status: entry.status,
-      }));
-
-      return c.json({
-        context: result.context,
-        entries: formattedEntries,
-      });
-    } catch (error) {
-      if (error instanceof SyntaxError) {
-        return c.json(
-          {
-            error: "Bad Request",
-            message: "Invalid JSON in request body",
-          },
-          400
-        );
-      }
-      // Note: inject gracefully handles zk unavailable by returning a message
-      throw error;
-    }
+    return c.json({
+      context: result.context,
+      entries: formattedEntries,
+    }, 200);
   });
 
   return search;

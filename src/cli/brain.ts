@@ -2,7 +2,7 @@
 /**
  * Brain API Server CLI
  *
- * A CLI tool to manage the Brain API server.
+ * A CLI tool to manage the Brain API server and plugins.
  *
  * Usage:
  *   brain start     - Start the API server (background)
@@ -15,6 +15,7 @@
  *   brain dev       - Start in development mode
  *   brain config    - Show configuration
  *   brain doctor    - Diagnose brain configuration
+ *   brain install   - Install brain plugin to AI coding assistants
  */
 
 import { spawn, spawnSync } from "child_process";

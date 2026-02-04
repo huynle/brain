@@ -2,7 +2,8 @@
 /**
  * do-work - Task Runner CLI
  *
- * A CLI tool to manage brain tasks and run the task runner.
+ * A simplified wrapper around brain-runner for quick task management.
+ * This CLI directly imports the runner module - no external dependencies needed.
  *
  * Usage:
  *   do-work start <project>     - Start runner with TUI for a project
@@ -15,26 +16,16 @@
  *   do-work ready <project>     - Show ready tasks
  *   do-work waiting <project>   - Show waiting tasks
  *   do-work blocked <project>   - Show blocked tasks
- *   do-work tree <project>      - Show task dependency tree
  *   do-work run-one <project>   - Execute single task
  *   do-work logs [-f]           - Show runner logs
  *   do-work config              - Show configuration
  */
 
-import { spawn, spawnSync } from "child_process";
-import { existsSync } from "fs";
-import { homedir } from "os";
-import { join } from "path";
+// Import runner's main function directly - no subprocess needed
+import { main as runnerMain } from "../runner/index";
 
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const HOME = homedir();
 const DEFAULT_API_URL = "http://localhost:3333";
 const BRAIN_API_URL = process.env.BRAIN_API_URL || DEFAULT_API_URL;
-const BRAIN_DIR_SRC = process.env.BRAIN_DIR_SRC || join(HOME, "projects/brain");
-const RUNNER_SCRIPT = join(BRAIN_DIR_SRC, "src/runner/index.ts");
 
 // =============================================================================
 // API Client
@@ -70,14 +61,12 @@ Commands:
   ready <project>     Show ready tasks
   waiting <project>   Show waiting tasks
   blocked <project>   Show blocked tasks
-  tree <project>      Show task dependency tree
   run-one <project>   Execute single task
   logs [-f]           Show runner logs
   config              Show current configuration
 
 Environment:
   BRAIN_API_URL   API server URL (default: ${DEFAULT_API_URL})
-  BRAIN_DIR_SRC   Brain source directory (default: ~/projects/brain)
 
 Examples:
   do-work start myproject
@@ -87,47 +76,33 @@ Examples:
 `);
 }
 
-function runRunner(args: string[]): never {
-  if (!existsSync(RUNNER_SCRIPT)) {
-    console.error(`Runner script not found: ${RUNNER_SCRIPT}`);
-    console.error("Make sure BRAIN_DIR_SRC is set correctly.");
-    process.exit(1);
+/**
+ * Run the runner with the given arguments by manipulating process.argv
+ * and calling the runner's main function directly.
+ */
+async function runRunner(args: string[]): Promise<number> {
+  // Save original argv and replace with our args
+  const originalArgv = process.argv;
+  process.argv = ["bun", "brain-runner", ...args];
+
+  try {
+    const exitCode = await runnerMain();
+    return exitCode;
+  } finally {
+    // Restore original argv
+    process.argv = originalArgv;
   }
-
-  const proc = spawnSync("bun", ["run", RUNNER_SCRIPT, ...args], {
-    cwd: BRAIN_DIR_SRC,
-    env: { ...process.env, BRAIN_API_URL },
-    stdio: "inherit",
-  });
-
-  process.exit(proc.status || 0);
-}
-
-function runRunnerAsync(args: string[]): void {
-  if (!existsSync(RUNNER_SCRIPT)) {
-    console.error(`Runner script not found: ${RUNNER_SCRIPT}`);
-    console.error("Make sure BRAIN_DIR_SRC is set correctly.");
-    process.exit(1);
-  }
-
-  const proc = spawn("bun", ["run", RUNNER_SCRIPT, ...args], {
-    cwd: BRAIN_DIR_SRC,
-    env: { ...process.env, BRAIN_API_URL },
-    stdio: "inherit",
-  });
-
-  proc.on("exit", (code) => process.exit(code || 0));
 }
 
 // =============================================================================
 // Commands
 // =============================================================================
 
-function cmdStart(project: string | undefined, background: boolean) {
+async function cmdStart(project: string | undefined, background: boolean): Promise<number> {
   if (!project) {
     console.error("Error: project argument required");
     console.error("Usage: do-work start <project>");
-    process.exit(1);
+    return 1;
   }
 
   const args = ["start", project];
@@ -137,93 +112,84 @@ function cmdStart(project: string | undefined, background: boolean) {
     args.push("--tui");
   }
 
-  runRunnerAsync(args);
+  return runRunner(args);
 }
 
-function cmdStop(project?: string) {
+async function cmdStop(project?: string): Promise<number> {
   const args = ["stop"];
   if (project) args.push(project);
-  runRunner(args);
+  return runRunner(args);
 }
 
-function cmdStatus(project?: string) {
+async function cmdStatus(project?: string): Promise<number> {
   const args = ["status"];
   if (project) args.push(project);
-  runRunner(args);
+  return runRunner(args);
 }
 
-async function cmdList(project: string | undefined) {
+async function cmdList(project: string | undefined): Promise<number> {
   if (!project) {
     // List all projects
     try {
       const result = await apiGet<{ projects: string[]; count: number }>("/tasks");
       if (result.count === 0) {
         console.log("No projects with tasks found.");
-        return;
+        return 0;
       }
       console.log("Projects with tasks:");
       for (const p of result.projects) {
         console.log(`  ${p}`);
       }
       console.log(`\nTotal: ${result.count} project(s)`);
+      return 0;
     } catch (error) {
       console.error(`Error: ${error instanceof Error ? error.message : error}`);
-      process.exit(1);
+      return 1;
     }
-    return;
   }
-  runRunner(["list", project]);
+  return runRunner(["list", project]);
 }
 
-function cmdReady(project: string | undefined) {
+async function cmdReady(project: string | undefined): Promise<number> {
   if (!project) {
     console.error("Error: project argument required");
     console.error("Usage: do-work ready <project>");
-    process.exit(1);
+    return 1;
   }
-  runRunner(["ready", project]);
+  return runRunner(["ready", project]);
 }
 
-function cmdWaiting(project: string | undefined) {
+async function cmdWaiting(project: string | undefined): Promise<number> {
   if (!project) {
     console.error("Error: project argument required");
     console.error("Usage: do-work waiting <project>");
-    process.exit(1);
+    return 1;
   }
-  runRunner(["waiting", project]);
+  return runRunner(["waiting", project]);
 }
 
-function cmdBlocked(project: string | undefined) {
+async function cmdBlocked(project: string | undefined): Promise<number> {
   if (!project) {
     console.error("Error: project argument required");
     console.error("Usage: do-work blocked <project>");
-    process.exit(1);
+    return 1;
   }
-  runRunner(["blocked", project]);
+  return runRunner(["blocked", project]);
 }
 
-function cmdTree(project: string | undefined) {
-  if (!project) {
-    console.error("Error: project argument required");
-    console.error("Usage: do-work tree <project>");
-    process.exit(1);
-  }
-  runRunner(["tree", project]);
-}
-
-function cmdRunOne(project: string | undefined) {
+async function cmdRunOne(project: string | undefined): Promise<number> {
   if (!project) {
     console.error("Error: project argument required");
     console.error("Usage: do-work run-one <project>");
-    process.exit(1);
+    return 1;
   }
-  runRunner(["run-one", project]);
+  return runRunner(["run-one", project]);
 }
 
-function cmdLogs(follow: boolean) {
+async function cmdLogs(follow: boolean): Promise<number> {
   const args = ["logs"];
   if (follow) args.push("-f");
-  runRunner(args);
+  return runRunner(args);
 }
 
 function cmdConfig() {
@@ -238,43 +204,40 @@ async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   const arg1 = args[1];
-  const arg2 = args[2];
+
+  let exitCode = 0;
 
   switch (command) {
     case "start":
-      cmdStart(arg1, false);
+      exitCode = await cmdStart(arg1, false);
       break;
     case "start-bg":
     case "background":
-      cmdStart(arg1, true);
+      exitCode = await cmdStart(arg1, true);
       break;
     case "stop":
-      cmdStop(arg1);
+      exitCode = await cmdStop(arg1);
       break;
     case "status":
-      cmdStatus(arg1);
+      exitCode = await cmdStatus(arg1);
       break;
     case "list":
-      await cmdList(arg1);
+      exitCode = await cmdList(arg1);
       break;
     case "ready":
-      cmdReady(arg1);
+      exitCode = await cmdReady(arg1);
       break;
     case "waiting":
-      cmdWaiting(arg1);
+      exitCode = await cmdWaiting(arg1);
       break;
     case "blocked":
-      cmdBlocked(arg1);
-      break;
-    case "tree":
-    case "graph":
-      cmdTree(arg1);
+      exitCode = await cmdBlocked(arg1);
       break;
     case "run-one":
-      cmdRunOne(arg1);
+      exitCode = await cmdRunOne(arg1);
       break;
     case "logs":
-      cmdLogs(arg1 === "-f");
+      exitCode = await cmdLogs(arg1 === "-f");
       break;
     case "config":
       cmdConfig();
@@ -287,12 +250,14 @@ async function main() {
     default:
       // If first arg looks like a project name (not a flag), start TUI for it
       if (command && !command.startsWith("-")) {
-        cmdStart(command, false);
+        exitCode = await cmdStart(command, false);
       } else {
         printHelp();
-        process.exit(command ? 1 : 0);
+        exitCode = command ? 1 : 0;
       }
   }
+
+  process.exit(exitCode);
 }
 
 main();

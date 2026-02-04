@@ -11,8 +11,27 @@ Built with [Bun](https://bun.sh) and [Hono](https://hono.dev).
 - Task management with dependency tracking and resolution
 - Graph traversal (backlinks, outlinks, related entries)
 - Integration with `do-work` task queue processor
+- TUI dashboard for task monitoring
 
-## Quick Start
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+# Install globally with bun
+bun add -g @brain/api
+
+# Or run directly with bunx (no install needed)
+bunx @brain/api brain --help
+```
+
+This installs the following CLI commands:
+- `brain` - Server management and diagnostics
+- `brain-server` - API server (used internally)
+- `brain-runner` - Task runner with TUI
+- `do-work` - Quick task runner wrapper
+
+### From Source
 
 ```bash
 # Clone and install dependencies
@@ -20,16 +39,22 @@ git clone https://github.com/huynle/brain.git
 cd brain
 bun install
 
-# Build and install CLI tools to ~/.local/bin
+# Option 1: Link for development (updates automatically)
+bun link
+
+# Option 2: Build standalone binaries to ~/.local/bin
 just install
 ```
 
-This builds standalone `brain` and `do-work` executables and installs them to `~/.local/bin`. Run `just install` again after pulling updates to replace with the latest version.
-
-Make sure `~/.local/bin` is in your `PATH`:
+If using `just install`, make sure `~/.local/bin` is in your `PATH`:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
+
+### Requirements
+
+- [Bun](https://bun.sh) >= 1.0.0
+- [zk](https://github.com/mickael-menu/zk) CLI (for Zettelkasten operations)
 
 ## Usage
 
@@ -276,8 +301,9 @@ brain-runner logs [-f]
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAIN_PORT` | `3333` | API server port |
+| `BRAIN_HOST` | `0.0.0.0` | API server host |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
-| `BRAIN_DIR_SRC` | `~/projects/brain` | Source directory |
+| `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
 
 ## Architecture
 

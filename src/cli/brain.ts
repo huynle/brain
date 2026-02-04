@@ -32,18 +32,40 @@ const HOME = homedir();
 const DEFAULT_PORT = "3333";
 const PORT = process.env.BRAIN_PORT || process.env.PORT || DEFAULT_PORT;
 
-// Find brain-server binary: check same directory as this binary, then PATH
-function findBrainServer(): string {
+// Find brain-server: check same directory as this binary, PATH, or use the TypeScript source
+function findBrainServer(): { command: string; args: string[] } {
   const selfPath = process.argv[0];
   const selfDir = dirname(selfPath);
-  const localServer = join(selfDir, "brain-server");
   
+  // 1. Check for compiled binary next to this executable
+  const localServer = join(selfDir, "brain-server");
   if (existsSync(localServer)) {
-    return localServer;
+    return { command: localServer, args: [] };
   }
   
-  // Fall back to PATH lookup
-  return "brain-server";
+  // 2. Check if brain-server is in PATH
+  const pathResult = spawnSync("which", ["brain-server"], { encoding: "utf-8" });
+  if (pathResult.status === 0 && pathResult.stdout.trim()) {
+    return { command: "brain-server", args: [] };
+  }
+  
+  // 3. Use TypeScript source directly with bun (for bunx/npm installs)
+  // Find the package root by looking for package.json
+  let searchDir = dirname(import.meta.dir);
+  while (searchDir !== "/") {
+    const pkgJson = join(searchDir, "package.json");
+    if (existsSync(pkgJson)) {
+      const serverTs = join(searchDir, "src/cli/server.ts");
+      if (existsSync(serverTs)) {
+        return { command: "bun", args: ["run", serverTs] };
+      }
+      break;
+    }
+    searchDir = dirname(searchDir);
+  }
+  
+  // 4. Fall back to assuming brain-server is somehow available
+  return { command: "brain-server", args: [] };
 }
 
 // XDG Base Directory Specification
@@ -192,10 +214,10 @@ async function cmdStart() {
   console.log(`Starting Brain API server on port ${PORT}...`);
 
   // Start the server with output redirected to log file
-  const serverBin = findBrainServer();
+  const server = findBrainServer();
   const logFd = openSync(LOG_FILE, "a");
   
-  const proc = spawn(serverBin, [], {
+  const proc = spawn(server.command, server.args, {
     env: { ...process.env, PORT },
     detached: true,
     stdio: ["ignore", logFd, logFd],
@@ -204,12 +226,14 @@ async function cmdStart() {
   proc.unref();
 
   // Save PID
-  writeFileSync(PID_FILE, proc.pid!.toString());
+  if (proc.pid) {
+    writeFileSync(PID_FILE, proc.pid.toString());
+  }
 
   // Wait and verify
   await new Promise((resolve) => setTimeout(resolve, 2000));
 
-  if (isProcessRunning(proc.pid!)) {
+  if (proc.pid && isProcessRunning(proc.pid)) {
     console.log(`Brain API started (PID: ${proc.pid})`);
     await healthCheck(PORT);
   } else {

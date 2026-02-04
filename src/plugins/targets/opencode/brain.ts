@@ -437,6 +437,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Parent entry ID (8-char alphanumeric) for hierarchical grouping. Use this to group tasks under an objective/plan."
             ),
+          user_original_request: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion by comparing implementation against original intent. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task."
+            ),
         },
         async execute(args) {
           try {
@@ -464,6 +470,9 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               worktree: args.type === "task" ? context.worktree : undefined,
               git_remote: args.type === "task" ? context.gitRemote : undefined,
               git_branch: args.type === "task" ? context.gitBranch : undefined,
+              // User intent for validation
+              user_original_request:
+                args.type === "task" ? args.user_original_request : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";

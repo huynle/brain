@@ -135,6 +135,10 @@ export const CreateEntryRequestSchema = z.object({
   worktree: z.string().optional(),
   git_remote: z.string().optional(),
   git_branch: z.string().optional(),
+  user_original_request: z.string().optional().openapi({
+    description: "Verbatim user request for validation during task completion. Highly recommended for tasks to enable intent verification. Supports multiline content, code blocks, and special characters.",
+    example: "Add a dark mode toggle to the settings page with the following requirements:\n- Toggle should persist across sessions\n- Use CSS variables for theming"
+  }),
 }).openapi("CreateEntryRequest");
 
 export const CreateEntryResponseSchema = z.object({

@@ -13,6 +13,7 @@ import {
   extractIdFromPath,
   generateMarkdownLink,
   matchesFilenamePattern,
+  formatYamlMultilineValue,
 } from "./zk-client";
 
 // =============================================================================
@@ -380,5 +381,270 @@ describe("matchesFilenamePattern()", () => {
   test("handles .md extension", () => {
     expect(matchesFilenamePattern("abc12def.md", "abc12def")).toBe(true);
     expect(matchesFilenamePattern("abc12def", "abc12def.md")).toBe(true);
+  });
+});
+
+// =============================================================================
+// Tests for formatYamlMultilineValue
+// =============================================================================
+
+describe("formatYamlMultilineValue()", () => {
+  test("formats simple single-line value without quoting", () => {
+    const result = formatYamlMultilineValue("key", "simple value");
+    expect(result).toBe("key: simple value");
+  });
+
+  test("uses literal block scalar for multiline content", () => {
+    const result = formatYamlMultilineValue("key", "line 1\nline 2\nline 3");
+    expect(result).toBe("key: |\n  line 1\n  line 2\n  line 3");
+  });
+
+  test("uses literal block scalar for content with special YAML characters", () => {
+    const result = formatYamlMultilineValue("key", "value: with colon");
+    expect(result).toBe("key: |\n  value: with colon");
+  });
+
+  test("handles content with code blocks", () => {
+    const content = `Here's some code:
+\`\`\`typescript
+function hello() {
+  console.log("world");
+}
+\`\`\``;
+    const result = formatYamlMultilineValue("user_original_request", content);
+    expect(result).toContain("user_original_request: |");
+    expect(result).toContain("  Here's some code:");
+    expect(result).toContain("  ```typescript");
+    expect(result).toContain('  console.log("world");');
+  });
+
+  test("handles content with special characters", () => {
+    const content = "Use the @decorator and #tags, also: colons";
+    const result = formatYamlMultilineValue("key", content);
+    expect(result).toBe("key: |\n  Use the @decorator and #tags, also: colons");
+  });
+
+  test("preserves empty lines in multiline content", () => {
+    const content = "line 1\n\nline 3";
+    const result = formatYamlMultilineValue("key", content);
+    expect(result).toBe("key: |\n  line 1\n  \n  line 3");
+  });
+
+  test("handles content with quotes", () => {
+    const content = 'say "hello" and \'world\'';
+    const result = formatYamlMultilineValue("key", content);
+    expect(result).toBe("key: |\n  say \"hello\" and 'world'");
+  });
+
+  test("handles content with backslashes", () => {
+    const content = "path\\to\\file";
+    const result = formatYamlMultilineValue("key", content);
+    // Backslashes alone don't require quoting in YAML
+    expect(result).toBe("key: path\\to\\file");
+  });
+
+  test("handles content with backslashes and special chars", () => {
+    const content = "path\\to\\file: with colon";
+    const result = formatYamlMultilineValue("key", content);
+    // Colon triggers literal block scalar
+    expect(result).toBe("key: |\n  path\\to\\file: with colon");
+  });
+});
+
+// =============================================================================
+// Tests for user_original_request in generateFrontmatter
+// =============================================================================
+
+describe("generateFrontmatter() with user_original_request", () => {
+  test("includes simple user_original_request", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      user_original_request: "Add a button",
+    });
+    expect(fm).toContain("user_original_request: Add a button");
+  });
+
+  test("formats multiline user_original_request as literal block scalar", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      user_original_request: "Add a button\nwith these requirements:\n- Blue color\n- Round corners",
+    });
+    expect(fm).toContain("user_original_request: |");
+    expect(fm).toContain("  Add a button");
+    expect(fm).toContain("  with these requirements:");
+    expect(fm).toContain("  - Blue color");
+  });
+
+  test("handles user_original_request with code blocks", () => {
+    const request = `Implement this function:
+\`\`\`typescript
+interface Config {
+  timeout: number;
+  retries: number;
+}
+\`\`\``;
+    const fm = generateFrontmatter({
+      title: "Implement Config",
+      type: "task",
+      user_original_request: request,
+    });
+    expect(fm).toContain("user_original_request: |");
+    expect(fm).toContain("  Implement this function:");
+    expect(fm).toContain("  ```typescript");
+    expect(fm).toContain("  interface Config {");
+  });
+
+  test("omits user_original_request when not provided", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+    });
+    expect(fm).not.toContain("user_original_request");
+  });
+});
+
+// =============================================================================
+// Tests for user_original_request in parseFrontmatter
+// =============================================================================
+
+describe("parseFrontmatter() with user_original_request", () => {
+  test("parses simple single-line user_original_request", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+user_original_request: Add a simple button
+---
+
+Task content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.user_original_request).toBe("Add a simple button");
+  });
+
+  test("parses multiline user_original_request (literal block scalar)", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+user_original_request: |
+  Add a button with:
+  - Blue color
+  - Round corners
+  - 10px padding
+---
+
+Task content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.user_original_request).toBe(
+      "Add a button with:\n- Blue color\n- Round corners\n- 10px padding"
+    );
+  });
+
+  test("parses user_original_request with code blocks", () => {
+    const content = `---
+title: Implement Feature
+type: task
+status: pending
+user_original_request: |
+  Implement this function:
+  \`\`\`typescript
+  function greet(name: string): string {
+    return \`Hello, \${name}!\`;
+  }
+  \`\`\`
+---
+
+Implementation notes`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.user_original_request).toContain("Implement this function:");
+    expect(frontmatter.user_original_request).toContain("```typescript");
+    expect(frontmatter.user_original_request).toContain("function greet(name: string)");
+  });
+
+  test("parses user_original_request with special YAML characters", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+user_original_request: |
+  Use the @decorator and #tags
+  Also: handle colons properly
+  And "quotes" and 'single quotes'
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.user_original_request).toContain("@decorator");
+    expect(frontmatter.user_original_request).toContain("#tags");
+    expect(frontmatter.user_original_request).toContain('Also: handle colons');
+    expect(frontmatter.user_original_request).toContain('"quotes"');
+  });
+
+  test("handles missing user_original_request gracefully", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.user_original_request).toBeUndefined();
+  });
+
+  test("round-trip: generateFrontmatter -> parseFrontmatter preserves multiline content", () => {
+    const originalRequest = `Add a feature with these specs:
+1. Must support dark mode
+2. Code example:
+\`\`\`js
+const theme = getTheme();
+\`\`\`
+3. Special chars: @#$%^&*()`;
+
+    const fm = generateFrontmatter({
+      title: "Feature Task",
+      type: "task",
+      status: "pending",
+      user_original_request: originalRequest,
+    });
+
+    const fullContent = `---\n${fm}---\n\nTask body`;
+    const { frontmatter } = parseFrontmatter(fullContent);
+    
+    expect(frontmatter.user_original_request).toBe(originalRequest);
+  });
+
+  test("round-trip preserves complex request with all edge cases", () => {
+    const complexRequest = `User request with everything:
+- Bullet points
+- Colons: like this
+- Quotes: "double" and 'single'
+- Code:
+  \`\`\`python
+  def hello():
+      print("world")  # comment
+  \`\`\`
+- Special: @mentions #hashtags
+- Emoji: not recommended but 🎉
+- Backslash: path\\to\\file
+- URL: https://example.com?foo=bar&baz=qux`;
+
+    const fm = generateFrontmatter({
+      title: "Complex Task",
+      type: "task",
+      user_original_request: complexRequest,
+    });
+
+    const fullContent = `---\n${fm}---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(fullContent);
+    
+    expect(frontmatter.user_original_request).toBe(complexRequest);
   });
 });

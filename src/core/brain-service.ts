@@ -303,6 +303,31 @@ export class BrainService {
         zkArgs.push("--extra", `git_branch=${request.git_branch}`);
       }
 
+      // User original request for validation - format for YAML
+      // For multiline content, we need to format it as YAML literal block scalar
+      if (request.user_original_request) {
+        const hasNewlines = request.user_original_request.includes("\n");
+        const hasSpecialChars =
+          /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%]|^\s|\s$|^---|^\.\.\./.test(
+            request.user_original_request
+          );
+
+        if (hasNewlines || hasSpecialChars) {
+          // Format as YAML literal block scalar (|) with proper indentation
+          const indentedLines = request.user_original_request
+            .split("\n")
+            .map((line) => `  ${line}`)
+            .join("\n");
+          zkArgs.push("--extra", `user_original_request=|\n${indentedLines}`);
+        } else {
+          // Simple single-line value
+          zkArgs.push(
+            "--extra",
+            `user_original_request=${request.user_original_request}`
+          );
+        }
+      }
+
       if (!isGlobal) {
         zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
       }
@@ -345,6 +370,8 @@ export class BrainService {
         worktree: request.worktree,
         git_remote: request.git_remote,
         git_branch: request.git_branch,
+        // User intent for validation
+        user_original_request: request.user_original_request,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;

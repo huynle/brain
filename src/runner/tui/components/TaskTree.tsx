@@ -14,7 +14,12 @@ interface TaskTreeProps {
   tasks: TaskDisplay[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  completedCollapsed: boolean;
+  onToggleCompleted: () => void;
 }
+
+// Special ID for the completed section header (used for navigation)
+export const COMPLETED_HEADER_ID = '__completed_header__';
 
 // Status symbols per spec
 const STATUS_ICONS: Record<string, string> = {
@@ -214,12 +219,23 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   return roots;
 }
 
+// Helper to check if a task is completed
+const isCompleted = (t: TaskDisplay): boolean => t.status === 'completed' || t.status === 'validated';
+
 /**
  * Flatten tree into an array of task IDs in visual/navigation order.
  * This matches the order tasks appear on screen for j/k navigation.
+ * 
+ * @param tasks - All tasks
+ * @param completedCollapsed - Whether the completed section is collapsed
  */
-export function flattenTreeOrder(tasks: TaskDisplay[]): string[] {
-  const tree = buildTree(tasks);
+export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true): string[] {
+  // Separate active and completed tasks
+  const activeTasks = tasks.filter(t => !isCompleted(t));
+  const completedTasks = tasks.filter(isCompleted);
+  
+  // Build tree only from active tasks
+  const tree = buildTree(activeTasks);
   const result: string[] = [];
 
   function traverse(nodes: TreeNode[]): void {
@@ -232,7 +248,45 @@ export function flattenTreeOrder(tasks: TaskDisplay[]): string[] {
   }
 
   traverse(tree);
+  
+  // Add completed header and tasks if there are any completed tasks
+  if (completedTasks.length > 0) {
+    result.push(COMPLETED_HEADER_ID);
+    
+    // If expanded, add completed task IDs
+    if (!completedCollapsed) {
+      completedTasks.forEach(t => result.push(t.id));
+    }
+  }
+  
   return result;
+}
+
+/**
+ * Completed section header component
+ */
+function CompletedHeader({
+  count,
+  collapsed,
+  isSelected,
+}: {
+  count: number;
+  collapsed: boolean;
+  isSelected: boolean;
+}): React.ReactElement {
+  const icon = collapsed ? '▶' : '▾';
+  return (
+    <Box>
+      <Text
+        color={isSelected ? 'white' : 'green'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+        bold={isSelected}
+        dimColor
+      >
+        {icon} Completed ({count})
+      </Text>
+    </Box>
+  );
 }
 
 /**
@@ -345,9 +399,14 @@ function renderTree(
 export function TaskTree({
   tasks,
   selectedId,
+  completedCollapsed,
 }: TaskTreeProps): React.ReactElement {
-  // Build tree structure
-  const tree = useMemo(() => buildTree(tasks), [tasks]);
+  // Separate active and completed tasks
+  const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t)), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter(isCompleted), [tasks]);
+  
+  // Build tree structure from active tasks only
+  const tree = useMemo(() => buildTree(activeTasks), [activeTasks]);
 
   // Compute ready task IDs (pending with all deps completed)
   const readyIds = useMemo(() => {
@@ -413,6 +472,43 @@ export function TaskTree({
     }
   });
 
+  // Add completed section if there are completed tasks
+  const completedElements: React.ReactElement[] = [];
+  if (completedTasks.length > 0) {
+    // Add spacing before completed section
+    completedElements.push(
+      <Box key="completed-spacer">
+        <Text> </Text>
+      </Box>
+    );
+    
+    // Completed header
+    completedElements.push(
+      <CompletedHeader
+        key={COMPLETED_HEADER_ID}
+        count={completedTasks.length}
+        collapsed={completedCollapsed}
+        isSelected={selectedId === COMPLETED_HEADER_ID}
+      />
+    );
+    
+    // Render completed tasks as flat list when expanded
+    if (!completedCollapsed) {
+      completedTasks.forEach(task => {
+        completedElements.push(
+          <TaskRow
+            key={task.id}
+            task={task}
+            prefix="  "
+            isSelected={task.id === selectedId}
+            inCycle={false}
+            isReady={false}
+          />
+        );
+      });
+    }
+  }
+
   return (
     <Box flexDirection="column" padding={1}>
       <Text bold underline>
@@ -420,6 +516,7 @@ export function TaskTree({
       </Text>
       <Box flexDirection="column" marginTop={1}>
         {elements}
+        {completedElements}
       </Box>
     </Box>
   );

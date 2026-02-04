@@ -428,6 +428,26 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    // Handle user_original_request - can be single-line or multi-line (literal block scalar)
+    // Single-line: user_original_request: simple request
+    // Multi-line: user_original_request: |
+    //               line 1
+    //               line 2
+    const userRequestSingleMatch = line.match(/^user_original_request:\s*(.+)$/);
+    if (userRequestSingleMatch && userRequestSingleMatch[1].trim() !== "|") {
+      frontmatter.user_original_request = parseYamlStringValue(userRequestSingleMatch[1]);
+      inTags = false;
+      continue;
+    }
+    const userRequestBlockMatch = line.match(/^user_original_request:\s*\|\s*$/);
+    if (userRequestBlockMatch) {
+      // Start collecting multi-line content
+      inTags = false;
+      // Mark that we're in user_original_request block mode
+      // We'll handle this with a dedicated parser below
+      continue;
+    }
+
     // Handle tags array
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
@@ -447,6 +467,19 @@ export function parseFrontmatter(content: string): {
 
   if (tags.length > 0) {
     frontmatter.tags = tags;
+  }
+
+  // Handle multi-line user_original_request (literal block scalar)
+  // This needs special handling because it spans multiple lines
+  const userRequestBlockRegex = /user_original_request:\s*\|\n((?:  .+\n?)*)/;
+  const blockMatch = yaml.match(userRequestBlockRegex);
+  if (blockMatch) {
+    // Remove the 2-space indent from each line and join
+    const lines = blockMatch[1].split("\n");
+    const unindentedLines = lines
+      .filter((l) => l.length > 0) // Remove empty trailing lines
+      .map((l) => (l.startsWith("  ") ? l.slice(2) : l));
+    frontmatter.user_original_request = unindentedLines.join("\n");
   }
 
   return { frontmatter, body };
@@ -469,6 +502,42 @@ export function escapeYamlValue(value: string): string {
   const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 
   return `"${escaped}"`;
+}
+
+/**
+ * Format a value for YAML frontmatter, using literal block scalar (|) for multiline content.
+ * This preserves newlines, special characters, code blocks, etc. verbatim.
+ *
+ * For single-line content without problematic characters, returns simple key: value
+ * For content with newlines or special YAML characters, uses literal block scalar:
+ *   key: |
+ *     line 1
+ *     line 2
+ *
+ * @param key - The YAML key name
+ * @param value - The value to format (can be multiline)
+ * @returns Formatted YAML string
+ */
+export function formatYamlMultilineValue(key: string, value: string): string {
+  const hasNewlines = value.includes("\n");
+  // Characters that would be problematic in YAML without quoting
+  const hasSpecialChars =
+    /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%]|^\s|\s$|^---|^\.\.\./.test(value);
+
+  // For simple single-line content without special chars, use plain format
+  if (!hasNewlines && !hasSpecialChars) {
+    return `${key}: ${value}`;
+  }
+
+  // For multiline content or content with special chars, use literal block scalar
+  // The '|' indicator preserves newlines exactly as written
+  // We indent each line with 2 spaces as per YAML block scalar rules
+  const indentedLines = value
+    .split("\n")
+    .map((line) => `  ${line}`)
+    .join("\n");
+
+  return `${key}: |\n${indentedLines}`;
 }
 
 /**
@@ -544,6 +613,8 @@ export interface GenerateFrontmatterOptions {
   worktree?: string;
   git_remote?: string;
   git_branch?: string;
+  // User intent for validation
+  user_original_request?: string;
 }
 
 /**
@@ -597,6 +668,11 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.git_branch) {
     lines.push(`git_branch: ${escapeYamlValue(options.git_branch)}`);
+  }
+
+  // User intent for validation - use YAML literal block scalar for multiline
+  if (options.user_original_request) {
+    lines.push(formatYamlMultilineValue("user_original_request", options.user_original_request));
   }
 
   return lines.join("\n") + "\n";

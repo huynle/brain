@@ -19,7 +19,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenTreeOrder } from './components/TaskTree';
+import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -37,6 +37,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [showHelp, setShowHelp] = useState(false);
+  const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
   // Hooks
   const { tasks, stats, isLoading, isConnected, error, refetch } = useTaskPoller({
@@ -60,7 +61,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
 
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
-  const navigationOrder = useMemo(() => flattenTreeOrder(tasks), [tasks]);
+  const navigationOrder = useMemo(() => flattenTreeOrder(tasks, completedCollapsed), [tasks, completedCollapsed]);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -136,8 +137,13 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
         return;
       }
 
-      // Enter to show details (future enhancement)
+      // Enter to toggle completed section or show details
       if (key.return) {
+        // Toggle completed section if header is selected
+        if (selectedTaskId === COMPLETED_HEADER_ID) {
+          setCompletedCollapsed(!completedCollapsed);
+          return;
+        }
         // Currently just logs - TaskDetail is always visible
         if (selectedTask) {
           addLog({
@@ -215,6 +221,8 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
             tasks={tasks}
             selectedId={selectedTaskId}
             onSelect={setSelectedTaskId}
+            completedCollapsed={completedCollapsed}
+            onToggleCompleted={() => setCompletedCollapsed(!completedCollapsed)}
           />
         </Box>
 

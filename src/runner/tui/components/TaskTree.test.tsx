@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, COMPLETED_HEADER_ID } from './TaskTree';
 import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
@@ -31,11 +31,17 @@ function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
   };
 }
 
+// Default props for TaskTree to reduce test boilerplate
+const defaultTreeProps = {
+  completedCollapsed: true,
+  onToggleCompleted: () => {},
+};
+
 describe('TaskTree', () => {
   describe('empty state', () => {
     it('shows "No tasks found" when task list is empty', () => {
       const { lastFrame } = render(
-        <TaskTree tasks={[]} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={[]} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('No tasks found');
     });
@@ -45,7 +51,7 @@ describe('TaskTree', () => {
     it('renders single task correctly', () => {
       const tasks = [createTask({ id: '1', title: 'Setup Project' })];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('Setup Project');
       expect(lastFrame()).toContain('Tasks (1)');
@@ -58,7 +64,7 @@ describe('TaskTree', () => {
         createTask({ id: '3', title: 'Task Three' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('Task One');
       expect(lastFrame()).toContain('Task Two');
@@ -78,7 +84,7 @@ describe('TaskTree', () => {
         }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // Both tasks should be rendered
       expect(lastFrame()).toContain('Parent Task');
@@ -102,7 +108,7 @@ describe('TaskTree', () => {
         }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('Root Task');
       expect(lastFrame()).toContain('Level 1 Task');
@@ -114,7 +120,7 @@ describe('TaskTree', () => {
     it('shows pending symbol for pending tasks', () => {
       const tasks = [createTask({ id: '1', title: 'Pending', status: 'pending' })];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // Pending tasks with no blocking deps should show ready indicator
       expect(lastFrame()).toContain('●');
@@ -125,7 +131,7 @@ describe('TaskTree', () => {
         createTask({ id: '1', title: 'Active', status: 'in_progress' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('▶');
     });
@@ -135,7 +141,7 @@ describe('TaskTree', () => {
         createTask({ id: '1', title: 'Done', status: 'completed' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} completedCollapsed={false} onToggleCompleted={() => {}} />
       );
       expect(lastFrame()).toContain('✓');
     });
@@ -145,7 +151,7 @@ describe('TaskTree', () => {
         createTask({ id: '1', title: 'Blocked', status: 'blocked' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('✗');
     });
@@ -158,7 +164,7 @@ describe('TaskTree', () => {
         createTask({ id: '2', title: 'Second Task' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId="1" onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId="1" onSelect={() => {}} {...defaultTreeProps} />
       );
       // Both tasks should be visible
       expect(lastFrame()).toContain('First Task');
@@ -168,7 +174,7 @@ describe('TaskTree', () => {
     it('handles null selectedId', () => {
       const tasks = [createTask({ id: '1', title: 'Task' })];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('Task');
     });
@@ -180,6 +186,7 @@ describe('TaskTree', () => {
           tasks={tasks}
           selectedId="non-existent"
           onSelect={() => {}}
+          {...defaultTreeProps}
         />
       );
       expect(lastFrame()).toContain('Task');
@@ -192,7 +199,7 @@ describe('TaskTree', () => {
         createTask({ id: '1', title: 'Urgent', priority: 'high' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('!');
     });
@@ -202,7 +209,7 @@ describe('TaskTree', () => {
         createTask({ id: '1', title: 'Normal', priority: 'medium' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // The frame should contain Normal but after it should not have !
       const frame = lastFrame() || '';
@@ -214,7 +221,7 @@ describe('TaskTree', () => {
     it('does not show ! for low priority tasks', () => {
       const tasks = [createTask({ id: '1', title: 'Low', priority: 'low' })];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       const frame = lastFrame() || '';
       expect(frame.includes('Low!')).toBe(false);
@@ -227,7 +234,7 @@ describe('TaskTree', () => {
         createTask({ id: '3', title: 'Medium Task', priority: 'medium' }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       const frame = lastFrame() || '';
       const highIndex = frame.indexOf('High Task');
@@ -247,7 +254,7 @@ describe('TaskTree', () => {
         createTask({ id: 'b', title: 'Task B', dependencies: ['a'] }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // Cycle indicator should be present
       expect(lastFrame()).toContain('↺');
@@ -259,7 +266,7 @@ describe('TaskTree', () => {
         createTask({ id: 'b', title: 'Task B', dependencies: ['a'] }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).not.toContain('↺');
     });
@@ -282,7 +289,7 @@ describe('TaskTree', () => {
         }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // Child should show ready indicator since parent is completed
       expect(lastFrame()).toContain('●');
@@ -304,7 +311,7 @@ describe('TaskTree', () => {
         }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // Both should be visible, child waiting on parent
       expect(lastFrame()).toContain('Parent');
@@ -322,7 +329,7 @@ describe('TaskTree', () => {
         }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       expect(lastFrame()).toContain('Task with external dep');
     });
@@ -337,13 +344,74 @@ describe('TaskTree', () => {
         createTask({ id: 'd', title: 'Task D', dependencies: ['b', 'c'] }),
       ];
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       // All tasks should be rendered once
       expect(lastFrame()).toContain('Task A');
       expect(lastFrame()).toContain('Task B');
       expect(lastFrame()).toContain('Task C');
       expect(lastFrame()).toContain('Task D');
+    });
+  });
+
+  describe('collapsible completed section', () => {
+    it('shows collapsed completed header when there are completed tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} completedCollapsed={true} onToggleCompleted={() => {}} />
+      );
+      expect(lastFrame()).toContain('▶ Completed (1)');
+      expect(lastFrame()).not.toContain('Done');
+    });
+
+    it('shows expanded completed header and tasks when expanded', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} completedCollapsed={false} onToggleCompleted={() => {}} />
+      );
+      expect(lastFrame()).toContain('▾ Completed (1)');
+      expect(lastFrame()).toContain('Done');
+    });
+
+    it('does not show completed section when no completed tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'In Progress', status: 'in_progress' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).not.toContain('Completed');
+    });
+
+    it('counts validated tasks as completed', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', status: 'completed' }),
+        createTask({ id: '3', title: 'Validated', status: 'validated' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} completedCollapsed={true} onToggleCompleted={() => {}} />
+      );
+      expect(lastFrame()).toContain('▶ Completed (2)');
+    });
+
+    it('highlights completed header when selected', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={COMPLETED_HEADER_ID} onSelect={() => {}} completedCollapsed={true} onToggleCompleted={() => {}} />
+      );
+      // The header should be visible and selectable
+      expect(lastFrame()).toContain('Completed (1)');
     });
   });
 });
@@ -466,7 +534,7 @@ describe('flattenTreeOrder', () => {
       
       // Render the tree and check visual order
       const { lastFrame } = render(
-        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
       const frame = lastFrame() || '';
       
@@ -480,6 +548,62 @@ describe('flattenTreeOrder', () => {
           lastIndex = currentIndex;
         }
       }
+    });
+  });
+
+  describe('completed section navigation', () => {
+    it('includes completed header ID when there are completed tasks', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'done', title: 'Done', status: 'completed' }),
+      ];
+      const order = flattenTreeOrder(tasks, true);
+      expect(order).toContain(COMPLETED_HEADER_ID);
+      expect(order).not.toContain('done'); // collapsed - completed tasks not in order
+    });
+
+    it('includes completed task IDs when expanded', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'done', title: 'Done', status: 'completed' }),
+      ];
+      const order = flattenTreeOrder(tasks, false);
+      expect(order).toContain(COMPLETED_HEADER_ID);
+      expect(order).toContain('done'); // expanded - completed tasks in order
+    });
+
+    it('does not include completed header when no completed tasks', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'blocked', title: 'Blocked', status: 'blocked' }),
+      ];
+      const order = flattenTreeOrder(tasks, true);
+      expect(order).not.toContain(COMPLETED_HEADER_ID);
+    });
+
+    it('places completed header after all active tasks', () => {
+      const tasks = [
+        createTask({ id: 'active1', title: 'Active 1', status: 'pending' }),
+        createTask({ id: 'active2', title: 'Active 2', status: 'in_progress' }),
+        createTask({ id: 'done', title: 'Done', status: 'completed' }),
+      ];
+      const order = flattenTreeOrder(tasks, true);
+      const headerIndex = order.indexOf(COMPLETED_HEADER_ID);
+      const active1Index = order.indexOf('active1');
+      const active2Index = order.indexOf('active2');
+      expect(headerIndex).toBeGreaterThan(active1Index);
+      expect(headerIndex).toBeGreaterThan(active2Index);
+    });
+
+    it('excludes completed tasks from active tree', () => {
+      const tasks = [
+        createTask({ id: 'parent', title: 'Parent', status: 'completed' }),
+        createTask({ id: 'child', title: 'Child', status: 'pending', dependencies: ['parent'] }),
+      ];
+      const order = flattenTreeOrder(tasks, true);
+      // Child should be in active tree (despite parent being completed)
+      // Parent should only appear in completed section
+      expect(order.indexOf('child')).toBeLessThan(order.indexOf(COMPLETED_HEADER_ID));
     });
   });
 });

@@ -367,6 +367,9 @@ const tools: Tool[] = [
         priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level" },
         global: { type: "boolean", description: "Save to global brain (cross-project)" },
         project: { type: "string", description: "Explicit project ID/name" },
+        depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
+        parent_id: { type: "string", description: "Parent entry ID (8-char) for hierarchical grouping" },
+        user_original_request: { type: "string", description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task." },
       },
       required: ["type", "title", "content"],
     },
@@ -491,6 +494,9 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           worktree: args.type === "task" ? context.worktree : undefined,
           git_remote: args.type === "task" ? context.gitRemote : undefined,
           git_branch: args.type === "task" ? context.gitBranch : undefined,
+          // Only include user_original_request for tasks
+          user_original_request:
+            args.type === "task" ? args.user_original_request : undefined,
         });
         return `Saved to brain\n\nPath: ${response.path}\nID: ${response.id}\nTitle: ${response.title}\nType: ${response.type}\nStatus: ${response.status}`;
       }

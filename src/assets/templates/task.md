@@ -13,6 +13,7 @@ created: {{format-date now}}
 {{/if}}{{#if extra.worktree}}worktree: {{extra.worktree}}
 {{/if}}{{#if extra.git_remote}}git_remote: {{extra.git_remote}}
 {{/if}}{{#if extra.git_branch}}git_branch: {{extra.git_branch}}
+{{/if}}{{#if extra.user_original_request}}user_original_request: {{extra.user_original_request}}
 {{/if}}---
 
 {{content}}

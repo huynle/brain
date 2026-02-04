@@ -16,7 +16,7 @@ export function HelpBar({ focusedPanel }: HelpBarProps): React.ReactElement {
         <Text dimColor>
           <Text bold>Arrow/j/k</Text> Navigate
           {'  '}
-          <Text bold>Enter</Text> Details
+          <Text bold>Enter</Text> Details/Toggle
           {'  '}
           <Text bold>x</Text> Cancel
           {'  '}

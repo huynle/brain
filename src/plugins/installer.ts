@@ -2,12 +2,36 @@
  * Brain Plugin Installer
  *
  * Handles installation of brain plugins to various AI coding assistant targets.
+ *
+ * NOTE: Plugin source files are embedded into the compiled binary using
+ * `import ... with { type: "file" }`. This allows `brain install` to work
+ * from both `bun run` and compiled standalone executables.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync, renameSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "fs";
+import { join } from "path";
 import { homedir } from "os";
 import type { InstallTarget, InstallOptions, InstallResult } from "./shared/types";
+
+// ============================================================================
+// Embedded Plugin Sources
+// ============================================================================
+// These imports embed the plugin files into the compiled binary.
+// When running via `bun run`, they resolve to the actual file paths.
+// When running as a compiled binary, they point to embedded data.
+// The `with { type: "file" }` syntax is Bun-specific and not recognized by tsc.
+
+// @ts-ignore - Bun import attribute syntax
+import opencodePluginPath from "./targets/opencode/brain.ts" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import claudeCodePluginPath from "./targets/claude-code/brain-mcp.ts" with { type: "file" };
+// Note: cursor and antigravity plugins don't exist yet, we'll handle them gracefully
+
+// Map of target to embedded plugin path
+const EMBEDDED_PLUGINS: Partial<Record<InstallTarget, string>> = {
+  opencode: opencodePluginPath,
+  "claude-code": claudeCodePluginPath,
+};
 
 // ============================================================================
 // Target Configuration
@@ -19,7 +43,6 @@ interface TargetConfig {
   configDir: string | ((home: string) => string);
   pluginDir: string | ((home: string) => string);
   pluginFile: string;
-  sourceFile: string;
   configFile?: string;
   configUpdater?: (configPath: string, pluginPath: string) => void;
   postInstall?: (pluginPath: string) => string[];
@@ -32,7 +55,6 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
     configDir: (home) => join(home, "dot/config/opencode"),
     pluginDir: (home) => join(home, "dot/config/opencode/plugin"),
     pluginFile: "brain.ts",
-    sourceFile: "targets/opencode/brain.ts",
     postInstall: () => [
       "Plugin installed. OpenCode will automatically load it on next start.",
       "Make sure the Brain API server is running: brain start",
@@ -44,7 +66,6 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
     configDir: (home) => join(home, ".config/claude-code"),
     pluginDir: (home) => join(home, ".config/claude-code/mcp-servers"),
     pluginFile: "brain-mcp.ts",
-    sourceFile: "targets/claude-code/brain-mcp.ts",
     configFile: "mcp-config.json",
     configUpdater: (configPath, pluginPath) => {
       let config: Record<string, unknown> = {};
@@ -73,7 +94,6 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
     configDir: (home) => join(home, ".cursor"),
     pluginDir: (home) => join(home, ".cursor/extensions/brain"),
     pluginFile: "brain-extension.ts",
-    sourceFile: "targets/cursor/brain-extension.ts",
     postInstall: () => [
       "Cursor extension scaffolding installed.",
       "Note: Full Cursor extension support is coming soon.",
@@ -86,7 +106,6 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
     configDir: (home) => join(home, ".config/antigravity"),
     pluginDir: (home) => join(home, ".config/antigravity/plugins"),
     pluginFile: "brain.ts",
-    sourceFile: "targets/antigravity/brain.ts",
     postInstall: () => [
       "Plugin installed for Antigravity.",
       "Make sure the Brain API server is running: brain start",
@@ -141,17 +160,14 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
   const config = getTargetConfig(target);
   const { pluginDir, pluginPath, configPath } = resolveTargetPaths(target);
 
-  // Get source file path (relative to this module)
-  const sourceDir = dirname(new URL(import.meta.url).pathname);
-  const sourcePath = join(sourceDir, config.sourceFile);
-
-  // Check if source exists
-  if (!existsSync(sourcePath)) {
+  // Get embedded plugin source (works in both bun run and compiled binary)
+  const embeddedPath = EMBEDDED_PLUGINS[target];
+  if (!embeddedPath) {
     return {
       success: false,
       target,
       installedPath: pluginPath,
-      message: `Source plugin not found: ${sourcePath}. This target may not be fully implemented yet.`,
+      message: `Plugin for ${target} is not yet implemented.`,
     };
   }
 
@@ -201,8 +217,9 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     };
   }
 
-  // Read source and process template variables
-  let content = readFileSync(sourcePath, "utf-8");
+  // Read source from embedded file (works in both bun run and compiled binary)
+  // Bun.file() handles both regular paths and $bunfs:// paths
+  let content = await Bun.file(embeddedPath).text();
 
   // Replace template variables
   content = content.replace(/\{\{GENERATED_DATE\}\}/g, new Date().toISOString());

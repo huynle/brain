@@ -131,6 +131,9 @@ export interface CreateEntryRequest {
   worktree?: string;
   git_remote?: string;
   git_branch?: string;
+
+  // User intent for validation
+  user_original_request?: string; // Verbatim user request for validation during task completion
 }
 
 export interface CreateEntryResponse {
@@ -283,6 +286,7 @@ export interface Task {
   worktree: string | null;
   git_remote: string | null;
   git_branch: string | null;
+  user_original_request: string | null; // Verbatim user request for validation during task completion
 }
 
 // Task with resolved dependencies

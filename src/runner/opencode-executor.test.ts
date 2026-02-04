@@ -45,6 +45,7 @@ function createMockTask(
     worktree: null,
     git_remote: null,
     git_branch: null,
+    user_original_request: null,
     resolved_deps: [],
     unresolved_deps: [],
     parent_chain: [],

@@ -120,6 +120,8 @@ export class TaskService {
         worktree: (note.metadata?.worktree as string) || null,
         git_remote: (note.metadata?.git_remote as string) || null,
         git_branch: (note.metadata?.git_branch as string) || null,
+        user_original_request:
+          (note.metadata?.user_original_request as string) || null,
       }));
   }
 

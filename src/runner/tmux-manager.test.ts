@@ -45,6 +45,7 @@ describe("TmuxManager", () => {
 
   afterEach(async () => {
     manager.stopStatusUpdates();
+    manager.stopPaneMonitoring();
     resetTmuxManager();
   });
 
@@ -107,6 +108,42 @@ describe("TmuxManager", () => {
       manager.startStatusUpdates(1000);
       manager.startStatusUpdates(2000); // Should clear previous
       manager.stopStatusUpdates();
+    });
+  });
+
+  describe("startPaneMonitoring() / stopPaneMonitoring()", () => {
+    test("can start and stop monitoring without error", () => {
+      // Should not throw
+      manager.startPaneMonitoring(1000);
+      manager.stopPaneMonitoring();
+    });
+
+    test("can call stopPaneMonitoring multiple times", () => {
+      manager.startPaneMonitoring(1000);
+      manager.stopPaneMonitoring();
+      manager.stopPaneMonitoring(); // Should not throw
+    });
+
+    test("starting monitoring clears previous interval", () => {
+      manager.startPaneMonitoring(1000);
+      manager.startPaneMonitoring(2000); // Should clear previous
+      manager.stopPaneMonitoring();
+    });
+  });
+
+  describe("onPaneClosed()", () => {
+    test("can register callback without error", () => {
+      // Should not throw
+      manager.onPaneClosed((taskId, paneId) => {
+        // callback
+      });
+    });
+
+    test("can register multiple callbacks", () => {
+      // Should not throw
+      manager.onPaneClosed(() => {});
+      manager.onPaneClosed(() => {});
+      manager.onPaneClosed(() => {});
     });
   });
 

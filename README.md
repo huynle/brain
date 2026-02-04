@@ -86,11 +86,105 @@ curl http://localhost:3333/api/v1/tasks/myproject/ready
 curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
 ```
 
+## Task Runner
+
+The built-in task runner (`brain-runner`) processes tasks with dependency tracking and parallel execution.
+
+### Basic Usage
+
+```bash
+# Start the runner in foreground mode
+bun run src/runner/index.ts start my-project -f
+
+# Run with interactive TUI dashboard
+bun run src/runner/index.ts start my-project --tui
+
+# List available commands
+bun run src/runner/index.ts --help
+```
+
+### TUI Dashboard
+
+The `--tui` flag enables an interactive terminal dashboard built with [Ink](https://github.com/vadimdemedes/ink):
+
+```
+┌─ my-project ──────────────────────────────────────────────────────────────┐
+│  ● 2 ready   ○ 3 waiting   ▶ 1 active   ✓ 5 done                          │
+├───────────────────────────────────────────────────────────────────────────┤
+│ Tasks                              │ Logs                                  │
+│ ────────────────────────────────── │ ───────────────────────────────────── │
+│ ● Setup base config                │ 17:30:45 INFO  Runner started         │
+│ └─○ Create utils module            │ 17:30:46 INFO  Task started...        │
+│   └─○ Create main entry            │ 17:30:47 DEBUG Polling...             │
+├───────────────────────────────────────────────────────────────────────────┤
+│ ↑↓/j/k Navigate  Tab: Switch  r: Refresh  ?: Help  q: Quit               │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Features
+
+- **Real-time task tree** with dependency visualization
+- **Status indicators**: `●` ready, `○` waiting, `▶` running, `✓` completed, `✗` blocked
+- **Priority markers**: `!` for high priority tasks
+- **Cycle detection**: `↺` marks circular dependencies
+- **Live logs** with timestamps and log levels
+- **Connection status** indicator
+
+#### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| `↑/k` | Navigate up |
+| `↓/j` | Navigate down |
+| `Tab` | Switch focus (tasks/logs) |
+| `Enter` | Select task |
+| `r` | Refresh task list |
+| `?` | Toggle help |
+| `q` | Quit |
+
+### Runner Commands
+
+```bash
+# Start runner (foreground or TUI)
+brain-runner start [project] [-f|--tui]
+
+# Stop running daemon
+brain-runner stop [project]
+
+# Check status
+brain-runner status [project]
+
+# Execute single task
+brain-runner run-one [project]
+
+# List tasks by state
+brain-runner list [project]    # all tasks
+brain-runner ready [project]   # ready to execute
+brain-runner waiting [project] # waiting on dependencies
+brain-runner blocked [project] # blocked tasks
+
+# View logs
+brain-runner logs [-f]
+```
+
+### Runner Options
+
+| Option | Description |
+|--------|-------------|
+| `-f, --foreground` | Run in foreground (default) |
+| `-b, --background` | Run as daemon |
+| `--tui` | Interactive TUI dashboard |
+| `-p, --max-parallel N` | Max concurrent tasks (default: 3) |
+| `--poll-interval N` | Seconds between polls (default: 30) |
+| `-w, --workdir DIR` | Working directory |
+| `--dry-run` | Log actions without executing |
+| `-v, --verbose` | Enable verbose logging |
+
 ## Architecture
 
 ```
 +------------------+     +------------------+     +--------------+
-|   do-work        |---->|   brain-api      |---->| ~/docs/brain |
+|   brain-runner   |---->|   brain-api      |---->| ~/docs/brain |
 |   (task runner)  |     |   TaskService    |     | (markdown)   |
 +------------------+     +------------------+     +--------------+
         |                        |
@@ -100,6 +194,24 @@ curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
 |   OpenCode       |     |   zk CLI         |
 |   (task exec)    |     |                  |
 +------------------+     +------------------+
+```
+
+### TUI Architecture
+
+```
+src/runner/tui/
+├── App.tsx              # Main app component with layout
+├── index.tsx            # Entry point and configuration
+├── types.ts             # TypeScript interfaces
+├── components/
+│   ├── StatusBar.tsx    # Project status and stats
+│   ├── TaskTree.tsx     # Dependency tree visualization
+│   ├── TaskDetail.tsx   # Selected task details
+│   ├── LogViewer.tsx    # Real-time log display
+│   └── HelpBar.tsx      # Keyboard shortcuts bar
+└── hooks/
+    ├── useTaskPoller.ts # API polling for tasks
+    └── useLogStream.ts  # Log entry management
 ```
 
 ## License

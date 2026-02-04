@@ -247,14 +247,9 @@ cd "${workdir}"
 "${this.config.opencode.bin}" --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" --port 0 --prompt "$(cat '${promptFile}')"
 exit_code=$?
 echo ""
-if [[ $exit_code -eq 0 ]]; then
-  echo "Task completed. Window closing in 3s..."
-  sleep 3
-else
-  echo "Exit code: $exit_code. Press Enter to close."
-  read
-fi
-exit 0
+echo "Task Complete (exit: $exit_code)"
+# Exit immediately so window closes and monitoring can detect completion
+exit $exit_code
 `;
     await Bun.write(runnerScript, script);
     await Bun.$`chmod +x ${runnerScript}`;
@@ -323,33 +318,66 @@ cd "${workdir}"
 ${opencodeCmd}
 exit_code=$?
 echo ""
-if [[ $exit_code -eq 0 ]]; then
-  echo "Task completed. Pane closing in 3s..."
-  sleep 3
-else
-  echo "Exit code: $exit_code. Press Enter to close."
-  read
-fi
-exit 0
+echo "Task Complete (exit: $exit_code)"
+# Exit immediately so pane closes and monitoring can detect completion
+exit $exit_code
 `;
     await Bun.write(runnerScript, script);
     await Bun.$`chmod +x ${runnerScript}`;
 
-    // Split existing pane horizontally
-    const splitCmd = targetPane
-      ? Bun.$`tmux split-window -t ${targetPane} -h -d -P -F '#{pane_id}' ${runnerScript}`
-      : Bun.$`tmux split-window -h -d -P -F '#{pane_id}' ${runnerScript}`;
+    // Verify target pane exists before splitting (prevents race condition)
+    if (targetPane) {
+      const paneExists = await this.waitForPaneReady(targetPane, 3000);
+      if (!paneExists) {
+        throw new Error(`Target pane ${targetPane} not ready for split`);
+      }
+    }
 
-    const paneIdResult = await splitCmd.text();
-    const paneId = paneIdResult.trim();
+    // Split existing pane horizontally with retry logic
+    let paneId: string | null = null;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const splitCmd = targetPane
+          ? Bun.$`tmux split-window -t ${targetPane} -h -d -P -F '#{pane_id}' ${runnerScript}`
+          : Bun.$`tmux split-window -h -d -P -F '#{pane_id}' ${runnerScript}`;
 
-    // Wait for process to start
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+        const paneIdResult = await splitCmd.text();
+        paneId = paneIdResult.trim();
+        
+        if (paneId && paneId.startsWith('%')) {
+          break; // Success
+        }
+      } catch (error) {
+        lastError = error as Error;
+        if (isDebugEnabled()) {
+          console.log(`[OpencodeExecutor] Split attempt ${attempt + 1} failed:`, error);
+        }
+        // Wait before retry with exponential backoff
+        await Bun.sleep(500 * (attempt + 1));
+      }
+    }
 
-    // Get PID
-    const panePidResult =
-      await Bun.$`tmux list-panes -F '#{pane_id} #{pane_pid}' | grep "^${paneId} "`.text();
-    const pid = parseInt(panePidResult.split(" ")[1]?.trim() ?? "0", 10);
+    if (!paneId || !paneId.startsWith('%')) {
+      throw lastError ?? new Error("Failed to create dashboard pane after 3 attempts");
+    }
+
+    // Wait for pane to be fully ready
+    await Bun.sleep(500);
+
+    // Get PID with retry
+    let pid = 0;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const panePidResult =
+          await Bun.$`tmux list-panes -F '#{pane_id} #{pane_pid}' | grep "^${paneId} "`.text();
+        pid = parseInt(panePidResult.split(" ")[1]?.trim() ?? "0", 10);
+        if (pid > 0) break;
+      } catch {
+        await Bun.sleep(300);
+      }
+    }
 
     // Set pane title
     const shortTitle =
@@ -368,6 +396,28 @@ exit 0
       paneId,
       promptFile,
     };
+  }
+
+  /**
+   * Wait for a tmux pane to be ready (exists and accessible).
+   */
+  private async waitForPaneReady(paneId: string, timeoutMs: number): Promise<boolean> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const result = await Bun.$`tmux list-panes -a -F '#{pane_id}'`.text();
+        const panes = result.trim().split('\n');
+        if (panes.includes(paneId)) {
+          return true;
+        }
+      } catch {
+        // tmux command failed, keep trying
+      }
+      await Bun.sleep(100);
+    }
+    
+    return false;
   }
 
   // ========================================

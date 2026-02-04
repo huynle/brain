@@ -56,4 +56,6 @@ export interface TUIConfig {
  */
 export interface AppProps {
   config: TUIConfig;
+  /** Callback to receive the addLog function for external log integration */
+  onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
 }

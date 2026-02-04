@@ -322,9 +322,14 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
     // Start the runner
     await runner.start();
 
-    // If in foreground mode, keep running
-    if (options.foreground || mode === "dashboard") {
-      logger.info("Runner started in foreground mode. Press Ctrl+C to stop.");
+    // If in foreground or TUI mode, keep running
+    // TUI mode runs in the main terminal and waits for user to quit
+    if (options.foreground || mode === "dashboard" || mode === "tui") {
+      if (mode === "tui") {
+        logger.info("Runner started with Ink TUI. Press 'q' to quit.");
+      } else {
+        logger.info("Runner started in foreground mode. Press Ctrl+C to stop.");
+      }
       // Keep the process alive
       await new Promise(() => {}); // Never resolves - process runs until signal
     }

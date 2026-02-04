@@ -16,7 +16,7 @@ import type {
   RunnerEvent,
   EventHandler,
 } from "./types";
-import type { ResolvedTask } from "../core/types";
+import type { ResolvedTask, EntryStatus } from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
 import { ApiClient, getApiClient } from "./api-client";
 import { ProcessManager, getProcessManager, CompletionStatus } from "./process-manager";
@@ -25,6 +25,8 @@ import { OpencodeExecutor, getOpencodeExecutor } from "./opencode-executor";
 import { SignalHandler, setupSignalHandler } from "./signals";
 import { getLogger } from "./logger";
 import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
+import { startDashboard, type DashboardHandle } from "./tui";
+import type { LogEntry } from "./tui/types";
 
 // =============================================================================
 // Types
@@ -65,6 +67,8 @@ export class TaskRunner {
   private readonly executor: OpencodeExecutor;
   private signalHandler: SignalHandler | null = null;
   private tmuxManager: TmuxManager | null = null;
+  private tuiDashboard: DashboardHandle | null = null;
+  private tuiAddLog: ((entry: Omit<LogEntry, 'timestamp'>) => void) | null = null;
 
   // State
   private status: RunnerStatus = "idle";
@@ -72,6 +76,9 @@ export class TaskRunner {
   private stats: RunnerStats = { completed: 0, failed: 0, totalRuntime: 0 };
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private isPolling = false;
+
+  // TUI mode task tracking (tasks spawned in tmux windows without proc handles)
+  private tuiTasks: Map<string, RunningTask> = new Map();
 
   // Event handling
   private eventHandlers: EventHandler[] = [];
@@ -165,7 +172,7 @@ export class TaskRunner {
       await this.sleep(100);
     }
 
-    // Kill all running tasks
+    // Kill all running tasks (from processManager)
     if (this.processManager.runningCount() > 0) {
       this.logger.info("Killing running tasks", {
         count: this.processManager.runningCount(),
@@ -173,7 +180,23 @@ export class TaskRunner {
       await this.processManager.killAll();
     }
 
-    // Cleanup dashboard if in dashboard mode
+    // Clean up TUI mode tasks (tmux windows)
+    if (this.tuiTasks.size > 0) {
+      this.logger.info("Cleaning up TUI task windows", {
+        count: this.tuiTasks.size,
+      });
+      for (const task of this.tuiTasks.values()) {
+        await this.cleanupTaskTmux(task);
+      }
+      this.tuiTasks.clear();
+    }
+
+    // Cleanup dashboard (either TUI or tmux)
+    if (this.tuiDashboard) {
+      this.tuiDashboard.unmount();
+      this.tuiDashboard = null;
+      this.tuiAddLog = null;
+    }
     if (this.tmuxManager) {
       await this.tmuxManager.cleanup();
       this.tmuxManager = null;
@@ -223,12 +246,18 @@ export class TaskRunner {
    * Get current runner status.
    */
   getStatus(): RunnerStatusInfo {
+    // Combine processManager tasks with TUI tasks
+    const allRunningTasks = [
+      ...this.processManager.getAll().map((info) => info.task),
+      ...Array.from(this.tuiTasks.values()),
+    ];
+    
     return {
       status: this.status,
       projectId: this.projectId,
       runnerId: this.runnerId,
       startedAt: this.startedAt,
-      runningTasks: this.processManager.getAll().map((info) => info.task),
+      runningTasks: allRunningTasks,
       stats: { ...this.stats },
     };
   }
@@ -298,8 +327,8 @@ export class TaskRunner {
       // Step 1: Check completion of running tasks
       await this.checkRunningTasks();
 
-      // Step 2: Check if at max parallel capacity
-      const runningCount = this.processManager.runningCount();
+      // Step 2: Check if at max parallel capacity (include TUI tasks)
+      const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
       if (runningCount >= this.config.maxParallel) {
         if (isDebugEnabled()) {
           this.logger.debug("At max parallel capacity", {
@@ -313,10 +342,11 @@ export class TaskRunner {
       // Step 3: Get ready tasks
       const readyTasks = await this.apiClient.getReadyTasks(this.projectId);
 
-      // Step 4: Filter out already running tasks
-      const runningIds = new Set(
-        this.processManager.getAll().map((info) => info.task.id)
-      );
+      // Step 4: Filter out already running tasks (from both processManager and tuiTasks)
+      const runningIds = new Set([
+        ...this.processManager.getAll().map((info) => info.task.id),
+        ...Array.from(this.tuiTasks.keys()),
+      ]);
       const availableTasks = readyTasks.filter(
         (task) => !runningIds.has(task.id)
       );
@@ -328,7 +358,7 @@ export class TaskRunner {
         this.emitEvent({
           type: "poll_complete",
           readyCount: 0,
-          runningCount: this.processManager.runningCount(),
+          runningCount,
         });
         return;
       }
@@ -345,10 +375,11 @@ export class TaskRunner {
       this.saveState();
 
       // Emit poll complete event
+      const totalRunning = this.processManager.runningCount() + this.tuiTasks.size;
       this.emitEvent({
         type: "poll_complete",
         readyCount: availableTasks.length,
-        runningCount: this.processManager.runningCount(),
+        runningCount: totalRunning,
       });
     } catch (error) {
       this.logger.error("Poll error", { error: String(error) });
@@ -356,8 +387,8 @@ export class TaskRunner {
       this.isPolling = false;
       // Note: status could be changed to "stopped" by stop() during await operations
       if ((this.status as string) !== "stopped") {
-        this.status =
-          this.processManager.runningCount() > 0 ? "processing" : "polling";
+        const totalRunning = this.processManager.runningCount() + this.tuiTasks.size;
+        this.status = totalRunning > 0 ? "processing" : "polling";
       }
     }
   }
@@ -422,9 +453,12 @@ export class TaskRunner {
         workdir: this.executor.resolveWorkdir(task),
       };
 
-      // Only add if we have a direct process handle
+      // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
       if (result.proc) {
         this.processManager.add(task.id, runningTask, result.proc);
+      } else if (result.windowName) {
+        // TUI mode: track separately since we can't get proc handle
+        this.tuiTasks.set(task.id, runningTask);
       }
 
       this.logger.info("Task started", {
@@ -432,6 +466,7 @@ export class TaskRunner {
         title: task.title,
         pid: result.pid,
       });
+      this.tuiLog('info', `Task started: ${task.title}`, task.id);
 
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
@@ -494,6 +529,44 @@ export class TaskRunner {
         await this.handleTaskCompletion(info.task.id, status);
       }
     }
+
+    // Also check TUI mode tasks (tracked separately)
+    await this.checkTuiTasks();
+  }
+
+  /**
+   * Check TUI mode tasks for completion.
+   * These are tasks spawned in tmux windows without direct proc handles.
+   * We poll the brain API to detect when they complete.
+   */
+  private async checkTuiTasks(): Promise<void> {
+    for (const [taskId, task] of this.tuiTasks) {
+      try {
+        // Check task status from brain API
+        const encodedPath = encodeURIComponent(task.path);
+        const response = await fetch(
+          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
+        );
+        
+        if (!response.ok) continue;
+        
+        const entry = await response.json();
+        const status = entry.status as EntryStatus;
+
+        if (status === "completed" || status === "blocked") {
+          const completionStatus = status === "completed" 
+            ? CompletionStatus.Completed 
+            : CompletionStatus.Blocked;
+          
+          await this.handleTuiTaskCompletion(taskId, task, completionStatus);
+        }
+      } catch (error) {
+        this.logger.debug("Failed to check TUI task status", {
+          taskId,
+          error: String(error),
+        });
+      }
+    }
   }
 
   private async handleTaskCompletion(
@@ -519,6 +592,7 @@ export class TaskRunner {
         title: info.task.title,
         duration: result.duration,
       });
+      this.tuiLog('info', `Task completed: ${info.task.title} (${Math.round(result.duration / 1000)}s)`, taskId);
     } else {
       this.stats.failed++;
       this.emitEvent({ type: "task_failed", result });
@@ -528,6 +602,7 @@ export class TaskRunner {
         status: result.status,
         exitCode: result.exitCode,
       });
+      this.tuiLog('error', `Task failed: ${info.task.title} (${result.status})`, taskId);
 
       // Update task status to blocked in the brain (failed tasks are marked as blocked)
       try {
@@ -567,6 +642,77 @@ export class TaskRunner {
 
     // Remove from process manager
     this.processManager.remove(taskId);
+
+    // Save state
+    this.saveState();
+
+    return result;
+  }
+
+  /**
+   * Handle completion for TUI mode tasks.
+   * These are tracked separately from processManager since we can't get proc handles.
+   */
+  private async handleTuiTaskCompletion(
+    taskId: string,
+    task: RunningTask,
+    status: CompletionStatus
+  ): Promise<TaskResult | null> {
+    const completedAt = new Date().toISOString();
+    const startedAt = task.startedAt;
+    const duration =
+      new Date(completedAt).getTime() - new Date(startedAt).getTime();
+
+    // Create result
+    const result: TaskResult = {
+      taskId,
+      status: status === CompletionStatus.Completed ? "completed" : "blocked",
+      startedAt,
+      completedAt,
+      duration,
+    };
+
+    // Update stats
+    if (status === CompletionStatus.Completed) {
+      this.stats.completed++;
+      this.emitEvent({ type: "task_completed", result });
+      this.logger.info("TUI task completed", {
+        taskId,
+        title: task.title,
+        duration,
+      });
+      this.tuiLog('info', `Task completed: ${task.title} (${Math.round(duration / 1000)}s)`, taskId);
+    } else {
+      this.stats.failed++;
+      this.emitEvent({ type: "task_failed", result });
+      this.logger.warn("TUI task failed", {
+        taskId,
+        title: task.title,
+        status: result.status,
+      });
+      this.tuiLog('error', `Task failed: ${task.title} (${result.status})`, taskId);
+    }
+
+    this.stats.totalRuntime += duration;
+
+    // Release claim
+    try {
+      await this.apiClient.releaseTask(this.projectId, taskId);
+    } catch (error) {
+      this.logger.error("Failed to release TUI task", {
+        taskId,
+        error: String(error),
+      });
+    }
+
+    // Cleanup executor files
+    await this.executor.cleanup(taskId, this.projectId);
+
+    // Clean up tmux window
+    await this.cleanupTaskTmux(task);
+
+    // Remove from TUI tasks tracking
+    this.tuiTasks.delete(taskId);
 
     // Save state
     this.saveState();
@@ -658,6 +804,51 @@ export class TaskRunner {
   // ========================================
 
   private async initializeDashboard(): Promise<void> {
+    // Use Ink TUI for "tui" mode, tmux bash dashboard for "dashboard" mode
+    if (this.mode === "tui") {
+      await this.initializeInkTui();
+    } else {
+      await this.initializeTmuxDashboard();
+    }
+  }
+
+  /**
+   * Initialize the new Ink-based TUI dashboard.
+   * Runs in the main terminal, not in tmux panes.
+   */
+  private async initializeInkTui(): Promise<void> {
+    try {
+      this.tuiDashboard = startDashboard({
+        projectId: this.projectId,
+        apiUrl: this.config.brainApiUrl,
+        pollInterval: this.config.pollInterval * 1000, // Convert to ms
+        maxLogs: 100,
+        onExit: () => {
+          this.logger.info("TUI dashboard exited");
+          // Trigger graceful shutdown when user quits TUI
+          this.stop();
+        },
+        onLogCallback: (addLog) => {
+          // Store the addLog function for pushing logs to TUI
+          this.tuiAddLog = addLog;
+          this.logger.info("TUI log callback registered");
+        },
+      });
+
+      this.logger.info("Ink TUI dashboard initialized", { projectId: this.projectId });
+    } catch (error) {
+      this.logger.warn("Failed to start Ink TUI, continuing without dashboard", {
+        error: String(error),
+      });
+      this.tuiDashboard = null;
+    }
+  }
+
+  /**
+   * Initialize the legacy tmux-based bash dashboard.
+   * Creates panes with bash/jq scripts for task list rendering.
+   */
+  private async initializeTmuxDashboard(): Promise<void> {
     this.tmuxManager = getTmuxManager();
 
     try {
@@ -666,9 +857,9 @@ export class TaskRunner {
       // Start periodic status updates (every 5 seconds)
       this.startDashboardStatusUpdates();
 
-      this.logger.info("Dashboard initialized", { projectId: this.projectId });
+      this.logger.info("Tmux dashboard initialized", { projectId: this.projectId });
     } catch (error) {
-      this.logger.warn("Failed to create dashboard, continuing without it", {
+      this.logger.warn("Failed to create tmux dashboard, continuing without it", {
         error: String(error),
       });
       this.tmuxManager = null;
@@ -680,6 +871,15 @@ export class TaskRunner {
 
     // Start with the TmuxManager's built-in status updates
     this.tmuxManager.startStatusUpdates(5000);
+
+    // Start pane monitoring to detect when OpenCode finishes
+    this.tmuxManager.startPaneMonitoring(2000);
+
+    // Register callback for when panes close (OpenCode completed)
+    this.tmuxManager.onPaneClosed(async (taskId: string, paneId: string) => {
+      this.logger.info("Task pane closed", { taskId, paneId });
+      await this.handleDashboardPaneClosed(taskId);
+    });
 
     // Set up an event handler to update status on each poll
     this.on(async (event) => {
@@ -745,6 +945,101 @@ export class TaskRunner {
     if (!this.tmuxManager) return;
 
     await this.tmuxManager.removeTaskPane(taskId);
+  }
+
+  /**
+   * Handle when a dashboard pane closes (detected by TmuxManager).
+   * This is how we detect task completion in dashboard mode since we don't
+   * have direct process handles.
+   */
+  private async handleDashboardPaneClosed(taskId: string): Promise<void> {
+    // Check if task is still tracked as running (could have been cleaned up already)
+    const paneInfo = this.tmuxManager?.getTaskPane(taskId);
+    
+    // Get task status from the brain API to determine completion status
+    let completionStatus: CompletionStatus = CompletionStatus.Completed;
+    
+    // Find the task path from our tracked panes or running tasks
+    const runningInfo = this.processManager.get(taskId);
+    const taskPath = runningInfo?.task.path;
+    
+    if (taskPath) {
+      try {
+        const encodedPath = encodeURIComponent(taskPath);
+        const response = await fetch(
+          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
+        );
+        if (response.ok) {
+          const entry = await response.json();
+          const status = entry.status as EntryStatus;
+          
+          if (status === "completed") {
+            completionStatus = CompletionStatus.Completed;
+          } else if (status === "blocked") {
+            completionStatus = CompletionStatus.Blocked;
+          } else if (status === "in_progress") {
+            // Process exited while still in_progress - likely crashed
+            completionStatus = CompletionStatus.Crashed;
+          }
+        }
+      } catch (error) {
+        this.logger.debug("Failed to check task status after pane closed", {
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+
+    // Handle completion via the standard path if we have process info
+    if (runningInfo) {
+      await this.handleTaskCompletion(taskId, completionStatus);
+    } else {
+      // Task wasn't in processManager (common in dashboard mode)
+      // Just update stats and emit event
+      if (completionStatus === CompletionStatus.Completed) {
+        this.stats.completed++;
+        this.logger.info("Dashboard task completed", { taskId });
+        this.emitEvent({
+          type: "task_completed",
+          result: {
+            taskId,
+            status: "completed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            duration: 0,
+          },
+        });
+      } else {
+        this.stats.failed++;
+        this.logger.warn("Dashboard task failed", { taskId, status: completionStatus });
+        this.emitEvent({
+          type: "task_failed",
+          result: {
+            taskId,
+            status: completionStatus === CompletionStatus.Blocked ? "blocked" : "crashed",
+            startedAt: new Date().toISOString(),
+            completedAt: new Date().toISOString(),
+            duration: 0,
+          },
+        });
+      }
+
+      // Release the claim
+      try {
+        await this.apiClient.releaseTask(this.projectId, taskId);
+      } catch (error) {
+        this.logger.error("Failed to release task after pane closed", {
+          taskId,
+          error: String(error),
+        });
+      }
+
+      // Cleanup executor files
+      await this.executor.cleanup(taskId, this.projectId);
+    }
+
+    // Save state
+    this.saveState();
   }
 
   /**
@@ -829,6 +1124,20 @@ export class TaskRunner {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Push a log entry to the TUI dashboard (if active).
+   * This allows runner logs to appear in the TUI log panel.
+   */
+  private tuiLog(
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    taskId?: string
+  ): void {
+    if (this.tuiAddLog) {
+      this.tuiAddLog({ level, message, taskId });
+    }
   }
 
   /**

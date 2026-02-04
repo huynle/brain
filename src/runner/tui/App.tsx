@@ -29,7 +29,7 @@ import type { AppProps } from './types';
 
 type FocusedPanel = 'tasks' | 'logs';
 
-export function App({ config }: AppProps): React.ReactElement {
+export function App({ config, onLogCallback }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
   // State
@@ -45,6 +45,13 @@ export function App({ config }: AppProps): React.ReactElement {
     enabled: true,
   });
   const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs });
+
+  // Expose addLog to parent for external log integration
+  useEffect(() => {
+    if (onLogCallback) {
+      onLogCallback(addLog);
+    }
+  }, [onLogCallback, addLog]);
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;

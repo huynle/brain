@@ -1,0 +1,179 @@
+#!/usr/bin/env bun
+/**
+ * Main entry point for the Ink TUI dashboard
+ * 
+ * Usage: bun run src/runner/tui/index.tsx [options]
+ * 
+ * Options:
+ *   --api-url <url>       Brain API URL (default: http://localhost:3000)
+ *   --project <name>      Project name (default: default)
+ *   --poll-interval <ms>  Polling interval in ms (default: 5000)
+ * 
+ * Programmatic usage:
+ *   import { startDashboard } from './tui';
+ *   const dashboard = startDashboard({ projectId: 'my-project', apiUrl: 'http://localhost:3000' });
+ *   // Later: dashboard.unmount();
+ */
+
+import React from 'react';
+import { render } from 'ink';
+import { App } from './App';
+import type { TUIConfig } from './types';
+import type { LogEntry } from './types';
+
+// =============================================================================
+// Types for programmatic API
+// =============================================================================
+
+export interface DashboardOptions {
+  /** Project ID to display tasks for */
+  projectId: string;
+  /** Brain API URL (default: http://localhost:3000) */
+  apiUrl?: string;
+  /** Polling interval in ms (default: 5000) */
+  pollInterval?: number;
+  /** Maximum log entries to keep (default: 100) */
+  maxLogs?: number;
+  /** Callback when dashboard exits (q pressed or Ctrl+C) */
+  onExit?: () => void;
+  /** Callback to receive log additions from external sources */
+  onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
+}
+
+export interface DashboardHandle {
+  /** Unmount the TUI and clean up */
+  unmount: () => void;
+  /** Wait for the dashboard to exit */
+  waitUntilExit: () => Promise<void>;
+}
+
+// =============================================================================
+// Programmatic API for TaskRunner integration
+// =============================================================================
+
+/**
+ * Start the Ink TUI dashboard programmatically.
+ * 
+ * This is the main integration point for TaskRunner to use instead of
+ * the bash-based tmux dashboard.
+ * 
+ * @param options - Dashboard configuration
+ * @returns Handle to control the dashboard
+ * 
+ * @example
+ * ```typescript
+ * const dashboard = startDashboard({
+ *   projectId: 'my-project',
+ *   apiUrl: 'http://localhost:3000',
+ *   onExit: () => console.log('Dashboard closed'),
+ *   onLogCallback: (addLog) => {
+ *     // Store addLog for later use
+ *     myLogger.setTuiCallback(addLog);
+ *   }
+ * });
+ * 
+ * // Later, when shutting down:
+ * dashboard.unmount();
+ * ```
+ */
+export function startDashboard(options: DashboardOptions): DashboardHandle {
+  const config: TUIConfig = {
+    apiUrl: options.apiUrl ?? 'http://localhost:3000',
+    project: options.projectId,
+    pollInterval: options.pollInterval ?? 5000,
+    maxLogs: options.maxLogs ?? 100,
+  };
+
+  // Render the Ink app
+  const { unmount, waitUntilExit } = render(
+    <App 
+      config={config} 
+      onLogCallback={options.onLogCallback}
+    />
+  );
+
+  // Set up exit callback
+  if (options.onExit) {
+    waitUntilExit().then(options.onExit);
+  }
+
+  return { unmount, waitUntilExit };
+}
+
+// =============================================================================
+// CLI Entry Point
+// =============================================================================
+
+// Parse command line arguments
+function parseArgs(): TUIConfig {
+  const args = process.argv.slice(2);
+  const config: TUIConfig = {
+    apiUrl: 'http://localhost:3000',
+    project: 'default',
+    pollInterval: 5000,
+    maxLogs: 100,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    switch (args[i]) {
+      case '--api-url':
+        config.apiUrl = args[++i] || config.apiUrl;
+        break;
+      case '--project':
+        config.project = args[++i] || config.project;
+        break;
+      case '--poll-interval':
+        config.pollInterval = parseInt(args[++i], 10) || config.pollInterval;
+        break;
+      case '--max-logs':
+        config.maxLogs = parseInt(args[++i], 10) || config.maxLogs;
+        break;
+      case '--help':
+      case '-h':
+        console.log(`
+Brain Task Runner TUI
+
+Usage: bun run src/runner/tui/index.tsx [options]
+
+Options:
+  --api-url <url>       Brain API URL (default: http://localhost:3000)
+  --project <name>      Project name (default: default)
+  --poll-interval <ms>  Polling interval in ms (default: 5000)
+  --max-logs <n>        Maximum log entries to keep (default: 100)
+  --help, -h            Show this help message
+`);
+        process.exit(0);
+    }
+  }
+
+  return config;
+}
+
+// Main entry point for CLI usage
+function main() {
+  const config = parseArgs();
+
+  console.log('Starting Brain Task Runner TUI...');
+  console.log(`API URL: ${config.apiUrl}`);
+  console.log(`Project: ${config.project}`);
+  console.log(`Poll Interval: ${config.pollInterval}ms`);
+  console.log('');
+
+  // Render the Ink app
+  const { waitUntilExit } = render(<App config={config} />);
+
+  // Wait for the app to exit
+  waitUntilExit().then(() => {
+    console.log('Goodbye!');
+    process.exit(0);
+  });
+}
+
+// Run if executed directly
+if (import.meta.main) {
+  main();
+}
+
+// Export for testing and programmatic use
+export { App, startDashboard as default };
+export type { TUIConfig, LogEntry };

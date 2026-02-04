@@ -57,14 +57,12 @@ export class TaskService {
     // Ensure zk index is up to date
     await execZk(["index", "--quiet"]);
 
-    // Query for task entries
+    // Query for task entries (directory path is sufficient, no tag filter needed)
     const result = await execZk([
       "list",
       "--format",
       "json",
       "--quiet",
-      "--tag",
-      "task",
       projectDir,
     ]);
 

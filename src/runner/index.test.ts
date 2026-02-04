@@ -101,6 +101,16 @@ describe("CLI", () => {
       expect(result.options.dryRun).toBe(true);
     });
 
+    it("should parse include option (repeatable)", () => {
+      const result = parseArgs(argv("start", "-i", "prod-*", "-i", "brain-*"));
+      expect(result.options.include).toEqual(["prod-*", "brain-*"]);
+    });
+
+    it("should parse --include option (repeatable)", () => {
+      const result = parseArgs(argv("start", "--include", "prod-*", "--include", "brain-*"));
+      expect(result.options.include).toEqual(["prod-*", "brain-*"]);
+    });
+
     it("should parse exclude option (repeatable)", () => {
       const result = parseArgs(argv("start", "-e", "test-*", "-e", "dev-*"));
       expect(result.options.exclude).toEqual(["test-*", "dev-*"]);

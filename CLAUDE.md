@@ -113,3 +113,80 @@ bun run src/runner/index.ts logs -f
 - Tests: `*.test.ts` or `*.test.tsx` alongside source
 - Types: `types.ts` in each major directory
 - Entry points: `index.ts`
+
+## Multi-Project Mode
+
+The task runner supports monitoring multiple projects simultaneously with a shared execution pool.
+
+### Basic Usage
+
+```bash
+# Monitor all projects
+bun run src/runner/index.ts start all --tui
+
+# Filter with glob patterns
+bun run src/runner/index.ts start all --include 'prod-*' --exclude 'prod-legacy'
+bun run src/runner/index.ts start all -i 'brain-*' -e 'test-*'
+
+# List all available projects
+curl http://localhost:3333/api/v1/tasks | jq '.projects'
+```
+
+### TUI Keyboard Shortcuts (Multi-Project Mode)
+
+| Key | Action |
+|-----|--------|
+| `1-9` | Jump to project tab 1-9 |
+| `[` | Previous project tab |
+| `]` | Next project tab |
+| `j/k` | Navigate tasks |
+| `Tab` | Switch panel focus |
+| `r` | Refresh all projects |
+| `q` | Quit |
+
+### Architecture
+
+- **Shared execution pool**: `--max-parallel` applies across ALL projects
+- **Parallel polling**: All projects fetched simultaneously via `useMultiProjectPoller`
+- **Composite task keys**: Tasks tracked as `projectId:taskId` internally
+- **Project tabs**: First tab shows "All" aggregate, then individual project tabs
+
+### Key Components
+
+```
+Task Runner Multi-Project Architecture
+
+TaskRunner
+├── projects: string[]              # List of projects to poll
+├── isMultiProject: boolean         # Enables multi-project behavior
+└── Shared ProcessManager           # Single pool for all projects
+
+TUI (App.tsx)
+├── useMultiProjectPoller           # Fetches all projects in parallel
+│   ├── tasksByProject: Map         # Tasks keyed by project
+│   ├── statsByProject: Map         # Stats keyed by project
+│   └── aggregateStats              # Combined stats for "All" view
+├── StatusBar                       # Shows project tabs with task counts
+└── activeProject state             # Current tab selection
+```
+
+### CLI Options for Multi-Project
+
+```bash
+-i, --include PATTERN    Include projects matching glob (repeatable)
+-e, --exclude PATTERN    Exclude projects matching glob (repeatable)
+-p, --max-parallel N     Max concurrent tasks across ALL projects
+```
+
+### Filter Examples
+
+```bash
+# Only production projects
+bun run src/runner/index.ts start all -i 'prod-*'
+
+# All except test projects
+bun run src/runner/index.ts start all -e 'test-*' -e '*-staging'
+
+# Brain projects except legacy
+bun run src/runner/index.ts start all -i 'brain-*' -e 'brain-legacy'
+```

@@ -26,8 +26,10 @@ import type { LogEntry } from './types';
 // =============================================================================
 
 export interface DashboardOptions {
-  /** Project ID to display tasks for */
-  projectId: string;
+  /** Project ID to display tasks for (legacy single project) */
+  projectId?: string;
+  /** Multiple project IDs to display tasks for (Phase 2) */
+  projects?: string[];
   /** Brain API URL (default: http://localhost:3000) */
   apiUrl?: string;
   /** Polling interval in ms (default: 5000) */
@@ -79,9 +81,15 @@ export interface DashboardHandle {
  * ```
  */
 export function startDashboard(options: DashboardOptions): DashboardHandle {
+  // Resolve projects: prefer projects array, fall back to single projectId
+  const projects = options.projects ?? (options.projectId ? [options.projectId] : ['default']);
+  const isMultiProject = projects.length > 1;
+  
   const config: TUIConfig = {
     apiUrl: options.apiUrl ?? 'http://localhost:3000',
-    project: options.projectId,
+    project: projects[0], // Legacy single project (first project for backward compatibility)
+    projects: projects,   // Full project list
+    activeProject: isMultiProject ? 'all' : projects[0], // Default to 'all' in multi-project mode
     pollInterval: options.pollInterval ?? 5000,
     maxLogs: options.maxLogs ?? 100,
   };

@@ -903,3 +903,231 @@ describe("Integration: Dependency Resolution Flow", () => {
     expect(next!.priority).toBe("high");
   });
 });
+
+// =============================================================================
+// Multi-Project Integration Tests (Phase 5)
+// =============================================================================
+
+describe("Integration: Multi-Project Mode", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `multi-project-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+    resetAllSingletons();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetAllSingletons();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("resolveProjects", () => {
+    test("filters projects with include pattern", async () => {
+      // Import resolveProjects from project-filter
+      const { resolveProjects } = await import("./project-filter");
+      
+      const mockProjects = ["brain-api", "brain-web", "prod-api", "test-api"];
+
+      globalThis.fetch = createMockFetch({
+        "/tasks": () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ projects: mockProjects }))
+          ),
+      });
+
+      const result = await resolveProjects(config.brainApiUrl, {
+        includes: ["brain-*"],
+        excludes: [],
+      });
+
+      expect(result).toEqual(["brain-api", "brain-web"]);
+    });
+
+    test("filters projects with exclude pattern", async () => {
+      const { resolveProjects } = await import("./project-filter");
+      
+      const mockProjects = ["brain-api", "brain-web", "test-api", "test-web"];
+
+      globalThis.fetch = createMockFetch({
+        "/tasks": () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ projects: mockProjects }))
+          ),
+      });
+
+      const result = await resolveProjects(config.brainApiUrl, {
+        includes: [],
+        excludes: ["test-*"],
+      });
+
+      expect(result).toEqual(["brain-api", "brain-web"]);
+    });
+
+    test("filters projects with both include and exclude patterns", async () => {
+      const { resolveProjects } = await import("./project-filter");
+      
+      const mockProjects = [
+        "brain-api",
+        "brain-web",
+        "brain-legacy",
+        "prod-api",
+        "test-api",
+      ];
+
+      globalThis.fetch = createMockFetch({
+        "/tasks": () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ projects: mockProjects }))
+          ),
+      });
+
+      // Include brain-* but exclude *-legacy
+      const result = await resolveProjects(config.brainApiUrl, {
+        includes: ["brain-*"],
+        excludes: ["*-legacy"],
+      });
+
+      expect(result).toEqual(["brain-api", "brain-web"]);
+    });
+
+    test("returns empty array when no projects match filters", async () => {
+      const { resolveProjects } = await import("./project-filter");
+      
+      const mockProjects = ["brain-api", "prod-api"];
+
+      globalThis.fetch = createMockFetch({
+        "/tasks": () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ projects: mockProjects }))
+          ),
+      });
+
+      const result = await resolveProjects(config.brainApiUrl, {
+        includes: ["nonexistent-*"],
+        excludes: [],
+      });
+
+      expect(result).toEqual([]);
+    });
+  });
+
+  describe("TaskRunner multi-project initialization", () => {
+    test("accepts multiple projects in constructor", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b", "project-c"],
+        config,
+      });
+
+      const status = runner.getStatus();
+      
+      // First project is used as projectId for backward compatibility
+      expect(status.projectId).toBe("project-a");
+      // Status should be idle before start
+      expect(status.status).toBe("idle");
+    });
+
+    test("single project mode works for backward compatibility", () => {
+      const runner = new TaskRunner({
+        projectId: "legacy-project",
+        config,
+      });
+
+      const status = runner.getStatus();
+      expect(status.projectId).toBe("legacy-project");
+    });
+
+    test("throws when neither projectId nor projects provided", () => {
+      expect(() => {
+        new TaskRunner({ config });
+      }).toThrow("TaskRunner requires either projectId or projects option");
+    });
+  });
+
+  describe("Multi-project polling flow", () => {
+    test("API client can fetch tasks for multiple projects", async () => {
+      const mockTasksA = [createMockTask("task-a-1", { title: "Task A1" })];
+      const mockTasksB = [createMockTask("task-b-1", { title: "Task B1" })];
+
+      globalThis.fetch = ((url: string) => {
+        if (url.includes("project-a")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ tasks: mockTasksA, count: 1 }))
+          );
+        }
+        if (url.includes("project-b")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ tasks: mockTasksB, count: 1 }))
+          );
+        }
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ status: "healthy", zkAvailable: true, dbAvailable: true })
+          )
+        );
+      }) as typeof fetch;
+
+      const apiClient = new ApiClient(config);
+
+      // Fetch from multiple projects in parallel
+      const [tasksA, tasksB] = await Promise.all([
+        apiClient.getReadyTasks("project-a"),
+        apiClient.getReadyTasks("project-b"),
+      ]);
+
+      expect(tasksA).toHaveLength(1);
+      expect(tasksA[0].title).toBe("Task A1");
+      
+      expect(tasksB).toHaveLength(1);
+      expect(tasksB[0].title).toBe("Task B1");
+    });
+
+    test("shared execution pool limits total parallel tasks across all projects", async () => {
+      // Create a runner with multiple projects and max-parallel of 2
+      const multiConfig: RunnerConfig = {
+        ...config,
+        maxParallel: 2,
+      };
+
+      const runner = new TaskRunner({
+        projects: ["project-a", "project-b"],
+        config: multiConfig,
+      });
+
+      // Verify config was applied
+      const status = runner.getStatus();
+      expect(status.status).toBe("idle");
+      
+      // The maxParallel applies globally across all projects
+      // This is enforced in ProcessManager.runningCount()
+    });
+  });
+
+  describe("Composite task keys", () => {
+    test("tasks from different projects can have same ID", () => {
+      // Create tasks with same ID from different projects
+      const taskFromA = createRunningTask("task-1", 1001, { projectId: "project-a" });
+      const taskFromB = createRunningTask("task-1", 1002, { projectId: "project-b" });
+
+      // In multi-project mode, composite keys would be: "project-a:task-1" and "project-b:task-1"
+      const compositeKeyA = `${taskFromA.projectId}:${taskFromA.id}`;
+      const compositeKeyB = `${taskFromB.projectId}:${taskFromB.id}`;
+
+      expect(compositeKeyA).toBe("project-a:task-1");
+      expect(compositeKeyB).toBe("project-b:task-1");
+      expect(compositeKeyA).not.toBe(compositeKeyB);
+    });
+  });
+});

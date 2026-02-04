@@ -166,6 +166,58 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("listProjects", () => {
+    it("returns array of project names", async () => {
+      const mockProjects = ["brain-api", "my-project", "test-project"];
+
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ projects: mockProjects, count: 3 }), {
+            status: 200,
+          })
+        )
+      );
+
+      const projects = await client.listProjects();
+
+      expect(projects).toEqual(mockProjects);
+    });
+
+    it("returns empty array when no projects", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ projects: [], count: 0 }), {
+            status: 200,
+          })
+        )
+      );
+
+      const projects = await client.listProjects();
+
+      expect(projects).toEqual([]);
+    });
+
+    it("returns empty array when projects field missing", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({}), { status: 200 })
+        )
+      );
+
+      const projects = await client.listProjects();
+
+      expect(projects).toEqual([]);
+    });
+
+    it("throws ApiError on non-ok response", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response("Server error", { status: 500 }))
+      );
+
+      await expect(client.listProjects()).rejects.toThrow(ApiError);
+    });
+  });
+
   describe("getReadyTasks", () => {
     it("returns array of ready tasks", async () => {
       const mockTasks = [

@@ -115,3 +115,18 @@ export type RunnerEvent =
   | { type: "shutdown"; reason: string };
 
 export type EventHandler = (event: RunnerEvent) => void;
+
+// =============================================================================
+// Multi-Project Types (Phase 2)
+// =============================================================================
+
+export interface MultiProjectConfig {
+  projects: string[];           // Resolved project list
+  isMultiProject: boolean;      // true when "all" was specified
+}
+
+export interface MultiProjectRunnerOptions {
+  projects: string[];
+  mode: ExecutionMode;
+  config: RunnerConfig;
+}

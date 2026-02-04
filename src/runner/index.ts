@@ -25,6 +25,7 @@ import { ApiClient, getApiClient } from "./api-client";
 import { StateManager } from "./state-manager";
 import { getLogger, type LogLevel } from "./logger";
 import { TaskRunner, getTaskRunner, resetTaskRunner } from "./task-runner";
+import { resolveProjects, type ProjectFilter } from "./project-filter";
 import type { ExecutionMode, RunnerConfig, RunnerState } from "./types";
 import type { ResolvedTask } from "../core/types";
 
@@ -54,6 +55,7 @@ interface CLIOptions {
 
   // Behavior
   dryRun: boolean;
+  include: string[];
   exclude: string[];
   noResume: boolean;
   follow: boolean;
@@ -95,6 +97,7 @@ Options:
   --agent NAME          OpenCode agent to use
   -m, --model NAME      Model to use
   --dry-run             Log actions without executing
+  -i, --include PATTERN Include project pattern (repeatable)
   -e, --exclude PATTERN Exclude project pattern (repeatable)
   --no-resume           Skip interrupted tasks
   -v, --verbose         Enable verbose logging
@@ -128,6 +131,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     agent: "",
     model: "",
     dryRun: false,
+    include: [],
     exclude: [],
     noResume: false,
     follow: false,
@@ -221,6 +225,12 @@ function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    if (arg === "-i" || arg === "--include") {
+      options.include.push(args[++i] || "");
+      i++;
+      continue;
+    }
+
     if (arg === "-e" || arg === "--exclude") {
       options.exclude.push(args[++i] || "");
       i++;
@@ -268,6 +278,37 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   const logger = getLogger();
   const config = getRunnerConfig();
 
+  // Resolve projects when 'all' is specified
+  let projects: string[];
+  if (projectId === "all") {
+    const filter: ProjectFilter = {
+      includes: options.include,
+      excludes: options.exclude,
+    };
+
+    try {
+      projects = await resolveProjects(config.brainApiUrl, filter);
+    } catch (error) {
+      logger.error("Failed to resolve projects", { error: String(error) });
+      return 1;
+    }
+
+    if (projects.length === 0) {
+      logger.error("No projects found matching filters", {
+        includes: options.include,
+        excludes: options.exclude,
+      });
+      return 1;
+    }
+
+    logger.info("Resolved projects", { count: projects.length, projects });
+  } else {
+    projects = [projectId];
+  }
+  
+  // Use first project for backward compat (state management, etc.)
+  projectId = projects[0];
+
   // Check if already running
   const stateManager = new StateManager(config.stateDir, projectId);
   if (stateManager.isPidRunning()) {
@@ -289,7 +330,9 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   }
 
   logger.info("Starting runner", {
+    projects: projects.length > 1 ? projects : undefined,
     projectId,
+    projectCount: projects.length,
     mode,
     maxParallel: options.maxParallel || config.maxParallel,
     pollInterval: options.pollInterval || config.pollInterval,
@@ -310,7 +353,8 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   // Create and start TaskRunner
   try {
     const runner = getTaskRunner({
-      projectId,
+      projects,                        // Pass all projects for multi-project support
+      projectId,                       // Legacy single project (backward compat)
       mode,
       config: { ...config, ...configOverrides },
     });

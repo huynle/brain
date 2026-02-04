@@ -33,7 +33,8 @@ import type { LogEntry } from "./tui/types";
 // =============================================================================
 
 export interface TaskRunnerOptions {
-  projectId: string;
+  projectId?: string;           // Legacy single project
+  projects?: string[];          // Multiple projects (Phase 2)
   config?: RunnerConfig;
   mode?: ExecutionMode;
 }
@@ -53,9 +54,11 @@ export interface RunnerStatusInfo {
 
 export class TaskRunner {
   // Core identity
-  private readonly projectId: string;
+  private readonly projects: string[];     // All projects to poll
+  private readonly projectId: string;      // Legacy: first project (for backward compat)
   private readonly runnerId: string;
   private readonly mode: ExecutionMode;
+  private readonly isMultiProject: boolean;
 
   // Configuration
   private readonly config: RunnerConfig;
@@ -87,7 +90,19 @@ export class TaskRunner {
   private readonly logger = getLogger();
 
   constructor(options: TaskRunnerOptions) {
-    this.projectId = options.projectId;
+    // Handle both legacy single-project and new multi-project options
+    if (options.projects && options.projects.length > 0) {
+      this.projects = options.projects;
+      this.projectId = options.projects[0]; // First project for backward compat
+      this.isMultiProject = options.projects.length > 1;
+    } else if (options.projectId) {
+      this.projects = [options.projectId];
+      this.projectId = options.projectId;
+      this.isMultiProject = false;
+    } else {
+      throw new Error("TaskRunner requires either projectId or projects option");
+    }
+    
     this.runnerId = this.generateRunnerId();
     this.mode = options.mode ?? "background";
     this.config = options.config ?? getRunnerConfig();
@@ -122,7 +137,9 @@ export class TaskRunner {
     }
 
     this.logger.info("Starting runner", {
-      projectId: this.projectId,
+      projects: this.projects,
+      projectCount: this.projects.length,
+      isMultiProject: this.isMultiProject,
       runnerId: this.runnerId,
       mode: this.mode,
       maxParallel: this.config.maxParallel,
@@ -334,6 +351,7 @@ export class TaskRunner {
       await this.checkRunningTasks();
 
       // Step 2: Check if at max parallel capacity (include TUI tasks)
+      // Note: maxParallel is SHARED across ALL projects
       const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
       if (runningCount >= this.config.maxParallel) {
         if (isDebugEnabled()) {
@@ -345,21 +363,38 @@ export class TaskRunner {
         return;
       }
 
-      // Step 3: Get ready tasks
-      const readyTasks = await this.apiClient.getReadyTasks(this.projectId);
+      // Step 3: Get ready tasks from ALL projects in parallel
+      const readyTasksResults = await Promise.allSettled(
+        this.projects.map(async (projectId) => {
+          const tasks = await this.apiClient.getReadyTasks(projectId);
+          // Tag each task with its project ID for tracking
+          return tasks.map(task => ({ ...task, _pollProjectId: projectId }));
+        })
+      );
 
-      // Step 4: Filter out already running tasks (from both processManager and tuiTasks)
-      const runningIds = new Set([
-        ...this.processManager.getAll().map((info) => info.task.id),
-        ...Array.from(this.tuiTasks.keys()),
+      // Merge ready tasks from all projects (handle partial failures)
+      const allReadyTasks: (ResolvedTask & { _pollProjectId: string })[] = [];
+      for (const result of readyTasksResults) {
+        if (result.status === 'fulfilled') {
+          allReadyTasks.push(...result.value);
+        }
+      }
+
+      // Step 4: Filter out already running tasks
+      // Use composite key "projectId:taskId" to avoid collisions across projects
+      const runningKeys = new Set([
+        ...this.processManager.getAll().map((info) => `${info.task.projectId}:${info.task.id}`),
+        ...Array.from(this.tuiTasks.values()).map((task) => `${task.projectId}:${task.id}`),
       ]);
-      const availableTasks = readyTasks.filter(
-        (task) => !runningIds.has(task.id)
+      const availableTasks = allReadyTasks.filter(
+        (task) => !runningKeys.has(`${task._pollProjectId}:${task.id}`)
       );
 
       if (availableTasks.length === 0) {
         if (isDebugEnabled()) {
-          this.logger.debug("No available tasks to start");
+          this.logger.debug("No available tasks to start", {
+            projects: this.projects.length,
+          });
         }
         this.emitEvent({
           type: "poll_complete",
@@ -369,12 +404,13 @@ export class TaskRunner {
         return;
       }
 
-      // Step 5: Start tasks up to capacity
+      // Step 5: Start tasks up to capacity (shared pool across all projects)
       const slotsAvailable = this.config.maxParallel - runningCount;
       const tasksToStart = availableTasks.slice(0, slotsAvailable);
 
       for (const task of tasksToStart) {
-        await this.claimAndSpawn(task);
+        // Use the tagged project ID for claiming/spawning
+        await this.claimAndSpawn(task, task._pollProjectId);
       }
 
       // Step 6: Save state
@@ -403,10 +439,13 @@ export class TaskRunner {
   // Task Execution
   // ========================================
 
-  private async claimAndSpawn(task: ResolvedTask): Promise<boolean> {
+  private async claimAndSpawn(task: ResolvedTask, projectId?: string): Promise<boolean> {
+    // Use provided projectId or fall back to legacy single project
+    const effectiveProjectId = projectId ?? this.projectId;
+    
     // Step 1: Claim task via API
     const claim = await this.apiClient.claimTask(
-      this.projectId,
+      effectiveProjectId,
       task.id,
       this.runnerId
     );
@@ -437,7 +476,7 @@ export class TaskRunner {
     const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
     const useTui = this.mode === "tui";
     try {
-      const result = await this.executor.spawn(task, this.projectId, {
+      const result = await this.executor.spawn(task, effectiveProjectId, {
         mode: effectiveMode,
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: false,
@@ -450,7 +489,7 @@ export class TaskRunner {
         path: task.path,
         title: task.title,
         priority: task.priority,
-        projectId: this.projectId,
+        projectId: effectiveProjectId,
         pid: result.pid,
         paneId: result.paneId,
         windowName: result.windowName,
@@ -471,8 +510,9 @@ export class TaskRunner {
         taskId: task.id,
         title: task.title,
         pid: result.pid,
+        projectId: effectiveProjectId,
       });
-      this.tuiLog('info', `Task started: ${task.title}`, task.id);
+      this.tuiLog('info', `Task started: ${task.title}`, task.id, effectiveProjectId);
 
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
@@ -486,7 +526,7 @@ export class TaskRunner {
         taskId: task.id,
         error: String(error),
       });
-      await this.apiClient.releaseTask(this.projectId, task.id);
+      await this.apiClient.releaseTask(effectiveProjectId, task.id);
       return false;
     }
   }
@@ -599,8 +639,9 @@ export class TaskRunner {
         taskId,
         title: info.task.title,
         duration: result.duration,
+        projectId: info.task.projectId,
       });
-      this.tuiLog('info', `Task completed: ${info.task.title} (${Math.round(result.duration / 1000)}s)`, taskId);
+      this.tuiLog('info', `Task completed: ${info.task.title} (${Math.round(result.duration / 1000)}s)`, taskId, info.task.projectId);
     } else {
       this.stats.failed++;
       this.emitEvent({ type: "task_failed", result });
@@ -609,8 +650,9 @@ export class TaskRunner {
         title: info.task.title,
         status: result.status,
         exitCode: result.exitCode,
+        projectId: info.task.projectId,
       });
-      this.tuiLog('error', `Task failed: ${info.task.title} (${result.status})`, taskId);
+      this.tuiLog('error', `Task failed: ${info.task.title} (${result.status})`, taskId, info.task.projectId);
 
       // Update task status to blocked in the brain (failed tasks are marked as blocked)
       try {
@@ -688,8 +730,9 @@ export class TaskRunner {
         taskId,
         title: task.title,
         duration,
+        projectId: task.projectId,
       });
-      this.tuiLog('info', `Task completed: ${task.title} (${Math.round(duration / 1000)}s)`, taskId);
+      this.tuiLog('info', `Task completed: ${task.title} (${Math.round(duration / 1000)}s)`, taskId, task.projectId);
     } else {
       this.stats.failed++;
       this.emitEvent({ type: "task_failed", result });
@@ -697,8 +740,9 @@ export class TaskRunner {
         taskId,
         title: task.title,
         status: result.status,
+        projectId: task.projectId,
       });
-      this.tuiLog('error', `Task failed: ${task.title} (${result.status})`, taskId);
+      this.tuiLog('error', `Task failed: ${task.title} (${result.status})`, taskId, task.projectId);
     }
 
     this.stats.totalRuntime += duration;
@@ -849,12 +893,14 @@ export class TaskRunner {
       });
     }
 
-    // 4. Release any claim
+    // 4. Release any claim (use task's projectId if available)
+    const taskProjectId = processInfo?.task.projectId ?? tuiTask?.projectId ?? this.projectId;
     try {
-      await this.apiClient.releaseTask(this.projectId, taskId);
+      await this.apiClient.releaseTask(taskProjectId, taskId);
     } catch (error) {
       this.logger.error("Failed to release task claim", {
         taskId,
+        projectId: taskProjectId,
         error: String(error),
       });
     }
@@ -877,7 +923,7 @@ export class TaskRunner {
     this.emitEvent({ type: "task_cancelled", taskId, taskPath });
 
     // 8. Log to TUI
-    this.tuiLog('warn', `Task cancelled: ${taskId}`, taskId);
+    this.tuiLog('warn', `Task cancelled: ${taskId}`, taskId, taskProjectId);
 
     // 9. Save state
     this.saveState();
@@ -903,7 +949,8 @@ export class TaskRunner {
   private async initializeInkTui(): Promise<void> {
     try {
       this.tuiDashboard = startDashboard({
-        projectId: this.projectId,
+        projects: this.projects,       // Pass all projects for multi-project mode
+        projectId: this.projectId,     // Legacy single project (backward compat)
         apiUrl: this.config.brainApiUrl,
         pollInterval: this.config.pollInterval * 1000, // Convert to ms
         maxLogs: 100,
@@ -920,7 +967,11 @@ export class TaskRunner {
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
       });
 
-      this.logger.info("Ink TUI dashboard initialized", { projectId: this.projectId });
+      this.logger.info("Ink TUI dashboard initialized", { 
+        projects: this.projects,
+        projectCount: this.projects.length,
+        isMultiProject: this.isMultiProject,
+      });
     } catch (error) {
       this.logger.warn("Failed to start Ink TUI, continuing without dashboard", {
         error: String(error),
@@ -1228,10 +1279,11 @@ export class TaskRunner {
   private tuiLog(
     level: 'debug' | 'info' | 'warn' | 'error',
     message: string,
-    taskId?: string
+    taskId?: string,
+    projectId?: string
   ): void {
     if (this.tuiAddLog) {
-      this.tuiAddLog({ level, message, taskId });
+      this.tuiAddLog({ level, message, taskId, projectId });
     }
   }
 

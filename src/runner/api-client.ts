@@ -71,6 +71,17 @@ export class ApiClient {
   // Task Queries
   // ========================================
 
+  async listProjects(): Promise<string[]> {
+    const response = await this.fetch("/api/v1/tasks");
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as { projects: string[] };
+    return data.projects || [];
+  }
+
   async getReadyTasks(projectId: string): Promise<ResolvedTask[]> {
     const response = await this.fetch(`/api/v1/tasks/${projectId}/ready`);
 

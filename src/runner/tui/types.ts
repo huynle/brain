@@ -18,6 +18,7 @@ export interface TaskDisplay {
   parent_id?: string | null;
   progress?: number;
   error?: string;
+  projectId?: string;  // Which project this task belongs to (for multi-project mode)
 }
 
 /**
@@ -28,6 +29,7 @@ export interface LogEntry {
   level: 'debug' | 'info' | 'warn' | 'error';
   message: string;
   taskId?: string;
+  projectId?: string;  // Which project this log entry belongs to (for multi-project mode)
   context?: Record<string, unknown>;
 }
 
@@ -48,9 +50,25 @@ export interface TUIState {
  */
 export interface TUIConfig {
   apiUrl: string;
-  project: string;
+  project: string;              // Legacy single project (kept for backward compatibility)
+  projects?: string[];          // Multiple projects (Phase 2)
+  activeProject?: string;       // Currently selected project (or 'all')
   pollInterval: number;
   maxLogs: number;
+}
+
+/**
+ * Per-project stats tracking (for multi-project mode)
+ */
+export interface ProjectStats {
+  projectId: string;
+  stats: {
+    ready: number;
+    waiting: number;
+    inProgress: number;
+    completed: number;
+    blocked: number;
+  };
 }
 
 /**

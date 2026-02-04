@@ -471,14 +471,34 @@ export function parseFrontmatter(content: string): {
 
   // Handle multi-line user_original_request (literal block scalar)
   // This needs special handling because it spans multiple lines
-  const userRequestBlockRegex = /user_original_request:\s*\|\n((?:  .+\n?)*)/;
-  const blockMatch = yaml.match(userRequestBlockRegex);
-  if (blockMatch) {
-    // Remove the 2-space indent from each line and join
-    const lines = blockMatch[1].split("\n");
-    const unindentedLines = lines
-      .filter((l) => l.length > 0) // Remove empty trailing lines
-      .map((l) => (l.startsWith("  ") ? l.slice(2) : l));
+  // The block continues while lines are either empty OR indented with 2+ spaces
+  // It stops at non-empty, non-indented lines (like --- or other YAML keys)
+  const userRequestBlockStart = yaml.indexOf("user_original_request: |");
+  if (userRequestBlockStart !== -1) {
+    const afterHeader = yaml.slice(userRequestBlockStart + "user_original_request: |".length);
+    const lines = afterHeader.split("\n").slice(1); // Skip the line with just "|"
+    
+    const blockLines: string[] = [];
+    for (const line of lines) {
+      // Stop at non-empty lines that don't start with spaces (like --- or other keys)
+      if (line.length > 0 && !line.startsWith("  ") && !line.startsWith("\t")) {
+        break;
+      }
+      blockLines.push(line);
+    }
+    
+    // Find the last non-empty line to trim trailing empty lines
+    let lastContentIdx = blockLines.length - 1;
+    while (lastContentIdx >= 0 && blockLines[lastContentIdx].trim() === "") {
+      lastContentIdx--;
+    }
+    const contentLines = blockLines.slice(0, lastContentIdx + 1);
+    
+    // Remove the 2-space indent from each line
+    // Empty lines in literal blocks are preserved (they just don't have indent)
+    const unindentedLines = contentLines.map((l) => 
+      l.startsWith("  ") ? l.slice(2) : l
+    );
     frontmatter.user_original_request = unindentedLines.join("\n");
   }
 

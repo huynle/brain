@@ -607,3 +607,109 @@ describe('flattenTreeOrder', () => {
     });
   });
 });
+
+// =============================================================================
+// Group By Project Tests
+// =============================================================================
+
+describe('TaskTree groupByProject', () => {
+  describe('project headers', () => {
+    it('shows project headers when groupByProject is true', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', projectId: 'brain-api' }),
+        createTask({ id: '2', title: 'Task 2', projectId: 'opencode' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={true}
+        />
+      );
+      expect(lastFrame()).toContain('brain-api');
+      expect(lastFrame()).toContain('opencode');
+    });
+
+    it('shows task count with proper pluralization in project headers', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', projectId: 'brain-api' }),
+        createTask({ id: '2', title: 'Task 2', projectId: 'brain-api' }),
+        createTask({ id: '3', title: 'Task 3', projectId: 'opencode' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={true}
+        />
+      );
+      expect(lastFrame()).toContain('brain-api (2 tasks)');
+      expect(lastFrame()).toContain('opencode (1 task)');
+    });
+
+    it('does not show project headers when groupByProject is false', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', projectId: 'brain-api' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={false}
+        />
+      );
+      // Should show task but not the project header format with "(X tasks)"
+      expect(lastFrame()).toContain('Task 1');
+      expect(lastFrame()).not.toContain('(1 task)');
+    });
+  });
+
+  describe('project sorting', () => {
+    it('sorts projects with in_progress tasks first', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Waiting Task', projectId: 'aaa-first', status: 'pending' }),
+        createTask({ id: '2', title: 'Active Task', projectId: 'zzz-last', status: 'in_progress' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      // zzz-last should come BEFORE aaa-first because it has in_progress task
+      const zzzIndex = frame.indexOf('zzz-last');
+      const aaaIndex = frame.indexOf('aaa-first');
+      expect(zzzIndex).toBeLessThan(aaaIndex);
+    });
+
+    it('sorts projects alphabetically when none have in_progress', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', projectId: 'zebra', status: 'pending' }),
+        createTask({ id: '2', title: 'Task 2', projectId: 'alpha', status: 'pending' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      const alphaIndex = frame.indexOf('alpha');
+      const zebraIndex = frame.indexOf('zebra');
+      expect(alphaIndex).toBeLessThan(zebraIndex);
+    });
+  });
+});

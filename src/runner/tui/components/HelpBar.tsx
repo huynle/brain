@@ -7,20 +7,28 @@ import { Box, Text } from 'ink';
 
 interface HelpBarProps {
   focusedPanel?: 'tasks' | 'logs';
+  /** Whether in multi-project mode (shows tab shortcuts) */
+  isMultiProject?: boolean;
 }
 
-export function HelpBar({ focusedPanel }: HelpBarProps): React.ReactElement {
+export function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
   return (
     <Box paddingX={1} justifyContent="space-between">
       <Box>
         <Text dimColor>
-          <Text bold>Arrow/j/k</Text> Navigate
+          {isMultiProject && (
+            <>
+              <Text bold>1-9/[/]</Text> Tabs
+              {'  '}
+            </>
+          )}
+          <Text bold>j/k</Text> Navigate
           {'  '}
-          <Text bold>Enter</Text> Details/Toggle
+          <Text bold>Enter</Text> Toggle
           {'  '}
           <Text bold>x</Text> Cancel
           {'  '}
-          <Text bold>Tab</Text> Switch Panel
+          <Text bold>Tab</Text> Panel
           {'  '}
           <Text bold>r</Text> Refresh
           {'  '}

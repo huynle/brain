@@ -221,6 +221,65 @@ describe('LogViewer', () => {
     });
   });
 
+  describe('project prefix', () => {
+    it('shows project prefix when showProjectPrefix is true and projectId exists', () => {
+      const logs = [
+        createLog({
+          message: 'Task started',
+          projectId: 'brain-api',
+        }),
+      ];
+      const { lastFrame } = render(
+        <LogViewer logs={logs} showProjectPrefix={true} />
+      );
+      expect(lastFrame()).toContain('[brain-api]');
+      expect(lastFrame()).toContain('Task started');
+    });
+
+    it('does not show project prefix when showProjectPrefix is false', () => {
+      const logs = [
+        createLog({
+          message: 'Task started',
+          projectId: 'brain-api',
+        }),
+      ];
+      const { lastFrame } = render(
+        <LogViewer logs={logs} showProjectPrefix={false} />
+      );
+      expect(lastFrame()).not.toContain('[brain-api]');
+      expect(lastFrame()).toContain('Task started');
+    });
+
+    it('does not show prefix for logs without projectId', () => {
+      const logs = [
+        createLog({
+          message: 'Task started',
+          projectId: undefined,
+        }),
+      ];
+      const { lastFrame } = render(
+        <LogViewer logs={logs} showProjectPrefix={true} />
+      );
+      // Should not have any brackets for missing projectId
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Task started');
+      // Should not have stray brackets
+      expect(frame).not.toMatch(/\[\s*\]/);
+    });
+
+    it('shows project prefix for multiple different projects', () => {
+      const logs = [
+        createLog({ message: 'Log from brain', projectId: 'brain-api' }),
+        createLog({ message: 'Log from opencode', projectId: 'opencode' }),
+      ];
+      const { lastFrame } = render(
+        <LogViewer logs={logs} showProjectPrefix={true} />
+      );
+      expect(lastFrame()).toContain('[brain-api]');
+      expect(lastFrame()).toContain('[opencode]');
+    });
+  });
+
   describe('edge cases', () => {
     it('handles logs with special characters', () => {
       const logs = [

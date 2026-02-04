@@ -12,6 +12,8 @@ interface LogViewerProps {
   maxLines?: number;
   showTimestamp?: boolean;
   showLevel?: boolean;
+  /** When true, display [projectId] prefix for multi-project mode */
+  showProjectPrefix?: boolean;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -72,19 +74,27 @@ function LogLine({
   log,
   showTimestamp,
   showLevel,
+  showProjectPrefix,
 }: {
   log: LogEntry;
   showTimestamp: boolean;
   showLevel: boolean;
+  showProjectPrefix: boolean;
 }): React.ReactElement {
   const levelColor = LEVEL_COLORS[log.level] || 'white';
   const levelLabel = LEVEL_LABELS[log.level] || log.level.toUpperCase();
   const contextStr = formatContext(log.context);
   
-  // Calculate available space for message
+  // Project prefix for multi-project mode
+  const projectPrefix = showProjectPrefix && log.projectId ? `[${log.projectId}] ` : '';
+  
+  // Calculate available space for message (account for project prefix)
   let availableLength = MAX_MESSAGE_LENGTH;
+  if (projectPrefix) {
+    availableLength = Math.max(30, availableLength - projectPrefix.length);
+  }
   if (contextStr) {
-    availableLength = Math.max(30, MAX_MESSAGE_LENGTH - contextStr.length - 1);
+    availableLength = Math.max(30, availableLength - contextStr.length - 1);
   }
   
   const truncatedMessage = truncateMessage(log.message, availableLength);
@@ -98,6 +108,9 @@ function LogLine({
         <Text color={levelColor} bold={log.level === 'error'}>
           {levelLabel.padEnd(5)}{' '}
         </Text>
+      )}
+      {projectPrefix && (
+        <Text color="cyan" dimColor>{projectPrefix}</Text>
       )}
       <Text color={log.level === 'debug' ? 'gray' : undefined}>
         {truncatedMessage}
@@ -114,6 +127,7 @@ export function LogViewer({
   maxLines = 50,
   showTimestamp = true,
   showLevel = true,
+  showProjectPrefix = false,
 }: LogViewerProps): React.ReactElement {
   // Memoize visible logs calculation for performance
   const visibleLogs = useMemo(() => {
@@ -150,6 +164,7 @@ export function LogViewer({
                 log={log}
                 showTimestamp={showTimestamp}
                 showLevel={showLevel}
+                showProjectPrefix={showProjectPrefix}
               />
             )}
           </Static>
@@ -161,6 +176,7 @@ export function LogViewer({
               log={log}
               showTimestamp={showTimestamp}
               showLevel={showLevel}
+              showProjectPrefix={showProjectPrefix}
             />
           ))}
         </>

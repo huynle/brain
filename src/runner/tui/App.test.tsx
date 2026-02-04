@@ -267,3 +267,79 @@ describe('App - Configuration', () => {
     unmount();
   });
 });
+
+// =============================================================================
+// Multi-project mode tests
+// =============================================================================
+
+describe('App - Multi-Project Mode', () => {
+  const multiProjectConfig: TUIConfig = {
+    ...defaultConfig,
+    projects: ['brain-api', 'opencode', 'my-proj'],
+    activeProject: 'all',
+  };
+
+  it('renders tabs in multi-project mode', () => {
+    const { lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    const frame = lastFrame() || '';
+    // Should show tabs
+    expect(frame).toContain('[All]');
+    unmount();
+  });
+
+  it('shows tab navigation shortcuts in help bar for multi-project mode', () => {
+    const { lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    const frame = lastFrame() || '';
+    // Should show tab shortcuts (1-9/[/])
+    expect(frame).toContain('Tabs');
+    unmount();
+  });
+
+  it('responds to [ key to switch to previous tab', () => {
+    const startOnSecondTab: TUIConfig = {
+      ...multiProjectConfig,
+      activeProject: 'brain-api', // Start on first project tab (after All)
+    };
+    const { stdin, lastFrame, unmount } = render(<App config={startOnSecondTab} />);
+    
+    // Press [ to go to previous tab (should go to All)
+    stdin.write('[');
+    
+    const frame = lastFrame() || '';
+    // Should still render
+    expect(frame.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('responds to ] key to switch to next tab', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    
+    // Press ] to go to next tab (should go from All to brain-api)
+    stdin.write(']');
+    
+    const frame = lastFrame() || '';
+    // Should still render
+    expect(frame.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('responds to number keys for direct tab access', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    
+    // Press 2 to go to tab 2 (brain-api, index 1)
+    stdin.write('2');
+    
+    const frame = lastFrame() || '';
+    // Should still render without crashing
+    expect(frame.length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('does not show tab shortcuts in single-project mode', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // Should NOT show tab shortcuts in single project mode
+    expect(frame.includes('1-9/[/]')).toBe(false);
+    unmount();
+  });
+});

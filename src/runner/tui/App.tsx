@@ -24,28 +24,81 @@ import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { useTaskPoller } from './hooks/useTaskPoller';
+import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
-import type { AppProps } from './types';
+import type { AppProps, TaskDisplay } from './types';
+import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'logs';
 
 export function App({ config, onLogCallback, onCancelTask }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
+  // Determine if multi-project mode - memoize to avoid re-creating array on every render
+  const projects = useMemo(
+    () => config.projects ?? [config.project],
+    [config.projects, config.project]
+  );
+  const isMultiProject = projects.length > 1;
+
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [showHelp, setShowHelp] = useState(false);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
+  const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
 
-  // Hooks
-  const { tasks, stats, isLoading, isConnected, error, refetch } = useTaskPoller({
+  // Single-project poller (used when not in multi-project mode)
+  const singleProjectPoller = useTaskPoller({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: true,
+    enabled: !isMultiProject,
   });
+
+  // Multi-project poller (used when in multi-project mode)
+  const multiProjectPoller = useMultiProjectPoller({
+    projects: projects,
+    apiUrl: config.apiUrl,
+    pollInterval: config.pollInterval,
+    enabled: isMultiProject,
+  });
+
+  // Select appropriate data based on mode
+  let tasks: TaskDisplay[];
+  let stats: TaskStats;
+  let isLoading: boolean;
+  let isConnected: boolean;
+  let error: Error | null;
+  let refetch: () => Promise<void>;
+
+  if (isMultiProject) {
+    // Multi-project mode: filter tasks by activeProject
+    if (activeProject === 'all') {
+      tasks = multiProjectPoller.allTasks;
+    } else {
+      tasks = multiProjectPoller.tasksByProject.get(activeProject) ?? [];
+    }
+    stats = activeProject === 'all' 
+      ? multiProjectPoller.aggregateStats 
+      : (multiProjectPoller.statsByProject.get(activeProject) ?? {
+          total: 0, ready: 0, waiting: 0, blocked: 0, inProgress: 0, completed: 0,
+        });
+    isLoading = multiProjectPoller.isLoading;
+    isConnected = multiProjectPoller.isConnected;
+    error = multiProjectPoller.error;
+    refetch = multiProjectPoller.refetch;
+  } else {
+    // Single-project mode
+    tasks = singleProjectPoller.tasks;
+    stats = singleProjectPoller.stats;
+    isLoading = singleProjectPoller.isLoading;
+    isConnected = singleProjectPoller.isConnected;
+    error = singleProjectPoller.error;
+    refetch = singleProjectPoller.refetch;
+  }
+
   const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs });
   const { rows: terminalRows } = useTerminalSize();
 
@@ -62,6 +115,9 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
   const navigationOrder = useMemo(() => flattenTreeOrder(tasks, completedCollapsed), [tasks, completedCollapsed]);
+
+  // All project tabs including 'all' at the front
+  const allProjectTabs = ['all', ...projects];
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -107,6 +163,39 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
     if (key.tab) {
       setFocusedPanel((prev) => (prev === 'tasks' ? 'logs' : 'tasks'));
       return;
+    }
+
+    // Project tab navigation (only in multi-project mode)
+    if (isMultiProject) {
+      // Previous tab: [
+      if (input === '[') {
+        const currentIndex = allProjectTabs.indexOf(activeProject);
+        if (currentIndex > 0) {
+          setActiveProject(allProjectTabs[currentIndex - 1]);
+          addLog({ level: 'info', message: `Switched to: ${allProjectTabs[currentIndex - 1]}` });
+        }
+        return;
+      }
+
+      // Next tab: ]
+      if (input === ']') {
+        const currentIndex = allProjectTabs.indexOf(activeProject);
+        if (currentIndex < allProjectTabs.length - 1) {
+          setActiveProject(allProjectTabs[currentIndex + 1]);
+          addLog({ level: 'info', message: `Switched to: ${allProjectTabs[currentIndex + 1]}` });
+        }
+        return;
+      }
+
+      // Number keys 1-9 for direct tab access
+      if (input >= '1' && input <= '9') {
+        const index = parseInt(input, 10) - 1;
+        if (index < allProjectTabs.length) {
+          setActiveProject(allProjectTabs[index]);
+          addLog({ level: 'info', message: `Switched to: ${allProjectTabs[index]}` });
+        }
+        return;
+      }
     }
 
     // Navigation (only when focused on tasks panel)
@@ -192,7 +281,16 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
-        <Text>  <Text bold>Enter</Text>     - Select task (show details)</Text>
+        <Text>  <Text bold>Enter</Text>     - Select task / Toggle completed</Text>
+        {isMultiProject && (
+          <>
+            <Text />
+            <Text bold dimColor>Multi-project Navigation:</Text>
+            <Text>  <Text bold>[</Text>         - Previous project tab</Text>
+            <Text>  <Text bold>]</Text>         - Next project tab</Text>
+            <Text>  <Text bold>1-9</Text>       - Jump to project tab 1-9</Text>
+          </>
+        )}
         <Text />
         <Text dimColor>Press ? to close</Text>
       </Box>
@@ -203,8 +301,12 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
     <Box flexDirection="column" width="100%" height={terminalRows}>
       {/* Status bar at top */}
       <StatusBar
-        projectId={config.project || 'brain-runner'}
+        projectId={isMultiProject && activeProject === 'all' ? `${projects.length} projects` : (activeProject || config.project || 'brain-runner')}
+        projects={isMultiProject ? projects : undefined}
+        activeProject={isMultiProject ? activeProject : undefined}
+        onSelectProject={isMultiProject ? setActiveProject : undefined}
         stats={stats}
+        statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
         isConnected={isConnected}
       />
 
@@ -223,6 +325,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
             onSelect={setSelectedTaskId}
             completedCollapsed={completedCollapsed}
             onToggleCompleted={() => setCompletedCollapsed(!completedCollapsed)}
+            groupByProject={isMultiProject && activeProject === 'all'}
           />
         </Box>
 
@@ -235,7 +338,11 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
         >
           {/* Log viewer takes most of the space */}
           <Box flexGrow={1}>
-            <LogViewer logs={logs} maxLines={10} />
+            <LogViewer 
+              logs={logs} 
+              maxLines={10} 
+              showProjectPrefix={isMultiProject}
+            />
           </Box>
 
           {/* Task detail at bottom of right panel */}
@@ -244,7 +351,7 @@ export function App({ config, onLogCallback, onCancelTask }: AppProps): React.Re
       </Box>
 
       {/* Help bar at bottom */}
-      <HelpBar focusedPanel={focusedPanel} />
+      <HelpBar focusedPanel={focusedPanel} isMultiProject={isMultiProject} />
     </Box>
   );
 }

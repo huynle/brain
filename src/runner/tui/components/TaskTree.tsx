@@ -16,6 +16,8 @@ interface TaskTreeProps {
   onSelect: (id: string) => void;
   completedCollapsed: boolean;
   onToggleCompleted: () => void;
+  /** When true, tasks are grouped by project ID (for multi-project "All" view) */
+  groupByProject?: boolean;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -396,17 +398,94 @@ function renderTree(
   return elements;
 }
 
+/**
+ * Project header component for grouped view
+ */
+function ProjectHeader({
+  projectId,
+  taskCount,
+}: {
+  projectId: string;
+  taskCount: number;
+}): React.ReactElement {
+  return (
+    <Box marginTop={1}>
+      <Text bold color="cyan">
+        {projectId} ({taskCount} {taskCount === 1 ? 'task' : 'tasks'})
+      </Text>
+    </Box>
+  );
+}
+
+/**
+ * Render a single project's tasks as a tree
+ */
+function renderProjectTasks(
+  projectTasks: TaskDisplay[],
+  selectedId: string | null,
+  readyIds: Set<string>,
+): React.ReactElement[] {
+  const elements: React.ReactElement[] = [];
+  
+  // Separate active and completed tasks
+  const activeTasks = projectTasks.filter(t => !isCompleted(t));
+  
+  // Build tree structure from active tasks
+  const tree = buildTree(activeTasks);
+  
+  tree.forEach((rootNode, rootIndex) => {
+    const isSelected = rootNode.task.id === selectedId;
+    const isReady = readyIds.has(rootNode.task.id);
+
+    // Root task with indent for project grouping
+    elements.push(
+      <TaskRow
+        key={rootNode.task.id}
+        task={rootNode.task}
+        prefix="  "
+        isSelected={isSelected}
+        inCycle={rootNode.inCycle}
+        isReady={isReady}
+      />
+    );
+
+    // Children of root
+    if (rootNode.children.length > 0) {
+      elements.push(
+        ...renderTree(rootNode.children, selectedId, '  ', readyIds)
+      );
+    }
+  });
+  
+  return elements;
+}
+
 export function TaskTree({
   tasks,
   selectedId,
   completedCollapsed,
+  groupByProject = false,
 }: TaskTreeProps): React.ReactElement {
   // Separate active and completed tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t)), [tasks]);
   const completedTasks = useMemo(() => tasks.filter(isCompleted), [tasks]);
   
-  // Build tree structure from active tasks only
+  // Build tree structure from active tasks only (for non-grouped view)
   const tree = useMemo(() => buildTree(activeTasks), [activeTasks]);
+
+  // Group tasks by project (for grouped view)
+  const tasksByProject = useMemo(() => {
+    if (!groupByProject) return null;
+    const grouped = new Map<string, TaskDisplay[]>();
+    for (const task of tasks) {
+      const projectId = task.projectId || 'unknown';
+      if (!grouped.has(projectId)) {
+        grouped.set(projectId, []);
+      }
+      grouped.get(projectId)!.push(task);
+    }
+    return grouped;
+  }, [tasks, groupByProject]);
 
   // Compute ready task IDs (pending with all deps completed)
   const readyIds = useMemo(() => {
@@ -436,6 +515,101 @@ export function TaskTree({
     );
   }
 
+  // Grouped view by project
+  if (groupByProject && tasksByProject) {
+    const projectElements: React.ReactElement[] = [];
+    
+    // Sort projects: those with in_progress tasks first, then alphabetically
+    const projectIds = Array.from(tasksByProject.keys()).sort((a, b) => {
+      const tasksA = tasksByProject.get(a) || [];
+      const tasksB = tasksByProject.get(b) || [];
+      const hasInProgressA = tasksA.some(t => t.status === 'in_progress');
+      const hasInProgressB = tasksB.some(t => t.status === 'in_progress');
+      
+      if (hasInProgressA && !hasInProgressB) return -1;
+      if (!hasInProgressA && hasInProgressB) return 1;
+      return a.localeCompare(b);
+    });
+    
+    projectIds.forEach((projectId, projectIndex) => {
+      const projectTasks = tasksByProject.get(projectId) || [];
+      const projectActiveTasks = projectTasks.filter(t => !isCompleted(t));
+      
+      // Skip projects with no active tasks in grouped view
+      if (projectActiveTasks.length === 0) return;
+      
+      // Project header
+      projectElements.push(
+        <ProjectHeader
+          key={`project-header-${projectId}`}
+          projectId={projectId}
+          taskCount={projectActiveTasks.length}
+        />
+      );
+      
+      // Project's tasks
+      projectElements.push(
+        ...renderProjectTasks(projectTasks, selectedId, readyIds)
+      );
+      
+      // Add spacing between projects (except last)
+      if (projectIndex < projectIds.length - 1) {
+        projectElements.push(
+          <Box key={`project-spacer-${projectId}`}>
+            <Text> </Text>
+          </Box>
+        );
+      }
+    });
+
+    // Add completed section if there are completed tasks
+    const completedElements: React.ReactElement[] = [];
+    if (completedTasks.length > 0) {
+      completedElements.push(
+        <Box key="completed-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      completedElements.push(
+        <CompletedHeader
+          key={COMPLETED_HEADER_ID}
+          count={completedTasks.length}
+          collapsed={completedCollapsed}
+          isSelected={selectedId === COMPLETED_HEADER_ID}
+        />
+      );
+      
+      if (!completedCollapsed) {
+        completedTasks.forEach(task => {
+          completedElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
+    }
+
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold underline>
+          Tasks ({tasks.length})
+        </Text>
+        <Box flexDirection="column" marginTop={1}>
+          {projectElements}
+          {completedElements}
+        </Box>
+      </Box>
+    );
+  }
+
+  // Standard view (non-grouped)
   // Render root nodes at top level (no prefix for roots)
   const elements: React.ReactElement[] = [];
   

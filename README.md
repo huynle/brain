@@ -142,6 +142,89 @@ The `--tui` flag enables an interactive terminal dashboard built with [Ink](http
 | `?` | Toggle help |
 | `q` | Quit |
 
+## Brain CLI
+
+The `brain` CLI manages the API server and diagnoses brain configuration issues.
+
+### Server Commands
+
+```bash
+# Start the API server (background)
+brain start
+
+# Stop the server
+brain stop
+
+# Restart the server
+brain restart
+
+# Check server status
+brain status
+
+# Show health check
+brain health
+
+# View logs
+brain logs       # Recent logs
+brain logs -f    # Follow logs
+
+# Development mode (foreground with hot reload)
+brain dev
+
+# Show configuration
+brain config
+```
+
+### Doctor Command
+
+The `brain doctor` command diagnoses and fixes brain configuration issues:
+
+```bash
+# Run diagnostics (show failures only)
+brain doctor
+
+# Verbose output (show all checks)
+brain doctor -v
+
+# Fix fixable issues
+brain doctor --fix
+
+# Reset modified files to reference templates
+brain doctor --fix --force
+
+# Preview fixes without applying
+brain doctor --fix --dry-run
+```
+
+#### What Doctor Checks
+
+| Category | Checks |
+|----------|--------|
+| **ZK CLI** | CLI available, correct version |
+| **ZK Notebook** | `.zk` directory exists |
+| **ZK Config** | `id-length = 8`, `id-charset = alphanum` |
+| **Directory Structure** | `projects/`, `global/` directories |
+| **Templates** | All 12 entry type templates present and valid |
+
+#### Entry Templates
+
+Doctor validates these templates in `.zk/templates/`:
+
+| Template | Entry Type |
+|----------|------------|
+| `summary.md` | Session summaries, key decisions |
+| `report.md` | Analysis reports, code reviews |
+| `walkthrough.md` | Code explanations, architecture overviews |
+| `plan.md` | Implementation plans, designs |
+| `pattern.md` | Reusable patterns (supports `global: true`) |
+| `learning.md` | Best practices (supports `global: true`) |
+| `idea.md` | Ideas for future exploration |
+| `scratch.md` | Temporary working notes |
+| `decision.md` | Architectural decisions, ADRs |
+| `exploration.md` | Investigation notes, research |
+| `execution.md` | Execution tracking |
+| `task.md` | Task entries with dependencies |
+
 ### Runner Commands
 
 ```bash
@@ -179,6 +262,14 @@ brain-runner logs [-f]
 | `-w, --workdir DIR` | Working directory |
 | `--dry-run` | Log actions without executing |
 | `-v, --verbose` | Enable verbose logging |
+
+## Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BRAIN_PORT` | `3333` | API server port |
+| `BRAIN_DIR` | `~/.brain` | Brain data directory |
+| `BRAIN_API_DIR` | `~/projects/brain-api` | Source directory |
 
 ## Architecture
 

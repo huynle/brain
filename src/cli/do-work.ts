@@ -10,7 +10,8 @@
  *   do-work start-bg <project>  - Start runner in background
  *   do-work stop [project]      - Stop runner
  *   do-work status [project]    - Show runner status
- *   do-work list <project>      - List all tasks
+ *   do-work list                - List all projects with tasks
+ *   do-work list <project>      - List all tasks for a project
  *   do-work ready <project>     - Show ready tasks
  *   do-work waiting <project>   - Show waiting tasks
  *   do-work blocked <project>   - Show blocked tasks
@@ -36,6 +37,20 @@ const BRAIN_API_DIR = process.env.BRAIN_API_DIR || join(HOME, "projects/brain-ap
 const RUNNER_SCRIPT = join(BRAIN_API_DIR, "src/runner/index.ts");
 
 // =============================================================================
+// API Client
+// =============================================================================
+
+async function apiGet<T>(path: string): Promise<T> {
+  const url = `${BRAIN_API_URL}${path}`;
+  const response = await fetch(url);
+  if (!response.ok) {
+    const error = await response.text();
+    throw new Error(`API error (${response.status}): ${error}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 
@@ -50,7 +65,8 @@ Commands:
   start-bg <project>  Start runner in background
   stop [project]      Stop runner
   status [project]    Show runner status
-  list <project>      List all tasks
+  list                List all projects with tasks
+  list <project>      List all tasks for a project
   ready <project>     Show ready tasks
   waiting <project>   Show waiting tasks
   blocked <project>   Show blocked tasks
@@ -136,11 +152,25 @@ function cmdStatus(project?: string) {
   runRunner(args);
 }
 
-function cmdList(project: string | undefined) {
+async function cmdList(project: string | undefined) {
   if (!project) {
-    console.error("Error: project argument required");
-    console.error("Usage: do-work list <project>");
-    process.exit(1);
+    // List all projects
+    try {
+      const result = await apiGet<{ projects: string[]; count: number }>("/tasks");
+      if (result.count === 0) {
+        console.log("No projects with tasks found.");
+        return;
+      }
+      console.log("Projects with tasks:");
+      for (const p of result.projects) {
+        console.log(`  ${p}`);
+      }
+      console.log(`\nTotal: ${result.count} project(s)`);
+    } catch (error) {
+      console.error(`Error: ${error instanceof Error ? error.message : error}`);
+      process.exit(1);
+    }
+    return;
   }
   runRunner(["list", project]);
 }
@@ -198,15 +228,13 @@ function cmdLogs(follow: boolean) {
 
 function cmdConfig() {
   console.log(`BRAIN_API_URL=${BRAIN_API_URL}`);
-  console.log(`BRAIN_API_DIR=${BRAIN_API_DIR}`);
-  console.log(`RUNNER_SCRIPT=${RUNNER_SCRIPT}`);
 }
 
 // =============================================================================
 // Main
 // =============================================================================
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
   const command = args[0];
   const arg1 = args[1];
@@ -227,7 +255,7 @@ function main() {
       cmdStatus(arg1);
       break;
     case "list":
-      cmdList(arg1);
+      await cmdList(arg1);
       break;
     case "ready":
       cmdReady(arg1);

@@ -14,12 +14,14 @@
  *   brain logs -f   - Follow logs
  *   brain dev       - Start in development mode
  *   brain config    - Show configuration
+ *   brain doctor    - Diagnose brain configuration
  */
 
 import { spawn, spawnSync } from "child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { homedir } from "os";
 import { join, dirname } from "path";
+import { createDoctorService, type Check, type DoctorResult } from "../core/doctor";
 
 // =============================================================================
 // Configuration
@@ -29,8 +31,13 @@ const HOME = homedir();
 const BRAIN_API_DIR = process.env.BRAIN_API_DIR || join(HOME, "projects/brain-api");
 const DEFAULT_PORT = "3333";
 const PORT = process.env.BRAIN_PORT || process.env.PORT || DEFAULT_PORT;
-const PID_FILE = join(HOME, ".local/run/brain-api.pid");
-const LOG_FILE = join(HOME, ".local/log/brain-api.log");
+
+// XDG Base Directory Specification
+const XDG_STATE_HOME = process.env.XDG_STATE_HOME || join(HOME, ".local/state");
+const XDG_CACHE_HOME = process.env.XDG_CACHE_HOME || join(HOME, ".cache");
+
+const PID_FILE = join(XDG_STATE_HOME, "brain/brain.pid");
+const LOG_FILE = join(XDG_STATE_HOME, "brain/brain.log");
 
 // Ensure directories exist
 function ensureDirs() {
@@ -105,14 +112,23 @@ Commands:
   logs -f     Follow logs
   dev         Start in development mode (foreground with hot reload)
   config      Show current configuration
+  doctor      Diagnose and fix brain configuration
+
+Doctor Options:
+  brain doctor              Run diagnostics (show failures only)
+  brain doctor -v           Verbose output (show all checks)
+  brain doctor --fix        Fix fixable issues
+  brain doctor --fix --force  Reset modified files to reference
+  brain doctor --fix --dry-run  Show what would be fixed
 
 Environment:
   BRAIN_PORT      Server port (default: ${DEFAULT_PORT})
-  BRAIN_API_DIR   Brain API directory (default: ~/projects/brain-api)
+  BRAIN_DIR       Brain data directory (default: ~/.brain)
 
 Examples:
   brain start
   brain status
+  brain doctor --fix
   BRAIN_PORT=4444 brain start
 `);
 }
@@ -268,10 +284,156 @@ function cmdDev() {
 }
 
 function cmdConfig() {
+  const brainDir = process.env.BRAIN_DIR || join(HOME, ".brain");
   console.log(`BRAIN_PORT=${PORT}`);
-  console.log(`BRAIN_API_DIR=${BRAIN_API_DIR}`);
+  console.log(`BRAIN_DIR=${brainDir}`);
   console.log(`PID_FILE=${PID_FILE}`);
   console.log(`LOG_FILE=${LOG_FILE}`);
+}
+
+// =============================================================================
+// Doctor Command
+// =============================================================================
+
+// ANSI color codes
+const COLORS = {
+  reset: "\x1b[0m",
+  green: "\x1b[32m",
+  red: "\x1b[31m",
+  yellow: "\x1b[33m",
+  gray: "\x1b[90m",
+  bold: "\x1b[1m",
+};
+
+function getStatusIcon(status: Check["status"]): string {
+  switch (status) {
+    case "pass":
+      return `${COLORS.green}\u2713${COLORS.reset}`;
+    case "fail":
+      return `${COLORS.red}\u2717${COLORS.reset}`;
+    case "warn":
+      return `${COLORS.yellow}\u26A0${COLORS.reset}`;
+    case "skip":
+      return `${COLORS.gray}-${COLORS.reset}`;
+  }
+}
+
+function formatCheck(check: Check, verbose: boolean): string | null {
+  // In non-verbose mode, skip passed and skipped checks
+  if (!verbose && (check.status === "pass" || check.status === "skip")) {
+    return null;
+  }
+
+  const icon = getStatusIcon(check.status);
+  let line = `  ${icon} ${check.message}`;
+
+  if (check.details && (verbose || check.status === "fail" || check.status === "warn")) {
+    line += `\n      ${COLORS.gray}${check.details}${COLORS.reset}`;
+  }
+
+  if (check.fixable && check.status === "fail") {
+    line += `\n      ${COLORS.gray}(fixable with --fix)${COLORS.reset}`;
+  }
+
+  return line;
+}
+
+function printResult(result: DoctorResult, verbose: boolean): void {
+  console.log(`\n${COLORS.bold}Brain Doctor${COLORS.reset}`);
+  console.log(`${COLORS.gray}BRAIN_DIR: ${result.brainDir}${COLORS.reset}\n`);
+
+  // Group checks by category
+  const categories: Record<string, Check[]> = {
+    "ZK CLI": [],
+    "ZK Configuration": [],
+    "Templates": [],
+    "Database": [],
+    "Permissions": [],
+  };
+
+  for (const check of result.checks) {
+    if (check.name.startsWith("zk-cli")) {
+      categories["ZK CLI"].push(check);
+    } else if (check.name.startsWith("zk-")) {
+      categories["ZK Configuration"].push(check);
+    } else if (check.name.startsWith("template-")) {
+      categories["Templates"].push(check);
+    } else if (check.name.startsWith("database-")) {
+      categories["Database"].push(check);
+    } else {
+      categories["Permissions"].push(check);
+    }
+  }
+
+  for (const [category, checks] of Object.entries(categories)) {
+    const hasOutput = checks.some(
+      (c) => verbose || c.status === "fail" || c.status === "warn"
+    );
+    if (!hasOutput && !verbose) continue;
+
+    console.log(`${COLORS.bold}${category}${COLORS.reset}`);
+    for (const check of checks) {
+      const formatted = formatCheck(check, verbose);
+      if (formatted) {
+        console.log(formatted);
+      }
+    }
+    console.log();
+  }
+
+  // Print summary
+  const { passed, failed, warnings, skipped } = result.summary;
+  console.log(`${COLORS.bold}Summary${COLORS.reset}`);
+  console.log(
+    `  ${COLORS.green}${passed} passed${COLORS.reset}, ` +
+      `${COLORS.red}${failed} failed${COLORS.reset}, ` +
+      `${COLORS.yellow}${warnings} warnings${COLORS.reset}, ` +
+      `${COLORS.gray}${skipped} skipped${COLORS.reset}`
+  );
+
+  if (result.healthy) {
+    console.log(`\n${COLORS.green}${COLORS.bold}Brain is healthy!${COLORS.reset}`);
+  } else {
+    console.log(`\n${COLORS.red}${COLORS.bold}Brain has issues that need attention.${COLORS.reset}`);
+    const fixableCount = result.checks.filter((c) => c.status === "fail" && c.fixable).length;
+    if (fixableCount > 0) {
+      console.log(`${COLORS.gray}Run 'brain doctor --fix' to fix ${fixableCount} issue(s).${COLORS.reset}`);
+    }
+  }
+}
+
+async function cmdDoctor(args: string[]): Promise<void> {
+  // Parse flags
+  const fix = args.includes("--fix");
+  const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
+  const verbose = args.includes("-v") || args.includes("--verbose");
+
+  // Get BRAIN_DIR from config
+  // Import dynamically to avoid circular dependency issues
+  const { getConfig } = await import("../config");
+  const config = getConfig();
+  const brainDir = config.brain.brainDir;
+
+  // Create doctor service
+  const doctor = createDoctorService(brainDir, { fix, force, dryRun, verbose });
+
+  // Run diagnosis or fix
+  let result: DoctorResult;
+  if (fix) {
+    if (dryRun) {
+      console.log(`${COLORS.yellow}Dry run mode - no changes will be made${COLORS.reset}\n`);
+    }
+    result = await doctor.fix();
+  } else {
+    result = await doctor.diagnose();
+  }
+
+  // Print results
+  printResult(result, verbose);
+
+  // Exit with appropriate code
+  process.exit(result.healthy ? 0 : 1);
 }
 
 // =============================================================================
@@ -306,6 +468,9 @@ async function main() {
       break;
     case "config":
       cmdConfig();
+      break;
+    case "doctor":
+      await cmdDoctor(args.slice(1));
       break;
     case "help":
     case "--help":

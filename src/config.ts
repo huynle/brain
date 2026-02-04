@@ -27,7 +27,7 @@ function getEnvInt(key: string, defaultValue: number): number {
 
 export function loadConfig(): Config {
   // Brain configuration
-  const brainDir = getEnv("BRAIN_DIR", join(homedir(), ".opencode", "brain"));
+  const brainDir = getEnv("BRAIN_DIR", join(homedir(), ".brain"));
   const dbPath = join(brainDir, "living-brain.db");
 
   const brain: BrainConfig = {

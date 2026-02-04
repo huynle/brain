@@ -59,6 +59,15 @@ export function createTaskRoutes(): Hono {
   const tasks = new Hono();
   const taskService = getTaskService();
 
+  // GET / - List all projects with tasks
+  tasks.get("/", (c) => {
+    const projects = taskService.listProjects();
+    return c.json({
+      projects,
+      count: projects.length,
+    });
+  });
+
   // GET /:projectId - All tasks with dependency resolution
   tasks.get("/:projectId", async (c) => {
     const projectId = c.req.param("projectId");

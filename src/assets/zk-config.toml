@@ -1,0 +1,15 @@
+[notebook]
+dir = "."
+
+[note]
+id-charset = "alphanum"
+id-length = 8
+id-case = "lower"
+default-title = "untitled"
+filename = "{{id}}"
+extension = "md"
+template = "default.md"
+
+[format.markdown]
+link-format = "markdown"
+link-drop-extension = true

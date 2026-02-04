@@ -5,7 +5,8 @@
  * Follows BrainService patterns for consistency.
  */
 
-import { existsSync } from "fs";
+import { existsSync, readdirSync } from "fs";
+import { join } from "path";
 import { getConfig } from "../config";
 import type { BrainConfig, Task, ResolvedTask, DependencyResult } from "./types";
 import {
@@ -35,6 +36,37 @@ export class TaskService {
     const fullConfig = getConfig();
     this.config = config || fullConfig.brain;
     this.projectId = projectId || fullConfig.brain.defaultProject;
+  }
+
+  // ========================================
+  // Project Discovery
+  // ========================================
+
+  /**
+   * List all projects that have tasks.
+   * Scans the projects/ directory for subdirectories containing a task/ folder.
+   */
+  listProjects(): string[] {
+    const projectsDir = join(this.config.brainDir, "projects");
+    
+    if (!existsSync(projectsDir)) {
+      return [];
+    }
+
+    try {
+      const entries = readdirSync(projectsDir, { withFileTypes: true });
+      return entries
+        .filter((entry) => {
+          if (!entry.isDirectory()) return false;
+          // Check if project has a task/ subdirectory
+          const taskDir = join(projectsDir, entry.name, "task");
+          return existsSync(taskDir);
+        })
+        .map((entry) => entry.name)
+        .sort();
+    } catch {
+      return [];
+    }
   }
 
   // ========================================

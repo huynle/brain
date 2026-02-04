@@ -18,15 +18,27 @@ beforeAll(() => {
 });
 
 // =============================================================================
+// Project List Tests
+// =============================================================================
+
+describe("GET /api/v1/tasks", () => {
+  test("returns list of projects", async () => {
+    const res = await app.request("/api/v1/tasks");
+    expect(res.status).toBe(200);
+
+    const data = await res.json();
+    expect(data).toHaveProperty("projects");
+    expect(Array.isArray(data.projects)).toBe(true);
+    expect(data).toHaveProperty("count");
+    expect(typeof data.count).toBe("number");
+  });
+});
+
+// =============================================================================
 // Validation Tests
 // =============================================================================
 
 describe("GET /api/v1/tasks/:projectId", () => {
-  test("returns 400 for empty project ID", async () => {
-    const res = await app.request("/api/v1/tasks/");
-    // Note: This might be 404 depending on routing - adjust as needed
-    expect([400, 404]).toContain(res.status);
-  });
 
   test("returns tasks array for valid project", async () => {
     const res = await app.request("/api/v1/tasks/test-project");

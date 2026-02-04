@@ -524,8 +524,10 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           status: string;
           content: string;
           tags: string[];
+          user_original_request?: string;
         }>("GET", `/entries/${entryPath}`);
-        return `## ${response.title}\n\nPath: ${response.path}\nType: ${response.type}\nStatus: ${response.status}\nTags: ${response.tags?.join(", ") || "none"}\n\n---\n\n${response.content}`;
+        const userRequest = response.user_original_request ? `\nUser Original Request: ${response.user_original_request}` : "";
+        return `## ${response.title}\n\nPath: ${response.path}\nType: ${response.type}\nStatus: ${response.status}\nTags: ${response.tags?.join(", ") || "none"}${userRequest}\n\n---\n\n${response.content}`;
       }
 
       case "brain_search": {

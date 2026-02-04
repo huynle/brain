@@ -567,6 +567,8 @@ export class BrainService {
       worktree: frontmatter.worktree as string | undefined,
       git_remote: frontmatter.git_remote as string | undefined,
       git_branch: frontmatter.git_branch as string | undefined,
+      // User intent for validation
+      user_original_request: frontmatter.user_original_request as string | undefined,
     };
   }
 

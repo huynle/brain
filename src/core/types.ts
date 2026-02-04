@@ -107,6 +107,9 @@ export interface BrainEntry {
   worktree?: string; // Specific worktree if different from main
   git_remote?: string; // Git remote URL for verification
   git_branch?: string; // Branch context when task was created
+
+  // User intent for validation
+  user_original_request?: string; // Verbatim user request for validation during task completion
 }
 
 // =============================================================================

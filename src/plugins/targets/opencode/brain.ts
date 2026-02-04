@@ -557,6 +557,7 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
               tags: string[];
               access_count?: number;
               backlinks?: Array<{ id: string; title: string; path: string }>;
+              user_original_request?: string;
             }>("GET", `/entries/${entryPath}`);
 
             const backlinkLinks =
@@ -574,6 +575,7 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
 **Tags:** ${response.tags?.join(", ") || "none"}
 **Access Count:** ${response.access_count ?? 1}
 ${backlinkLinks.length > 0 ? `**Backlinks:** ${backlinkLinks.join(", ")}` : ""}
+${response.user_original_request ? `**User Original Request:** ${response.user_original_request}` : ""}
 
 ---
 

@@ -98,6 +98,10 @@ export const BrainEntrySchema = z.object({
   worktree: z.string().optional().openapi({ description: "Specific worktree if different from main" }),
   git_remote: z.string().optional().openapi({ description: "Git remote URL for verification" }),
   git_branch: z.string().optional().openapi({ description: "Branch context when entry was created" }),
+  user_original_request: z.string().optional().openapi({ 
+    description: "Verbatim user request for validation during task completion",
+    example: "Add a dark mode toggle to the settings page" 
+  }),
 }).openapi("BrainEntry");
 
 export const BrainEntrySummarySchema = z.object({

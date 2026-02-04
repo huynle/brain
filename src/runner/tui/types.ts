@@ -9,11 +9,13 @@ import type { EntryStatus, Priority } from '../../core/types';
  */
 export interface TaskDisplay {
   id: string;
+  path: string;
   title: string;
   status: EntryStatus;
   priority: Priority;
   dependencies: string[];
   dependents: string[];
+  parent_id?: string | null;
   progress?: number;
   error?: string;
 }
@@ -58,4 +60,6 @@ export interface AppProps {
   config: TUIConfig;
   /** Callback to receive the addLog function for external log integration */
   onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
+  /** Callback to cancel a task by ID and path */
+  onCancelTask?: (taskId: string, taskPath: string) => Promise<void>;
 }

@@ -84,11 +84,13 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
       // Transform API response to TaskDisplay format
       const taskDisplays: TaskDisplay[] = (data.tasks || []).map((task: any) => ({
         id: task.id,
+        path: task.path,
         title: task.title,
         status: task.status,
         priority: task.priority || 'medium',
         dependencies: task.resolved_deps || task.dependencies || [],
         dependents: task.dependents || [],
+        parent_id: task.parent_id,
         progress: task.progress,
         error: task.error,
       }));

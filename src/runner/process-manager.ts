@@ -20,6 +20,7 @@ export enum CompletionStatus {
   Completed = "completed",
   Failed = "failed",
   Blocked = "blocked",
+  Cancelled = "cancelled",
   Timeout = "timeout",
   Crashed = "crashed",
 }
@@ -206,6 +207,7 @@ export class ProcessManager {
         if (status) {
           if (status === "completed") return CompletionStatus.Completed;
           if (status === "blocked") return CompletionStatus.Blocked;
+          if (status === "cancelled") return CompletionStatus.Cancelled;
           // failed, archived, etc
           if (status !== "in_progress" && status !== "pending") {
             return CompletionStatus.Failed;
@@ -459,6 +461,9 @@ export class ProcessManager {
         break;
       case CompletionStatus.Blocked:
         resultStatus = "blocked";
+        break;
+      case CompletionStatus.Cancelled:
+        resultStatus = "cancelled";
         break;
       case CompletionStatus.Timeout:
         resultStatus = "timeout";

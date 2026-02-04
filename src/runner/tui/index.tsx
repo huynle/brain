@@ -38,6 +38,8 @@ export interface DashboardOptions {
   onExit?: () => void;
   /** Callback to receive log additions from external sources */
   onLogCallback?: (addLog: (entry: Omit<LogEntry, 'timestamp'>) => void) => void;
+  /** Callback to cancel a task by ID and path */
+  onCancelTask?: (taskId: string, taskPath: string) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -96,6 +98,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
     <App 
       config={config} 
       onLogCallback={options.onLogCallback}
+      onCancelTask={options.onCancelTask}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

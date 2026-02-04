@@ -559,9 +559,11 @@ export class TaskRunner {
         const entry = await response.json();
         const status = entry.status as EntryStatus;
 
-        if (status === "completed" || status === "blocked") {
+        if (status === "completed" || status === "blocked" || status === "cancelled") {
           const completionStatus = status === "completed" 
             ? CompletionStatus.Completed 
+            : status === "cancelled"
+            ? CompletionStatus.Cancelled
             : CompletionStatus.Blocked;
           
           await this.handleTuiTaskCompletion(taskId, task, completionStatus);
@@ -806,6 +808,82 @@ export class TaskRunner {
   }
 
   // ========================================
+  // Task Cancellation
+  // ========================================
+
+  /**
+   * Cancel a task by ID.
+   * - Kills the running process if active
+   * - Updates task status to 'cancelled' in brain
+   * - Releases any claim
+   * - Child tasks will be blocked on next poll
+   */
+  async cancelTask(taskId: string, taskPath: string): Promise<void> {
+    this.logger.info("Cancelling task", { taskId, taskPath });
+
+    // 1. Check if task is running in processManager
+    const processInfo = this.processManager.get(taskId);
+    if (processInfo) {
+      // Kill the process
+      await this.processManager.kill(taskId);
+      this.processManager.remove(taskId);
+      this.logger.info("Killed running process for task", { taskId, pid: processInfo.proc.pid });
+    }
+
+    // 2. Check if task is in TUI tasks (tmux windows without proc handles)
+    const tuiTask = this.tuiTasks.get(taskId);
+    if (tuiTask) {
+      await this.cleanupTaskTmux(tuiTask);
+      this.tuiTasks.delete(taskId);
+      this.logger.info("Cleaned up TUI task window", { taskId });
+    }
+
+    // 3. Update status to 'cancelled' in brain
+    try {
+      await this.apiClient.updateTaskStatus(taskPath, "cancelled");
+      this.logger.info("Updated task status to cancelled", { taskId });
+    } catch (error) {
+      this.logger.error("Failed to update task status to cancelled", {
+        taskId,
+        error: String(error),
+      });
+    }
+
+    // 4. Release any claim
+    try {
+      await this.apiClient.releaseTask(this.projectId, taskId);
+    } catch (error) {
+      this.logger.error("Failed to release task claim", {
+        taskId,
+        error: String(error),
+      });
+    }
+
+    // 5. Append cancellation note to task
+    try {
+      const cancelNote = `\n\n## Cancelled\n\n**Time:** ${new Date().toISOString()}\nTask was cancelled by user.\n`;
+      await this.apiClient.appendToTask(taskPath, cancelNote);
+    } catch (error) {
+      this.logger.error("Failed to append cancellation note", {
+        taskId,
+        error: String(error),
+      });
+    }
+
+    // 6. Update stats
+    this.stats.failed++;
+
+    // 7. Emit event
+    this.emitEvent({ type: "task_cancelled", taskId, taskPath });
+
+    // 8. Log to TUI
+    this.tuiLog('warn', `Task cancelled: ${taskId}`, taskId);
+
+    // 9. Save state
+    this.saveState();
+  }
+
+  // ========================================
   // Dashboard Management
   // ========================================
 
@@ -839,6 +917,7 @@ export class TaskRunner {
           this.tuiAddLog = addLog;
           this.logger.info("TUI log callback registered");
         },
+        onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { projectId: this.projectId });
@@ -983,6 +1062,8 @@ export class TaskRunner {
             completionStatus = CompletionStatus.Completed;
           } else if (status === "blocked") {
             completionStatus = CompletionStatus.Blocked;
+          } else if (status === "cancelled") {
+            completionStatus = CompletionStatus.Cancelled;
           } else if (status === "in_progress") {
             // Process exited while still in_progress - likely crashed
             completionStatus = CompletionStatus.Crashed;
@@ -1014,6 +1095,14 @@ export class TaskRunner {
             completedAt: new Date().toISOString(),
             duration: 0,
           },
+        });
+      } else if (completionStatus === CompletionStatus.Cancelled) {
+        this.stats.failed++;
+        this.logger.warn("Dashboard task cancelled", { taskId });
+        this.emitEvent({
+          type: "task_cancelled",
+          taskId,
+          taskPath: taskPath ?? "",
         });
       } else {
         this.stats.failed++;

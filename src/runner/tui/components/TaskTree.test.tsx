@@ -14,13 +14,14 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree } from './TaskTree';
 import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
 function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
   return {
     id: 'task-1',
+    path: 'projects/test/task/task-1.md',
     title: 'Test Task',
     status: 'pending',
     priority: 'medium',
@@ -343,6 +344,142 @@ describe('TaskTree', () => {
       expect(lastFrame()).toContain('Task B');
       expect(lastFrame()).toContain('Task C');
       expect(lastFrame()).toContain('Task D');
+    });
+  });
+});
+
+// =============================================================================
+// Navigation order tests (flattenTreeOrder)
+// =============================================================================
+
+describe('flattenTreeOrder', () => {
+  describe('basic ordering', () => {
+    it('returns empty array for empty tasks', () => {
+      const order = flattenTreeOrder([]);
+      expect(order).toEqual([]);
+    });
+
+    it('returns single task id for single task', () => {
+      const tasks = [createTask({ id: 'task-1', title: 'Only Task' })];
+      const order = flattenTreeOrder(tasks);
+      expect(order).toEqual(['task-1']);
+    });
+
+    it('maintains order for flat list of independent tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', priority: 'medium' }),
+        createTask({ id: '2', title: 'Task 2', priority: 'medium' }),
+        createTask({ id: '3', title: 'Task 3', priority: 'medium' }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      // Should contain all task IDs
+      expect(order.length).toBe(3);
+      expect(order).toContain('1');
+      expect(order).toContain('2');
+      expect(order).toContain('3');
+    });
+  });
+
+  describe('tree traversal order', () => {
+    it('places children after parent in navigation order', () => {
+      const tasks = [
+        createTask({ id: 'parent', title: 'Parent', dependencies: [] }),
+        createTask({ id: 'child', title: 'Child', dependencies: ['parent'] }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      expect(order).toEqual(['parent', 'child']);
+    });
+
+    it('traverses deeply nested tree in depth-first order', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'level1', title: 'Level 1', dependencies: ['root'] }),
+        createTask({ id: 'level2', title: 'Level 2', dependencies: ['level1'] }),
+        createTask({ id: 'level3', title: 'Level 3', dependencies: ['level2'] }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      // Should be depth-first: root -> level1 -> level2 -> level3
+      expect(order).toEqual(['root', 'level1', 'level2', 'level3']);
+    });
+
+    it('handles multiple children at same level', () => {
+      const tasks = [
+        createTask({ id: 'parent', title: 'Parent', dependencies: [] }),
+        createTask({ id: 'child1', title: 'Child 1', dependencies: ['parent'], priority: 'high' }),
+        createTask({ id: 'child2', title: 'Child 2', dependencies: ['parent'], priority: 'medium' }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      // Parent first, then children (sorted by priority: high before medium)
+      expect(order[0]).toBe('parent');
+      expect(order).toContain('child1');
+      expect(order).toContain('child2');
+      // High priority child should come before medium
+      expect(order.indexOf('child1')).toBeLessThan(order.indexOf('child2'));
+    });
+  });
+
+  describe('priority sorting in navigation', () => {
+    it('respects priority order among siblings', () => {
+      const tasks = [
+        createTask({ id: 'low', title: 'Low', priority: 'low' }),
+        createTask({ id: 'high', title: 'High', priority: 'high' }),
+        createTask({ id: 'medium', title: 'Medium', priority: 'medium' }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      // High should come before medium, medium before low
+      expect(order.indexOf('high')).toBeLessThan(order.indexOf('medium'));
+      expect(order.indexOf('medium')).toBeLessThan(order.indexOf('low'));
+    });
+  });
+
+  describe('diamond dependencies', () => {
+    it('includes each task only once for diamond pattern', () => {
+      // A -> B, C
+      // B, C -> D
+      const tasks = [
+        createTask({ id: 'a', title: 'Task A', dependencies: [] }),
+        createTask({ id: 'b', title: 'Task B', dependencies: ['a'] }),
+        createTask({ id: 'c', title: 'Task C', dependencies: ['a'] }),
+        createTask({ id: 'd', title: 'Task D', dependencies: ['b', 'c'] }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      // All four tasks exactly once
+      expect(order.length).toBe(4);
+      expect(new Set(order).size).toBe(4);
+      // A must come before B and C, B and C before D
+      expect(order.indexOf('a')).toBeLessThan(order.indexOf('b'));
+      expect(order.indexOf('a')).toBeLessThan(order.indexOf('c'));
+    });
+  });
+
+  describe('consistency with visual display', () => {
+    it('navigation order matches task appearance order in rendered output', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root Task', dependencies: [] }),
+        createTask({ id: 'child1', title: 'Child One', dependencies: ['root'], priority: 'high' }),
+        createTask({ id: 'child2', title: 'Child Two', dependencies: ['root'], priority: 'low' }),
+        createTask({ id: 'grandchild', title: 'Grandchild', dependencies: ['child1'] }),
+      ];
+      
+      // Get navigation order
+      const navOrder = flattenTreeOrder(tasks);
+      
+      // Render the tree and check visual order
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} />
+      );
+      const frame = lastFrame() || '';
+      
+      // Tasks should appear in same order visually as in navOrder
+      let lastIndex = -1;
+      for (const taskId of navOrder) {
+        const task = tasks.find(t => t.id === taskId);
+        if (task) {
+          const currentIndex = frame.indexOf(task.title);
+          expect(currentIndex).toBeGreaterThan(lastIndex);
+          lastIndex = currentIndex;
+        }
+      }
     });
   });
 });

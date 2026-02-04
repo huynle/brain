@@ -16,10 +16,10 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Box, Text, useInput, useApp } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree } from './components/TaskTree';
+import { TaskTree, flattenTreeOrder } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -30,7 +30,7 @@ import type { AppProps } from './types';
 
 type FocusedPanel = 'tasks' | 'logs';
 
-export function App({ config, onLogCallback }: AppProps): React.ReactElement {
+export function App({ config, onLogCallback, onCancelTask }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
   // State
@@ -58,6 +58,10 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
+  // Get task IDs in visual tree order for navigation (j/k keys)
+  // This ensures navigation follows the same order tasks appear on screen
+  const navigationOrder = useMemo(() => flattenTreeOrder(tasks), [tasks]);
+
   // Handle keyboard input
   useInput((input, key) => {
     // Quit
@@ -70,6 +74,25 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
     if (input === 'r') {
       addLog({ level: 'info', message: 'Manual refresh triggered' });
       refetch();
+      return;
+    }
+
+    // Cancel selected task
+    if (input === 'x' && selectedTask && onCancelTask) {
+      addLog({
+        level: 'warn',
+        message: `Cancelling task: ${selectedTask.title}`,
+        taskId: selectedTask.id,
+      });
+      onCancelTask(selectedTask.id, selectedTask.path).then(() => {
+        refetch(); // Refresh to show updated status
+      }).catch((err) => {
+        addLog({
+          level: 'error',
+          message: `Failed to cancel task: ${err}`,
+          taskId: selectedTask.id,
+        });
+      });
       return;
     }
 
@@ -87,24 +110,28 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
 
     // Navigation (only when focused on tasks panel)
     if (focusedPanel === 'tasks') {
-      const currentIndex = tasks.findIndex((t) => t.id === selectedTaskId);
+      // Use navigationOrder (flattened tree) instead of raw tasks array
+      // This ensures j/k navigation matches the visual tree order
+      const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
 
       // Up arrow or k (vim-style)
       if (key.upArrow || input === 'k') {
         if (currentIndex > 0) {
-          setSelectedTaskId(tasks[currentIndex - 1].id);
-        } else if (currentIndex === -1 && tasks.length > 0) {
-          setSelectedTaskId(tasks[tasks.length - 1].id);
+          setSelectedTaskId(navigationOrder[currentIndex - 1]);
+        } else if (currentIndex === -1 && navigationOrder.length > 0) {
+          // No selection - go to last item
+          setSelectedTaskId(navigationOrder[navigationOrder.length - 1]);
         }
         return;
       }
 
       // Down arrow or j (vim-style)
       if (key.downArrow || input === 'j') {
-        if (currentIndex === -1 && tasks.length > 0) {
-          setSelectedTaskId(tasks[0].id);
-        } else if (currentIndex < tasks.length - 1) {
-          setSelectedTaskId(tasks[currentIndex + 1].id);
+        if (currentIndex === -1 && navigationOrder.length > 0) {
+          // No selection - go to first item
+          setSelectedTaskId(navigationOrder[0]);
+        } else if (currentIndex < navigationOrder.length - 1) {
+          setSelectedTaskId(navigationOrder[currentIndex + 1]);
         }
         return;
       }
@@ -154,6 +181,7 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
         <Text />
         <Text>  <Text bold>q</Text>         - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
+        <Text>  <Text bold>x</Text>         - Cancel selected task</Text>
         <Text>  <Text bold>?</Text>         - Toggle help</Text>
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>

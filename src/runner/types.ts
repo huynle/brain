@@ -55,7 +55,7 @@ export interface RunningTask {
 
 export interface TaskResult {
   taskId: string;
-  status: "completed" | "failed" | "blocked" | "timeout" | "crashed";
+  status: "completed" | "failed" | "blocked" | "cancelled" | "timeout" | "crashed";
   startedAt: string;
   completedAt: string;
   duration: number; // ms
@@ -109,6 +109,7 @@ export type RunnerEvent =
   | { type: "task_started"; task: RunningTask }
   | { type: "task_completed"; result: TaskResult }
   | { type: "task_failed"; result: TaskResult }
+  | { type: "task_cancelled"; taskId: string; taskPath: string }
   | { type: "poll_complete"; readyCount: number; runningCount: number }
   | { type: "state_saved"; path: string }
   | { type: "shutdown"; reason: string };

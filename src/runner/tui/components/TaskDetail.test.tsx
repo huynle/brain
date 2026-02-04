@@ -14,6 +14,7 @@ import type { TaskDisplay } from '../types';
 function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
   return {
     id: 'task-123',
+    path: 'projects/test/task/task-123.md',
     title: 'Test Task',
     status: 'pending',
     priority: 'medium',

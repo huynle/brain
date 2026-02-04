@@ -18,6 +18,8 @@ export function HelpBar({ focusedPanel }: HelpBarProps): React.ReactElement {
           {'  '}
           <Text bold>Enter</Text> Details
           {'  '}
+          <Text bold>x</Text> Cancel
+          {'  '}
           <Text bold>Tab</Text> Switch Panel
           {'  '}
           <Text bold>r</Text> Refresh

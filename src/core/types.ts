@@ -35,6 +35,7 @@ export const ENTRY_STATUSES = [
   "active", // Ready/in use (default)
   "in_progress", // Actively being worked on
   "blocked", // Waiting on something
+  "cancelled", // User-cancelled task
   "completed", // Done/implemented
   "validated", // Implementation verified working
   "superseded", // Replaced by another entry

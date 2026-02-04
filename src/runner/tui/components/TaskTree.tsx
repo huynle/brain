@@ -22,6 +22,7 @@ const STATUS_ICONS: Record<string, string> = {
   in_progress: '▶',   // In Progress (blue)
   completed: '✓',     // Completed (green dim)
   blocked: '✗',       // Blocked (red)
+  cancelled: '⊘',     // Cancelled (yellow)
   draft: '○',
   active: '●',        // Ready (green)
   validated: '✓',
@@ -34,6 +35,7 @@ const STATUS_COLORS: Record<string, string> = {
   in_progress: 'blue',
   completed: 'green',
   blocked: 'red',
+  cancelled: 'yellow',
   draft: 'gray',
   active: 'green',
   validated: 'green',
@@ -51,16 +53,17 @@ const STATUS_ORDER: Record<EntryStatus, number> = {
   in_progress: 0,
   pending: 1,
   blocked: 2,
-  completed: 3,
-  draft: 4,
-  active: 5,
-  validated: 6,
-  superseded: 7,
-  archived: 8,
+  cancelled: 3,
+  completed: 4,
+  draft: 5,
+  active: 6,
+  validated: 7,
+  superseded: 8,
+  archived: 9,
 };
 
 // Tree node representation
-interface TreeNode {
+export interface TreeNode {
   task: TaskDisplay;
   children: TreeNode[];
   inCycle: boolean;
@@ -75,7 +78,7 @@ const EMPTY = '  ';
 /**
  * Build tree structure from flat task list
  */
-function buildTree(tasks: TaskDisplay[]): TreeNode[] {
+export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   // Create lookup map
   const taskMap = new Map<string, TaskDisplay>();
   tasks.forEach(t => taskMap.set(t.id, t));
@@ -209,6 +212,27 @@ function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   }
 
   return roots;
+}
+
+/**
+ * Flatten tree into an array of task IDs in visual/navigation order.
+ * This matches the order tasks appear on screen for j/k navigation.
+ */
+export function flattenTreeOrder(tasks: TaskDisplay[]): string[] {
+  const tree = buildTree(tasks);
+  const result: string[] = [];
+
+  function traverse(nodes: TreeNode[]): void {
+    for (const node of nodes) {
+      result.push(node.task.id);
+      if (node.children.length > 0) {
+        traverse(node.children);
+      }
+    }
+  }
+
+  traverse(tree);
+  return result;
 }
 
 /**

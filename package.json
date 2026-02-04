@@ -4,6 +4,10 @@
   "description": "REST API service for AI agent memory and knowledge management",
   "type": "module",
   "main": "src/index.ts",
+  "bin": {
+    "brain": "./src/cli/brain.ts",
+    "do-work": "./src/cli/do-work.ts"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/huynle/brain.git"

@@ -142,4 +142,65 @@ describe("Logger", () => {
       expect(parsed.timestamp).toBeDefined();
     });
   });
+
+  describe("suppressConsole", () => {
+    it("should suppress console output when enabled", () => {
+      const logs: string[] = [];
+      const originalLog = console.log;
+      const originalWarn = console.warn;
+      const originalError = console.error;
+
+      console.log = (msg: string) => logs.push(msg);
+      console.warn = (msg: string) => logs.push(msg);
+      console.error = (msg: string) => logs.push(msg);
+
+      const logger = createLogger({ level: "debug", colorOutput: false, suppressConsole: true });
+      logger.debug("debug");
+      logger.info("info");
+      logger.warn("warn");
+      logger.error("error");
+
+      console.log = originalLog;
+      console.warn = originalWarn;
+      console.error = originalError;
+
+      // No logs should be output to console when suppressed
+      expect(logs.length).toBe(0);
+    });
+
+    it("should allow toggling suppression at runtime", () => {
+      const logs: string[] = [];
+      const originalLog = console.log;
+      console.log = (msg: string) => logs.push(msg);
+
+      const logger = createLogger({ level: "info", colorOutput: false });
+
+      // Log with console output enabled
+      logger.info("visible");
+      expect(logs.length).toBe(1);
+
+      // Suppress console
+      logger.setSuppressConsole(true);
+      logger.info("suppressed");
+      expect(logs.length).toBe(1); // Still 1, no new log
+
+      // Re-enable console
+      logger.setSuppressConsole(false);
+      logger.info("visible again");
+      expect(logs.length).toBe(2);
+
+      console.log = originalLog;
+    });
+
+    it("should report suppression state", () => {
+      const logger = createLogger({ level: "info" });
+      expect(logger.isSuppressConsole()).toBe(false);
+
+      logger.setSuppressConsole(true);
+      expect(logger.isSuppressConsole()).toBe(true);
+
+      logger.setSuppressConsole(false);
+      expect(logger.isSuppressConsole()).toBe(false);
+    });
+  });
 });

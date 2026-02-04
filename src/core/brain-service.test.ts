@@ -5,10 +5,11 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { BrainService } from "./brain-service";
+import { parseFrontmatter } from "./zk-client";
 import type { BrainConfig } from "./types";
 
 // =============================================================================
@@ -366,6 +367,101 @@ Testing approach.
       await expect(
         service.getSection(planPath, "Non-existent Section")
       ).rejects.toThrow("not found in plan");
+    });
+  });
+
+  describe("recall - execution context fields", () => {
+    let taskPath: string;
+
+    beforeAll(() => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const taskFile = join(taskDir, "task-with-context.md");
+      taskPath = "projects/test-project/task/task-with-context.md";
+
+      writeFileSync(
+        taskFile,
+        `---
+title: Task With Execution Context
+type: task
+status: pending
+priority: high
+workdir: projects/my-project
+worktree: projects/my-project-wt
+git_remote: git@github.com:user/repo.git
+git_branch: feature/test
+---
+
+Task content here.
+`
+      );
+    });
+
+    test("should recall workdir from task", async () => {
+      const result = await service.recall(taskPath);
+      expect(result.workdir).toBe("projects/my-project");
+    });
+
+    test("should recall worktree from task", async () => {
+      const result = await service.recall(taskPath);
+      expect(result.worktree).toBe("projects/my-project-wt");
+    });
+
+    test("should recall git_remote from task", async () => {
+      const result = await service.recall(taskPath);
+      expect(result.git_remote).toBe("git@github.com:user/repo.git");
+    });
+
+    test("should recall git_branch from task", async () => {
+      const result = await service.recall(taskPath);
+      expect(result.git_branch).toBe("feature/test");
+    });
+
+    test("should recall all execution context fields together", async () => {
+      const result = await service.recall(taskPath);
+      
+      expect(result.title).toBe("Task With Execution Context");
+      expect(result.type).toBe("task");
+      expect(result.status).toBe("pending");
+      expect(result.priority).toBe("high");
+      expect(result.workdir).toBe("projects/my-project");
+      expect(result.worktree).toBe("projects/my-project-wt");
+      expect(result.git_remote).toBe("git@github.com:user/repo.git");
+      expect(result.git_branch).toBe("feature/test");
+    });
+  });
+
+  describe("recall - missing execution context", () => {
+    let taskPath: string;
+
+    beforeAll(() => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const taskFile = join(taskDir, "task-without-context.md");
+      taskPath = "projects/test-project/task/task-without-context.md";
+
+      writeFileSync(
+        taskFile,
+        `---
+title: Task Without Context
+type: task
+status: pending
+---
+
+Task content.
+`
+      );
+    });
+
+    test("should return undefined for missing execution context fields", async () => {
+      const result = await service.recall(taskPath);
+      
+      expect(result.workdir).toBeUndefined();
+      expect(result.worktree).toBeUndefined();
+      expect(result.git_remote).toBeUndefined();
+      expect(result.git_branch).toBeUndefined();
     });
   });
 });

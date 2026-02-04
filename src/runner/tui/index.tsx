@@ -84,17 +84,39 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
     maxLogs: options.maxLogs ?? 100,
   };
 
+  // Enter alternate screen buffer and clear it (like vim/less do)
+  // This gives us a clean fullscreen canvas that restores the previous
+  // terminal content when we exit
+  process.stdout.write('\x1b[?1049h'); // Enter alternate screen buffer
+  process.stdout.write('\x1b[H');      // Move cursor to top-left
+  process.stdout.write('\x1b[2J');     // Clear entire screen
+
   // Render the Ink app
-  const { unmount, waitUntilExit } = render(
+  const { unmount: inkUnmount, waitUntilExit } = render(
     <App 
       config={config} 
       onLogCallback={options.onLogCallback}
-    />
+    />,
+    {
+      // Patch console to prevent any stray console.log from corrupting the TUI
+      patchConsole: true,
+    }
   );
+
+  // Wrap unmount to restore normal screen buffer
+  const unmount = () => {
+    inkUnmount();
+    // Exit alternate screen buffer (restores previous terminal content)
+    process.stdout.write('\x1b[?1049l');
+  };
 
   // Set up exit callback
   if (options.onExit) {
-    waitUntilExit().then(options.onExit);
+    waitUntilExit().then(() => {
+      // Restore normal screen buffer on exit
+      process.stdout.write('\x1b[?1049l');
+      options.onExit!();
+    });
   }
 
   return { unmount, waitUntilExit };

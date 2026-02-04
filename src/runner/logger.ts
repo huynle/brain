@@ -28,6 +28,7 @@ export interface LoggerConfig {
   logFile: string;
   jsonOutput: boolean;
   colorOutput: boolean;
+  suppressConsole: boolean;
 }
 
 // =============================================================================
@@ -68,6 +69,7 @@ export class Logger {
       logFile: config?.logFile ?? "brain-runner.log",
       jsonOutput: config?.jsonOutput ?? false,
       colorOutput: config?.colorOutput ?? process.stdout.isTTY ?? false,
+      suppressConsole: config?.suppressConsole ?? false,
     };
 
     // Initialize log file path
@@ -127,6 +129,11 @@ export class Logger {
   // ========================================
 
   private writeConsole(entry: LogEntry): void {
+    // Skip console output when suppressed (e.g., TUI mode)
+    if (this.config.suppressConsole) {
+      return;
+    }
+
     const output = this.config.jsonOutput
       ? JSON.stringify(entry)
       : this.formatConsole(entry);
@@ -209,6 +216,18 @@ export class Logger {
 
   getLevel(): LogLevel {
     return this.config.level;
+  }
+
+  /**
+   * Suppress console output (useful for TUI mode).
+   * Logs will still be written to the log file.
+   */
+  setSuppressConsole(suppress: boolean): void {
+    this.config.suppressConsole = suppress;
+  }
+
+  isSuppressConsole(): boolean {
+    return this.config.suppressConsole;
   }
 }
 

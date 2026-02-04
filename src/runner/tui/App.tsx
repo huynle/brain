@@ -25,6 +25,7 @@ import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useLogStream } from './hooks/useLogStream';
+import { useTerminalSize } from './hooks/useTerminalSize';
 import type { AppProps } from './types';
 
 type FocusedPanel = 'tasks' | 'logs';
@@ -45,6 +46,7 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
     enabled: true,
   });
   const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs });
+  const { rows: terminalRows } = useTerminalSize();
 
   // Expose addLog to parent for external log integration
   useEffect(() => {
@@ -164,7 +166,7 @@ export function App({ config, onLogCallback }: AppProps): React.ReactElement {
   }
 
   return (
-    <Box flexDirection="column" width="100%" height="100%">
+    <Box flexDirection="column" width="100%" height={terminalRows}>
       {/* Status bar at top */}
       <StatusBar
         projectId={config.project || 'brain-runner'}

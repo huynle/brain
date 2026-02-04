@@ -261,7 +261,7 @@ describe("ProcessManager", () => {
 
       // Create manager with short timeout
       const customManager = new ProcessManager({
-        brainApiUrl: "http://localhost:3000",
+        brainApiUrl: "http://localhost:3333",
         pollInterval: 30,
         taskPollInterval: 5,
         maxParallel: 3,

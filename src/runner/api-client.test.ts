@@ -22,7 +22,7 @@ import type { ResolvedTask } from "../core/types";
 
 // Mock config for testing
 const mockConfig: RunnerConfig = {
-  brainApiUrl: "http://localhost:3000",
+  brainApiUrl: "http://localhost:3333",
   pollInterval: 30,
   taskPollInterval: 5,
   maxParallel: 3,

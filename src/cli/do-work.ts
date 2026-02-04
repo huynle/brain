@@ -32,7 +32,7 @@ const BRAIN_API_URL = process.env.BRAIN_API_URL || DEFAULT_API_URL;
 // =============================================================================
 
 async function apiGet<T>(path: string): Promise<T> {
-  const url = `${BRAIN_API_URL}${path}`;
+  const url = `${BRAIN_API_URL}/api/v1${path}`;
   const response = await fetch(url);
   if (!response.ok) {
     const error = await response.text();

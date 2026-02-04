@@ -89,12 +89,18 @@ let connectionState: BrainConnectionState = {
   lastCheck: 0,
 };
 
-const HEALTH_CHECK_INTERVAL_MS = 30_000;
+const HEALTH_CHECK_INTERVAL_MS = 30_000; // Re-check every 30 seconds when healthy
+const HEALTH_CHECK_RETRY_MS = 5_000; // Re-check every 5 seconds when unhealthy (faster reconnect)
 
 async function checkBrainHealth(): Promise<BrainConnectionState> {
   const now = Date.now();
   
-  if (now - connectionState.lastCheck < HEALTH_CHECK_INTERVAL_MS) {
+  // Use shorter retry interval when unhealthy for faster reconnect
+  const cacheInterval = connectionState.available 
+    ? HEALTH_CHECK_INTERVAL_MS 
+    : HEALTH_CHECK_RETRY_MS;
+  
+  if (now - connectionState.lastCheck < cacheInterval) {
     return connectionState;
   }
 

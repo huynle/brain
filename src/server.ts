@@ -97,7 +97,7 @@ When enabled, pass the API key in the \`Authorization\` header.`,
         description: "Current server",
       },
       {
-        url: "http://localhost:3000",
+        url: "http://localhost:3333",
         description: "Local development server",
       },
     ],

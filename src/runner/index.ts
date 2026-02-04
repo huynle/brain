@@ -282,6 +282,12 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   else if (options.dashboard) mode = "dashboard";
   else if (options.foreground) mode = "background"; // foreground still uses background mode internally
 
+  // Suppress console output in TUI mode - logs go to file only
+  // This keeps the TUI display clean
+  if (mode === "tui") {
+    logger.setSuppressConsole(true);
+  }
+
   logger.info("Starting runner", {
     projectId,
     mode,

@@ -41,7 +41,7 @@ describe("config", () => {
     it("returns default config values when no env vars set", () => {
       const config = loadConfig();
 
-      expect(config.brainApiUrl).toBe("http://localhost:3000");
+      expect(config.brainApiUrl).toBe("http://localhost:3333");
       expect(config.pollInterval).toBe(30);
       expect(config.taskPollInterval).toBe(5);
       expect(config.maxParallel).toBe(3);

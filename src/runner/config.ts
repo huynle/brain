@@ -56,7 +56,7 @@ export function loadConfig(): RunnerConfig {
   return {
     brainApiUrl: getEnv(
       "BRAIN_API_URL",
-      fileConfig.brainApiUrl ?? "http://localhost:3000"
+      fileConfig.brainApiUrl ?? "http://localhost:3333"
     ),
     pollInterval: getEnvInt(
       "RUNNER_POLL_INTERVAL",

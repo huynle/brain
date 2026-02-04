@@ -399,6 +399,35 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    // Handle execution context fields for tasks
+    const workdirMatch = line.match(/^workdir:\s*(.+)$/);
+    if (workdirMatch) {
+      frontmatter.workdir = parseYamlStringValue(workdirMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    const worktreeMatch = line.match(/^worktree:\s*(.+)$/);
+    if (worktreeMatch) {
+      frontmatter.worktree = parseYamlStringValue(worktreeMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    const gitRemoteMatch = line.match(/^git_remote:\s*(.+)$/);
+    if (gitRemoteMatch) {
+      frontmatter.git_remote = parseYamlStringValue(gitRemoteMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    const gitBranchMatch = line.match(/^git_branch:\s*(.+)$/);
+    if (gitBranchMatch) {
+      frontmatter.git_branch = parseYamlStringValue(gitBranchMatch[1]);
+      inTags = false;
+      continue;
+    }
+
     // Handle tags array
     if (line.match(/^tags:\s*$/)) {
       inTags = true;

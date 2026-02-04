@@ -103,7 +103,7 @@ export class TmuxManager {
     const scriptPath = join(this.stateDir, `task_list_${projectId}.sh`);
     
     // Get API URL from environment or use default
-    const apiUrl = process.env.BRAIN_API_URL ?? "http://localhost:3000";
+    const apiUrl = process.env.BRAIN_API_URL ?? "http://localhost:3333";
     
     // Maximum width for the task list pane (leaving room for tree lines and border)
     const maxTitleWidth = 45;

@@ -130,7 +130,7 @@ describe('useTaskPoller - Core Logic', () => {
     it('should use default interval when not specified', () => {
       const options = {
         projectId: 'test',
-        apiUrl: 'http://localhost:3000',
+        apiUrl: 'http://localhost:3333',
       };
 
       const interval = getPollInterval(options);
@@ -140,7 +140,7 @@ describe('useTaskPoller - Core Logic', () => {
     it('should use custom interval when specified', () => {
       const options = {
         projectId: 'test',
-        apiUrl: 'http://localhost:3000',
+        apiUrl: 'http://localhost:3333',
         pollInterval: 5000,
       };
 
@@ -153,7 +153,7 @@ describe('useTaskPoller - Core Logic', () => {
     it('should default to enabled', () => {
       const options = {
         projectId: 'test',
-        apiUrl: 'http://localhost:3000',
+        apiUrl: 'http://localhost:3333',
       };
 
       const isEnabled = getEnabled(options);
@@ -163,7 +163,7 @@ describe('useTaskPoller - Core Logic', () => {
     it('should respect disabled state', () => {
       const options = {
         projectId: 'test',
-        apiUrl: 'http://localhost:3000',
+        apiUrl: 'http://localhost:3333',
         enabled: false,
       };
 
@@ -174,20 +174,20 @@ describe('useTaskPoller - Core Logic', () => {
 
   describe('URL construction', () => {
     it('should construct correct API URL', () => {
-      const url = buildTasksUrl('http://localhost:3000', 'my-project');
-      expect(url).toBe('http://localhost:3000/api/v1/tasks/my-project');
+      const url = buildTasksUrl('http://localhost:3333', 'my-project');
+      expect(url).toBe('http://localhost:3333/api/v1/tasks/my-project');
     });
 
     it('should encode special characters in project ID', () => {
-      const url = buildTasksUrl('http://localhost:3000', 'my project/test');
+      const url = buildTasksUrl('http://localhost:3333', 'my project/test');
       expect(url).toBe(
-        'http://localhost:3000/api/v1/tasks/my%20project%2Ftest'
+        'http://localhost:3333/api/v1/tasks/my%20project%2Ftest'
       );
     });
 
     it('should handle trailing slash in base URL', () => {
-      const url = buildTasksUrl('http://localhost:3000/', 'project');
-      expect(url).toBe('http://localhost:3000//api/v1/tasks/project');
+      const url = buildTasksUrl('http://localhost:3333/', 'project');
+      expect(url).toBe('http://localhost:3333//api/v1/tasks/project');
     });
   });
 

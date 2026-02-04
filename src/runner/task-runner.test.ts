@@ -37,7 +37,7 @@ import type { ResolvedTask } from "../core/types";
 
 function createTestConfig(stateDir: string): RunnerConfig {
   return {
-    brainApiUrl: "http://localhost:3000",
+    brainApiUrl: "http://localhost:3333",
     pollInterval: 1, // Short for tests
     taskPollInterval: 1,
     maxParallel: 3,

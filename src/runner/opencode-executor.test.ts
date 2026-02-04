@@ -59,7 +59,7 @@ function createMockTask(
 
 function createTestConfig(stateDir: string): RunnerConfig {
   return {
-    brainApiUrl: "http://localhost:3000",
+    brainApiUrl: "http://localhost:3333",
     pollInterval: 30,
     taskPollInterval: 5,
     maxParallel: 3,

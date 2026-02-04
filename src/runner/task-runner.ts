@@ -115,6 +115,12 @@ export class TaskRunner {
       return;
     }
 
+    // Suppress console output in TUI mode - logs go to file only
+    // This must happen BEFORE any logging so the TUI display is clean
+    if (this.mode === "tui") {
+      this.logger.setSuppressConsole(true);
+    }
+
     this.logger.info("Starting runner", {
       projectId: this.projectId,
       runnerId: this.runnerId,

@@ -38,7 +38,7 @@ import type { ResolvedTask } from "../core/types";
 
 function createTestConfig(stateDir: string): RunnerConfig {
   return {
-    brainApiUrl: "http://localhost:3000",
+    brainApiUrl: "http://localhost:3333",
     pollInterval: 1,
     taskPollInterval: 1,
     maxParallel: 2,
@@ -648,6 +648,160 @@ describe("Integration: Error Handling", () => {
 
     // Clear should not throw
     expect(() => stateManager.clear()).not.toThrow();
+  });
+});
+
+describe("Integration: Workdir/Execution Context Flow", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `workdir-flow-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    resetAllSingletons();
+  });
+
+  afterEach(() => {
+    resetAllSingletons();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  test("ResolvedTask includes workdir fields from API response", async () => {
+    const taskWithWorkdir = createMockTask("task-with-workdir", {
+      workdir: "projects/my-project",
+      worktree: "projects/my-project-wt",
+      git_remote: "git@github.com:user/repo.git",
+      git_branch: "main",
+      resolved_workdir: "/home/user/projects/my-project",
+    });
+
+    expect(taskWithWorkdir.workdir).toBe("projects/my-project");
+    expect(taskWithWorkdir.worktree).toBe("projects/my-project-wt");
+    expect(taskWithWorkdir.git_remote).toBe("git@github.com:user/repo.git");
+    expect(taskWithWorkdir.git_branch).toBe("main");
+    expect(taskWithWorkdir.resolved_workdir).toBe("/home/user/projects/my-project");
+  });
+
+  test("OpencodeExecutor.resolveWorkdir uses task workdir fields", () => {
+    const executor = new OpencodeExecutor(config);
+    
+    // Task with no workdir fields - should use config default
+    const taskNoWorkdir = createMockTask("task1", {
+      workdir: null,
+      worktree: null,
+      resolved_workdir: null,
+    });
+    expect(executor.resolveWorkdir(taskNoWorkdir)).toBe(config.workDir);
+
+    // Task with resolved_workdir - should use it if directory exists
+    const taskWithResolvedWorkdir = createMockTask("task2", {
+      resolved_workdir: testDir, // Use test directory which exists
+    });
+    expect(executor.resolveWorkdir(taskWithResolvedWorkdir)).toBe(testDir);
+
+    // Task with non-existent resolved_workdir - should fall back to config
+    const taskWithBadResolved = createMockTask("task3", {
+      resolved_workdir: "/nonexistent/path/that/does/not/exist",
+    });
+    expect(executor.resolveWorkdir(taskWithBadResolved)).toBe(config.workDir);
+  });
+
+  test("RunningTask preserves workdir from ResolvedTask", () => {
+    const resolvedTask = createMockTask("task1", {
+      workdir: "projects/my-project",
+      worktree: "projects/my-project-wt",
+      resolved_workdir: testDir,
+    });
+
+    // Simulate what TaskRunner does when creating RunningTask
+    const runningTask: RunningTask = {
+      id: resolvedTask.id,
+      path: resolvedTask.path,
+      title: resolvedTask.title,
+      priority: resolvedTask.priority,
+      projectId: "test-project",
+      pid: 12345,
+      startedAt: new Date().toISOString(),
+      isResume: false,
+      workdir: testDir, // This would be set to resolved_workdir or config.workDir
+    };
+
+    expect(runningTask.workdir).toBe(testDir);
+  });
+
+  test("StateManager persists and restores tasks with workdir", () => {
+    const projectId = "workdir-state-test";
+    const stateManager = new StateManager(testDir, projectId);
+
+    const tasks: RunningTask[] = [
+      createRunningTask("task1", 1001, { workdir: "/path/to/project" }),
+      createRunningTask("task2", 1002, { workdir: "/path/to/worktree" }),
+    ];
+
+    // Save state
+    const stats = { completed: 0, failed: 0, totalRuntime: 0 };
+    stateManager.save("processing", tasks, stats, new Date().toISOString());
+    stateManager.saveRunningTasks(tasks);
+
+    // Load and verify
+    const loadedTasks = stateManager.loadRunningTasks();
+    expect(loadedTasks).toHaveLength(2);
+    expect(loadedTasks[0].workdir).toBe("/path/to/project");
+    expect(loadedTasks[1].workdir).toBe("/path/to/worktree");
+  });
+
+  test("full workdir flow: mock task -> executor -> process spawn", async () => {
+    const executor = new OpencodeExecutor(config);
+    const processManager = new ProcessManager(config);
+
+    // Task with no relative paths but has resolved_workdir
+    // This is what TaskService produces after resolving workdir
+    const task = createMockTask("task-with-workdir", {
+      workdir: null, // No relative path
+      worktree: null,
+      resolved_workdir: testDir, // Already resolved to absolute path
+    });
+
+    // Verify workdir resolution - should use resolved_workdir since workdir/worktree are null
+    const resolvedWorkdir = executor.resolveWorkdir(task);
+    expect(resolvedWorkdir).toBe(testDir);
+
+    // Mock Bun.spawn to capture spawn arguments
+    let capturedCwd: string | undefined;
+    const originalSpawn = Bun.spawn;
+    const mockProc = {
+      pid: 99999,
+      kill: () => {},
+      exited: Promise.resolve(0),
+    };
+
+    // @ts-expect-error - mocking
+    Bun.spawn = (args: { cwd?: string }) => {
+      capturedCwd = args.cwd;
+      return mockProc;
+    };
+
+    try {
+      // Spawn with explicit workdir (simulating what TaskRunner does)
+      const result = await executor.spawn(task, "test-project", {
+        mode: "background",
+        workdir: resolvedWorkdir,
+      });
+
+      expect(result.pid).toBe(99999);
+      expect(capturedCwd).toBe(testDir);
+    } finally {
+      Bun.spawn = originalSpawn;
+      await executor.cleanup("task-with-workdir", "test-project");
+    }
   });
 });
 

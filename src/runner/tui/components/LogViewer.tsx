@@ -1,0 +1,172 @@
+/**
+ * Log viewer component for displaying streaming logs
+ * Features: auto-scroll, color-coded levels, context display, performance optimization
+ */
+
+import React, { useMemo } from 'react';
+import { Box, Text, Static } from 'ink';
+import type { LogEntry } from '../types';
+
+interface LogViewerProps {
+  logs: LogEntry[];
+  maxLines?: number;
+  showTimestamp?: boolean;
+  showLevel?: boolean;
+}
+
+const LEVEL_COLORS: Record<string, string> = {
+  debug: 'gray',
+  info: 'white',
+  warn: 'yellow',
+  error: 'red',
+};
+
+const LEVEL_LABELS: Record<string, string> = {
+  debug: 'DEBUG',
+  info: 'INFO',
+  warn: 'WARN',
+  error: 'ERROR',
+};
+
+// Maximum message length before truncation
+const MAX_MESSAGE_LENGTH = 80;
+
+/**
+ * Format timestamp to HH:MM:SS
+ */
+function formatTime(date: Date): string {
+  const pad = (n: number): string => n.toString().padStart(2, '0');
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+/**
+ * Format context as key="value" pairs
+ */
+function formatContext(context?: Record<string, unknown>): string {
+  if (!context || Object.keys(context).length === 0) {
+    return '';
+  }
+
+  return Object.entries(context)
+    .map(([key, value]) => {
+      const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+      return `${key}="${stringValue}"`;
+    })
+    .join(' ');
+}
+
+/**
+ * Truncate message with ellipsis if too long
+ */
+function truncateMessage(message: string, maxLength: number): string {
+  if (message.length <= maxLength) {
+    return message;
+  }
+  return message.slice(0, maxLength - 3) + '...';
+}
+
+/**
+ * Single log line component
+ */
+function LogLine({
+  log,
+  showTimestamp,
+  showLevel,
+}: {
+  log: LogEntry;
+  showTimestamp: boolean;
+  showLevel: boolean;
+}): React.ReactElement {
+  const levelColor = LEVEL_COLORS[log.level] || 'white';
+  const levelLabel = LEVEL_LABELS[log.level] || log.level.toUpperCase();
+  const contextStr = formatContext(log.context);
+  
+  // Calculate available space for message
+  let availableLength = MAX_MESSAGE_LENGTH;
+  if (contextStr) {
+    availableLength = Math.max(30, MAX_MESSAGE_LENGTH - contextStr.length - 1);
+  }
+  
+  const truncatedMessage = truncateMessage(log.message, availableLength);
+
+  return (
+    <Box>
+      {showTimestamp && (
+        <Text dimColor>{formatTime(log.timestamp)} </Text>
+      )}
+      {showLevel && (
+        <Text color={levelColor} bold={log.level === 'error'}>
+          {levelLabel.padEnd(5)}{' '}
+        </Text>
+      )}
+      <Text color={log.level === 'debug' ? 'gray' : undefined}>
+        {truncatedMessage}
+      </Text>
+      {contextStr && (
+        <Text dimColor> {contextStr}</Text>
+      )}
+    </Box>
+  );
+}
+
+export function LogViewer({
+  logs,
+  maxLines = 50,
+  showTimestamp = true,
+  showLevel = true,
+}: LogViewerProps): React.ReactElement {
+  // Memoize visible logs calculation for performance
+  const visibleLogs = useMemo(() => {
+    // Auto-scroll: show the most recent logs
+    return logs.slice(-maxLines);
+  }, [logs, maxLines]);
+
+  // Split into static (older) and dynamic (recent) logs for performance
+  // Static logs won't re-render, only the most recent few will
+  const splitPoint = Math.max(0, visibleLogs.length - 5);
+  const staticLogs = visibleLogs.slice(0, splitPoint);
+  const dynamicLogs = visibleLogs.slice(splitPoint);
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor="gray"
+      paddingX={1}
+    >
+      <Text bold dimColor>
+        {'Logs'.padEnd(60, ' ').substring(0, 60)}
+      </Text>
+      
+      {visibleLogs.length === 0 ? (
+        <Text dimColor>No logs yet</Text>
+      ) : (
+        <>
+          {/* Static logs - won't re-render for performance */}
+          <Static items={staticLogs}>
+            {(log, index) => (
+              <LogLine
+                key={`static-${index}`}
+                log={log}
+                showTimestamp={showTimestamp}
+                showLevel={showLevel}
+              />
+            )}
+          </Static>
+          
+          {/* Dynamic logs - most recent, will update */}
+          {dynamicLogs.map((log, index) => (
+            <LogLine
+              key={`dynamic-${splitPoint + index}`}
+              log={log}
+              showTimestamp={showTimestamp}
+              showLevel={showLevel}
+            />
+          ))}
+        </>
+      )}
+    </Box>
+  );
+}
+
+export default LogViewer;

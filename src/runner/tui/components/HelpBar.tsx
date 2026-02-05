@@ -11,7 +11,7 @@ interface HelpBarProps {
   isMultiProject?: boolean;
 }
 
-export function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
+export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
   return (
     <Box paddingX={1} justifyContent="space-between">
       <Box>
@@ -55,6 +55,6 @@ export function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.R
       )}
     </Box>
   );
-}
+});
 
 export default HelpBar;

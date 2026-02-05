@@ -18,7 +18,7 @@ const STATUS_COLORS: Record<string, string> = {
   failed: 'red',
 };
 
-export function TaskDetail({ task }: TaskDetailProps): React.ReactElement {
+export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailProps): React.ReactElement {
   if (!task) {
     return (
       <Box
@@ -79,6 +79,6 @@ export function TaskDetail({ task }: TaskDetailProps): React.ReactElement {
       )}
     </Box>
   );
-}
+});
 
 export default TaskDetail;

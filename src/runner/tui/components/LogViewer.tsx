@@ -4,7 +4,7 @@
  */
 
 import React, { useMemo } from 'react';
-import { Box, Text, Static } from 'ink';
+import { Box, Text } from 'ink';
 import type { LogEntry } from '../types';
 
 interface LogViewerProps {
@@ -68,9 +68,9 @@ function truncateMessage(message: string, maxLength: number): string {
 }
 
 /**
- * Single log line component
+ * Single log line component (memoized to prevent unnecessary re-renders)
  */
-function LogLine({
+export const LogLine = React.memo(function LogLine({
   log,
   showTimestamp,
   showLevel,
@@ -120,9 +120,9 @@ function LogLine({
       )}
     </Box>
   );
-}
+});
 
-export function LogViewer({
+export const LogViewer = React.memo(function LogViewer({
   logs,
   maxLines = 50,
   showTimestamp = true,
@@ -134,12 +134,6 @@ export function LogViewer({
     // Auto-scroll: show the most recent logs
     return logs.slice(-maxLines);
   }, [logs, maxLines]);
-
-  // Split into static (older) and dynamic (recent) logs for performance
-  // Static logs won't re-render, only the most recent few will
-  const splitPoint = Math.max(0, visibleLogs.length - 5);
-  const staticLogs = visibleLogs.slice(0, splitPoint);
-  const dynamicLogs = visibleLogs.slice(splitPoint);
 
   return (
     <Box
@@ -155,34 +149,18 @@ export function LogViewer({
       {visibleLogs.length === 0 ? (
         <Text dimColor>No logs yet</Text>
       ) : (
-        <>
-          {/* Static logs - won't re-render for performance */}
-          <Static items={staticLogs}>
-            {(log, index) => (
-              <LogLine
-                key={`static-${index}`}
-                log={log}
-                showTimestamp={showTimestamp}
-                showLevel={showLevel}
-                showProjectPrefix={showProjectPrefix}
-              />
-            )}
-          </Static>
-          
-          {/* Dynamic logs - most recent, will update */}
-          {dynamicLogs.map((log, index) => (
-            <LogLine
-              key={`dynamic-${splitPoint + index}`}
-              log={log}
-              showTimestamp={showTimestamp}
-              showLevel={showLevel}
-              showProjectPrefix={showProjectPrefix}
-            />
-          ))}
-        </>
+        visibleLogs.map((log, index) => (
+          <LogLine
+            key={`log-${log.timestamp.getTime()}-${index}`}
+            log={log}
+            showTimestamp={showTimestamp}
+            showLevel={showLevel}
+            showProjectPrefix={showProjectPrefix}
+          />
+        ))
       )}
     </Box>
   );
-}
+});
 
 export default LogViewer;

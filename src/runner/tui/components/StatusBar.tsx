@@ -26,7 +26,7 @@ interface StatusBarProps {
   pausedProjects?: Set<string>;  // Set of paused project IDs
 }
 
-export function StatusBar({
+export const StatusBar = React.memo(function StatusBar({
   projectId,
   projects,
   activeProject,
@@ -159,6 +159,6 @@ export function StatusBar({
       </Box>
     </Box>
   );
-}
+});
 
 export default StatusBar;

@@ -380,9 +380,9 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
 }
 
 /**
- * Completed section header component
+ * Completed section header component (memoized)
  */
-function CompletedHeader({
+const CompletedHeader = React.memo(function CompletedHeader({
   count,
   collapsed,
   isSelected,
@@ -404,12 +404,12 @@ function CompletedHeader({
       </Text>
     </Box>
   );
-}
+});
 
 /**
- * Task row component
+ * Task row component (memoized to prevent unnecessary re-renders)
  */
-function TaskRow({
+const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
   isSelected,
@@ -471,7 +471,7 @@ function TaskRow({
       )}
     </Box>
   );
-}
+});
 
 /**
  * Render tree recursively
@@ -514,9 +514,9 @@ function renderTree(
 }
 
 /**
- * Project header component for grouped view
+ * Project header component for grouped view (memoized)
  */
-function ProjectHeader({
+const ProjectHeader = React.memo(function ProjectHeader({
   projectId,
   taskCount,
 }: {
@@ -530,7 +530,7 @@ function ProjectHeader({
       </Text>
     </Box>
   );
-}
+});
 
 /**
  * Render a single project's tasks as a tree
@@ -575,7 +575,7 @@ function renderProjectTasks(
   return elements;
 }
 
-export function TaskTree({
+export const TaskTree = React.memo(function TaskTree({
   tasks,
   selectedId,
   completedCollapsed,
@@ -810,6 +810,6 @@ export function TaskTree({
       </Box>
     </Box>
   );
-}
+});
 
 export default TaskTree;

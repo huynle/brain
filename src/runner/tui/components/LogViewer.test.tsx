@@ -12,7 +12,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { LogViewer } from './LogViewer';
+import { LogViewer, LogLine } from './LogViewer';
 import type { LogEntry } from '../types';
 
 // Helper to create mock log entries
@@ -277,6 +277,29 @@ describe('LogViewer', () => {
       );
       expect(lastFrame()).toContain('[brain-api]');
       expect(lastFrame()).toContain('[opencode]');
+    });
+  });
+
+  describe('React.memo optimization', () => {
+    it('exports LogLine as a memoized component', () => {
+      // LogLine should be exported and wrapped in React.memo for performance
+      expect(LogLine).toBeDefined();
+      // React.memo wraps the component - check it's a valid React component
+      expect(typeof LogLine).toBe('object'); // memo components are objects, not functions
+    });
+
+    it('renders LogLine directly with correct props', () => {
+      const log = createLog({ message: 'Direct render test', level: 'warn' });
+      const { lastFrame } = render(
+        <LogLine
+          log={log}
+          showTimestamp={false}
+          showLevel={true}
+          showProjectPrefix={false}
+        />
+      );
+      expect(lastFrame()).toContain('WARN');
+      expect(lastFrame()).toContain('Direct render test');
     });
   });
 

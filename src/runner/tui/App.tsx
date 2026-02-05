@@ -16,7 +16,7 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -161,6 +161,11 @@ export function App({
       return derivedPaused;
     });
   }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
+
+  // Stable callback for toggling completed section (avoids new ref on every render)
+  const handleToggleCompleted = useCallback(() => {
+    setCompletedCollapsed(prev => !prev);
+  }, []);
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
@@ -339,7 +344,7 @@ export function App({
       if (key.return) {
         // Toggle completed section if header is selected
         if (selectedTaskId === COMPLETED_HEADER_ID) {
-          setCompletedCollapsed(!completedCollapsed);
+          setCompletedCollapsed(prev => !prev);
           return;
         }
         // Currently just logs - TaskDetail is always visible
@@ -438,7 +443,7 @@ export function App({
             selectedId={selectedTaskId}
             onSelect={setSelectedTaskId}
             completedCollapsed={completedCollapsed}
-            onToggleCompleted={() => setCompletedCollapsed(!completedCollapsed)}
+            onToggleCompleted={handleToggleCompleted}
             groupByProject={isMultiProject && activeProject === 'all'}
           />
         </Box>

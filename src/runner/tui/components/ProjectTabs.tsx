@@ -53,9 +53,9 @@ function getProjectIndicator(stats: TaskStats | undefined): { icon: string; colo
 }
 
 /**
- * Single tab component
+ * Single tab component (memoized to prevent unnecessary re-renders)
  */
-function Tab({
+const Tab = React.memo(function Tab({
   label,
   isActive,
   indicator,
@@ -85,9 +85,9 @@ function Tab({
       {suffix && <Text>{suffix}</Text>}
     </>
   );
-}
+});
 
-export function ProjectTabs({
+export const ProjectTabs = React.memo(function ProjectTabs({
   projects,
   activeProject,
   onSelectProject,
@@ -162,6 +162,6 @@ export function ProjectTabs({
       <Box flexGrow={1} />
     </Box>
   );
-}
+});
 
 export default ProjectTabs;

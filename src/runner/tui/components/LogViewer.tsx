@@ -141,6 +141,8 @@ export const LogViewer = React.memo(function LogViewer({
       borderStyle="single"
       borderColor="gray"
       paddingX={1}
+      width="100%"
+      flexGrow={1}
     >
       <Text bold dimColor>
         {'Logs'.padEnd(60, ' ').substring(0, 60)}

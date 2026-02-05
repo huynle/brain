@@ -99,13 +99,9 @@ async function runRunner(args: string[]): Promise<number> {
 // =============================================================================
 
 async function cmdStart(project: string | undefined, background: boolean): Promise<number> {
-  if (!project) {
-    console.error("Error: project argument required");
-    console.error("Usage: do-work start <project>");
-    return 1;
-  }
+  const resolvedProject = project || "all";
 
-  const args = ["start", project];
+  const args = ["start", resolvedProject];
   if (background) {
     args.push("--background");
   } else {
@@ -251,9 +247,12 @@ async function main() {
       // If first arg looks like a project name (not a flag), start TUI for it
       if (command && !command.startsWith("-")) {
         exitCode = await cmdStart(command, false);
+      } else if (!command) {
+        // No command given: default to `start all`
+        exitCode = await cmdStart(undefined, false);
       } else {
         printHelp();
-        exitCode = command ? 1 : 0;
+        exitCode = 1;
       }
   }
 

@@ -164,7 +164,7 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
       )}
 
       {/* Dependencies section */}
-      {(task.dependencies.length > 0 || task.waitingOn?.length || task.blockedBy?.length) && (
+      {(task.dependencies.length > 0 || (task.waitingOn?.length ?? 0) > 0 || (task.blockedBy?.length ?? 0) > 0) && (
         <Box flexDirection="column" marginTop={1}>
           <Text underline>Dependencies:</Text>
           {task.dependencies.map((dep, i) => (

@@ -64,7 +64,7 @@ export class Logger {
     const runnerConfig = getRunnerConfig();
 
     this.config = {
-      level: (process.env.LOG_LEVEL as LogLevel) ?? config?.level ?? "info",
+      level: config?.level ?? (process.env.LOG_LEVEL as LogLevel) ?? "info",
       logDir: config?.logDir ?? runnerConfig.logDir,
       logFile: config?.logFile ?? "brain-runner.log",
       jsonOutput: config?.jsonOutput ?? false,

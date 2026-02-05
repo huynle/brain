@@ -4,7 +4,7 @@
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { tmpdir } from "os";
 import { DoctorService, createDoctorService } from "./doctor-service";
 import type { DoctorResult, Check } from "./types";
@@ -52,22 +52,26 @@ link-drop-extension = true
   );
 }
 
+// Path to reference templates (mirrors REFERENCE_TEMPLATES_DIR in doctor-service.ts)
+// import.meta.dir is /path/to/src/core/doctor, we need /path/to/src/assets/templates
+const ASSETS_TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "assets", "templates");
+
 function createTemplate(brainDir: string, type: string, content?: string): void {
   const templatesDir = join(brainDir, ".zk", "templates");
   if (!existsSync(templatesDir)) {
     mkdirSync(templatesDir, { recursive: true });
   }
-  // Match the exact format of reference templates (with trailing newline)
-  const templateContent = content ?? `---
-title: {{title}}
-type: ${type}
-tags:
-  - ${type}
-status: active
----
-
-# {{title}}
-`;
+  // Use the actual reference template content by default so hash comparison passes
+  let templateContent = content;
+  if (!templateContent) {
+    const referencePath = join(ASSETS_TEMPLATES_DIR, `${type}.md`);
+    if (existsSync(referencePath)) {
+      templateContent = readFileSync(referencePath, "utf-8");
+    } else {
+      // Fallback if reference template doesn't exist
+      templateContent = `---\ntitle: {{title}}\ntype: ${type}\n---\n`;
+    }
+  }
   writeFileSync(join(templatesDir, `${type}.md`), templateContent);
 }
 
@@ -358,7 +362,7 @@ id-length = 8
       expect(existsSync(templatePath)).toBe(true);
 
       const content = readFileSync(templatePath, "utf-8");
-      expect(content).toContain("type: plan");
+      expect(content).toContain("type: {{extra.type}}");
       expect(content).toContain("{{title}}");
     });
   });

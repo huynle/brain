@@ -32,6 +32,8 @@ import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID } from './components/Ta
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
+import { StatusPopup } from './components/StatusPopup';
+import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useLogStream } from './hooks/useLogStream';
@@ -50,6 +52,7 @@ export function App({
   onPauseAll,
   onResumeAll,
   getPausedProjects,
+  onUpdateStatus,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -64,6 +67,8 @@ export function App({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [showHelp, setShowHelp] = useState(false);
+  const [showStatusPopup, setShowStatusPopup] = useState(false);
+  const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
@@ -179,6 +184,73 @@ export function App({
 
   // Handle keyboard input
   useInput((input, key) => {
+    // === Status Popup Mode ===
+    if (showStatusPopup) {
+      // Escape to close popup
+      if (key.escape) {
+        setShowStatusPopup(false);
+        return;
+      }
+
+      // Navigate status list with j/k or arrows
+      if (key.upArrow || input === 'k') {
+        setPopupSelectedStatus((prev) => {
+          const currentIndex = ENTRY_STATUSES.indexOf(prev);
+          if (currentIndex > 0) {
+            return ENTRY_STATUSES[currentIndex - 1];
+          }
+          return prev;
+        });
+        return;
+      }
+
+      if (key.downArrow || input === 'j') {
+        setPopupSelectedStatus((prev) => {
+          const currentIndex = ENTRY_STATUSES.indexOf(prev);
+          if (currentIndex < ENTRY_STATUSES.length - 1) {
+            return ENTRY_STATUSES[currentIndex + 1];
+          }
+          return prev;
+        });
+        return;
+      }
+
+      // Enter to confirm status change
+      if (key.return && selectedTask && onUpdateStatus) {
+        const newStatus = popupSelectedStatus;
+        setShowStatusPopup(false);
+        
+        addLog({
+          level: 'info',
+          message: `Updating status: ${selectedTask.title} → ${newStatus}`,
+          taskId: selectedTask.id,
+        });
+        
+        onUpdateStatus(selectedTask.id, selectedTask.path, newStatus)
+          .then(() => {
+            addLog({
+              level: 'info',
+              message: `Status updated: ${selectedTask.title} is now ${newStatus}`,
+              taskId: selectedTask.id,
+            });
+            refetch(); // Refresh to show updated status
+          })
+          .catch((err) => {
+            addLog({
+              level: 'error',
+              message: `Failed to update status: ${err}`,
+              taskId: selectedTask.id,
+            });
+          });
+        return;
+      }
+
+      // Block all other input when popup is open
+      return;
+    }
+
+    // === Normal Mode ===
+    
     // Quit
     if (input === 'q') {
       exit();
@@ -340,20 +412,17 @@ export function App({
         return;
       }
 
-      // Enter to toggle completed section or show details
+      // Enter to toggle completed section or open status popup
       if (key.return) {
         // Toggle completed section if header is selected
         if (selectedTaskId === COMPLETED_HEADER_ID) {
           setCompletedCollapsed(prev => !prev);
           return;
         }
-        // Currently just logs - TaskDetail is always visible
+        // Open status popup for selected task
         if (selectedTask) {
-          addLog({
-            level: 'info',
-            message: `Selected: ${selectedTask.title}`,
-            taskId: selectedTask.id,
-          });
+          setPopupSelectedStatus(selectedTask.status);
+          setShowStatusPopup(true);
         }
         return;
       }
@@ -399,7 +468,7 @@ export function App({
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
-        <Text>  <Text bold>Enter</Text>     - Select task / Toggle completed</Text>
+        <Text>  <Text bold>Enter</Text>     - Change status / Toggle completed</Text>
         {isMultiProject && (
           <>
             <Text />
@@ -411,6 +480,19 @@ export function App({
         )}
         <Text />
         <Text dimColor>Press ? to close</Text>
+      </Box>
+    );
+  }
+
+  // Status popup overlay
+  if (showStatusPopup && selectedTask) {
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <StatusPopup
+          currentStatus={selectedTask.status}
+          selectedStatus={popupSelectedStatus}
+          taskTitle={selectedTask.title}
+        />
       </Box>
     );
   }

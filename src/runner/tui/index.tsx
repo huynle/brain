@@ -20,6 +20,7 @@ import { render } from 'ink';
 import { App } from './App';
 import type { TUIConfig } from './types';
 import type { LogEntry } from './types';
+import type { EntryStatus } from '../../core/types';
 
 // =============================================================================
 // Types for programmatic API
@@ -52,6 +53,8 @@ export interface DashboardOptions {
   onResumeAll?: () => void | Promise<void>;
   /** Get current paused projects from TaskRunner */
   getPausedProjects?: () => string[];
+  /** Callback to update a task's status */
+  onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -122,6 +125,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onPauseAll={options.onPauseAll}
       onResumeAll={options.onResumeAll}
       getPausedProjects={options.getPausedProjects}
+      onUpdateStatus={options.onUpdateStatus}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

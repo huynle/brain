@@ -1327,6 +1327,27 @@ export class TaskRunner {
     this.saveState();
   }
 
+  /**
+   * Update a task's status via the API.
+   * Called from TUI when user changes status via the popup.
+   */
+  async updateTaskStatus(taskId: string, taskPath: string, newStatus: EntryStatus): Promise<void> {
+    this.logger.info("Updating task status", { taskId, taskPath, newStatus });
+
+    try {
+      await this.apiClient.updateTaskStatus(taskPath, newStatus);
+      this.logger.info("Task status updated", { taskId, newStatus });
+      this.tuiLog('info', `Task status changed to ${newStatus}: ${taskId}`, taskId);
+    } catch (error) {
+      this.logger.error("Failed to update task status", {
+        taskId,
+        newStatus,
+        error: String(error),
+      });
+      throw error;
+    }
+  }
+
   // ========================================
   // Dashboard Management
   // ========================================
@@ -1363,6 +1384,7 @@ export class TaskRunner {
           this.logger.info("TUI log callback registered");
         },
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
+        onUpdateStatus: (taskId, taskPath, newStatus) => this.updateTaskStatus(taskId, taskPath, newStatus),
         // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),

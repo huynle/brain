@@ -89,4 +89,6 @@ export interface AppProps {
   onResumeAll?: () => void | Promise<void>;
   /** Get current paused projects from TaskRunner */
   getPausedProjects?: () => string[];
+  /** Callback to update a task's status */
+  onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
 }

@@ -97,7 +97,7 @@ async function checkBrainHealth(): Promise<BrainConnectionState> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
     
-    const response = await fetch(`${BRAIN_API_URL}/health`, {
+    const response = await fetch(`${BRAIN_API_URL}/api/v1/health`, {
       signal: controller.signal,
     });
     clearTimeout(timeoutId);

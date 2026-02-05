@@ -2,7 +2,7 @@
  * Hook for polling the Brain API for task updates
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { TaskDisplay } from '../types';
 
 /**
@@ -45,6 +45,54 @@ const EMPTY_STATS: TaskStats = {
 };
 
 /**
+ * Consolidated state for the task poller.
+ * Using a single reducer instead of multiple useState calls ensures
+ * exactly ONE re-render per poll cycle instead of 4-5.
+ */
+export interface PollerState {
+  tasks: TaskDisplay[];
+  stats: TaskStats;
+  isLoading: boolean;
+  isConnected: boolean;
+  error: Error | null;
+}
+
+export type PollerAction =
+  | { type: 'FETCH_START' }
+  | { type: 'FETCH_SUCCESS'; tasks: TaskDisplay[]; stats: TaskStats }
+  | { type: 'FETCH_ERROR'; error: Error };
+
+export function pollerReducer(state: PollerState, action: PollerAction): PollerState {
+  switch (action.type) {
+    case 'FETCH_START':
+      return { ...state, isLoading: true };
+    case 'FETCH_SUCCESS':
+      return {
+        tasks: action.tasks,
+        stats: action.stats,
+        isLoading: false,
+        isConnected: true,
+        error: null,
+      };
+    case 'FETCH_ERROR':
+      return {
+        ...state,
+        isLoading: false,
+        isConnected: false,
+        error: action.error,
+      };
+  }
+}
+
+const INITIAL_POLLER_STATE: PollerState = {
+  tasks: [],
+  stats: EMPTY_STATS,
+  isLoading: true,
+  isConnected: false,
+  error: null,
+};
+
+/**
  * Poll the Brain API for tasks at a regular interval
  */
 export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResult {
@@ -55,11 +103,7 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
     enabled = true,
   } = options;
 
-  const [tasks, setTasks] = useState<TaskDisplay[]>([]);
-  const [stats, setStats] = useState<TaskStats>(EMPTY_STATS);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isConnected, setIsConnected] = useState(false);
-  const [error, setError] = useState<Error | null>(null);
+  const [state, dispatch] = useReducer(pollerReducer, INITIAL_POLLER_STATE);
 
   // Track if this is the initial fetch vs subsequent polls
   const isInitialFetchRef = useRef(true);
@@ -67,7 +111,7 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
   const fetchTasks = useCallback(async () => {
     // Only set loading on initial fetch
     if (isInitialFetchRef.current) {
-      setIsLoading(true);
+      dispatch({ type: 'FETCH_START' });
     }
 
     try {
@@ -106,17 +150,14 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         completed: taskDisplays.filter((t) => t.status === 'completed' || t.status === 'validated').length,
       };
 
-      setTasks(taskDisplays);
-      setStats(calculatedStats);
-      setIsConnected(true);
-      setError(null);
+      // Single dispatch replaces 4 separate setState calls
+      dispatch({ type: 'FETCH_SUCCESS', tasks: taskDisplays, stats: calculatedStats });
     } catch (err) {
       const errorObj = err instanceof Error ? err : new Error('Unknown error');
-      setError(errorObj);
-      setIsConnected(false);
-      // Don't clear tasks/stats on error - keep showing stale data
+      // Single dispatch replaces 2 separate setState calls
+      // Don't clear tasks/stats on error - reducer preserves stale data via ...state
+      dispatch({ type: 'FETCH_ERROR', error: errorObj });
     } finally {
-      setIsLoading(false);
       isInitialFetchRef.current = false;
     }
   }, [apiUrl, projectId]);
@@ -147,11 +188,11 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
   }, [fetchTasks, pollInterval, enabled]);
 
   return {
-    tasks,
-    stats,
-    isLoading,
-    isConnected,
-    error,
+    tasks: state.tasks,
+    stats: state.stats,
+    isLoading: state.isLoading,
+    isConnected: state.isConnected,
+    error: state.error,
     refetch,
   };
 }

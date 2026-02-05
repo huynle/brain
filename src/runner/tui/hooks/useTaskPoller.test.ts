@@ -218,6 +218,100 @@ describe('useTaskPoller - Core Logic', () => {
 });
 
 // =============================================================================
+// Test the pollerReducer (consolidated state management)
+// =============================================================================
+
+describe('useTaskPoller - pollerReducer', () => {
+  // Import the reducer and types from the hook module
+  // These will be exported after the refactor
+  let pollerReducer: typeof import('./useTaskPoller').pollerReducer;
+
+  beforeEach(async () => {
+    const mod = await import('./useTaskPoller');
+    pollerReducer = mod.pollerReducer;
+  });
+
+  const initialState = {
+    tasks: [],
+    stats: { total: 0, ready: 0, waiting: 0, blocked: 0, inProgress: 0, completed: 0 },
+    isLoading: true,
+    isConnected: false,
+    error: null,
+  };
+
+  it('should handle FETCH_START by setting isLoading to true', () => {
+    const state = { ...initialState, isLoading: false };
+    const result = pollerReducer(state, { type: 'FETCH_START' as const });
+    expect(result.isLoading).toBe(true);
+    // Other fields should remain unchanged
+    expect(result.tasks).toEqual([]);
+    expect(result.isConnected).toBe(false);
+    expect(result.error).toBeNull();
+  });
+
+  it('should handle FETCH_SUCCESS with tasks and stats in a single state object', () => {
+    const tasks = [
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [] },
+    ];
+    const stats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
+
+    const result = pollerReducer(initialState, {
+      type: 'FETCH_SUCCESS' as const,
+      tasks,
+      stats,
+    });
+
+    expect(result.tasks).toEqual(tasks);
+    expect(result.stats).toEqual(stats);
+    expect(result.isLoading).toBe(false);
+    expect(result.isConnected).toBe(true);
+    expect(result.error).toBeNull();
+  });
+
+  it('should handle FETCH_ERROR by preserving existing tasks and stats', () => {
+    const existingTasks = [
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [] },
+    ];
+    const existingStats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
+    const stateWithData = {
+      tasks: existingTasks,
+      stats: existingStats,
+      isLoading: false,
+      isConnected: true,
+      error: null,
+    };
+
+    const error = new Error('Network failure');
+    const result = pollerReducer(stateWithData, {
+      type: 'FETCH_ERROR' as const,
+      error,
+    });
+
+    // Tasks and stats should be preserved (stale data)
+    expect(result.tasks).toEqual(existingTasks);
+    expect(result.stats).toEqual(existingStats);
+    expect(result.isLoading).toBe(false);
+    expect(result.isConnected).toBe(false);
+    expect(result.error).toBe(error);
+  });
+
+  it('should produce a new state reference on FETCH_SUCCESS (enables React re-render)', () => {
+    const tasks = [
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [] },
+    ];
+    const stats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
+
+    const result = pollerReducer(initialState, {
+      type: 'FETCH_SUCCESS' as const,
+      tasks,
+      stats,
+    });
+
+    expect(result).not.toBe(initialState);
+  });
+});
+
+// =============================================================================
 // Helper functions that mirror the hook's internal logic
 // These are extracted to enable unit testing
 // =============================================================================

@@ -5,7 +5,7 @@
  * It fetches tasks from all projects concurrently and merges them with projectId tags.
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { TaskDisplay } from '../types';
 import type { TaskStats } from './useTaskPoller';
 
@@ -120,6 +120,55 @@ function aggregateProjectStats(statsByProject: Map<string, TaskStats>): TaskStat
 }
 
 /**
+ * Consolidated state for the multi-project poller.
+ * Using a single reducer instead of multiple useState calls ensures
+ * exactly ONE re-render per poll cycle instead of 5.
+ */
+export interface MultiProjectPollerState {
+  tasksByProject: Map<string, TaskDisplay[]>;
+  statsByProject: Map<string, TaskStats>;
+  connectionByProject: Map<string, boolean>;
+  errorsByProject: Map<string, Error>;
+  isLoading: boolean;
+}
+
+export type MultiProjectPollerAction =
+  | { type: 'FETCH_START' }
+  | {
+      type: 'FETCH_SUCCESS';
+      tasksByProject: Map<string, TaskDisplay[]>;
+      statsByProject: Map<string, TaskStats>;
+      connectionByProject: Map<string, boolean>;
+      errorsByProject: Map<string, Error>;
+    };
+
+export function multiProjectReducer(
+  state: MultiProjectPollerState,
+  action: MultiProjectPollerAction
+): MultiProjectPollerState {
+  switch (action.type) {
+    case 'FETCH_START':
+      return { ...state, isLoading: true };
+    case 'FETCH_SUCCESS':
+      return {
+        tasksByProject: action.tasksByProject,
+        statsByProject: action.statsByProject,
+        connectionByProject: action.connectionByProject,
+        errorsByProject: action.errorsByProject,
+        isLoading: false,
+      };
+  }
+}
+
+const INITIAL_MULTI_PROJECT_STATE: MultiProjectPollerState = {
+  tasksByProject: new Map(),
+  statsByProject: new Map(),
+  connectionByProject: new Map(),
+  errorsByProject: new Map(),
+  isLoading: true,
+};
+
+/**
  * Poll multiple projects in parallel for task updates
  */
 export function useMultiProjectPoller(
@@ -132,12 +181,8 @@ export function useMultiProjectPoller(
     enabled = true,
   } = options;
 
-  // State
-  const [tasksByProject, setTasksByProject] = useState<Map<string, TaskDisplay[]>>(new Map());
-  const [statsByProject, setStatsByProject] = useState<Map<string, TaskStats>>(new Map());
-  const [connectionByProject, setConnectionByProject] = useState<Map<string, boolean>>(new Map());
-  const [errorsByProject, setErrorsByProject] = useState<Map<string, Error>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
+  // Consolidated state via reducer — single dispatch per poll cycle
+  const [state, dispatch] = useReducer(multiProjectReducer, INITIAL_MULTI_PROJECT_STATE);
 
   // Track if this is the initial fetch
   const isInitialFetchRef = useRef(true);
@@ -146,16 +191,16 @@ export function useMultiProjectPoller(
   const projectsKey = projects.join(',');
 
   // Derived state
-  const aggregateStats = aggregateProjectStats(statsByProject);
-  const allTasks: TaskDisplay[] = Array.from(tasksByProject.values()).flat();
-  const isConnected = Array.from(connectionByProject.values()).some(Boolean);
-  const error = Array.from(errorsByProject.values())[0] ?? null;
+  const aggregateStats = aggregateProjectStats(state.statsByProject);
+  const allTasks: TaskDisplay[] = Array.from(state.tasksByProject.values()).flat();
+  const isConnected = Array.from(state.connectionByProject.values()).some(Boolean);
+  const error: Error | null = Array.from(state.errorsByProject.values())[0] ?? null;
 
   // Refs to hold current state for use in callback without re-creating it
-  const tasksByProjectRef = useRef(tasksByProject);
-  const statsByProjectRef = useRef(statsByProject);
-  tasksByProjectRef.current = tasksByProject;
-  statsByProjectRef.current = statsByProject;
+  const tasksByProjectRef = useRef(state.tasksByProject);
+  const statsByProjectRef = useRef(state.statsByProject);
+  tasksByProjectRef.current = state.tasksByProject;
+  statsByProjectRef.current = state.statsByProject;
 
   // Fetch all projects in parallel
   const fetchAllProjects = useCallback(async () => {
@@ -165,7 +210,7 @@ export function useMultiProjectPoller(
 
     // Only set loading on initial fetch
     if (isInitialFetchRef.current) {
-      setIsLoading(true);
+      dispatch({ type: 'FETCH_START' });
     }
 
     // Fetch all projects in parallel
@@ -207,11 +252,14 @@ export function useMultiProjectPoller(
       }
     }
 
-    setTasksByProject(newTasksByProject);
-    setStatsByProject(newStatsByProject);
-    setConnectionByProject(newConnectionByProject);
-    setErrorsByProject(newErrorsByProject);
-    setIsLoading(false);
+    // Single dispatch replaces 5 separate setState calls
+    dispatch({
+      type: 'FETCH_SUCCESS',
+      tasksByProject: newTasksByProject,
+      statsByProject: newStatsByProject,
+      connectionByProject: newConnectionByProject,
+      errorsByProject: newErrorsByProject,
+    });
     isInitialFetchRef.current = false;
   }, [apiUrl, projectsKey]); // Use projectsKey for stable comparison; removed tasksByProject, statsByProject - using refs
 
@@ -242,16 +290,16 @@ export function useMultiProjectPoller(
   }, [fetchAllProjects, pollInterval, enabled, projectsKey]);
 
   return {
-    tasksByProject,
-    statsByProject,
+    tasksByProject: state.tasksByProject,
+    statsByProject: state.statsByProject,
     aggregateStats,
     allTasks,
-    isLoading,
+    isLoading: state.isLoading,
     isConnected,
     error,
     refetch,
-    connectionByProject,
-    errorsByProject,
+    connectionByProject: state.connectionByProject,
+    errorsByProject: state.errorsByProject,
   };
 }
 

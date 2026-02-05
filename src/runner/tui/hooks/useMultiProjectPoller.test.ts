@@ -8,7 +8,7 @@
  * - Task projectId tagging
  */
 
-import { describe, it, expect } from 'bun:test';
+import { describe, it, expect, beforeEach } from 'bun:test';
 
 // =============================================================================
 // Test the core logic directly (without React hooks)
@@ -223,6 +223,80 @@ describe('useMultiProjectPoller - Core Logic', () => {
       expect(stats.total).toBe(0);
       expect(stats.ready).toBe(0);
     });
+  });
+});
+
+// =============================================================================
+// Test the multiProjectReducer (consolidated state management)
+// =============================================================================
+
+describe('useMultiProjectPoller - multiProjectReducer', () => {
+  let multiProjectReducer: typeof import('./useMultiProjectPoller').multiProjectReducer;
+
+  beforeEach(async () => {
+    const mod = await import('./useMultiProjectPoller');
+    multiProjectReducer = mod.multiProjectReducer;
+  });
+
+  const initialState = {
+    tasksByProject: new Map<string, any[]>(),
+    statsByProject: new Map<string, any>(),
+    connectionByProject: new Map<string, boolean>(),
+    errorsByProject: new Map<string, Error>(),
+    isLoading: true,
+  };
+
+  it('should handle FETCH_START by setting isLoading to true', () => {
+    const state = { ...initialState, isLoading: false };
+    const result = multiProjectReducer(state, { type: 'FETCH_START' as const });
+    expect(result.isLoading).toBe(true);
+  });
+
+  it('should handle FETCH_SUCCESS with all project data in a single state object', () => {
+    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[] }]]]);
+    const statsByProject = new Map([['p1', { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 }]]);
+    const connectionByProject = new Map([['p1', true]]);
+    const errorsByProject = new Map<string, Error>();
+
+    const result = multiProjectReducer(initialState, {
+      type: 'FETCH_SUCCESS' as const,
+      tasksByProject,
+      statsByProject,
+      connectionByProject,
+      errorsByProject,
+    });
+
+    expect(result.tasksByProject).toBe(tasksByProject);
+    expect(result.statsByProject).toBe(statsByProject);
+    expect(result.connectionByProject).toBe(connectionByProject);
+    expect(result.errorsByProject).toBe(errorsByProject);
+    expect(result.isLoading).toBe(false);
+  });
+
+  it('should produce a new state reference on FETCH_SUCCESS', () => {
+    const result = multiProjectReducer(initialState, {
+      type: 'FETCH_SUCCESS' as const,
+      tasksByProject: new Map(),
+      statsByProject: new Map(),
+      connectionByProject: new Map(),
+      errorsByProject: new Map(),
+    });
+
+    expect(result).not.toBe(initialState);
+  });
+
+  it('should handle FETCH_START without losing existing data', () => {
+    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[] }]]]);
+    const stateWithData = {
+      ...initialState,
+      tasksByProject,
+      isLoading: false,
+    };
+
+    const result = multiProjectReducer(stateWithData, { type: 'FETCH_START' as const });
+
+    expect(result.isLoading).toBe(true);
+    expect(result.tasksByProject).toBe(tasksByProject); // preserved
   });
 });
 

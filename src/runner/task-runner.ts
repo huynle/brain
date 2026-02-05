@@ -715,15 +715,15 @@ export class TaskRunner {
         const entry = await response.json();
         const status = entry.status as EntryStatus;
 
-        if (status === "completed" || status === "blocked" || status === "cancelled") {
+        if (status === "completed" || status === "cancelled") {
           const completionStatus = status === "completed" 
             ? CompletionStatus.Completed 
-            : status === "cancelled"
-            ? CompletionStatus.Cancelled
-            : CompletionStatus.Blocked;
+            : CompletionStatus.Cancelled;
           
           await this.handleTuiTaskCompletion(taskId, task, completionStatus);
         }
+        // Note: "blocked" status is NOT treated as completion
+        // Blocked tasks stay in tuiTasks to allow resume detection
       } catch (error) {
         this.logger.debug("Failed to check TUI task status", {
           taskId,

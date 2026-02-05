@@ -86,9 +86,22 @@ export function parsePortFromLsof(lsofOutput: string): number | null {
 }
 
 /**
+ * Session status as returned by OpenCode's /session/status endpoint.
+ * Note: Sessions that are idle are NOT included in the response map.
+ */
+type SessionStatusResponse = Record<string, { type: "idle" | "busy" | "retry" }>;
+
+/**
  * Check the status of an OpenCode instance via its HTTP API.
- * GET http://localhost:<port>/api/status
- * Response: { status: { type: "idle" | "busy" } }
+ * 
+ * GET http://localhost:<port>/session/status
+ * Response: Record<sessionId, { type: "idle" | "busy" | "retry" }>
+ * 
+ * CRITICAL: OpenCode uses absence-based idle detection:
+ * - Sessions that are busy/retry appear in the map
+ * - Sessions that are IDLE are NOT included in the response
+ * - Therefore, if no sessions are busy, the instance is idle
+ * 
  * Returns 'unavailable' on error/timeout.
  */
 export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus> {
@@ -96,7 +109,7 @@ export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus>
   const timeout = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
   try {
-    const response = await fetch(`http://localhost:${port}/api/status`, {
+    const response = await fetch(`http://localhost:${port}/session/status`, {
       signal: controller.signal,
       headers: {
         Accept: "application/json",
@@ -112,25 +125,37 @@ export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus>
       return "unavailable";
     }
 
-    const data = await response.json() as { status?: { type?: string } };
+    const data = await response.json() as SessionStatusResponse;
 
-    // Parse the status response
-    const statusType = data?.status?.type;
-    if (statusType === "idle" || statusType === "busy") {
+    // OpenCode's /session/status returns a map of session IDs to statuses
+    // Sessions that are idle are NOT in the map
+    // If there are any busy sessions, consider the instance busy
+    const sessionIds = Object.keys(data);
+    
+    if (sessionIds.length === 0) {
+      // No sessions in the status map = all sessions are idle
       if (isDebugEnabled()) {
-        console.log(`[OpenCodePort] Status for port ${port}: ${statusType}`);
+        console.log(`[OpenCodePort] Status for port ${port}: idle (no busy sessions)`);
       }
-      return statusType;
+      return "idle";
     }
 
-    // Unknown status format
-    if (isDebugEnabled()) {
-      console.log(
-        `[OpenCodePort] Unknown status format for port ${port}:`,
-        JSON.stringify(data)
-      );
+    // Check if any session is busy
+    for (const sessionId of sessionIds) {
+      const status = data[sessionId];
+      if (status?.type === "busy") {
+        if (isDebugEnabled()) {
+          console.log(`[OpenCodePort] Status for port ${port}: busy (session ${sessionId})`);
+        }
+        return "busy";
+      }
     }
-    return "unavailable";
+
+    // All sessions are in retry or other non-busy states - consider idle
+    if (isDebugEnabled()) {
+      console.log(`[OpenCodePort] Status for port ${port}: idle (no busy sessions, ${sessionIds.length} in retry/other)`);
+    }
+    return "idle";
   } catch (error) {
     if (isDebugEnabled()) {
       console.log(

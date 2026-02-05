@@ -12,6 +12,7 @@ Built with [Bun](https://bun.sh) and [Hono](https://hono.dev).
 - Graph traversal (backlinks, outlinks, related entries)
 - Integration with `do-work` task queue processor
 - TUI dashboard for task monitoring
+- Embedded MCP server via Streamable HTTP transport
 
 ## Installation
 
@@ -118,6 +119,44 @@ curl http://localhost:3333/api/v1/tasks/myproject/ready
 # Start a task
 curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
 ```
+
+## MCP Server
+
+Brain API includes an embedded [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server served over Streamable HTTP on the same port as the REST API. When `brain start` runs, the MCP endpoint is available at `POST /mcp` — no separate process needed.
+
+### Connecting Claude Code
+
+```bash
+claude mcp add --transport http brain http://localhost:3333/mcp
+```
+
+Or add to `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "brain": {
+      "type": "http",
+      "url": "http://localhost:3333/mcp"
+    }
+  }
+}
+```
+
+### Available Tools
+
+| Tool | Description |
+|------|-------------|
+| `brain_save` | Save content to the brain (notes, plans, decisions, etc.) |
+| `brain_recall` | Retrieve a specific entry by path, ID, or title |
+| `brain_search` | Full-text search across entries |
+| `brain_list` | List entries with filtering by type, status, etc. |
+| `brain_inject` | Get relevant context for a task query |
+| `brain_update` | Update an entry's status, title, or append content |
+| `brain_stats` | Get brain statistics |
+| `brain_check_connection` | Verify the brain API is available |
+
+The embedded MCP server calls the service layer directly (no HTTP round-trip), making it faster than the standalone stdio-based MCP server installed via `brain install claude-code`.
 
 ## Task Runner
 

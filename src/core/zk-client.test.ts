@@ -14,6 +14,11 @@ import {
   generateMarkdownLink,
   matchesFilenamePattern,
   formatYamlMultilineValue,
+  sanitizeTitle,
+  sanitizeTag,
+  sanitizeSimpleValue,
+  sanitizeDependsOnEntry,
+  serializeFrontmatter,
 } from "./zk-client";
 
 // =============================================================================
@@ -269,6 +274,18 @@ describe("escapeYamlValue()", () => {
   test("escapes internal quotes", () => {
     expect(escapeYamlValue('say "hello"')).toBe('"say \\"hello\\""');
   });
+
+  test("escapes newlines", () => {
+    expect(escapeYamlValue("line1\nline2")).toBe('"line1\\nline2"');
+  });
+
+  test("escapes carriage returns", () => {
+    expect(escapeYamlValue("line1\rline2")).toBe('"line1\\rline2"');
+  });
+
+  test("escapes tabs", () => {
+    expect(escapeYamlValue("col1\tcol2")).toBe('"col1\\tcol2"');
+  });
 });
 
 describe("unescapeYamlValue()", () => {
@@ -484,6 +501,235 @@ interface Config {
 // =============================================================================
 // Tests for user_original_request in parseFrontmatter
 // =============================================================================
+
+// =============================================================================
+// Tests for sanitization functions
+// =============================================================================
+
+describe("sanitizeTitle()", () => {
+  test("strips newlines", () => {
+    expect(sanitizeTitle("Fix:\nbug")).toBe("Fix: bug");
+  });
+
+  test("strips carriage returns", () => {
+    expect(sanitizeTitle("Title\r\nhere")).toBe("Title here");
+  });
+
+  test("strips null bytes", () => {
+    expect(sanitizeTitle("Title\0here")).toBe("Titlehere");
+  });
+
+  test("trims whitespace", () => {
+    expect(sanitizeTitle("  spaced  ")).toBe("spaced");
+  });
+
+  test("collapses internal whitespace", () => {
+    expect(sanitizeTitle("too   many   spaces")).toBe("too many spaces");
+  });
+
+  test("truncates to 200 chars", () => {
+    const longTitle = "a".repeat(250);
+    expect(sanitizeTitle(longTitle).length).toBe(200);
+  });
+
+  test("preserves YAML-special chars (they get escaped later)", () => {
+    expect(sanitizeTitle("Fix: Update API")).toBe("Fix: Update API");
+  });
+
+  test("handles tabs", () => {
+    expect(sanitizeTitle("Title\twith\ttabs")).toBe("Title with tabs");
+  });
+});
+
+describe("sanitizeTag()", () => {
+  test("returns null for empty tag", () => {
+    expect(sanitizeTag("")).toBeNull();
+    expect(sanitizeTag("   ")).toBeNull();
+  });
+
+  test("strips newlines from tags", () => {
+    expect(sanitizeTag("bad\ntag")).toBe("badtag");
+  });
+
+  test("trims whitespace", () => {
+    expect(sanitizeTag("  tag  ")).toBe("tag");
+  });
+
+  test("strips carriage returns", () => {
+    expect(sanitizeTag("tag\rwith\rcr")).toBe("tagwithcr");
+  });
+
+  test("strips null bytes", () => {
+    expect(sanitizeTag("tag\0null")).toBe("tagnull");
+  });
+
+  test("strips tabs", () => {
+    expect(sanitizeTag("tag\twith\ttab")).toBe("tagwithtab");
+  });
+});
+
+describe("sanitizeSimpleValue()", () => {
+  test("strips newlines", () => {
+    expect(sanitizeSimpleValue("path/to\n/file")).toBe("path/to /file");
+  });
+
+  test("preserves colons (common in git remotes)", () => {
+    expect(sanitizeSimpleValue("git@github.com:user/repo")).toBe("git@github.com:user/repo");
+  });
+
+  test("strips carriage returns", () => {
+    expect(sanitizeSimpleValue("path\r\nto")).toBe("path to");
+  });
+
+  test("strips null bytes", () => {
+    expect(sanitizeSimpleValue("path\0to")).toBe("pathto");
+  });
+
+  test("trims whitespace", () => {
+    expect(sanitizeSimpleValue("  path  ")).toBe("path");
+  });
+});
+
+describe("sanitizeDependsOnEntry()", () => {
+  test("strips newlines", () => {
+    expect(sanitizeDependsOnEntry("dep\nid")).toBe("depid");
+  });
+
+  test("handles quotes (escaping happens at format time)", () => {
+    expect(sanitizeDependsOnEntry('abc"def')).toBe('abc"def');
+  });
+
+  test("strips carriage returns", () => {
+    expect(sanitizeDependsOnEntry("dep\rid")).toBe("depid");
+  });
+
+  test("strips null bytes", () => {
+    expect(sanitizeDependsOnEntry("dep\0id")).toBe("depid");
+  });
+
+  test("trims whitespace", () => {
+    expect(sanitizeDependsOnEntry("  depid  ")).toBe("depid");
+  });
+});
+
+// =============================================================================
+// Tests for serializeFrontmatter
+// =============================================================================
+
+describe("serializeFrontmatter()", () => {
+  test("serializes basic frontmatter", () => {
+    const fm = {
+      title: "Test Title",
+      type: "task",
+      status: "active",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("title: Test Title");
+    expect(result).toContain("type: task");
+    expect(result).toContain("status: active");
+  });
+
+  test("preserves all task fields", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "pending",
+      created: "2024-01-01T00:00:00Z",
+      priority: "high",
+      parent_id: "abc12def",
+      projectId: "my-project",
+      depends_on: ["dep1", "dep2"],
+      workdir: "projects/test",
+      worktree: "projects/test-feature",
+      git_remote: "git@github.com:user/repo",
+      git_branch: "feature-branch",
+      user_original_request: "Do the thing",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("title: Task");
+    expect(result).toContain("created: 2024-01-01T00:00:00Z");
+    expect(result).toContain("priority: high");
+    expect(result).toContain("parent_id: abc12def");
+    expect(result).toContain("depends_on:");
+    expect(result).toContain('  - "dep1"');
+    expect(result).toContain("workdir: projects/test");
+    expect(result).toContain("git_remote:");
+    expect(result).toContain("user_original_request: Do the thing");
+  });
+
+  test("escapes title with special chars", () => {
+    const fm = {
+      title: "Fix: the bug",
+      type: "task",
+      status: "active",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain('title: "Fix: the bug"');
+  });
+
+  test("escapes depends_on entries with quotes", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      depends_on: ['abc"def'],
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain('  - "abc\\"def"');
+  });
+
+  test("handles tags array", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      tags: ["feature", "urgent"],
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("tags:");
+    expect(result).toContain("  - feature");
+    expect(result).toContain("  - urgent");
+  });
+
+  test("escapes tags with special chars", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      tags: ["tag: with colon"],
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain('  - "tag: with colon"');
+  });
+
+  test("handles multiline user_original_request", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      user_original_request: "Line 1\nLine 2\nLine 3",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("user_original_request: |");
+    expect(result).toContain("  Line 1");
+    expect(result).toContain("  Line 2");
+  });
+
+  test("omits undefined fields", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).not.toContain("workdir:");
+    expect(result).not.toContain("worktree:");
+    expect(result).not.toContain("git_remote:");
+    expect(result).not.toContain("git_branch:");
+    expect(result).not.toContain("depends_on:");
+    expect(result).not.toContain("user_original_request:");
+  });
+});
 
 describe("parseFrontmatter() with user_original_request", () => {
   test("parses simple single-line user_original_request", () => {

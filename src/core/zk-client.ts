@@ -285,6 +285,76 @@ export function getPrioritySortValue(priority: Priority | undefined): number {
 }
 
 // =============================================================================
+// Input Sanitization Functions
+// =============================================================================
+
+/**
+ * Sanitize a title for safe use in YAML frontmatter.
+ * - Strips control characters (newlines, carriage returns, tabs, null bytes)
+ * - Trims leading/trailing whitespace
+ * - Collapses internal runs of whitespace to single space
+ * - Truncates to 200 characters
+ */
+export function sanitizeTitle(title: string): string {
+  // Strip control characters (except spaces), including \n, \r, \t, \0
+  let result = title.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+  // Replace newlines, carriage returns, and tabs with spaces
+  result = result.replace(/[\n\r\t]/g, " ");
+  // Trim leading/trailing whitespace
+  result = result.trim();
+  // Collapse internal runs of whitespace to single space
+  result = result.replace(/\s+/g, " ");
+  // Truncate to 200 chars
+  return result.slice(0, 200);
+}
+
+/**
+ * Sanitize a tag for safe use in YAML frontmatter.
+ * - Strips control characters (newlines, carriage returns, tabs, null bytes)
+ * - Trims whitespace
+ * - Returns null for empty tags (caller should filter these out)
+ */
+export function sanitizeTag(tag: string): string | null {
+  // Strip control characters including \n, \r, \t, \0
+  let result = tag.replace(/[\x00-\x1F\x7F]/g, "");
+  // Trim whitespace
+  result = result.trim();
+  // Return null for empty tags
+  return result.length === 0 ? null : result;
+}
+
+/**
+ * Sanitize a simple value (workdir, worktree, git_remote, git_branch, projectId).
+ * - Strips control characters (newlines, carriage returns, null bytes)
+ * - Replaces newlines with spaces
+ * - Collapses multiple spaces to single space
+ * - Trims whitespace
+ */
+export function sanitizeSimpleValue(value: string): string {
+  // Strip null bytes
+  let result = value.replace(/\0/g, "");
+  // Replace newlines and carriage returns with spaces
+  result = result.replace(/[\n\r]/g, " ");
+  // Collapse multiple spaces to single space
+  result = result.replace(/\s+/g, " ");
+  // Trim whitespace
+  return result.trim();
+}
+
+/**
+ * Sanitize a depends_on entry.
+ * - Strips control characters (newlines, carriage returns, null bytes)
+ * - Trims whitespace
+ * Note: Quote escaping happens at format time, not here
+ */
+export function sanitizeDependsOnEntry(dep: string): string {
+  // Strip control characters including \n, \r, \0
+  let result = dep.replace(/[\x00-\x1F\x7F]/g, "");
+  // Trim whitespace
+  return result.trim();
+}
+
+// =============================================================================
 // Frontmatter Functions
 // =============================================================================
 
@@ -331,7 +401,9 @@ export function parseFrontmatter(content: string): {
   const body = match[2].trim();
   const frontmatter: Record<string, unknown> = {};
   const tags: string[] = [];
+  const dependsOn: string[] = [];
   let inTags = false;
+  let inDependsOn = false;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -376,6 +448,22 @@ export function parseFrontmatter(content: string): {
     const priorityMatch = line.match(/^priority:\s*(\w+)\s*$/);
     if (priorityMatch) {
       frontmatter.priority = priorityMatch[1];
+      inTags = false;
+      continue;
+    }
+
+    // Handle created timestamp
+    const createdMatch = line.match(/^created:\s*(.+)$/);
+    if (createdMatch) {
+      frontmatter.created = parseYamlStringValue(createdMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    // Handle parent_id
+    const parentIdMatch = line.match(/^parent_id:\s*(.+)$/);
+    if (parentIdMatch) {
+      frontmatter.parent_id = parseYamlStringValue(parentIdMatch[1]);
       inTags = false;
       continue;
     }
@@ -432,22 +520,44 @@ export function parseFrontmatter(content: string): {
     // Handle tags array
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
+      inDependsOn = false;
+      continue;
+    }
+
+    // Handle depends_on array
+    if (line.match(/^depends_on:\s*$/)) {
+      inDependsOn = true;
+      inTags = false;
       continue;
     }
 
     if (inTags) {
       const tagMatch = line.match(/^\s+-\s+(.+?)\s*$/);
       if (tagMatch) {
-        tags.push(tagMatch[1]);
+        tags.push(parseYamlStringValue(tagMatch[1]));
       } else if (!line.match(/^\s/)) {
         // No longer indented, exit tags section
         inTags = false;
+      }
+    }
+
+    if (inDependsOn) {
+      const depMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (depMatch) {
+        dependsOn.push(parseYamlStringValue(depMatch[1]));
+      } else if (!line.match(/^\s/)) {
+        // No longer indented, exit depends_on section
+        inDependsOn = false;
       }
     }
   }
 
   if (tags.length > 0) {
     frontmatter.tags = tags;
+  }
+
+  if (dependsOn.length > 0) {
+    frontmatter.depends_on = dependsOn;
   }
 
   // Handle multi-line user_original_request (literal block scalar)
@@ -491,16 +601,21 @@ export function parseFrontmatter(content: string): {
  * Wraps in quotes if the string contains special YAML characters.
  */
 export function escapeYamlValue(value: string): string {
-  // Characters that require quoting in YAML
+  // Characters that require quoting in YAML (including control characters)
   const needsQuoting =
-    /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%]|^\s|\s$|^---|^\.\.\./.test(value);
+    /[\n\r\t]|[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%]|^\s|\s$|^---|^\.\.\./.test(value);
 
   if (!needsQuoting) {
     return value;
   }
 
-  // Use double quotes and escape internal double quotes and backslashes
-  const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  // Use double quotes and escape internal double quotes, backslashes, and control chars
+  const escaped = value
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
 
   return `"${escaped}"`;
 }
@@ -600,6 +715,58 @@ export function unescapeYamlValue(value: string): string {
   return result;
 }
 
+/**
+ * Serialize a frontmatter object back to YAML string.
+ * Handles all known fields with proper escaping.
+ * Used by update() to preserve all fields when modifying entries.
+ */
+export function serializeFrontmatter(fm: Record<string, unknown>): string {
+  const lines: string[] = [];
+
+  // Emit fields in canonical order, escaping each appropriately
+  if (fm.title) lines.push(`title: ${escapeYamlValue(fm.title as string)}`);
+  if (fm.type) lines.push(`type: ${fm.type}`);
+
+  // Include name field for execution entries
+  if (fm.name) lines.push(`name: ${escapeYamlValue(fm.name as string)}`);
+
+  // Handle tags array
+  if (Array.isArray(fm.tags) && fm.tags.length > 0) {
+    lines.push("tags:");
+    for (const tag of fm.tags) {
+      lines.push(`  - ${escapeYamlValue(String(tag))}`);
+    }
+  }
+
+  if (fm.status) lines.push(`status: ${fm.status}`);
+  if (fm.created) lines.push(`created: ${fm.created}`);
+  if (fm.priority) lines.push(`priority: ${fm.priority}`);
+  if (fm.parent_id) lines.push(`parent_id: ${fm.parent_id}`);
+  if (fm.projectId) lines.push(`projectId: ${escapeYamlValue(fm.projectId as string)}`);
+
+  // depends_on array
+  if (Array.isArray(fm.depends_on) && fm.depends_on.length > 0) {
+    lines.push("depends_on:");
+    for (const dep of fm.depends_on) {
+      const escaped = String(dep).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      lines.push(`  - "${escaped}"`);
+    }
+  }
+
+  // Execution context fields
+  if (fm.workdir) lines.push(`workdir: ${escapeYamlValue(fm.workdir as string)}`);
+  if (fm.worktree) lines.push(`worktree: ${escapeYamlValue(fm.worktree as string)}`);
+  if (fm.git_remote) lines.push(`git_remote: ${escapeYamlValue(fm.git_remote as string)}`);
+  if (fm.git_branch) lines.push(`git_branch: ${escapeYamlValue(fm.git_branch as string)}`);
+
+  // User original request - use multiline format if contains newlines
+  if (fm.user_original_request) {
+    lines.push(formatYamlMultilineValue("user_original_request", fm.user_original_request as string));
+  }
+
+  return lines.join("\n") + "\n";
+}
+
 export interface GenerateFrontmatterOptions {
   title: string;
   type: EntryType;
@@ -639,7 +806,7 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (tags.size > 0) {
     lines.push("tags:");
-    for (const tag of tags) lines.push(`  - ${tag}`);
+    for (const tag of tags) lines.push(`  - ${escapeYamlValue(tag)}`);
   }
 
   lines.push(`status: ${status}`);

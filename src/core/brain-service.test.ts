@@ -464,4 +464,95 @@ Task content.
       expect(result.git_branch).toBeUndefined();
     });
   });
+
+  describe("update() field preservation", () => {
+    let taskPath: string;
+
+    beforeAll(() => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const taskFile = join(taskDir, "task-full-fields.md");
+      taskPath = "projects/test-project/task/task-full-fields.md";
+
+      // Create a task with all fields populated
+      writeFileSync(
+        taskFile,
+        `---
+title: Full Task
+type: task
+tags:
+  - task
+  - feature
+status: pending
+created: 2024-01-01T00:00:00Z
+priority: high
+parent_id: abc12def
+projectId: my-project
+depends_on:
+  - "dep1"
+  - "dep2"
+workdir: projects/test
+worktree: projects/test-wt
+git_remote: git@github.com:user/repo
+git_branch: main
+user_original_request: Original request
+---
+
+Task content here.
+`
+      );
+    });
+
+    test("preserves priority when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.status).toBe("in_progress");
+      expect(result.priority).toBe("high");
+    });
+
+    test("preserves workdir when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.workdir).toBe("projects/test");
+    });
+
+    test("preserves worktree when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.worktree).toBe("projects/test-wt");
+    });
+
+    test("preserves git_remote when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.git_remote).toBe("git@github.com:user/repo");
+    });
+
+    test("preserves git_branch when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.git_branch).toBe("main");
+    });
+
+    test("preserves user_original_request when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.user_original_request).toBe("Original request");
+    });
+
+    test("preserves depends_on when updating status", async () => {
+      const result = await service.update(taskPath, { status: "in_progress" });
+      expect(result.depends_on).toEqual(["dep1", "dep2"]);
+    });
+
+    test("preserves created timestamp when updating status", async () => {
+      // Read the file directly to check created field is preserved
+      const fullPath = join(TEST_DIR, taskPath);
+      const content = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.created).toBe("2024-01-01T00:00:00Z");
+    });
+
+    test("preserves parent_id when updating status", async () => {
+      const fullPath = join(TEST_DIR, taskPath);
+      const content = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.parent_id).toBe("abc12def");
+    });
+  });
 });

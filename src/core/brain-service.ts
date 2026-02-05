@@ -37,6 +37,11 @@ import {
   escapeYamlValue,
   slugify,
   matchesFilenamePattern,
+  sanitizeTitle,
+  sanitizeTag,
+  sanitizeSimpleValue,
+  sanitizeDependsOnEntry,
+  serializeFrontmatter,
 } from "./zk-client";
 import type {
   BrainConfig,
@@ -102,6 +107,28 @@ export class BrainService {
    * Save a new entry to the brain (brain_save)
    */
   async save(request: CreateEntryRequest): Promise<CreateEntryResponse> {
+    // Normalize inputs to prevent YAML corruption
+    request.title = sanitizeTitle(request.title);
+    if (request.tags) {
+      request.tags = request.tags
+        .map(sanitizeTag)
+        .filter((t): t is string => t !== null); // Drop tags that sanitize to empty
+    }
+    if (request.workdir) request.workdir = sanitizeSimpleValue(request.workdir);
+    if (request.worktree) request.worktree = sanitizeSimpleValue(request.worktree);
+    if (request.git_remote) request.git_remote = sanitizeSimpleValue(request.git_remote);
+    if (request.git_branch) request.git_branch = sanitizeSimpleValue(request.git_branch);
+    if (request.project) request.project = sanitizeSimpleValue(request.project);
+    if (request.depends_on) {
+      request.depends_on = request.depends_on.map(sanitizeDependsOnEntry);
+    }
+    // user_original_request: allow multiline but strip \r and \0
+    if (request.user_original_request) {
+      request.user_original_request = request.user_original_request
+        .replace(/\r/g, "")
+        .replace(/\0/g, "");
+    }
+
     const entryType = request.type;
     const entryStatus = request.status || "active";
     const isGlobal = request.global ?? false;
@@ -297,7 +324,7 @@ export class BrainService {
 
       if (request.depends_on && request.depends_on.length > 0) {
         const formattedDeps = request.depends_on
-          .map((d) => `\n  - "${d}"`)
+          .map((d) => `\n  - "${d.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
           .join("");
         zkArgs.push("--extra", `depends_on=${formattedDeps}`);
       }
@@ -608,33 +635,19 @@ export class BrainService {
     const oldTitle = (frontmatter.title as string) || path;
     const newTitle = request.title || oldTitle;
 
-    // Rebuild frontmatter
-    const lines: string[] = [];
-    lines.push(`title: ${escapeYamlValue(newTitle)}`);
-    if (frontmatter.type) lines.push(`type: ${frontmatter.type}`);
+    // Build updated frontmatter preserving all existing fields
+    const updatedFrontmatter = { ...frontmatter };
+    updatedFrontmatter.title = newTitle;
+    updatedFrontmatter.status = newStatus;
 
-    // Rebuild tags
-    const existingTags = new Set<string>();
-    if (Array.isArray(frontmatter.tags)) {
-      for (const tag of frontmatter.tags) {
-        if (!ENTRY_STATUSES.includes(tag as EntryStatus)) {
-          existingTags.add(tag);
-        }
-      }
-    }
-    if (frontmatter.type) existingTags.add(frontmatter.type as string);
-
-    if (existingTags.size > 0) {
-      lines.push("tags:");
-      for (const tag of existingTags) lines.push(`  - ${tag}`);
+    // Filter out status-tags from tags array (status is in status: field, not tags)
+    if (Array.isArray(updatedFrontmatter.tags)) {
+      updatedFrontmatter.tags = (updatedFrontmatter.tags as string[]).filter(
+        (tag) => !ENTRY_STATUSES.includes(tag as EntryStatus)
+      );
     }
 
-    lines.push(`status: ${newStatus}`);
-    if (frontmatter.priority) lines.push(`priority: ${frontmatter.priority}`);
-    if (frontmatter.projectId)
-      lines.push(`projectId: ${escapeYamlValue(frontmatter.projectId as string)}`);
-
-    const newFrontmatter = lines.join("\n") + "\n";
+    const newFrontmatter = serializeFrontmatter(updatedFrontmatter);
 
     // Build new body
     let newBody = body;

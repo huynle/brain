@@ -272,6 +272,7 @@ describe("ProcessManager", () => {
         taskTimeout: 1000, // 1 second timeout
         opencode: { bin: "opencode", agent: "general", model: "test" },
         excludeProjects: [],
+    idleDetectionThreshold: 60000,
       });
 
       customManager.add("task1", task, proc);

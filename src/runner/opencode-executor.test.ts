@@ -75,6 +75,7 @@ function createTestConfig(stateDir: string): RunnerConfig {
       model: "anthropic/claude-opus-4-5",
     },
     excludeProjects: [],
+    idleDetectionThreshold: 60000,
   };
 }
 

@@ -141,6 +141,18 @@ export class ApiClient {
     return data.tasks;
   }
 
+  async getInProgressTasks(projectId: string): Promise<ResolvedTask[]> {
+    const response = await this.fetch(`/api/v1/tasks/${projectId}`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as TaskListResponse;
+    // Filter to only in_progress tasks (API doesn't support status filtering)
+    return data.tasks.filter(task => task.status === "in_progress");
+  }
+
   // ========================================
   // Task Status Updates
   // ========================================

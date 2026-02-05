@@ -27,6 +27,7 @@ import { getLogger } from "./logger";
 import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
 import type { LogEntry } from "./tui/types";
+import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
 
 // =============================================================================
 // Types
@@ -604,6 +605,7 @@ export class TaskRunner {
         startedAt: new Date().toISOString(),
         isResume: false,
         workdir: this.executor.resolveWorkdir(task),
+        opencodePort: result.opencodePort,
       };
 
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
@@ -686,6 +688,12 @@ export class TaskRunner {
 
     // Also check TUI mode tasks (tracked separately)
     await this.checkTuiTasks();
+
+    // Check for idle OpenCode instances and mark as blocked
+    await this.checkOpencodeIdleStatus();
+
+    // Check if blocked tasks should be auto-resumed
+    await this.checkBlockedTasksForResume();
   }
 
   /**
@@ -722,6 +730,175 @@ export class TaskRunner {
           error: String(error),
         });
       }
+    }
+  }
+
+  // ========================================
+  // OpenCode Idle Detection
+  // ========================================
+
+  /**
+   * Check running tasks for idle OpenCode instances.
+   * If a task's OpenCode is idle for longer than idleDetectionThreshold,
+   * mark it as blocked (but don't kill the process).
+   */
+  private async checkOpencodeIdleStatus(): Promise<void> {
+    for (const [taskId, task] of this.tuiTasks) {
+      // Skip tasks without discovered ports
+      if (!task.opencodePort) {
+        // Try to discover the port if we haven't yet
+        if (task.pid > 0 && isPidAlive(task.pid)) {
+          const port = await discoverOpencodePort(task.pid);
+          if (port) {
+            task.opencodePort = port;
+            this.logger.debug("Discovered OpenCode port", { taskId, port });
+          }
+        }
+        continue;
+      }
+
+      // Check OpenCode status via HTTP API
+      const status = await checkOpencodeStatus(task.opencodePort);
+
+      if (status === "idle") {
+        // OpenCode is idle - check if we need to mark as blocked
+        const now = Date.now();
+        
+        if (!task.idleSince) {
+          // First time detecting idle - record the timestamp
+          task.idleSince = new Date().toISOString();
+          this.logger.debug("OpenCode became idle", { taskId, idleSince: task.idleSince });
+        } else {
+          // Check if idle for longer than threshold
+          const idleDuration = now - new Date(task.idleSince).getTime();
+          
+          if (idleDuration >= this.config.idleDetectionThreshold) {
+            // Mark task as blocked
+            await this.markTaskBlocked(taskId, task, "OpenCode idle - waiting for user input");
+          }
+        }
+      } else if (status === "busy") {
+        // OpenCode is busy - clear idle state
+        if (task.idleSince) {
+          this.logger.debug("OpenCode became busy again", { taskId });
+          task.idleSince = undefined;
+        }
+      }
+      // status === "unavailable" - skip, might be temporary
+    }
+  }
+
+  /**
+   * Check blocked tasks for auto-resume.
+   * If a blocked task's OpenCode becomes busy again (user interacted),
+   * transition it back to in_progress.
+   */
+  private async checkBlockedTasksForResume(): Promise<void> {
+    for (const [taskId, task] of this.tuiTasks) {
+      // Check current status from Brain API
+      try {
+        const encodedPath = encodeURIComponent(task.path);
+        const response = await fetch(
+          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
+        );
+        
+        if (!response.ok) continue;
+        
+        const entry = await response.json();
+        const brainStatus = entry.status as EntryStatus;
+
+        // Only interested in blocked tasks
+        if (brainStatus !== "blocked") continue;
+
+        // Check if PID is still alive
+        if (!isPidAlive(task.pid)) {
+          // Process is dead - user must manually handle
+          this.logger.debug("Blocked task has dead PID, skipping auto-resume", { taskId });
+          continue;
+        }
+
+        // Check if we have a port to check status
+        if (!task.opencodePort) {
+          // Try to discover port
+          const port = await discoverOpencodePort(task.pid);
+          if (port) {
+            task.opencodePort = port;
+          } else {
+            continue;
+          }
+        }
+
+        // Check OpenCode status
+        const opencodeStatus = await checkOpencodeStatus(task.opencodePort);
+
+        if (opencodeStatus === "busy") {
+          // User has interacted! Resume the task
+          await this.resumeBlockedTask(taskId, task);
+        }
+      } catch (error) {
+        this.logger.debug("Failed to check blocked task for resume", {
+          taskId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  /**
+   * Mark a task as blocked in the Brain API.
+   * Does NOT kill the process - leaves OpenCode running for user interaction.
+   */
+  private async markTaskBlocked(taskId: string, task: RunningTask, reason: string): Promise<void> {
+    try {
+      // Update status in Brain API
+      await this.apiClient.updateTaskStatus(task.path, "blocked");
+
+      // Append note to task file
+      const note = `\n\n## Blocked: ${reason}\n` +
+        `- Detected at: ${new Date().toISOString()}\n` +
+        `- Tmux window: ${task.windowName || task.paneId || 'unknown'}\n` +
+        `- To resume: Navigate to the tmux window and interact with OpenCode\n`;
+
+      await this.apiClient.appendToTask(task.path, note);
+
+      this.logger.info("Task marked as blocked", { taskId, reason });
+      this.tuiLog('warn', `Task blocked: ${task.title} (${reason})`, taskId, task.projectId);
+
+      // Clear idle state since we've now acted on it
+      task.idleSince = undefined;
+    } catch (error) {
+      this.logger.error("Failed to mark task as blocked", {
+        taskId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Resume a blocked task that has become active again.
+   */
+  private async resumeBlockedTask(taskId: string, task: RunningTask): Promise<void> {
+    try {
+      // Update status back to in_progress
+      await this.apiClient.updateTaskStatus(task.path, "in_progress");
+
+      // Clear idle state
+      task.idleSince = undefined;
+
+      // Append resume note
+      const note = `\n\n## Resumed\n` +
+        `- Resumed at: ${new Date().toISOString()}\n` +
+        `- Auto-detected: User interaction with OpenCode\n`;
+
+      await this.apiClient.appendToTask(task.path, note);
+
+      this.logger.info("Blocked task resumed", { taskId });
+      this.tuiLog('info', `Task resumed: ${task.title}`, taskId, task.projectId);
+    } catch (error) {
+      this.logger.error("Failed to resume blocked task", {
+        taskId,
+        error: String(error),
+      });
     }
   }
 
@@ -885,13 +1062,17 @@ export class TaskRunner {
   // ========================================
 
   private async handleInterruptedTasks(): Promise<void> {
-    // Load previous state
+    // Step 1: Check Brain API for in_progress tasks that have no running process
+    // These should be prioritized for resume BEFORE checking local state
+    await this.resumeOrphanedInProgressTasks();
+
+    // Step 2: Load previous state
     const prevState = this.stateManager.load();
     if (!prevState || prevState.runningTasks.length === 0) {
       return;
     }
 
-    this.logger.info("Found interrupted tasks", {
+    this.logger.info("Found interrupted tasks in local state", {
       count: prevState.runningTasks.length,
     });
 
@@ -902,9 +1083,62 @@ export class TaskRunner {
       totalRuntime: prevState.stats.totalRuntime,
     };
 
-    // Try to resume each interrupted task
+    // Try to resume each interrupted task from local state
     for (const task of prevState.runningTasks) {
       await this.resumeTask(task);
+    }
+  }
+
+  /**
+   * Check Brain API for tasks marked as in_progress but without running processes.
+   * These are "orphaned" tasks from a previous runner crash/restart.
+   * Resume them before picking up new work.
+   */
+  private async resumeOrphanedInProgressTasks(): Promise<void> {
+    // Get running task IDs we're currently tracking
+    const runningTaskIds = new Set([
+      ...this.processManager.getAll().map((info) => info.task.id),
+      ...Array.from(this.tuiTasks.keys()),
+    ]);
+
+    // Check each project for orphaned in_progress tasks
+    for (const projectId of this.projects) {
+      try {
+        const inProgressTasks = await this.apiClient.getInProgressTasks(projectId);
+
+        for (const task of inProgressTasks) {
+          // Skip if we're already tracking this task
+          if (runningTaskIds.has(task.id)) {
+            continue;
+          }
+
+          this.logger.info("Found orphaned in_progress task", {
+            taskId: task.id,
+            title: task.title,
+            projectId,
+          });
+
+          // Create a RunningTask placeholder to resume
+          const runningTask: RunningTask = {
+            id: task.id,
+            path: task.path,
+            title: task.title,
+            priority: task.priority,
+            projectId,
+            pid: 0, // No running process
+            startedAt: new Date().toISOString(),
+            isResume: true,
+            workdir: this.executor.resolveWorkdir(task),
+          };
+
+          await this.resumeTask(runningTask);
+        }
+      } catch (error) {
+        this.logger.warn("Failed to check for orphaned tasks", {
+          projectId,
+          error: String(error),
+        });
+      }
     }
   }
 
@@ -944,10 +1178,15 @@ export class TaskRunner {
         windowName: result.windowName,
         startedAt: new Date().toISOString(),
         isResume: true,
+        opencodePort: result.opencodePort,
+        idleSince: undefined, // Clear any previous idle state
       };
 
       if (result.proc) {
         this.processManager.add(task.id, newRunningTask, result.proc);
+      } else if (result.windowName || result.paneId) {
+        // TUI/Dashboard mode: track separately since we can't get proc handle
+        this.tuiTasks.set(task.id, newRunningTask);
       }
 
       this.emitEvent({ type: "task_started", task: newRunningTask });

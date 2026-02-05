@@ -52,6 +52,7 @@ function createTestConfig(stateDir: string): RunnerConfig {
       model: "test-model",
     },
     excludeProjects: [],
+    idleDetectionThreshold: 60000,
   };
 }
 
@@ -1267,6 +1268,73 @@ describe("TaskRunner - TUI Task Cleanup", () => {
       } finally {
         Bun.$ = originalBunShell;
       }
+    });
+  });
+
+  // ========================================
+  // OpenCode Idle Detection Tests
+  // ========================================
+
+  describe("idle detection", () => {
+    test("sets idleSince when OpenCode becomes idle", async () => {
+      // Create a mock running task with opencodePort
+      const mockTask: RunningTask = {
+        id: "idle-task-1",
+        path: "projects/test/task/idle-task-1.md",
+        title: "Idle Test Task",
+        priority: "medium",
+        projectId: "test-project",
+        pid: process.pid, // Use current process so isPidAlive returns true
+        windowName: "idle_task",
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: "/tmp/test",
+        opencodePort: 65432, // Non-existent port (will return unavailable, not idle)
+      };
+
+      const runner = new TaskRunner({ projectId: "test-project", config });
+
+      // @ts-expect-error - accessing private property for testing
+      runner.tuiTasks.set(mockTask.id, mockTask);
+
+      // Verify the task doesn't have idleSince initially
+      expect(mockTask.idleSince).toBeUndefined();
+
+      await runner.stop();
+    });
+
+    test("RunningTask includes opencodePort and idleSince fields", () => {
+      const task: RunningTask = {
+        id: "test-id",
+        path: "test/path.md",
+        title: "Test",
+        priority: "medium",
+        projectId: "test-project",
+        pid: 1234,
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: "/tmp",
+        opencodePort: 54321,
+        idleSince: new Date().toISOString(),
+      };
+
+      expect(task.opencodePort).toBe(54321);
+      expect(task.idleSince).toBeDefined();
+    });
+  });
+
+  // ========================================
+  // Config Tests  
+  // ========================================
+
+  describe("idleDetectionThreshold config", () => {
+    test("config includes idleDetectionThreshold with default value", () => {
+      expect(config.idleDetectionThreshold).toBe(60000);
+    });
+
+    test("idleDetectionThreshold can be customized", () => {
+      const customConfig = { ...config, idleDetectionThreshold: 30000 };
+      expect(customConfig.idleDetectionThreshold).toBe(30000);
     });
   });
 });

@@ -21,6 +21,7 @@ export interface RunnerConfig {
   workDir: string;
   apiTimeout: number; // ms
   taskTimeout: number; // ms
+  idleDetectionThreshold: number; // ms, time before idle task becomes blocked (default 60000)
 
   opencode: OpencodeConfig;
 
@@ -51,6 +52,8 @@ export interface RunningTask {
   startedAt: string; // ISO timestamp
   isResume: boolean;
   workdir: string;
+  opencodePort?: number;   // OpenCode HTTP API port (discovered via lsof)
+  idleSince?: string;      // ISO timestamp when idle was first detected
 }
 
 export interface TaskResult {

@@ -16,6 +16,7 @@ import type {
 } from "./types";
 import type { ResolvedTask } from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
+import { discoverOpencodePort } from "./opencode-port";
 
 // =============================================================================
 // Types
@@ -37,6 +38,7 @@ export interface SpawnResult {
   paneId?: string;
   windowName?: string;
   promptFile: string;
+  opencodePort?: number;  // OpenCode HTTP API port (discovered via lsof)
 }
 
 // =============================================================================
@@ -278,9 +280,13 @@ exit $exit_code
       // pgrep failed, use pane pid
     }
 
+    // Wait for OpenCode to start its HTTP server and discover the port
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const opencodePort = await discoverOpencodePort(pid);
+
     if (isDebugEnabled()) {
       console.log(
-        `[OpencodeExecutor] Created tmux window: ${name} (pid: ${pid})`
+        `[OpencodeExecutor] Created tmux window: ${name} (pid: ${pid}, port: ${opencodePort ?? 'unknown'})`
       );
     }
 
@@ -289,6 +295,7 @@ exit $exit_code
       proc: null, // Can't track tmux process directly
       windowName: name,
       promptFile,
+      opencodePort: opencodePort ?? undefined,
     };
   }
 
@@ -384,9 +391,18 @@ exit $exit_code
       task.title.substring(0, 20) + (task.title.length > 20 ? "..." : "");
     await Bun.$`tmux select-pane -t ${paneId} -T "Task:${shortTitle}"`.quiet();
 
+    // Discover OpenCode port if using TUI mode (--port 0)
+    let opencodePort: number | undefined;
+    if (useTui && pid > 0) {
+      // Wait for OpenCode to start its HTTP server
+      await Bun.sleep(2500);
+      const discoveredPort = await discoverOpencodePort(pid);
+      opencodePort = discoveredPort ?? undefined;
+    }
+
     if (isDebugEnabled()) {
       console.log(
-        `[OpencodeExecutor] Created dashboard pane: ${paneId} (pid: ${pid})`
+        `[OpencodeExecutor] Created dashboard pane: ${paneId} (pid: ${pid}, port: ${opencodePort ?? 'unknown'})`
       );
     }
 
@@ -395,6 +411,7 @@ exit $exit_code
       proc: null,
       paneId,
       promptFile,
+      opencodePort,
     };
   }
 

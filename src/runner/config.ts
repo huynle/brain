@@ -81,6 +81,10 @@ export function loadConfig(): RunnerConfig {
       "RUNNER_TASK_TIMEOUT",
       fileConfig.taskTimeout ?? 1800000
     ),
+    idleDetectionThreshold: getEnvInt(
+      "RUNNER_IDLE_THRESHOLD",
+      fileConfig.idleDetectionThreshold ?? 60000
+    ),
     opencode,
     excludeProjects: fileConfig.excludeProjects ?? [],
   };

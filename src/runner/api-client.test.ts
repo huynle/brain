@@ -37,6 +37,7 @@ const mockConfig: RunnerConfig = {
     model: "anthropic/claude-sonnet-4-20250514",
   },
   excludeProjects: [],
+    idleDetectionThreshold: 60000,
 };
 
 // Helper to create a mock fetch function

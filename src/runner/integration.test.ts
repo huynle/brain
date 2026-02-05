@@ -53,6 +53,7 @@ function createTestConfig(stateDir: string): RunnerConfig {
       model: "test-model",
     },
     excludeProjects: [],
+    idleDetectionThreshold: 60000,
   };
 }
 

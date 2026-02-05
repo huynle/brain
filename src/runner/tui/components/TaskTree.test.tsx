@@ -713,3 +713,269 @@ describe('TaskTree groupByProject', () => {
     });
   });
 });
+
+// =============================================================================
+// parent_id hierarchy tests
+// =============================================================================
+
+describe('buildTree with parent_id', () => {
+  describe('unified tree via parent_id', () => {
+    it('builds a single tree when tasks have parent_id', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root Task', dependencies: [] }),
+        createTask({ id: 'child1', title: 'Child 1', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'child2', title: 'Child 2', dependencies: [], parent_id: 'root' }),
+      ];
+      const tree = buildTree(tasks);
+      // Should produce exactly 1 root
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('root');
+      expect(tree[0].children.length).toBe(2);
+    });
+
+    it('nests grandchildren correctly via parent_id', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'child', title: 'Child', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'grandchild', title: 'Grandchild', dependencies: [], parent_id: 'child' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('root');
+      expect(tree[0].children.length).toBe(1);
+      expect(tree[0].children[0].task.id).toBe('child');
+      expect(tree[0].children[0].children.length).toBe(1);
+      expect(tree[0].children[0].children[0].task.id).toBe('grandchild');
+    });
+
+    it('does not create duplicate roots when using parent_id', () => {
+      // Without parent_id, these would all be separate roots (no depends_on)
+      const tasks = [
+        createTask({ id: 'root', title: 'Scanner Redesign', dependencies: [] }),
+        createTask({ id: 'p0', title: 'P0 Setup', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'p1-1', title: 'P1-1 Layout', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'p1-2', title: 'P1-2 FilterChip', dependencies: [], parent_id: 'p1-1' }),
+        createTask({ id: 'p2-1', title: 'P2-1 ViewTabs', dependencies: [], parent_id: 'p1-1' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('root');
+      // root should have p0 and p1-1 as children
+      const rootChildIds = tree[0].children.map(c => c.task.id);
+      expect(rootChildIds).toContain('p0');
+      expect(rootChildIds).toContain('p1-1');
+      // p1-1 should have p1-2 and p2-1 as children
+      const p1Node = tree[0].children.find(c => c.task.id === 'p1-1');
+      expect(p1Node).toBeDefined();
+      const p1ChildIds = p1Node!.children.map(c => c.task.id);
+      expect(p1ChildIds).toContain('p1-2');
+      expect(p1ChildIds).toContain('p2-1');
+    });
+  });
+
+  describe('mixed parent_id and depends_on', () => {
+    it('parent_id determines placement, depends_on orders siblings', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'a', title: 'Task A', dependencies: [], parent_id: 'root', priority: 'medium' }),
+        createTask({ id: 'b', title: 'Task B', dependencies: ['a'], parent_id: 'root', priority: 'medium' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      // Both a and b should be children of root (parent_id = root for both)
+      expect(tree[0].children.length).toBe(2);
+      // b depends on a, so a should come first
+      expect(tree[0].children[0].task.id).toBe('a');
+      expect(tree[0].children[1].task.id).toBe('b');
+    });
+
+    it('task with parent_id is placed under parent even if it has depends_on to another task', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'branch1', title: 'Branch 1', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'branch2', title: 'Branch 2', dependencies: [], parent_id: 'root' }),
+        // leaf has parent_id=branch1 but also depends_on branch2
+        // parent_id should win for placement (under branch1, not branch2)
+        createTask({ id: 'leaf', title: 'Leaf', dependencies: ['branch2'], parent_id: 'branch1' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      const branch1 = tree[0].children.find(c => c.task.id === 'branch1');
+      const branch2 = tree[0].children.find(c => c.task.id === 'branch2');
+      expect(branch1).toBeDefined();
+      expect(branch2).toBeDefined();
+      // Leaf should be under branch1 (parent_id), not branch2 (depends_on)
+      expect(branch1!.children.length).toBe(1);
+      expect(branch1!.children[0].task.id).toBe('leaf');
+      // branch2 should NOT have leaf as a child
+      expect(branch2!.children.length).toBe(0);
+    });
+
+    it('depends_on still works for tasks without parent_id', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'child', title: 'Child', dependencies: ['root'] }),
+        // No parent_id — should still be placed under root via depends_on
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      expect(tree[0].children.length).toBe(1);
+      expect(tree[0].children[0].task.id).toBe('child');
+    });
+  });
+
+  describe('completed intermediate tasks', () => {
+    it('walks up parent_id chain through completed tasks to find active ancestor', () => {
+      const allTasks = [
+        createTask({ id: 'root', title: 'Root', status: 'pending', dependencies: [] }),
+        createTask({ id: 'mid', title: 'Middle (completed)', status: 'completed', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'leaf', title: 'Leaf', status: 'pending', dependencies: [], parent_id: 'mid' }),
+      ];
+      // Active tasks only (mid is completed, so filtered out)
+      const activeTasks = allTasks.filter(t => t.status !== 'completed');
+      
+      const tree = buildTree(activeTasks, allTasks);
+      // Should be 1 root: root, with leaf as child (mid is skipped)
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('root');
+      expect(tree[0].children.length).toBe(1);
+      expect(tree[0].children[0].task.id).toBe('leaf');
+    });
+
+    it('treats task as root when all ancestors are completed and filtered', () => {
+      const allTasks = [
+        createTask({ id: 'root', title: 'Root', status: 'completed', dependencies: [] }),
+        createTask({ id: 'mid', title: 'Middle', status: 'completed', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'leaf', title: 'Leaf', status: 'pending', dependencies: [], parent_id: 'mid' }),
+      ];
+      const activeTasks = allTasks.filter(t => t.status !== 'completed');
+      
+      const tree = buildTree(activeTasks, allTasks);
+      // Leaf should become a root since no active ancestors exist
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('leaf');
+    });
+
+    it('unified tree stays intact when intermediate depends_on task is completed', () => {
+      // Scenario: A -> B -> C, B is completed. Without parent_id, C becomes orphaned root.
+      // With parent_id, C stays under A.
+      const allTasks = [
+        createTask({ id: 'A', title: 'Task A', status: 'pending', dependencies: [] }),
+        createTask({ id: 'B', title: 'Task B', status: 'completed', dependencies: ['A'], parent_id: 'A' }),
+        createTask({ id: 'C', title: 'Task C', status: 'pending', dependencies: ['B'], parent_id: 'A' }),
+      ];
+      const activeTasks = allTasks.filter(t => t.status !== 'completed');
+      
+      const tree = buildTree(activeTasks, allTasks);
+      // Should be 1 root: A, with C as child
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('A');
+      expect(tree[0].children.length).toBe(1);
+      expect(tree[0].children[0].task.id).toBe('C');
+    });
+  });
+
+  describe('root detection with parent_id', () => {
+    it('task with parent_id pointing to active task is NOT a root', () => {
+      const tasks = [
+        createTask({ id: 'parent', title: 'Parent', dependencies: [] }),
+        createTask({ id: 'child', title: 'Child', dependencies: [], parent_id: 'parent' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('parent');
+    });
+
+    it('task with parent_id pointing to non-existent task is a root', () => {
+      const tasks = [
+        createTask({ id: 'orphan', title: 'Orphan', dependencies: [], parent_id: 'non-existent' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+      expect(tree[0].task.id).toBe('orphan');
+    });
+
+    it('task with both parent_id and depends_on pointing to active tasks is NOT a root', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'dep', title: 'Dep', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'child', title: 'Child', dependencies: ['dep'], parent_id: 'root' }),
+      ];
+      const tree = buildTree(tasks);
+      expect(tree.length).toBe(1);
+    });
+  });
+
+  describe('flattenTreeOrder with parent_id', () => {
+    it('preserves depth-first order with parent_id hierarchy', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', dependencies: [] }),
+        createTask({ id: 'child1', title: 'Child 1', dependencies: [], parent_id: 'root', priority: 'high' }),
+        createTask({ id: 'child2', title: 'Child 2', dependencies: [], parent_id: 'root', priority: 'medium' }),
+        createTask({ id: 'grandchild', title: 'Grandchild', dependencies: [], parent_id: 'child1' }),
+      ];
+      const order = flattenTreeOrder(tasks);
+      expect(order[0]).toBe('root');
+      // child1 (high priority) before child2 (medium)
+      expect(order.indexOf('child1')).toBeLessThan(order.indexOf('child2'));
+      // grandchild immediately after child1
+      expect(order.indexOf('grandchild')).toBe(order.indexOf('child1') + 1);
+    });
+
+    it('completed intermediate parent_id tasks do not break flatten order', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root', status: 'pending', dependencies: [] }),
+        createTask({ id: 'mid', title: 'Mid', status: 'completed', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'leaf', title: 'Leaf', status: 'pending', dependencies: [], parent_id: 'mid' }),
+      ];
+      const order = flattenTreeOrder(tasks, true);
+      // Active tasks: root and leaf. Leaf should be under root.
+      expect(order.indexOf('root')).toBe(0);
+      expect(order.indexOf('leaf')).toBe(1);
+      // Completed header after active tasks
+      expect(order).toContain(COMPLETED_HEADER_ID);
+    });
+  });
+
+  describe('TaskTree rendering with parent_id', () => {
+    it('renders unified tree with parent_id', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Scanner Redesign', dependencies: [] }),
+        createTask({ id: 'p0', title: 'P0 Setup', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'p1', title: 'P1 Layout', dependencies: [], parent_id: 'root' }),
+        createTask({ id: 'p1-2', title: 'P1-2 FilterChip', dependencies: [], parent_id: 'p1' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      const frame = lastFrame() || '';
+      // All tasks visible
+      expect(frame).toContain('Scanner Redesign');
+      expect(frame).toContain('P0 Setup');
+      expect(frame).toContain('P1 Layout');
+      expect(frame).toContain('P1-2 FilterChip');
+      // Should have tree drawing chars for nesting
+      expect(frame).toContain('─');
+    });
+
+    it('renders unified tree in grouped view with parent_id', () => {
+      const tasks = [
+        createTask({ id: 'root', title: 'Root Task', dependencies: [], projectId: 'myproject' }),
+        createTask({ id: 'child', title: 'Child Task', dependencies: [], parent_id: 'root', projectId: 'myproject' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByProject={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('myproject');
+      expect(frame).toContain('Root Task');
+      expect(frame).toContain('Child Task');
+    });
+  });
+});

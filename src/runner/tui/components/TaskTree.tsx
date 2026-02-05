@@ -83,22 +83,59 @@ const VERTICAL = '│ ';
 const EMPTY = '  ';
 
 /**
- * Build tree structure from flat task list
+ * Build tree structure from flat task list.
+ * 
+ * Uses BOTH parent_id (primary hierarchy) and depends_on (secondary ordering):
+ * - parent_id determines WHERE a task appears in the tree (keeps tree unified)
+ * - depends_on orders siblings and adds additional edges
+ * - When a task has both, parent_id wins for placement
+ * 
+ * @param tasks - Active tasks to build tree from
+ * @param allTasks - Optional full task list (including completed) for parent_id chain walking
  */
-export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
-  // Create lookup map
+export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeNode[] {
+  // Step 1: Create lookup map for active tasks
   const taskMap = new Map<string, TaskDisplay>();
   tasks.forEach(t => taskMap.set(t.id, t));
 
-  // Track which tasks are children (have a parent that exists in our list)
-  const childIds = new Set<string>();
+  // Also create a lookup for all tasks (for parent_id chain walking through completed tasks)
+  const allTaskMap = new Map<string, TaskDisplay>();
+  if (allTasks) {
+    allTasks.forEach(t => allTaskMap.set(t.id, t));
+  } else {
+    tasks.forEach(t => allTaskMap.set(t.id, t));
+  }
+
+  // Step 2: Build TWO relationship maps
   
-  // Build reverse dependency map (who depends on each task)
+  // 2a: parentChildren - from parent_id field (primary hierarchy)
+  const parentChildren = new Map<string, Set<string>>();
+  // Track tasks that have an active parent via parent_id
+  const hasParentInTree = new Set<string>();
+  
+  tasks.forEach(task => {
+    if (task.parent_id) {
+      // Walk up the parent_id chain to find the nearest active ancestor
+      const activeAncestorId = findActiveAncestor(task.parent_id, taskMap, allTaskMap);
+      if (activeAncestorId) {
+        hasParentInTree.add(task.id);
+        if (!parentChildren.has(activeAncestorId)) {
+          parentChildren.set(activeAncestorId, new Set());
+        }
+        parentChildren.get(activeAncestorId)!.add(task.id);
+      }
+    }
+  });
+
+  // 2b: reverseDeps - from depends_on field (secondary ordering + additional edges)
   const reverseDeps = new Map<string, string[]>();
+  // Track tasks that have active depends_on targets
+  const hasDepsInTree = new Set<string>();
+  
   tasks.forEach(task => {
     task.dependencies.forEach(depId => {
       if (taskMap.has(depId)) {
-        childIds.add(task.id);
+        hasDepsInTree.add(task.id);
         if (!reverseDeps.has(depId)) {
           reverseDeps.set(depId, []);
         }
@@ -107,7 +144,34 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
     });
   });
 
-  // Detect cycles using DFS
+  // Step 3: Merge children - UNION of parent_id children and depends_on children
+  // But: if a task has a parent_id pointing to an active task, parent_id wins for placement
+  const mergedChildren = new Map<string, Set<string>>();
+  
+  // Start with parent_id children
+  for (const [parentId, children] of parentChildren) {
+    if (!mergedChildren.has(parentId)) {
+      mergedChildren.set(parentId, new Set());
+    }
+    for (const childId of children) {
+      mergedChildren.get(parentId)!.add(childId);
+    }
+  }
+  
+  // Add depends_on children, but only if the child doesn't already have a parent_id placement
+  for (const [depId, dependents] of reverseDeps) {
+    if (!mergedChildren.has(depId)) {
+      mergedChildren.set(depId, new Set());
+    }
+    for (const dependentId of dependents) {
+      // Only add via depends_on if this task doesn't have an active parent_id elsewhere
+      if (!hasParentInTree.has(dependentId)) {
+        mergedChildren.get(depId)!.add(dependentId);
+      }
+    }
+  }
+
+  // Detect cycles using DFS (on the merged children graph)
   const inCycle = new Set<string>();
   const visited = new Set<string>();
   const recursionStack = new Set<string>();
@@ -116,7 +180,7 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
     visited.add(taskId);
     recursionStack.add(taskId);
 
-    const children = reverseDeps.get(taskId) || [];
+    const children = mergedChildren.get(taskId) || new Set();
     for (const childId of children) {
       if (!visited.has(childId)) {
         if (detectCycles(childId)) {
@@ -145,6 +209,31 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   // Track rendered tasks to handle diamond dependencies
   const rendered = new Set<string>();
 
+  // Step 5: Sort children - use depends_on to order siblings within a parent
+  function sortChildIds(childIdSet: Set<string>): string[] {
+    const childIds = [...childIdSet];
+    
+    // Build a local dependency order among siblings:
+    // If sibling A is in sibling B's depends_on, A should come before B
+    return childIds.sort((a, b) => {
+      const taskA = taskMap.get(a);
+      const taskB = taskMap.get(b);
+      if (!taskA || !taskB) return 0;
+
+      // Check if B depends on A (A should come first)
+      if (taskB.dependencies.includes(a)) return -1;
+      // Check if A depends on B (B should come first)
+      if (taskA.dependencies.includes(b)) return 1;
+
+      // Fall back to priority then status ordering
+      const priorityDiff = 
+        (PRIORITY_ORDER[taskA.priority] ?? 1) - (PRIORITY_ORDER[taskB.priority] ?? 1);
+      if (priorityDiff !== 0) return priorityDiff;
+      
+      return (STATUS_ORDER[taskA.status] ?? 1) - (STATUS_ORDER[taskB.status] ?? 1);
+    });
+  }
+
   // Build tree recursively
   function buildNode(taskId: string): TreeNode | null {
     const task = taskMap.get(taskId);
@@ -156,21 +245,10 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
     }
     rendered.add(taskId);
 
-    const childIds = reverseDeps.get(taskId) || [];
+    const childIdSet = mergedChildren.get(taskId) || new Set();
     const children: TreeNode[] = [];
 
-    // Sort children by priority then status
-    const sortedChildIds = [...childIds].sort((a, b) => {
-      const taskA = taskMap.get(a);
-      const taskB = taskMap.get(b);
-      if (!taskA || !taskB) return 0;
-
-      const priorityDiff = 
-        (PRIORITY_ORDER[taskA.priority] ?? 1) - (PRIORITY_ORDER[taskB.priority] ?? 1);
-      if (priorityDiff !== 0) return priorityDiff;
-      
-      return (STATUS_ORDER[taskA.status] ?? 1) - (STATUS_ORDER[taskB.status] ?? 1);
-    });
+    const sortedChildIds = sortChildIds(childIdSet);
 
     for (const childId of sortedChildIds) {
       const childNode = buildNode(childId);
@@ -186,7 +264,9 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
     };
   }
 
-  // Find root nodes (tasks with no dependencies, or deps outside our list)
+  // Step 4: Root detection - a task is a root ONLY if:
+  // - It has no parent_id pointing to an active task, AND
+  // - It has no depends_on pointing to an active task
   const roots: TreeNode[] = [];
   
   // Sort tasks for consistent ordering
@@ -198,9 +278,11 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   });
 
   for (const task of sortedTasks) {
-    // Root if no dependencies or all dependencies are outside our task list
-    const hasInternalDeps = task.dependencies.some(depId => taskMap.has(depId));
-    if (!hasInternalDeps) {
+    const isChildViaParentId = hasParentInTree.has(task.id);
+    const isChildViaDepsOn = task.dependencies.some(depId => taskMap.has(depId));
+    
+    // Root only if NOT a child via either mechanism
+    if (!isChildViaParentId && !isChildViaDepsOn) {
       const node = buildNode(task.id);
       if (node) {
         roots.push(node);
@@ -208,7 +290,7 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
     }
   }
 
-  // Handle orphan tasks (those with unresolved dependencies)
+  // Handle orphan tasks (those with unresolved dependencies or cycles)
   for (const task of sortedTasks) {
     if (!rendered.has(task.id)) {
       const node = buildNode(task.id);
@@ -219,6 +301,39 @@ export function buildTree(tasks: TaskDisplay[]): TreeNode[] {
   }
 
   return roots;
+}
+
+/**
+ * Walk up the parent_id chain to find the nearest active ancestor.
+ * Handles the case where a task's parent_id points to a completed (filtered-out) task.
+ */
+function findActiveAncestor(
+  parentId: string,
+  activeTaskMap: Map<string, TaskDisplay>,
+  allTaskMap: Map<string, TaskDisplay>,
+): string | null {
+  const visited = new Set<string>();
+  let currentId: string | null = parentId;
+  
+  while (currentId) {
+    // Prevent infinite loops
+    if (visited.has(currentId)) return null;
+    visited.add(currentId);
+    
+    // If this ancestor is in the active task list, we found it
+    if (activeTaskMap.has(currentId)) {
+      return currentId;
+    }
+    
+    // Otherwise, look up this task in the full list and walk to its parent
+    const task = allTaskMap.get(currentId);
+    if (!task || !task.parent_id) {
+      return null; // No more parents to walk up to
+    }
+    currentId = task.parent_id;
+  }
+  
+  return null;
 }
 
 // Helper to check if a task is completed
@@ -236,8 +351,8 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
   const activeTasks = tasks.filter(t => !isCompleted(t));
   const completedTasks = tasks.filter(isCompleted);
   
-  // Build tree only from active tasks
-  const tree = buildTree(activeTasks);
+  // Build tree from active tasks, passing all tasks for parent_id chain walking
+  const tree = buildTree(activeTasks, tasks);
   const result: string[] = [];
 
   function traverse(nodes: TreeNode[]): void {
@@ -430,8 +545,8 @@ function renderProjectTasks(
   // Separate active and completed tasks
   const activeTasks = projectTasks.filter(t => !isCompleted(t));
   
-  // Build tree structure from active tasks
-  const tree = buildTree(activeTasks);
+  // Build tree structure from active tasks, passing all project tasks for parent_id chain walking
+  const tree = buildTree(activeTasks, projectTasks);
   
   tree.forEach((rootNode, rootIndex) => {
     const isSelected = rootNode.task.id === selectedId;
@@ -470,8 +585,8 @@ export function TaskTree({
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t)), [tasks]);
   const completedTasks = useMemo(() => tasks.filter(isCompleted), [tasks]);
   
-  // Build tree structure from active tasks only (for non-grouped view)
-  const tree = useMemo(() => buildTree(activeTasks), [activeTasks]);
+  // Build tree structure from active tasks, passing all tasks for parent_id chain walking
+  const tree = useMemo(() => buildTree(activeTasks, tasks), [activeTasks, tasks]);
 
   // Group tasks by project (for grouped view)
   const tasksByProject = useMemo(() => {

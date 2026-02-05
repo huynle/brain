@@ -126,6 +126,7 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
       const data = await response.json();
 
       // Transform API response to TaskDisplay format
+      // Include all frontmatter fields from the brain entry
       const taskDisplays: TaskDisplay[] = (data.tasks || []).map((task: any) => ({
         id: task.id,
         path: task.path,
@@ -136,6 +137,23 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         dependents: task.dependents || [],
         progress: task.progress,
         error: task.error,
+        parent_id: task.parent_id,
+        // Frontmatter fields
+        created: task.created,
+        workdir: task.workdir,
+        worktree: task.worktree,
+        gitRemote: task.git_remote,
+        gitBranch: task.git_branch,
+        userOriginalRequest: task.user_original_request,
+        // Dependency resolution fields
+        resolvedDeps: task.resolved_deps,
+        unresolvedDeps: task.unresolved_deps,
+        classification: task.classification,
+        blockedBy: task.blocked_by,
+        blockedByReason: task.blocked_by_reason,
+        waitingOn: task.waiting_on,
+        inCycle: task.in_cycle,
+        resolvedWorkdir: task.resolved_workdir,
       }));
 
       // Calculate stats from tasks

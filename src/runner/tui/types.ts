@@ -5,7 +5,13 @@
 import type { EntryStatus, Priority } from '../../core/types';
 
 /**
+ * Task classification for dependency resolution
+ */
+export type TaskClassification = 'ready' | 'waiting' | 'blocked' | 'not_pending';
+
+/**
  * Task display information for TUI rendering
+ * Includes all frontmatter fields from the brain entry
  */
 export interface TaskDisplay {
   id: string;
@@ -18,6 +24,25 @@ export interface TaskDisplay {
   progress?: number;
   error?: string;
   projectId?: string;  // Which project this task belongs to (for multi-project mode)
+  parent_id?: string;  // Parent task ID for hierarchy
+  
+  // Frontmatter fields
+  created?: string;                  // ISO timestamp when created
+  workdir?: string | null;           // $HOME-relative working directory
+  worktree?: string | null;          // Specific git worktree path
+  gitRemote?: string | null;         // Git remote URL
+  gitBranch?: string | null;         // Branch context
+  userOriginalRequest?: string | null; // Original user request for validation
+  
+  // Dependency resolution fields
+  resolvedDeps?: string[];           // IDs of resolved dependencies
+  unresolvedDeps?: string[];         // References that couldn't be resolved
+  classification?: TaskClassification; // "ready", "waiting", "blocked", "not_pending"
+  blockedBy?: string[];              // IDs of blocking dependencies
+  blockedByReason?: string;          // "circular_dependency" or "dependency_blocked"
+  waitingOn?: string[];              // IDs of incomplete dependencies
+  inCycle?: boolean;                 // Whether task is in a dependency cycle
+  resolvedWorkdir?: string | null;   // Absolute path after resolution
 }
 
 /**

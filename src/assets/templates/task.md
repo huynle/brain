@@ -6,7 +6,6 @@ tags:
   - task{{extra.tags}}
 created: {{format-date now}}
 {{#if extra.priority}}priority: {{extra.priority}}
-{{/if}}{{#if extra.parent_id}}parent_id: {{extra.parent_id}}
 {{/if}}{{#if extra.projectId}}projectId: {{extra.projectId}}
 {{/if}}{{#if extra.depends_on}}depends_on: {{extra.depends_on}}
 {{/if}}{{#if extra.workdir}}workdir: {{extra.workdir}}

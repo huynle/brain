@@ -368,7 +368,6 @@ const tools: Tool[] = [
         global: { type: "boolean", description: "Save to global brain (cross-project)" },
         project: { type: "string", description: "Explicit project ID/name" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
-        parent_id: { type: "string", description: "Parent entry ID (8-char) for hierarchical grouping" },
         user_original_request: { type: "string", description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task." },
       },
       required: ["type", "title", "content"],

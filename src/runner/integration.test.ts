@@ -68,7 +68,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
-    parent_id: null,
+
     created: new Date().toISOString(),
     workdir: null,
     worktree: null,
@@ -77,7 +77,6 @@ function createMockTask(
     user_original_request: null,
     resolved_deps: [],
     unresolved_deps: [],
-    parent_chain: [],
     classification: "ready",
     blocked_by: [],
     waiting_on: [],

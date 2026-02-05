@@ -31,7 +31,6 @@ import {
   extractType,
   extractStatus,
   extractPriority,
-  extractParentId,
   getPrioritySortValue,
   parseFrontmatter,
   generateFrontmatter,
@@ -59,6 +58,7 @@ import type {
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
+import { getTaskService } from "./task-service";
 
 // =============================================================================
 // Constants
@@ -121,6 +121,23 @@ export class BrainService {
     // Ensure directory exists
     if (!existsSync(fullDir)) {
       mkdirSync(fullDir, { recursive: true });
+    }
+
+    // Auto-inject project root dependency for orphan tasks
+    // Skip if: not a task, already has depends_on, or IS the project root
+    if (
+      entryType === "task" &&
+      (!request.depends_on || request.depends_on.length === 0) &&
+      !(request.tags && request.tags.includes("project-root"))
+    ) {
+      try {
+        const taskService = getTaskService();
+        const rootId = await taskService.getOrCreateProjectRoot(effectiveProjectId);
+        request.depends_on = [rootId];
+      } catch (err) {
+        // If root creation fails (e.g., zk not available), proceed without injection
+        console.error("[brain-service] Auto-inject project root failed:", err);
+      }
     }
 
     // Build content with optional related entries section
@@ -285,10 +302,6 @@ export class BrainService {
         zkArgs.push("--extra", `depends_on=${formattedDeps}`);
       }
 
-      if (request.parent_id) {
-        zkArgs.push("--extra", `parent_id=${request.parent_id}`);
-      }
-
       // Execution context for tasks
       if (request.workdir) {
         zkArgs.push("--extra", `workdir=${request.workdir}`);
@@ -364,7 +377,6 @@ export class BrainService {
         status: entryStatus,
         projectId: isGlobal ? undefined : this.projectId,
         priority: request.priority,
-        parent_id: request.parent_id,
         // Execution context for tasks
         workdir: request.workdir,
         worktree: request.worktree,
@@ -554,7 +566,6 @@ export class BrainService {
       tags: note.tags || [],
       priority,
       depends_on: frontmatter.depends_on as string[] | undefined,
-      parent_id: frontmatter.parent_id as string | undefined,
       project_id: frontmatter.projectId as string | undefined,
       created: note.created,
       modified: note.modified,
@@ -729,7 +740,6 @@ export class BrainService {
       content: note.lead || note.body?.slice(0, 150) || "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
     }));
@@ -751,7 +761,7 @@ export class BrainService {
       );
     }
 
-    const needsCodeFiltering = request.status || request.filename || request.parent_id;
+    const needsCodeFiltering = request.status || request.filename;
     const fetchLimit = needsCodeFiltering ? Math.max(limit * 5, 100) : limit + offset;
     const zkArgs = [
       "list",
@@ -789,10 +799,6 @@ export class BrainService {
       });
     }
 
-    if (request.parent_id) {
-      notes = notes.filter((note) => extractParentId(note) === request.parent_id);
-    }
-
     if (request.sortBy === "priority") {
       notes.sort((a, b) => {
         const aPriority = getPrioritySortValue(extractPriority(a));
@@ -814,7 +820,6 @@ export class BrainService {
       content: "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
       access_count: getEntryMeta(note.path)?.access_count ?? 0,
@@ -915,7 +920,6 @@ export class BrainService {
         content,
         tags: note.tags || [],
         priority: extractPriority(note),
-        parent_id: extractParentId(note),
         created: note.created,
         modified: note.modified,
       });
@@ -964,7 +968,6 @@ export class BrainService {
       content: "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
     }));
@@ -1003,7 +1006,6 @@ export class BrainService {
       content: "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
     }));
@@ -1044,7 +1046,6 @@ export class BrainService {
       content: "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
     }));
@@ -1097,7 +1098,6 @@ export class BrainService {
       content: "",
       tags: note.tags || [],
       priority: extractPriority(note),
-      parent_id: extractParentId(note),
       created: note.created,
       modified: note.modified,
     }));

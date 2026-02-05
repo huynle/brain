@@ -431,12 +431,6 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Titles or paths of related brain entries to link to. Auto-generates markdown links."
             ),
-          parent_id: tool.schema
-            .string()
-            .optional()
-            .describe(
-              "Parent entry ID (8-char alphanumeric) for hierarchical grouping. Use this to group tasks under an objective/plan."
-            ),
           user_original_request: tool.schema
             .string()
             .optional()
@@ -464,7 +458,6 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               global: args.global,
               project: args.project || projectId,
               relatedEntries: args.relatedEntries,
-              parent_id: args.parent_id,
               // Execution context for tasks
               workdir: args.type === "task" ? context.workdir : undefined,
               worktree: args.type === "task" ? context.worktree : undefined,
@@ -477,8 +470,6 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 
             const location = args.global ? "global brain" : "project brain";
 
-            const parentInfo = args.parent_id ? `\n**Parent:** \`${args.parent_id}\`` : "";
-
             return `Saved to ${location}
 
 **Path:** \`${response.path}\`
@@ -487,7 +478,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 **Title:** ${response.title}
 **Type:** ${response.type}
 **Status:** ${response.status}
-**Tags:** ${args.tags?.length ? args.tags.join(", ") : "none"}${parentInfo}
+**Tags:** ${args.tags?.length ? args.tags.join(", ") : "none"}
 
 Use \`brain_recall\` with the path, ID, or title to retrieve it later.
 Use the link \`${response.link}\` to reference this entry from other notes.

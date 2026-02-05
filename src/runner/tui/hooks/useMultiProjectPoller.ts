@@ -82,7 +82,6 @@ async function fetchProjectTasks(
     priority: task.priority || 'medium',
     dependencies: task.resolved_deps || task.dependencies || [],
     dependents: task.dependents || [],
-    parent_id: task.parent_id,
     progress: task.progress,
     error: task.error,
     projectId, // Tag with project ID

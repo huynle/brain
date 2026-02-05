@@ -43,13 +43,13 @@ export interface DashboardOptions {
   /** Callback to cancel a task by ID and path */
   onCancelTask?: (taskId: string, taskPath: string) => Promise<void>;
   /** Callback to pause a specific project */
-  onPause?: (projectId: string) => void;
+  onPause?: (projectId: string) => void | Promise<void>;
   /** Callback to resume a specific project */
-  onResume?: (projectId: string) => void;
+  onResume?: (projectId: string) => void | Promise<void>;
   /** Callback to pause all projects */
-  onPauseAll?: () => void;
+  onPauseAll?: () => void | Promise<void>;
   /** Callback to resume all projects */
-  onResumeAll?: () => void;
+  onResumeAll?: () => void | Promise<void>;
   /** Get current paused projects from TaskRunner */
   getPausedProjects?: () => string[];
 }

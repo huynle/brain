@@ -95,7 +95,6 @@ export interface BrainEntry {
   tags: string[];
   priority?: Priority;
   depends_on?: string[];
-  parent_id?: string; // 8-char ID of parent entry for hierarchical grouping
   project_id?: string;
   created?: string; // ISO timestamp
   modified?: string; // ISO timestamp
@@ -124,7 +123,6 @@ export interface CreateEntryRequest {
   status?: EntryStatus;
   priority?: Priority;
   depends_on?: string[];
-  parent_id?: string; // 8-char ID of parent entry for hierarchical grouping
   global?: boolean;
   project?: string;
   relatedEntries?: string[];
@@ -159,7 +157,6 @@ export interface ListEntriesRequest {
   type?: EntryType;
   status?: EntryStatus;
   filename?: string;
-  parent_id?: string; // Filter by parent entry ID
   limit?: number;
   offset?: number;
   global?: boolean;
@@ -263,9 +260,7 @@ export interface Config {
 export const TASK_CLASSIFICATIONS = [
   "ready", // Pending, all deps satisfied
   "waiting", // Pending, waiting on incomplete deps
-  "waiting_on_parent", // Pending, parent not active/in_progress
   "blocked", // Blocked by blocked/cancelled deps
-  "blocked_by_parent", // Parent is blocked/cancelled
   "not_pending", // Task is not in pending status
 ] as const;
 
@@ -283,7 +278,6 @@ export interface Task {
   priority: Priority;
   status: EntryStatus;
   depends_on: string[];
-  parent_id: string | null;
   created: string;
   workdir: string | null;
   worktree: string | null;
@@ -296,10 +290,9 @@ export interface Task {
 export interface ResolvedTask extends Task {
   resolved_deps: string[]; // IDs of resolved dependencies
   unresolved_deps: string[]; // References that couldn't be resolved
-  parent_chain: string[]; // IDs of all ancestors
   classification: TaskClassification;
   blocked_by: string[]; // IDs of blocking deps
-  blocked_by_reason?: string; // "circular_dependency" | "dependency_blocked" | "parent_blocked"
+  blocked_by_reason?: string; // "circular_dependency" | "dependency_blocked"
   waiting_on: string[]; // IDs of incomplete deps
   in_cycle: boolean;
   resolved_workdir: string | null; // Absolute path after resolution

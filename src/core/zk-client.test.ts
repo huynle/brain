@@ -66,16 +66,6 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("priority: high");
     });
 
-    test("includes parent_id", () => {
-      const fm = generateFrontmatter({
-        title: "Test",
-        type: "task",
-        parent_id: "abc12def",
-      });
-      
-      expect(fm).toContain("parent_id: abc12def");
-    });
-
     test("includes projectId", () => {
       const fm = generateFrontmatter({
         title: "Test",
@@ -241,20 +231,6 @@ Content`;
 
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.tags).toEqual(["tag1", "tag2"]);
-  });
-
-  test("parses frontmatter with parent_id", () => {
-    const content = `---
-title: Test
-type: task
-parent_id: abc12def
-status: active
----
-
-Content`;
-
-    const { frontmatter } = parseFrontmatter(content);
-    expect(frontmatter.parent_id).toBe("abc12def");
   });
 
   test("parses quoted title with special characters", () => {

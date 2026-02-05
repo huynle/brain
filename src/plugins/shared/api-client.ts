@@ -176,7 +176,7 @@ export const brainApi = {
     global?: boolean;
     project?: string;
     relatedEntries?: string[];
-    parent_id?: string;
+
     workdir?: string;
     worktree?: string;
     git_remote?: string;

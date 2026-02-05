@@ -119,22 +119,32 @@ export function App({
     }
   }, [onLogCallback, addLog]);
 
-  // Sync pause state from TaskRunner
+  // Derive pause state from tasks: project root task with status === 'blocked' means paused
+  // Also fall back to getPausedProjects() for backward compatibility
   useEffect(() => {
-    if (!getPausedProjects) return;
-    
-    const syncPauseState = () => {
+    // Derive from task list: find root tasks (title = projectId, no deps) that are blocked
+    const derivedPaused = new Set<string>();
+    const allTasksForPause = isMultiProject ? multiProjectPoller.allTasks : tasks;
+    for (const task of allTasksForPause) {
+      if (task.dependencies.length === 0 && task.status === 'blocked') {
+        // This could be a project root task — use projectId or title
+        const pid = task.projectId || task.title;
+        if (pid && projects.includes(pid)) {
+          derivedPaused.add(pid);
+        }
+      }
+    }
+
+    // Fall back to getPausedProjects() if no root tasks found (transition period)
+    if (derivedPaused.size === 0 && getPausedProjects) {
       const paused = getPausedProjects();
-      setPausedProjects(new Set(paused));
-    };
-    
-    // Initial sync
-    syncPauseState();
-    
-    // Poll for updates every 500ms
-    const interval = setInterval(syncPauseState, 500);
-    return () => clearInterval(interval);
-  }, [getPausedProjects]);
+      for (const p of paused) {
+        derivedPaused.add(p);
+      }
+    }
+
+    setPausedProjects(derivedPaused);
+  }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
@@ -225,7 +235,7 @@ export function App({
       }
     }
 
-    // Pause/Resume handling
+    // Pause/Resume handling (async — fire-and-forget with error logging)
     // 'p' - toggle pause for current project (or all if viewing "all")
     if (input === 'p') {
       const targetProject = activeProject === 'all' 
@@ -236,20 +246,28 @@ export function App({
         // Toggle all projects
         const allPaused = pausedProjects.size === projects.length;
         if (allPaused && onResumeAll) {
-          onResumeAll();
+          Promise.resolve(onResumeAll()).catch((err) => {
+            addLog({ level: 'error', message: `Failed to resume all: ${err}` });
+          });
           addLog({ level: 'info', message: 'All projects resumed' });
         } else if (!allPaused && onPauseAll) {
-          onPauseAll();
+          Promise.resolve(onPauseAll()).catch((err) => {
+            addLog({ level: 'error', message: `Failed to pause all: ${err}` });
+          });
           addLog({ level: 'warn', message: 'All projects paused' });
         }
       } else {
         // Toggle single project
         const isPaused = pausedProjects.has(targetProject);
         if (isPaused && onResume) {
-          onResume(targetProject);
+          Promise.resolve(onResume(targetProject)).catch((err) => {
+            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
+          });
           addLog({ level: 'info', message: `Project resumed: ${targetProject}` });
         } else if (!isPaused && onPause) {
-          onPause(targetProject);
+          Promise.resolve(onPause(targetProject)).catch((err) => {
+            addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
+          });
           addLog({ level: 'warn', message: `Project paused: ${targetProject}` });
         }
       }
@@ -260,10 +278,14 @@ export function App({
     if (input === 'P' && isMultiProject) {
       const allPaused = pausedProjects.size === projects.length;
       if (allPaused && onResumeAll) {
-        onResumeAll();
+        Promise.resolve(onResumeAll()).catch((err) => {
+          addLog({ level: 'error', message: `Failed to resume all: ${err}` });
+        });
         addLog({ level: 'info', message: 'All projects resumed' });
       } else if (!allPaused && onPauseAll) {
-        onPauseAll();
+        Promise.resolve(onPauseAll()).catch((err) => {
+          addLog({ level: 'error', message: `Failed to pause all: ${err}` });
+        });
         addLog({ level: 'warn', message: 'All projects paused' });
       }
       return;

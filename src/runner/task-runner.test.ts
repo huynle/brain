@@ -67,7 +67,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
-    parent_id: null,
+
     created: new Date().toISOString(),
     workdir: null,
     worktree: null,
@@ -76,7 +76,6 @@ function createMockTask(
     user_original_request: null,
     resolved_deps: [],
     unresolved_deps: [],
-    parent_chain: [],
     classification: "ready",
     blocked_by: [],
     waiting_on: [],
@@ -735,29 +734,29 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("pause()", () => {
-    test("adds project to pausedProjects set", () => {
+    test("adds project to pausedProjects set", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
         config,
       });
 
       expect(runner.isPaused("project-a")).toBe(false);
-      runner.pause("project-a");
+      await runner.pause("project-a");
       expect(runner.isPaused("project-a")).toBe(true);
       expect(runner.isPaused("project-b")).toBe(false);
     });
 
-    test("ignores unknown projects", () => {
+    test("ignores unknown projects", async () => {
       const runner = new TaskRunner({
         projects: ["project-a"],
         config,
       });
 
-      runner.pause("unknown-project");
+      await runner.pause("unknown-project");
       expect(runner.getPausedProjects()).toEqual([]);
     });
 
-    test("emits project_paused event", () => {
+    test("emits project_paused event", async () => {
       const events: RunnerEvent[] = [];
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
@@ -765,7 +764,7 @@ describe("TaskRunner - Pause/Resume", () => {
       });
       runner.on((event) => events.push(event));
 
-      runner.pause("project-a");
+      await runner.pause("project-a");
 
       const pauseEvents = events.filter((e) => e.type === "project_paused");
       expect(pauseEvents.length).toBe(1);
@@ -774,20 +773,20 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("resume()", () => {
-    test("removes project from pausedProjects set", () => {
+    test("removes project from pausedProjects set", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
         config,
       });
 
-      runner.pause("project-a");
+      await runner.pause("project-a");
       expect(runner.isPaused("project-a")).toBe(true);
       
-      runner.resume("project-a");
+      await runner.resume("project-a");
       expect(runner.isPaused("project-a")).toBe(false);
     });
 
-    test("does nothing if project is not paused", () => {
+    test("does nothing if project is not paused", async () => {
       const events: RunnerEvent[] = [];
       const runner = new TaskRunner({
         projects: ["project-a"],
@@ -795,13 +794,13 @@ describe("TaskRunner - Pause/Resume", () => {
       });
       runner.on((event) => events.push(event));
 
-      runner.resume("project-a");
+      await runner.resume("project-a");
 
       const resumeEvents = events.filter((e) => e.type === "project_resumed");
       expect(resumeEvents.length).toBe(0);
     });
 
-    test("emits project_resumed event", () => {
+    test("emits project_resumed event", async () => {
       const events: RunnerEvent[] = [];
       const runner = new TaskRunner({
         projects: ["project-a"],
@@ -809,8 +808,8 @@ describe("TaskRunner - Pause/Resume", () => {
       });
       runner.on((event) => events.push(event));
 
-      runner.pause("project-a");
-      runner.resume("project-a");
+      await runner.pause("project-a");
+      await runner.resume("project-a");
 
       const resumeEvents = events.filter((e) => e.type === "project_resumed");
       expect(resumeEvents.length).toBe(1);
@@ -819,14 +818,14 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("pauseAll()", () => {
-    test("pauses all projects", () => {
+    test("pauses all projects", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b", "project-c"],
         config,
       });
 
       expect(runner.isAllPaused()).toBe(false);
-      runner.pauseAll();
+      await runner.pauseAll();
       
       expect(runner.isPaused("project-a")).toBe(true);
       expect(runner.isPaused("project-b")).toBe(true);
@@ -834,7 +833,7 @@ describe("TaskRunner - Pause/Resume", () => {
       expect(runner.isAllPaused()).toBe(true);
     });
 
-    test("emits all_paused event", () => {
+    test("emits all_paused event", async () => {
       const events: RunnerEvent[] = [];
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
@@ -842,7 +841,7 @@ describe("TaskRunner - Pause/Resume", () => {
       });
       runner.on((event) => events.push(event));
 
-      runner.pauseAll();
+      await runner.pauseAll();
 
       const pauseAllEvents = events.filter((e) => e.type === "all_paused");
       expect(pauseAllEvents.length).toBe(1);
@@ -850,21 +849,21 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("resumeAll()", () => {
-    test("resumes all paused projects", () => {
+    test("resumes all paused projects", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
         config,
       });
 
-      runner.pauseAll();
+      await runner.pauseAll();
       expect(runner.isAllPaused()).toBe(true);
 
-      runner.resumeAll();
+      await runner.resumeAll();
       expect(runner.getPausedProjects()).toEqual([]);
       expect(runner.isAllPaused()).toBe(false);
     });
 
-    test("emits all_resumed event", () => {
+    test("emits all_resumed event", async () => {
       const events: RunnerEvent[] = [];
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
@@ -872,8 +871,8 @@ describe("TaskRunner - Pause/Resume", () => {
       });
       runner.on((event) => events.push(event));
 
-      runner.pauseAll();
-      runner.resumeAll();
+      await runner.pauseAll();
+      await runner.resumeAll();
 
       const resumeAllEvents = events.filter((e) => e.type === "all_resumed");
       expect(resumeAllEvents.length).toBe(1);
@@ -881,14 +880,14 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("getPausedProjects()", () => {
-    test("returns array of paused project IDs", () => {
+    test("returns array of paused project IDs", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b", "project-c"],
         config,
       });
 
-      runner.pause("project-a");
-      runner.pause("project-c");
+      await runner.pause("project-a");
+      await runner.pause("project-c");
 
       const paused = runner.getPausedProjects();
       expect(paused.sort()).toEqual(["project-a", "project-c"].sort());
@@ -905,28 +904,28 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   describe("isAllPaused()", () => {
-    test("returns true when all projects are paused", () => {
+    test("returns true when all projects are paused", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
         config,
       });
 
       expect(runner.isAllPaused()).toBe(false);
-      runner.pause("project-a");
+      await runner.pause("project-a");
       expect(runner.isAllPaused()).toBe(false);
-      runner.pause("project-b");
+      await runner.pause("project-b");
       expect(runner.isAllPaused()).toBe(true);
     });
   });
 
   describe("getStatus()", () => {
-    test("includes pausedProjects in status", () => {
+    test("includes pausedProjects in status", async () => {
       const runner = new TaskRunner({
         projects: ["project-a", "project-b"],
         config,
       });
 
-      runner.pause("project-a");
+      await runner.pause("project-a");
 
       const status = runner.getStatus();
       expect(status.pausedProjects).toContain("project-a");

@@ -90,7 +90,7 @@ const listEntriesRoute = createRoute({
   path: "/",
   tags: ["Entries"],
   summary: "List entries",
-  description: "Lists brain entries with optional filtering by type, status, parent, and pagination.",
+  description: "Lists brain entries with optional filtering by type, status, and pagination.",
   request: {
     query: ListEntriesQuerySchema,
   },
@@ -315,7 +315,6 @@ export function createEntriesRoutes(): OpenAPIHono {
       type: query.type,
       status: query.status,
       filename: query.filename,
-      parent_id: query.parent_id,
       limit: query.limit,
       offset: query.offset,
       global: query.global,

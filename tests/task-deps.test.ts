@@ -6,7 +6,6 @@ import { describe, test, expect } from "bun:test";
 import {
   buildLookupMaps,
   resolveDep,
-  getParentChain,
   buildAdjacencyList,
   findCycles,
   classifyTask,
@@ -31,12 +30,13 @@ function createTask(overrides: Partial<Task> = {}): Task {
     priority: "medium",
     status: "pending",
     depends_on: [],
-    parent_id: null,
+
     created: "2024-01-01",
     workdir: null,
     worktree: null,
     git_remote: null,
     git_branch: null,
+    user_original_request: null,
     ...overrides,
   };
 }
@@ -96,50 +96,6 @@ describe("resolveDep", () => {
     const maps = buildLookupMaps(tasks);
 
     expect(resolveDep("unknown", maps)).toBeNull();
-  });
-});
-
-// =============================================================================
-// Parent Hierarchy Tests
-// =============================================================================
-
-describe("getParentChain", () => {
-  test("returns empty for task with no parent", () => {
-    const tasks = [createTask({ id: "a", parent_id: null })];
-    const maps = buildLookupMaps(tasks);
-
-    expect(getParentChain("a", maps)).toEqual([]);
-  });
-
-  test("returns parent chain", () => {
-    const tasks = [
-      createTask({ id: "child", parent_id: "parent" }),
-      createTask({ id: "parent", parent_id: "grandparent" }),
-      createTask({ id: "grandparent", parent_id: null }),
-    ];
-    const maps = buildLookupMaps(tasks);
-
-    expect(getParentChain("child", maps)).toEqual(["parent", "grandparent"]);
-  });
-
-  test("handles circular parent references", () => {
-    const tasks = [
-      createTask({ id: "a", parent_id: "b" }),
-      createTask({ id: "b", parent_id: "a" }),
-    ];
-    const maps = buildLookupMaps(tasks);
-
-    // Should not infinite loop
-    const chain = getParentChain("a", maps);
-    expect(chain.length).toBeLessThan(10);
-  });
-
-  test("handles missing parent", () => {
-    const tasks = [createTask({ id: "a", parent_id: "nonexistent" })];
-    const maps = buildLookupMaps(tasks);
-
-    // Returns the reference even if parent doesn't exist (stops at first missing)
-    expect(getParentChain("a", maps)).toEqual(["nonexistent"]);
   });
 });
 
@@ -258,7 +214,7 @@ describe("classifyTask", () => {
     const inCycle = new Set(["a"]);
     const effectiveStatus = new Map([["a", "circular"]]);
 
-    const result = classifyTask(task, [], [], effectiveStatus, inCycle);
+    const result = classifyTask(task, [], effectiveStatus, inCycle);
 
     expect(result.classification).toBe("blocked");
     expect(result.reason).toBe("circular_dependency");
@@ -268,42 +224,9 @@ describe("classifyTask", () => {
     const task = createTask({ id: "a", status: "completed" });
     const effectiveStatus = new Map([["a", "completed"]]);
 
-    const result = classifyTask(task, [], [], effectiveStatus, new Set());
+    const result = classifyTask(task, [], effectiveStatus, new Set());
 
     expect(result.classification).toBe("not_pending");
-  });
-
-  test("classifies task with blocked parent", () => {
-    const task = createTask({ id: "a", status: "pending", parent_id: "parent" });
-    const parentChain = ["parent"];
-    const effectiveStatus = new Map([
-      ["a", "pending"],
-      ["parent", "blocked"],
-    ]);
-
-    const result = classifyTask(
-      task,
-      [],
-      parentChain,
-      effectiveStatus,
-      new Set()
-    );
-
-    expect(result.classification).toBe("blocked_by_parent");
-    expect(result.blockedBy).toContain("parent");
-  });
-
-  test("classifies task waiting on parent", () => {
-    const task = createTask({ id: "a", status: "pending", parent_id: "parent" });
-    const effectiveStatus = new Map([
-      ["a", "pending"],
-      ["parent", "pending"],
-    ]);
-
-    const result = classifyTask(task, [], [], effectiveStatus, new Set());
-
-    expect(result.classification).toBe("waiting_on_parent");
-    expect(result.waitingOn).toContain("parent");
   });
 
   test("classifies task with blocked dependency", () => {
@@ -317,7 +240,6 @@ describe("classifyTask", () => {
     const result = classifyTask(
       task,
       resolvedDeps,
-      [],
       effectiveStatus,
       new Set()
     );
@@ -337,7 +259,6 @@ describe("classifyTask", () => {
     const result = classifyTask(
       task,
       resolvedDeps,
-      [],
       effectiveStatus,
       new Set()
     );
@@ -350,11 +271,24 @@ describe("classifyTask", () => {
     const task = createTask({ id: "a", status: "pending" });
     const effectiveStatus = new Map([["a", "pending"]]);
 
-    const result = classifyTask(task, [], [], effectiveStatus, new Set());
+    const result = classifyTask(task, [], effectiveStatus, new Set());
 
     expect(result.classification).toBe("ready");
     expect(result.blockedBy).toEqual([]);
     expect(result.waitingOn).toEqual([]);
+  });
+
+  test("classifies task with active dep as ready (non-blocking)", () => {
+    const task = createTask({ id: "a", status: "pending" });
+    const resolvedDeps = ["root"];
+    const effectiveStatus = new Map([
+      ["a", "pending"],
+      ["root", "active"],
+    ]);
+
+    const result = classifyTask(task, resolvedDeps, effectiveStatus, new Set());
+
+    expect(result.classification).toBe("ready");
   });
 });
 
@@ -468,34 +402,32 @@ describe("resolveDependencies", () => {
 });
 
 // =============================================================================
-// Parent Hierarchy Classification Tests
+// depends_on Classification Tests (replaces parent hierarchy tests)
 // =============================================================================
 
-describe("parent hierarchy classification", () => {
-  test("child waiting when parent is pending", () => {
+describe("depends_on classification", () => {
+  test("child waiting when dep is pending", () => {
     const tasks = [
-      createTask({ id: "parent", status: "pending", depends_on: [] }),
+      createTask({ id: "dep", status: "pending", depends_on: [] }),
       createTask({
         id: "child",
         status: "pending",
-        depends_on: [],
-        parent_id: "parent",
+        depends_on: ["dep"],
       }),
     ];
     const result = resolveDependencies(tasks);
 
     const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("waiting_on_parent");
+    expect(child?.classification).toBe("waiting");
   });
 
-  test("child ready when parent is active", () => {
+  test("child ready when dep is active (non-blocking)", () => {
     const tasks = [
-      createTask({ id: "parent", status: "active", depends_on: [] }),
+      createTask({ id: "root", status: "active", depends_on: [] }),
       createTask({
         id: "child",
         status: "pending",
-        depends_on: [],
-        parent_id: "parent",
+        depends_on: ["root"],
       }),
     ];
     const result = resolveDependencies(tasks);
@@ -504,81 +436,34 @@ describe("parent hierarchy classification", () => {
     expect(child?.classification).toBe("ready");
   });
 
-  test("child ready when parent is in_progress", () => {
+  test("child blocked when dep is blocked", () => {
     const tasks = [
-      createTask({ id: "parent", status: "in_progress", depends_on: [] }),
+      createTask({ id: "dep", status: "blocked", depends_on: [] }),
       createTask({
         id: "child",
         status: "pending",
-        depends_on: [],
-        parent_id: "parent",
+        depends_on: ["dep"],
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+
+    const child = result.tasks.find((t) => t.id === "child");
+    expect(child?.classification).toBe("blocked");
+  });
+
+  test("child ready when dep is completed", () => {
+    const tasks = [
+      createTask({ id: "dep", status: "completed", depends_on: [] }),
+      createTask({
+        id: "child",
+        status: "pending",
+        depends_on: ["dep"],
       }),
     ];
     const result = resolveDependencies(tasks);
 
     const child = result.tasks.find((t) => t.id === "child");
     expect(child?.classification).toBe("ready");
-  });
-
-  test("child blocked when parent is blocked", () => {
-    const tasks = [
-      createTask({ id: "parent", status: "blocked", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: [],
-        parent_id: "parent",
-      }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("blocked_by_parent");
-  });
-
-  test("grandchild blocked when grandparent is blocked", () => {
-    const tasks = [
-      createTask({ id: "grandparent", status: "blocked", depends_on: [] }),
-      createTask({
-        id: "parent",
-        status: "active",
-        depends_on: [],
-        parent_id: "grandparent",
-      }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: [],
-        parent_id: "parent",
-      }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("blocked_by_parent");
-    expect(child?.parent_chain).toContain("grandparent");
-  });
-
-  test("builds parent chain correctly", () => {
-    const tasks = [
-      createTask({ id: "grandparent", status: "active", depends_on: [] }),
-      createTask({
-        id: "parent",
-        status: "active",
-        depends_on: [],
-        parent_id: "grandparent",
-      }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: [],
-        parent_id: "parent",
-      }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.parent_chain).toEqual(["parent", "grandparent"]);
   });
 });
 
@@ -651,17 +536,11 @@ describe("getReadyTasks", () => {
 });
 
 describe("getWaitingTasks", () => {
-  test("returns waiting and waiting_on_parent tasks", () => {
+  test("returns waiting tasks", () => {
     const tasks = [
       createTask({ id: "ready", status: "pending", depends_on: [] }),
       createTask({ id: "waiting", status: "pending", depends_on: ["ready"] }),
-      createTask({ id: "parent", status: "pending", depends_on: [] }),
-      createTask({
-        id: "waitingOnParent",
-        status: "pending",
-        depends_on: [],
-        parent_id: "parent",
-      }),
+      createTask({ id: "waitingOnDep", status: "pending", depends_on: ["ready"] }),
     ];
     const result = resolveDependencies(tasks);
     const waiting = getWaitingTasks(result);
@@ -669,22 +548,16 @@ describe("getWaitingTasks", () => {
     expect(waiting.length).toBe(2);
     const ids = waiting.map((t) => t.id);
     expect(ids).toContain("waiting");
-    expect(ids).toContain("waitingOnParent");
+    expect(ids).toContain("waitingOnDep");
   });
 });
 
 describe("getBlockedTasks", () => {
-  test("returns blocked and blocked_by_parent tasks", () => {
+  test("returns blocked tasks", () => {
     const tasks = [
       createTask({ id: "blocker", status: "blocked", depends_on: [] }),
       createTask({ id: "blocked", status: "pending", depends_on: ["blocker"] }),
-      createTask({ id: "blockedParent", status: "blocked", depends_on: [] }),
-      createTask({
-        id: "blockedByParent",
-        status: "pending",
-        depends_on: [],
-        parent_id: "blockedParent",
-      }),
+      createTask({ id: "blockedByDep", status: "pending", depends_on: ["blocker"] }),
     ];
     const result = resolveDependencies(tasks);
     const blocked = getBlockedTasks(result);
@@ -692,7 +565,7 @@ describe("getBlockedTasks", () => {
     expect(blocked.length).toBe(2);
     const ids = blocked.map((t) => t.id);
     expect(ids).toContain("blocked");
-    expect(ids).toContain("blockedByParent");
+    expect(ids).toContain("blockedByDep");
   });
 });
 
@@ -753,33 +626,31 @@ describe("stats calculation", () => {
     expect(result.stats.not_pending).toBe(2);
   });
 
-  test("counts waiting_on_parent as waiting", () => {
+  test("counts waiting on dep as waiting", () => {
     const tasks = [
-      createTask({ id: "parent", status: "pending", depends_on: [] }),
+      createTask({ id: "dep", status: "pending", depends_on: [] }),
       createTask({
         id: "child",
         status: "pending",
-        depends_on: [],
-        parent_id: "parent",
+        depends_on: ["dep"],
       }),
     ];
     const result = resolveDependencies(tasks);
 
-    expect(result.stats.waiting).toBe(1); // child is waiting_on_parent
+    expect(result.stats.waiting).toBe(1); // child is waiting on dep
   });
 
-  test("counts blocked_by_parent as blocked", () => {
+  test("counts blocked by dep as blocked", () => {
     const tasks = [
-      createTask({ id: "parent", status: "blocked", depends_on: [] }),
+      createTask({ id: "dep", status: "blocked", depends_on: [] }),
       createTask({
         id: "child",
         status: "pending",
-        depends_on: [],
-        parent_id: "parent",
+        depends_on: ["dep"],
       }),
     ];
     const result = resolveDependencies(tasks);
 
-    expect(result.stats.blocked).toBe(1); // child is blocked_by_parent
+    expect(result.stats.blocked).toBe(1); // child is blocked by dep
   });
 });

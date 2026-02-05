@@ -428,12 +428,10 @@ describe("response schema", () => {
       expect(task).toHaveProperty("priority");
       expect(task).toHaveProperty("status");
       expect(task).toHaveProperty("depends_on");
-      expect(task).toHaveProperty("parent_id");
 
       // Resolved fields
       expect(task).toHaveProperty("resolved_deps");
       expect(task).toHaveProperty("unresolved_deps");
-      expect(task).toHaveProperty("parent_chain");
       expect(task).toHaveProperty("classification");
       expect(task).toHaveProperty("blocked_by");
       expect(task).toHaveProperty("waiting_on");

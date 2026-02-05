@@ -276,17 +276,6 @@ export function extractPriority(note: ZkNote): Priority | undefined {
 }
 
 /**
- * Extract the parent_id from a ZkNote.
- * Checks metadata.parent_id.
- */
-export function extractParentId(note: ZkNote): string | undefined {
-  if (note.metadata?.parent_id && typeof note.metadata.parent_id === "string") {
-    return note.metadata.parent_id;
-  }
-  return undefined;
-}
-
-/**
  * Priority sort order: high=0, medium=1, low=2, undefined=3
  */
 const PRIORITY_ORDER: Record<string, number> = { high: 0, medium: 1, low: 2 };
@@ -387,14 +376,6 @@ export function parseFrontmatter(content: string): {
     const priorityMatch = line.match(/^priority:\s*(\w+)\s*$/);
     if (priorityMatch) {
       frontmatter.priority = priorityMatch[1];
-      inTags = false;
-      continue;
-    }
-
-    // Handle parent_id
-    const parentIdMatch = line.match(/^parent_id:\s*([a-z0-9]+)\s*$/);
-    if (parentIdMatch) {
-      frontmatter.parent_id = parentIdMatch[1];
       inTags = false;
       continue;
     }
@@ -627,7 +608,6 @@ export interface GenerateFrontmatterOptions {
   projectId?: string;
   name?: string;
   priority?: Priority;
-  parent_id?: string;
   // Execution context for tasks
   workdir?: string;
   worktree?: string;
@@ -666,10 +646,6 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.priority) {
     lines.push(`priority: ${options.priority}`);
-  }
-
-  if (options.parent_id) {
-    lines.push(`parent_id: ${options.parent_id}`);
   }
 
   if (options.projectId) {

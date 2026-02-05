@@ -2,7 +2,7 @@
  * Task Dependency Resolution
  *
  * Ported from do-work bash script jq logic.
- * Handles: dependency resolution, cycle detection, parent hierarchy, task classification.
+ * Handles: dependency resolution, cycle detection, task classification.
  */
 
 import type {
@@ -44,28 +44,6 @@ export function resolveDep(ref: string, maps: TaskLookupMaps): string | null {
   if (maps.byId.has(ref)) return ref;
   if (maps.titleToId.has(ref)) return maps.titleToId.get(ref)!;
   return null;
-}
-
-// =============================================================================
-// Parent Hierarchy
-// =============================================================================
-
-/**
- * Get the chain of parent IDs for a task (for hierarchy checks)
- * Returns array from immediate parent to root ancestor
- */
-export function getParentChain(
-  taskId: string,
-  maps: TaskLookupMaps,
-  visited: Set<string> = new Set()
-): string[] {
-  if (visited.has(taskId)) return []; // Prevent infinite loop
-
-  const task = maps.byId.get(taskId);
-  if (!task?.parent_id) return [];
-
-  visited.add(taskId);
-  return [task.parent_id, ...getParentChain(task.parent_id, maps, visited)];
 }
 
 // =============================================================================
@@ -132,12 +110,11 @@ export function findCycles(adjacency: Map<string, string[]>): Set<string> {
 // =============================================================================
 
 /**
- * Classify a single task based on its dependencies and parent hierarchy
+ * Classify a single task based on its dependencies
  */
 export function classifyTask(
   task: Task,
   resolvedDeps: string[],
-  parentChain: string[],
   effectiveStatus: Map<string, string>,
   inCycle: Set<string>
 ): {
@@ -159,33 +136,6 @@ export function classifyTask(
   // Task not pending - skip classification
   if (task.status !== "pending") {
     return { classification: "not_pending", blockedBy: [], waitingOn: [] };
-  }
-
-  // Check parent hierarchy for blocked/cancelled parents
-  const blockedParents = parentChain.filter((pid) => {
-    const status = effectiveStatus.get(pid) || "unknown";
-    return ["blocked", "cancelled"].includes(status) || inCycle.has(pid);
-  });
-
-  if (blockedParents.length > 0) {
-    return {
-      classification: "blocked_by_parent",
-      blockedBy: blockedParents,
-      waitingOn: [],
-      reason: "parent_blocked",
-    };
-  }
-
-  // Check if direct parent is not active/in_progress/completed
-  if (task.parent_id) {
-    const parentStatus = effectiveStatus.get(task.parent_id) || "unknown";
-    if (!["active", "in_progress", "completed"].includes(parentStatus)) {
-      return {
-        classification: "waiting_on_parent",
-        blockedBy: [],
-        waitingOn: [task.parent_id],
-      };
-    }
   }
 
   // Check for blocked dependencies
@@ -265,14 +215,10 @@ export function resolveDependencies(tasks: Task[]): DependencyResult {
       }
     }
 
-    // Get parent chain
-    const parentChain = getParentChain(task.id, maps);
-
     // Classify
     const { classification, blockedBy, waitingOn, reason } = classifyTask(
       task,
       resolvedDeps,
-      parentChain,
       effectiveStatus,
       inCycle
     );
@@ -281,7 +227,6 @@ export function resolveDependencies(tasks: Task[]): DependencyResult {
       ...task,
       resolved_deps: resolvedDeps,
       unresolved_deps: unresolvedDeps,
-      parent_chain: parentChain,
       classification,
       blocked_by: blockedBy,
       blocked_by_reason: reason,
@@ -295,16 +240,8 @@ export function resolveDependencies(tasks: Task[]): DependencyResult {
   const stats = {
     total: resolvedTasks.length,
     ready: resolvedTasks.filter((t) => t.classification === "ready").length,
-    waiting: resolvedTasks.filter(
-      (t) =>
-        t.classification === "waiting" ||
-        t.classification === "waiting_on_parent"
-    ).length,
-    blocked: resolvedTasks.filter(
-      (t) =>
-        t.classification === "blocked" ||
-        t.classification === "blocked_by_parent"
-    ).length,
+    waiting: resolvedTasks.filter((t) => t.classification === "waiting").length,
+    blocked: resolvedTasks.filter((t) => t.classification === "blocked").length,
     not_pending: resolvedTasks.filter((t) => t.classification === "not_pending")
       .length,
   };
@@ -342,25 +279,17 @@ export function getReadyTasks(result: DependencyResult): ResolvedTask[] {
 }
 
 /**
- * Filter to waiting tasks (including waiting_on_parent)
+ * Filter to waiting tasks
  */
 export function getWaitingTasks(result: DependencyResult): ResolvedTask[] {
-  return result.tasks.filter(
-    (t) =>
-      t.classification === "waiting" ||
-      t.classification === "waiting_on_parent"
-  );
+  return result.tasks.filter((t) => t.classification === "waiting");
 }
 
 /**
- * Filter to blocked tasks (including blocked_by_parent)
+ * Filter to blocked tasks
  */
 export function getBlockedTasks(result: DependencyResult): ResolvedTask[] {
-  return result.tasks.filter(
-    (t) =>
-      t.classification === "blocked" ||
-      t.classification === "blocked_by_parent"
-  );
+  return result.tasks.filter((t) => t.classification === "blocked");
 }
 
 /**

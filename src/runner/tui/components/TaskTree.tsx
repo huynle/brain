@@ -612,7 +612,8 @@ export function TaskTree({
       if (task.status === 'pending') {
         const allDepsCompleted = task.dependencies.every(depId => {
           const dep = taskMap.get(depId);
-          return !dep || dep.status === 'completed' || dep.status === 'validated';
+          // active = non-blocking container (project root), completed/validated = done
+          return !dep || dep.status === 'completed' || dep.status === 'validated' || dep.status === 'active';
         });
         if (allDepsCompleted) {
           ready.add(task.id);

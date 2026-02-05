@@ -86,8 +86,9 @@ export class TaskRunner {
   // TUI mode task tracking (tasks spawned in tmux windows without proc handles)
   private tuiTasks: Map<string, RunningTask> = new Map();
 
-  // Pause state (non-persistent, resets on restart)
-  private pausedProjects: Set<string> = new Set();
+  // Pause state: persisted via project root task status (active = running, blocked = paused)
+  // Local cache for synchronous access in poll loop; synced on pause/resume calls
+  private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
 
   // Event handling
@@ -181,14 +182,11 @@ export class TaskRunner {
 
     // If configured to start paused, pause all projects immediately
     if (this.startPaused) {
-      for (const projectId of this.projects) {
-        this.pausedProjects.add(projectId);
-      }
+      await this.pauseAll();
       this.logger.info("Runner started paused - press 'P' to begin processing", {
         projectCount: this.projects.length,
       });
       this.tuiLog('warn', "Runner started paused - press 'P' to begin processing");
-      this.emitEvent({ type: "all_paused" });
     }
   }
 
@@ -302,7 +300,7 @@ export class TaskRunner {
       startedAt: this.startedAt,
       runningTasks: allRunningTasks,
       stats: { ...this.stats },
-      pausedProjects: this.getPausedProjects(),
+      pausedProjects: Array.from(this.pauseCache),
     };
   }
 
@@ -312,17 +310,31 @@ export class TaskRunner {
 
   /**
    * Pause a specific project.
+   * Sets the project root task to status: blocked, which blocks all children via depends_on cascade.
    * Running tasks will complete, but no new tasks will be started.
    */
-  pause(projectId: string): void {
+  async pause(projectId: string): Promise<void> {
     if (!this.projects.includes(projectId)) {
       this.logger.warn("Attempted to pause unknown project", { projectId });
       return;
     }
-    if (this.pausedProjects.has(projectId)) {
+    if (this.pauseCache.has(projectId)) {
       return; // Already paused
     }
-    this.pausedProjects.add(projectId);
+
+    try {
+      const rootPath = await this.findProjectRootPath(projectId);
+      if (rootPath) {
+        await this.apiClient.updateTaskStatus(rootPath, "blocked");
+      }
+    } catch (error) {
+      this.logger.error("Failed to persist pause state to root task", {
+        projectId,
+        error: String(error),
+      });
+    }
+
+    this.pauseCache.add(projectId);
     this.logger.info("Project paused", { projectId });
     this.tuiLog('warn', `Project paused: ${projectId}`, undefined, projectId);
     this.emitEvent({ type: "project_paused", projectId });
@@ -330,12 +342,26 @@ export class TaskRunner {
 
   /**
    * Resume a paused project.
+   * Sets the project root task to status: active, which unblocks children.
    */
-  resume(projectId: string): void {
-    if (!this.pausedProjects.has(projectId)) {
+  async resume(projectId: string): Promise<void> {
+    if (!this.pauseCache.has(projectId)) {
       return; // Not paused
     }
-    this.pausedProjects.delete(projectId);
+
+    try {
+      const rootPath = await this.findProjectRootPath(projectId);
+      if (rootPath) {
+        await this.apiClient.updateTaskStatus(rootPath, "active");
+      }
+    } catch (error) {
+      this.logger.error("Failed to persist resume state to root task", {
+        projectId,
+        error: String(error),
+      });
+    }
+
+    this.pauseCache.delete(projectId);
     this.logger.info("Project resumed", { projectId });
     this.tuiLog('info', `Project resumed: ${projectId}`, undefined, projectId);
     this.emitEvent({ type: "project_resumed", projectId });
@@ -344,10 +370,10 @@ export class TaskRunner {
   /**
    * Pause all projects.
    */
-  pauseAll(): void {
-    for (const projectId of this.projects) {
-      this.pausedProjects.add(projectId);
-    }
+  async pauseAll(): Promise<void> {
+    await Promise.allSettled(
+      this.projects.map(projectId => this.pause(projectId))
+    );
     this.logger.info("All projects paused", { count: this.projects.length });
     this.tuiLog('warn', `All projects paused (${this.projects.length})`);
     this.emitEvent({ type: "all_paused" });
@@ -356,33 +382,58 @@ export class TaskRunner {
   /**
    * Resume all paused projects.
    */
-  resumeAll(): void {
-    const count = this.pausedProjects.size;
-    this.pausedProjects.clear();
+  async resumeAll(): Promise<void> {
+    const count = this.pauseCache.size;
+    const pausedIds = Array.from(this.pauseCache);
+    await Promise.allSettled(
+      pausedIds.map(projectId => this.resume(projectId))
+    );
     this.logger.info("All projects resumed", { count });
     this.tuiLog('info', `All projects resumed (${count})`);
     this.emitEvent({ type: "all_resumed" });
   }
 
   /**
-   * Check if a specific project is paused.
+   * Check if a specific project is paused (synchronous, uses local cache).
    */
   isPaused(projectId: string): boolean {
-    return this.pausedProjects.has(projectId);
+    return this.pauseCache.has(projectId);
   }
 
   /**
    * Get array of all paused project IDs.
    */
   getPausedProjects(): string[] {
-    return Array.from(this.pausedProjects);
+    return Array.from(this.pauseCache);
   }
 
   /**
    * Check if all projects are paused.
    */
   isAllPaused(): boolean {
-    return this.pausedProjects.size === this.projects.length && this.projects.length > 0;
+    return this.pauseCache.size === this.projects.length && this.projects.length > 0;
+  }
+
+  /**
+   * Find the path of a project's root task (title = projectId, no depends_on, status active or blocked).
+   * Returns the task path for status updates, or null if not found.
+   */
+  private async findProjectRootPath(projectId: string): Promise<string | null> {
+    try {
+      const tasks = await this.apiClient.getAllTasks(projectId);
+      const root = tasks.find(t =>
+        t.title === projectId &&
+        (!t.depends_on || t.depends_on.length === 0) &&
+        (t.status === "active" || t.status === "blocked")
+      );
+      return root?.path ?? null;
+    } catch (error) {
+      this.logger.error("Failed to find project root task", {
+        projectId,
+        error: String(error),
+      });
+      return null;
+    }
   }
 
   // ========================================
@@ -464,7 +515,7 @@ export class TaskRunner {
       }
 
       // Step 3: Get ready tasks from non-paused projects in parallel
-      const activeProjects = this.projects.filter(p => !this.pausedProjects.has(p));
+      const activeProjects = this.projects.filter(p => !this.pauseCache.has(p));
       if (activeProjects.length === 0) {
         // All projects are paused, skip fetching tasks
         if (isDebugEnabled()) {
@@ -1312,7 +1363,7 @@ export class TaskRunner {
           this.logger.info("TUI log callback registered");
         },
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
-        // Pause/resume callbacks
+        // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),
         onPauseAll: () => this.pauseAll(),

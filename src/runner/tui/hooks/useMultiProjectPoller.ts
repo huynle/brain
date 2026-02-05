@@ -5,7 +5,7 @@
  * It fetches tasks from all projects concurrently and merges them with projectId tags.
  */
 
-import { useReducer, useEffect, useCallback, useRef } from 'react';
+import { useReducer, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { TaskDisplay } from '../types';
 import type { TaskStats } from './useTaskPoller';
 
@@ -104,7 +104,7 @@ async function fetchProjectTasks(
 /**
  * Aggregate stats from multiple projects
  */
-function aggregateProjectStats(statsByProject: Map<string, TaskStats>): TaskStats {
+export function aggregateProjectStats(statsByProject: Map<string, TaskStats>): TaskStats {
   const aggregate: TaskStats = { ...EMPTY_STATS };
   
   for (const stats of statsByProject.values()) {
@@ -117,6 +117,30 @@ function aggregateProjectStats(statsByProject: Map<string, TaskStats>): TaskStat
   }
 
   return aggregate;
+}
+
+/**
+ * Merge all tasks from all projects into a single flat array.
+ * Extracted as a named function for use with useMemo.
+ */
+export function mergeAllTasks(tasksByProject: Map<string, TaskDisplay[]>): TaskDisplay[] {
+  return Array.from(tasksByProject.values()).flat();
+}
+
+/**
+ * Check if at least one project is connected.
+ * Extracted as a named function for use with useMemo.
+ */
+export function checkAnyConnected(connectionByProject: Map<string, boolean>): boolean {
+  return Array.from(connectionByProject.values()).some(Boolean);
+}
+
+/**
+ * Get the first error from the errors map, or null if none.
+ * Extracted as a named function for use with useMemo.
+ */
+export function getFirstError(errorsByProject: Map<string, Error>): Error | null {
+  return Array.from(errorsByProject.values())[0] ?? null;
 }
 
 /**
@@ -190,11 +214,23 @@ export function useMultiProjectPoller(
   // Stable key for projects array to avoid effect re-running on array reference change
   const projectsKey = projects.join(',');
 
-  // Derived state
-  const aggregateStats = aggregateProjectStats(state.statsByProject);
-  const allTasks: TaskDisplay[] = Array.from(state.tasksByProject.values()).flat();
-  const isConnected = Array.from(state.connectionByProject.values()).some(Boolean);
-  const error: Error | null = Array.from(state.errorsByProject.values())[0] ?? null;
+  // Derived state — memoized to avoid new references on every render
+  const aggregateStats = useMemo(
+    () => aggregateProjectStats(state.statsByProject),
+    [state.statsByProject]
+  );
+  const allTasks = useMemo(
+    () => mergeAllTasks(state.tasksByProject),
+    [state.tasksByProject]
+  );
+  const isConnected = useMemo(
+    () => checkAnyConnected(state.connectionByProject),
+    [state.connectionByProject]
+  );
+  const error = useMemo(
+    () => getFirstError(state.errorsByProject),
+    [state.errorsByProject]
+  );
 
   // Refs to hold current state for use in callback without re-creating it
   const tasksByProjectRef = useRef(state.tasksByProject);

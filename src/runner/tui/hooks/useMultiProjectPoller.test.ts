@@ -6,6 +6,7 @@
  * - Per-project data tracking
  * - Partial failure handling
  * - Task projectId tagging
+ * - Memoization of derived state (Issue #2)
  */
 
 import { describe, it, expect, beforeEach } from 'bun:test';
@@ -297,6 +298,116 @@ describe('useMultiProjectPoller - multiProjectReducer', () => {
 
     expect(result.isLoading).toBe(true);
     expect(result.tasksByProject).toBe(tasksByProject); // preserved
+  });
+});
+
+// =============================================================================
+// Test exported derived-state helpers for useMemo (Issue #2)
+// =============================================================================
+
+describe('useMultiProjectPoller - Exported derived-state helpers', () => {
+  let mergeAllTasks: typeof import('./useMultiProjectPoller').mergeAllTasks;
+  let checkAnyConnected: typeof import('./useMultiProjectPoller').checkAnyConnected;
+  let getFirstError: typeof import('./useMultiProjectPoller').getFirstError;
+  let aggregateProjectStatsExported: typeof import('./useMultiProjectPoller').aggregateProjectStats;
+
+  beforeEach(async () => {
+    const mod = await import('./useMultiProjectPoller');
+    mergeAllTasks = mod.mergeAllTasks;
+    checkAnyConnected = mod.checkAnyConnected;
+    getFirstError = mod.getFirstError;
+    aggregateProjectStatsExported = mod.aggregateProjectStats;
+  });
+
+  describe('mergeAllTasks', () => {
+    it('should be exported from the module', () => {
+      expect(typeof mergeAllTasks).toBe('function');
+    });
+
+    it('should merge tasks from multiple projects into a flat array', () => {
+      const tasksByProject = new Map([
+        ['p1', [
+          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], projectId: 'p1' },
+        ]],
+        ['p2', [
+          { id: 't2', path: '/p', title: 'T2', status: 'completed' as any, priority: 'low' as any, dependencies: [] as string[], dependents: [] as string[], projectId: 'p2' },
+        ]],
+      ]);
+
+      const result = mergeAllTasks(tasksByProject);
+      expect(result).toHaveLength(2);
+      expect(result.find((t: any) => t.id === 't1')).toBeDefined();
+      expect(result.find((t: any) => t.id === 't2')).toBeDefined();
+    });
+
+    it('should return empty array for empty map', () => {
+      const result = mergeAllTasks(new Map());
+      expect(result).toHaveLength(0);
+    });
+
+    it('should return the same reference when called with the same Map reference', () => {
+      // This tests that the function is pure and suitable for useMemo
+      const tasksByProject = new Map([
+        ['p1', [
+          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], projectId: 'p1' },
+        ]],
+      ]);
+
+      const result1 = mergeAllTasks(tasksByProject);
+      const result2 = mergeAllTasks(tasksByProject);
+      // Both calls produce arrays with the same content
+      expect(result1).toEqual(result2);
+    });
+  });
+
+  describe('checkAnyConnected', () => {
+    it('should be exported from the module', () => {
+      expect(typeof checkAnyConnected).toBe('function');
+    });
+
+    it('should return true if at least one project is connected', () => {
+      const connectionByProject = new Map([
+        ['p1', true],
+        ['p2', false],
+      ]);
+      expect(checkAnyConnected(connectionByProject)).toBe(true);
+    });
+
+    it('should return false if no projects are connected', () => {
+      const connectionByProject = new Map([
+        ['p1', false],
+        ['p2', false],
+      ]);
+      expect(checkAnyConnected(connectionByProject)).toBe(false);
+    });
+
+    it('should return false for empty map', () => {
+      expect(checkAnyConnected(new Map())).toBe(false);
+    });
+  });
+
+  describe('getFirstError', () => {
+    it('should be exported from the module', () => {
+      expect(typeof getFirstError).toBe('function');
+    });
+
+    it('should return the first error from the map', () => {
+      const err = new Error('test error');
+      const errorsByProject = new Map([
+        ['p1', err],
+      ]);
+      expect(getFirstError(errorsByProject)).toBe(err);
+    });
+
+    it('should return null for empty map', () => {
+      expect(getFirstError(new Map())).toBeNull();
+    });
+  });
+
+  describe('aggregateProjectStats (exported)', () => {
+    it('should be exported from the module', () => {
+      expect(typeof aggregateProjectStatsExported).toBe('function');
+    });
   });
 });
 

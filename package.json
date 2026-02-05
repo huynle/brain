@@ -54,6 +54,7 @@
   },
   "dependencies": {
     "@hono/zod-openapi": "^1.2.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/react": "^19.2.10",
     "hono": "^4.6.0",
     "ink": "^6.6.0",

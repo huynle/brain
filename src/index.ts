@@ -47,4 +47,5 @@ console.log(`  GET  /api/v1/entries/:id  - Get entry`);
 console.log(`  GET  /api/v1/entries      - List entries`);
 console.log(`  POST /api/v1/search       - Search entries`);
 console.log(`  ...and more`);
+console.log(`  POST /mcp                 - MCP Streamable HTTP transport`);
 console.log();

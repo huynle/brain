@@ -14,6 +14,7 @@ import {
   generateMarkdownLink,
   matchesFilenamePattern,
   formatYamlMultilineValue,
+  normalizeTitle,
   sanitizeTitle,
   sanitizeTag,
   sanitizeSimpleValue,
@@ -532,12 +533,42 @@ describe("sanitizeTitle()", () => {
     expect(sanitizeTitle(longTitle).length).toBe(200);
   });
 
-  test("preserves YAML-special chars (they get escaped later)", () => {
+  test("preserves YAML-special chars like colons", () => {
     expect(sanitizeTitle("Fix: Update API")).toBe("Fix: Update API");
   });
 
   test("handles tabs", () => {
     expect(sanitizeTitle("Title\twith\ttabs")).toBe("Title with tabs");
+  });
+
+  test("escapes double quotes (templates wrap title in quotes)", () => {
+    expect(sanitizeTitle('Say "hello"')).toBe('Say \\"hello\\"');
+  });
+
+  test("escapes backslashes", () => {
+    expect(sanitizeTitle("path\\to\\file")).toBe("path\\\\to\\\\file");
+  });
+});
+
+describe("normalizeTitle()", () => {
+  test("returns same value for simple title", () => {
+    expect(normalizeTitle("Simple Title")).toBe("Simple Title");
+  });
+
+  test("replaces newlines with spaces", () => {
+    expect(normalizeTitle("Line1\nLine2")).toBe("Line1 Line2");
+  });
+
+  test("does NOT escape quotes (unlike sanitizeTitle)", () => {
+    expect(normalizeTitle('Say "hello"')).toBe('Say "hello"');
+  });
+
+  test("does NOT escape backslashes (unlike sanitizeTitle)", () => {
+    expect(normalizeTitle("path\\to\\file")).toBe("path\\to\\file");
+  });
+
+  test("preserves colons", () => {
+    expect(normalizeTitle("Fix: this bug")).toBe("Fix: this bug");
   });
 });
 
@@ -545,6 +576,11 @@ describe("sanitizeTag()", () => {
   test("returns null for empty tag", () => {
     expect(sanitizeTag("")).toBeNull();
     expect(sanitizeTag("   ")).toBeNull();
+  });
+
+  test("returns null for tags with colons (YAML corruption)", () => {
+    expect(sanitizeTag("bad: tag")).toBeNull();
+    expect(sanitizeTag("key:value")).toBeNull();
   });
 
   test("strips newlines from tags", () => {

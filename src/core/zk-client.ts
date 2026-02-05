@@ -289,13 +289,16 @@ export function getPrioritySortValue(priority: Priority | undefined): number {
 // =============================================================================
 
 /**
- * Sanitize a title for safe use in YAML frontmatter.
- * - Strips control characters (newlines, carriage returns, tabs, null bytes)
- * - Trims leading/trailing whitespace
- * - Collapses internal runs of whitespace to single space
+ * Normalize a title for user-friendly display.
+ * - Strips control characters (except spaces)
+ * - Replaces newlines/carriage returns/tabs with spaces
+ * - Collapses multiple spaces to single space
+ * - Trims whitespace
  * - Truncates to 200 characters
+ * 
+ * This version is returned to clients.
  */
-export function sanitizeTitle(title: string): string {
+export function normalizeTitle(title: string): string {
   // Strip control characters (except spaces), including \n, \r, \t, \0
   let result = title.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
   // Replace newlines, carriage returns, and tabs with spaces
@@ -309,10 +312,23 @@ export function sanitizeTitle(title: string): string {
 }
 
 /**
+ * Sanitize a title for safe use in YAML frontmatter (double-quoted string).
+ * - First normalizes the title (see normalizeTitle)
+ * - Then escapes backslashes and double quotes for YAML
+ * 
+ * This version is written to files.
+ */
+export function sanitizeTitle(title: string): string {
+  const normalized = normalizeTitle(title);
+  // Escape backslashes and double quotes (templates wrap title in double quotes)
+  return normalized.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+/**
  * Sanitize a tag for safe use in YAML frontmatter.
  * - Strips control characters (newlines, carriage returns, tabs, null bytes)
  * - Trims whitespace
- * - Returns null for empty tags (caller should filter these out)
+ * - Returns null for empty tags or tags containing colons (which would break YAML)
  */
 export function sanitizeTag(tag: string): string | null {
   // Strip control characters including \n, \r, \t, \0
@@ -320,7 +336,10 @@ export function sanitizeTag(tag: string): string | null {
   // Trim whitespace
   result = result.trim();
   // Return null for empty tags
-  return result.length === 0 ? null : result;
+  if (result.length === 0) return null;
+  // Return null for tags with colons (would be parsed as YAML key-value pairs)
+  if (result.includes(":")) return null;
+  return result;
 }
 
 /**

@@ -37,6 +37,7 @@ import {
   escapeYamlValue,
   slugify,
   matchesFilenamePattern,
+  normalizeTitle,
   sanitizeTitle,
   sanitizeTag,
   sanitizeSimpleValue,
@@ -107,8 +108,13 @@ export class BrainService {
    * Save a new entry to the brain (brain_save)
    */
   async save(request: CreateEntryRequest): Promise<CreateEntryResponse> {
-    // Normalize inputs to prevent YAML corruption
-    request.title = sanitizeTitle(request.title);
+    // Normalize title for user-friendly display (strips control chars, collapses whitespace)
+    // This is what we return to clients
+    const displayTitle = normalizeTitle(request.title);
+    
+    // Sanitize title for YAML (adds escaping for quotes/backslashes)
+    // This is what we write to files
+    const sanitizedTitle = sanitizeTitle(request.title);
     if (request.tags) {
       request.tags = request.tags
         .map(sanitizeTag)
@@ -300,7 +306,7 @@ export class BrainService {
 
       const zkArgs: string[] = [
         "--title",
-        request.title,
+        sanitizedTitle,
         "--extra",
         `type=${entryType}`,
         "--extra",
@@ -392,13 +398,13 @@ export class BrainService {
       noteId = extractIdFromPath(relativePath);
     } else {
       // Fallback: manual file creation
-      const filename = `${Date.now()}-${slugify(request.title)}.md`;
+      const filename = `${Date.now()}-${slugify(sanitizedTitle)}.md`;
       relativePath = `${dir}/${filename}`;
       noteId = filename.replace(".md", "");
       const fullPath = join(this.config.brainDir, relativePath);
 
       const frontmatter = generateFrontmatter({
-        title: request.title,
+        title: sanitizedTitle,
         type: entryType,
         tags: request.tags,
         status: entryStatus,
@@ -420,12 +426,13 @@ export class BrainService {
     // Initialize in database
     initEntry(relativePath, effectiveProjectId);
 
-    const link = generateMarkdownLink(noteId, request.title);
+    // Return display title (normalized but not escaped) for client use
+    const link = generateMarkdownLink(noteId, displayTitle);
 
     return {
       id: noteId,
       path: relativePath,
-      title: request.title,
+      title: displayTitle,
       type: entryType,
       status: entryStatus,
       link,

@@ -17,6 +17,15 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+
+/** Compare two Sets for value equality (same size and same elements) */
+export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
+  if (a.size !== b.size) return false;
+  for (const item of a) {
+    if (!b.has(item)) return false;
+  }
+  return true;
+}
 import { Box, Text, useInput, useApp } from 'ink';
 import { StatusBar } from './components/StatusBar';
 import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID } from './components/TaskTree';
@@ -143,7 +152,14 @@ export function App({
       }
     }
 
-    setPausedProjects(derivedPaused);
+    setPausedProjects(prev => {
+      // Only update if the set actually changed — returning the same reference
+      // causes React to skip the re-render (Object.is equality check)
+      if (setsEqual(prev, derivedPaused)) {
+        return prev;
+      }
+      return derivedPaused;
+    });
   }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
 
   // Find selected task

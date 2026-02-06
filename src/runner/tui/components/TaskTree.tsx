@@ -18,10 +18,15 @@ interface TaskTreeProps {
   onToggleCompleted: () => void;
   /** When true, tasks are grouped by project ID (for multi-project "All" view) */
   groupByProject?: boolean;
+  /** When true, tasks are grouped by feature_id */
+  groupByFeature?: boolean;
 }
 
 // Special ID for the completed section header (used for navigation)
 export const COMPLETED_HEADER_ID = '__completed_header__';
+
+// Special ID prefix for feature headers (used for navigation)
+export const FEATURE_HEADER_PREFIX = '__feature_header__';
 
 // Status symbols per spec
 const STATUS_ICONS: Record<string, string> = {
@@ -380,6 +385,129 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
 }
 
 /**
+ * Flatten feature-grouped tree into an array of IDs in visual/navigation order.
+ * Includes feature header IDs for navigation.
+ * 
+ * @param tasks - All tasks
+ * @param completedCollapsed - Whether the completed section is collapsed
+ */
+export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true): string[] {
+  const result: string[] = [];
+  
+  // Separate active and completed tasks
+  const activeTasks = tasks.filter(t => !isCompleted(t));
+  const completedTasks = tasks.filter(isCompleted);
+  
+  // Group tasks by feature
+  const tasksByFeature = new Map<string, TaskDisplay[]>();
+  const ungrouped: TaskDisplay[] = [];
+  
+  for (const task of tasks) {
+    if (task.feature_id) {
+      if (!tasksByFeature.has(task.feature_id)) {
+        tasksByFeature.set(task.feature_id, []);
+      }
+      tasksByFeature.get(task.feature_id)!.push(task);
+    } else {
+      ungrouped.push(task);
+    }
+  }
+  
+  // Compute feature priorities for sorting
+  const featurePriorities = new Map<string, number>();
+  for (const [featureId, featureTasks] of tasksByFeature) {
+    const firstTaskWithPriority = featureTasks.find(t => t.feature_priority);
+    if (firstTaskWithPriority?.feature_priority) {
+      featurePriorities.set(featureId, PRIORITY_ORDER[firstTaskWithPriority.feature_priority] ?? 1);
+    } else {
+      const minPriority = Math.min(...featureTasks.map(t => PRIORITY_ORDER[t.priority] ?? 1));
+      featurePriorities.set(featureId, minPriority);
+    }
+  }
+  
+  // Collect feature dependencies for ordering
+  const featureDeps = new Map<string, string[]>();
+  for (const [featureId, featureTasks] of tasksByFeature) {
+    const deps = new Set<string>();
+    for (const task of featureTasks) {
+      if (task.feature_depends_on) {
+        task.feature_depends_on.forEach(dep => deps.add(dep));
+      }
+    }
+    featureDeps.set(featureId, [...deps]);
+  }
+  
+  // Sort features: by priority, then dependency order, then alphabetically
+  const featureIds = Array.from(tasksByFeature.keys()).sort((a, b) => {
+    const priorityA = featurePriorities.get(a) ?? 1;
+    const priorityB = featurePriorities.get(b) ?? 1;
+    
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    
+    const depsA = featureDeps.get(a) || [];
+    const depsB = featureDeps.get(b) || [];
+    
+    if (depsB.includes(a)) return -1;
+    if (depsA.includes(b)) return 1;
+    
+    return a.localeCompare(b);
+  });
+  
+  // Add feature headers and tasks
+  for (const featureId of featureIds) {
+    const featureTasks = tasksByFeature.get(featureId) || [];
+    const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
+    
+    if (activeFeatureTasks.length === 0) continue;
+    
+    // Add feature header
+    result.push(`${FEATURE_HEADER_PREFIX}${featureId}`);
+    
+    // Build tree for this feature's tasks
+    const tree = buildTree(activeFeatureTasks, featureTasks);
+    
+    function traverse(nodes: TreeNode[]): void {
+      for (const node of nodes) {
+        result.push(node.task.id);
+        if (node.children.length > 0) {
+          traverse(node.children);
+        }
+      }
+    }
+    
+    traverse(tree);
+  }
+  
+  // Add ungrouped tasks
+  const ungroupedActive = ungrouped.filter(t => !isCompleted(t));
+  if (ungroupedActive.length > 0) {
+    const tree = buildTree(ungroupedActive, ungrouped);
+    
+    function traverse(nodes: TreeNode[]): void {
+      for (const node of nodes) {
+        result.push(node.task.id);
+        if (node.children.length > 0) {
+          traverse(node.children);
+        }
+      }
+    }
+    
+    traverse(tree);
+  }
+  
+  // Add completed section
+  if (completedTasks.length > 0) {
+    result.push(COMPLETED_HEADER_ID);
+    
+    if (!completedCollapsed) {
+      completedTasks.forEach(t => result.push(t.id));
+    }
+  }
+  
+  return result;
+}
+
+/**
  * Completed section header component (memoized)
  */
 const CompletedHeader = React.memo(function CompletedHeader({
@@ -533,6 +661,94 @@ const ProjectHeader = React.memo(function ProjectHeader({
 });
 
 /**
+ * Feature header component for feature grouping (memoized)
+ * Shows: feature name, completion stats, status indicator
+ */
+const FeatureHeader = React.memo(function FeatureHeader({
+  featureId,
+  completed,
+  total,
+  status,
+  blockedBy,
+  isSelected,
+}: {
+  featureId: string;
+  completed: number;
+  total: number;
+  status: 'ready' | 'waiting' | 'blocked' | 'in_progress' | 'completed';
+  blockedBy?: string[];
+  isSelected?: boolean;
+}): React.ReactElement {
+  // Status indicator and color
+  let icon: string;
+  let color: string;
+  
+  switch (status) {
+    case 'completed':
+      icon = '✓';
+      color = 'green';
+      break;
+    case 'in_progress':
+      icon = '▶';
+      color = 'blue';
+      break;
+    case 'blocked':
+      icon = '✗';
+      color = 'red';
+      break;
+    case 'waiting':
+      icon = '◌';
+      color = 'yellow';
+      break;
+    case 'ready':
+    default:
+      icon = '●';
+      color = 'green';
+      break;
+  }
+  
+  // Build the header text
+  const statsText = `[${completed}/${total} complete]`;
+  const blockedText = blockedBy && blockedBy.length > 0 
+    ? ` [waiting on: ${blockedBy.join(', ')}]`
+    : '';
+
+  return (
+    <Box marginTop={1}>
+      <Text
+        color={isSelected ? 'white' : color}
+        backgroundColor={isSelected ? 'blue' : undefined}
+        bold
+      >
+        {icon}
+      </Text>
+      <Text
+        color={isSelected ? 'white' : 'cyan'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+        bold
+      >
+        {' '}Feature: {featureId}
+      </Text>
+      <Text
+        color={isSelected ? 'white' : 'gray'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+      >
+        {' '}{statsText}
+      </Text>
+      {blockedText && (
+        <Text
+          color={isSelected ? 'white' : 'yellow'}
+          backgroundColor={isSelected ? 'blue' : undefined}
+          dimColor
+        >
+          {blockedText}
+        </Text>
+      )}
+    </Box>
+  );
+});
+
+/**
  * Render a single project's tasks as a tree
  */
 function renderProjectTasks(
@@ -575,11 +791,79 @@ function renderProjectTasks(
   return elements;
 }
 
+/**
+ * Render a single feature's tasks as a tree
+ */
+function renderFeatureTasks(
+  featureTasks: TaskDisplay[],
+  selectedId: string | null,
+  readyIds: Set<string>,
+): React.ReactElement[] {
+  const elements: React.ReactElement[] = [];
+  
+  // Separate active and completed tasks
+  const activeTasks = featureTasks.filter(t => !isCompleted(t));
+  
+  // Build tree structure from active tasks, passing all feature tasks for parent_id chain walking
+  const tree = buildTree(activeTasks, featureTasks);
+  
+  tree.forEach((rootNode) => {
+    const isSelected = rootNode.task.id === selectedId;
+    const isReady = readyIds.has(rootNode.task.id);
+
+    // Root task with indent for feature grouping
+    elements.push(
+      <TaskRow
+        key={rootNode.task.id}
+        task={rootNode.task}
+        prefix="├─"
+        isSelected={isSelected}
+        inCycle={rootNode.inCycle}
+        isReady={isReady}
+      />
+    );
+
+    // Children of root
+    if (rootNode.children.length > 0) {
+      elements.push(
+        ...renderTree(rootNode.children, selectedId, '│ ', readyIds)
+      );
+    }
+  });
+  
+  // Update last task prefix to use └─ instead of ├─
+  if (elements.length > 0) {
+    const lastElement = elements[elements.length - 1];
+    if (lastElement && React.isValidElement(lastElement)) {
+      const props = lastElement.props as { prefix?: string };
+      if (props.prefix === '├─') {
+        const task = (lastElement.props as { task: TaskDisplay }).task;
+        const isSelected = (lastElement.props as { isSelected: boolean }).isSelected;
+        const inCycle = (lastElement.props as { inCycle: boolean }).inCycle;
+        const isReady = (lastElement.props as { isReady: boolean }).isReady;
+        elements[elements.length - 1] = (
+          <TaskRow
+            key={task.id}
+            task={task}
+            prefix="└─"
+            isSelected={isSelected}
+            inCycle={inCycle}
+            isReady={isReady}
+          />
+        );
+      }
+    }
+  }
+  
+  return elements;
+}
+
 export const TaskTree = React.memo(function TaskTree({
   tasks,
   selectedId,
   completedCollapsed,
   groupByProject = false,
+  groupByFeature = false,
 }: TaskTreeProps): React.ReactElement {
   // Separate active and completed tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t)), [tasks]);
@@ -601,6 +885,111 @@ export const TaskTree = React.memo(function TaskTree({
     }
     return grouped;
   }, [tasks, groupByProject]);
+
+  // Group tasks by feature (for feature grouping view)
+  const tasksByFeature = useMemo(() => {
+    if (!groupByFeature) return null;
+    const grouped = new Map<string, TaskDisplay[]>();
+    const ungrouped: TaskDisplay[] = [];
+    
+    for (const task of tasks) {
+      if (task.feature_id) {
+        if (!grouped.has(task.feature_id)) {
+          grouped.set(task.feature_id, []);
+        }
+        grouped.get(task.feature_id)!.push(task);
+      } else {
+        ungrouped.push(task);
+      }
+    }
+    
+    // Add ungrouped as a special key
+    if (ungrouped.length > 0) {
+      grouped.set('__ungrouped__', ungrouped);
+    }
+    
+    return grouped;
+  }, [tasks, groupByFeature]);
+
+  // Compute feature metadata for sorting and display
+  const featureMetadata = useMemo(() => {
+    if (!tasksByFeature) return null;
+    
+    const metadata = new Map<string, {
+      priority: number;
+      status: 'ready' | 'waiting' | 'blocked' | 'in_progress' | 'completed';
+      completed: number;
+      total: number;
+      blockedBy: string[];
+      dependsOn: string[];
+    }>();
+    
+    for (const [featureId, featureTasks] of tasksByFeature) {
+      if (featureId === '__ungrouped__') continue;
+      
+      const activeFeatTasks = featureTasks.filter(t => !isCompleted(t));
+      const completedCount = featureTasks.filter(isCompleted).length;
+      
+      // Determine feature priority (from feature_priority or highest task priority)
+      let priorityNum = 1; // medium default
+      const firstTaskWithFeaturePriority = featureTasks.find(t => t.feature_priority);
+      if (firstTaskWithFeaturePriority?.feature_priority) {
+        priorityNum = PRIORITY_ORDER[firstTaskWithFeaturePriority.feature_priority] ?? 1;
+      } else {
+        // Use highest task priority
+        priorityNum = Math.min(...featureTasks.map(t => PRIORITY_ORDER[t.priority] ?? 1));
+      }
+      
+      // Collect feature dependencies
+      const dependsOn = new Set<string>();
+      for (const task of featureTasks) {
+        if (task.feature_depends_on) {
+          task.feature_depends_on.forEach(dep => dependsOn.add(dep));
+        }
+      }
+      
+      // Determine feature status
+      let status: 'ready' | 'waiting' | 'blocked' | 'in_progress' | 'completed';
+      const hasInProgress = featureTasks.some(t => t.status === 'in_progress');
+      const hasBlocked = featureTasks.some(t => t.status === 'blocked');
+      const allCompleted = activeFeatTasks.length === 0 && completedCount > 0;
+      
+      // Check if waiting on other features
+      const blockedByFeatures: string[] = [];
+      for (const depFeatureId of dependsOn) {
+        const depFeatureTasks = tasksByFeature.get(depFeatureId);
+        if (depFeatureTasks) {
+          const depActiveCount = depFeatureTasks.filter(t => !isCompleted(t)).length;
+          if (depActiveCount > 0) {
+            blockedByFeatures.push(depFeatureId);
+          }
+        }
+      }
+      
+      if (allCompleted) {
+        status = 'completed';
+      } else if (hasBlocked) {
+        status = 'blocked';
+      } else if (hasInProgress) {
+        status = 'in_progress';
+      } else if (blockedByFeatures.length > 0) {
+        status = 'waiting';
+      } else {
+        status = 'ready';
+      }
+      
+      metadata.set(featureId, {
+        priority: priorityNum,
+        status,
+        completed: completedCount,
+        total: featureTasks.length,
+        blockedBy: blockedByFeatures,
+        dependsOn: [...dependsOn],
+      });
+    }
+    
+    return metadata;
+  }, [tasksByFeature]);
 
   // Compute ready task IDs (pending with all deps completed)
   const readyIds = useMemo(() => {
@@ -719,6 +1108,148 @@ export const TaskTree = React.memo(function TaskTree({
         </Text>
         <Box flexDirection="column" marginTop={1}>
           {projectElements}
+          {completedElements}
+        </Box>
+      </Box>
+    );
+  }
+
+  // Grouped view by feature
+  if (groupByFeature && tasksByFeature && featureMetadata) {
+    const featureElements: React.ReactElement[] = [];
+    
+    // Sort features: by priority first, then by dependency order, then alphabetically
+    // Features that are dependencies of others come first
+    const featureIds = Array.from(tasksByFeature.keys())
+      .filter(id => id !== '__ungrouped__')
+      .sort((a, b) => {
+        const metaA = featureMetadata.get(a);
+        const metaB = featureMetadata.get(b);
+        if (!metaA || !metaB) return 0;
+        
+        // Priority first (lower number = higher priority)
+        if (metaA.priority !== metaB.priority) {
+          return metaA.priority - metaB.priority;
+        }
+        
+        // Then by dependency order: if B depends on A, A comes first
+        if (metaB.dependsOn.includes(a)) return -1;
+        if (metaA.dependsOn.includes(b)) return 1;
+        
+        // Then alphabetically
+        return a.localeCompare(b);
+      });
+    
+    featureIds.forEach((featureId, featureIndex) => {
+      const featureTasks = tasksByFeature.get(featureId) || [];
+      const featureActiveTasks = featureTasks.filter(t => !isCompleted(t));
+      const meta = featureMetadata.get(featureId);
+      
+      // Skip features with no active tasks
+      if (featureActiveTasks.length === 0) return;
+      
+      const headerId = `${FEATURE_HEADER_PREFIX}${featureId}`;
+      
+      // Feature header
+      featureElements.push(
+        <FeatureHeader
+          key={headerId}
+          featureId={featureId}
+          completed={meta?.completed ?? 0}
+          total={meta?.total ?? featureTasks.length}
+          status={meta?.status ?? 'ready'}
+          blockedBy={meta?.blockedBy}
+          isSelected={selectedId === headerId}
+        />
+      );
+      
+      // Feature's tasks
+      featureElements.push(
+        ...renderFeatureTasks(featureTasks, selectedId, readyIds)
+      );
+      
+      // Add spacing between features (except last)
+      if (featureIndex < featureIds.length - 1) {
+        featureElements.push(
+          <Box key={`feature-spacer-${featureId}`}>
+            <Text> </Text>
+          </Box>
+        );
+      }
+    });
+    
+    // Handle ungrouped tasks
+    const ungroupedTasks = tasksByFeature.get('__ungrouped__');
+    if (ungroupedTasks && ungroupedTasks.length > 0) {
+      const ungroupedActive = ungroupedTasks.filter(t => !isCompleted(t));
+      
+      if (ungroupedActive.length > 0) {
+        // Add spacing before ungrouped section
+        if (featureElements.length > 0) {
+          featureElements.push(
+            <Box key="ungrouped-spacer">
+              <Text> </Text>
+            </Box>
+          );
+        }
+        
+        // Ungrouped header
+        featureElements.push(
+          <Box key="ungrouped-header" marginTop={1}>
+            <Text bold color="gray">
+              Ungrouped ({ungroupedActive.length})
+            </Text>
+          </Box>
+        );
+        
+        // Ungrouped tasks
+        featureElements.push(
+          ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds)
+        );
+      }
+    }
+
+    // Add completed section if there are completed tasks
+    const completedElements: React.ReactElement[] = [];
+    if (completedTasks.length > 0) {
+      completedElements.push(
+        <Box key="completed-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      completedElements.push(
+        <CompletedHeader
+          key={COMPLETED_HEADER_ID}
+          count={completedTasks.length}
+          collapsed={completedCollapsed}
+          isSelected={selectedId === COMPLETED_HEADER_ID}
+        />
+      );
+      
+      if (!completedCollapsed) {
+        completedTasks.forEach(task => {
+          completedElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
+    }
+
+    return (
+      <Box flexDirection="column" padding={1}>
+        <Text bold underline>
+          Tasks ({tasks.length})
+        </Text>
+        <Box flexDirection="column" marginTop={1}>
+          {featureElements}
           {completedElements}
         </Box>
       </Box>

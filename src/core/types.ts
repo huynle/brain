@@ -288,6 +288,7 @@ export interface Task {
   status: EntryStatus;
   depends_on: string[];
   created: string;
+  modified?: string; // ISO timestamp when last modified
   workdir: string | null;
   worktree: string | null;
   git_remote: string | null;

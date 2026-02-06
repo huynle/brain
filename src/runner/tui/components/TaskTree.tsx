@@ -345,7 +345,12 @@ const isDraft = (t: TaskDisplay): boolean => t.status === 'draft';
 export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
   // Separate active, completed, and draft tasks
   const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
-  const completedTasks = tasks.filter(isCompleted);
+  const completedTasks = tasks.filter(isCompleted).sort((a, b) => {
+    // Sort by modified time descending (most recent first)
+    const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+    const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+    return bTime - aTime;
+  });
   const draftTasks = tasks.filter(isDraft);
   
   // Build tree from active tasks, passing all tasks for parent_id chain walking
@@ -399,7 +404,12 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   
   // Separate active, completed, and draft tasks
   const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
-  const completedTasks = tasks.filter(isCompleted);
+  const completedTasks = tasks.filter(isCompleted).sort((a, b) => {
+    // Sort by modified time descending (most recent first)
+    const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+    const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+    return bTime - aTime;
+  });
   const draftTasks = tasks.filter(isDraft);
   
   // Group tasks by feature
@@ -904,7 +914,13 @@ export const TaskTree = React.memo(function TaskTree({
 }: TaskTreeProps): React.ReactElement {
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
-  const completedTasks = useMemo(() => tasks.filter(isCompleted), [tasks]);
+  const completedTasks = useMemo(() => 
+    tasks.filter(isCompleted).sort((a, b) => {
+      // Sort by modified time descending (most recent first)
+      const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+      const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+      return bTime - aTime;
+    }), [tasks]);
   const draftTasks = useMemo(() => tasks.filter(isDraft), [tasks]);
   
   // Build tree structure from active tasks, passing all tasks for parent_id chain walking

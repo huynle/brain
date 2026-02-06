@@ -41,6 +41,57 @@ function loadConfigFile(): Partial<RunnerConfig> | null {
   }
 }
 
+/**
+ * Validate configuration values are within reasonable ranges.
+ * Throws an error if validation fails.
+ */
+function validateConfig(config: RunnerConfig): void {
+  const errors: string[] = [];
+
+  // Validate maxParallel
+  if (config.maxParallel < 1 || config.maxParallel > 100) {
+    errors.push(`maxParallel must be between 1 and 100, got ${config.maxParallel}`);
+  }
+
+  // Validate maxTotalProcesses
+  if (config.maxTotalProcesses < 1 || config.maxTotalProcesses > 100) {
+    errors.push(`maxTotalProcesses must be between 1 and 100, got ${config.maxTotalProcesses}`);
+  }
+
+  // Validate memoryThresholdPercent
+  if (config.memoryThresholdPercent < 0 || config.memoryThresholdPercent > 100) {
+    errors.push(`memoryThresholdPercent must be between 0 and 100, got ${config.memoryThresholdPercent}`);
+  }
+
+  // Validate maxTotalProcesses >= maxParallel
+  if (config.maxTotalProcesses < config.maxParallel) {
+    errors.push(`maxTotalProcesses (${config.maxTotalProcesses}) must be >= maxParallel (${config.maxParallel})`);
+  }
+
+  // Validate poll intervals
+  if (config.pollInterval < 1) {
+    errors.push(`pollInterval must be >= 1, got ${config.pollInterval}`);
+  }
+  if (config.taskPollInterval < 1) {
+    errors.push(`taskPollInterval must be >= 1, got ${config.taskPollInterval}`);
+  }
+
+  // Validate timeouts (positive numbers)
+  if (config.apiTimeout < 0) {
+    errors.push(`apiTimeout must be >= 0, got ${config.apiTimeout}`);
+  }
+  if (config.taskTimeout < 0) {
+    errors.push(`taskTimeout must be >= 0, got ${config.taskTimeout}`);
+  }
+  if (config.idleDetectionThreshold < 0) {
+    errors.push(`idleDetectionThreshold must be >= 0, got ${config.idleDetectionThreshold}`);
+  }
+
+  if (errors.length > 0) {
+    throw new Error(`Invalid runner configuration:\n  - ${errors.join("\n  - ")}`);
+  }
+}
+
 export function loadConfig(): RunnerConfig {
   const fileConfig = loadConfigFile() ?? {};
 
@@ -53,7 +104,7 @@ export function loadConfig(): RunnerConfig {
     ),
   };
 
-  return {
+  const config: RunnerConfig = {
     brainApiUrl: getEnv(
       "BRAIN_API_URL",
       fileConfig.brainApiUrl ?? "http://localhost:3333"
@@ -66,7 +117,7 @@ export function loadConfig(): RunnerConfig {
       "RUNNER_TASK_POLL_INTERVAL",
       fileConfig.taskPollInterval ?? 5
     ),
-    maxParallel: getEnvInt("RUNNER_MAX_PARALLEL", fileConfig.maxParallel ?? 3),
+    maxParallel: getEnvInt("RUNNER_MAX_PARALLEL", fileConfig.maxParallel ?? 2),
     stateDir: getEnv(
       "RUNNER_STATE_DIR",
       fileConfig.stateDir ?? join(homedir(), ".local", "state", "brain-runner")
@@ -85,9 +136,20 @@ export function loadConfig(): RunnerConfig {
       "RUNNER_IDLE_THRESHOLD",
       fileConfig.idleDetectionThreshold ?? 60000
     ),
+    maxTotalProcesses: getEnvInt(
+      "RUNNER_MAX_TOTAL_PROCESSES",
+      fileConfig.maxTotalProcesses ?? 10
+    ),
+    memoryThresholdPercent: getEnvInt(
+      "RUNNER_MEMORY_THRESHOLD",
+      fileConfig.memoryThresholdPercent ?? 10
+    ),
     opencode,
     excludeProjects: fileConfig.excludeProjects ?? [],
   };
+
+  validateConfig(config);
+  return config;
 }
 
 // Singleton instance

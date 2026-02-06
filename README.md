@@ -124,7 +124,9 @@ curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
 
 Brain API includes an embedded [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server served over Streamable HTTP on the same port as the REST API. When `brain start` runs, the MCP endpoint is available at `POST /mcp` — no separate process needed.
 
-### Connecting Claude Code
+### Connecting Claude Code CLI
+
+The Claude Code CLI can use HTTP directly — no HTTPS required:
 
 ```bash
 claude mcp add --transport http brain http://localhost:3333/mcp
@@ -142,6 +144,53 @@ Or add to `.mcp.json`:
   }
 }
 ```
+
+### Connecting Claude Web UI (Custom Connector)
+
+Claude's web UI "Add Custom Connector" feature requires HTTPS with a **publicly trusted certificate**. Self-signed certificates (including mkcert) won't work because validation requests come from Anthropic's backend servers, not your browser.
+
+#### Option 1: Use a Tunnel Service (Recommended)
+
+Tunnel services provide publicly trusted HTTPS URLs that forward to your local server:
+
+**ngrok:**
+```bash
+# Install: brew install ngrok (macOS) or https://ngrok.com/download
+ngrok http 3333
+# Gives you: https://xyz.ngrok-free.app
+```
+
+**Cloudflare Tunnel:**
+```bash
+# Install: brew install cloudflared
+cloudflared tunnel --url http://localhost:3333
+# Gives you: https://xyz.trycloudflare.com
+```
+
+**Tailscale Funnel:**
+```bash
+# Requires Tailscale account
+tailscale funnel 3333
+# Gives you: https://your-machine.tailnet-name.ts.net
+```
+
+Then add the tunnel URL as your custom connector in Claude's web UI.
+
+#### Option 2: Local HTTPS (Developer Use Only)
+
+For local development where you want HTTPS (e.g., testing TLS handling), Brain API supports TLS:
+
+```bash
+# Generate local certificates with mkcert
+brew install mkcert   # macOS
+mkcert -install       # One-time CA setup
+mkcert localhost 127.0.0.1  # Generates localhost.pem and localhost-key.pem
+
+# Start with TLS
+ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem bun run dev
+```
+
+**Note:** Local HTTPS works for browser access but NOT for Claude's custom connector (see above).
 
 ### Available Tools
 
@@ -343,6 +392,9 @@ brain-runner logs [-f]
 | `BRAIN_HOST` | `0.0.0.0` | API server host |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
 | `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
+| `ENABLE_TLS` | `false` | Enable HTTPS/TLS |
+| `TLS_KEY` | — | Path to TLS private key file (PEM format) |
+| `TLS_CERT` | — | Path to TLS certificate file (PEM format) |
 
 ## Architecture
 

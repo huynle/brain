@@ -35,6 +35,7 @@ export interface TaskDisplay {
   
   // Frontmatter fields
   created?: string;                  // ISO timestamp when created
+  modified?: string;                 // ISO timestamp when last modified
   workdir?: string | null;           // $HOME-relative working directory
   worktree?: string | null;          // Specific git worktree path
   gitRemote?: string | null;         // Git remote URL
@@ -152,4 +153,6 @@ export interface AppProps {
   onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
   /** Callback to edit a task in external editor. Returns new content or null if cancelled. */
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
+  /** Callback to get the actual count of running OpenCode processes */
+  getRunningProcessCount?: () => number;
 }

@@ -205,6 +205,7 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           parent_id: task.parent_id,
           // Frontmatter fields
           created: task.created,
+          modified: task.modified,
           workdir: task.workdir,
           worktree: task.worktree,
           gitRemote: task.git_remote,

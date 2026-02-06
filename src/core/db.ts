@@ -67,6 +67,73 @@ export function initDatabase(): Database {
     "CREATE INDEX IF NOT EXISTS idx_entries_verified ON entries_meta(last_verified)"
   );
 
+  // OAuth 2.1 tables for MCP authentication
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+      client_id TEXT PRIMARY KEY,
+      client_secret TEXT NOT NULL,
+      redirect_uris TEXT NOT NULL,
+      client_name TEXT,
+      client_uri TEXT,
+      logo_uri TEXT,
+      scope TEXT,
+      grant_types TEXT NOT NULL,
+      response_types TEXT NOT NULL,
+      token_endpoint_auth_method TEXT NOT NULL DEFAULT 'client_secret_post',
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+      code TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      redirect_uri TEXT NOT NULL,
+      scope TEXT,
+      code_challenge TEXT NOT NULL,
+      code_challenge_method TEXT NOT NULL DEFAULT 'S256',
+      user_id TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+      token TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scope TEXT,
+      user_id TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+      token TEXT PRIMARY KEY,
+      client_id TEXT NOT NULL,
+      scope TEXT,
+      user_id TEXT,
+      expires_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+    )
+  `);
+
+  // OAuth indexes
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_oauth_tokens_client ON oauth_access_tokens(client_id)"
+  );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expires ON oauth_access_tokens(expires_at)"
+  );
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_auth_codes(expires_at)"
+  );
+
   return db;
 }
 

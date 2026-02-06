@@ -92,6 +92,11 @@ export class TaskRunner {
   private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
 
+  // Pending resume queue: orphaned in_progress tasks detected on startup when paused
+  // These are prioritized when resume/resumeAll is called
+  // Map key is taskId, value is RunningTask placeholder
+  private pendingResumeTasks: Map<string, RunningTask> = new Map();
+
   // Event handling
   private eventHandlers: EventHandler[] = [];
 
@@ -172,16 +177,8 @@ export class TaskRunner {
     // Save PID for external stop commands
     this.stateManager.savePid(process.pid);
 
-    // Check for interrupted tasks and try to resume
-    await this.handleInterruptedTasks();
-
-    // Save initial state
-    this.saveState();
-
-    // Start polling loop
-    this.schedulePoll();
-
-    // If configured to start paused, pause all projects immediately
+    // If configured to start paused, pause all projects BEFORE checking interrupted tasks
+    // This ensures orphaned in_progress tasks are queued for resume rather than immediately spawned
     if (this.startPaused) {
       await this.pauseAll();
       this.logger.info("Runner started paused - press 'P' to begin processing", {
@@ -189,6 +186,15 @@ export class TaskRunner {
       });
       this.tuiLog('warn', "Runner started paused - press 'P' to begin processing");
     }
+
+    // Check for interrupted tasks and try to resume (or queue if paused)
+    await this.handleInterruptedTasks();
+
+    // Save initial state
+    this.saveState();
+
+    // Start polling loop
+    this.schedulePoll();
   }
 
   /**
@@ -381,6 +387,7 @@ export class TaskRunner {
   /**
    * Resume a paused project.
    * Removes the project from pauseCache so new tasks can be picked up.
+   * PRIORITY: First processes any pending orphaned in_progress tasks for this project.
    */
   async resume(projectId: string): Promise<void> {
     if (!this.pauseCache.has(projectId)) {
@@ -391,6 +398,65 @@ export class TaskRunner {
     this.logger.info("Project resumed", { projectId });
     this.tuiLog('info', `Project resumed: ${projectId}`, undefined, projectId);
     this.emitEvent({ type: "project_resumed", projectId });
+
+    // Process any pending orphaned in_progress tasks for this project FIRST
+    await this.processPendingResumeTasks(projectId);
+  }
+
+  /**
+   * Process pending orphaned in_progress tasks that were queued during startup.
+   * These take priority over new tasks because they represent interrupted work.
+   * @param projectId - Optional. If provided, only process tasks for this project.
+   */
+  private async processPendingResumeTasks(projectId?: string): Promise<void> {
+    const tasksToProcess: RunningTask[] = [];
+    
+    for (const [taskId, task] of this.pendingResumeTasks) {
+      // Filter by project if specified
+      if (projectId && task.projectId !== projectId) {
+        continue;
+      }
+      // Skip if project is still paused
+      if (this.pauseCache.has(task.projectId)) {
+        continue;
+      }
+      tasksToProcess.push(task);
+    }
+
+    if (tasksToProcess.length === 0) {
+      return;
+    }
+
+    this.logger.info("Processing pending orphaned tasks", {
+      count: tasksToProcess.length,
+      projectId: projectId ?? "all",
+    });
+
+    // Sort by priority (high > medium > low)
+    const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    tasksToProcess.sort((a, b) => {
+      const aPriority = priorityOrder[a.priority] ?? 1;
+      const bPriority = priorityOrder[b.priority] ?? 1;
+      return aPriority - bPriority;
+    });
+
+    // Resume each pending task (respects maxParallel via resumeTask)
+    for (const task of tasksToProcess) {
+      // Check capacity before each resume
+      const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
+      if (runningCount >= this.config.maxParallel) {
+        this.logger.info("At max parallel capacity, leaving remaining pending tasks in queue", {
+          remaining: tasksToProcess.length - tasksToProcess.indexOf(task),
+        });
+        break;
+      }
+
+      // Remove from pending queue
+      this.pendingResumeTasks.delete(task.id);
+
+      // Resume the task
+      await this.resumeTask(task);
+    }
   }
 
   /**
@@ -407,16 +473,27 @@ export class TaskRunner {
 
   /**
    * Resume all paused projects.
+   * PRIORITY: First processes any pending orphaned in_progress tasks.
    */
   async resumeAll(): Promise<void> {
     const count = this.pauseCache.size;
+    const pendingCount = this.pendingResumeTasks.size;
     const pausedIds = Array.from(this.pauseCache);
-    await Promise.allSettled(
-      pausedIds.map(projectId => this.resume(projectId))
-    );
-    this.logger.info("All projects resumed", { count });
-    this.tuiLog('info', `All projects resumed (${count})`);
+    
+    // Clear pause state for all projects first
+    for (const projectId of pausedIds) {
+      this.pauseCache.delete(projectId);
+      this.emitEvent({ type: "project_resumed", projectId });
+    }
+    
+    this.logger.info("All projects resumed", { count, pendingOrphanedTasks: pendingCount });
+    this.tuiLog('info', `All projects resumed (${count})${pendingCount > 0 ? `, processing ${pendingCount} orphaned task(s)` : ''}`);
     this.emitEvent({ type: "all_resumed" });
+
+    // Process ALL pending orphaned in_progress tasks (no project filter)
+    if (pendingCount > 0) {
+      await this.processPendingResumeTasks();
+    }
   }
 
   /**
@@ -1274,7 +1351,7 @@ export class TaskRunner {
   /**
    * Check Brain API for tasks marked as in_progress but without running processes.
    * These are "orphaned" tasks from a previous runner crash/restart.
-   * Resume them before picking up new work.
+   * If paused, queue them for priority execution on resume. Otherwise, resume immediately.
    */
   private async resumeOrphanedInProgressTasks(): Promise<void> {
     // Get running task IDs we're currently tracking
@@ -1298,6 +1375,7 @@ export class TaskRunner {
             taskId: task.id,
             title: task.title,
             projectId,
+            paused: this.pauseCache.has(projectId),
           });
 
           // Create a RunningTask placeholder to resume
@@ -1313,7 +1391,18 @@ export class TaskRunner {
             workdir: this.executor.resolveWorkdir(task),
           };
 
-          await this.resumeTask(runningTask);
+          // If project is paused, queue for later. Otherwise resume immediately.
+          if (this.pauseCache.has(projectId)) {
+            this.pendingResumeTasks.set(task.id, runningTask);
+            this.logger.info("Queued orphaned task for resume on unpause", {
+              taskId: task.id,
+              title: task.title,
+              projectId,
+            });
+            this.tuiLog('warn', `Orphaned task queued: ${task.title} (will resume on unpause)`, task.id, projectId);
+          } else {
+            await this.resumeTask(runningTask);
+          }
         }
       } catch (error) {
         this.logger.warn("Failed to check for orphaned tasks", {
@@ -1328,14 +1417,25 @@ export class TaskRunner {
     this.logger.info("Resuming interrupted task", {
       taskId: runningTask.id,
       title: runningTask.title,
+      projectId: runningTask.projectId,
     });
 
-    // Fetch current task state
-    const task = await this.apiClient.getNextTask(this.projectId);
-    if (!task || task.id !== runningTask.id) {
-      // Task may have been completed or changed
-      this.logger.info("Task no longer pending, skipping resume", {
+    // Fetch current task state by path (not getNextTask which only returns ready tasks)
+    const task = await this.apiClient.getTaskByPath(runningTask.path);
+    if (!task) {
+      // Task may have been deleted
+      this.logger.info("Task no longer exists, skipping resume", {
         taskId: runningTask.id,
+        path: runningTask.path,
+      });
+      return;
+    }
+
+    // Check if task is still in_progress (not completed, cancelled, etc.)
+    if (task.status !== "in_progress") {
+      this.logger.info("Task status changed, skipping resume", {
+        taskId: runningTask.id,
+        currentStatus: task.status,
       });
       return;
     }
@@ -1345,13 +1445,16 @@ export class TaskRunner {
     // But preserve TUI flag to use interactive command
     const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
     const useTui = this.mode === "tui";
+    const effectiveProjectId = runningTask.projectId;
     try {
-      const result = await this.executor.spawn(task, this.projectId, {
+      const result = await this.executor.spawn(task, effectiveProjectId, {
         mode: effectiveMode,
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: true,
         useTui,
       });
+
+      this.tuiLog('info', `Resuming orphaned task: ${task.title}`, task.id, effectiveProjectId);
 
       const newRunningTask: RunningTask = {
         ...runningTask,
@@ -1603,6 +1706,7 @@ export class TaskRunner {
         onPauseAll: () => this.pauseAll(),
         onResumeAll: () => this.resumeAll(),
         getPausedProjects: () => this.getPausedProjects(),
+        getRunningProcessCount: () => this.processManager.runningCount() + this.tuiTasks.size,
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

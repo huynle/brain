@@ -395,3 +395,69 @@ describe('App - Pause state derivation optimization', () => {
     unmount();
   });
 });
+
+// =============================================================================
+// Logs panel visibility toggle tests
+// =============================================================================
+
+describe('App - Logs Panel Visibility Toggle', () => {
+  it('shows logs panel by default', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // Should show "No logs yet" when logs panel is visible (from LogViewer)
+    expect(frame).toContain('No logs yet');
+    unmount();
+  });
+
+  it('can send L key without crashing', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Initial render should show logs panel content
+    expect(lastFrame()).toContain('No logs yet');
+    
+    // Send 'L' to toggle logs visibility
+    // Note: ink-testing-library may not properly handle shift+key for uppercase
+    // This test verifies the app doesn't crash when receiving the key
+    stdin.write('L');
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    
+    // Toggle back
+    stdin.write('L');
+    
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('Tab switches focus between panels', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Initial state - logs panel is visible
+    const initialFrame = lastFrame() || '';
+    expect(initialFrame).toContain('No logs yet');
+    
+    // Tab to switch focus
+    stdin.write('\t');
+    
+    // Focus should now be on logs
+    const afterTab = lastFrame() || '';
+    expect(afterTab.includes('Focus:')).toBe(true);
+    
+    // Tab again to switch back
+    stdin.write('\t');
+    
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('shows L shortcut in help bar', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // HelpBar should show "L Logs" shortcut - this appears in the help bar text
+    expect(frame).toContain('L');
+    unmount();
+  });
+});

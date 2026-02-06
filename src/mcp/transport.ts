@@ -3,14 +3,20 @@
  *
  * Hono route handler that serves MCP over Streamable HTTP at /mcp.
  * Uses stateless mode (no session tracking) with a fresh McpServer per request.
+ * Supports optional OAuth 2.1 bearer token authentication.
  */
 
 import { Hono } from "hono";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { createMcpServer } from "./index";
+import { conditionalAuth } from "./auth";
+import type { Config } from "../core/types";
 
-export function createMcpRoutes(): Hono {
+export function createMcpRoutes(config: Config): Hono {
   const mcp = new Hono();
+
+  // Apply OAuth authentication when ENABLE_AUTH=true
+  mcp.use("/mcp", conditionalAuth(config.server.enableAuth));
 
   mcp.post("/mcp", async (c) => {
     const server = createMcpServer();

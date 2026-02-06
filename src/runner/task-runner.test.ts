@@ -746,6 +746,36 @@ describe("TaskRunner - Pause/Resume", () => {
       expect(runner.isPaused("project-b")).toBe(false);
     });
 
+    test("does NOT call API to find or update root task (root task removed)", async () => {
+      // Track API calls - specifically looking for getAllTasks or updateTaskStatus
+      let getAllTasksCalled = false;
+      let updateStatusCalled = false;
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        // Check for getAllTasks call (used by findProjectRootPath)
+        if (url.includes("/tasks/project-a") && !options?.method) {
+          getAllTasksCalled = true;
+        }
+        // Check for updateTaskStatus call
+        if (url.includes("/entries/") && options?.method === "PATCH") {
+          updateStatusCalled = true;
+        }
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      await runner.pause("project-a");
+
+      // Pause should NOT call the API to find root task or update any task status
+      // (previously it would call getAllTasks to find root, then update it to "blocked")
+      expect(getAllTasksCalled).toBe(false);
+      expect(updateStatusCalled).toBe(false);
+    });
+
     test("ignores unknown projects", async () => {
       const runner = new TaskRunner({
         projects: ["project-a"],
@@ -784,6 +814,41 @@ describe("TaskRunner - Pause/Resume", () => {
       
       await runner.resume("project-a");
       expect(runner.isPaused("project-a")).toBe(false);
+    });
+
+    test("does NOT call API to find or update root task (root task removed)", async () => {
+      // Track API calls - specifically looking for getAllTasks or updateTaskStatus
+      let getAllTasksCalled = false;
+      let updateStatusCalled = false;
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        // Check for getAllTasks call (used by findProjectRootPath)
+        if (url.includes("/tasks/project-a") && !options?.method) {
+          getAllTasksCalled = true;
+        }
+        // Check for updateTaskStatus call
+        if (url.includes("/entries/") && options?.method === "PATCH") {
+          updateStatusCalled = true;
+        }
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      // First pause, then resume
+      await runner.pause("project-a");
+      getAllTasksCalled = false; // Reset after pause
+      updateStatusCalled = false;
+      
+      await runner.resume("project-a");
+
+      // Resume should NOT call the API to find root task or update any task status
+      // (previously it would call getAllTasks to find root, then update it to "active")
+      expect(getAllTasksCalled).toBe(false);
+      expect(updateStatusCalled).toBe(false);
     });
 
     test("does nothing if project is not paused", async () => {

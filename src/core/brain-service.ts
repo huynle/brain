@@ -64,7 +64,6 @@ import type {
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
-import { getTaskService } from "./task-service";
 
 // =============================================================================
 // Constants
@@ -154,23 +153,6 @@ export class BrainService {
     // Ensure directory exists
     if (!existsSync(fullDir)) {
       mkdirSync(fullDir, { recursive: true });
-    }
-
-    // Auto-inject project root dependency for orphan tasks
-    // Skip if: not a task, already has depends_on, or IS the project root
-    if (
-      entryType === "task" &&
-      (!request.depends_on || request.depends_on.length === 0) &&
-      !(request.tags && request.tags.includes("project-root"))
-    ) {
-      try {
-        const taskService = getTaskService();
-        const rootId = await taskService.getOrCreateProjectRoot(effectiveProjectId);
-        request.depends_on = [rootId];
-      } catch (err) {
-        // If root creation fails (e.g., zk not available), proceed without injection
-        console.error("[brain-service] Auto-inject project root failed:", err);
-      }
     }
 
     // Build content with optional related entries section

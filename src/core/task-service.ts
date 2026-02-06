@@ -23,7 +23,6 @@ import {
   getBlockedTasks,
   getNextTask,
 } from "./task-deps";
-import { getBrainService } from "./brain-service";
 
 // =============================================================================
 // TaskService Class
@@ -171,46 +170,6 @@ export class TaskService {
   async getNext(projectId: string): Promise<ResolvedTask | null> {
     const result = await this.getTasksWithDependencies(projectId);
     return getNextTask(result);
-  }
-
-  // ========================================
-  // Project Root Task
-  // ========================================
-
-  /**
-   * Get or create the project root task.
-   * Root task has status: active and serves as the tree root + pause/unpause control.
-   * Returns the root task ID (8-char).
-   */
-  async getOrCreateProjectRoot(projectId: string): Promise<string> {
-    const tasks = await this.getAllTasks(projectId);
-
-    // Find existing root: active (or blocked for paused) task with no depends_on, title = projectId
-    const existingRoot = tasks.find(
-      (t) =>
-        (t.status === "active" || t.status === "blocked") &&
-        t.depends_on.length === 0 &&
-        t.title === projectId
-    );
-
-    if (existingRoot) {
-      return existingRoot.id;
-    }
-
-    // Create new root task via BrainService
-    const brainService = getBrainService();
-    const result = await brainService.save({
-      type: "task",
-      title: projectId,
-      content: `Project root task for ${projectId}. This task is always active and serves as the tree root.\n\n- Set to \`blocked\` to pause the project\n- Set to \`active\` to resume`,
-      status: "active",
-      project: projectId,
-      tags: ["task", "project-root", projectId],
-      priority: "medium",
-      depends_on: [],
-    });
-
-    return result.id;
   }
 
   // ========================================

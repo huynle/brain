@@ -121,6 +121,17 @@ describe("TaskService", () => {
     });
   });
 
+  describe("getOrCreateProjectRoot() - REMOVED", () => {
+    // This test verifies that getOrCreateProjectRoot method has been removed
+    // The project root task feature is no longer used
+    test("getOrCreateProjectRoot method should not exist", () => {
+      const service = new TaskService(createTestConfig(), "test-project");
+      
+      // The method should not exist on the service
+      expect((service as unknown as Record<string, unknown>).getOrCreateProjectRoot).toBeUndefined();
+    });
+  });
+
   describe("listProjects()", () => {
     let service: TaskService;
     let testDir: string;

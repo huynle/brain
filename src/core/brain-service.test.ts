@@ -465,6 +465,68 @@ Task content.
     });
   });
 
+  describe("save() - no project root auto-injection", () => {
+    // These tests verify that tasks with empty depends_on do NOT get a project root dependency.
+    // The project root task feature was removed - tasks now have truly empty depends_on.
+    // 
+    // NOTE: Tests are skipped because they require zk CLI to be available.
+    // The behavior is verified through:
+    // 1. Code inspection (auto-injection block removed from brain-service.ts)
+    // 2. TaskService test (getOrCreateProjectRoot method removed)
+    // 3. TaskRunner tests (pause/resume no longer call API for root task)
+    test.skip("should NOT auto-inject project root dependency for tasks with empty depends_on", async () => {
+      // Create a task directory for this test
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      // Create a task with empty depends_on
+      const result = await service.save({
+        type: "task",
+        title: "Task Without Root Dependency",
+        content: "This task should have no dependencies",
+        status: "pending",
+        project: "test-project",
+        depends_on: [],
+      });
+
+      expect(result).toBeDefined();
+      expect(result.type).toBe("task");
+
+      // Read the file and verify depends_on is truly empty (no project root injected)
+      const fullPath = join(TEST_DIR, result.path);
+      const content = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+
+      // The key assertion: depends_on should be empty or undefined, NOT contain a project root ID
+      expect(frontmatter.depends_on).toBeUndefined();
+    });
+
+    test.skip("should preserve explicit depends_on without adding project root", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      // Create a task with explicit dependencies
+      const result = await service.save({
+        type: "task",
+        title: "Task With Explicit Deps",
+        content: "This task has explicit dependencies",
+        status: "pending",
+        project: "test-project",
+        depends_on: ["abc12345", "def67890"],
+      });
+
+      expect(result).toBeDefined();
+
+      // Read the file and verify depends_on contains only the explicit deps
+      const fullPath = join(TEST_DIR, result.path);
+      const content = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+
+      // Should have exactly the deps we specified, no project root added
+      expect(frontmatter.depends_on).toEqual(["abc12345", "def67890"]);
+    });
+  });
+
   describe("update() field preservation", () => {
     let taskPath: string;
 

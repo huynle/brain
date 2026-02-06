@@ -86,8 +86,8 @@ export class TaskRunner {
   // TUI mode task tracking (tasks spawned in tmux windows without proc handles)
   private tuiTasks: Map<string, RunningTask> = new Map();
 
-  // Pause state: persisted via project root task status (active = running, blocked = paused)
-  // Local cache for synchronous access in poll loop; synced on pause/resume calls
+  // Pause state: in-memory only (not persisted across restarts)
+  // Paused projects are excluded from task polling
   private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
 
@@ -310,8 +310,8 @@ export class TaskRunner {
 
   /**
    * Pause a specific project.
-   * Sets the project root task to status: blocked, which blocks all children via depends_on cascade.
-   * Running tasks will complete, but no new tasks will be started.
+   * Paused projects are tracked in pauseCache - no new tasks will be started.
+   * Running tasks will complete, but no new tasks will be picked up.
    */
   async pause(projectId: string): Promise<void> {
     if (!this.projects.includes(projectId)) {
@@ -322,18 +322,6 @@ export class TaskRunner {
       return; // Already paused
     }
 
-    try {
-      const rootPath = await this.findProjectRootPath(projectId);
-      if (rootPath) {
-        await this.apiClient.updateTaskStatus(rootPath, "blocked");
-      }
-    } catch (error) {
-      this.logger.error("Failed to persist pause state to root task", {
-        projectId,
-        error: String(error),
-      });
-    }
-
     this.pauseCache.add(projectId);
     this.logger.info("Project paused", { projectId });
     this.tuiLog('warn', `Project paused: ${projectId}`, undefined, projectId);
@@ -342,23 +330,11 @@ export class TaskRunner {
 
   /**
    * Resume a paused project.
-   * Sets the project root task to status: active, which unblocks children.
+   * Removes the project from pauseCache so new tasks can be picked up.
    */
   async resume(projectId: string): Promise<void> {
     if (!this.pauseCache.has(projectId)) {
       return; // Not paused
-    }
-
-    try {
-      const rootPath = await this.findProjectRootPath(projectId);
-      if (rootPath) {
-        await this.apiClient.updateTaskStatus(rootPath, "active");
-      }
-    } catch (error) {
-      this.logger.error("Failed to persist resume state to root task", {
-        projectId,
-        error: String(error),
-      });
     }
 
     this.pauseCache.delete(projectId);
@@ -414,29 +390,7 @@ export class TaskRunner {
     return this.pauseCache.size === this.projects.length && this.projects.length > 0;
   }
 
-  /**
-   * Find the path of a project's root task (title = projectId, no depends_on, status active or blocked).
-   * Returns the task path for status updates, or null if not found.
-   */
-  private async findProjectRootPath(projectId: string): Promise<string | null> {
-    try {
-      const tasks = await this.apiClient.getAllTasks(projectId);
-      const root = tasks.find(t =>
-        t.title === projectId &&
-        (!t.depends_on || t.depends_on.length === 0) &&
-        (t.status === "active" || t.status === "blocked")
-      );
-      return root?.path ?? null;
-    } catch (error) {
-      this.logger.error("Failed to find project root task", {
-        projectId,
-        error: String(error),
-      });
-      return null;
-    }
-  }
-
-  // ========================================
+// ========================================
   // Event Handling
   // ========================================
 

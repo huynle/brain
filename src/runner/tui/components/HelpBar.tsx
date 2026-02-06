@@ -31,10 +31,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
             <>
               <Text bold>g/G</Text> Top/Bottom
               {'  '}
+              <Text bold>f</Text> Filter
+              {'  '}
             </>
           ) : (
             <>
-              <Text bold>Enter</Text> Toggle
+              <Text bold>s</Text> Status
               {'  '}
               <Text bold>x</Text> Cancel
               {'  '}

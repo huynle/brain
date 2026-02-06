@@ -18,6 +18,10 @@ interface LogViewerProps {
   isFocused?: boolean;
   /** Scroll offset from bottom (0 = latest logs, positive = scrolled up) */
   scrollOffset?: number;
+  /** Filter logs to only show entries for this task ID */
+  filterByTaskId?: string | null;
+  /** When true, filtering is active (shows indicator in header) */
+  isFiltering?: boolean;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -134,10 +138,20 @@ export const LogViewer = React.memo(function LogViewer({
   showProjectPrefix = false,
   isFocused = false,
   scrollOffset = 0,
+  filterByTaskId = null,
+  isFiltering = false,
 }: LogViewerProps): React.ReactElement {
+  // Filter logs by taskId if filtering is active
+  const filteredLogs = useMemo(() => {
+    if (!isFiltering || !filterByTaskId) {
+      return logs;
+    }
+    return logs.filter(log => log.taskId === filterByTaskId);
+  }, [logs, filterByTaskId, isFiltering]);
+
   // Calculate visible logs with scroll support
   const visibleLogs = useMemo(() => {
-    const totalLogs = logs.length;
+    const totalLogs = filteredLogs.length;
     
     if (totalLogs === 0) return [];
     
@@ -147,14 +161,19 @@ export const LogViewer = React.memo(function LogViewer({
     const endIndex = Math.max(0, totalLogs - scrollOffset);
     const startIndex = Math.max(0, endIndex - maxLines);
     
-    return logs.slice(startIndex, endIndex);
-  }, [logs, maxLines, scrollOffset]);
+    return filteredLogs.slice(startIndex, endIndex);
+  }, [filteredLogs, maxLines, scrollOffset]);
   const isScrolled = scrollOffset > 0;
 
-  // Header with scroll indicator
-  const headerText = isScrolled 
-    ? `Logs (${scrollOffset} lines below)`
-    : 'Logs';
+  // Header with scroll and filter indicators
+  const headerParts: string[] = ['Logs'];
+  if (isFiltering && filterByTaskId) {
+    headerParts[0] = 'Task Logs';
+  }
+  if (isScrolled) {
+    headerParts.push(`(${scrollOffset} lines below)`);
+  }
+  const headerText = headerParts.join(' ');
 
   return (
     <Box

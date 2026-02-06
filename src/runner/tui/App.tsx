@@ -74,6 +74,7 @@ export function App({
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
+  const [filterLogsByTask, setFilterLogsByTask] = useState(false);
 
   // Single-project poller (used when not in multi-project mode)
   const singleProjectPoller = useTaskPoller({
@@ -428,8 +429,8 @@ export function App({
         return;
       }
 
-      // Enter to toggle completed section or open status popup
-      if (key.return) {
+      // 's' to toggle completed section or open status popup
+      if (input === 's') {
         // Toggle completed section if header is selected
         if (selectedTaskId === COMPLETED_HEADER_ID) {
           setCompletedCollapsed(prev => !prev);
@@ -467,6 +468,13 @@ export function App({
       // g or Home: jump to top (oldest logs)
       if (input === 'g' || key.home) {
         setLogScrollOffset(Math.max(0, logs.length - logMaxLines));
+        return;
+      }
+      
+      // f: toggle log filtering by selected task
+      if (input === 'f') {
+        setFilterLogsByTask(prev => !prev);
+        setLogScrollOffset(0); // Reset scroll when toggling filter
         return;
       }
     }
@@ -511,7 +519,8 @@ export function App({
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
-        <Text>  <Text bold>Enter</Text>     - Change status / Toggle completed</Text>
+        <Text>  <Text bold>s</Text>         - Change status / Toggle completed</Text>
+        <Text>  <Text bold>f</Text>         - Filter logs by selected task (in logs panel)</Text>
         {isMultiProject && (
           <>
             <Text />
@@ -588,6 +597,8 @@ export function App({
               showProjectPrefix={isMultiProject}
               isFocused={focusedPanel === 'logs'}
               scrollOffset={logScrollOffset}
+              filterByTaskId={selectedTaskId}
+              isFiltering={filterLogsByTask}
             />
           </Box>
 

@@ -86,8 +86,9 @@ export class TaskService {
       );
     }
 
-    // Ensure zk index is up to date
-    await execZk(["index", "--quiet"]);
+    // NOTE: Removed zk index --quiet from here for performance.
+    // zk index is called once at startup via BrainService.
+    // Calling it on every task fetch added significant latency.
 
     // Query for task entries (directory path is sufficient, no tag filter needed)
     const result = await execZk([
@@ -121,6 +122,10 @@ export class TaskService {
         git_branch: (note.metadata?.git_branch as string) || null,
         user_original_request:
           (note.metadata?.user_original_request as string) || null,
+        // Feature grouping fields
+        feature_id: (note.metadata?.feature_id as string) ?? undefined,
+        feature_priority: (note.metadata?.feature_priority as Task["feature_priority"]) ?? undefined,
+        feature_depends_on: (note.metadata?.feature_depends_on as string[]) ?? undefined,
       }));
   }
 
@@ -170,6 +175,27 @@ export class TaskService {
   async getNext(projectId: string): Promise<ResolvedTask | null> {
     const result = await this.getTasksWithDependencies(projectId);
     return getNextTask(result);
+  }
+
+  // ========================================
+  // Feature-based Queries
+  // ========================================
+
+  /**
+   * Get all tasks belonging to a specific feature
+   * @param projectId - The project to search in
+   * @param featureId - The feature ID to filter by
+   * @returns Tasks with matching feature_id, sorted by priority
+   */
+  async getTasksByFeature(projectId: string, featureId: string): Promise<Task[]> {
+    const allTasks = await this.getAllTasks(projectId);
+    return allTasks
+      .filter((task) => task.feature_id === featureId)
+      .sort((a, b) => {
+        // Sort by priority: high > medium > low
+        const priorityOrder = { high: 0, medium: 1, low: 2 };
+        return priorityOrder[a.priority] - priorityOrder[b.priority];
+      });
   }
 
   // ========================================

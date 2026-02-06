@@ -13,6 +13,8 @@ Built with [Bun](https://bun.sh) and [Hono](https://hono.dev).
 - Integration with `do-work` task queue processor
 - TUI dashboard for task monitoring
 - Embedded MCP server via Streamable HTTP transport
+- OAuth 2.1 authentication with PKCE for secure client connections
+- Multi-project support with shared execution pools
 
 ## Installation
 
@@ -56,6 +58,16 @@ export PATH="$HOME/.local/bin:$PATH"
 
 - [Bun](https://bun.sh) >= 1.0.0
 - [zk](https://github.com/mickael-menu/zk) CLI (for Zettelkasten operations)
+
+To verify your installation:
+
+```bash
+# Check zk is available
+zk --version
+
+# Run diagnostics
+brain doctor -v
+```
 
 ## Usage
 
@@ -205,7 +217,22 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem bun run dev
 | `brain_stats` | Get brain statistics |
 | `brain_check_connection` | Verify the brain API is available |
 
-The embedded MCP server calls the service layer directly (no HTTP round-trip), making it faster than the standalone stdio-based MCP server installed via `brain install claude-code`.
+The embedded MCP server calls the service layer directly (no HTTP round-trip), making it faster than the standalone stdio-based MCP server.
+
+### OAuth 2.1 Authentication
+
+Brain API supports OAuth 2.1 with PKCE for secure MCP client authentication. This enables proper access control for remote clients.
+
+**Discovery Endpoints:**
+- `GET /.well-known/oauth-authorization-server` - OAuth server metadata
+- `GET /.well-known/oauth-protected-resource` - Protected resource metadata
+
+**OAuth Endpoints:**
+- `POST /register` - Dynamic client registration (RFC 7591)
+- `GET /authorize` - Authorization endpoint with PKCE
+- `POST /token` - Token exchange endpoint
+
+**Supported Scopes:** `mcp`, `mcp:read`, `mcp:write`
 
 ## Task Runner
 
@@ -378,11 +405,31 @@ brain-runner logs [-f]
 | `-f, --foreground` | Run in foreground (default) |
 | `-b, --background` | Run as daemon |
 | `--tui` | Interactive TUI dashboard |
-| `-p, --max-parallel N` | Max concurrent tasks (default: 3) |
+| `-p, --max-parallel N` | Max concurrent tasks across ALL projects |
 | `--poll-interval N` | Seconds between polls (default: 30) |
 | `-w, --workdir DIR` | Working directory |
 | `--dry-run` | Log actions without executing |
 | `-v, --verbose` | Enable verbose logging |
+
+## do-work CLI
+
+The `do-work` command is a convenient wrapper for quick task queue operations:
+
+```bash
+# Process tasks for a project
+do-work start myproject
+
+# With TUI dashboard
+do-work start myproject --tui
+
+# View ready tasks
+do-work ready myproject
+
+# List all tasks
+do-work list myproject
+```
+
+This is an alias for `brain-runner` with commonly used defaults.
 
 ## Environment Variables
 

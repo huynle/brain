@@ -363,7 +363,7 @@ const tools: Tool[] = [
         title: { type: "string", description: "Short descriptive title for the entry" },
         content: { type: "string", description: "The content to save (markdown supported)" },
         tags: { type: "array", items: { type: "string" }, description: "Tags for categorization" },
-        status: { type: "string", enum: ENTRY_STATUSES, description: "Initial status" },
+        status: { type: "string", enum: ENTRY_STATUSES, description: "Initial status. Tasks default to 'draft' (user reviews before promoting to 'pending'). Other entry types default to 'active'." },
         priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level" },
         global: { type: "boolean", description: "Save to global brain (cross-project)" },
         project: { type: "string", description: "Explicit project ID/name" },

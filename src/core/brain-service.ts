@@ -135,7 +135,9 @@ export class BrainService {
     }
 
     const entryType = request.type;
-    const entryStatus = request.status || "active";
+    // Tasks default to 'draft' status (user reviews before promoting to 'pending')
+    // All other entry types default to 'active'
+    const entryStatus = request.status || (entryType === "task" ? "draft" : "active");
     const isGlobal = request.global ?? false;
 
     // Determine effective project ID

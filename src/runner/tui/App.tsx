@@ -37,7 +37,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID } from './components/TaskTree';
+import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -80,11 +80,13 @@ export function App({
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
+  const [draftCollapsed, setDraftCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [taskScrollOffset, setTaskScrollOffset] = useState(0);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -156,6 +158,10 @@ export function App({
   const topRowHeight = Math.floor((terminalRows - 6) * 0.6); // ~60% for top row
   const logMaxLines = Math.max(5, terminalRows - 6 - topRowHeight - 2); // remaining height minus log panel chrome
   
+  // Calculate task viewport height for scrolling
+  // Account for: TaskTree header (2 lines: title + margin) + border (2 lines) + padding (2 lines)
+  const taskViewportHeight = Math.max(3, topRowHeight - 6);
+  
   // Reset scroll offset when new logs arrive and we're at the bottom
   useEffect(() => {
     if (logScrollOffset === 0) {
@@ -204,9 +210,13 @@ export function App({
     });
   }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
 
-  // Stable callback for toggling completed section (avoids new ref on every render)
+  // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
     setCompletedCollapsed(prev => !prev);
+  }, []);
+
+  const handleToggleDraft = useCallback(() => {
+    setDraftCollapsed(prev => !prev);
   }, []);
 
   // Find selected task
@@ -214,7 +224,24 @@ export function App({
 
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
-  const navigationOrder = useMemo(() => flattenTreeOrder(tasks, completedCollapsed), [tasks, completedCollapsed]);
+  const navigationOrder = useMemo(() => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed), [tasks, completedCollapsed, draftCollapsed]);
+
+  // Auto-scroll task list to keep selected task in view
+  useEffect(() => {
+    if (!selectedTaskId || taskViewportHeight <= 0) return;
+    
+    const selectedIndex = navigationOrder.indexOf(selectedTaskId);
+    if (selectedIndex === -1) return;
+    
+    // Ensure selected task is visible in viewport
+    if (selectedIndex < taskScrollOffset) {
+      // Selected is above viewport - scroll up
+      setTaskScrollOffset(selectedIndex);
+    } else if (selectedIndex >= taskScrollOffset + taskViewportHeight) {
+      // Selected is below viewport - scroll down
+      setTaskScrollOffset(selectedIndex - taskViewportHeight + 1);
+    }
+  }, [selectedTaskId, navigationOrder, taskScrollOffset, taskViewportHeight]);
 
   // All project tabs including 'all' at the front
   const allProjectTabs = ['all', ...projects];
@@ -484,17 +511,42 @@ export function App({
         return;
       }
 
-      // Enter to toggle completed section when header is selected
+      // g - Jump to top of task list
+      if (input === 'g' && navigationOrder.length > 0) {
+        setSelectedTaskId(navigationOrder[0]);
+        setTaskScrollOffset(0);
+        return;
+      }
+
+      // G - Jump to bottom of task list
+      if (input === 'G' && navigationOrder.length > 0) {
+        setSelectedTaskId(navigationOrder[navigationOrder.length - 1]);
+        // Scroll to show last item
+        const maxOffset = Math.max(0, navigationOrder.length - taskViewportHeight);
+        setTaskScrollOffset(maxOffset);
+        return;
+      }
+
+      // Enter to toggle completed/draft section when header is selected
       if (key.return && selectedTaskId === COMPLETED_HEADER_ID) {
         setCompletedCollapsed(prev => !prev);
         return;
       }
+      if (key.return && selectedTaskId === DRAFT_HEADER_ID) {
+        setDraftCollapsed(prev => !prev);
+        return;
+      }
 
-      // 's' to toggle completed section or open status popup
+      // 's' to toggle completed/draft section or open status popup
       if (input === 's') {
         // Toggle completed section if header is selected
         if (selectedTaskId === COMPLETED_HEADER_ID) {
           setCompletedCollapsed(prev => !prev);
+          return;
+        }
+        // Toggle draft section if header is selected
+        if (selectedTaskId === DRAFT_HEADER_ID) {
+          setDraftCollapsed(prev => !prev);
           return;
         }
         // Open status popup for selected task
@@ -642,7 +694,11 @@ export function App({
               onSelect={setSelectedTaskId}
               completedCollapsed={completedCollapsed}
               onToggleCompleted={handleToggleCompleted}
+              draftCollapsed={draftCollapsed}
+              onToggleDraft={handleToggleDraft}
               groupByProject={isMultiProject && activeProject === 'all'}
+              scrollOffset={taskScrollOffset}
+              viewportHeight={taskViewportHeight}
             />
           </Box>
 

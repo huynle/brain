@@ -27,10 +27,10 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
           )}
           <Text bold>j/k</Text> {isLogsFocused ? 'Scroll' : 'Navigate'}
           {'  '}
+          <Text bold>g/G</Text> Top/Bottom
+          {'  '}
           {isLogsFocused ? (
             <>
-              <Text bold>g/G</Text> Top/Bottom
-              {'  '}
               <Text bold>f</Text> Filter
               {'  '}
             </>

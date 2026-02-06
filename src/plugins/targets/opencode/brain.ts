@@ -399,7 +399,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .enum(ENTRY_STATUSES)
             .optional()
             .describe(
-              "Initial status (default: 'active'). Use 'draft' for work-in-progress."
+              "Initial status. Tasks default to 'draft' (user reviews before promoting to 'pending'). Other entry types default to 'active'."
             ),
           priority: tool.schema
             .enum(["high", "medium", "low"])

@@ -25,6 +25,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import type { EntryStatus } from '../../../core/types';
 import { ENTRY_STATUSES } from '../../../core/types';
+import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 export interface StatusPopupProps {
   /** Current status of the task (highlighted as current) */
@@ -35,38 +36,7 @@ export interface StatusPopupProps {
   taskTitle: string;
 }
 
-/** Get a color for each status */
-function getStatusColor(status: EntryStatus): string {
-  switch (status) {
-    case 'draft':
-      return 'gray';
-    case 'pending':
-      return 'yellow';
-    case 'active':
-      return 'blue';
-    case 'in_progress':
-      return 'cyan';
-    case 'blocked':
-      return 'red';
-    case 'cancelled':
-      return 'magenta';
-    case 'completed':
-      return 'green';
-    case 'validated':
-      return 'greenBright';
-    case 'superseded':
-      return 'gray';
-    case 'archived':
-      return 'gray';
-    default:
-      return 'white';
-  }
-}
-
-/** Get display label for status */
-function getStatusLabel(status: EntryStatus): string {
-  return status.replace('_', ' ');
-}
+// Status colors, icons, and labels are now imported from shared status-display.ts
 
 export function StatusPopup({
   currentStatus,
@@ -107,9 +77,9 @@ export function StatusPopup({
                 {isSelected ? '→ ' : '  '}
               </Text>
               
-              {/* Radio-style indicator */}
+              {/* Status icon - use the same icons as TaskTree */}
               <Text color={color}>
-                {isCurrent ? '●' : '○'}
+                {getStatusIcon(status)}
               </Text>
               
               {/* Status label */}

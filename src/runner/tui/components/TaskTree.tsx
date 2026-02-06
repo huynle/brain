@@ -9,6 +9,7 @@ import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
 import type { TaskDisplay } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
+import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -16,44 +17,30 @@ interface TaskTreeProps {
   onSelect: (id: string) => void;
   completedCollapsed: boolean;
   onToggleCompleted: () => void;
+  /** When true, draft section is collapsed */
+  draftCollapsed?: boolean;
+  /** Callback to toggle draft section collapsed state */
+  onToggleDraft?: () => void;
   /** When true, tasks are grouped by project ID (for multi-project "All" view) */
   groupByProject?: boolean;
   /** When true, tasks are grouped by feature_id */
   groupByFeature?: boolean;
+  /** Scroll offset for viewport (0 = top of list visible) */
+  scrollOffset?: number;
+  /** Number of visible rows in the viewport (for virtual scrolling) */
+  viewportHeight?: number;
 }
 
 // Special ID for the completed section header (used for navigation)
 export const COMPLETED_HEADER_ID = '__completed_header__';
 
+// Special ID for the draft section header (used for navigation)
+export const DRAFT_HEADER_ID = '__draft_header__';
+
 // Special ID prefix for feature headers (used for navigation)
 export const FEATURE_HEADER_PREFIX = '__feature_header__';
 
-// Status symbols per spec
-const STATUS_ICONS: Record<string, string> = {
-  pending: '○',       // Waiting (yellow when ready)
-  in_progress: '▶',   // In Progress (blue)
-  completed: '✓',     // Completed (green dim)
-  blocked: '✗',       // Blocked (red)
-  cancelled: '⊘',     // Cancelled (yellow)
-  draft: '○',
-  active: '●',        // Ready (green)
-  validated: '✓',
-  superseded: '○',
-  archived: '○',
-};
-
-const STATUS_COLORS: Record<string, string> = {
-  pending: 'yellow',  // Ready tasks are yellow
-  in_progress: 'blue',
-  completed: 'green',
-  blocked: 'red',
-  cancelled: 'yellow',
-  draft: 'gray',
-  active: 'green',
-  validated: 'green',
-  superseded: 'gray',
-  archived: 'gray',
-};
+// Status icons and colors are now imported from shared status-display.ts
 
 const PRIORITY_ORDER: Record<Priority, number> = {
   high: 0,
@@ -344,17 +331,22 @@ function findActiveAncestor(
 // Helper to check if a task is completed
 const isCompleted = (t: TaskDisplay): boolean => t.status === 'completed' || t.status === 'validated';
 
+// Helper to check if a task is a draft
+const isDraft = (t: TaskDisplay): boolean => t.status === 'draft';
+
 /**
  * Flatten tree into an array of task IDs in visual/navigation order.
  * This matches the order tasks appear on screen for j/k navigation.
  * 
  * @param tasks - All tasks
  * @param completedCollapsed - Whether the completed section is collapsed
+ * @param draftCollapsed - Whether the draft section is collapsed
  */
-export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true): string[] {
-  // Separate active and completed tasks
-  const activeTasks = tasks.filter(t => !isCompleted(t));
+export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
+  // Separate active, completed, and draft tasks
+  const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
   const completedTasks = tasks.filter(isCompleted);
+  const draftTasks = tasks.filter(isDraft);
   
   // Build tree from active tasks, passing all tasks for parent_id chain walking
   const tree = buildTree(activeTasks, tasks);
@@ -370,6 +362,16 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
   }
 
   traverse(tree);
+  
+  // Add draft header and tasks if there are any draft tasks
+  if (draftTasks.length > 0) {
+    result.push(DRAFT_HEADER_ID);
+    
+    // If expanded, add draft task IDs
+    if (!draftCollapsed) {
+      draftTasks.forEach(t => result.push(t.id));
+    }
+  }
   
   // Add completed header and tasks if there are any completed tasks
   if (completedTasks.length > 0) {
@@ -390,13 +392,15 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
  * 
  * @param tasks - All tasks
  * @param completedCollapsed - Whether the completed section is collapsed
+ * @param draftCollapsed - Whether the draft section is collapsed
  */
-export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true): string[] {
+export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
   const result: string[] = [];
   
-  // Separate active and completed tasks
-  const activeTasks = tasks.filter(t => !isCompleted(t));
+  // Separate active, completed, and draft tasks
+  const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
   const completedTasks = tasks.filter(isCompleted);
+  const draftTasks = tasks.filter(isDraft);
   
   // Group tasks by feature
   const tasksByFeature = new Map<string, TaskDisplay[]>();
@@ -479,7 +483,7 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   }
   
   // Add ungrouped tasks
-  const ungroupedActive = ungrouped.filter(t => !isCompleted(t));
+  const ungroupedActive = ungrouped.filter(t => !isCompleted(t) && !isDraft(t));
   if (ungroupedActive.length > 0) {
     const tree = buildTree(ungroupedActive, ungrouped);
     
@@ -493,6 +497,15 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
     }
     
     traverse(tree);
+  }
+  
+  // Add draft section
+  if (draftTasks.length > 0) {
+    result.push(DRAFT_HEADER_ID);
+    
+    if (!draftCollapsed) {
+      draftTasks.forEach(t => result.push(t.id));
+    }
   }
   
   // Add completed section
@@ -526,9 +539,36 @@ const CompletedHeader = React.memo(function CompletedHeader({
         color={isSelected ? 'white' : 'green'}
         backgroundColor={isSelected ? 'blue' : undefined}
         bold={isSelected}
-        dimColor
+        dimColor={!isSelected}
       >
         {icon} Completed ({count})
+      </Text>
+    </Box>
+  );
+});
+
+/**
+ * Draft section header component (memoized)
+ */
+const DraftHeader = React.memo(function DraftHeader({
+  count,
+  collapsed,
+  isSelected,
+}: {
+  count: number;
+  collapsed: boolean;
+  isSelected: boolean;
+}): React.ReactElement {
+  const icon = collapsed ? '▶' : '▾';
+  return (
+    <Box>
+      <Text
+        color={isSelected ? 'white' : 'gray'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+        bold={isSelected}
+        dimColor={!isSelected}
+      >
+        {icon} Draft ({count})
       </Text>
     </Box>
   );
@@ -551,14 +591,8 @@ const TaskRow = React.memo(function TaskRow({
   isReady: boolean;
 }): React.ReactElement {
   // Determine icon and color based on status and readiness
-  let icon = STATUS_ICONS[task.status] || '?';
-  let color = STATUS_COLORS[task.status] || 'white';
-  
-  // Override for ready tasks (pending with no blocking deps)
-  if (task.status === 'pending' && isReady) {
-    icon = '●';  // Ready indicator
-    color = 'green';
-  }
+  const icon = getStatusIcon(task.status, isReady);
+  const color = getStatusColor(task.status, isReady);
   
   // Dim completed tasks
   const isDim = task.status === 'completed' || task.status === 'validated';
@@ -862,12 +896,16 @@ export const TaskTree = React.memo(function TaskTree({
   tasks,
   selectedId,
   completedCollapsed,
+  draftCollapsed = true,
   groupByProject = false,
   groupByFeature = false,
+  scrollOffset = 0,
+  viewportHeight,
 }: TaskTreeProps): React.ReactElement {
-  // Separate active and completed tasks
-  const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t)), [tasks]);
+  // Separate active, completed, and draft tasks
+  const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
   const completedTasks = useMemo(() => tasks.filter(isCompleted), [tasks]);
+  const draftTasks = useMemo(() => tasks.filter(isDraft), [tasks]);
   
   // Build tree structure from active tasks, passing all tasks for parent_id chain walking
   const tree = useMemo(() => buildTree(activeTasks, tasks), [activeTasks, tasks]);
@@ -1067,6 +1105,40 @@ export const TaskTree = React.memo(function TaskTree({
       }
     });
 
+    // Add draft section if there are draft tasks
+    const draftElements: React.ReactElement[] = [];
+    if (draftTasks.length > 0) {
+      draftElements.push(
+        <Box key="draft-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      draftElements.push(
+        <DraftHeader
+          key={DRAFT_HEADER_ID}
+          count={draftTasks.length}
+          collapsed={draftCollapsed}
+          isSelected={selectedId === DRAFT_HEADER_ID}
+        />
+      );
+      
+      if (!draftCollapsed) {
+        draftTasks.forEach(task => {
+          draftElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
+    }
+
     // Add completed section if there are completed tasks
     const completedElements: React.ReactElement[] = [];
     if (completedTasks.length > 0) {
@@ -1108,6 +1180,7 @@ export const TaskTree = React.memo(function TaskTree({
         </Text>
         <Box flexDirection="column" marginTop={1}>
           {projectElements}
+          {draftElements}
           {completedElements}
         </Box>
       </Box>
@@ -1181,7 +1254,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Handle ungrouped tasks
     const ungroupedTasks = tasksByFeature.get('__ungrouped__');
     if (ungroupedTasks && ungroupedTasks.length > 0) {
-      const ungroupedActive = ungroupedTasks.filter(t => !isCompleted(t));
+      const ungroupedActive = ungroupedTasks.filter(t => !isCompleted(t) && !isDraft(t));
       
       if (ungroupedActive.length > 0) {
         // Add spacing before ungrouped section
@@ -1206,6 +1279,40 @@ export const TaskTree = React.memo(function TaskTree({
         featureElements.push(
           ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds)
         );
+      }
+    }
+
+    // Add draft section if there are draft tasks
+    const draftElements: React.ReactElement[] = [];
+    if (draftTasks.length > 0) {
+      draftElements.push(
+        <Box key="draft-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      draftElements.push(
+        <DraftHeader
+          key={DRAFT_HEADER_ID}
+          count={draftTasks.length}
+          collapsed={draftCollapsed}
+          isSelected={selectedId === DRAFT_HEADER_ID}
+        />
+      );
+      
+      if (!draftCollapsed) {
+        draftTasks.forEach(task => {
+          draftElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
       }
     }
 
@@ -1250,6 +1357,7 @@ export const TaskTree = React.memo(function TaskTree({
         </Text>
         <Box flexDirection="column" marginTop={1}>
           {featureElements}
+          {draftElements}
           {completedElements}
         </Box>
       </Box>
@@ -1293,6 +1401,43 @@ export const TaskTree = React.memo(function TaskTree({
     }
   });
 
+  // Add draft section if there are draft tasks
+  const draftElements: React.ReactElement[] = [];
+  if (draftTasks.length > 0) {
+    // Add spacing before draft section
+    draftElements.push(
+      <Box key="draft-spacer">
+        <Text> </Text>
+      </Box>
+    );
+    
+    // Draft header
+    draftElements.push(
+      <DraftHeader
+        key={DRAFT_HEADER_ID}
+        count={draftTasks.length}
+        collapsed={draftCollapsed}
+        isSelected={selectedId === DRAFT_HEADER_ID}
+      />
+    );
+    
+    // Render draft tasks as flat list when expanded
+    if (!draftCollapsed) {
+      draftTasks.forEach(task => {
+        draftElements.push(
+          <TaskRow
+            key={task.id}
+            task={task}
+            prefix="  "
+            isSelected={task.id === selectedId}
+            inCycle={false}
+            isReady={false}
+          />
+        );
+      });
+    }
+  }
+
   // Add completed section if there are completed tasks
   const completedElements: React.ReactElement[] = [];
   if (completedTasks.length > 0) {
@@ -1330,15 +1475,42 @@ export const TaskTree = React.memo(function TaskTree({
     }
   }
 
+  // Combine all elements for viewport slicing
+  const allElements = [...elements, ...draftElements, ...completedElements];
+  
+  // Apply viewport slicing if viewportHeight is provided
+  let visibleElements: React.ReactElement[];
+  let hasMoreAbove = false;
+  let hasMoreBelow = false;
+  
+  if (viewportHeight && viewportHeight > 0) {
+    const startIndex = scrollOffset;
+    const endIndex = scrollOffset + viewportHeight;
+    visibleElements = allElements.slice(startIndex, endIndex);
+    hasMoreAbove = startIndex > 0;
+    hasMoreBelow = endIndex < allElements.length;
+  } else {
+    visibleElements = allElements;
+  }
+
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold underline>
-        Tasks ({tasks.length})
-      </Text>
-      <Box flexDirection="column" marginTop={1}>
-        {elements}
-        {completedElements}
+      <Box>
+        <Text bold underline>
+          Tasks ({tasks.length})
+        </Text>
+        {hasMoreAbove && (
+          <Text dimColor> ↑{scrollOffset} more</Text>
+        )}
       </Box>
+      <Box flexDirection="column" marginTop={1}>
+        {visibleElements}
+      </Box>
+      {hasMoreBelow && (
+        <Box>
+          <Text dimColor>↓{allElements.length - scrollOffset - (viewportHeight || 0)} more</Text>
+        </Box>
+      )}
     </Box>
   );
 });

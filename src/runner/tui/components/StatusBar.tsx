@@ -50,7 +50,9 @@ export const StatusBar = React.memo(function StatusBar({
     : false;
 
   // If multi-project mode, render tabs on separate row above stats
-  if (isMultiProject && activeProject && onSelectProject) {
+  // Only check isMultiProject - activeProject defaults to 'all' if undefined
+  if (isMultiProject && onSelectProject) {
+    const effectiveActiveProject = activeProject || 'all';
     return (
       <Box flexDirection="column">
         {/* Tabs row */}
@@ -62,7 +64,7 @@ export const StatusBar = React.memo(function StatusBar({
         >
           <ProjectTabs
             projects={projects}
-            activeProject={activeProject}
+            activeProject={effectiveActiveProject}
             onSelectProject={onSelectProject}
             statsByProject={statsByProject}
             pausedProjects={pausedProjects}

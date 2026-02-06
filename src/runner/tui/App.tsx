@@ -546,7 +546,7 @@ export function App({
       <StatusBar
         projectId={isMultiProject && activeProject === 'all' ? `${projects.length} projects` : (activeProject || config.project || 'brain-runner')}
         projects={isMultiProject ? projects : undefined}
-        activeProject={isMultiProject ? activeProject : undefined}
+        activeProject={isMultiProject ? (activeProject || 'all') : undefined}
         onSelectProject={isMultiProject ? setActiveProject : undefined}
         stats={stats}
         statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}

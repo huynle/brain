@@ -421,8 +421,10 @@ export function parseFrontmatter(content: string): {
   const frontmatter: Record<string, unknown> = {};
   const tags: string[] = [];
   const dependsOn: string[] = [];
+  const featureDependsOn: string[] = [];
   let inTags = false;
   let inDependsOn = false;
+  let inFeatureDependsOn = false;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -468,6 +470,27 @@ export function parseFrontmatter(content: string): {
     if (priorityMatch) {
       frontmatter.priority = priorityMatch[1];
       inTags = false;
+      inFeatureDependsOn = false;
+      continue;
+    }
+
+    // Handle feature_id
+    const featureIdMatch = line.match(/^feature_id:\s*(.+)$/);
+    if (featureIdMatch) {
+      frontmatter.feature_id = parseYamlStringValue(featureIdMatch[1]);
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      continue;
+    }
+
+    // Handle feature_priority
+    const featurePriorityMatch = line.match(/^feature_priority:\s*(\w+)\s*$/);
+    if (featurePriorityMatch) {
+      frontmatter.feature_priority = featurePriorityMatch[1];
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
       continue;
     }
 
@@ -547,6 +570,15 @@ export function parseFrontmatter(content: string): {
     if (line.match(/^depends_on:\s*$/)) {
       inDependsOn = true;
       inTags = false;
+      inFeatureDependsOn = false;
+      continue;
+    }
+
+    // Handle feature_depends_on array
+    if (line.match(/^feature_depends_on:\s*$/)) {
+      inFeatureDependsOn = true;
+      inTags = false;
+      inDependsOn = false;
       continue;
     }
 
@@ -569,6 +601,16 @@ export function parseFrontmatter(content: string): {
         inDependsOn = false;
       }
     }
+
+    if (inFeatureDependsOn) {
+      const depMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (depMatch) {
+        featureDependsOn.push(parseYamlStringValue(depMatch[1]));
+      } else if (!line.match(/^\s/)) {
+        // No longer indented, exit feature_depends_on section
+        inFeatureDependsOn = false;
+      }
+    }
   }
 
   if (tags.length > 0) {
@@ -577,6 +619,10 @@ export function parseFrontmatter(content: string): {
 
   if (dependsOn.length > 0) {
     frontmatter.depends_on = dependsOn;
+  }
+
+  if (featureDependsOn.length > 0) {
+    frontmatter.feature_depends_on = featureDependsOn;
   }
 
   // Handle multi-line user_original_request (literal block scalar)
@@ -772,6 +818,19 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
     }
   }
 
+  // Feature group fields
+  if (fm.feature_id) lines.push(`feature_id: ${escapeYamlValue(fm.feature_id as string)}`);
+  if (fm.feature_priority) lines.push(`feature_priority: ${fm.feature_priority}`);
+
+  // feature_depends_on array
+  if (Array.isArray(fm.feature_depends_on) && fm.feature_depends_on.length > 0) {
+    lines.push("feature_depends_on:");
+    for (const dep of fm.feature_depends_on) {
+      const escaped = String(dep).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      lines.push(`  - "${escaped}"`);
+    }
+  }
+
   // Execution context fields
   if (fm.workdir) lines.push(`workdir: ${escapeYamlValue(fm.workdir as string)}`);
   if (fm.worktree) lines.push(`worktree: ${escapeYamlValue(fm.worktree as string)}`);
@@ -794,6 +853,10 @@ export interface GenerateFrontmatterOptions {
   projectId?: string;
   name?: string;
   priority?: Priority;
+  // Feature group fields for task grouping
+  feature_id?: string;
+  feature_priority?: Priority;
+  feature_depends_on?: string[];
   // Execution context for tasks
   workdir?: string;
   worktree?: string;
@@ -836,6 +899,21 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.projectId) {
     lines.push(`projectId: ${escapeYamlValue(options.projectId)}`);
+  }
+
+  // Feature group fields
+  if (options.feature_id) {
+    lines.push(`feature_id: ${escapeYamlValue(options.feature_id)}`);
+  }
+  if (options.feature_priority) {
+    lines.push(`feature_priority: ${options.feature_priority}`);
+  }
+  if (options.feature_depends_on && options.feature_depends_on.length > 0) {
+    lines.push("feature_depends_on:");
+    for (const dep of options.feature_depends_on) {
+      const escaped = String(dep).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      lines.push(`  - "${escaped}"`);
+    }
   }
 
   // Execution context for tasks

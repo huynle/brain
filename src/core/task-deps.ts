@@ -11,6 +11,12 @@ import type {
   TaskClassification,
   DependencyResult,
 } from "./types";
+import {
+  computeFeatures,
+  resolveFeatureDependencies,
+  getReadyFeatures,
+  sortFeaturesByPriority,
+} from "./feature-service";
 
 // =============================================================================
 // Lookup Map Builders
@@ -293,9 +299,45 @@ export function getBlockedTasks(result: DependencyResult): ResolvedTask[] {
 }
 
 /**
- * Get the next task to execute (highest priority ready task)
+ * Get the next task to execute with feature-based ordering
+ *
+ * Priority order:
+ * 1. Tasks in "ready" features (sorted by feature priority)
+ * 2. Ungrouped ready tasks (no feature_id)
+ *
+ * Within a ready feature, normal task priority/dependency rules apply.
+ * Tasks in "waiting" or "blocked" features are skipped.
  */
 export function getNextTask(result: DependencyResult): ResolvedTask | null {
-  const ready = getReadyTasks(result);
-  return ready.length > 0 ? ready[0] : null;
+  // Get all ready tasks
+  const allReady = getReadyTasks(result);
+  if (allReady.length === 0) return null;
+
+  // Compute features from all tasks (not just ready ones)
+  const features = computeFeatures(result.tasks);
+  if (features.length === 0) {
+    // No features defined, fall back to ungrouped ready tasks
+    return allReady[0];
+  }
+
+  // Resolve feature dependencies
+  const resolvedFeatures = resolveFeatureDependencies(features);
+
+  // Get ready features sorted by priority
+  const readyFeatures = getReadyFeatures(resolvedFeatures);
+
+  // For each ready feature, find ready tasks within it (sorted by priority)
+  for (const feature of readyFeatures) {
+    const featureReadyTasks = allReady.filter(
+      (t) => t.feature_id === feature.id
+    );
+    if (featureReadyTasks.length > 0) {
+      // Already sorted by priority from getReadyTasks -> sortByPriority
+      return featureReadyTasks[0];
+    }
+  }
+
+  // Fall back to ungrouped ready tasks (no feature_id)
+  const ungroupedReady = allReady.filter((t) => !t.feature_id);
+  return ungroupedReady.length > 0 ? ungroupedReady[0] : null;
 }

@@ -608,9 +608,9 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
-    if (!request.status && !request.title && !request.append && !request.note) {
+    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, append, note"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on"
       );
     }
 
@@ -629,6 +629,11 @@ export class BrainService {
     updatedFrontmatter.title = newTitle;
     updatedFrontmatter.status = newStatus;
 
+    // Update depends_on if provided
+    if (request.depends_on !== undefined) {
+      updatedFrontmatter.depends_on = request.depends_on;
+    }
+
     // Filter out status-tags from tags array (status is in status: field, not tags)
     if (Array.isArray(updatedFrontmatter.tags)) {
       updatedFrontmatter.tags = (updatedFrontmatter.tags as string[]).filter(
@@ -638,22 +643,30 @@ export class BrainService {
 
     const newFrontmatter = serializeFrontmatter(updatedFrontmatter);
 
-    // Build new body
-    let newBody = body;
+    // Build new body - full content replacement takes precedence
+    let newBody: string;
+    
+    if (request.content !== undefined) {
+      // Full content replacement - used by external editor workflow
+      newBody = request.content;
+    } else {
+      // Incremental updates (append, notes, status changes)
+      newBody = body;
 
-    if (request.status && request.status !== oldStatus) {
-      const timestamp = new Date().toISOString().split("T")[0];
-      const statusNote = request.note
-        ? `\n\n---\n*Status changed to **${newStatus}** on ${timestamp}: ${request.note}*`
-        : `\n\n---\n*Status changed to **${newStatus}** on ${timestamp}*`;
-      newBody += statusNote;
-    } else if (request.note) {
-      const timestamp = new Date().toISOString().split("T")[0];
-      newBody += `\n\n---\n*Note (${timestamp}): ${request.note}*`;
-    }
+      if (request.status && request.status !== oldStatus) {
+        const timestamp = new Date().toISOString().split("T")[0];
+        const statusNote = request.note
+          ? `\n\n---\n*Status changed to **${newStatus}** on ${timestamp}: ${request.note}*`
+          : `\n\n---\n*Status changed to **${newStatus}** on ${timestamp}*`;
+        newBody += statusNote;
+      } else if (request.note) {
+        const timestamp = new Date().toISOString().split("T")[0];
+        newBody += `\n\n---\n*Note (${timestamp}): ${request.note}*`;
+      }
 
-    if (request.append) {
-      newBody += `\n\n${request.append}`;
+      if (request.append) {
+        newBody += `\n\n${request.append}`;
+      }
     }
 
     // Write updated file

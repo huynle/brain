@@ -220,6 +220,38 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Get full entry details including content.
+   * Used by external editor workflow to fetch content before editing.
+   */
+  async getEntry(taskPath: string): Promise<{ content: string; path: string; title: string }> {
+    const encodedPath = encodeURIComponent(taskPath);
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = await response.json() as { content: string; path: string; title: string };
+    return data;
+  }
+
+  /**
+   * Replace the full content of an entry.
+   * Used by external editor workflow to save edited content back.
+   */
+  async updateEntryContent(taskPath: string, content: string): Promise<void> {
+    const encodedPath = encodeURIComponent(taskPath);
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}`, {
+      method: "PATCH",
+      body: JSON.stringify({ content }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+  }
+
   // ========================================
   // Task Claiming
   // ========================================

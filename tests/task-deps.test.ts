@@ -599,6 +599,171 @@ describe("getNextTask", () => {
 
     expect(next).toBeNull();
   });
+
+  // Feature-based ordering tests
+  test("prioritizes tasks in ready features over ungrouped tasks", () => {
+    const tasks = [
+      // Ungrouped high-priority task
+      createTask({ id: "ungrouped", status: "pending", priority: "high", depends_on: [] }),
+      // Featured medium-priority task
+      createTask({
+        id: "featured",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "auth",
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Featured task should be selected before ungrouped
+    expect(next?.id).toBe("featured");
+  });
+
+  test("prioritizes high-priority features over low-priority features", () => {
+    const tasks = [
+      createTask({
+        id: "low-feature-task",
+        status: "pending",
+        priority: "low",
+        depends_on: [],
+        feature_id: "low-feature",
+      }),
+      createTask({
+        id: "high-feature-task",
+        status: "pending",
+        priority: "high",
+        depends_on: [],
+        feature_id: "high-feature",
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Task from high-priority feature should be selected
+    expect(next?.id).toBe("high-feature-task");
+  });
+
+  test("skips tasks in waiting features", () => {
+    const tasks = [
+      // Auth feature (blocking payments)
+      createTask({
+        id: "auth-task",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "auth",
+      }),
+      // Payments feature depends on auth
+      createTask({
+        id: "payments-task",
+        status: "pending",
+        priority: "high", // Higher priority but feature is waiting
+        depends_on: [],
+        feature_id: "payments",
+        feature_depends_on: ["auth"],
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Auth task should be selected (payments feature is waiting on auth)
+    expect(next?.id).toBe("auth-task");
+  });
+
+  test("falls back to ungrouped tasks when no featured tasks ready", () => {
+    const tasks = [
+      // All featured tasks are in waiting features
+      createTask({
+        id: "featured-waiting",
+        status: "pending",
+        priority: "high",
+        depends_on: ["blocker"],
+        feature_id: "blocked-feature",
+      }),
+      createTask({
+        id: "blocker",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Ungrouped blocker task should be selected
+    expect(next?.id).toBe("blocker");
+  });
+
+  test("respects task priority within a ready feature", () => {
+    const tasks = [
+      createTask({
+        id: "low-task",
+        status: "pending",
+        priority: "low",
+        depends_on: [],
+        feature_id: "auth",
+      }),
+      createTask({
+        id: "high-task",
+        status: "pending",
+        priority: "high",
+        depends_on: [],
+        feature_id: "auth",
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // High priority task within the feature should be selected
+    expect(next?.id).toBe("high-task");
+  });
+
+  test("handles circular feature dependencies by blocking those features", () => {
+    const tasks = [
+      createTask({
+        id: "a-task",
+        status: "pending",
+        priority: "high",
+        depends_on: [],
+        feature_id: "a",
+        feature_depends_on: ["b"],
+      }),
+      createTask({
+        id: "b-task",
+        status: "pending",
+        priority: "high",
+        depends_on: [],
+        feature_id: "b",
+        feature_depends_on: ["a"],
+      }),
+      // Ungrouped task should be selected
+      createTask({
+        id: "ungrouped",
+        status: "pending",
+        priority: "low",
+        depends_on: [],
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Circular features are blocked, fall back to ungrouped
+    expect(next?.id).toBe("ungrouped");
+  });
+
+  test("handles tasks without feature_id (backward compatible)", () => {
+    const tasks = [
+      createTask({ id: "a", status: "pending", priority: "high", depends_on: [] }),
+      createTask({ id: "b", status: "pending", priority: "medium", depends_on: [] }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Should work like before - highest priority ungrouped task
+    expect(next?.id).toBe("a");
+  });
 });
 
 // =============================================================================

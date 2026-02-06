@@ -4,13 +4,18 @@
  * Layout:
  * ┌─ project-name ──────────────────────────────────────────────────────────┐
  * │  ● 2 ready   ○ 3 waiting   ▶ 1 active   ✓ 2 done                        │
- * ├──────────────────────────────────────────────────────────────────────────┤
- * │ Tasks                              │ Logs                                │
- * │ ────────────────────────────────── │ ─────────────────────────────────── │
- * │ ● Setup base config                │ 17:30:45 INFO  Runner started       │
- * │ └─○ Create utils module            │ 17:30:46 INFO  Task started...      │
- * │   └─○ Create main entry            │ 17:30:47 DEBUG Polling...           │
- * │                                    │ 17:31:22 INFO  Task completed       │
+ * ├──────────────────────────┬───────────────────────────────────────────────┤
+ * │ Tasks                    │ Task Details                                  │
+ * │ ──────────────────────── │ ───────────────────────────────────────────── │
+ * │ ● Setup base config      │ Title: Setup base config                      │
+ * │ └─○ Create utils module  │ Status: pending (ready)                       │
+ * │   └─○ Create main entry  │ Priority: high                                │
+ * ├──────────────────────────┴───────────────────────────────────────────────┤
+ * │ Logs                                                                     │
+ * │ ───────────────────────────────────────────────────────────────────────  │
+ * │ 17:30:45 INFO  Runner started                                            │
+ * │ 17:30:46 INFO  Task started...                                           │
+ * │ 17:30:47 DEBUG Polling...                                                │
  * ├──────────────────────────────────────────────────────────────────────────┤
  * │ ↑↓/j/k Navigate  Enter: Details  Tab: Switch  r: Refresh  q: Quit       │
  * └──────────────────────────────────────────────────────────────────────────┘
@@ -138,8 +143,10 @@ export function App({
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
 
   // Calculate dynamic maxLines for log viewer based on terminal height
-  // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders (2 lines) + header (1 line) + task detail (~5 lines)
-  const logMaxLines = Math.max(5, terminalRows - 12);
+  // New layout: logs at bottom take ~40% of available height
+  // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders (4 lines for top row, 2 for bottom)
+  const topRowHeight = Math.floor((terminalRows - 6) * 0.6); // ~60% for top row
+  const logMaxLines = Math.max(5, terminalRows - 6 - topRowHeight - 2); // remaining height minus log panel chrome
   
   // Reset scroll offset when new logs arrive and we're at the bottom
   useEffect(() => {
@@ -569,47 +576,47 @@ export function App({
         pausedProjects={pausedProjects}
       />
 
-      {/* Main content area: Tasks (left) + Logs/Details (right) */}
-      <Box flexGrow={1} flexDirection="row">
-        {/* Left panel: Task Tree */}
-        <Box
-          width="50%"
-          borderStyle="single"
-          borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
-          flexDirection="column"
-        >
-          <TaskTree
-            tasks={tasks}
-            selectedId={selectedTaskId}
-            onSelect={setSelectedTaskId}
-            completedCollapsed={completedCollapsed}
-            onToggleCompleted={handleToggleCompleted}
-            groupByProject={isMultiProject && activeProject === 'all'}
-          />
-        </Box>
-
-        {/* Right panel: Logs (top) + Task Detail (bottom) */}
-        <Box
-          width="50%"
-          borderStyle="single"
-          borderColor={focusedPanel === 'logs' ? 'cyan' : 'gray'}
-          flexDirection="column"
-        >
-          {/* Log viewer takes most of the space */}
-          <Box flexGrow={1}>
-            <LogViewer 
-              logs={logs} 
-              maxLines={logMaxLines} 
-              showProjectPrefix={isMultiProject}
-              isFocused={focusedPanel === 'logs'}
-              scrollOffset={logScrollOffset}
-              filterByTaskId={selectedTaskId}
-              isFiltering={filterLogsByTask}
+      {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
+      <Box flexGrow={1} flexDirection="column">
+        {/* Top row: Task Tree (left) + Task Detail (right) */}
+        <Box height={topRowHeight} flexDirection="row">
+          {/* Left panel: Task Tree */}
+          <Box
+            width="50%"
+            borderStyle="single"
+            borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
+            flexDirection="column"
+          >
+            <TaskTree
+              tasks={tasks}
+              selectedId={selectedTaskId}
+              onSelect={setSelectedTaskId}
+              completedCollapsed={completedCollapsed}
+              onToggleCompleted={handleToggleCompleted}
+              groupByProject={isMultiProject && activeProject === 'all'}
             />
           </Box>
 
-          {/* Task detail at bottom of right panel */}
-          <TaskDetail task={selectedTask} />
+          {/* Right panel: Task Detail */}
+          <Box
+            width="50%"
+            flexDirection="column"
+          >
+            <TaskDetail task={selectedTask} />
+          </Box>
+        </Box>
+
+        {/* Bottom row: Logs (full width) */}
+        <Box flexGrow={1}>
+          <LogViewer 
+            logs={logs} 
+            maxLines={logMaxLines} 
+            showProjectPrefix={isMultiProject}
+            isFocused={focusedPanel === 'logs'}
+            scrollOffset={logScrollOffset}
+            filterByTaskId={selectedTaskId}
+            isFiltering={filterLogsByTask}
+          />
         </Box>
       </Box>
 

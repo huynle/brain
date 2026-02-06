@@ -150,4 +150,6 @@ export interface AppProps {
   getPausedProjects?: () => string[];
   /** Callback to update a task's status */
   onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
+  /** Callback to edit a task in external editor. Returns new content or null if cancelled. */
+  onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
 }

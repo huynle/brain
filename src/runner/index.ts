@@ -21,7 +21,7 @@ import { spawn } from "child_process";
 import { existsSync, readFileSync, watchFile, unwatchFile } from "fs";
 import { join } from "path";
 import { getRunnerConfig, loadConfig } from "./config";
-import { ApiClient, getApiClient } from "./api-client";
+import { ApiClient, getApiClient, type ApiFeature } from "./api-client";
 import { StateManager } from "./state-manager";
 import { getLogger, type LogLevel } from "./logger";
 import { TaskRunner, getTaskRunner, resetTaskRunner } from "./task-runner";
@@ -36,6 +36,7 @@ import type { ResolvedTask } from "../core/types";
 interface ParsedArgs {
   command: string;
   projectId: string;
+  featureId?: string;
   options: CLIOptions;
 }
 
@@ -64,6 +65,9 @@ interface CLIOptions {
   // Misc
   help: boolean;
   verbose: boolean;
+  
+  // Features command
+  ready: boolean;
 }
 
 // =============================================================================
@@ -85,6 +89,8 @@ Commands:
   ready [projectId]     List ready tasks
   waiting [projectId]   List waiting tasks
   blocked [projectId]   List blocked tasks
+  features [projectId] [featureId]
+                        List features or show feature details
   logs                  View runner logs
 
 Options:
@@ -104,12 +110,16 @@ Options:
   --no-resume           Skip interrupted tasks
   -v, --verbose         Enable verbose logging
   -h, --help            Show this help message
+  --ready               Filter to ready features only (features command)
 
 Examples:
   brain-runner start my-project -f
   brain-runner start all --max-parallel 5
   brain-runner run-one my-project --dry-run
   brain-runner ready my-project
+  brain-runner features my-project
+  brain-runner features my-project --ready
+  brain-runner features my-project my-feature-id
   brain-runner logs -f
 `;
 
@@ -140,10 +150,12 @@ function parseArgs(argv: string[]): ParsedArgs {
     run: false,
     help: false,
     verbose: false,
+    ready: false,
   };
 
   let command = "";
   let projectId = DEFAULT_PROJECT_ID;
+  let featureId: string | undefined;
   let i = 0;
 
   while (i < args.length) {
@@ -252,6 +264,13 @@ function parseArgs(argv: string[]): ParsedArgs {
       continue;
     }
 
+    // Ready flag (for features command)
+    if (arg === "--ready") {
+      options.ready = true;
+      i++;
+      continue;
+    }
+
     // Logs follow flag
     if (arg === "-f" && command === "logs") {
       options.follow = true;
@@ -265,6 +284,9 @@ function parseArgs(argv: string[]): ParsedArgs {
         command = arg;
       } else if (projectId === DEFAULT_PROJECT_ID) {
         projectId = arg;
+      } else if (command === "features" && !featureId) {
+        // Third positional for features command is featureId
+        featureId = arg;
       }
     }
 
@@ -276,7 +298,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     command = "help";
   }
 
-  return { command, projectId, options };
+  return { command, projectId, featureId, options };
 }
 
 // =============================================================================
@@ -567,6 +589,40 @@ async function handleBlocked(projectId: string, _options: CLIOptions): Promise<n
   }
 }
 
+async function handleFeatures(
+  projectId: string,
+  featureId: string | undefined,
+  options: CLIOptions
+): Promise<number> {
+  const apiClient = getApiClient();
+
+  try {
+    // If featureId is provided, show detailed view
+    if (featureId) {
+      const feature = await apiClient.getFeature(projectId, featureId);
+      if (!feature) {
+        console.log(`\nFeature not found: ${featureId}`);
+        return 1;
+      }
+      printFeatureDetail(feature);
+      return 0;
+    }
+
+    // List features, optionally filtered to ready only
+    if (options.ready) {
+      const features = await apiClient.getReadyFeatures(projectId);
+      printFeatureList("Ready Features", features);
+    } else {
+      const response = await apiClient.getFeatures(projectId);
+      printFeatureList("All Features", response.features, response.stats);
+    }
+    return 0;
+  } catch (error) {
+    getLogger().error("Failed to list features", { projectId, error: String(error) });
+    return 1;
+  }
+}
+
 async function handleLogs(options: CLIOptions): Promise<number> {
   const logger = getLogger();
   const logFile = logger.getLogFilePath();
@@ -635,12 +691,96 @@ function printTaskList(title: string, tasks: ResolvedTask[]): void {
   console.log("");
 }
 
+function printFeatureList(
+  title: string,
+  features: ApiFeature[],
+  stats?: { total: number; ready: number; waiting: number; blocked: number }
+): void {
+  console.log(`\n${title} (${features.length})`);
+  if (stats) {
+    console.log(`  Ready: ${stats.ready} | Waiting: ${stats.waiting} | Blocked: ${stats.blocked}`);
+  }
+  console.log("─".repeat(60));
+
+  if (features.length === 0) {
+    console.log("  No features found");
+    console.log("");
+    return;
+  }
+
+  for (const feature of features) {
+    const taskStats = feature.task_stats;
+    const taskStr = `${taskStats.completed}/${taskStats.total} tasks`;
+    const statusIcon = getStatusIcon(feature.status);
+    
+    console.log(`  ${statusIcon} [${feature.priority.padEnd(6)}] ${feature.id}`);
+    console.log(`           Status: ${feature.status} | ${taskStr}`);
+    
+    if (feature.blocked_by_features.length > 0) {
+      console.log(`           Blocked by: ${feature.blocked_by_features.join(", ")}`);
+    }
+    if (feature.waiting_on_features.length > 0) {
+      console.log(`           Waiting on: ${feature.waiting_on_features.join(", ")}`);
+    }
+  }
+
+  console.log("");
+}
+
+function printFeatureDetail(feature: ApiFeature): void {
+  console.log(`\nFeature: ${feature.id}`);
+  console.log("─".repeat(60));
+  console.log(`  Priority:       ${feature.priority}`);
+  console.log(`  Status:         ${feature.status}`);
+  console.log(`  Classification: ${feature.classification}`);
+  console.log("");
+  console.log("  Task Stats:");
+  console.log(`    Total:       ${feature.task_stats.total}`);
+  console.log(`    Completed:   ${feature.task_stats.completed}`);
+  console.log(`    In Progress: ${feature.task_stats.in_progress}`);
+  console.log(`    Pending:     ${feature.task_stats.pending}`);
+  console.log(`    Blocked:     ${feature.task_stats.blocked}`);
+  
+  if (feature.blocked_by_features.length > 0) {
+    console.log("");
+    console.log("  Blocked by Features:");
+    for (const blockerId of feature.blocked_by_features) {
+      console.log(`    - ${blockerId}`);
+    }
+  }
+  
+  if (feature.waiting_on_features.length > 0) {
+    console.log("");
+    console.log("  Waiting on Features:");
+    for (const waitId of feature.waiting_on_features) {
+      console.log(`    - ${waitId}`);
+    }
+  }
+  
+  console.log("");
+}
+
+function getStatusIcon(status: string): string {
+  switch (status) {
+    case "ready":
+      return "●"; // Green dot
+    case "waiting":
+      return "○"; // Empty circle
+    case "blocked":
+      return "✕"; // X mark
+    case "completed":
+      return "✓"; // Check mark
+    default:
+      return "?";
+  }
+}
+
 // =============================================================================
 // Main Entry Point
 // =============================================================================
 
 async function main(): Promise<number> {
-  const { command, projectId, options } = parseArgs(process.argv);
+  const { command, projectId, featureId, options } = parseArgs(process.argv);
 
   // Set log level based on verbose flag
   if (options.verbose) {
@@ -678,6 +818,9 @@ async function main(): Promise<number> {
 
     case "blocked":
       return handleBlocked(projectId, options);
+
+    case "features":
+      return handleFeatures(projectId, featureId, options);
 
     case "logs":
       return handleLogs(options);

@@ -71,6 +71,23 @@ describe("computeFeatures", () => {
     expect(features[0].tasks).toHaveLength(1);
   });
 
+  it("returns empty array for empty task list", () => {
+    const features = computeFeatures([]);
+
+    expect(features).toHaveLength(0);
+  });
+
+  it("returns empty array when all tasks lack feature_id", () => {
+    const tasks = [
+      mockTask({ id: "t1" }), // No feature_id
+      mockTask({ id: "t2" }), // No feature_id
+    ];
+
+    const features = computeFeatures(tasks);
+
+    expect(features).toHaveLength(0);
+  });
+
   it("uses highest priority from any task", () => {
     const tasks = [
       mockTask({ id: "t1", feature_id: "auth", priority: "low" }),
@@ -146,6 +163,12 @@ describe("computeFeatureStatus", () => {
 });
 
 describe("resolveFeatureDependencies", () => {
+  it("returns empty array for empty feature list", () => {
+    const resolved = resolveFeatureDependencies([]);
+
+    expect(resolved).toHaveLength(0);
+  });
+
   it("classifies features with no deps as ready", () => {
     const tasks = [mockTask({ id: "t1", feature_id: "auth", status: "pending" })];
     const features = computeFeatures(tasks);
@@ -331,6 +354,137 @@ describe("getReadyFeatures", () => {
 
     expect(ready).toHaveLength(1);
     expect(ready[0].id).toBe("pending");
+  });
+
+  it("returns empty array when no ready features", () => {
+    const tasks = [
+      mockTask({
+        id: "t1",
+        feature_id: "waiting",
+        status: "pending",
+        feature_depends_on: ["other"],
+      }),
+      mockTask({ id: "t2", feature_id: "other", status: "pending" }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const ready = getReadyFeatures(resolved);
+
+    // "other" is ready, "waiting" is waiting on "other"
+    expect(ready).toHaveLength(1);
+    expect(ready[0].id).toBe("other");
+  });
+});
+
+describe("getWaitingFeatures", () => {
+  it("returns features waiting on pending dependencies", () => {
+    const tasks = [
+      mockTask({ id: "t1", feature_id: "auth", status: "pending" }),
+      mockTask({
+        id: "t2",
+        feature_id: "payments",
+        status: "pending",
+        feature_depends_on: ["auth"],
+      }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const waiting = getWaitingFeatures(resolved);
+
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0].id).toBe("payments");
+  });
+
+  it("returns features waiting on in_progress dependencies", () => {
+    const tasks = [
+      mockTask({ id: "t1", feature_id: "auth", status: "in_progress" }),
+      mockTask({
+        id: "t2",
+        feature_id: "payments",
+        status: "pending",
+        feature_depends_on: ["auth"],
+      }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const waiting = getWaitingFeatures(resolved);
+
+    expect(waiting).toHaveLength(1);
+    expect(waiting[0].id).toBe("payments");
+    expect(waiting[0].waiting_on_features).toContain("auth");
+  });
+
+  it("returns empty array when no waiting features", () => {
+    const tasks = [
+      mockTask({ id: "t1", feature_id: "auth", status: "pending" }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const waiting = getWaitingFeatures(resolved);
+
+    expect(waiting).toHaveLength(0);
+  });
+});
+
+describe("getBlockedFeatures", () => {
+  it("returns features blocked by blocked dependencies", () => {
+    const tasks = [
+      mockTask({ id: "t1", feature_id: "auth", status: "blocked" }),
+      mockTask({
+        id: "t2",
+        feature_id: "payments",
+        status: "pending",
+        feature_depends_on: ["auth"],
+      }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const blocked = getBlockedFeatures(resolved);
+
+    expect(blocked).toHaveLength(1);
+    expect(blocked[0].id).toBe("payments");
+    expect(blocked[0].blocked_by_features).toContain("auth");
+  });
+
+  it("returns features in cycles as blocked", () => {
+    const tasks = [
+      mockTask({
+        id: "t1",
+        feature_id: "a",
+        status: "pending",
+        feature_depends_on: ["b"],
+      }),
+      mockTask({
+        id: "t2",
+        feature_id: "b",
+        status: "pending",
+        feature_depends_on: ["a"],
+      }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const blocked = getBlockedFeatures(resolved);
+
+    expect(blocked).toHaveLength(2);
+    expect(blocked.every((f) => f.in_cycle)).toBe(true);
+  });
+
+  it("returns empty array when no blocked features", () => {
+    const tasks = [
+      mockTask({ id: "t1", feature_id: "auth", status: "pending" }),
+    ];
+
+    const features = computeFeatures(tasks);
+    const resolved = resolveFeatureDependencies(features);
+    const blocked = getBlockedFeatures(resolved);
+
+    expect(blocked).toHaveLength(0);
   });
 });
 

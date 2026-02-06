@@ -211,13 +211,14 @@ export function registerBrainTools(server: McpServer): void {
   // brain_update
   // --------------------------------------------------------------------------
   server.registerTool("brain_update", {
-    description: "Update an existing brain entry's status, title, or append content.",
+    description: "Update an existing brain entry's status, title, dependencies, or append content.",
     inputSchema: {
       path: z.string().describe("Path to the entry to update"),
       status: z.enum(ENTRY_STATUSES).optional().describe("New status"),
       title: z.string().optional().describe("New title"),
       append: z.string().optional().describe("Content to append"),
       note: z.string().optional().describe("Short note to add"),
+      depends_on: z.array(z.string()).optional().describe("Task dependencies - list of task IDs or titles"),
     },
   }, async (args) => {
     try {

@@ -7,6 +7,7 @@
 
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getTaskService } from "../core/task-service";
+import { computeAndResolveFeatures } from "../core/feature-service";
 import type { TaskClaim } from "../core/types";
 import {
   ProjectIdSchema,
@@ -20,6 +21,9 @@ import {
   ClaimStatusResponseSchema,
   ErrorResponseSchema,
   ServiceUnavailableResponseSchema,
+  ComputedFeatureSchema,
+  FeatureListResponseSchema,
+  NotFoundResponseSchema,
 } from "./schemas";
 
 // =============================================================================
@@ -60,6 +64,18 @@ const TaskIdParamSchema = z.object({
     param: { name: "taskId", in: "path" },
     description: "Task identifier",
     example: "abc12def",
+  }),
+});
+
+const FeatureIdParamSchema = z.object({
+  projectId: ProjectIdSchema.openapi({
+    param: { name: "projectId", in: "path" },
+    example: "my-project",
+  }),
+  featureId: z.string().min(1).openapi({
+    param: { name: "featureId", in: "path" },
+    description: "Feature identifier",
+    example: "auth-system",
   }),
 });
 
@@ -319,6 +335,110 @@ const getClaimStatusRoute = createRoute({
       content: {
         "application/json": {
           schema: ClaimStatusResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// =============================================================================
+// Feature Route Definitions
+// =============================================================================
+
+// GET /:projectId/features - List all computed features with stats
+const listFeaturesRoute = createRoute({
+  method: "get",
+  path: "/{projectId}/features",
+  tags: ["Tasks"],
+  summary: "List all computed features",
+  description: "Returns all computed features with task statistics and dependency resolution",
+  request: {
+    params: ProjectIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "List of features with stats",
+      content: {
+        "application/json": {
+          schema: FeatureListResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable (zk CLI required)",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// GET /:projectId/features/ready - Get features ready for execution
+const getReadyFeaturesRoute = createRoute({
+  method: "get",
+  path: "/{projectId}/features/ready",
+  tags: ["Tasks"],
+  summary: "Get ready features",
+  description: "Returns features that are ready to execute (all feature dependencies satisfied)",
+  request: {
+    params: ProjectIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Ready features",
+      content: {
+        "application/json": {
+          schema: FeatureListResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// GET /:projectId/features/:featureId - Get single feature with its tasks
+const getFeatureRoute = createRoute({
+  method: "get",
+  path: "/{projectId}/features/{featureId}",
+  tags: ["Tasks"],
+  summary: "Get a single feature",
+  description: "Returns a specific feature with its tasks and dependency information",
+  request: {
+    params: FeatureIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Feature details",
+      content: {
+        "application/json": {
+          schema: z.object({
+            feature: ComputedFeatureSchema,
+          }).openapi("GetFeatureResponse"),
+        },
+      },
+    },
+    404: {
+      description: "Feature not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
         },
       },
     },
@@ -592,6 +712,132 @@ export function createTaskRoutes(): OpenAPIHono {
       claimedAt: new Date(claim.claimedAt).toISOString(),
       isStale: isClaimStale(claim),
     }, 200);
+  });
+
+  // ==========================================================================
+  // Feature Endpoints
+  // ==========================================================================
+
+  // GET /:projectId/features - List all computed features
+  tasks.openapi(listFeaturesRoute, async (c) => {
+    const { projectId } = c.req.valid("param");
+    const taskService = getTaskService();
+
+    try {
+      const result = await taskService.getTasksWithDependencies(projectId);
+      const featureResult = computeAndResolveFeatures(result.tasks);
+
+      return c.json({
+        features: featureResult.features.map((f) => ({
+          id: f.id,
+          priority: f.priority,
+          status: f.status,
+          classification: f.classification,
+          task_stats: f.task_stats,
+          blocked_by_features: f.blocked_by_features,
+          waiting_on_features: f.waiting_on_features,
+        })),
+        count: featureResult.features.length,
+        stats: featureResult.stats,
+      }, 200);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  // GET /:projectId/features/ready - Get ready features
+  tasks.openapi(getReadyFeaturesRoute, async (c) => {
+    const { projectId } = c.req.valid("param");
+    const taskService = getTaskService();
+
+    try {
+      const result = await taskService.getTasksWithDependencies(projectId);
+      const featureResult = computeAndResolveFeatures(result.tasks);
+      
+      // Filter to only ready features (not completed)
+      const readyFeatures = featureResult.features.filter(
+        (f) => f.classification === "ready" && f.status !== "completed"
+      );
+
+      return c.json({
+        features: readyFeatures.map((f) => ({
+          id: f.id,
+          priority: f.priority,
+          status: f.status,
+          classification: f.classification,
+          task_stats: f.task_stats,
+          blocked_by_features: f.blocked_by_features,
+          waiting_on_features: f.waiting_on_features,
+        })),
+        count: readyFeatures.length,
+      }, 200);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  // GET /:projectId/features/:featureId - Get single feature
+  tasks.openapi(getFeatureRoute, async (c) => {
+    const { projectId, featureId } = c.req.valid("param");
+    const taskService = getTaskService();
+
+    try {
+      const result = await taskService.getTasksWithDependencies(projectId);
+      const featureResult = computeAndResolveFeatures(result.tasks);
+      
+      const feature = featureResult.features.find((f) => f.id === featureId);
+      
+      if (!feature) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Feature '${featureId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      return c.json({
+        feature: {
+          id: feature.id,
+          priority: feature.priority,
+          status: feature.status,
+          classification: feature.classification,
+          task_stats: feature.task_stats,
+          blocked_by_features: feature.blocked_by_features,
+          waiting_on_features: feature.waiting_on_features,
+        },
+      }, 200);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
   });
 
   // ==========================================================================

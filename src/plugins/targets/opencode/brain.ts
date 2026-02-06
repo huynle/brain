@@ -413,6 +413,24 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Task dependencies - list of task IDs or titles that must be completed before this task."
             ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."
+            ),
+          feature_priority: tool.schema
+            .enum(["high", "medium", "low"])
+            .optional()
+            .describe(
+              "Priority level for the feature group. Determines execution order relative to other features."
+            ),
+          feature_depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe(
+              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."
+            ),
           global: tool.schema
             .boolean()
             .optional()
@@ -466,6 +484,10 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               // User intent for validation
               user_original_request:
                 args.type === "task" ? args.user_original_request : undefined,
+              // Feature grouping for tasks
+              feature_id: args.type === "task" ? args.feature_id : undefined,
+              feature_priority: args.type === "task" ? args.feature_priority : undefined,
+              feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";
@@ -1603,6 +1625,290 @@ Use this to see:
             return lines.join("\n");
           } catch (error) {
             return `Failed to list tasks: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_next
+      // ========================================
+      brain_task_next: tool({
+        description: `Get the next actionable task (highest priority ready task) with full content.
+
+Use this to quickly find what to work on next. Returns the complete task including:
+- Full markdown content for implementation
+- User's original request for validation
+- Dependency information
+
+If no ready tasks, shows current queue state.`,
+        args: {
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          try {
+            const proj = args.project || projectId;
+            
+            // Get next ready task from API
+            interface TaskNextResponse {
+              task: {
+                id: string;
+                title: string;
+                status: string;
+                priority?: string;
+                classification: string;
+                resolved_deps: string[];
+                waiting_on: string[];
+                blocked_by: string[];
+                user_original_request?: string;
+              } | null;
+              message?: string;
+            }
+            
+            const response = await apiRequest<TaskNextResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}/next`
+            );
+
+            // No ready task available
+            if (!response.task) {
+              // Get stats for context
+              interface TaskListResponse {
+                tasks: Array<{ classification: string; status: string }>;
+                stats?: {
+                  ready: number;
+                  waiting: number;
+                  blocked: number;
+                  completed: number;
+                  total: number;
+                };
+              }
+              
+              const statsResponse = await apiRequest<TaskListResponse>(
+                "GET",
+                `/tasks/${encodeURIComponent(proj)}`
+              );
+              
+              const stats = statsResponse.stats || {
+                ready: 0,
+                waiting: statsResponse.tasks.filter(t => t.classification === "waiting").length,
+                blocked: statsResponse.tasks.filter(t => t.classification === "blocked").length,
+                completed: statsResponse.tasks.filter(t => t.status === "completed").length,
+                total: statsResponse.tasks.length,
+              };
+
+              return `No ready tasks available.
+
+Current state:
+- ${stats.waiting} tasks waiting on dependencies
+- ${stats.blocked} tasks blocked
+- ${stats.completed} tasks completed
+
+Use \`brain_tasks\` to see the full task list and dependency status.`;
+            }
+
+            const task = response.task;
+            
+            // Get full entry content
+            const entry = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              content: string;
+              tags: string[];
+              user_original_request?: string;
+            }>("GET", `/entries/${task.id}`);
+
+            const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
+            const depsCount = task.resolved_deps?.length || 0;
+            
+            // Count tasks that depend on this one (reverse lookup not available, show resolved deps)
+            const lines: string[] = [];
+            lines.push(`## Next Task: ${entry.title}`);
+            lines.push("");
+            lines.push(`**ID:** \`${entry.id}\``);
+            lines.push(`**Path:** \`${entry.path}\``);
+            lines.push(`**Priority:** ${priority}`);
+            lines.push(`**Status:** ${entry.status}`);
+            lines.push("");
+            
+            // User's original request for validation
+            if (entry.user_original_request) {
+              lines.push("### User Original Request");
+              lines.push(`> ${entry.user_original_request.split('\n').join('\n> ')}`);
+              lines.push("");
+            }
+            
+            lines.push("### Quick Context");
+            if (depsCount > 0) {
+              lines.push(`- ${depsCount} dependencies (all satisfied)`);
+            } else {
+              lines.push("- No dependencies");
+            }
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push(entry.content);
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get next task: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_get
+      // ========================================
+      brain_task_get: tool({
+        description: `Get a specific task by ID with full dependency info, dependents list, and content.
+
+Use this to get detailed information about a specific task including:
+- Full markdown content for implementation
+- User's original request for validation  
+- Dependencies (what this task needs)
+- Dependents (what needs this task)
+- Classification (ready/waiting/blocked)`,
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric) or title"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          if (!args.taskId) {
+            return "Please provide a task ID or title";
+          }
+
+          try {
+            const proj = args.project || projectId;
+            
+            // Get all tasks to find the specific task and calculate dependents
+            interface TaskWithDeps {
+              id: string;
+              title: string;
+              path: string;
+              status: string;
+              priority?: string;
+              classification: string;
+              resolved_deps: string[];
+              waiting_on: string[];
+              blocked_by: string[];
+              dependsOn?: Array<{ id: string; title: string; status: string }>;
+            }
+            
+            interface TaskListResponse {
+              tasks: TaskWithDeps[];
+              count: number;
+            }
+            
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            // Find the task by ID or title
+            const taskId = args.taskId.toLowerCase();
+            const task = response.tasks.find(
+              t => t.id.toLowerCase() === taskId || 
+                   t.title.toLowerCase() === taskId.toLowerCase()
+            );
+
+            if (!task) {
+              // Try searching for partial match
+              const partialMatches = response.tasks.filter(
+                t => t.title.toLowerCase().includes(taskId) ||
+                     t.id.toLowerCase().includes(taskId)
+              );
+              
+              if (partialMatches.length > 0) {
+                const suggestions = partialMatches.slice(0, 5).map(
+                  t => `- ${t.title} (ID: ${t.id})`
+                ).join("\n");
+                return `Task not found: "${args.taskId}"\n\n**Did you mean:**\n${suggestions}`;
+              }
+              
+              return `Task not found: "${args.taskId}"\n\nUse \`brain_tasks\` to list all tasks.`;
+            }
+
+            // Calculate dependents - tasks that have this task in their resolved_deps
+            const dependents = response.tasks.filter(
+              t => t.resolved_deps?.includes(task.id)
+            ).map(t => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+            }));
+
+            // Get full entry content
+            const entry = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              content: string;
+              tags: string[];
+              user_original_request?: string;
+            }>("GET", `/entries/${task.id}`);
+
+            const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
+            
+            const lines: string[] = [];
+            lines.push(`## ${entry.title}`);
+            lines.push("");
+            lines.push(`**ID:** \`${entry.id}\``);
+            lines.push(`**Path:** \`${entry.path}\``);
+            lines.push(`**Priority:** ${priority}`);
+            lines.push(`**Status:** ${entry.status}`);
+            lines.push(`**Classification:** ${task.classification}`);
+            lines.push("");
+            
+            // Dependencies section
+            lines.push("### Dependencies (what this task needs)");
+            if (task.dependsOn && task.dependsOn.length > 0) {
+              for (const dep of task.dependsOn) {
+                const statusEmoji = dep.status === "completed" ? "✓" : dep.status === "in_progress" ? "⋯" : "○";
+                lines.push(`- ${statusEmoji} **${dep.title}** (\`${dep.id}\`) - ${dep.status}`);
+              }
+            } else {
+              lines.push("*No dependencies*");
+            }
+            lines.push("");
+            
+            // Dependents section
+            lines.push("### Dependents (what needs this task)");
+            if (dependents.length > 0) {
+              for (const dep of dependents) {
+                const statusEmoji = dep.status === "completed" ? "✓" : dep.status === "in_progress" ? "⋯" : "○";
+                lines.push(`- ${statusEmoji} **${dep.title}** (\`${dep.id}\`) - ${dep.status}`);
+              }
+            } else {
+              lines.push("*No tasks depend on this one*");
+            }
+            lines.push("");
+            
+            // User's original request
+            if (entry.user_original_request) {
+              lines.push("### User Original Request");
+              lines.push(`> ${entry.user_original_request.split('\n').join('\n> ')}`);
+              lines.push("");
+            }
+            
+            lines.push("---");
+            lines.push("");
+            lines.push(entry.content);
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get task: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       }),

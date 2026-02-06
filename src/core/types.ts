@@ -149,8 +149,10 @@ export interface CreateEntryResponse {
 export interface UpdateEntryRequest {
   status?: EntryStatus;
   title?: string;
+  content?: string; // Full content replacement (for external editor workflows)
   append?: string;
   note?: string;
+  depends_on?: string[];
 }
 
 export interface ListEntriesRequest {
@@ -284,6 +286,11 @@ export interface Task {
   git_remote: string | null;
   git_branch: string | null;
   user_original_request: string | null; // Verbatim user request for validation during task completion
+
+  // Feature grouping (optional)
+  feature_id?: string; // e.g., "auth-system", "payment-flow"
+  feature_priority?: Priority; // Priority for this feature
+  feature_depends_on?: string[]; // Feature IDs this feature depends on
 }
 
 // Task with resolved dependencies

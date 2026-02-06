@@ -159,12 +159,13 @@ export const CreateEntryResponseSchema = z.object({
 export const UpdateEntryRequestSchema = z.object({
   status: EntryStatusSchema.optional(),
   title: z.string().optional(),
+  content: z.string().optional().openapi({ description: "Full content replacement (for external editor workflows)" }),
   append: z.string().optional().openapi({ description: "Content to append to the entry" }),
   note: z.string().optional().openapi({ description: "Note to add to the entry" }),
   depends_on: z.array(z.string()).optional().openapi({ description: "Task dependencies - list of task IDs or titles" }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined,
-  { message: "At least one of status, title, append, note, or depends_on must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined,
+  { message: "At least one of status, title, content, append, note, or depends_on must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================

@@ -161,9 +161,10 @@ export const UpdateEntryRequestSchema = z.object({
   title: z.string().optional(),
   append: z.string().optional().openapi({ description: "Content to append to the entry" }),
   note: z.string().optional().openapi({ description: "Note to add to the entry" }),
+  depends_on: z.array(z.string()).optional().openapi({ description: "Task dependencies - list of task IDs or titles" }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.append !== undefined || data.note !== undefined,
-  { message: "At least one of status, title, append, or note must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined,
+  { message: "At least one of status, title, append, note, or depends_on must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -390,6 +391,10 @@ export const TaskSchema = z.object({
   worktree: z.string().nullable(),
   git_remote: z.string().nullable(),
   git_branch: z.string().nullable(),
+  // Feature grouping (optional)
+  feature_id: z.string().optional().openapi({ description: "Feature group identifier", example: "auth-system" }),
+  feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature" }),
+  feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
 }).openapi("Task");
 
 export const ResolvedTaskSchema = TaskSchema.extend({
@@ -465,3 +470,50 @@ export const ClaimStatusResponseSchema = z.object({
   claimedAt: z.string().optional(),
   isStale: z.boolean().optional(),
 }).openapi("ClaimStatusResponse");
+
+// =============================================================================
+// Feature Schemas
+// =============================================================================
+
+export const FeatureStatusSchema = z.enum(["pending", "in_progress", "completed", "blocked"]).openapi({
+  description: "Computed status of a feature based on its tasks",
+  example: "in_progress",
+});
+
+export const FeatureStatsSchema = z.object({
+  total: z.number().openapi({ description: "Total number of tasks in the feature" }),
+  pending: z.number().openapi({ description: "Number of pending tasks" }),
+  in_progress: z.number().openapi({ description: "Number of in-progress tasks" }),
+  completed: z.number().openapi({ description: "Number of completed tasks" }),
+  blocked: z.number().openapi({ description: "Number of blocked tasks" }),
+}).openapi("FeatureStats");
+
+export const ComputedFeatureSchema = z.object({
+  id: z.string().openapi({ description: "Feature identifier", example: "auth-system" }),
+  priority: PrioritySchema.openapi({ description: "Highest priority among feature tasks" }),
+  status: FeatureStatusSchema,
+  classification: z.enum(["ready", "waiting", "blocked"]).openapi({
+    description: "Feature classification based on dependency resolution",
+    example: "ready",
+  }),
+  task_stats: FeatureStatsSchema,
+  blocked_by_features: z.array(z.string()).openapi({
+    description: "Feature IDs blocking this feature",
+    example: ["payment-flow"],
+  }),
+  waiting_on_features: z.array(z.string()).openapi({
+    description: "Feature IDs this feature is waiting on",
+    example: ["user-model"],
+  }),
+}).openapi("ComputedFeature");
+
+export const FeatureListResponseSchema = z.object({
+  features: z.array(ComputedFeatureSchema),
+  count: z.number().openapi({ description: "Total number of features" }),
+  stats: z.object({
+    total: z.number(),
+    ready: z.number(),
+    waiting: z.number(),
+    blocked: z.number(),
+  }).optional().openapi({ description: "Aggregate statistics across all features" }),
+}).openapi("FeatureListResponse");

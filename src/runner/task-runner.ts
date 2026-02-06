@@ -468,7 +468,8 @@ export class TaskRunner {
         return;
       }
 
-      // Step 3: Get ready tasks from non-paused projects in parallel
+      // Step 3: Get next tasks from non-paused projects using feature-aware ordering
+      // Uses getNextTask() which respects feature dependencies and priorities
       const activeProjects = this.projects.filter(p => !this.pauseCache.has(p));
       if (activeProjects.length === 0) {
         // All projects are paused, skip fetching tasks
@@ -478,33 +479,79 @@ export class TaskRunner {
         return;
       }
 
-      const readyTasksResults = await Promise.allSettled(
-        activeProjects.map(async (projectId) => {
-          const tasks = await this.apiClient.getReadyTasks(projectId);
-          // Tag each task with its project ID for tracking
-          return tasks.map(task => ({ ...task, _pollProjectId: projectId }));
-        })
-      );
-
-      // Merge ready tasks from all projects (handle partial failures)
-      const allReadyTasks: (ResolvedTask & { _pollProjectId: string })[] = [];
-      for (const result of readyTasksResults) {
-        if (result.status === 'fulfilled') {
-          allReadyTasks.push(...result.value);
-        }
-      }
-
-      // Step 4: Filter out already running tasks
-      // Use composite key "projectId:taskId" to avoid collisions across projects
+      // Build set of already running task keys to filter out
       const runningKeys = new Set([
         ...this.processManager.getAll().map((info) => `${info.task.projectId}:${info.task.id}`),
         ...Array.from(this.tuiTasks.values()).map((task) => `${task.projectId}:${task.id}`),
       ]);
-      const availableTasks = allReadyTasks.filter(
-        (task) => !runningKeys.has(`${task._pollProjectId}:${task.id}`)
-      );
 
-      if (availableTasks.length === 0) {
+      // Step 4: Fill available slots using feature-ordered task selection
+      // For each slot, get the next task from each active project and pick the highest priority
+      const slotsAvailable = this.config.maxParallel - runningCount;
+      const tasksToStart: (ResolvedTask & { _pollProjectId: string })[] = [];
+
+      for (let slot = 0; slot < slotsAvailable; slot++) {
+        // Get next task from each active project (respects feature ordering)
+        const nextTaskResults = await Promise.allSettled(
+          activeProjects.map(async (projectId) => {
+            const task = await this.apiClient.getNextTask(projectId);
+            if (task) {
+              return { ...task, _pollProjectId: projectId };
+            }
+            return null;
+          })
+        );
+
+        // Collect valid next tasks
+        const candidateTasks: (ResolvedTask & { _pollProjectId: string })[] = [];
+        for (const result of nextTaskResults) {
+          if (result.status === 'fulfilled' && result.value) {
+            const task = result.value;
+            // Skip if already running or already queued to start
+            const key = `${task._pollProjectId}:${task.id}`;
+            if (!runningKeys.has(key)) {
+              candidateTasks.push(task);
+            }
+          }
+        }
+
+        if (candidateTasks.length === 0) {
+          // No more tasks available from any project
+          break;
+        }
+
+        // Pick the highest priority task across all projects
+        // Priority order: high (0) > medium (1) > low (2)
+        const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+        candidateTasks.sort((a, b) => {
+          const aPriority = priorityOrder[a.priority] ?? 1;
+          const bPriority = priorityOrder[b.priority] ?? 1;
+          if (aPriority !== bPriority) return aPriority - bPriority;
+          // Secondary: prefer tasks with feature_id (feature-grouped work)
+          if (a.feature_id && !b.feature_id) return -1;
+          if (!a.feature_id && b.feature_id) return 1;
+          // Tertiary: by created date (older first)
+          return (a.created || "").localeCompare(b.created || "");
+        });
+
+        const selectedTask = candidateTasks[0];
+        tasksToStart.push(selectedTask);
+        
+        // Mark as "running" for next iteration's filter
+        runningKeys.add(`${selectedTask._pollProjectId}:${selectedTask.id}`);
+
+        // Log feature context if task belongs to a feature
+        if (selectedTask.feature_id) {
+          this.logger.info("Selected task from feature", {
+            taskId: selectedTask.id,
+            title: selectedTask.title,
+            featureId: selectedTask.feature_id,
+            projectId: selectedTask._pollProjectId,
+          });
+        }
+      }
+
+      if (tasksToStart.length === 0) {
         if (isDebugEnabled()) {
           this.logger.debug("No available tasks to start", {
             projects: this.projects.length,
@@ -518,10 +565,7 @@ export class TaskRunner {
         return;
       }
 
-      // Step 5: Start tasks up to capacity (shared pool across all projects)
-      const slotsAvailable = this.config.maxParallel - runningCount;
-      const tasksToStart = availableTasks.slice(0, slotsAvailable);
-
+      // Step 5: Start the selected tasks
       for (const task of tasksToStart) {
         // Use the tagged project ID for claiming/spawning
         await this.claimAndSpawn(task, task._pollProjectId);
@@ -534,7 +578,7 @@ export class TaskRunner {
       const totalRunning = this.processManager.runningCount() + this.tuiTasks.size;
       this.emitEvent({
         type: "poll_complete",
-        readyCount: availableTasks.length,
+        readyCount: tasksToStart.length,
         runningCount: totalRunning,
       });
     } catch (error) {

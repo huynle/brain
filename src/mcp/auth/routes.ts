@@ -302,11 +302,13 @@ export function createOAuthRoutes(): Hono {
       scope,
     });
 
-    // Redirect with code
+    // Build redirect URL with code
     const params = new URLSearchParams({ code: authCode.code });
     if (state) params.set("state", state);
+    const finalRedirect = `${redirectUri}?${params.toString()}`;
 
-    return c.redirect(`${redirectUri}?${params.toString()}`);
+    // Return success page that auto-closes the tab
+    return c.html(renderSuccessPage(finalRedirect));
   });
 
   // ==========================================================================
@@ -544,6 +546,56 @@ function renderError(message: string): string {
     <h1>Authorization Error</h1>
     <p>${escapeHtml(message)}</p>
   </div>
+</body>
+</html>`;
+}
+
+/**
+ * Render success page that completes OAuth redirect and closes the tab
+ */
+function renderSuccessPage(redirectUrl: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Authorized - Brain MCP</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { 
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0a; color: #f5f5f5;
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 1rem;
+    }
+    .container {
+      background: #1a1a1a; border-radius: 12px; padding: 2rem;
+      max-width: 420px; width: 100%; border: 1px solid #333;
+      text-align: center;
+    }
+    .icon { font-size: 3rem; margin-bottom: 1rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.5rem; color: #10b981; }
+    p { color: #888; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">&#10003;</div>
+    <h1>Authorized!</h1>
+    <p>You can close this tab.</p>
+  </div>
+  <script>
+    // Complete the OAuth redirect in a hidden iframe, then close the tab
+    const iframe = document.createElement('iframe');
+    iframe.style.display = 'none';
+    iframe.src = ${JSON.stringify(redirectUrl)};
+    document.body.appendChild(iframe);
+    
+    // Try to close the tab after a brief delay
+    setTimeout(() => {
+      window.close();
+    }, 500);
+  </script>
 </body>
 </html>`;
 }

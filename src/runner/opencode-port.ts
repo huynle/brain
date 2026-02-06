@@ -171,8 +171,20 @@ export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus>
 
 /**
  * Check if a PID is still alive using signal 0.
+ * 
+ * SAFETY: PIDs <= 0 are dangerous on POSIX systems:
+ * - PID 0: signals the current process group
+ * - PID -1: signals ALL processes the user can signal (catastrophic!)
+ * - Negative PIDs: signal process groups
+ * 
+ * We guard against these to prevent accidental mass-kill scenarios.
  */
 export function isPidAlive(pid: number): boolean {
+  // Guard against dangerous PIDs that could affect multiple processes
+  if (pid <= 0) {
+    return false;
+  }
+  
   try {
     // Sending signal 0 checks if process exists without actually signaling
     process.kill(pid, 0);

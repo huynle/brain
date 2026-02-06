@@ -59,6 +59,8 @@ export interface DashboardOptions {
   onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
   /** Callback to edit a task in external editor. Returns new content or null if cancelled. */
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
+  /** Callback to get the actual count of running OpenCode processes */
+  getRunningProcessCount?: () => number;
 }
 
 export interface DashboardHandle {
@@ -132,6 +134,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       getPausedProjects={options.getPausedProjects}
       onUpdateStatus={options.onUpdateStatus}
       onEditTask={options.onEditTask}
+      getRunningProcessCount={options.getRunningProcessCount}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

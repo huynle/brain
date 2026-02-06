@@ -274,6 +274,48 @@ describe("SignalHandler", () => {
       // Should have killed the process
       expect(exitCode).toBe(0);
     });
+
+    it("calls onShutdown callback before killing processes", async () => {
+      const callOrder: string[] = [];
+      
+      const optionsWithOnShutdown: SignalHandlerOptions = {
+        ...options,
+        onShutdown: async () => {
+          callOrder.push("onShutdown");
+        },
+      };
+
+      handler = new SignalHandler(optionsWithOnShutdown, processManager);
+      handler.register();
+
+      // Spawn a short process
+      const proc = Bun.spawn(["sleep", "0.1"]);
+      const task = createSampleTask();
+      processManager.add(task.id, task, proc);
+
+      await handler.shutdown("SIGTERM");
+
+      // onShutdown should be called
+      expect(callOrder).toContain("onShutdown");
+    });
+
+    it("continues shutdown even if onShutdown throws", async () => {
+      const optionsWithFailingShutdown: SignalHandlerOptions = {
+        ...options,
+        onShutdown: async () => {
+          throw new Error("Shutdown callback failed");
+        },
+      };
+
+      handler = new SignalHandler(optionsWithFailingShutdown, processManager);
+      handler.register();
+
+      // Should not throw, should continue with shutdown
+      const exitCode = await handler.shutdown("manual");
+      
+      expect(exitCode).toBe(0);
+      expect(handler.isShuttingDown()).toBe(true);
+    });
   });
 
   describe("getShutdownState", () => {

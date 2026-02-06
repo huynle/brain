@@ -20,6 +20,9 @@ describe("config", () => {
     delete process.env.RUNNER_POLL_INTERVAL;
     delete process.env.RUNNER_TASK_POLL_INTERVAL;
     delete process.env.RUNNER_MAX_PARALLEL;
+    delete process.env.RUNNER_MAX_TOTAL_PROCESSES;
+    delete process.env.RUNNER_MEMORY_THRESHOLD;
+    delete process.env.RUNNER_IDLE_THRESHOLD;
     delete process.env.RUNNER_STATE_DIR;
     delete process.env.RUNNER_LOG_DIR;
     delete process.env.RUNNER_WORK_DIR;
@@ -44,7 +47,10 @@ describe("config", () => {
       expect(config.brainApiUrl).toBe("http://localhost:3333");
       expect(config.pollInterval).toBe(30);
       expect(config.taskPollInterval).toBe(5);
-      expect(config.maxParallel).toBe(3);
+      expect(config.maxParallel).toBe(2);
+      expect(config.maxTotalProcesses).toBe(10);
+      expect(config.memoryThresholdPercent).toBe(10);
+      expect(config.idleDetectionThreshold).toBe(60000);
       expect(config.stateDir).toBe(join(homedir(), ".local", "state", "brain-runner"));
       expect(config.logDir).toBe(join(homedir(), ".local", "log"));
       expect(config.workDir).toBe(homedir());
@@ -82,7 +88,76 @@ describe("config", () => {
 
       // Should fall back to defaults
       expect(config.pollInterval).toBe(30);
-      expect(config.maxParallel).toBe(3);
+      expect(config.maxParallel).toBe(2);
+    });
+
+    it("loads new process limit config options from env vars", () => {
+      process.env.RUNNER_MAX_TOTAL_PROCESSES = "20";
+      process.env.RUNNER_MEMORY_THRESHOLD = "15";
+
+      const config = loadConfig();
+
+      expect(config.maxTotalProcesses).toBe(20);
+      expect(config.memoryThresholdPercent).toBe(15);
+    });
+  });
+
+  describe("config validation", () => {
+    it("throws error when maxParallel is out of range", () => {
+      process.env.RUNNER_MAX_PARALLEL = "0";
+      expect(() => loadConfig()).toThrow(/maxParallel must be between 1 and 100/);
+
+      resetConfig();
+      process.env.RUNNER_MAX_PARALLEL = "101";
+      expect(() => loadConfig()).toThrow(/maxParallel must be between 1 and 100/);
+    });
+
+    it("throws error when maxTotalProcesses is out of range", () => {
+      process.env.RUNNER_MAX_TOTAL_PROCESSES = "0";
+      expect(() => loadConfig()).toThrow(/maxTotalProcesses must be between 1 and 100/);
+
+      resetConfig();
+      process.env.RUNNER_MAX_TOTAL_PROCESSES = "101";
+      expect(() => loadConfig()).toThrow(/maxTotalProcesses must be between 1 and 100/);
+    });
+
+    it("throws error when memoryThresholdPercent is out of range", () => {
+      process.env.RUNNER_MEMORY_THRESHOLD = "-1";
+      expect(() => loadConfig()).toThrow(/memoryThresholdPercent must be between 0 and 100/);
+
+      resetConfig();
+      process.env.RUNNER_MEMORY_THRESHOLD = "101";
+      expect(() => loadConfig()).toThrow(/memoryThresholdPercent must be between 0 and 100/);
+    });
+
+    it("throws error when maxTotalProcesses < maxParallel", () => {
+      process.env.RUNNER_MAX_PARALLEL = "5";
+      process.env.RUNNER_MAX_TOTAL_PROCESSES = "3";
+      expect(() => loadConfig()).toThrow(/maxTotalProcesses.*must be >= maxParallel/);
+    });
+
+    it("throws error when pollInterval is less than 1", () => {
+      process.env.RUNNER_POLL_INTERVAL = "0";
+      expect(() => loadConfig()).toThrow(/pollInterval must be >= 1/);
+    });
+
+    it("accepts valid configuration values", () => {
+      process.env.RUNNER_MAX_PARALLEL = "5";
+      process.env.RUNNER_MAX_TOTAL_PROCESSES = "10";
+      process.env.RUNNER_MEMORY_THRESHOLD = "20";
+
+      const config = loadConfig();
+
+      expect(config.maxParallel).toBe(5);
+      expect(config.maxTotalProcesses).toBe(10);
+      expect(config.memoryThresholdPercent).toBe(20);
+    });
+
+    it("allows memoryThresholdPercent to be 0 (disable memory checks)", () => {
+      process.env.RUNNER_MEMORY_THRESHOLD = "0";
+
+      const config = loadConfig();
+      expect(config.memoryThresholdPercent).toBe(0);
     });
   });
 

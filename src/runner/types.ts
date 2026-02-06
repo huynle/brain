@@ -23,6 +23,12 @@ export interface RunnerConfig {
   taskTimeout: number; // ms
   idleDetectionThreshold: number; // ms, time before idle task becomes blocked (default 60000)
 
+  /** Hard limit on total processes regardless of tracking state (default: 10) */
+  maxTotalProcesses: number;
+
+  /** Pause spawning if available memory below this percent (default: 10) */
+  memoryThresholdPercent: number;
+
   opencode: OpencodeConfig;
 
   excludeProjects: string[]; // glob patterns

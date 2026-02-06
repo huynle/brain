@@ -116,6 +116,7 @@ export class TaskService {
         status: (note.metadata?.status as Task["status"]) || "pending",
         depends_on: (note.metadata?.depends_on as string[]) || [],
         created: note.created || "",
+        modified: note.modified,
         workdir: (note.metadata?.workdir as string) || null,
         worktree: (note.metadata?.worktree as string) || null,
         git_remote: (note.metadata?.git_remote as string) || null,

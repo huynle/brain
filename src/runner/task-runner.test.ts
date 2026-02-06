@@ -53,6 +53,8 @@ function createTestConfig(stateDir: string): RunnerConfig {
     },
     excludeProjects: [],
     idleDetectionThreshold: 60000,
+    maxTotalProcesses: 10,
+    memoryThresholdPercent: 10,
   };
 }
 
@@ -691,6 +693,63 @@ describe("TaskRunner - API interactions", () => {
     await runner.stop();
 
     // Should only claim up to maxParallel tasks
+    expect(claimCount).toBeLessThanOrEqual(2);
+  });
+
+  test("respects maxTotalProcesses hard limit", async () => {
+    const tasks = [
+      createMockTask("task1"),
+      createMockTask("task2"),
+      createMockTask("task3"),
+    ];
+
+    let claimCount = 0;
+
+    globalThis.fetch = ((url: string, options?: RequestInit) => {
+      if (url.includes("/health")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "healthy",
+              zkAvailable: true,
+              dbAvailable: true,
+            })
+          )
+        );
+      }
+      if (url.includes("/ready")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ tasks, count: tasks.length })
+          )
+        );
+      }
+      if (url.includes("/claim")) {
+        claimCount++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              success: true,
+              taskId: `task${claimCount}`,
+              runnerId: "test",
+              claimedAt: new Date().toISOString(),
+            })
+          )
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    // Set maxTotalProcesses lower than maxParallel to test hard limit
+    // maxParallel=5 but maxTotalProcesses=2 should still cap at 2
+    const limitedConfig = { ...config, maxParallel: 5, maxTotalProcesses: 2 };
+    const runner = new TaskRunner({ projectId: "test", config: limitedConfig });
+
+    runner.start();
+    await new Promise((r) => setTimeout(r, 100));
+    await runner.stop();
+
+    // Should only claim up to maxTotalProcesses (the hard limit)
     expect(claimCount).toBeLessThanOrEqual(2);
   });
 });
@@ -1336,19 +1395,85 @@ describe("TaskRunner - TUI Task Cleanup", () => {
   });
 
   // ========================================
+  // Orphan Process Cleanup Tests
+  // ========================================
+
+  describe("orphan process cleanup in stop()", () => {
+    test("does not attempt to kill non-existent PIDs", async () => {
+      // Use a non-existent PID that isPidAlive will return false for
+      const mockTask: RunningTask = {
+        id: "dead-task-1",
+        path: "projects/test/task/dead-task-1.md",
+        title: "Dead Task",
+        priority: "medium",
+        projectId: "test-project",
+        pid: 99999, // Non-existent PID
+        windowName: "dead_task",
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: "/tmp/test",
+      };
+
+      const runner = new TaskRunner({ projectId: "test-project", config });
+
+      // @ts-expect-error - accessing private property for testing
+      runner.tuiTasks.set(mockTask.id, mockTask);
+
+      // Should not throw - non-existent PIDs are handled gracefully
+      await runner.stop();
+
+      // @ts-expect-error - accessing private property for testing
+      expect(runner.tuiTasks.size).toBe(0);
+    });
+
+    test("handles errors when killing processes gracefully", async () => {
+      // Mock a task with a PID that is invalid/non-existent
+      // NOTE: DO NOT use negative PIDs like -1! On POSIX systems:
+      // - process.kill(-1, signal) sends the signal to ALL user processes
+      // - This would kill everything on the system!
+      // Use a very high PID that's guaranteed not to exist instead.
+      const mockTask: RunningTask = {
+        id: "error-task-1",
+        path: "projects/test/task/error-task-1.md",
+        title: "Error Task",
+        priority: "medium",
+        projectId: "test-project",
+        pid: 4194301, // Very high non-existent PID (safely above macOS max of 99999)
+        windowName: "error_task",
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: "/tmp/test",
+      };
+
+      const runner = new TaskRunner({ projectId: "test-project", config });
+
+      // @ts-expect-error - accessing private property for testing
+      runner.tuiTasks.set(mockTask.id, mockTask);
+
+      // Should not throw - errors during process killing are caught
+      await runner.stop();
+
+      // @ts-expect-error - accessing private property for testing
+      expect(runner.tuiTasks.size).toBe(0);
+    });
+  });
+
+  // ========================================
   // OpenCode Idle Detection Tests
   // ========================================
 
   describe("idle detection", () => {
     test("sets idleSince when OpenCode becomes idle", async () => {
       // Create a mock running task with opencodePort
+      // Use a non-existent PID (99999) to avoid triggering orphan process killing
+      // which could kill the test runner itself if we used process.pid
       const mockTask: RunningTask = {
         id: "idle-task-1",
         path: "projects/test/task/idle-task-1.md",
         title: "Idle Test Task",
         priority: "medium",
         projectId: "test-project",
-        pid: process.pid, // Use current process so isPidAlive returns true
+        pid: 99999, // Non-existent PID - won't trigger orphan killing
         windowName: "idle_task",
         startedAt: new Date().toISOString(),
         isResume: false,

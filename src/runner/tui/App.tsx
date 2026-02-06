@@ -63,6 +63,7 @@ export function App({
   getPausedProjects,
   onUpdateStatus,
   onEditTask,
+  getRunningProcessCount,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -87,6 +88,7 @@ export function App({
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
+  const [logsVisible, setLogsVisible] = useState(true);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -153,9 +155,11 @@ export function App({
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
 
   // Calculate dynamic maxLines for log viewer based on terminal height
-  // New layout: logs at bottom take ~40% of available height
+  // New layout: logs at bottom take ~40% of available height (when visible)
   // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders (4 lines for top row, 2 for bottom)
-  const topRowHeight = Math.floor((terminalRows - 6) * 0.6); // ~60% for top row
+  const topRowHeight = logsVisible 
+    ? Math.floor((terminalRows - 6) * 0.6) // ~60% for top row when logs visible
+    : terminalRows - 6; // Full height when logs hidden
   const logMaxLines = Math.max(5, terminalRows - 6 - topRowHeight - 2); // remaining height minus log panel chrome
   
   // Calculate task viewport height for scrolling
@@ -388,9 +392,25 @@ export function App({
       return;
     }
 
-    // Tab to switch focus between panels
+    // Tab to switch focus between panels (skip logs if hidden)
     if (key.tab) {
-      setFocusedPanel((prev) => (prev === 'tasks' ? 'logs' : 'tasks'));
+      if (logsVisible) {
+        setFocusedPanel((prev) => (prev === 'tasks' ? 'logs' : 'tasks'));
+      }
+      // If logs hidden, Tab does nothing (only one panel to focus)
+      return;
+    }
+
+    // Toggle logs panel visibility
+    if (input === 'L') {
+      setLogsVisible(prev => {
+        const newVisible = !prev;
+        // If hiding logs and logs are focused, switch focus to tasks
+        if (!newVisible && focusedPanel === 'logs') {
+          setFocusedPanel('tasks');
+        }
+        return newVisible;
+      });
       return;
     }
 
@@ -438,29 +458,41 @@ export function App({
         // Toggle all projects
         const allPaused = pausedProjects.size === projects.length;
         if (allPaused && onResumeAll) {
+          addLog({ level: 'info', message: 'Resuming all projects...' });
+          // Optimistic update: clear all paused projects
+          setPausedProjects(new Set());
           Promise.resolve(onResumeAll()).catch((err) => {
             addLog({ level: 'error', message: `Failed to resume all: ${err}` });
           });
-          addLog({ level: 'info', message: 'All projects resumed' });
         } else if (!allPaused && onPauseAll) {
+          addLog({ level: 'info', message: 'Pausing all projects...' });
+          // Optimistic update: mark all projects as paused
+          setPausedProjects(new Set(projects));
           Promise.resolve(onPauseAll()).catch((err) => {
             addLog({ level: 'error', message: `Failed to pause all: ${err}` });
           });
-          addLog({ level: 'warn', message: 'All projects paused' });
         }
       } else {
         // Toggle single project
         const isPaused = pausedProjects.has(targetProject);
         if (isPaused && onResume) {
+          addLog({ level: 'info', message: `Resuming ${targetProject}...` });
+          // Optimistic update: remove project from paused set
+          setPausedProjects(prev => {
+            const next = new Set(prev);
+            next.delete(targetProject);
+            return next;
+          });
           Promise.resolve(onResume(targetProject)).catch((err) => {
             addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
           });
-          addLog({ level: 'info', message: `Project resumed: ${targetProject}` });
         } else if (!isPaused && onPause) {
+          addLog({ level: 'info', message: `Pausing ${targetProject}...` });
+          // Optimistic update: add project to paused set
+          setPausedProjects(prev => new Set([...prev, targetProject]));
           Promise.resolve(onPause(targetProject)).catch((err) => {
             addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
           });
-          addLog({ level: 'warn', message: `Project paused: ${targetProject}` });
         }
       }
       return;
@@ -470,15 +502,19 @@ export function App({
     if (input === 'P' && isMultiProject) {
       const allPaused = pausedProjects.size === projects.length;
       if (allPaused && onResumeAll) {
+        addLog({ level: 'info', message: 'Resuming all projects...' });
+        // Optimistic update: clear all paused projects
+        setPausedProjects(new Set());
         Promise.resolve(onResumeAll()).catch((err) => {
           addLog({ level: 'error', message: `Failed to resume all: ${err}` });
         });
-        addLog({ level: 'info', message: 'All projects resumed' });
       } else if (!allPaused && onPauseAll) {
+        addLog({ level: 'info', message: 'Pausing all projects...' });
+        // Optimistic update: mark all projects as paused
+        setPausedProjects(new Set(projects));
         Promise.resolve(onPauseAll()).catch((err) => {
           addLog({ level: 'error', message: `Failed to pause all: ${err}` });
         });
-        addLog({ level: 'warn', message: 'All projects paused' });
       }
       return;
     }
@@ -527,18 +563,8 @@ export function App({
         return;
       }
 
-      // Enter to toggle completed/draft section when header is selected
-      if (key.return && selectedTaskId === COMPLETED_HEADER_ID) {
-        setCompletedCollapsed(prev => !prev);
-        return;
-      }
-      if (key.return && selectedTaskId === DRAFT_HEADER_ID) {
-        setDraftCollapsed(prev => !prev);
-        return;
-      }
-
-      // 's' to toggle completed/draft section or open status popup
-      if (input === 's') {
+      // Enter to toggle completed/draft section when header is selected, or open status popup
+      if (key.return) {
         // Toggle completed section if header is selected
         if (selectedTaskId === COMPLETED_HEADER_ID) {
           setCompletedCollapsed(prev => !prev);
@@ -631,6 +657,7 @@ export function App({
         )}
         <Text>  <Text bold>?</Text>         - Toggle help</Text>
         <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
+        <Text>  <Text bold>L</Text>         - Toggle logs panel visibility</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
         <Text>  <Text bold>s</Text>         - Change status / Toggle completed</Text>
@@ -675,6 +702,7 @@ export function App({
         statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
         isConnected={isConnected}
         pausedProjects={pausedProjects}
+        getRunningProcessCount={getRunningProcessCount}
       />
 
       {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
@@ -711,18 +739,20 @@ export function App({
           </Box>
         </Box>
 
-        {/* Bottom row: Logs (full width) */}
-        <Box flexGrow={1}>
-          <LogViewer 
-            logs={logs} 
-            maxLines={logMaxLines} 
-            showProjectPrefix={isMultiProject}
-            isFocused={focusedPanel === 'logs'}
-            scrollOffset={logScrollOffset}
-            filterByTaskId={selectedTaskId}
-            isFiltering={filterLogsByTask}
-          />
-        </Box>
+        {/* Bottom row: Logs (full width) - conditionally rendered */}
+        {logsVisible && (
+          <Box flexGrow={1}>
+            <LogViewer 
+              logs={logs} 
+              maxLines={logMaxLines} 
+              showProjectPrefix={isMultiProject}
+              isFocused={focusedPanel === 'logs'}
+              scrollOffset={logScrollOffset}
+              filterByTaskId={selectedTaskId}
+              isFiltering={filterLogsByTask}
+            />
+          </Box>
+        )}
       </Box>
 
       {/* Help bar at bottom */}

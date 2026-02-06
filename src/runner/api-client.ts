@@ -192,6 +192,27 @@ export class ApiClient {
     return data.tasks.filter(task => task.status === "in_progress");
   }
 
+  /**
+   * Get a task by its path.
+   * Used for resuming orphaned in_progress tasks where getNextTask won't work.
+   */
+  async getTaskByPath(taskPath: string): Promise<ResolvedTask | null> {
+    const encodedPath = encodeURIComponent(taskPath);
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}`);
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    // The entries API returns the full entry which includes task fields
+    const entry = await response.json() as ResolvedTask;
+    return entry;
+  }
+
   // ========================================
   // Task Status Updates
   // ========================================

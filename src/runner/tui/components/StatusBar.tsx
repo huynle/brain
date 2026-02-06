@@ -27,6 +27,8 @@ interface StatusBarProps {
   pausedProjects?: Set<string>;  // Set of paused project IDs
   featureStats?: FeatureStats;   // Feature-level statistics
   activeFeatureName?: string;    // Name of active feature (when tasks running)
+  /** Callback to get actual running OpenCode process count (overrides stats.inProgress) */
+  getRunningProcessCount?: () => number;
 }
 
 /**
@@ -71,6 +73,7 @@ export const StatusBar = React.memo(function StatusBar({
   pausedProjects,
   featureStats,
   activeFeatureName,
+  getRunningProcessCount,
 }: StatusBarProps): React.ReactElement {
   // Check if we have feature stats to display (total > 0 means features exist)
   const hasFeatures = featureStats && featureStats.total > 0;
@@ -87,6 +90,9 @@ export const StatusBar = React.memo(function StatusBar({
         ? (pausedProjects.size === (projects?.length ?? 0) && (projects?.length ?? 0) > 0)
         : pausedProjects.has(activeProject ?? projectId))
     : false;
+
+  // Use actual running process count if callback provided, otherwise fall back to stats.inProgress
+  const activeCount = getRunningProcessCount ? getRunningProcessCount() : stats.inProgress;
 
   // If multi-project mode, render tabs on separate row above stats
   // Only check isMultiProject - activeProject defaults to 'all' if undefined
@@ -129,7 +135,7 @@ export const StatusBar = React.memo(function StatusBar({
             <Text>   </Text>
             <Text color="yellow">○ {stats.waiting} waiting</Text>
             <Text>   </Text>
-            <Text color="blue">▶ {stats.inProgress} active</Text>
+            <Text color="blue">▶ {activeCount} active</Text>
             <Text>   </Text>
             <Text color="green" dimColor>✓ {stats.completed} done</Text>
             {stats.blocked > 0 && (
@@ -186,7 +192,7 @@ export const StatusBar = React.memo(function StatusBar({
         <Text>   </Text>
         <Text color="yellow">○ {stats.waiting} waiting</Text>
         <Text>   </Text>
-        <Text color="blue">▶ {stats.inProgress} active</Text>
+        <Text color="blue">▶ {activeCount} active</Text>
         <Text>   </Text>
         <Text color="green" dimColor>✓ {stats.completed} done</Text>
         {stats.blocked > 0 && (

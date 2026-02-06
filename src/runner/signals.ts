@@ -39,6 +39,8 @@ export interface SignalHandlerOptions {
   getStats?: () => RunnerStats;
   /** Callback to get runner start time */
   getStartedAt?: () => string;
+  /** Callback for graceful shutdown cleanup (e.g., TaskRunner.stop()) */
+  onShutdown?: () => Promise<void>;
 }
 
 // =============================================================================
@@ -69,6 +71,7 @@ export class SignalHandler {
       getRunningTasks: () => [],
       getStats: () => ({ completed: 0, failed: 0, totalRuntime: 0 }),
       getStartedAt: () => new Date().toISOString(),
+      onShutdown: async () => {},
       ...options,
     };
 
@@ -184,7 +187,20 @@ export class SignalHandler {
       // Step 1: Emit shutdown event
       this.emitEvent({ type: "shutdown", reason });
 
-      // Step 2: Wait for running tasks to complete
+      // Step 2: Call onShutdown callback for graceful cleanup (e.g., TaskRunner.stop())
+      // This handles tuiTasks cleanup and other runner-specific teardown
+      if (isDebugEnabled()) {
+        console.log("[SignalHandler] Calling onShutdown callback for graceful cleanup");
+      }
+      try {
+        await this.options.onShutdown();
+      } catch (error) {
+        if (isDebugEnabled()) {
+          console.log("[SignalHandler] Error in onShutdown callback:", error);
+        }
+      }
+
+      // Step 3: Wait for running tasks to complete
       const runningCount = this.processManager.runningCount();
       if (runningCount > 0) {
         if (isDebugEnabled()) {
@@ -199,10 +215,10 @@ export class SignalHandler {
             console.log("[SignalHandler] Timeout waiting for tasks, sending SIGTERM to children");
           }
 
-          // Step 3: Send SIGTERM to remaining children
+          // Step 4: Send SIGTERM to remaining children
           await this.processManager.killAll();
 
-          // Step 4: Wait a bit more for graceful termination
+          // Step 5: Wait a bit more for graceful termination
           const stillRunning = await this.waitForTasks(this.options.forceKillTimeout);
 
           if (!stillRunning) {
@@ -214,7 +230,7 @@ export class SignalHandler {
         }
       }
 
-      // Step 5: Save final state
+      // Step 6: Save final state
       this.saveState("stopped");
 
       if (isDebugEnabled()) {

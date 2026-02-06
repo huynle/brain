@@ -38,6 +38,8 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
             <>
               <Text bold>s</Text> Status
               {'  '}
+              <Text bold>e</Text> Edit
+              {'  '}
               <Text bold>x</Text> Cancel
               {'  '}
             </>

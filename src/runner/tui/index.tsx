@@ -57,6 +57,8 @@ export interface DashboardOptions {
   getPausedProjects?: () => string[];
   /** Callback to update a task's status */
   onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
+  /** Callback to edit a task in external editor. Returns new content or null if cancelled. */
+  onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
 }
 
 export interface DashboardHandle {
@@ -129,6 +131,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onResumeAll={options.onResumeAll}
       getPausedProjects={options.getPausedProjects}
       onUpdateStatus={options.onUpdateStatus}
+      onEditTask={options.onEditTask}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

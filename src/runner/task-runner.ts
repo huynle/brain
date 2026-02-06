@@ -1346,6 +1346,85 @@ export class TaskRunner {
     }
   }
 
+  /**
+   * Edit a task in an external editor.
+   * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
+   * Returns the new content if changes were made, null if cancelled/unchanged.
+   */
+  async editTask(taskId: string, taskPath: string): Promise<string | null> {
+    this.logger.info("Editing task in external editor", { taskId, taskPath });
+
+    // Import necessary modules
+    const { spawnSync } = await import("child_process");
+    const { writeFileSync, readFileSync, unlinkSync, mkdtempSync } = await import("fs");
+    const { tmpdir } = await import("os");
+    const { join } = await import("path");
+
+    try {
+      // Step 1: Fetch task content from API
+      const entry = await this.apiClient.getEntry(taskPath);
+      const originalContent = entry.content;
+
+      // Step 2: Write content to temp file
+      const tempDir = mkdtempSync(join(tmpdir(), "brain-task-"));
+      const tempFile = join(tempDir, `${taskId}.md`);
+      writeFileSync(tempFile, originalContent, "utf-8");
+
+      // Step 3: Get editor from environment
+      const editor = process.env.EDITOR || process.env.VISUAL || "vim";
+
+      // Step 4: Exit alternate screen buffer (restore normal terminal)
+      process.stdout.write("\x1b[?1049l");
+
+      // Step 5: Spawn editor synchronously
+      this.logger.info("Spawning editor", { editor, tempFile });
+      const result = spawnSync(editor, [tempFile], {
+        stdio: "inherit",
+        env: process.env,
+      });
+
+      // Step 6: Re-enter alternate screen buffer
+      process.stdout.write("\x1b[?1049h");
+      process.stdout.write("\x1b[H");
+      process.stdout.write("\x1b[2J");
+
+      // Step 7: Check if editor exited successfully
+      if (result.status !== 0) {
+        this.logger.warn("Editor exited with non-zero status", { status: result.status });
+        // Clean up temp file
+        try { unlinkSync(tempFile); } catch { /* ignore */ }
+        return null;
+      }
+
+      // Step 8: Read modified content
+      const newContent = readFileSync(tempFile, "utf-8");
+
+      // Step 9: Clean up temp file
+      try { unlinkSync(tempFile); } catch { /* ignore */ }
+
+      // Step 10: Check if content changed
+      if (newContent === originalContent) {
+        this.logger.info("No changes made to task content", { taskId });
+        return null;
+      }
+
+      // Step 11: Sync changes back to brain API
+      await this.apiClient.updateEntryContent(taskPath, newContent);
+      this.logger.info("Task content updated from editor", { taskId });
+      this.tuiLog("info", `Task edited: ${taskId}`, taskId);
+
+      return newContent;
+    } catch (error) {
+      this.logger.error("Failed to edit task", {
+        taskId,
+        error: String(error),
+      });
+      // Re-enter alternate screen in case of early error
+      process.stdout.write("\x1b[?1049h");
+      throw error;
+    }
+  }
+
   // ========================================
   // Dashboard Management
   // ========================================
@@ -1384,6 +1463,7 @@ export class TaskRunner {
         },
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
         onUpdateStatus: (taskId, taskPath, newStatus) => this.updateTaskStatus(taskId, taskPath, newStatus),
+        onEditTask: (taskId, taskPath) => this.editTask(taskId, taskPath),
         // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),

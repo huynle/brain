@@ -419,6 +419,63 @@ describe('TaskTree', () => {
       // The header should be visible and selectable
       expect(lastFrame()).toContain('Completed (1)');
     });
+
+    it('keeps completed header visible after expanding (toggle from collapsed to expanded)', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Done Task', status: 'completed' }),
+      ];
+      
+      // Simulate: user has completed header selected and presses Enter to expand
+      // After toggle, header should still be visible with expanded icon
+      const { lastFrame } = render(
+        <TaskTree 
+          tasks={tasks} 
+          selectedId={COMPLETED_HEADER_ID} 
+          onSelect={() => {}} 
+          completedCollapsed={false}  // expanded state
+          onToggleCompleted={() => {}} 
+        />
+      );
+      
+      // Header should be visible with expanded icon and highlighted
+      expect(lastFrame()).toContain('▾ Completed (1)');
+      // Completed task should also be visible when expanded
+      expect(lastFrame()).toContain('Done');
+    });
+
+    it('shows completed header when there are only completed tasks (no active tasks)', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Done Task 1', status: 'completed' }),
+        createTask({ id: '2', title: 'Done Task 2', status: 'completed' }),
+      ];
+      
+      // Even with no active tasks, the completed header should be visible
+      const { lastFrame: collapsedFrame } = render(
+        <TaskTree 
+          tasks={tasks} 
+          selectedId={COMPLETED_HEADER_ID} 
+          onSelect={() => {}} 
+          completedCollapsed={true}
+          onToggleCompleted={() => {}} 
+        />
+      );
+      expect(collapsedFrame()).toContain('▶ Completed (2)');
+      
+      // And when expanded
+      const { lastFrame: expandedFrame } = render(
+        <TaskTree 
+          tasks={tasks} 
+          selectedId={COMPLETED_HEADER_ID} 
+          onSelect={() => {}} 
+          completedCollapsed={false}
+          onToggleCompleted={() => {}} 
+        />
+      );
+      expect(expandedFrame()).toContain('▾ Completed (2)');
+      expect(expandedFrame()).toContain('Done Task 1');
+      expect(expandedFrame()).toContain('Done Task 2');
+    });
   });
 });
 

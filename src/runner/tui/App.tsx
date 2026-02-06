@@ -21,8 +21,11 @@
  * └──────────────────────────────────────────────────────────────────────────┘
  */
 
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { join } from 'path';
+import { spawnSync } from 'child_process';
+import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from 'fs';
+import { tmpdir } from 'os';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -32,7 +35,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
   }
   return true;
 }
-import { Box, Text, useInput, useApp } from 'ink';
+import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
 import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
@@ -59,6 +62,7 @@ export function App({
   onResumeAll,
   getPausedProjects,
   onUpdateStatus,
+  onEditTask,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -80,6 +84,10 @@ export function App({
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+
+  // Get stdin control for suspending during editor session
+  const { setRawMode } = useStdin();
 
   // Single-project poller (used when not in multi-project mode)
   const singleProjectPoller = useTaskPoller({
@@ -211,6 +219,40 @@ export function App({
   // All project tabs including 'all' at the front
   const allProjectTabs = ['all', ...projects];
 
+  /**
+   * Edit a task in an external editor ($EDITOR or $VISUAL, fallback to vim).
+   * Suspends the TUI, launches editor synchronously, then resumes TUI and syncs changes.
+   */
+  const editTaskInEditor = useCallback(async (taskId: string, taskPath: string) => {
+    if (!onEditTask) {
+      addLog({ level: 'warn', message: 'Editor feature not available (no onEditTask callback)' });
+      return;
+    }
+
+    addLog({ level: 'info', message: `Opening editor for: ${taskPath}`, taskId });
+    setIsEditing(true);
+
+    try {
+      // Call the external editor handler (provided by TaskRunner)
+      const result = await onEditTask(taskId, taskPath);
+      
+      if (result !== null) {
+        addLog({ level: 'info', message: 'Task content updated from editor', taskId });
+        refetch(); // Refresh to show updated content
+      } else {
+        addLog({ level: 'info', message: 'Editor cancelled or no changes made', taskId });
+      }
+    } catch (err) {
+      addLog({ 
+        level: 'error', 
+        message: `Editor failed: ${err instanceof Error ? err.message : String(err)}`, 
+        taskId 
+      });
+    } finally {
+      setIsEditing(false);
+    }
+  }, [onEditTask, addLog, refetch]);
+
   // Handle keyboard input
   useInput((input, key) => {
     // === Status Popup Mode ===
@@ -304,6 +346,12 @@ export function App({
           taskId: selectedTask.id,
         });
       });
+      return;
+    }
+
+    // Edit selected task in external editor
+    if (input === 'e' && selectedTask && focusedPanel === 'tasks') {
+      editTaskInEditor(selectedTask.id, selectedTask.path);
       return;
     }
 
@@ -523,6 +571,7 @@ export function App({
         <Text />
         <Text>  <Text bold>Ctrl-C</Text>    - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
+        <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
         <Text>  <Text bold>x</Text>         - Cancel selected task</Text>
         <Text>  <Text bold>p</Text>         - Pause/Resume current project</Text>
         {isMultiProject && (

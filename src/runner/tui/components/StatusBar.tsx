@@ -8,6 +8,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { ProjectTabs } from './ProjectTabs';
 import type { TaskStats } from '../hooks/useTaskPoller';
+import type { FeatureStats } from '../types';
 
 interface StatusBarProps {
   projectId: string;
@@ -24,6 +25,39 @@ interface StatusBarProps {
   statsByProject?: Map<string, TaskStats>;  // Per-project stats for tab indicators
   isConnected: boolean;
   pausedProjects?: Set<string>;  // Set of paused project IDs
+  featureStats?: FeatureStats;   // Feature-level statistics
+  activeFeatureName?: string;    // Name of active feature (when tasks running)
+}
+
+/**
+ * Render feature stats inline
+ * Format: "Features: N/M ready" or "Features: N/M ready [active-name]"
+ */
+function FeatureStatsDisplay({ 
+  featureStats, 
+  activeFeatureName 
+}: { 
+  featureStats: FeatureStats; 
+  activeFeatureName?: string;
+}): React.ReactElement {
+  // Calculate ready features: total - pending - inProgress - blocked
+  const ready = featureStats.total - featureStats.pending - featureStats.inProgress - featureStats.blocked;
+  
+  return (
+    <>
+      <Text dimColor>|</Text>
+      <Text>   </Text>
+      <Text color="magenta">
+        Features: {ready}/{featureStats.total} ready
+      </Text>
+      {activeFeatureName && (
+        <>
+          <Text> </Text>
+          <Text color="blue" dimColor>[{activeFeatureName}]</Text>
+        </>
+      )}
+    </>
+  );
 }
 
 export const StatusBar = React.memo(function StatusBar({
@@ -35,7 +69,12 @@ export const StatusBar = React.memo(function StatusBar({
   statsByProject,
   isConnected,
   pausedProjects,
+  featureStats,
+  activeFeatureName,
 }: StatusBarProps): React.ReactElement {
+  // Check if we have feature stats to display (total > 0 means features exist)
+  const hasFeatures = featureStats && featureStats.total > 0;
+  
   // Display title based on multi-project mode
   const isMultiProject = projects && projects.length > 1;
   const displayTitle = isMultiProject && activeProject === 'all'
@@ -99,6 +138,12 @@ export const StatusBar = React.memo(function StatusBar({
                 <Text color="red">✗ {stats.blocked} blocked</Text>
               </>
             )}
+            {hasFeatures && featureStats && (
+              <FeatureStatsDisplay 
+                featureStats={featureStats} 
+                activeFeatureName={activeFeatureName} 
+              />
+            )}
           </Box>
 
           <Box>
@@ -149,6 +194,12 @@ export const StatusBar = React.memo(function StatusBar({
             <Text>   </Text>
             <Text color="red">✗ {stats.blocked} blocked</Text>
           </>
+        )}
+        {hasFeatures && featureStats && (
+          <FeatureStatsDisplay 
+            featureStats={featureStats} 
+            activeFeatureName={activeFeatureName} 
+          />
         )}
       </Box>
 

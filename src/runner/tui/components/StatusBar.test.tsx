@@ -265,4 +265,116 @@ describe('StatusBar', () => {
       expect(lastFrame()).not.toContain('PAUSED');
     });
   });
+
+  describe('feature stats display', () => {
+    const defaultFeatureStats = {
+      total: 5,
+      pending: 2,
+      inProgress: 1,
+      completed: 2,
+      blocked: 0,
+    };
+
+    it('shows feature stats when provided and total > 0', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={defaultFeatureStats}
+        />
+      );
+      // ready = total - pending - inProgress - blocked = 5 - 2 - 1 - 0 = 2
+      expect(lastFrame()).toContain('Features: 2/5 ready');
+    });
+
+    it('does not show feature stats when total is 0', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={{ total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0 }}
+        />
+      );
+      expect(lastFrame()).not.toContain('Features:');
+    });
+
+    it('does not show feature stats when not provided', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+        />
+      );
+      expect(lastFrame()).not.toContain('Features:');
+    });
+
+    it('shows active feature name when provided', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={defaultFeatureStats}
+          activeFeatureName="auth-system"
+        />
+      );
+      expect(lastFrame()).toContain('[auth-system]');
+    });
+
+    it('does not show active feature name when not provided', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={defaultFeatureStats}
+        />
+      );
+      expect(lastFrame()).not.toContain('[');
+    });
+
+    it('shows feature stats in multi-project mode', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="brain-api"
+          projects={['brain-api', 'opencode']}
+          activeProject="brain-api"
+          onSelectProject={() => {}}
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={defaultFeatureStats}
+        />
+      );
+      expect(lastFrame()).toContain('Features: 2/5 ready');
+    });
+
+    it('handles all features completed', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={{ total: 3, pending: 0, inProgress: 0, completed: 3, blocked: 0 }}
+        />
+      );
+      // ready = 3 - 0 - 0 - 0 = 3
+      expect(lastFrame()).toContain('Features: 3/3 ready');
+    });
+
+    it('handles all features blocked', () => {
+      const { lastFrame } = render(
+        <StatusBar
+          projectId="test-project"
+          stats={defaultStats}
+          isConnected={true}
+          featureStats={{ total: 3, pending: 0, inProgress: 0, completed: 0, blocked: 3 }}
+        />
+      );
+      // ready = 3 - 0 - 0 - 3 = 0
+      expect(lastFrame()).toContain('Features: 0/3 ready');
+    });
+  });
 });

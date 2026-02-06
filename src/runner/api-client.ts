@@ -11,7 +11,46 @@ import type {
   TaskListResponse,
   TaskNextResponse,
   EntryStatus,
+  Priority,
 } from "../core/types";
+import type {
+  FeatureStatus,
+  FeatureClassification,
+  FeatureTaskStats,
+} from "../core/feature-service";
+
+// =============================================================================
+// Feature Types (API Response Subset)
+// =============================================================================
+
+/**
+ * Feature data as returned by the API.
+ * This is a subset of ComputedFeature - tasks are not included in list responses.
+ */
+export interface ApiFeature {
+  id: string;
+  priority: Priority;
+  status: FeatureStatus;
+  classification: FeatureClassification;
+  task_stats: FeatureTaskStats;
+  blocked_by_features: string[];
+  waiting_on_features: string[];
+}
+
+export interface FeatureListResponse {
+  features: ApiFeature[];
+  count: number;
+  stats?: {
+    total: number;
+    ready: number;
+    waiting: number;
+    blocked: number;
+  };
+}
+
+export interface FeatureResponse {
+  feature: ApiFeature;
+}
 import { getRunnerConfig, isDebugEnabled } from "./config";
 
 // =============================================================================
@@ -225,6 +264,60 @@ export class ApiClient {
     if (!response.ok) {
       throw new ApiError(response.status, await response.text());
     }
+  }
+
+  // ========================================
+  // Feature Queries
+  // ========================================
+
+  /**
+   * Get all computed features for a project.
+   * Features aggregate tasks with the same feature_id.
+   */
+  async getFeatures(projectId: string): Promise<FeatureListResponse> {
+    const response = await this.fetch(`/api/v1/tasks/${projectId}/features`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as FeatureListResponse;
+  }
+
+  /**
+   * Get a single feature by ID with its task information.
+   * Returns null if feature not found.
+   */
+  async getFeature(projectId: string, featureId: string): Promise<ApiFeature | null> {
+    const response = await this.fetch(
+      `/api/v1/tasks/${projectId}/features/${encodeURIComponent(featureId)}`
+    );
+
+    if (response.status === 404) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as FeatureResponse;
+    return data.feature;
+  }
+
+  /**
+   * Get features that are ready for execution.
+   * Ready features have all dependencies completed and are not yet complete themselves.
+   */
+  async getReadyFeatures(projectId: string): Promise<ApiFeature[]> {
+    const response = await this.fetch(`/api/v1/tasks/${projectId}/features/ready`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as FeatureListResponse;
+    return data.features;
   }
 
   // ========================================

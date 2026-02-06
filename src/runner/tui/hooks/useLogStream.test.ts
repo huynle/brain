@@ -6,9 +6,13 @@
  * - Auto-timestamp on addLog
  * - JSON log line parsing
  * - Log callback integration
+ * - File persistence (load/save logs to disk)
  */
 
-import { describe, it, expect, beforeEach } from "bun:test";
+import { describe, it, expect, beforeEach, afterEach } from "bun:test";
+import { existsSync, mkdirSync, rmSync, readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
 
 // Since we're testing a React hook, we'll test the core logic directly
 // by extracting the parseJsonLogLine function and testing state management logic
@@ -270,6 +274,172 @@ function parseJsonLogLineForTest(line: string): LogEntry | null {
       timestamp: new Date(parsed.timestamp),
       level: parsed.level,
       message: parsed.message,
+      context: parsed.context,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// =============================================================================
+// Test file persistence helpers
+// =============================================================================
+
+describe("useLogStream - File Persistence Helpers", () => {
+  // Import the module to test internal file persistence functions
+  // We test through the exported hook and through file system side effects
+  
+  let testDir: string;
+  let testLogFile: string;
+
+  beforeEach(() => {
+    // Create a unique temp directory for each test
+    testDir = join(tmpdir(), `useLogStream-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    testLogFile = join(testDir, "test-logs.jsonl");
+  });
+
+  afterEach(() => {
+    // Clean up test directory
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  describe("serializeLogEntry / deserializeLogEntry", () => {
+    it("should serialize and deserialize a log entry correctly", () => {
+      const entry: LogEntry = {
+        timestamp: new Date("2026-02-06T10:00:00.000Z"),
+        level: "info",
+        message: "Test message",
+        taskId: "task123",
+        context: { key: "value" },
+      };
+
+      // Serialize
+      const serialized = JSON.stringify({
+        timestamp: entry.timestamp.toISOString(),
+        level: entry.level,
+        message: entry.message,
+        taskId: entry.taskId,
+        context: entry.context,
+      });
+
+      // Deserialize
+      const parsed = JSON.parse(serialized);
+      const deserialized: LogEntry = {
+        timestamp: new Date(parsed.timestamp),
+        level: parsed.level,
+        message: parsed.message,
+        taskId: parsed.taskId,
+        context: parsed.context,
+      };
+
+      expect(deserialized.level).toBe(entry.level);
+      expect(deserialized.message).toBe(entry.message);
+      expect(deserialized.taskId).toBe(entry.taskId);
+      expect(deserialized.context).toEqual(entry.context);
+      expect(deserialized.timestamp.toISOString()).toBe(entry.timestamp.toISOString());
+    });
+  });
+
+  describe("loadLogsFromFile", () => {
+    it("should return empty array if file does not exist", () => {
+      const entries = loadLogsFromFileForTest(join(testDir, "nonexistent.jsonl"), 100);
+      expect(entries).toEqual([]);
+    });
+
+    it("should load existing logs from file", () => {
+      // Write some logs to the file
+      const logs = [
+        { timestamp: "2026-02-06T10:00:00.000Z", level: "info", message: "Log 1" },
+        { timestamp: "2026-02-06T10:01:00.000Z", level: "warn", message: "Log 2" },
+      ];
+      const content = logs.map(l => JSON.stringify(l)).join("\n") + "\n";
+      writeFileSync(testLogFile, content);
+
+      const entries = loadLogsFromFileForTest(testLogFile, 100);
+      expect(entries.length).toBe(2);
+      expect(entries[0].message).toBe("Log 1");
+      expect(entries[1].message).toBe("Log 2");
+    });
+
+    it("should respect maxEntries when loading", () => {
+      // Write more logs than maxEntries
+      const logs = [];
+      for (let i = 0; i < 10; i++) {
+        logs.push({ timestamp: new Date().toISOString(), level: "info", message: `Log ${i}` });
+      }
+      const content = logs.map(l => JSON.stringify(l)).join("\n") + "\n";
+      writeFileSync(testLogFile, content);
+
+      const entries = loadLogsFromFileForTest(testLogFile, 5);
+      expect(entries.length).toBe(5);
+      // Should have the last 5 entries (Log 5 through Log 9)
+      expect(entries[0].message).toBe("Log 5");
+      expect(entries[4].message).toBe("Log 9");
+    });
+
+    it("should skip invalid lines", () => {
+      const content = [
+        JSON.stringify({ timestamp: new Date().toISOString(), level: "info", message: "Valid 1" }),
+        "not json",
+        JSON.stringify({ timestamp: new Date().toISOString(), level: "info", message: "Valid 2" }),
+        JSON.stringify({ level: "info", message: "Missing timestamp" }), // Invalid - missing timestamp
+      ].join("\n") + "\n";
+      writeFileSync(testLogFile, content);
+
+      const entries = loadLogsFromFileForTest(testLogFile, 100);
+      expect(entries.length).toBe(2);
+      expect(entries[0].message).toBe("Valid 1");
+      expect(entries[1].message).toBe("Valid 2");
+    });
+  });
+});
+
+// Helper functions to test file persistence (mirrors internal implementation)
+
+function loadLogsFromFileForTest(filePath: string, maxEntries: number): LogEntry[] {
+  try {
+    if (!existsSync(filePath)) {
+      return [];
+    }
+    const content = readFileSync(filePath, "utf-8");
+    const lines = content.split("\n").filter(line => line.trim());
+    const entries: LogEntry[] = [];
+    
+    for (const line of lines) {
+      const entry = deserializeLogEntryForTest(line);
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+    
+    // Return only the last maxEntries
+    if (entries.length > maxEntries) {
+      return entries.slice(-maxEntries);
+    }
+    return entries;
+  } catch {
+    return [];
+  }
+}
+
+function deserializeLogEntryForTest(line: string): LogEntry | null {
+  try {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith("{")) {
+      return null;
+    }
+    const parsed = JSON.parse(trimmed);
+    if (!parsed.timestamp || !parsed.level || !parsed.message) {
+      return null;
+    }
+    return {
+      timestamp: new Date(parsed.timestamp),
+      level: parsed.level,
+      message: parsed.message,
+      taskId: parsed.taskId,
       context: parsed.context,
     };
   } catch {

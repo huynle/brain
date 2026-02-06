@@ -17,6 +17,7 @@
  */
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { join } from 'path';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -124,7 +125,15 @@ export function App({
     refetch = singleProjectPoller.refetch;
   }
 
-  const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs });
+  // Compute log file path if logDir is configured
+  const logFile = useMemo(() => {
+    if (!config.logDir) return undefined;
+    // Use first project for single-project mode, 'multi' for multi-project mode
+    const projectName = isMultiProject ? 'multi' : (config.project || 'default');
+    return join(config.logDir, 'brain-runner', projectName, 'tui-logs.jsonl');
+  }, [config.logDir, config.project, isMultiProject]);
+
+  const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs, logFile });
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
 
   // Calculate dynamic maxLines for log viewer based on terminal height

@@ -1327,6 +1327,7 @@ export class TaskRunner {
         apiUrl: this.config.brainApiUrl,
         pollInterval: this.config.pollInterval * 1000, // Convert to ms
         maxLogs: 100,
+        logDir: this.config.logDir,    // Enable log persistence across TUI restarts
         onExit: () => {
           this.logger.info("TUI dashboard exited");
           // Trigger graceful shutdown when user quits TUI

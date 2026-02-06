@@ -37,6 +37,8 @@ export interface DashboardOptions {
   pollInterval?: number;
   /** Maximum log entries to keep (default: 100) */
   maxLogs?: number;
+  /** Directory for log file persistence (e.g. ~/.local/log) */
+  logDir?: string;
   /** Callback when dashboard exits (q pressed or Ctrl+C) */
   onExit?: () => void;
   /** Callback to receive log additions from external sources */
@@ -105,6 +107,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
     activeProject: isMultiProject ? 'all' : projects[0], // Default to 'all' in multi-project mode
     pollInterval: options.pollInterval ?? 5000,
     maxLogs: options.maxLogs ?? 100,
+    logDir: options.logDir, // Directory for log file persistence
   };
 
   // Enter alternate screen buffer and clear it (like vim/less do)

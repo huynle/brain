@@ -79,6 +79,7 @@ export interface TUIConfig {
   activeProject?: string;       // Currently selected project (or 'all')
   pollInterval: number;
   maxLogs: number;
+  logDir?: string;              // Directory for log file persistence
 }
 
 /**

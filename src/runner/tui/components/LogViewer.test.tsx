@@ -121,14 +121,12 @@ describe('LogViewer', () => {
         createLog({ message: `LogItem${i + 1}End` })
       );
       const { lastFrame } = render(<LogViewer logs={logs} maxLines={5} />);
-      // When logs > maxLines, "more above" indicator appears, reducing visible logs by 1
-      // With maxLines=5 and canScrollUp=true, we show 4 log entries
-      // Should show items 7-10 (most recent 4)
-      expect(lastFrame()).toContain('LogItem7End');
+      // Should show items 6-10 (most recent 5)
+      expect(lastFrame()).toContain('LogItem6End');
       expect(lastFrame()).toContain('LogItem10End');
       // Should NOT show older items - use unique markers to avoid substring matching
       expect(lastFrame()).not.toContain('LogItem1End');
-      expect(lastFrame()).not.toContain('LogItem6End');
+      expect(lastFrame()).not.toContain('LogItem5End');
     });
 
     it('shows all logs when under maxLines', () => {
@@ -146,11 +144,10 @@ describe('LogViewer', () => {
         createLog({ message: `Msg${i + 1}` })
       );
       const { lastFrame } = render(<LogViewer logs={logs} />);
-      // With 60 logs and default maxLines=50, "more above" indicator appears
-      // Reducing visible logs to 49 entries (Msg12-Msg60)
+      // With 60 logs and default maxLines=50, shows entries 11-60
       expect(lastFrame()).toContain('Msg60');
-      expect(lastFrame()).toContain('Msg12');
-      expect(lastFrame()).not.toContain('Msg11');
+      expect(lastFrame()).toContain('Msg11');
+      expect(lastFrame()).not.toContain('Msg10');
     });
   });
 
@@ -347,12 +344,11 @@ describe('LogViewer', () => {
       const { lastFrame } = render(
         <LogViewer logs={logs} maxLines={5} scrollOffset={0} />
       );
-      // With 20 logs and maxLines=5 at scrollOffset=0, "more above" indicator appears
-      // Reducing visible logs to 4 entries (Msg17-Msg20)
+      // With 20 logs and maxLines=5 at scrollOffset=0, shows entries 16-20
       expect(lastFrame()).toContain('Msg20End');
-      expect(lastFrame()).toContain('Msg17End');
+      expect(lastFrame()).toContain('Msg16End');
       // Should NOT show older items
-      expect(lastFrame()).not.toContain('Msg16End');
+      expect(lastFrame()).not.toContain('Msg15End');
       expect(lastFrame()).not.toContain('Msg1End');
     });
 
@@ -364,60 +360,35 @@ describe('LogViewer', () => {
       const { lastFrame } = render(
         <LogViewer logs={logs} maxLines={5} scrollOffset={5} />
       );
-      // With scrollOffset=5, both "more above" and "more below" indicators appear
-      // Reducing visible logs to 3 entries (Msg13-Msg15)
+      // With scrollOffset=5 and maxLines=5, shows entries 11-15
       expect(lastFrame()).toContain('Msg15End');
-      expect(lastFrame()).toContain('Msg13End');
+      expect(lastFrame()).toContain('Msg11End');
       // Should NOT show the latest logs
       expect(lastFrame()).not.toContain('Msg20End');
       expect(lastFrame()).not.toContain('Msg16End');
     });
 
-    it('shows scroll indicator when scrolled up', () => {
+    it('shows scroll position in header when scrolled up', () => {
       const logs = Array.from({ length: 20 }, (_, i) =>
         createLog({ message: `Msg${i + 1}` })
       );
       const { lastFrame } = render(
         <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
       );
-      // Should show "lines below" indicator
+      // Should show "lines below" indicator in header
       expect(lastFrame()).toContain('5 lines below');
     });
 
-    it('shows down arrow indicator when can scroll down', () => {
+    it('shows plain header when not scrolled', () => {
       const logs = Array.from({ length: 20 }, (_, i) =>
         createLog({ message: `Msg${i + 1}` })
       );
       const { lastFrame } = render(
-        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
+        <LogViewer logs={logs} maxLines={5} scrollOffset={0} isFocused={true} />
       );
-      // Should show down arrow since we can scroll down (scrollOffset > 0)
-      expect(lastFrame()).toContain('↓');
-    });
-
-    it('shows up arrow indicator when can scroll up', () => {
-      const logs = Array.from({ length: 20 }, (_, i) =>
-        createLog({ message: `Msg${i + 1}` })
-      );
-      const { lastFrame } = render(
-        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
-      );
-      // Should show up arrow since we can scroll up (more logs above)
-      expect(lastFrame()).toContain('↑');
-    });
-
-    it('does not show arrows when not focused', () => {
-      const logs = Array.from({ length: 20 }, (_, i) =>
-        createLog({ message: `Msg${i + 1}` })
-      );
-      const { lastFrame } = render(
-        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={false} />
-      );
-      // Should not show arrows since not focused (they appear in header)
-      const frame = lastFrame() || '';
-      // The header arrows should not be visible when not focused
-      // But the "more above/below" text indicators still appear
-      expect(frame).toContain('more above');
+      // Should show plain "Logs" header without scroll indicator
+      expect(lastFrame()).toContain('Logs');
+      expect(lastFrame()).not.toContain('lines below');
     });
 
     it('highlights border when focused', () => {

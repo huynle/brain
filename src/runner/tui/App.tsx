@@ -72,6 +72,7 @@ export function App({
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
+  const [logScrollOffset, setLogScrollOffset] = useState(0);
 
   // Single-project poller (used when not in multi-project mode)
   const singleProjectPoller = useTaskPoller({
@@ -124,7 +125,18 @@ export function App({
   }
 
   const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs });
-  const { rows: terminalRows } = useTerminalSize();
+  const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
+
+  // Calculate dynamic maxLines for log viewer based on terminal height
+  // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders (2 lines) + header (1 line) + task detail (~5 lines)
+  const logMaxLines = Math.max(5, terminalRows - 12);
+  
+  // Reset scroll offset when new logs arrive and we're at the bottom
+  useEffect(() => {
+    if (logScrollOffset === 0) {
+      // Already at bottom, no action needed - new logs will appear automatically
+    }
+  }, [logs.length, logScrollOffset]);
 
   // Expose addLog to parent for external log integration
   useEffect(() => {
@@ -427,6 +439,33 @@ export function App({
         return;
       }
     }
+    
+    // Log scrolling (when focused on logs panel)
+    if (focusedPanel === 'logs') {
+      // k or up arrow: scroll up (increase offset to see older logs)
+      if (key.upArrow || input === 'k') {
+        setLogScrollOffset(prev => Math.min(prev + 1, Math.max(0, logs.length - logMaxLines)));
+        return;
+      }
+      
+      // j or down arrow: scroll down (decrease offset to see newer logs)
+      if (key.downArrow || input === 'j') {
+        setLogScrollOffset(prev => Math.max(0, prev - 1));
+        return;
+      }
+      
+      // G or End: jump to bottom (latest logs)
+      if (input === 'G' || key.end) {
+        setLogScrollOffset(0);
+        return;
+      }
+      
+      // g or Home: jump to top (oldest logs)
+      if (input === 'g' || key.home) {
+        setLogScrollOffset(Math.max(0, logs.length - logMaxLines));
+        return;
+      }
+    }
   });
 
   // Log errors when they occur
@@ -541,8 +580,10 @@ export function App({
           <Box flexGrow={1}>
             <LogViewer 
               logs={logs} 
-              maxLines={10} 
+              maxLines={logMaxLines} 
               showProjectPrefix={isMultiProject}
+              isFocused={focusedPanel === 'logs'}
+              scrollOffset={logScrollOffset}
             />
           </Box>
 

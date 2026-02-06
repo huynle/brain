@@ -12,6 +12,9 @@ interface HelpBarProps {
 }
 
 export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
+  // Show different hints based on which panel is focused
+  const isLogsFocused = focusedPanel === 'logs';
+  
   return (
     <Box paddingX={1} justifyContent="space-between">
       <Box>
@@ -22,12 +25,21 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
             </>
           )}
-          <Text bold>j/k</Text> Navigate
+          <Text bold>j/k</Text> {isLogsFocused ? 'Scroll' : 'Navigate'}
           {'  '}
-          <Text bold>Enter</Text> Toggle
-          {'  '}
-          <Text bold>x</Text> Cancel
-          {'  '}
+          {isLogsFocused ? (
+            <>
+              <Text bold>g/G</Text> Top/Bottom
+              {'  '}
+            </>
+          ) : (
+            <>
+              <Text bold>Enter</Text> Toggle
+              {'  '}
+              <Text bold>x</Text> Cancel
+              {'  '}
+            </>
+          )}
           {isMultiProject ? (
             <>
               <Text bold>p/P</Text> Pause

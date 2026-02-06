@@ -1,9 +1,9 @@
 /**
  * Log viewer component for displaying streaming logs
- * Features: auto-scroll, color-coded levels, context display, performance optimization
+ * Features: scroll support, color-coded levels, context display, performance optimization
  */
 
-import React, { useMemo } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import type { LogEntry } from '../types';
 
@@ -14,6 +14,10 @@ interface LogViewerProps {
   showLevel?: boolean;
   /** When true, display [projectId] prefix for multi-project mode */
   showProjectPrefix?: boolean;
+  /** Whether this panel is focused (enables scroll indicators) */
+  isFocused?: boolean;
+  /** Scroll offset from bottom (0 = latest logs, positive = scrolled up) */
+  scrollOffset?: number;
 }
 
 const LEVEL_COLORS: Record<string, string> = {
@@ -128,25 +132,60 @@ export const LogViewer = React.memo(function LogViewer({
   showTimestamp = true,
   showLevel = true,
   showProjectPrefix = false,
+  isFocused = false,
+  scrollOffset = 0,
 }: LogViewerProps): React.ReactElement {
-  // Memoize visible logs calculation for performance
+  // Calculate visible logs with scroll support
   const visibleLogs = useMemo(() => {
-    // Auto-scroll: show the most recent logs
-    return logs.slice(-maxLines);
-  }, [logs, maxLines]);
+    const totalLogs = logs.length;
+    
+    if (totalLogs === 0) return [];
+    
+    // Calculate the end index based on scroll offset
+    // scrollOffset=0 means showing the latest logs (bottom)
+    // scrollOffset>0 means scrolled up by that many lines
+    const endIndex = Math.max(0, totalLogs - scrollOffset);
+    const startIndex = Math.max(0, endIndex - maxLines);
+    
+    return logs.slice(startIndex, endIndex);
+  }, [logs, maxLines, scrollOffset]);
+
+  // Calculate scroll indicators
+  const canScrollUp = scrollOffset < logs.length - maxLines;
+  const canScrollDown = scrollOffset > 0;
+  const isScrolled = scrollOffset > 0;
+
+  // Header with scroll indicator
+  const headerText = isScrolled 
+    ? `Logs (${scrollOffset} lines below)`
+    : 'Logs';
 
   return (
     <Box
       flexDirection="column"
       borderStyle="single"
-      borderColor="gray"
+      borderColor={isFocused ? 'cyan' : 'gray'}
       paddingX={1}
       width="100%"
       flexGrow={1}
     >
-      <Text bold dimColor>
-        {'Logs'.padEnd(60, ' ').substring(0, 60)}
-      </Text>
+      {/* Header with scroll indicator */}
+      <Box justifyContent="space-between">
+        <Text bold dimColor={!isFocused} color={isFocused ? 'cyan' : undefined}>
+          {headerText}
+        </Text>
+        {isFocused && (canScrollUp || canScrollDown) && (
+          <Text dimColor>
+            {canScrollUp ? '↑' : ' '}
+            {canScrollDown ? '↓' : ' '}
+          </Text>
+        )}
+      </Box>
+      
+      {/* Scroll up indicator */}
+      {canScrollUp && (
+        <Text dimColor color="gray">{'─'.repeat(20)} more above ↑</Text>
+      )}
       
       {visibleLogs.length === 0 ? (
         <Text dimColor>No logs yet</Text>
@@ -160,6 +199,11 @@ export const LogViewer = React.memo(function LogViewer({
             showProjectPrefix={showProjectPrefix}
           />
         ))
+      )}
+      
+      {/* Scroll down indicator */}
+      {canScrollDown && (
+        <Text dimColor color="gray">{'─'.repeat(20)} more below ↓</Text>
       )}
     </Box>
   );

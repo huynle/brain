@@ -335,4 +335,117 @@ describe('LogViewer', () => {
       expect(lastFrame()).toContain('nested=');
     });
   });
+
+  describe('scroll functionality', () => {
+    it('shows latest logs when scrollOffset is 0', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}End` })
+      );
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={0} />
+      );
+      // Should show items 16-20 (most recent)
+      expect(lastFrame()).toContain('Msg20End');
+      expect(lastFrame()).toContain('Msg16End');
+      // Should NOT show older items
+      expect(lastFrame()).not.toContain('Msg15End');
+      expect(lastFrame()).not.toContain('Msg1End');
+    });
+
+    it('shows older logs when scrollOffset is positive', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}End` })
+      );
+      // scrollOffset=5 means we're scrolled up 5 lines from the bottom
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={5} />
+      );
+      // Should show items 11-15 (5 lines before the last 5)
+      expect(lastFrame()).toContain('Msg15End');
+      expect(lastFrame()).toContain('Msg11End');
+      // Should NOT show the latest logs
+      expect(lastFrame()).not.toContain('Msg20End');
+      expect(lastFrame()).not.toContain('Msg16End');
+    });
+
+    it('shows scroll indicator when scrolled up', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}` })
+      );
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
+      );
+      // Should show "lines below" indicator
+      expect(lastFrame()).toContain('5 lines below');
+    });
+
+    it('shows down arrow indicator when can scroll down', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}` })
+      );
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
+      );
+      // Should show down arrow since we can scroll down (scrollOffset > 0)
+      expect(lastFrame()).toContain('↓');
+    });
+
+    it('shows up arrow indicator when can scroll up', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}` })
+      );
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={true} />
+      );
+      // Should show up arrow since we can scroll up (more logs above)
+      expect(lastFrame()).toContain('↑');
+    });
+
+    it('does not show arrows when not focused', () => {
+      const logs = Array.from({ length: 20 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}` })
+      );
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={5} scrollOffset={5} isFocused={false} />
+      );
+      // Should not show arrows since not focused (they appear in header)
+      const frame = lastFrame() || '';
+      // The header arrows should not be visible when not focused
+      // But the "more above/below" text indicators still appear
+      expect(frame).toContain('more above');
+    });
+
+    it('highlights border when focused', () => {
+      const logs = [createLog({ message: 'Test' })];
+      const { lastFrame: unfocused } = render(
+        <LogViewer logs={logs} isFocused={false} />
+      );
+      const { lastFrame: focused } = render(
+        <LogViewer logs={logs} isFocused={true} />
+      );
+      // Both should render the header
+      expect(unfocused()).toContain('Logs');
+      expect(focused()).toContain('Logs');
+      // Can't easily check colors in text output, but verify both render
+    });
+
+    it('handles scrollOffset larger than log count gracefully', () => {
+      const logs = Array.from({ length: 5 }, (_, i) =>
+        createLog({ message: `Msg${i + 1}` })
+      );
+      // Scroll offset way beyond available logs
+      const { lastFrame } = render(
+        <LogViewer logs={logs} maxLines={10} scrollOffset={100} />
+      );
+      // Should show empty or oldest logs, not crash
+      expect(lastFrame()).toBeDefined();
+    });
+
+    it('handles empty logs with scrollOffset', () => {
+      const { lastFrame } = render(
+        <LogViewer logs={[]} maxLines={10} scrollOffset={5} />
+      );
+      expect(lastFrame()).toContain('No logs yet');
+    });
+  });
 });

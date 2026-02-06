@@ -15,6 +15,7 @@ import { createSearchRoutes } from "./api/search";
 import { createSectionRoutes } from "./api/sections";
 import { createTaskRoutes } from "./api/tasks";
 import { createMcpRoutes } from "./mcp/transport";
+import { createOAuthRoutes } from "./mcp/auth";
 
 export function createApp(config: Config): OpenAPIHono {
   const app = new OpenAPIHono();
@@ -62,8 +63,11 @@ export function createApp(config: Config): OpenAPIHono {
   // Mount API routes
   app.route("/api/v1", api);
 
+  // Mount OAuth 2.1 routes for MCP authentication
+  app.route("/", createOAuthRoutes());
+
   // Mount MCP Streamable HTTP transport
-  app.route("/", createMcpRoutes());
+  app.route("/", createMcpRoutes(config));
 
   // OpenAPI documentation endpoint
   // Returns the OpenAPI 3.0 specification as JSON

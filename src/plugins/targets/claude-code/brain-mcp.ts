@@ -404,7 +404,11 @@ const tools: Tool[] = [
   },
   {
     name: "brain_list",
-    description: "List entries in the brain with optional filtering.",
+    description: `List entries in the brain with optional filtering by type, status, and filename.
+
+Filename filtering supports:
+- Exact match: "abc12def" finds entry with that exact ID
+- Wildcard patterns: "abc*" (prefix), "*def" (suffix), "abc*def" (contains)`,
     inputSchema: {
       type: "object",
       properties: {
@@ -413,6 +417,7 @@ const tools: Tool[] = [
         limit: { type: "number", description: "Maximum entries to return (default: 20)" },
         global: { type: "boolean", description: "List only global entries" },
         sortBy: { type: "string", enum: ["created", "modified", "priority"], description: "Sort order" },
+        filename: { type: "string", description: "Filter by filename/ID (supports wildcards: abc*, *def, abc*def)" },
       },
     },
   },
@@ -524,6 +529,129 @@ Use this to get detailed information about a specific task including:
         project: { type: "string", description: "Override auto-detected project" },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "brain_backlinks",
+    description: "Find entries that link TO a given entry (backlinks).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the target note" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "brain_outlinks",
+    description: "Find entries that a given entry links TO (outlinks).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the source note" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "brain_related",
+    description: "Find entries that share linked notes with a given entry.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the note to find related entries for" },
+        limit: { type: "number", description: "Maximum results (default: 10)" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "brain_orphans",
+    description: "Find entries with no incoming links (orphans). Useful for knowledge graph health.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
+        limit: { type: "number", description: "Maximum results (default: 20)" },
+      },
+    },
+  },
+  {
+    name: "brain_stale",
+    description: "Find entries that may need verification (not verified in N days).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "Days threshold (default: 30)" },
+        type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
+        limit: { type: "number", description: "Maximum results (default: 20)" },
+      },
+    },
+  },
+  {
+    name: "brain_verify",
+    description: "Mark an entry as verified (still accurate). Updates the last_verified timestamp.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the note to verify" },
+      },
+      required: ["path"],
+    },
+  },
+  {
+    name: "brain_delete",
+    description: "Delete a specific entry from the brain by path. Use with caution.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the entry to delete" },
+        confirm: { type: "boolean", description: "Must be true to confirm deletion" },
+      },
+      required: ["path", "confirm"],
+    },
+  },
+  {
+    name: "brain_link",
+    description: "Generate a markdown link to a brain entry. Use this when referencing other brain entries to ensure proper link resolution with mkdnflow.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Title to search for" },
+        path: { type: "string", description: "Direct path or ID (8-char alphanumeric) to the entry" },
+        withTitle: { type: "boolean", description: "Include title in link (default: true)" },
+      },
+    },
+  },
+  {
+    name: "brain_section",
+    description: `Retrieve a specific section's FULL CONTENT from a brain plan by section title.
+
+Use this when you need the detailed implementation spec for your assigned task.
+Returns the exact section content including all subsections, code examples, and acceptance criteria.
+
+Example: brain_section({ planId: "projects/abc/plan/auth.md", sectionTitle: "JWT Middleware" })
+
+This is more precise than brain_inject (which uses fuzzy search) - it extracts the exact section you need.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        planId: { type: "string", description: "Brain plan path (from orchestration context or brain_plan_sections)" },
+        sectionTitle: { type: "string", description: "Section title to retrieve (can be partial match)" },
+        includeSubsections: { type: "boolean", description: "Include nested subsections (default: true)" },
+      },
+      required: ["planId", "sectionTitle"],
+    },
+  },
+  {
+    name: "brain_plan_sections",
+    description: "Extract section headers from a plan entry for orchestration mapping.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the plan entry" },
+        title: { type: "string", description: "Title to search for" },
+      },
     },
   },
 ];
@@ -1055,6 +1183,310 @@ Use brain_tasks to see the full task list and dependency status.`;
         lines.push("---");
         lines.push("");
         lines.push(entry.content);
+
+        return lines.join("\n");
+      }
+
+      case "brain_backlinks": {
+        const response = await apiRequest<{
+          entries: Array<{
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+          }>;
+          total: number;
+        }>("GET", `/entries/${args.path}/backlinks`);
+
+        if (response.entries.length === 0) {
+          return `No backlinks found for: ${args.path}`;
+        }
+
+        const lines = [
+          `## Backlinks to: ${args.path}`,
+          "",
+          `Found ${response.total} entries linking to this note:`,
+          "",
+        ];
+
+        for (const entry of response.entries) {
+          lines.push(`- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`);
+        }
+
+        return lines.join("\n");
+      }
+
+      case "brain_outlinks": {
+        const response = await apiRequest<{
+          entries: Array<{
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+          }>;
+          total: number;
+        }>("GET", `/entries/${args.path}/outlinks`);
+
+        if (response.entries.length === 0) {
+          return `No outlinks found from: ${args.path}`;
+        }
+
+        const lines = [
+          `## Outlinks from: ${args.path}`,
+          "",
+          `Found ${response.total} entries linked from this note:`,
+          "",
+        ];
+
+        for (const entry of response.entries) {
+          lines.push(`- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`);
+        }
+
+        return lines.join("\n");
+      }
+
+      case "brain_related": {
+        const response = await apiRequest<{
+          entries: Array<{
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+          }>;
+          total: number;
+        }>("GET", `/entries/${args.path}/related`, undefined, {
+          limit: (args.limit as number) ?? 10,
+        });
+
+        if (response.entries.length === 0) {
+          return `No related entries found for: ${args.path}`;
+        }
+
+        const lines = [
+          `## Related to: ${args.path}`,
+          "",
+          `Found ${response.total} entries sharing links:`,
+          "",
+        ];
+
+        for (const entry of response.entries) {
+          lines.push(`- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`);
+        }
+
+        return lines.join("\n");
+      }
+
+      case "brain_orphans": {
+        const response = await apiRequest<{
+          entries: Array<{
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+          }>;
+          total: number;
+        }>("GET", "/orphans", undefined, {
+          type: args.type as string | undefined,
+          limit: (args.limit as number) ?? 20,
+        });
+
+        if (response.entries.length === 0) {
+          return `No orphan entries found${args.type ? ` of type "${args.type}"` : ""}`;
+        }
+
+        const lines = [
+          `## Orphan Entries${args.type ? ` (${args.type})` : ""}`,
+          "",
+          `Found ${response.total} entries with no incoming links:`,
+          "",
+        ];
+
+        for (const entry of response.entries) {
+          lines.push(`- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`);
+        }
+
+        lines.push("");
+        lines.push("*Consider linking these notes from related entries to improve knowledge graph connectivity.*");
+
+        return lines.join("\n");
+      }
+
+      case "brain_stale": {
+        const days = (args.days as number) ?? 30;
+
+        const response = await apiRequest<{
+          entries: Array<{
+            id: string;
+            path: string;
+            title: string;
+            type: string;
+            daysSinceVerified: number | null;
+          }>;
+          total: number;
+        }>("GET", "/stale", undefined, {
+          days,
+          type: args.type as string | undefined,
+          limit: (args.limit as number) ?? 20,
+        });
+
+        if (response.entries.length === 0) {
+          return `No stale entries found (all verified within ${days} days)`;
+        }
+
+        const lines = [
+          `## Stale Entries (not verified in ${days} days)`,
+          "",
+          `Found ${response.total} entries needing verification:`,
+          "",
+        ];
+
+        for (const entry of response.entries) {
+          const daysSince = entry.daysSinceVerified !== null
+            ? `${entry.daysSinceVerified} days ago`
+            : "never";
+          lines.push(`- **${entry.title}**`);
+          lines.push(`  \`${entry.path}\` | Last verified: ${daysSince}`);
+        }
+
+        lines.push("");
+        lines.push("*Use `brain_verify` to mark entries as still accurate.*");
+
+        return lines.join("\n");
+      }
+
+      case "brain_verify": {
+        await apiRequest<{ message: string; path: string }>(
+          "POST",
+          `/entries/${args.path}/verify`
+        );
+
+        return `Verified: ${args.path}
+
+Entry marked as still accurate. It will not appear in stale entry lists for 30 days.`;
+      }
+
+      case "brain_delete": {
+        if (!args.confirm) {
+          return "Please set `confirm: true` to delete the entry";
+        }
+
+        await apiRequest<{ message: string; path: string }>(
+          "DELETE",
+          `/entries/${args.path}`,
+          undefined,
+          { confirm: "true" }
+        );
+
+        return `Deleted: ${args.path}`;
+      }
+
+      case "brain_link": {
+        if (!args.path && !args.title) {
+          return "Please provide either a path, ID, or title to generate a link";
+        }
+
+        const response = await apiRequest<{
+          link: string;
+          id: string;
+          path: string;
+          title: string;
+        }>("POST", "/link", {
+          title: args.title,
+          path: args.path,
+          withTitle: args.withTitle,
+        });
+
+        return `Link: ${response.link}\nID: ${response.id}\nPath: ${response.path}\nTitle: ${response.title}`;
+      }
+
+      case "brain_section": {
+        if (!args.planId || !args.sectionTitle) {
+          return "Please provide both planId and sectionTitle";
+        }
+
+        const encodedTitle = encodeURIComponent(args.sectionTitle as string);
+        const response = await apiRequest<{
+          title: string;
+          content: string;
+          level: number;
+          line: number;
+        }>(
+          "GET",
+          `/entries/${args.planId}/sections/${encodedTitle}`,
+          undefined,
+          {
+            includeSubsections: args.includeSubsections !== false ? "true" : "false",
+          }
+        );
+
+        const lines = [
+          `## Section: ${response.title}`,
+          "",
+          `**Plan:** ${args.planId}`,
+          `**Line:** ${response.line}`,
+          "",
+          "---",
+          "",
+          response.content,
+        ];
+
+        return lines.join("\n");
+      }
+
+      case "brain_plan_sections": {
+        if (!args.path && !args.title) {
+          return "Please provide either a path or title";
+        }
+
+        // If title provided, search first
+        let entryPath = args.path as string | undefined;
+        if (!entryPath && args.title) {
+          const searchResult = await apiRequest<{
+            results: Array<{ path: string; title: string }>;
+          }>("POST", "/search", {
+            query: args.title,
+            limit: 5,
+          });
+
+          const exactMatch = searchResult.results.find(r => r.title === args.title);
+          if (exactMatch) {
+            entryPath = exactMatch.path;
+          } else if (searchResult.results.length > 0) {
+            const suggestions = searchResult.results.slice(0, 5).map(r => r.title).join(", ");
+            return `No exact match for title: "${args.title}"\n\nDid you mean: ${suggestions}`;
+          } else {
+            return `No entry found matching title: "${args.title}"`;
+          }
+        }
+
+        const response = await apiRequest<{
+          sections: Array<{
+            title: string;
+            level: number;
+            line: number;
+          }>;
+          total: number;
+        }>("GET", `/entries/${entryPath}/sections`);
+
+        // Get entry details for title
+        const entry = await apiRequest<{
+          title: string;
+          type: string;
+        }>("GET", `/entries/${entryPath}`);
+
+        const lines = [
+          `## Sections in: ${entry.title}`,
+          "",
+          `**Path:** ${entryPath}`,
+          `**Type:** ${entry.type}`,
+          `**Total sections:** ${response.total}`,
+          "",
+        ];
+
+        for (const section of response.sections) {
+          const indent = "  ".repeat(section.level - 1);
+          lines.push(`${indent}- ${section.title} (line ${section.line})`);
+        }
 
         return lines.join("\n");
       }

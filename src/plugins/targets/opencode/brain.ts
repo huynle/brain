@@ -1110,7 +1110,7 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
       // brain_update
       // ========================================
       brain_update: tool({
-        description: `Update an existing brain entry's status, title, or append content.
+        description: `Update an existing brain entry's status, title, dependencies, or append content.
 
 Use cases:
 - Mark a plan as completed: brain_update(path: "...", status: "completed")
@@ -1118,6 +1118,7 @@ Use cases:
 - Block with reason: brain_update(path: "...", status: "blocked", note: "Waiting on API design")
 - Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
+- Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
 
 Statuses: draft, active, in_progress, blocked, completed, validated, superseded, archived`,
         args: {
@@ -1138,10 +1139,14 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Short note to add (e.g., reason for status change)"),
+          depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Task dependencies - list of task IDs or titles"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note) {
-            return `No updates specified. Provide at least one of: status, title, append, note`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on`;
           }
 
           try {
@@ -1155,6 +1160,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               title: args.title,
               append: args.append,
               note: args.note,
+              depends_on: args.depends_on,
             });
 
             const changes: string[] = [];
@@ -1163,6 +1169,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             if (args.note) changes.push(`Note: "${args.note}"`);
             if (args.append)
               changes.push(`Appended ${args.append.length} characters`);
+            if (args.depends_on)
+              changes.push(`Dependencies: ${args.depends_on.length} task(s)`);
 
             return `Updated: ${args.path}
 
@@ -1442,6 +1450,159 @@ brain logs
 
 Brain tools will not work until the server is running.
 You can proceed with tasks that don't require brain functionality.`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_tasks
+      // ========================================
+      brain_tasks: tool({
+        description: `List all tasks for current project with dependency status (ready/waiting/blocked), stats, and cycles detected.
+
+Use this to see:
+- Which tasks are ready to work on (dependencies met)
+- Which tasks are waiting (dependencies incomplete)
+- Which tasks are blocked (circular deps or blocked deps)
+- Overall task queue stats`,
+        args: {
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe("Filter by task status (pending, in_progress, completed, etc.)"),
+          classification: tool.schema
+            .enum(["ready", "waiting", "blocked"])
+            .optional()
+            .describe("Filter by dependency classification"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results to return (default: 50)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          try {
+            const proj = args.project || projectId;
+            
+            interface TaskWithDeps {
+              id: string;
+              title: string;
+              status: string;
+              priority?: string;
+              classification: string;
+              dependsOn?: Array<{ id: string; title: string; status: string }>;
+              blockedBy?: string;
+            }
+            
+            interface TaskListResponse {
+              tasks: TaskWithDeps[];
+              count: number;
+              stats?: {
+                ready: number;
+                waiting: number;
+                blocked: number;
+                completed: number;
+                total: number;
+              };
+              cycles?: Array<{ taskId: string; cycle: string[] }>;
+            }
+            
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            // Apply filters
+            let filteredTasks = response.tasks;
+            
+            if (args.status) {
+              filteredTasks = filteredTasks.filter(t => t.status === args.status);
+            }
+            
+            if (args.classification) {
+              filteredTasks = filteredTasks.filter(t => t.classification === args.classification);
+            }
+            
+            const limit = args.limit ?? 50;
+            filteredTasks = filteredTasks.slice(0, limit);
+
+            // Group by classification
+            const ready = filteredTasks.filter(t => t.classification === "ready");
+            const waiting = filteredTasks.filter(t => t.classification === "waiting");
+            const blocked = filteredTasks.filter(t => t.classification === "blocked");
+
+            const lines: string[] = [];
+            lines.push(`## Tasks for project: ${proj}`);
+            lines.push("");
+
+            // Stats summary
+            if (response.stats) {
+              const s = response.stats;
+              lines.push(`**Stats:** ${s.ready} ready | ${s.waiting} waiting | ${s.blocked} blocked | ${s.completed} completed`);
+              lines.push("");
+            }
+
+            // Ready tasks
+            if (ready.length > 0) {
+              lines.push("### Ready (can start now)");
+              for (const task of ready) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                if (task.dependsOn && task.dependsOn.length > 0) {
+                  const deps = task.dependsOn.map(d => `${d.title} (${d.status})`).join(", ");
+                  lines.push(`  Dependencies: ${deps}`);
+                } else {
+                  lines.push("  Dependencies: none");
+                }
+              }
+              lines.push("");
+            }
+
+            // Waiting tasks
+            if (waiting.length > 0) {
+              lines.push("### Waiting (deps incomplete)");
+              for (const task of waiting) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                if (task.dependsOn && task.dependsOn.length > 0) {
+                  const incomplete = task.dependsOn.filter(d => d.status !== "completed");
+                  const deps = incomplete.map(d => `${d.title} (${d.status})`).join(", ");
+                  lines.push(`  Waiting on: ${deps}`);
+                }
+              }
+              lines.push("");
+            }
+
+            // Blocked tasks
+            if (blocked.length > 0) {
+              lines.push("### Blocked");
+              for (const task of blocked) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                lines.push(`  Blocked by: ${task.blockedBy || "circular dependency or blocked deps"}`);
+              }
+              lines.push("");
+            }
+
+            // Cycles warning
+            if (response.cycles && response.cycles.length > 0) {
+              lines.push("### Circular Dependencies Detected");
+              for (const cycle of response.cycles) {
+                lines.push(`- Cycle: ${cycle.cycle.join(" -> ")}`);
+              }
+              lines.push("");
+            }
+
+            if (filteredTasks.length === 0) {
+              lines.push("*No tasks found matching criteria.*");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to list tasks: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       }),

@@ -428,7 +428,7 @@ const tools: Tool[] = [
   },
   {
     name: "brain_update",
-    description: "Update an existing brain entry's status, title, or append content.",
+    description: "Update an existing brain entry's status, title, dependencies, or append content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -437,6 +437,7 @@ const tools: Tool[] = [
         title: { type: "string", description: "New title" },
         append: { type: "string", description: "Content to append" },
         note: { type: "string", description: "Short note to add" },
+        depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
       },
       required: ["path"],
     },
@@ -465,6 +466,25 @@ This is useful to:
     inputSchema: {
       type: "object",
       properties: {},
+    },
+  },
+  {
+    name: "brain_tasks",
+    description: `List all tasks for current project with dependency status (ready/waiting/blocked), stats, and cycles detected.
+
+Use this to see:
+- Which tasks are ready to work on (dependencies met)
+- Which tasks are waiting (dependencies incomplete)
+- Which tasks are blocked (circular deps or blocked deps)
+- Overall task queue stats`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by task status (pending, in_progress, completed, etc.)" },
+        classification: { type: "string", enum: ["ready", "waiting", "blocked"], description: "Filter by dependency classification" },
+        limit: { type: "number", description: "Maximum results to return (default: 50)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
     },
   },
 ];
@@ -641,6 +661,125 @@ To check server status:
 
 Brain tools will not work until the server is running.`;
         }
+      }
+
+      case "brain_tasks": {
+        const proj = (args.project as string) || context.projectId;
+        
+        interface TaskWithDeps {
+          id: string;
+          title: string;
+          status: string;
+          priority?: string;
+          classification: string;
+          dependsOn?: Array<{ id: string; title: string; status: string }>;
+          blockedBy?: string;
+        }
+        
+        interface TaskListResponse {
+          tasks: TaskWithDeps[];
+          count: number;
+          stats?: {
+            ready: number;
+            waiting: number;
+            blocked: number;
+            completed: number;
+            total: number;
+          };
+          cycles?: Array<{ taskId: string; cycle: string[] }>;
+        }
+        
+        const response = await apiRequest<TaskListResponse>(
+          "GET",
+          `/tasks/${encodeURIComponent(proj)}`
+        );
+
+        // Apply filters
+        let filteredTasks = response.tasks;
+        
+        if (args.status) {
+          filteredTasks = filteredTasks.filter(t => t.status === args.status);
+        }
+        
+        if (args.classification) {
+          filteredTasks = filteredTasks.filter(t => t.classification === args.classification);
+        }
+        
+        const limit = (args.limit as number) ?? 50;
+        filteredTasks = filteredTasks.slice(0, limit);
+
+        // Group by classification
+        const ready = filteredTasks.filter(t => t.classification === "ready");
+        const waiting = filteredTasks.filter(t => t.classification === "waiting");
+        const blocked = filteredTasks.filter(t => t.classification === "blocked");
+
+        const lines: string[] = [];
+        lines.push(`## Tasks for project: ${proj}`);
+        lines.push("");
+
+        // Stats summary
+        if (response.stats) {
+          const s = response.stats;
+          lines.push(`**Stats:** ${s.ready} ready | ${s.waiting} waiting | ${s.blocked} blocked | ${s.completed} completed`);
+          lines.push("");
+        }
+
+        // Ready tasks
+        if (ready.length > 0) {
+          lines.push("### Ready (can start now)");
+          for (const task of ready) {
+            const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+            lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+            if (task.dependsOn && task.dependsOn.length > 0) {
+              const deps = task.dependsOn.map(d => `${d.title} (${d.status})`).join(", ");
+              lines.push(`  Dependencies: ${deps}`);
+            } else {
+              lines.push("  Dependencies: none");
+            }
+          }
+          lines.push("");
+        }
+
+        // Waiting tasks
+        if (waiting.length > 0) {
+          lines.push("### Waiting (deps incomplete)");
+          for (const task of waiting) {
+            const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+            lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+            if (task.dependsOn && task.dependsOn.length > 0) {
+              const incomplete = task.dependsOn.filter(d => d.status !== "completed");
+              const deps = incomplete.map(d => `${d.title} (${d.status})`).join(", ");
+              lines.push(`  Waiting on: ${deps}`);
+            }
+          }
+          lines.push("");
+        }
+
+        // Blocked tasks
+        if (blocked.length > 0) {
+          lines.push("### Blocked");
+          for (const task of blocked) {
+            const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+            lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+            lines.push(`  Blocked by: ${task.blockedBy || "circular dependency or blocked deps"}`);
+          }
+          lines.push("");
+        }
+
+        // Cycles warning
+        if (response.cycles && response.cycles.length > 0) {
+          lines.push("### Circular Dependencies Detected");
+          for (const cycle of response.cycles) {
+            lines.push(`- Cycle: ${cycle.cycle.join(" -> ")}`);
+          }
+          lines.push("");
+        }
+
+        if (filteredTasks.length === 0) {
+          lines.push("*No tasks found matching criteria.*");
+        }
+
+        return lines.join("\n");
       }
 
       default:

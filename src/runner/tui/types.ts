@@ -28,6 +28,11 @@ export interface TaskDisplay {
   projectId?: string;  // Which project this task belongs to (for multi-project mode)
   parent_id?: string;  // Parent task ID for hierarchy
   
+  // Feature grouping
+  feature_id?: string;           // Feature this task belongs to (e.g., "auth-system")
+  feature_priority?: Priority;   // Priority for the feature
+  feature_depends_on?: string[]; // Feature IDs this feature depends on
+  
   // Frontmatter fields
   created?: string;                  // ISO timestamp when created
   workdir?: string | null;           // $HOME-relative working directory
@@ -96,6 +101,32 @@ export interface ProjectStats {
     completed: number;
     blocked: number;
   };
+}
+
+/**
+ * Feature-level statistics for aggregated display
+ */
+export interface FeatureStats {
+  total: number;
+  pending: number;
+  inProgress: number;
+  completed: number;
+  blocked: number;
+}
+
+/**
+ * Feature display information for TUI rendering
+ * Groups tasks by feature with aggregated stats
+ */
+export interface FeatureDisplay {
+  id: string;                                         // Feature ID (e.g., "auth-system")
+  priority: Priority;                                 // Feature priority (derived from feature_priority or highest task priority)
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked';  // Aggregated feature status
+  classification: TaskClassification;                 // "ready", "waiting", "blocked" based on feature deps
+  tasks: TaskDisplay[];                               // Tasks belonging to this feature
+  taskStats: FeatureStats;                            // Aggregated task statistics
+  blockedByFeatures: string[];                        // Feature IDs blocking this feature
+  waitingOnFeatures: string[];                        // Feature IDs this feature is waiting on
 }
 
 /**

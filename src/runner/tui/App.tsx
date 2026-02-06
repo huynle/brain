@@ -429,6 +429,12 @@ export function App({
         return;
       }
 
+      // Enter to toggle completed section when header is selected
+      if (key.return && selectedTaskId === COMPLETED_HEADER_ID) {
+        setCompletedCollapsed(prev => !prev);
+        return;
+      }
+
       // 's' to toggle completed section or open status popup
       if (input === 's') {
         // Toggle completed section if header is selected

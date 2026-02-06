@@ -50,6 +50,7 @@ export function loadConfig(): Config {
     logLevel: getEnv("LOG_LEVEL", "info") as ServerConfig["logLevel"],
     enableAuth: getEnvBool("ENABLE_AUTH", false),
     apiKey: process.env.API_KEY,
+    oauthPin: process.env.OAUTH_PIN,
     enableTenants: getEnvBool("ENABLE_TENANTS", false),
     tls,
   };

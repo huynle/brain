@@ -253,6 +253,8 @@ export interface ServerConfig {
   logLevel: "debug" | "info" | "warn" | "error";
   enableAuth: boolean;
   apiKey?: string;
+  /** PIN required on OAuth consent page (set via OAUTH_PIN env var) */
+  oauthPin?: string;
   enableTenants: boolean;
   tls: TlsConfig;
 }

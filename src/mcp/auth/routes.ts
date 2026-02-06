@@ -29,12 +29,29 @@ import {
 
 /**
  * Get the base URL from request or config
+ * Handles reverse proxy scenarios where TLS is terminated upstream
  */
-function getIssuer(requestUrl: string): string {
-  const config = getConfig();
-  // Use request origin for issuer
-  const url = new URL(requestUrl);
-  return `${url.protocol}//${url.host}`;
+function getIssuer(c: Context): string {
+  const url = new URL(c.req.url);
+  // Check for X-Forwarded-Proto header (set by reverse proxies like FRP, nginx)
+  const forwardedProto = c.req.header("x-forwarded-proto");
+  // Also check X-Forwarded-Ssl and common proxy indicators
+  const forwardedSsl = c.req.header("x-forwarded-ssl");
+  const frontEndHttps = c.req.header("front-end-https");
+  // Get the actual host from Host header (more reliable than url.host behind proxy)
+  const hostHeader = c.req.header("host") ?? url.host;
+  
+  let protocol = url.protocol;
+  if (forwardedProto) {
+    protocol = `${forwardedProto}:`;
+  } else if (forwardedSsl === "on" || frontEndHttps === "on") {
+    protocol = "https:";
+  } else if (hostHeader.includes("huynle.com") || hostHeader.includes(".app") || hostHeader.includes(".cloud")) {
+    // Known domains that are always behind HTTPS termination
+    protocol = "https:";
+  }
+  
+  return `${protocol}//${hostHeader}`;
 }
 
 /**
@@ -52,7 +69,7 @@ export function createOAuthRoutes(): Hono {
    * GET /.well-known/oauth-authorization-server
    */
   oauth.get("/.well-known/oauth-authorization-server", (c) => {
-    const issuer = getIssuer(c.req.url);
+    const issuer = getIssuer(c);
 
     const metadata: OAuthServerMetadata = {
       issuer,
@@ -79,7 +96,7 @@ export function createOAuthRoutes(): Hono {
    * GET /.well-known/oauth-protected-resource/mcp
    */
   oauth.get("/.well-known/oauth-protected-resource/mcp", (c) => {
-    const issuer = getIssuer(c.req.url);
+    const issuer = getIssuer(c);
 
     const metadata: ProtectedResourceMetadata = {
       resource: `${issuer}/mcp`,
@@ -219,7 +236,8 @@ export function createOAuthRoutes(): Hono {
     }
 
     // Display consent page
-    const issuer = getIssuer(c.req.url);
+    const issuer = getIssuer(c);
+    const config = getConfig();
     return c.html(renderConsentPage({
       clientName: client.client_name ?? clientId,
       clientUri: client.client_uri,
@@ -229,6 +247,7 @@ export function createOAuthRoutes(): Hono {
       redirectUri,
       codeChallenge,
       issuer,
+      requirePin: !!config.server.oauthPin,
     }));
   });
 
@@ -255,6 +274,27 @@ export function createOAuthRoutes(): Hono {
     // Handle deny
     if (action === "deny") {
       return redirectWithError(redirectUri, "access_denied", "User denied the request", state);
+    }
+
+    // Validate PIN if required
+    const config = getConfig();
+    if (config.server.oauthPin) {
+      const pin = body.pin as string;
+      if (!pin || pin !== config.server.oauthPin) {
+        // Re-render consent page with error
+        return c.html(renderConsentPage({
+          clientName: client.client_name ?? clientId,
+          clientUri: client.client_uri,
+          scope,
+          state,
+          clientId,
+          redirectUri,
+          codeChallenge,
+          issuer: getIssuer(c),
+          requirePin: true,
+          pinError: "Invalid PIN. Please try again.",
+        }), 401);
+      }
     }
 
     // Handle approve - create authorization code
@@ -517,6 +557,8 @@ function renderConsentPage(params: {
   redirectUri: string;
   codeChallenge: string;
   issuer: string;
+  requirePin?: boolean;
+  pinError?: string;
 }): string {
   const scopes = params.scope.split(" ").filter(Boolean);
 
@@ -569,6 +611,15 @@ function renderConsentPage(params: {
     .btn-deny:hover { background: #444; }
     .btn-allow { background: #10b981; color: #fff; }
     .btn-allow:hover { background: #059669; }
+    .pin-section { margin-bottom: 1.5rem; }
+    .pin-label { font-size: 0.875rem; color: #888; margin-bottom: 0.5rem; display: block; }
+    .pin-input {
+      width: 100%; padding: 0.75rem; border-radius: 8px;
+      background: #222; border: 1px solid #444; color: #fff;
+      font-size: 1rem; text-align: center; letter-spacing: 0.25rem;
+    }
+    .pin-input:focus { outline: none; border-color: #10b981; }
+    .pin-error { color: #ff6b6b; font-size: 0.8rem; margin-top: 0.5rem; }
     .footer { text-align: center; margin-top: 1.5rem; color: #666; font-size: 0.75rem; }
   </style>
 </head>
@@ -599,6 +650,14 @@ function renderConsentPage(params: {
       <input type="hidden" name="code_challenge" value="${escapeHtml(params.codeChallenge)}">
       <input type="hidden" name="scope" value="${escapeHtml(params.scope)}">
       ${params.state ? `<input type="hidden" name="state" value="${escapeHtml(params.state)}">` : ""}
+
+      ${params.requirePin ? `
+      <div class="pin-section">
+        <label class="pin-label">Enter PIN to authorize:</label>
+        <input type="password" name="pin" class="pin-input" placeholder="****" maxlength="20" required autofocus>
+        ${params.pinError ? `<div class="pin-error">${escapeHtml(params.pinError)}</div>` : ""}
+      </div>
+      ` : ""}
 
       <div class="buttons">
         <button type="submit" name="action" value="deny" class="btn-deny">Deny</button>

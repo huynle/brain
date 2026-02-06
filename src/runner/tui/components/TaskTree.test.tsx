@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, COMPLETED_HEADER_ID } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, FEATURE_HEADER_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
@@ -982,6 +982,430 @@ describe('buildTree with parent_id', () => {
       expect(frame).toContain('myproject');
       expect(frame).toContain('Root Task');
       expect(frame).toContain('Child Task');
+    });
+  });
+});
+
+// =============================================================================
+// Group By Feature Tests
+// =============================================================================
+
+describe('TaskTree groupByFeature', () => {
+  describe('feature headers', () => {
+    it('shows feature headers when groupByFeature is true', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+        createTask({ id: '2', title: 'Task 2', feature_id: 'payment-flow' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      expect(lastFrame()).toContain('Feature: auth-system');
+      expect(lastFrame()).toContain('Feature: payment-flow');
+    });
+
+    it('shows completion stats in feature headers', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system', status: 'pending' }),
+        createTask({ id: '2', title: 'Task 2', feature_id: 'auth-system', status: 'completed' }),
+        createTask({ id: '3', title: 'Task 3', feature_id: 'auth-system', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // Should show [2/3 complete] for auth-system
+      expect(lastFrame()).toContain('[2/3 complete]');
+    });
+
+    it('does not show feature headers when groupByFeature is false', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={false}
+        />
+      );
+      // Should show task but not the feature header format
+      expect(lastFrame()).toContain('Task 1');
+      expect(lastFrame()).not.toContain('Feature:');
+    });
+
+    it('shows ungrouped section for tasks without feature_id', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Featured Task', feature_id: 'auth-system' }),
+        createTask({ id: '2', title: 'Orphan Task' }), // no feature_id
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      expect(lastFrame()).toContain('Feature: auth-system');
+      expect(lastFrame()).toContain('Ungrouped');
+      expect(lastFrame()).toContain('Featured Task');
+      expect(lastFrame()).toContain('Orphan Task');
+    });
+  });
+
+  describe('task grouping under features', () => {
+    it('groups tasks under their respective features', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Auth Task 1', feature_id: 'auth-system' }),
+        createTask({ id: '2', title: 'Auth Task 2', feature_id: 'auth-system' }),
+        createTask({ id: '3', title: 'Payment Task', feature_id: 'payment-flow' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      // Both auth tasks should appear after auth-system header
+      const authHeaderIndex = frame.indexOf('auth-system');
+      const authTask1Index = frame.indexOf('Auth Task 1');
+      const authTask2Index = frame.indexOf('Auth Task 2');
+      const paymentHeaderIndex = frame.indexOf('payment-flow');
+      
+      expect(authHeaderIndex).toBeLessThan(authTask1Index);
+      expect(authHeaderIndex).toBeLessThan(authTask2Index);
+      expect(authTask1Index).toBeLessThan(paymentHeaderIndex);
+      expect(authTask2Index).toBeLessThan(paymentHeaderIndex);
+    });
+
+    it('preserves task hierarchy within features', () => {
+      const tasks = [
+        createTask({ id: 'parent', title: 'Parent Task', feature_id: 'auth-system', dependencies: [] }),
+        createTask({ id: 'child', title: 'Child Task', feature_id: 'auth-system', dependencies: ['parent'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      // Parent should come before child
+      const parentIndex = frame.indexOf('Parent Task');
+      const childIndex = frame.indexOf('Child Task');
+      expect(parentIndex).toBeLessThan(childIndex);
+      // Tree structure characters should be present
+      expect(frame).toContain('─');
+    });
+  });
+
+  describe('feature sorting', () => {
+    it('sorts features by priority (high before medium before low)', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Low Task', feature_id: 'low-feature', feature_priority: 'low' }),
+        createTask({ id: '2', title: 'High Task', feature_id: 'high-feature', feature_priority: 'high' }),
+        createTask({ id: '3', title: 'Medium Task', feature_id: 'medium-feature', feature_priority: 'medium' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      const highIndex = frame.indexOf('high-feature');
+      const mediumIndex = frame.indexOf('medium-feature');
+      const lowIndex = frame.indexOf('low-feature');
+      
+      expect(highIndex).toBeLessThan(mediumIndex);
+      expect(mediumIndex).toBeLessThan(lowIndex);
+    });
+
+    it('sorts features by dependency order when same priority', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Downstream Task', feature_id: 'downstream', feature_depends_on: ['upstream'] }),
+        createTask({ id: '2', title: 'Upstream Task', feature_id: 'upstream' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      const upstreamIndex = frame.indexOf('upstream');
+      const downstreamIndex = frame.indexOf('downstream');
+      
+      // upstream should come before downstream
+      expect(upstreamIndex).toBeLessThan(downstreamIndex);
+    });
+  });
+
+  describe('feature status indicators', () => {
+    it('shows ready indicator for features with all tasks ready', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Ready Task', feature_id: 'ready-feature', status: 'pending' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // Ready features show ● indicator
+      expect(lastFrame()).toContain('●');
+    });
+
+    it('shows in_progress indicator for features with active tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', feature_id: 'active-feature', status: 'in_progress' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // In-progress features show ▶ indicator
+      expect(lastFrame()).toContain('▶');
+    });
+
+    it('shows blocked indicator for features with blocked tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Blocked Task', feature_id: 'blocked-feature', status: 'blocked' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // Blocked features show ✗ indicator
+      expect(lastFrame()).toContain('✗');
+    });
+
+    it('shows waiting indicator for features waiting on other features', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Blocker', feature_id: 'blocker-feature', status: 'pending' }),
+        createTask({ id: '2', title: 'Waiter', feature_id: 'waiting-feature', status: 'pending', feature_depends_on: ['blocker-feature'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // Waiting features show ◌ indicator and blocked-by info
+      expect(lastFrame()).toContain('◌');
+      expect(lastFrame()).toContain('waiting on');
+    });
+  });
+
+  describe('feature header selection', () => {
+    it('highlights feature header when selected', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      const headerId = `${FEATURE_HEADER_PREFIX}auth-system`;
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={headerId}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // The header should be rendered and selectable
+      expect(lastFrame()).toContain('Feature: auth-system');
+    });
+  });
+
+  describe('completed tasks in features', () => {
+    it('hides completed tasks when completedCollapsed is true', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', feature_id: 'auth-system', status: 'pending' }),
+        createTask({ id: '2', title: 'Done Task', feature_id: 'auth-system', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={true}
+          onToggleCompleted={() => {}}
+          groupByFeature={true}
+        />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      expect(lastFrame()).not.toContain('Done Task');
+      // But completed count should still be shown
+      expect(lastFrame()).toContain('Completed (1)');
+    });
+
+    it('skips features with only completed tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', feature_id: 'active-feature', status: 'pending' }),
+        createTask({ id: '2', title: 'Done Task', feature_id: 'done-feature', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // Should show active-feature but not done-feature as a feature header
+      expect(lastFrame()).toContain('Feature: active-feature');
+      expect(lastFrame()).not.toContain('Feature: done-feature');
+    });
+  });
+});
+
+// =============================================================================
+// flattenFeatureOrder tests
+// =============================================================================
+
+describe('flattenFeatureOrder', () => {
+  describe('basic ordering', () => {
+    it('returns empty array for empty tasks', () => {
+      const order = flattenFeatureOrder([]);
+      expect(order).toEqual([]);
+    });
+
+    it('includes feature headers in navigation order', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+        createTask({ id: '2', title: 'Task 2', feature_id: 'payment-flow' }),
+      ];
+      const order = flattenFeatureOrder(tasks);
+      expect(order).toContain(`${FEATURE_HEADER_PREFIX}auth-system`);
+      expect(order).toContain(`${FEATURE_HEADER_PREFIX}payment-flow`);
+    });
+
+    it('places tasks after their feature header', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      const order = flattenFeatureOrder(tasks);
+      const headerIndex = order.indexOf(`${FEATURE_HEADER_PREFIX}auth-system`);
+      const taskIndex = order.indexOf('1');
+      expect(headerIndex).toBeLessThan(taskIndex);
+    });
+  });
+
+  describe('priority ordering', () => {
+    it('sorts features by priority', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Low', feature_id: 'low-feat', feature_priority: 'low' }),
+        createTask({ id: '2', title: 'High', feature_id: 'high-feat', feature_priority: 'high' }),
+      ];
+      const order = flattenFeatureOrder(tasks);
+      const highIndex = order.indexOf(`${FEATURE_HEADER_PREFIX}high-feat`);
+      const lowIndex = order.indexOf(`${FEATURE_HEADER_PREFIX}low-feat`);
+      expect(highIndex).toBeLessThan(lowIndex);
+    });
+  });
+
+  describe('dependency ordering', () => {
+    it('places dependency features before dependent features', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Dependent', feature_id: 'dependent', feature_depends_on: ['dependency'] }),
+        createTask({ id: '2', title: 'Dependency', feature_id: 'dependency' }),
+      ];
+      const order = flattenFeatureOrder(tasks);
+      const depIndex = order.indexOf(`${FEATURE_HEADER_PREFIX}dependency`);
+      const dependentIndex = order.indexOf(`${FEATURE_HEADER_PREFIX}dependent`);
+      expect(depIndex).toBeLessThan(dependentIndex);
+    });
+  });
+
+  describe('completed section', () => {
+    it('includes completed header after all features', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', feature_id: 'active-feature', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', feature_id: 'active-feature', status: 'completed' }),
+      ];
+      const order = flattenFeatureOrder(tasks, true);
+      expect(order).toContain(COMPLETED_HEADER_ID);
+      // Completed header should be after active tasks
+      const lastFeatureTaskIndex = order.indexOf('1');
+      const completedHeaderIndex = order.indexOf(COMPLETED_HEADER_ID);
+      expect(completedHeaderIndex).toBeGreaterThan(lastFeatureTaskIndex);
+    });
+
+    it('includes completed task IDs when expanded', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', feature_id: 'feat', status: 'pending' }),
+        createTask({ id: 'done', title: 'Done', feature_id: 'feat', status: 'completed' }),
+      ];
+      const order = flattenFeatureOrder(tasks, false); // expanded
+      expect(order).toContain('done');
+    });
+
+    it('excludes completed task IDs when collapsed', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', feature_id: 'feat', status: 'pending' }),
+        createTask({ id: 'done', title: 'Done', feature_id: 'feat', status: 'completed' }),
+      ];
+      const order = flattenFeatureOrder(tasks, true); // collapsed
+      expect(order).not.toContain('done');
+      expect(order).toContain(COMPLETED_HEADER_ID);
+    });
+  });
+
+  describe('ungrouped tasks', () => {
+    it('includes ungrouped tasks after featured tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Featured', feature_id: 'some-feature' }),
+        createTask({ id: '2', title: 'Ungrouped' }),
+      ];
+      const order = flattenFeatureOrder(tasks);
+      const featuredIndex = order.indexOf('1');
+      const ungroupedIndex = order.indexOf('2');
+      expect(featuredIndex).toBeLessThan(ungroupedIndex);
     });
   });
 });

@@ -172,7 +172,7 @@ export const brainApi = {
     tags?: string[];
     status?: string;
     priority?: string;
-    depends_on?: string[];
+    parent_id?: string;
     global?: boolean;
     project?: string;
     relatedEntries?: string[];

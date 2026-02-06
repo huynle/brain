@@ -94,7 +94,7 @@ export interface BrainEntry {
   content: string; // Markdown body
   tags: string[];
   priority?: Priority;
-  depends_on?: string[];
+  parent_id?: string; // Parent task ID - tasks point UP to their parent
   project_id?: string;
   created?: string; // ISO timestamp
   modified?: string; // ISO timestamp
@@ -122,7 +122,7 @@ export interface CreateEntryRequest {
   tags?: string[];
   status?: EntryStatus;
   priority?: Priority;
-  depends_on?: string[];
+  parent_id?: string; // Parent task ID - tasks point UP to their parent
   global?: boolean;
   project?: string;
   relatedEntries?: string[];
@@ -277,7 +277,7 @@ export interface Task {
   title: string;
   priority: Priority;
   status: EntryStatus;
-  depends_on: string[];
+  parent_id?: string; // Parent task ID - tasks point UP to their parent
   created: string;
   workdir: string | null;
   worktree: string | null;
@@ -286,22 +286,18 @@ export interface Task {
   user_original_request: string | null; // Verbatim user request for validation during task completion
 }
 
-// Task with resolved dependencies
+// Task with resolved parent/child relationships
 export interface ResolvedTask extends Task {
-  resolved_deps: string[]; // IDs of resolved dependencies
-  unresolved_deps: string[]; // References that couldn't be resolved
+  children_ids: string[]; // IDs of child tasks (computed from parent_id)
   classification: TaskClassification;
-  blocked_by: string[]; // IDs of blocking deps
-  blocked_by_reason?: string; // "circular_dependency" | "dependency_blocked"
-  waiting_on: string[]; // IDs of incomplete deps
-  in_cycle: boolean;
+  blocked_by?: string; // Parent ID if blocked due to parent
+  blocked_by_reason?: string; // "parent_blocked" | "parent_cancelled"
   resolved_workdir: string | null; // Absolute path after resolution
 }
 
-// Dependency resolution result
-export interface DependencyResult {
+// Task resolution result
+export interface TaskResolutionResult {
   tasks: ResolvedTask[];
-  cycles: string[][]; // Groups of task IDs in cycles
   stats: {
     total: number;
     ready: number;
@@ -310,6 +306,9 @@ export interface DependencyResult {
     not_pending: number;
   };
 }
+
+// Backwards compatibility alias
+export type DependencyResult = TaskResolutionResult;
 
 // =============================================================================
 // Task API Request/Response Types

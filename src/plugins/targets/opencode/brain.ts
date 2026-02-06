@@ -407,11 +407,11 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Priority level for tasks. High = urgent/blocking, Medium = normal, Low = nice-to-have."
             ),
-          depends_on: tool.schema
-            .array(tool.schema.string())
+          parent_id: tool.schema
+            .string()
             .optional()
             .describe(
-              "Task dependencies - list of task IDs or titles that must be completed before this task."
+              "ID of the parent task this task belongs to. Creates a hierarchy where leaf tasks (no children) are ready to execute, and parent tasks wait for all children to complete. Leave empty for root-level tasks."
             ),
           global: tool.schema
             .boolean()
@@ -454,7 +454,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               tags: args.tags,
               status: args.status,
               priority: args.priority,
-              depends_on: args.depends_on,
+              parent_id: args.parent_id,
               global: args.global,
               project: args.project || projectId,
               relatedEntries: args.relatedEntries,

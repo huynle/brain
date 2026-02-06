@@ -53,7 +53,7 @@ export function registerBrainTools(server: McpServer): void {
       priority: z.enum(["high", "medium", "low"]).optional().describe("Priority level"),
       global: z.boolean().optional().describe("Save to global brain (cross-project)"),
       project: z.string().optional().describe("Explicit project ID/name"),
-      depends_on: z.array(z.string()).optional().describe("Task dependencies - list of task IDs or titles"),
+      parent_id: z.string().optional().describe("ID of the parent task this task belongs to. Leaf tasks (no children) are ready to execute. Parent tasks wait for all children to complete. Leave empty for root-level tasks."),
       user_original_request: z.string().optional().describe("Verbatim user request for this task. HIGHLY RECOMMENDED for tasks."),
       relatedEntries: z.array(z.string()).optional().describe("Related brain entry paths or titles to link"),
     },

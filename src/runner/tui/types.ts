@@ -12,6 +12,12 @@ export type TaskClassification = 'ready' | 'waiting' | 'blocked' | 'not_pending'
 /**
  * Task display information for TUI rendering
  * Includes all frontmatter fields from the brain entry
+ * 
+ * Task hierarchy uses parent_id (tasks point UP to their parent):
+ * - Tasks with parent_id are children of that parent
+ * - Tasks without parent_id are root-level project deliverables
+ * - Leaf tasks (no children) are ready to execute
+ * - Parent tasks wait until all children complete
  */
 export interface TaskDisplay {
   id: string;
@@ -19,12 +25,13 @@ export interface TaskDisplay {
   title: string;
   status: EntryStatus;
   priority: Priority;
-  dependencies: string[];
-  dependents: string[];
   progress?: number;
   error?: string;
   projectId?: string;  // Which project this task belongs to (for multi-project mode)
-  parent_id?: string;  // Parent task ID for hierarchy
+  
+  // Parent-child hierarchy
+  parent_id?: string;       // Parent task ID - this task is a child of the parent
+  children_ids: string[];   // IDs of child tasks (computed from parent_id)
   
   // Frontmatter fields
   created?: string;                  // ISO timestamp when created
@@ -34,14 +41,10 @@ export interface TaskDisplay {
   gitBranch?: string | null;         // Branch context
   userOriginalRequest?: string | null; // Original user request for validation
   
-  // Dependency resolution fields
-  resolvedDeps?: string[];           // IDs of resolved dependencies
-  unresolvedDeps?: string[];         // References that couldn't be resolved
+  // Classification fields (from task resolution)
   classification?: TaskClassification; // "ready", "waiting", "blocked", "not_pending"
-  blockedBy?: string[];              // IDs of blocking dependencies
-  blockedByReason?: string;          // "circular_dependency" or "dependency_blocked"
-  waitingOn?: string[];              // IDs of incomplete dependencies
-  inCycle?: boolean;                 // Whether task is in a dependency cycle
+  blockedBy?: string;                // Parent ID if blocked due to parent
+  blockedByReason?: string;          // "parent_blocked" or "parent_cancelled"
   resolvedWorkdir?: string | null;   // Absolute path after resolution
 }
 

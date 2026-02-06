@@ -133,11 +133,11 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         title: task.title,
         status: task.status,
         priority: task.priority || 'medium',
-        dependencies: task.resolved_deps || task.dependencies || [],
-        dependents: task.dependents || [],
         progress: task.progress,
         error: task.error,
+        // Parent-child hierarchy
         parent_id: task.parent_id,
+        children_ids: task.children_ids || [],
         // Frontmatter fields
         created: task.created,
         workdir: task.workdir,
@@ -145,14 +145,10 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         gitRemote: task.git_remote,
         gitBranch: task.git_branch,
         userOriginalRequest: task.user_original_request,
-        // Dependency resolution fields
-        resolvedDeps: task.resolved_deps,
-        unresolvedDeps: task.unresolved_deps,
+        // Classification fields
         classification: task.classification,
         blockedBy: task.blocked_by,
         blockedByReason: task.blocked_by_reason,
-        waitingOn: task.waiting_on,
-        inCycle: task.in_cycle,
         resolvedWorkdir: task.resolved_workdir,
       }));
 

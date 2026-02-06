@@ -80,11 +80,24 @@ async function fetchProjectTasks(
     title: task.title,
     status: task.status,
     priority: task.priority || 'medium',
-    dependencies: task.resolved_deps || task.dependencies || [],
-    dependents: task.dependents || [],
     progress: task.progress,
     error: task.error,
     projectId, // Tag with project ID
+    // Parent-child hierarchy
+    parent_id: task.parent_id,
+    children_ids: task.children_ids || [],
+    // Frontmatter fields
+    created: task.created,
+    workdir: task.workdir,
+    worktree: task.worktree,
+    gitRemote: task.git_remote,
+    gitBranch: task.git_branch,
+    userOriginalRequest: task.user_original_request,
+    // Classification fields
+    classification: task.classification,
+    blockedBy: task.blocked_by,
+    blockedByReason: task.blocked_by_reason,
+    resolvedWorkdir: task.resolved_workdir,
   }));
 
   // Calculate stats from tasks

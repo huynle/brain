@@ -1,15 +1,18 @@
 /**
- * Task Dependency Resolution
+ * Task Hierarchy Resolution
  *
- * Ported from do-work bash script jq logic.
- * Handles: dependency resolution, cycle detection, task classification.
+ * Tasks use a parent_id field to form a tree hierarchy.
+ * - Tasks point UP to their parent via parent_id
+ * - Tasks without parent_id are root-level project deliverables
+ * - Leaf tasks (no children) are ready to execute
+ * - Parent tasks wait until all children complete
  */
 
 import type {
   Task,
   ResolvedTask,
   TaskClassification,
-  DependencyResult,
+  TaskResolutionResult,
 } from "./types";
 
 // =============================================================================
@@ -22,7 +25,7 @@ export interface TaskLookupMaps {
 }
 
 /**
- * Build lookup maps for fast dependency resolution
+ * Build lookup maps for fast task resolution
  */
 export function buildLookupMaps(tasks: Task[]): TaskLookupMaps {
   const byId = new Map<string, Task>();
@@ -36,73 +39,47 @@ export function buildLookupMaps(tasks: Task[]): TaskLookupMaps {
   return { byId, titleToId };
 }
 
-/**
- * Resolve a dependency reference to a task ID
- * Supports both ID and title references
- */
-export function resolveDep(ref: string, maps: TaskLookupMaps): string | null {
-  if (maps.byId.has(ref)) return ref;
-  if (maps.titleToId.has(ref)) return maps.titleToId.get(ref)!;
-  return null;
-}
-
 // =============================================================================
-// Cycle Detection
+// Parent-Child Map Builder
 // =============================================================================
 
 /**
- * Build adjacency list from tasks (task -> its dependencies)
+ * Build a map from parent_id to list of child tasks
+ * Key null represents root-level tasks (no parent)
  */
-export function buildAdjacencyList(
-  tasks: Task[],
-  maps: TaskLookupMaps
-): Map<string, string[]> {
-  const adj = new Map<string, string[]>();
+export function buildParentChildMap(
+  tasks: Task[]
+): Map<string | null, Task[]> {
+  const childrenMap = new Map<string | null, Task[]>();
 
   for (const task of tasks) {
-    const resolvedDeps = (task.depends_on || [])
-      .map((ref) => resolveDep(ref, maps))
-      .filter((id): id is string => id !== null);
-    adj.set(task.id, resolvedDeps);
+    const parentId = task.parent_id || null;
+    if (!childrenMap.has(parentId)) {
+      childrenMap.set(parentId, []);
+    }
+    childrenMap.get(parentId)!.push(task);
   }
 
-  return adj;
+  return childrenMap;
 }
 
 /**
- * Find all tasks that are part of a dependency cycle
- * Uses iterative BFS to detect if a task can reach itself
+ * Get children of a specific task
  */
-export function findCycles(adjacency: Map<string, string[]>): Set<string> {
-  const inCycle = new Set<string>();
+export function getChildren(taskId: string, tasks: Task[]): Task[] {
+  return tasks.filter((t) => t.parent_id === taskId);
+}
 
-  for (const start of adjacency.keys()) {
-    const initialDeps = adjacency.get(start) || [];
-    if (initialDeps.length === 0) continue;
-
-    const frontier = [...initialDeps];
-    const seen = new Set<string>();
-    let iterations = 0;
-    const maxIterations = 100; // Safety limit
-
-    while (frontier.length > 0 && iterations < maxIterations) {
-      iterations++;
-      const current = frontier.shift()!;
-
-      if (current === start) {
-        inCycle.add(start);
-        break;
-      }
-
-      if (seen.has(current)) continue;
-      seen.add(current);
-
-      const deps = adjacency.get(current) || [];
-      frontier.push(...deps);
-    }
-  }
-
-  return inCycle;
+/**
+ * Get the parent of a specific task
+ */
+export function getParent(
+  taskId: string,
+  maps: TaskLookupMaps
+): Task | null {
+  const task = maps.byId.get(taskId);
+  if (!task?.parent_id) return null;
+  return maps.byId.get(task.parent_id) || null;
 }
 
 // =============================================================================
@@ -110,61 +87,68 @@ export function findCycles(adjacency: Map<string, string[]>): Set<string> {
 // =============================================================================
 
 /**
- * Classify a single task based on its dependencies
+ * Classify a single task based on its parent/child relationships
+ *
+ * Rules:
+ * - Leaf tasks (no children) with status=pending are "ready"
+ * - Parent tasks (have children) are "waiting" until all children complete
+ * - Tasks with blocked/cancelled parent are "blocked"
+ * - Non-pending tasks are "not_pending"
  */
 export function classifyTask(
   task: Task,
-  resolvedDeps: string[],
-  effectiveStatus: Map<string, string>,
-  inCycle: Set<string>
+  childrenIds: string[],
+  maps: TaskLookupMaps
 ): {
   classification: TaskClassification;
-  blockedBy: string[];
-  waitingOn: string[];
+  blockedBy?: string;
   reason?: string;
 } {
-  // Check if task is in a cycle
-  if (inCycle.has(task.id)) {
-    return {
-      classification: "blocked",
-      blockedBy: [],
-      waitingOn: [],
-      reason: "circular_dependency",
-    };
-  }
-
   // Task not pending - skip classification
   if (task.status !== "pending") {
-    return { classification: "not_pending", blockedBy: [], waitingOn: [] };
+    return { classification: "not_pending" };
   }
 
-  // Check for blocked dependencies
-  const blockedDeps = resolvedDeps.filter((depId) => {
-    const status = effectiveStatus.get(depId) || "unknown";
-    return ["blocked", "cancelled"].includes(status) || inCycle.has(depId);
+  // Check if parent is blocked or cancelled
+  if (task.parent_id) {
+    const parent = maps.byId.get(task.parent_id);
+    if (parent) {
+      if (parent.status === "blocked") {
+        return {
+          classification: "blocked",
+          blockedBy: task.parent_id,
+          reason: "parent_blocked",
+        };
+      }
+      if (parent.status === "cancelled") {
+        return {
+          classification: "blocked",
+          blockedBy: task.parent_id,
+          reason: "parent_cancelled",
+        };
+      }
+    }
+  }
+
+  // Leaf task (no children) - ready to work on
+  if (childrenIds.length === 0) {
+    return { classification: "ready" };
+  }
+
+  // Has children - check if all are complete
+  const allChildrenComplete = childrenIds.every((childId) => {
+    const child = maps.byId.get(childId);
+    if (!child) return true; // Treat missing children as complete
+    return child.status === "completed" || child.status === "validated";
   });
 
-  if (blockedDeps.length > 0) {
-    return {
-      classification: "blocked",
-      blockedBy: blockedDeps,
-      waitingOn: [],
-      reason: "dependency_blocked",
-    };
+  if (allChildrenComplete) {
+    // All children done - parent is ready for review/completion
+    return { classification: "ready" };
   }
 
-  // Check for waiting dependencies (pending or in_progress)
-  const waitingDeps = resolvedDeps.filter((depId) => {
-    const status = effectiveStatus.get(depId) || "unknown";
-    return ["pending", "in_progress"].includes(status);
-  });
-
-  if (waitingDeps.length > 0) {
-    return { classification: "waiting", blockedBy: [], waitingOn: waitingDeps };
-  }
-
-  // All dependencies satisfied
-  return { classification: "ready", blockedBy: [], waitingOn: [] };
+  // Has incomplete children - waiting
+  return { classification: "waiting" };
 }
 
 // =============================================================================
@@ -172,14 +156,13 @@ export function classifyTask(
 // =============================================================================
 
 /**
- * Resolve all dependencies and classify all tasks
- * This is the main entry point - equivalent to resolve_dependencies() in bash
+ * Resolve all parent/child relationships and classify all tasks
+ * This is the main entry point
  */
-export function resolveDependencies(tasks: Task[]): DependencyResult {
+export function resolveTasks(tasks: Task[]): TaskResolutionResult {
   if (tasks.length === 0) {
     return {
       tasks: [],
-      cycles: [],
       stats: { total: 0, ready: 0, waiting: 0, blocked: 0, not_pending: 0 },
     };
   }
@@ -187,56 +170,33 @@ export function resolveDependencies(tasks: Task[]): DependencyResult {
   // Step 1: Build lookup maps
   const maps = buildLookupMaps(tasks);
 
-  // Step 2: Build adjacency list and detect cycles
-  const adjacency = buildAdjacencyList(tasks, maps);
-  const inCycle = findCycles(adjacency);
+  // Step 2: Build parent-child map
+  const parentChildMap = buildParentChildMap(tasks);
 
-  // Step 3: Build effective status map (with cycle override)
-  const effectiveStatus = new Map<string, string>();
-  for (const task of tasks) {
-    effectiveStatus.set(
-      task.id,
-      inCycle.has(task.id) ? "circular" : task.status
-    );
-  }
-
-  // Step 4: Resolve and classify each task
+  // Step 3: Resolve and classify each task
   const resolvedTasks: ResolvedTask[] = tasks.map((task) => {
-    // Resolve dependencies
-    const resolvedDeps: string[] = [];
-    const unresolvedDeps: string[] = [];
-
-    for (const ref of task.depends_on || []) {
-      const resolved = resolveDep(ref, maps);
-      if (resolved) {
-        resolvedDeps.push(resolved);
-      } else {
-        unresolvedDeps.push(ref);
-      }
-    }
+    // Get children IDs
+    const children = parentChildMap.get(task.id) || [];
+    const childrenIds = children.map((c) => c.id);
 
     // Classify
-    const { classification, blockedBy, waitingOn, reason } = classifyTask(
+    const { classification, blockedBy, reason } = classifyTask(
       task,
-      resolvedDeps,
-      effectiveStatus,
-      inCycle
+      childrenIds,
+      maps
     );
 
     return {
       ...task,
-      resolved_deps: resolvedDeps,
-      unresolved_deps: unresolvedDeps,
+      children_ids: childrenIds,
       classification,
       blocked_by: blockedBy,
       blocked_by_reason: reason,
-      waiting_on: waitingOn,
-      in_cycle: inCycle.has(task.id),
       resolved_workdir: null, // Resolved separately by TaskService
     };
   });
 
-  // Step 5: Compute stats
+  // Step 4: Compute stats
   const stats = {
     total: resolvedTasks.length,
     ready: resolvedTasks.filter((t) => t.classification === "ready").length,
@@ -246,11 +206,11 @@ export function resolveDependencies(tasks: Task[]): DependencyResult {
       .length,
   };
 
-  // Step 6: Extract cycle groups
-  const cycles = inCycle.size > 0 ? [Array.from(inCycle)] : [];
-
-  return { tasks: resolvedTasks, cycles, stats };
+  return { tasks: resolvedTasks, stats };
 }
+
+// Backwards compatibility alias
+export const resolveDependencies = resolveTasks;
 
 // =============================================================================
 // Utility Functions
@@ -273,7 +233,7 @@ export function sortByPriority(tasks: ResolvedTask[]): ResolvedTask[] {
 /**
  * Filter to ready tasks, sorted by priority
  */
-export function getReadyTasks(result: DependencyResult): ResolvedTask[] {
+export function getReadyTasks(result: TaskResolutionResult): ResolvedTask[] {
   const ready = result.tasks.filter((t) => t.classification === "ready");
   return sortByPriority(ready);
 }
@@ -281,21 +241,81 @@ export function getReadyTasks(result: DependencyResult): ResolvedTask[] {
 /**
  * Filter to waiting tasks
  */
-export function getWaitingTasks(result: DependencyResult): ResolvedTask[] {
+export function getWaitingTasks(result: TaskResolutionResult): ResolvedTask[] {
   return result.tasks.filter((t) => t.classification === "waiting");
 }
 
 /**
  * Filter to blocked tasks
  */
-export function getBlockedTasks(result: DependencyResult): ResolvedTask[] {
+export function getBlockedTasks(result: TaskResolutionResult): ResolvedTask[] {
   return result.tasks.filter((t) => t.classification === "blocked");
 }
 
 /**
  * Get the next task to execute (highest priority ready task)
  */
-export function getNextTask(result: DependencyResult): ResolvedTask | null {
+export function getNextTask(result: TaskResolutionResult): ResolvedTask | null {
   const ready = getReadyTasks(result);
   return ready.length > 0 ? ready[0] : null;
+}
+
+/**
+ * Build a tree structure from resolved tasks
+ */
+export interface TaskTreeNode {
+  task: ResolvedTask;
+  children: TaskTreeNode[];
+}
+
+export function buildTaskTree(tasks: ResolvedTask[]): TaskTreeNode[] {
+  const taskMap = new Map(tasks.map((t) => [t.id, t]));
+  const childrenMap = new Map<string | null, ResolvedTask[]>();
+
+  // Group by parent_id
+  for (const task of tasks) {
+    const parentId = task.parent_id || null;
+    if (!childrenMap.has(parentId)) {
+      childrenMap.set(parentId, []);
+    }
+    childrenMap.get(parentId)!.push(task);
+  }
+
+  // Root tasks = those with no parent_id
+  const rootTasks = childrenMap.get(null) || [];
+
+  function buildNode(task: ResolvedTask): TaskTreeNode {
+    const children = childrenMap.get(task.id) || [];
+    return {
+      task,
+      children: children.map(buildNode),
+    };
+  }
+
+  return rootTasks.map(buildNode);
+}
+
+/**
+ * Flatten a task tree to a list with depth info
+ */
+export interface FlattenedTask {
+  task: ResolvedTask;
+  depth: number;
+}
+
+export function flattenTaskTree(tree: TaskTreeNode[]): FlattenedTask[] {
+  const result: FlattenedTask[] = [];
+
+  function visit(node: TaskTreeNode, depth: number) {
+    result.push({ task: node.task, depth });
+    for (const child of node.children) {
+      visit(child, depth + 1);
+    }
+  }
+
+  for (const root of tree) {
+    visit(root, 0);
+  }
+
+  return result;
 }

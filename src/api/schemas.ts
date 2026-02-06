@@ -87,7 +87,7 @@ export const BrainEntrySchema = z.object({
   content: z.string().openapi({ example: "# Plan\n\nThis is the plan content..." }),
   tags: z.array(z.string()).openapi({ example: ["feature", "v2"] }),
   priority: PrioritySchema.optional(),
-  depends_on: z.array(z.string()).optional().openapi({ description: "Array of entry IDs this depends on" }),
+  parent_id: z.string().optional().openapi({ description: "Parent task ID - tasks point UP to their parent" }),
   project_id: z.string().optional(),
   created: z.string().optional().openapi({ example: "2024-01-15T10:30:00Z" }),
   modified: z.string().optional().openapi({ example: "2024-01-15T12:00:00Z" }),
@@ -129,7 +129,7 @@ export const CreateEntryRequestSchema = z.object({
   tags: z.array(z.string()).optional().openapi({ example: ["tag1", "tag2"] }),
   status: EntryStatusSchema.optional(),
   priority: PrioritySchema.optional(),
-  depends_on: z.array(z.string()).optional(),
+  parent_id: z.string().optional().openapi({ description: "Parent task ID - this task is a subtask of the parent" }),
   global: z.boolean().optional().openapi({ description: "Create as global entry" }),
   project: z.string().optional().openapi({ description: "Project name" }),
   relatedEntries: z.array(z.string()).optional().openapi({ description: "Related entry paths/IDs to link" }),
@@ -384,7 +384,7 @@ export const TaskSchema = z.object({
   title: z.string(),
   priority: PrioritySchema,
   status: EntryStatusSchema,
-  depends_on: z.array(z.string()),
+  parent_id: z.string().optional().openapi({ description: "Parent task ID - tasks point UP to their parent" }),
   created: z.string(),
   workdir: z.string().nullable(),
   worktree: z.string().nullable(),
@@ -393,13 +393,10 @@ export const TaskSchema = z.object({
 }).openapi("Task");
 
 export const ResolvedTaskSchema = TaskSchema.extend({
-  resolved_deps: z.array(EntryIdSchema).openapi({ description: "IDs of resolved dependencies" }),
-  unresolved_deps: z.array(z.string()).openapi({ description: "References that couldn't be resolved" }),
+  children_ids: z.array(EntryIdSchema).openapi({ description: "IDs of child tasks (computed)" }),
   classification: TaskClassificationSchema,
-  blocked_by: z.array(EntryIdSchema).openapi({ description: "IDs of blocking dependencies" }),
-  blocked_by_reason: z.string().optional().openapi({ description: "Reason for being blocked" }),
-  waiting_on: z.array(EntryIdSchema).openapi({ description: "IDs of incomplete dependencies" }),
-  in_cycle: z.boolean(),
+  blocked_by: z.string().optional().openapi({ description: "Parent ID if blocked due to parent" }),
+  blocked_by_reason: z.string().optional().openapi({ description: "Reason for being blocked (parent_blocked or parent_cancelled)" }),
   resolved_workdir: z.string().nullable().openapi({ description: "Absolute path after resolution" }),
 }).openapi("ResolvedTask");
 
@@ -420,7 +417,6 @@ export const TaskListResponseSchema = z.object({
   tasks: z.array(ResolvedTaskSchema),
   count: z.number(),
   stats: TaskStatsSchema.optional(),
-  cycles: z.array(z.array(z.string())).optional().openapi({ description: "Groups of task IDs in cycles" }),
 }).openapi("TaskListResponse");
 
 export const TaskNextResponseSchema = z.object({

@@ -367,7 +367,7 @@ const tools: Tool[] = [
         priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level" },
         global: { type: "boolean", description: "Save to global brain (cross-project)" },
         project: { type: "string", description: "Explicit project ID/name" },
-        depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
+        parent_id: { type: "string", description: "ID of the parent task this task belongs to. Leaf tasks (no children) are ready to execute. Parent tasks wait for all children to complete. Leave empty for root-level tasks." },
         user_original_request: { type: "string", description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task." },
       },
       required: ["type", "title", "content"],

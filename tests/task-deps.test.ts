@@ -1,20 +1,23 @@
 /**
- * Unit tests for task dependency resolution
+ * Unit tests for task hierarchy resolution (parent_id model)
  */
 
 import { describe, test, expect } from "bun:test";
 import {
   buildLookupMaps,
-  resolveDep,
-  buildAdjacencyList,
-  findCycles,
+  buildParentChildMap,
+  getChildren,
+  getParent,
   classifyTask,
+  resolveTasks,
   resolveDependencies,
   sortByPriority,
   getReadyTasks,
   getWaitingTasks,
   getBlockedTasks,
   getNextTask,
+  buildTaskTree,
+  flattenTaskTree,
 } from "../src/core/task-deps";
 import type { Task } from "../src/core/types";
 
@@ -29,7 +32,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     title: "Test Task",
     priority: "medium",
     status: "pending",
-    depends_on: [],
+    parent_id: undefined,
 
     created: "2024-01-01",
     workdir: null,
@@ -76,131 +79,109 @@ describe("buildLookupMaps", () => {
   });
 });
 
-describe("resolveDep", () => {
-  test("resolves by ID", () => {
-    const tasks = [createTask({ id: "abc123", title: "My Task" })];
-    const maps = buildLookupMaps(tasks);
+// =============================================================================
+// Parent-Child Map Tests
+// =============================================================================
 
-    expect(resolveDep("abc123", maps)).toBe("abc123");
+describe("buildParentChildMap", () => {
+  test("groups tasks by parent_id", () => {
+    const tasks = [
+      createTask({ id: "root", parent_id: undefined }),
+      createTask({ id: "child1", parent_id: "root" }),
+      createTask({ id: "child2", parent_id: "root" }),
+      createTask({ id: "grandchild", parent_id: "child1" }),
+    ];
+    const map = buildParentChildMap(tasks);
+
+    // Root tasks (no parent)
+    const rootTasks = map.get(null);
+    expect(rootTasks?.length).toBe(1);
+    expect(rootTasks?.[0].id).toBe("root");
+
+    // Children of root
+    const rootChildren = map.get("root");
+    expect(rootChildren?.length).toBe(2);
+    expect(rootChildren?.map(t => t.id).sort()).toEqual(["child1", "child2"]);
+
+    // Children of child1
+    const child1Children = map.get("child1");
+    expect(child1Children?.length).toBe(1);
+    expect(child1Children?.[0].id).toBe("grandchild");
   });
 
-  test("resolves by title", () => {
-    const tasks = [createTask({ id: "abc123", title: "My Task" })];
-    const maps = buildLookupMaps(tasks);
-
-    expect(resolveDep("My Task", maps)).toBe("abc123");
+  test("handles empty task list", () => {
+    const map = buildParentChildMap([]);
+    expect(map.size).toBe(0);
   });
 
-  test("returns null for unknown reference", () => {
-    const tasks = [createTask({ id: "abc123", title: "My Task" })];
-    const maps = buildLookupMaps(tasks);
+  test("handles all root tasks", () => {
+    const tasks = [
+      createTask({ id: "a", parent_id: undefined }),
+      createTask({ id: "b", parent_id: undefined }),
+    ];
+    const map = buildParentChildMap(tasks);
 
-    expect(resolveDep("unknown", maps)).toBeNull();
+    const rootTasks = map.get(null);
+    expect(rootTasks?.length).toBe(2);
   });
 });
 
-// =============================================================================
-// Adjacency List Tests
-// =============================================================================
-
-describe("buildAdjacencyList", () => {
-  test("builds adjacency list from tasks", () => {
+describe("getChildren", () => {
+  test("returns children of a task", () => {
     const tasks = [
-      createTask({ id: "a", depends_on: ["b", "c"] }),
-      createTask({ id: "b", depends_on: [] }),
-      createTask({ id: "c", depends_on: ["b"] }),
+      createTask({ id: "parent", parent_id: undefined }),
+      createTask({ id: "child1", parent_id: "parent" }),
+      createTask({ id: "child2", parent_id: "parent" }),
+      createTask({ id: "other", parent_id: undefined }),
     ];
-    const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
 
-    expect(adj.get("a")).toEqual(["b", "c"]);
-    expect(adj.get("b")).toEqual([]);
-    expect(adj.get("c")).toEqual(["b"]);
+    const children = getChildren("parent", tasks);
+    expect(children.length).toBe(2);
+    expect(children.map(c => c.id).sort()).toEqual(["child1", "child2"]);
   });
 
-  test("filters out unresolved dependencies", () => {
+  test("returns empty array for leaf task", () => {
     const tasks = [
-      createTask({ id: "a", depends_on: ["b", "nonexistent"] }),
-      createTask({ id: "b", depends_on: [] }),
+      createTask({ id: "parent", parent_id: undefined }),
+      createTask({ id: "leaf", parent_id: "parent" }),
     ];
-    const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
 
-    expect(adj.get("a")).toEqual(["b"]);
+    const children = getChildren("leaf", tasks);
+    expect(children.length).toBe(0);
   });
 });
 
-// =============================================================================
-// Cycle Detection Tests
-// =============================================================================
-
-describe("findCycles", () => {
-  test("detects no cycles in linear chain", () => {
+describe("getParent", () => {
+  test("returns parent of a task", () => {
     const tasks = [
-      createTask({ id: "a", depends_on: ["b"] }),
-      createTask({ id: "b", depends_on: ["c"] }),
-      createTask({ id: "c", depends_on: [] }),
+      createTask({ id: "parent", title: "Parent Task", parent_id: undefined }),
+      createTask({ id: "child", parent_id: "parent" }),
     ];
     const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
 
-    const cycles = findCycles(adj);
-    expect(cycles.size).toBe(0);
+    const parent = getParent("child", maps);
+    expect(parent?.id).toBe("parent");
+    expect(parent?.title).toBe("Parent Task");
   });
 
-  test("detects simple cycle A -> B -> A", () => {
+  test("returns null for root task", () => {
     const tasks = [
-      createTask({ id: "a", depends_on: ["b"] }),
-      createTask({ id: "b", depends_on: ["a"] }),
+      createTask({ id: "root", parent_id: undefined }),
     ];
     const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
 
-    const cycles = findCycles(adj);
-    expect(cycles.has("a")).toBe(true);
-    expect(cycles.has("b")).toBe(true);
+    const parent = getParent("root", maps);
+    expect(parent).toBeNull();
   });
 
-  test("detects longer cycle A -> B -> C -> A", () => {
+  test("returns null for missing parent", () => {
     const tasks = [
-      createTask({ id: "a", depends_on: ["b"] }),
-      createTask({ id: "b", depends_on: ["c"] }),
-      createTask({ id: "c", depends_on: ["a"] }),
+      createTask({ id: "orphan", parent_id: "nonexistent" }),
     ];
     const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
 
-    const cycles = findCycles(adj);
-    expect(cycles.has("a")).toBe(true);
-    expect(cycles.has("b")).toBe(true);
-    expect(cycles.has("c")).toBe(true);
-  });
-
-  test("detects self-cycle A -> A", () => {
-    const tasks = [createTask({ id: "a", depends_on: ["a"] })];
-    const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
-
-    const cycles = findCycles(adj);
-    expect(cycles.has("a")).toBe(true);
-  });
-
-  test("handles empty adjacency list", () => {
-    const adj = new Map<string, string[]>();
-    const cycles = findCycles(adj);
-    expect(cycles.size).toBe(0);
-  });
-
-  test("handles tasks with no dependencies", () => {
-    const tasks = [
-      createTask({ id: "a", depends_on: [] }),
-      createTask({ id: "b", depends_on: [] }),
-    ];
-    const maps = buildLookupMaps(tasks);
-    const adj = buildAdjacencyList(tasks, maps);
-
-    const cycles = findCycles(adj);
-    expect(cycles.size).toBe(0);
+    const parent = getParent("orphan", maps);
+    expect(parent).toBeNull();
   });
 });
 
@@ -209,86 +190,75 @@ describe("findCycles", () => {
 // =============================================================================
 
 describe("classifyTask", () => {
-  test("classifies task in cycle as blocked with reason", () => {
-    const task = createTask({ id: "a", status: "pending" });
-    const inCycle = new Set(["a"]);
-    const effectiveStatus = new Map([["a", "circular"]]);
-
-    const result = classifyTask(task, [], effectiveStatus, inCycle);
-
-    expect(result.classification).toBe("blocked");
-    expect(result.reason).toBe("circular_dependency");
-  });
-
-  test("classifies non-pending task", () => {
+  test("classifies non-pending task as not_pending", () => {
     const task = createTask({ id: "a", status: "completed" });
-    const effectiveStatus = new Map([["a", "completed"]]);
+    const maps = buildLookupMaps([task]);
 
-    const result = classifyTask(task, [], effectiveStatus, new Set());
+    const result = classifyTask(task, [], maps);
 
     expect(result.classification).toBe("not_pending");
   });
 
-  test("classifies task with blocked dependency", () => {
+  test("classifies leaf task (no children) as ready", () => {
     const task = createTask({ id: "a", status: "pending" });
-    const resolvedDeps = ["b"];
-    const effectiveStatus = new Map([
-      ["a", "pending"],
-      ["b", "blocked"],
-    ]);
+    const maps = buildLookupMaps([task]);
 
-    const result = classifyTask(
-      task,
-      resolvedDeps,
-      effectiveStatus,
-      new Set()
-    );
+    const result = classifyTask(task, [], maps);
 
-    expect(result.classification).toBe("blocked");
-    expect(result.blockedBy).toContain("b");
+    expect(result.classification).toBe("ready");
   });
 
-  test("classifies task waiting on dependency", () => {
-    const task = createTask({ id: "a", status: "pending" });
-    const resolvedDeps = ["b"];
-    const effectiveStatus = new Map([
-      ["a", "pending"],
-      ["b", "pending"],
-    ]);
+  test("classifies task with incomplete children as waiting", () => {
+    const tasks = [
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
+    ];
+    const maps = buildLookupMaps(tasks);
 
-    const result = classifyTask(
-      task,
-      resolvedDeps,
-      effectiveStatus,
-      new Set()
-    );
+    const result = classifyTask(tasks[0], ["child"], maps);
 
     expect(result.classification).toBe("waiting");
-    expect(result.waitingOn).toContain("b");
   });
 
-  test("classifies ready task", () => {
-    const task = createTask({ id: "a", status: "pending" });
-    const effectiveStatus = new Map([["a", "pending"]]);
+  test("classifies task with all completed children as ready", () => {
+    const tasks = [
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child1", status: "completed", parent_id: "parent" }),
+      createTask({ id: "child2", status: "validated", parent_id: "parent" }),
+    ];
+    const maps = buildLookupMaps(tasks);
 
-    const result = classifyTask(task, [], effectiveStatus, new Set());
+    const result = classifyTask(tasks[0], ["child1", "child2"], maps);
 
     expect(result.classification).toBe("ready");
-    expect(result.blockedBy).toEqual([]);
-    expect(result.waitingOn).toEqual([]);
   });
 
-  test("classifies task with active dep as ready (non-blocking)", () => {
-    const task = createTask({ id: "a", status: "pending" });
-    const resolvedDeps = ["root"];
-    const effectiveStatus = new Map([
-      ["a", "pending"],
-      ["root", "active"],
-    ]);
+  test("classifies task with blocked parent as blocked", () => {
+    const tasks = [
+      createTask({ id: "parent", status: "blocked" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
+    ];
+    const maps = buildLookupMaps(tasks);
 
-    const result = classifyTask(task, resolvedDeps, effectiveStatus, new Set());
+    const result = classifyTask(tasks[1], [], maps);
 
-    expect(result.classification).toBe("ready");
+    expect(result.classification).toBe("blocked");
+    expect(result.blockedBy).toBe("parent");
+    expect(result.reason).toBe("parent_blocked");
+  });
+
+  test("classifies task with cancelled parent as blocked", () => {
+    const tasks = [
+      createTask({ id: "parent", status: "cancelled" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
+    ];
+    const maps = buildLookupMaps(tasks);
+
+    const result = classifyTask(tasks[1], [], maps);
+
+    expect(result.classification).toBe("blocked");
+    expect(result.blockedBy).toBe("parent");
+    expect(result.reason).toBe("parent_cancelled");
   });
 });
 
@@ -296,174 +266,138 @@ describe("classifyTask", () => {
 // Main Resolution Function Tests
 // =============================================================================
 
-describe("resolveDependencies", () => {
+describe("resolveTasks", () => {
   test("handles empty task list", () => {
-    const result = resolveDependencies([]);
+    const result = resolveTasks([]);
 
     expect(result.tasks).toEqual([]);
-    expect(result.cycles).toEqual([]);
     expect(result.stats.total).toBe(0);
   });
 
-  test("classifies task with no deps as ready", () => {
-    const tasks = [createTask({ id: "a", status: "pending", depends_on: [] })];
-    const result = resolveDependencies(tasks);
+  test("classifies leaf task as ready", () => {
+    const tasks = [createTask({ id: "a", status: "pending" })];
+    const result = resolveTasks(tasks);
 
     expect(result.tasks[0].classification).toBe("ready");
+    expect(result.tasks[0].children_ids).toEqual([]);
   });
 
-  test("classifies task with completed deps as ready", () => {
+  test("computes children_ids correctly", () => {
     const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "completed", depends_on: [] }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child1", status: "pending", parent_id: "parent" }),
+      createTask({ id: "child2", status: "pending", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const taskA = result.tasks.find((t) => t.id === "a");
-    expect(taskA?.classification).toBe("ready");
+    const parent = result.tasks.find(t => t.id === "parent");
+    expect(parent?.children_ids.sort()).toEqual(["child1", "child2"]);
   });
 
-  test("classifies task with pending deps as waiting", () => {
+  test("classifies parent with pending children as waiting", () => {
     const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "pending", depends_on: [] }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const taskA = result.tasks.find((t) => t.id === "a");
-    expect(taskA?.classification).toBe("waiting");
-    expect(taskA?.waiting_on).toContain("b");
+    const parent = result.tasks.find(t => t.id === "parent");
+    expect(parent?.classification).toBe("waiting");
   });
 
-  test("classifies task with blocked deps as blocked", () => {
+  test("classifies parent with completed children as ready", () => {
     const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "blocked", depends_on: [] }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "completed", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const taskA = result.tasks.find((t) => t.id === "a");
-    expect(taskA?.classification).toBe("blocked");
-    expect(taskA?.blocked_by).toContain("b");
-  });
-
-  test("classifies circular dependency as blocked with reason", () => {
-    const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "pending", depends_on: ["a"] }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    const taskA = result.tasks.find((t) => t.id === "a");
-    expect(taskA?.classification).toBe("blocked");
-    expect(taskA?.blocked_by_reason).toBe("circular_dependency");
-    expect(taskA?.in_cycle).toBe(true);
+    const parent = result.tasks.find(t => t.id === "parent");
+    expect(parent?.classification).toBe("ready");
   });
 
   test("classifies non-pending task as not_pending", () => {
-    const tasks = [createTask({ id: "a", status: "completed", depends_on: [] })];
-    const result = resolveDependencies(tasks);
+    const tasks = [createTask({ id: "a", status: "completed" })];
+    const result = resolveTasks(tasks);
 
     expect(result.tasks[0].classification).toBe("not_pending");
   });
+});
 
-  test("tracks unresolved dependencies", () => {
-    const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["nonexistent"] }),
-    ];
-    const result = resolveDependencies(tasks);
+describe("resolveDependencies (alias)", () => {
+  test("is an alias for resolveTasks", () => {
+    const tasks = [createTask({ id: "a", status: "pending" })];
+    const result1 = resolveTasks(tasks);
+    const result2 = resolveDependencies(tasks);
 
-    expect(result.tasks[0].unresolved_deps).toContain("nonexistent");
-  });
-
-  test("resolves dependencies by title", () => {
-    const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["Task B"] }),
-      createTask({ id: "b", title: "Task B", status: "completed", depends_on: [] }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    const taskA = result.tasks.find((t) => t.id === "a");
-    expect(taskA?.resolved_deps).toContain("b");
-    expect(taskA?.classification).toBe("ready");
-  });
-
-  test("returns cycles in result", () => {
-    const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "pending", depends_on: ["a"] }),
-    ];
-    const result = resolveDependencies(tasks);
-
-    expect(result.cycles.length).toBe(1);
-    expect(result.cycles[0]).toContain("a");
-    expect(result.cycles[0]).toContain("b");
+    expect(result1.tasks[0].id).toBe(result2.tasks[0].id);
+    expect(result1.tasks[0].classification).toBe(result2.tasks[0].classification);
   });
 });
 
 // =============================================================================
-// depends_on Classification Tests (replaces parent hierarchy tests)
+// Parent-Child Classification Tests
 // =============================================================================
 
-describe("depends_on classification", () => {
-  test("child waiting when dep is pending", () => {
+describe("parent-child classification", () => {
+  test("leaf tasks (no children) are ready", () => {
     const tasks = [
-      createTask({ id: "dep", status: "pending", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["dep"],
-      }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "leaf", status: "pending", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("waiting");
+    const leaf = result.tasks.find(t => t.id === "leaf");
+    expect(leaf?.classification).toBe("ready");
   });
 
-  test("child ready when dep is active (non-blocking)", () => {
+  test("parent with incomplete child is waiting", () => {
     const tasks = [
-      createTask({ id: "root", status: "active", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["root"],
-      }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("ready");
+    const parent = result.tasks.find(t => t.id === "parent");
+    expect(parent?.classification).toBe("waiting");
   });
 
-  test("child blocked when dep is blocked", () => {
+  test("parent with all children completed is ready", () => {
     const tasks = [
-      createTask({ id: "dep", status: "blocked", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["dep"],
-      }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child1", status: "completed", parent_id: "parent" }),
+      createTask({ id: "child2", status: "validated", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const child = result.tasks.find((t) => t.id === "child");
+    const parent = result.tasks.find(t => t.id === "parent");
+    expect(parent?.classification).toBe("ready");
+  });
+
+  test("child with blocked parent is blocked", () => {
+    const tasks = [
+      createTask({ id: "parent", status: "blocked" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
+    ];
+    const result = resolveTasks(tasks);
+
+    const child = result.tasks.find(t => t.id === "child");
     expect(child?.classification).toBe("blocked");
+    expect(child?.blocked_by_reason).toBe("parent_blocked");
   });
 
-  test("child ready when dep is completed", () => {
+  test("siblings are both ready (parallel execution)", () => {
     const tasks = [
-      createTask({ id: "dep", status: "completed", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["dep"],
-      }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "sibling1", status: "pending", parent_id: "parent" }),
+      createTask({ id: "sibling2", status: "pending", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    const child = result.tasks.find((t) => t.id === "child");
-    expect(child?.classification).toBe("ready");
+    const sibling1 = result.tasks.find(t => t.id === "sibling1");
+    const sibling2 = result.tasks.find(t => t.id === "sibling2");
+    expect(sibling1?.classification).toBe("ready");
+    expect(sibling2?.classification).toBe("ready");
   });
 });
 
@@ -478,7 +412,7 @@ describe("sortByPriority", () => {
       createTask({ id: "high", priority: "high" }),
       createTask({ id: "medium", priority: "medium" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const sorted = sortByPriority(result.tasks);
 
     expect(sorted[0].id).toBe("high");
@@ -491,7 +425,7 @@ describe("sortByPriority", () => {
       createTask({ id: "newer", priority: "high", created: "2024-01-02" }),
       createTask({ id: "older", priority: "high", created: "2024-01-01" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const sorted = sortByPriority(result.tasks);
 
     expect(sorted[0].id).toBe("older");
@@ -511,23 +445,27 @@ describe("sortByPriority", () => {
 describe("getReadyTasks", () => {
   test("returns only ready tasks", () => {
     const tasks = [
-      createTask({ id: "ready", status: "pending", depends_on: [] }),
-      createTask({ id: "waiting", status: "pending", depends_on: ["ready"] }),
-      createTask({ id: "completed", status: "completed", depends_on: [] }),
+      createTask({ id: "ready", status: "pending" }),
+      createTask({ id: "waiting", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "waiting" }),
+      createTask({ id: "completed", status: "completed" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const ready = getReadyTasks(result);
 
-    expect(ready.length).toBe(1);
-    expect(ready[0].id).toBe("ready");
+    // "ready" is a leaf task with no children
+    // "waiting" has an incomplete child, so it's waiting
+    // "child" is a leaf task, so it's ready
+    // "completed" is not_pending
+    expect(ready.map(t => t.id).sort()).toEqual(["child", "ready"]);
   });
 
   test("returns tasks sorted by priority", () => {
     const tasks = [
-      createTask({ id: "low", status: "pending", priority: "low", depends_on: [] }),
-      createTask({ id: "high", status: "pending", priority: "high", depends_on: [] }),
+      createTask({ id: "low", status: "pending", priority: "low" }),
+      createTask({ id: "high", status: "pending", priority: "high" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const ready = getReadyTasks(result);
 
     expect(ready[0].id).toBe("high");
@@ -538,45 +476,44 @@ describe("getReadyTasks", () => {
 describe("getWaitingTasks", () => {
   test("returns waiting tasks", () => {
     const tasks = [
-      createTask({ id: "ready", status: "pending", depends_on: [] }),
-      createTask({ id: "waiting", status: "pending", depends_on: ["ready"] }),
-      createTask({ id: "waitingOnDep", status: "pending", depends_on: ["ready"] }),
+      createTask({ id: "parent1", status: "pending" }),
+      createTask({ id: "child1", status: "pending", parent_id: "parent1" }),
+      createTask({ id: "parent2", status: "pending" }),
+      createTask({ id: "child2", status: "pending", parent_id: "parent2" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const waiting = getWaitingTasks(result);
 
+    // Parents with incomplete children are waiting
     expect(waiting.length).toBe(2);
-    const ids = waiting.map((t) => t.id);
-    expect(ids).toContain("waiting");
-    expect(ids).toContain("waitingOnDep");
+    expect(waiting.map(t => t.id).sort()).toEqual(["parent1", "parent2"]);
   });
 });
 
 describe("getBlockedTasks", () => {
   test("returns blocked tasks", () => {
     const tasks = [
-      createTask({ id: "blocker", status: "blocked", depends_on: [] }),
-      createTask({ id: "blocked", status: "pending", depends_on: ["blocker"] }),
-      createTask({ id: "blockedByDep", status: "pending", depends_on: ["blocker"] }),
+      createTask({ id: "blockedParent", status: "blocked" }),
+      createTask({ id: "child1", status: "pending", parent_id: "blockedParent" }),
+      createTask({ id: "child2", status: "pending", parent_id: "blockedParent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const blocked = getBlockedTasks(result);
 
+    // Children of blocked parent are blocked
     expect(blocked.length).toBe(2);
-    const ids = blocked.map((t) => t.id);
-    expect(ids).toContain("blocked");
-    expect(ids).toContain("blockedByDep");
+    expect(blocked.map(t => t.id).sort()).toEqual(["child1", "child2"]);
   });
 });
 
 describe("getNextTask", () => {
   test("returns highest priority ready task", () => {
     const tasks = [
-      createTask({ id: "low", status: "pending", priority: "low", depends_on: [] }),
-      createTask({ id: "high", status: "pending", priority: "high", depends_on: [] }),
-      createTask({ id: "medium", status: "pending", priority: "medium", depends_on: [] }),
+      createTask({ id: "low", status: "pending", priority: "low" }),
+      createTask({ id: "high", status: "pending", priority: "high" }),
+      createTask({ id: "medium", status: "pending", priority: "medium" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const next = getNextTask(result);
 
     expect(next?.id).toBe("high");
@@ -584,17 +521,18 @@ describe("getNextTask", () => {
 
   test("returns null when no ready tasks", () => {
     const tasks = [
-      createTask({ id: "a", status: "pending", depends_on: ["b"] }),
-      createTask({ id: "b", status: "pending", depends_on: ["a"] }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "in_progress", parent_id: "parent" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
     const next = getNextTask(result);
 
+    // Parent is waiting (has in_progress child), child is not_pending
     expect(next).toBeNull();
   });
 
   test("returns null for empty task list", () => {
-    const result = resolveDependencies([]);
+    const result = resolveTasks([]);
     const next = getNextTask(result);
 
     expect(next).toBeNull();
@@ -608,49 +546,87 @@ describe("getNextTask", () => {
 describe("stats calculation", () => {
   test("calculates correct stats", () => {
     const tasks = [
-      createTask({ id: "ready1", status: "pending", depends_on: [] }),
-      createTask({ id: "ready2", status: "pending", depends_on: [] }),
-      createTask({ id: "waiting", status: "pending", depends_on: ["ready1"] }),
-      createTask({ id: "blocked", status: "pending", depends_on: ["blockedDep"] }),
-      createTask({ id: "blockedDep", status: "blocked", depends_on: [] }),
-      createTask({ id: "completed", status: "completed", depends_on: [] }),
+      createTask({ id: "ready1", status: "pending" }),
+      createTask({ id: "ready2", status: "pending" }),
+      createTask({ id: "parent", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "parent" }),
+      createTask({ id: "blockedParent", status: "blocked" }),
+      createTask({ id: "blockedChild", status: "pending", parent_id: "blockedParent" }),
+      createTask({ id: "completed", status: "completed" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
 
-    expect(result.stats.total).toBe(6);
-    expect(result.stats.ready).toBe(2);
+    expect(result.stats.total).toBe(7);
+    // ready: ready1, ready2, child (all leaf tasks)
+    expect(result.stats.ready).toBe(3);
+    // waiting: parent (has pending child)
     expect(result.stats.waiting).toBe(1);
-    // blocked: only pending tasks that are blocked count (blockedDep is not_pending)
+    // blocked: blockedChild (has blocked parent)
     expect(result.stats.blocked).toBe(1);
-    // not_pending: blockedDep (status=blocked) + completed (status=completed)
+    // not_pending: blockedParent (blocked), completed (completed)
     expect(result.stats.not_pending).toBe(2);
   });
+});
 
-  test("counts waiting on dep as waiting", () => {
+// =============================================================================
+// Tree Building Tests
+// =============================================================================
+
+describe("buildTaskTree", () => {
+  test("builds tree from tasks", () => {
     const tasks = [
-      createTask({ id: "dep", status: "pending", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["dep"],
-      }),
+      createTask({ id: "root1", status: "pending" }),
+      createTask({ id: "child1", status: "pending", parent_id: "root1" }),
+      createTask({ id: "child2", status: "pending", parent_id: "root1" }),
+      createTask({ id: "grandchild", status: "pending", parent_id: "child1" }),
+      createTask({ id: "root2", status: "pending" }),
     ];
-    const result = resolveDependencies(tasks);
+    const result = resolveTasks(tasks);
+    const tree = buildTaskTree(result.tasks);
 
-    expect(result.stats.waiting).toBe(1); // child is waiting on dep
+    // Should have 2 root nodes
+    expect(tree.length).toBe(2);
+
+    // Find root1
+    const root1 = tree.find(n => n.task.id === "root1");
+    expect(root1).toBeDefined();
+    expect(root1?.children.length).toBe(2);
+
+    // Find child1 under root1
+    const child1 = root1?.children.find(n => n.task.id === "child1");
+    expect(child1).toBeDefined();
+    expect(child1?.children.length).toBe(1);
+    expect(child1?.children[0].task.id).toBe("grandchild");
   });
 
-  test("counts blocked by dep as blocked", () => {
-    const tasks = [
-      createTask({ id: "dep", status: "blocked", depends_on: [] }),
-      createTask({
-        id: "child",
-        status: "pending",
-        depends_on: ["dep"],
-      }),
-    ];
-    const result = resolveDependencies(tasks);
+  test("handles empty task list", () => {
+    const tree = buildTaskTree([]);
+    expect(tree).toEqual([]);
+  });
+});
 
-    expect(result.stats.blocked).toBe(1); // child is blocked by dep
+describe("flattenTaskTree", () => {
+  test("flattens tree with correct depth", () => {
+    const tasks = [
+      createTask({ id: "root", status: "pending" }),
+      createTask({ id: "child", status: "pending", parent_id: "root" }),
+      createTask({ id: "grandchild", status: "pending", parent_id: "child" }),
+    ];
+    const result = resolveTasks(tasks);
+    const tree = buildTaskTree(result.tasks);
+    const flat = flattenTaskTree(tree);
+
+    expect(flat.length).toBe(3);
+    expect(flat[0].task.id).toBe("root");
+    expect(flat[0].depth).toBe(0);
+    expect(flat[1].task.id).toBe("child");
+    expect(flat[1].depth).toBe(1);
+    expect(flat[2].task.id).toBe("grandchild");
+    expect(flat[2].depth).toBe(2);
+  });
+
+  test("handles empty tree", () => {
+    const flat = flattenTaskTree([]);
+    expect(flat).toEqual([]);
   });
 });

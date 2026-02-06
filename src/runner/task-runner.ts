@@ -310,7 +310,7 @@ export class TaskRunner {
 
   /**
    * Pause a specific project.
-   * Sets the project root task to status: blocked, which blocks all children via depends_on cascade.
+   * Sets the project root task to status: blocked, which blocks all children via parent_id cascade.
    * Running tasks will complete, but no new tasks will be started.
    */
   async pause(projectId: string): Promise<void> {
@@ -415,15 +415,16 @@ export class TaskRunner {
   }
 
   /**
-   * Find the path of a project's root task (title = projectId, no depends_on, status active or blocked).
+   * Find the path of a project's root task (title = projectId, no parent_id, status active or blocked).
    * Returns the task path for status updates, or null if not found.
    */
   private async findProjectRootPath(projectId: string): Promise<string | null> {
     try {
       const tasks = await this.apiClient.getAllTasks(projectId);
+      // Root tasks are those without a parent_id
       const root = tasks.find(t =>
         t.title === projectId &&
-        (!t.depends_on || t.depends_on.length === 0) &&
+        !t.parent_id &&
         (t.status === "active" || t.status === "blocked")
       );
       return root?.path ?? null;

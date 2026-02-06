@@ -625,11 +625,11 @@ function printTaskList(title: string, tasks: ResolvedTask[]): void {
   }
 
   for (const task of tasks) {
-    const deps = task.resolved_deps?.length ?? 0;
-    const depStr = deps > 0 ? ` [${deps} deps]` : "";
+    const children = task.children_ids?.length ?? 0;
+    const childStr = children > 0 ? ` [${children} children]` : "";
 
-    console.log(`  [${task.priority.padEnd(6)}] ${task.title}${depStr}`);
-    console.log(`           ID: ${task.id} | Status: ${task.status}`);
+    console.log(`  [${task.priority.padEnd(6)}] ${task.title}${childStr}`);
+    console.log(`           ID: ${task.id} | Status: ${task.status}${task.parent_id ? ` | Parent: ${task.parent_id}` : ""}`);
   }
 
   console.log("");

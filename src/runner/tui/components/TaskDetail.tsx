@@ -111,6 +111,18 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
         </Box>
       )}
 
+      {/* Children tasks */}
+      {task.children_ids.length > 0 && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text underline>Children ({task.children_ids.length}):</Text>
+          {task.children_ids.map((childId, i) => (
+            <Text key={i} dimColor>
+              {'  '}- {childId}
+            </Text>
+          ))}
+        </Box>
+      )}
+
       {/* Created date */}
       {task.created && (
         <Box>
@@ -163,64 +175,20 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
         </Box>
       )}
 
-      {/* Dependencies section */}
-      {(task.dependencies.length > 0 || (task.waitingOn?.length ?? 0) > 0 || (task.blockedBy?.length ?? 0) > 0) && (
+      {/* Blocked status */}
+      {task.blockedBy && (
         <Box flexDirection="column" marginTop={1}>
-          <Text underline>Dependencies:</Text>
-          {task.dependencies.map((dep, i) => (
-            <Text key={i} dimColor>
-              {'  '}- {dep}
-            </Text>
-          ))}
-          {task.waitingOn && task.waitingOn.length > 0 && (
-            <Box marginTop={0}>
-              <Text color="yellow">  Waiting on: </Text>
-              <Text dimColor>{task.waitingOn.join(', ')}</Text>
-            </Box>
-          )}
-          {task.blockedBy && task.blockedBy.length > 0 && (
-            <Box>
-              <Text color="red">  Blocked by: </Text>
-              <Text dimColor>{task.blockedBy.join(', ')}</Text>
-            </Box>
-          )}
+          <Text color="red" underline>Blocked:</Text>
+          <Box>
+            <Text color="red">  By parent: </Text>
+            <Text dimColor>{task.blockedBy}</Text>
+          </Box>
           {task.blockedByReason && (
             <Box>
               <Text color="red">  Reason: </Text>
               <Text>{task.blockedByReason}</Text>
             </Box>
           )}
-        </Box>
-      )}
-
-      {/* Unresolved deps warning */}
-      {task.unresolvedDeps && task.unresolvedDeps.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text color="yellow">Unresolved Dependencies:</Text>
-          {task.unresolvedDeps.map((dep, i) => (
-            <Text key={i} color="yellow">
-              {'  '}- {dep}
-            </Text>
-          ))}
-        </Box>
-      )}
-
-      {/* Cycle warning */}
-      {task.inCycle && (
-        <Box marginTop={1}>
-          <Text color="red" bold>⚠ Task is part of a dependency cycle</Text>
-        </Box>
-      )}
-
-      {/* Dependents */}
-      {task.dependents.length > 0 && (
-        <Box flexDirection="column" marginTop={1}>
-          <Text underline>Dependents (blocked by this):</Text>
-          {task.dependents.map((dep, i) => (
-            <Text key={i} dimColor>
-              {'  '}- {dep}
-            </Text>
-          ))}
         </Box>
       )}
 

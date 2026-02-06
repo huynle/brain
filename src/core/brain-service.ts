@@ -125,8 +125,8 @@ export class BrainService {
     if (request.git_remote) request.git_remote = sanitizeSimpleValue(request.git_remote);
     if (request.git_branch) request.git_branch = sanitizeSimpleValue(request.git_branch);
     if (request.project) request.project = sanitizeSimpleValue(request.project);
-    if (request.depends_on) {
-      request.depends_on = request.depends_on.map(sanitizeDependsOnEntry);
+    if (request.parent_id) {
+      request.parent_id = sanitizeSimpleValue(request.parent_id);
     }
     // user_original_request: allow multiline but strip \r and \0
     if (request.user_original_request) {
@@ -156,22 +156,8 @@ export class BrainService {
       mkdirSync(fullDir, { recursive: true });
     }
 
-    // Auto-inject project root dependency for orphan tasks
-    // Skip if: not a task, already has depends_on, or IS the project root
-    if (
-      entryType === "task" &&
-      (!request.depends_on || request.depends_on.length === 0) &&
-      !(request.tags && request.tags.includes("project-root"))
-    ) {
-      try {
-        const taskService = getTaskService();
-        const rootId = await taskService.getOrCreateProjectRoot(effectiveProjectId);
-        request.depends_on = [rootId];
-      } catch (err) {
-        // If root creation fails (e.g., zk not available), proceed without injection
-        console.error("[brain-service] Auto-inject project root failed:", err);
-      }
-    }
+    // NOTE: With the parent_id model, we no longer auto-inject root dependencies.
+    // Tasks without parent_id are root-level project deliverables.
 
     // Build content with optional related entries section
     let finalContent = request.content;
@@ -328,11 +314,8 @@ export class BrainService {
         zkArgs.push("--extra", `priority=${request.priority}`);
       }
 
-      if (request.depends_on && request.depends_on.length > 0) {
-        const formattedDeps = request.depends_on
-          .map((d) => `\n  - "${d.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
-          .join("");
-        zkArgs.push("--extra", `depends_on=${formattedDeps}`);
+      if (request.parent_id) {
+        zkArgs.push("--extra", `parent_id=${request.parent_id}`);
       }
 
       // Execution context for tasks
@@ -599,7 +582,7 @@ export class BrainService {
       content: body,
       tags: note.tags || [],
       priority,
-      depends_on: frontmatter.depends_on as string[] | undefined,
+      parent_id: frontmatter.parent_id as string | undefined,
       project_id: frontmatter.projectId as string | undefined,
       created: note.created,
       modified: note.modified,

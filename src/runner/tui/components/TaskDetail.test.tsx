@@ -18,8 +18,7 @@ function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
     title: 'Test Task',
     status: 'pending',
     priority: 'medium',
-    dependencies: [],
-    dependents: [],
+    children_ids: [],
     ...overrides,
   };
 }
@@ -87,19 +86,34 @@ describe('TaskDetail', () => {
     });
   });
 
-  describe('dependencies display', () => {
-    it('shows dependencies section when task has dependencies', () => {
-      const task = createTask({ dependencies: ['dep-1', 'dep-2'] });
+  describe('children display', () => {
+    it('shows children section when task has children', () => {
+      const task = createTask({ children_ids: ['child-1', 'child-2'] });
       const { lastFrame } = render(<TaskDetail task={task} />);
-      expect(lastFrame()).toContain('Dependencies:');
-      expect(lastFrame()).toContain('dep-1');
-      expect(lastFrame()).toContain('dep-2');
+      expect(lastFrame()).toContain('Children (2):');
+      expect(lastFrame()).toContain('child-1');
+      expect(lastFrame()).toContain('child-2');
     });
 
-    it('hides dependencies section when no dependencies', () => {
-      const task = createTask({ dependencies: [] });
+    it('hides children section when no children', () => {
+      const task = createTask({ children_ids: [] });
       const { lastFrame } = render(<TaskDetail task={task} />);
-      expect(lastFrame()).not.toContain('Dependencies:');
+      expect(lastFrame()).not.toContain('Children');
+    });
+  });
+
+  describe('parent display', () => {
+    it('shows parent when task has parent_id', () => {
+      const task = createTask({ parent_id: 'parent-task-id' });
+      const { lastFrame } = render(<TaskDetail task={task} />);
+      expect(lastFrame()).toContain('Parent:');
+      expect(lastFrame()).toContain('parent-task-id');
+    });
+
+    it('hides parent section when no parent_id', () => {
+      const task = createTask({ parent_id: undefined });
+      const { lastFrame } = render(<TaskDetail task={task} />);
+      expect(lastFrame()).not.toContain('Parent:');
     });
   });
 

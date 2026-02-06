@@ -21,16 +21,15 @@ const mockTasks = [
     title: 'Setup Project',
     status: 'completed',
     priority: 'high',
-    dependencies: [],
-    dependents: ['task-2'],
+    children_ids: [],
   },
   {
     id: 'task-2',
     title: 'Implement Features',
     status: 'in_progress',
     priority: 'medium',
-    dependencies: ['task-1'],
-    dependents: [],
+    children_ids: [],
+    parent_id: 'task-1',
   },
 ];
 

@@ -489,9 +489,6 @@ created: 2024-01-01T00:00:00Z
 priority: high
 parent_id: abc12def
 projectId: my-project
-depends_on:
-  - "dep1"
-  - "dep2"
 workdir: projects/test
 worktree: projects/test-wt
 git_remote: git@github.com:user/repo
@@ -535,9 +532,9 @@ Task content here.
       expect(result.user_original_request).toBe("Original request");
     });
 
-    test("preserves depends_on when updating status", async () => {
+    test("preserves parent_id when updating status", async () => {
       const result = await service.update(taskPath, { status: "in_progress" });
-      expect(result.depends_on).toEqual(["dep1", "dep2"]);
+      expect(result.parent_id).toBe("abc12def");
     });
 
     test("preserves created timestamp when updating status", async () => {

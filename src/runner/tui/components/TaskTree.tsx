@@ -1,8 +1,14 @@
 /**
- * Task dependency tree component
+ * Task hierarchy tree component
  * 
- * Renders tasks as a tree with proper hierarchy, box-drawing characters,
+ * Renders tasks as a tree with proper parent-child hierarchy, box-drawing characters,
  * and visual indicators for status, priority, and selection.
+ * 
+ * Hierarchy is determined by parent_id:
+ * - Tasks with parent_id are children of that parent
+ * - Tasks without parent_id are root-level project deliverables
+ * - Leaf tasks (no children) are ready to execute
+ * - Parent tasks wait until all children complete
  */
 
 import React, { useMemo } from 'react';
@@ -73,7 +79,6 @@ const STATUS_ORDER: Record<EntryStatus, number> = {
 export interface TreeNode {
   task: TaskDisplay;
   children: TreeNode[];
-  inCycle: boolean;
 }
 
 // Box drawing characters
@@ -83,18 +88,18 @@ const VERTICAL = '│ ';
 const EMPTY = '  ';
 
 /**
- * Build tree structure from flat task list.
+ * Build tree structure from flat task list using parent_id hierarchy.
  * 
- * Uses BOTH parent_id (primary hierarchy) and depends_on (secondary ordering):
- * - parent_id determines WHERE a task appears in the tree (keeps tree unified)
- * - depends_on orders siblings and adds additional edges
- * - When a task has both, parent_id wins for placement
+ * Hierarchy rules:
+ * - Tasks with parent_id are children of that parent
+ * - Tasks without parent_id are root-level
+ * - When a parent is completed/filtered, walks up the chain to find nearest active ancestor
  * 
  * @param tasks - Active tasks to build tree from
  * @param allTasks - Optional full task list (including completed) for parent_id chain walking
  */
 export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeNode[] {
-  // Step 1: Create lookup map for active tasks
+  // Step 1: Create lookup maps
   const taskMap = new Map<string, TaskDisplay>();
   tasks.forEach(t => taskMap.set(t.id, t));
 
@@ -106,9 +111,7 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
     tasks.forEach(t => allTaskMap.set(t.id, t));
   }
 
-  // Step 2: Build TWO relationship maps
-  
-  // 2a: parentChildren - from parent_id field (primary hierarchy)
+  // Step 2: Build parent-children map from parent_id field
   const parentChildren = new Map<string, Set<string>>();
   // Track tasks that have an active parent via parent_id
   const hasParentInTree = new Set<string>();
@@ -127,105 +130,19 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
     }
   });
 
-  // 2b: reverseDeps - from depends_on field (secondary ordering + additional edges)
-  const reverseDeps = new Map<string, string[]>();
-  // Track tasks that have active depends_on targets
-  const hasDepsInTree = new Set<string>();
-  
-  tasks.forEach(task => {
-    task.dependencies.forEach(depId => {
-      if (taskMap.has(depId)) {
-        hasDepsInTree.add(task.id);
-        if (!reverseDeps.has(depId)) {
-          reverseDeps.set(depId, []);
-        }
-        reverseDeps.get(depId)!.push(task.id);
-      }
-    });
-  });
-
-  // Step 3: Merge children - UNION of parent_id children and depends_on children
-  // But: if a task has a parent_id pointing to an active task, parent_id wins for placement
-  const mergedChildren = new Map<string, Set<string>>();
-  
-  // Start with parent_id children
-  for (const [parentId, children] of parentChildren) {
-    if (!mergedChildren.has(parentId)) {
-      mergedChildren.set(parentId, new Set());
-    }
-    for (const childId of children) {
-      mergedChildren.get(parentId)!.add(childId);
-    }
-  }
-  
-  // Add depends_on children, but only if the child doesn't already have a parent_id placement
-  for (const [depId, dependents] of reverseDeps) {
-    if (!mergedChildren.has(depId)) {
-      mergedChildren.set(depId, new Set());
-    }
-    for (const dependentId of dependents) {
-      // Only add via depends_on if this task doesn't have an active parent_id elsewhere
-      if (!hasParentInTree.has(dependentId)) {
-        mergedChildren.get(depId)!.add(dependentId);
-      }
-    }
-  }
-
-  // Detect cycles using DFS (on the merged children graph)
-  const inCycle = new Set<string>();
-  const visited = new Set<string>();
-  const recursionStack = new Set<string>();
-
-  function detectCycles(taskId: string): boolean {
-    visited.add(taskId);
-    recursionStack.add(taskId);
-
-    const children = mergedChildren.get(taskId) || new Set();
-    for (const childId of children) {
-      if (!visited.has(childId)) {
-        if (detectCycles(childId)) {
-          inCycle.add(taskId);
-          return true;
-        }
-      } else if (recursionStack.has(childId)) {
-        // Found cycle
-        inCycle.add(taskId);
-        inCycle.add(childId);
-        return true;
-      }
-    }
-
-    recursionStack.delete(taskId);
-    return false;
-  }
-
-  // Run cycle detection from all nodes
-  tasks.forEach(task => {
-    if (!visited.has(task.id)) {
-      detectCycles(task.id);
-    }
-  });
-
-  // Track rendered tasks to handle diamond dependencies
+  // Track rendered tasks to prevent duplicates
   const rendered = new Set<string>();
 
-  // Step 5: Sort children - use depends_on to order siblings within a parent
+  // Sort children by priority, then status
   function sortChildIds(childIdSet: Set<string>): string[] {
     const childIds = [...childIdSet];
     
-    // Build a local dependency order among siblings:
-    // If sibling A is in sibling B's depends_on, A should come before B
     return childIds.sort((a, b) => {
       const taskA = taskMap.get(a);
       const taskB = taskMap.get(b);
       if (!taskA || !taskB) return 0;
 
-      // Check if B depends on A (A should come first)
-      if (taskB.dependencies.includes(a)) return -1;
-      // Check if A depends on B (B should come first)
-      if (taskA.dependencies.includes(b)) return 1;
-
-      // Fall back to priority then status ordering
+      // Sort by priority (high first), then status
       const priorityDiff = 
         (PRIORITY_ORDER[taskA.priority] ?? 1) - (PRIORITY_ORDER[taskB.priority] ?? 1);
       if (priorityDiff !== 0) return priorityDiff;
@@ -239,13 +156,13 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
     const task = taskMap.get(taskId);
     if (!task) return null;
 
-    // Handle diamond dependencies - only render once
+    // Prevent duplicates
     if (rendered.has(taskId)) {
       return null;
     }
     rendered.add(taskId);
 
-    const childIdSet = mergedChildren.get(taskId) || new Set();
+    const childIdSet = parentChildren.get(taskId) || new Set();
     const children: TreeNode[] = [];
 
     const sortedChildIds = sortChildIds(childIdSet);
@@ -260,13 +177,10 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
     return {
       task,
       children,
-      inCycle: inCycle.has(taskId),
     };
   }
 
-  // Step 4: Root detection - a task is a root ONLY if:
-  // - It has no parent_id pointing to an active task, AND
-  // - It has no depends_on pointing to an active task
+  // Step 3: Find root tasks (no active parent)
   const roots: TreeNode[] = [];
   
   // Sort tasks for consistent ordering
@@ -278,11 +192,8 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
   });
 
   for (const task of sortedTasks) {
-    const isChildViaParentId = hasParentInTree.has(task.id);
-    const isChildViaDepsOn = task.dependencies.some(depId => taskMap.has(depId));
-    
-    // Root only if NOT a child via either mechanism
-    if (!isChildViaParentId && !isChildViaDepsOn) {
+    // Root if not a child of any active task
+    if (!hasParentInTree.has(task.id)) {
       const node = buildNode(task.id);
       if (node) {
         roots.push(node);
@@ -290,7 +201,7 @@ export function buildTree(tasks: TaskDisplay[], allTasks?: TaskDisplay[]): TreeN
     }
   }
 
-  // Handle orphan tasks (those with unresolved dependencies or cycles)
+  // Handle orphan tasks (those not yet rendered due to unresolved parent_id)
   for (const task of sortedTasks) {
     if (!rendered.has(task.id)) {
       const node = buildNode(task.id);
@@ -413,20 +324,18 @@ const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
   isSelected,
-  inCycle,
   isReady,
 }: {
   task: TaskDisplay;
   prefix: string;
   isSelected: boolean;
-  inCycle: boolean;
   isReady: boolean;
 }): React.ReactElement {
   // Determine icon and color based on status and readiness
   let icon = STATUS_ICONS[task.status] || '?';
   let color = STATUS_COLORS[task.status] || 'white';
   
-  // Override for ready tasks (pending with no blocking deps)
+  // Override for ready tasks (pending leaf tasks or tasks with all children completed)
   if (task.status === 'pending' && isReady) {
     icon = '●';  // Ready indicator
     color = 'green';
@@ -437,9 +346,6 @@ const TaskRow = React.memo(function TaskRow({
   
   // High priority indicator
   const prioritySuffix = task.priority === 'high' ? '!' : '';
-  
-  // Cycle indicator
-  const cycleSuffix = inCycle ? ' ↺' : '';
 
   return (
     <Box>
@@ -462,11 +368,6 @@ const TaskRow = React.memo(function TaskRow({
       {prioritySuffix && (
         <Text color="red" bold>
           {prioritySuffix}
-        </Text>
-      )}
-      {cycleSuffix && (
-        <Text color="magenta">
-          {cycleSuffix}
         </Text>
       )}
     </Box>
@@ -496,7 +397,6 @@ function renderTree(
         task={node.task}
         prefix={prefix + branchChar}
         isSelected={isSelected}
-        inCycle={node.inCycle}
         isReady={isReady}
       />
     );
@@ -559,7 +459,6 @@ function renderProjectTasks(
         task={rootNode.task}
         prefix="  "
         isSelected={isSelected}
-        inCycle={rootNode.inCycle}
         isReady={isReady}
       />
     );
@@ -602,7 +501,9 @@ export const TaskTree = React.memo(function TaskTree({
     return grouped;
   }, [tasks, groupByProject]);
 
-  // Compute ready task IDs (pending with all deps completed)
+  // Compute ready task IDs using parent-child model:
+  // - Leaf tasks (no children) are ready
+  // - Parent tasks are ready when all children are completed
   const readyIds = useMemo(() => {
     const taskMap = new Map<string, TaskDisplay>();
     tasks.forEach(t => taskMap.set(t.id, t));
@@ -610,13 +511,18 @@ export const TaskTree = React.memo(function TaskTree({
     const ready = new Set<string>();
     tasks.forEach(task => {
       if (task.status === 'pending') {
-        const allDepsCompleted = task.dependencies.every(depId => {
-          const dep = taskMap.get(depId);
-          // active = non-blocking container (project root), completed/validated = done
-          return !dep || dep.status === 'completed' || dep.status === 'validated' || dep.status === 'active';
-        });
-        if (allDepsCompleted) {
+        // Leaf task (no children) = ready
+        if (task.children_ids.length === 0) {
           ready.add(task.id);
+        } else {
+          // Parent task = ready if all children completed/validated
+          const allChildrenComplete = task.children_ids.every(childId => {
+            const child = taskMap.get(childId);
+            return !child || child.status === 'completed' || child.status === 'validated';
+          });
+          if (allChildrenComplete) {
+            ready.add(task.id);
+          }
         }
       }
     });
@@ -704,7 +610,6 @@ export const TaskTree = React.memo(function TaskTree({
               task={task}
               prefix="  "
               isSelected={task.id === selectedId}
-              inCycle={false}
               isReady={false}
             />
           );
@@ -740,7 +645,6 @@ export const TaskTree = React.memo(function TaskTree({
         task={rootNode.task}
         prefix=""
         isSelected={isSelected}
-        inCycle={rootNode.inCycle}
         isReady={isReady}
       />
     );
@@ -791,7 +695,6 @@ export const TaskTree = React.memo(function TaskTree({
             task={task}
             prefix="  "
             isSelected={task.id === selectedId}
-            inCycle={false}
             isReady={false}
           />
         );

@@ -66,7 +66,7 @@ function createMockTask(
     title: `Test Task ${id}`,
     priority: "medium",
     status: "pending",
-    depends_on: [],
+    parent_id: undefined,
 
     created: new Date().toISOString(),
     workdir: null,
@@ -74,12 +74,9 @@ function createMockTask(
     git_remote: null,
     git_branch: null,
     user_original_request: null,
-    resolved_deps: [],
-    unresolved_deps: [],
+    children_ids: [],
     classification: "ready",
-    blocked_by: [],
-    waiting_on: [],
-    in_cycle: false,
+    blocked_by: undefined,
     resolved_workdir: null,
     ...overrides,
   };

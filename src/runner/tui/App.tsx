@@ -133,15 +133,16 @@ export function App({
     }
   }, [onLogCallback, addLog]);
 
-  // Derive pause state from tasks: project root task with status === 'blocked' means paused
+  // Derive pause state from tasks: root task with status === 'blocked' means paused
+  // Root tasks have no parent_id (they are project-level deliverables)
   // Also fall back to getPausedProjects() for backward compatibility
   useEffect(() => {
-    // Derive from task list: find root tasks (title = projectId, no deps) that are blocked
+    // Derive from task list: find root tasks (no parent_id) that are blocked
     const derivedPaused = new Set<string>();
     const allTasksForPause = isMultiProject ? multiProjectPoller.allTasks : tasks;
     for (const task of allTasksForPause) {
-      if (task.dependencies.length === 0 && task.status === 'blocked') {
-        // This could be a project root task — use projectId or title
+      if (!task.parent_id && task.status === 'blocked') {
+        // This is a root task — use projectId or title
         const pid = task.projectId || task.title;
         if (pid && projects.includes(pid)) {
           derivedPaused.add(pid);

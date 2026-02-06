@@ -376,7 +376,6 @@ export function createTaskRoutes(): OpenAPIHono {
         tasks: result.tasks,
         count: result.tasks.length,
         stats: result.stats,
-        cycles: result.cycles,
       }, 200);
     } catch (error) {
       if (error instanceof Error && error.message.includes("zk CLI not available")) {

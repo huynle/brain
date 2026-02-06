@@ -74,3 +74,22 @@ build-cli:
 uninstall:
     rm -f ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/do-work
     @echo "Removed brain, brain-server, and do-work from ~/.local/bin"
+
+# =============================================================================
+# Tunnel (FRP)
+# =============================================================================
+
+# Start FRP tunnel to expose brain MCP at https://BRAIN_TUNNEL_HOST
+tunnel:
+    @echo "Starting FRP tunnel to https://BRAIN_TUNNEL_HOST..."
+    @echo "Make sure brain-server is running (just dev)"
+    frpc -c ~/.config/frp/brain-mcp.toml
+
+# Check tunnel status
+tunnel-status:
+    @echo "Checking tunnel connectivity..."
+    @curl -sf https://BRAIN_TUNNEL_HOST/api/v1/health && echo "Tunnel OK" || echo "Tunnel not connected"
+
+# Show tunnel config
+tunnel-config:
+    @cat ~/.config/frp/brain-mcp.toml

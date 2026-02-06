@@ -121,12 +121,14 @@ describe('LogViewer', () => {
         createLog({ message: `LogItem${i + 1}End` })
       );
       const { lastFrame } = render(<LogViewer logs={logs} maxLines={5} />);
-      // Should show items 6-10 (most recent)
-      expect(lastFrame()).toContain('LogItem6End');
+      // When logs > maxLines, "more above" indicator appears, reducing visible logs by 1
+      // With maxLines=5 and canScrollUp=true, we show 4 log entries
+      // Should show items 7-10 (most recent 4)
+      expect(lastFrame()).toContain('LogItem7End');
       expect(lastFrame()).toContain('LogItem10End');
       // Should NOT show older items - use unique markers to avoid substring matching
       expect(lastFrame()).not.toContain('LogItem1End');
-      expect(lastFrame()).not.toContain('LogItem5End');
+      expect(lastFrame()).not.toContain('LogItem6End');
     });
 
     it('shows all logs when under maxLines', () => {
@@ -144,10 +146,11 @@ describe('LogViewer', () => {
         createLog({ message: `Msg${i + 1}` })
       );
       const { lastFrame } = render(<LogViewer logs={logs} />);
-      // Should show the last 50 logs (11-60)
+      // With 60 logs and default maxLines=50, "more above" indicator appears
+      // Reducing visible logs to 49 entries (Msg12-Msg60)
       expect(lastFrame()).toContain('Msg60');
-      expect(lastFrame()).toContain('Msg11');
-      expect(lastFrame()).not.toContain('Msg10');
+      expect(lastFrame()).toContain('Msg12');
+      expect(lastFrame()).not.toContain('Msg11');
     });
   });
 
@@ -344,11 +347,12 @@ describe('LogViewer', () => {
       const { lastFrame } = render(
         <LogViewer logs={logs} maxLines={5} scrollOffset={0} />
       );
-      // Should show items 16-20 (most recent)
+      // With 20 logs and maxLines=5 at scrollOffset=0, "more above" indicator appears
+      // Reducing visible logs to 4 entries (Msg17-Msg20)
       expect(lastFrame()).toContain('Msg20End');
-      expect(lastFrame()).toContain('Msg16End');
+      expect(lastFrame()).toContain('Msg17End');
       // Should NOT show older items
-      expect(lastFrame()).not.toContain('Msg15End');
+      expect(lastFrame()).not.toContain('Msg16End');
       expect(lastFrame()).not.toContain('Msg1End');
     });
 
@@ -360,9 +364,10 @@ describe('LogViewer', () => {
       const { lastFrame } = render(
         <LogViewer logs={logs} maxLines={5} scrollOffset={5} />
       );
-      // Should show items 11-15 (5 lines before the last 5)
+      // With scrollOffset=5, both "more above" and "more below" indicators appear
+      // Reducing visible logs to 3 entries (Msg13-Msg15)
       expect(lastFrame()).toContain('Msg15End');
-      expect(lastFrame()).toContain('Msg11End');
+      expect(lastFrame()).toContain('Msg13End');
       // Should NOT show the latest logs
       expect(lastFrame()).not.toContain('Msg20End');
       expect(lastFrame()).not.toContain('Msg16End');

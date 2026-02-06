@@ -164,10 +164,10 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
       )}
 
       {/* Dependencies section */}
-      {(task.dependencies.length > 0 || (task.waitingOn?.length ?? 0) > 0 || (task.blockedBy?.length ?? 0) > 0) && (
+      {(task.dependencyTitles.length > 0 || (task.waitingOn?.length ?? 0) > 0 || (task.blockedBy?.length ?? 0) > 0) && (
         <Box flexDirection="column" marginTop={1}>
           <Text underline>Dependencies:</Text>
-          {task.dependencies.map((dep, i) => (
+          {task.dependencyTitles.map((dep, i) => (
             <Text key={i} dimColor>
               {'  '}- {dep}
             </Text>
@@ -213,10 +213,10 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
       )}
 
       {/* Dependents */}
-      {task.dependents.length > 0 && (
+      {task.dependentTitles.length > 0 && (
         <Box flexDirection="column" marginTop={1}>
           <Text underline>Dependents (blocked by this):</Text>
-          {task.dependents.map((dep, i) => (
+          {task.dependentTitles.map((dep, i) => (
             <Text key={i} dimColor>
               {'  '}- {dep}
             </Text>

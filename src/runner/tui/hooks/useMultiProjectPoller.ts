@@ -45,7 +45,57 @@ export interface MultiProjectPollerResult {
   errorsByProject: Map<string, Error>;
 }
 
-const DEFAULT_POLL_INTERVAL = 2000;
+const DEFAULT_POLL_INTERVAL = 1000;
+
+/**
+ * Build a lookup map from task ID to task title
+ */
+function buildIdToTitleMap(tasks: any[]): Map<string, string> {
+  const map = new Map<string, string>();
+  for (const task of tasks) {
+    if (task.id && task.title) {
+      map.set(task.id, task.title);
+    }
+  }
+  return map;
+}
+
+/**
+ * Compute reverse dependencies (dependents) for each task.
+ * Returns a map from task ID to array of dependent task IDs.
+ */
+function computeDependents(tasks: any[]): Map<string, string[]> {
+  const dependentsMap = new Map<string, string[]>();
+  
+  // Initialize empty arrays for all tasks
+  for (const task of tasks) {
+    if (task.id) {
+      dependentsMap.set(task.id, []);
+    }
+  }
+  
+  // For each task, add it as a dependent of its dependencies
+  for (const task of tasks) {
+    const deps = task.resolved_deps || task.dependencies || [];
+    for (const depId of deps) {
+      const existingDependents = dependentsMap.get(depId);
+      if (existingDependents) {
+        existingDependents.push(task.id);
+      }
+    }
+  }
+  
+  return dependentsMap;
+}
+
+/**
+ * Resolve an array of task IDs to their titles.
+ * Falls back to ID if title not found.
+ */
+function resolveIdsToTitles(ids: string[] | undefined, idToTitle: Map<string, string>): string[] {
+  if (!ids || ids.length === 0) return [];
+  return ids.map(id => idToTitle.get(id) || id);
+}
 
 const EMPTY_STATS: TaskStats = {
   total: 0,
@@ -72,20 +122,53 @@ async function fetchProjectTasks(
   }
 
   const data = await response.json();
+  const rawTasks = data.tasks || [];
+
+  // Build lookup map and compute reverse dependencies
+  const idToTitle = buildIdToTitleMap(rawTasks);
+  const dependentsMap = computeDependents(rawTasks);
 
   // Transform API response to TaskDisplay format with projectId attached
-  const tasks: TaskDisplay[] = (data.tasks || []).map((task: any) => ({
-    id: task.id,
-    path: task.path,
-    title: task.title,
-    status: task.status,
-    priority: task.priority || 'medium',
-    dependencies: task.resolved_deps || task.dependencies || [],
-    dependents: task.dependents || [],
-    progress: task.progress,
-    error: task.error,
-    projectId, // Tag with project ID
-  }));
+  // Keep IDs for tree building, resolve to titles for display
+  const tasks: TaskDisplay[] = rawTasks.map((task: any) => {
+    // Keep dependencies as IDs for tree building
+    const depIds = task.resolved_deps || task.dependencies || [];
+    const dependentIds = dependentsMap.get(task.id) || [];
+    
+    return {
+      id: task.id,
+      path: task.path,
+      title: task.title,
+      status: task.status,
+      priority: task.priority || 'medium',
+      // Keep IDs for tree building (TaskTree.tsx needs these)
+      dependencies: depIds,
+      dependents: dependentIds,
+      // Resolve to titles for display (TaskDetail.tsx uses these)
+      dependencyTitles: resolveIdsToTitles(depIds, idToTitle),
+      dependentTitles: resolveIdsToTitles(dependentIds, idToTitle),
+      progress: task.progress,
+      error: task.error,
+      projectId, // Tag with project ID
+      parent_id: task.parent_id,
+      // Frontmatter fields
+      created: task.created,
+      workdir: task.workdir,
+      worktree: task.worktree,
+      gitRemote: task.git_remote,
+      gitBranch: task.git_branch,
+      userOriginalRequest: task.user_original_request,
+      // Dependency resolution fields - resolve to titles for display
+      resolvedDeps: resolveIdsToTitles(task.resolved_deps, idToTitle),
+      unresolvedDeps: task.unresolved_deps,
+      classification: task.classification,
+      blockedBy: resolveIdsToTitles(task.blocked_by, idToTitle),
+      blockedByReason: task.blocked_by_reason,
+      waitingOn: resolveIdsToTitles(task.waiting_on, idToTitle),
+      inCycle: task.in_cycle,
+      resolvedWorkdir: task.resolved_workdir,
+    };
+  });
 
   // Calculate stats from tasks
   const apiStats = data.stats || {};

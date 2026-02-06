@@ -19,8 +19,10 @@ export interface TaskDisplay {
   title: string;
   status: EntryStatus;
   priority: Priority;
-  dependencies: string[];
-  dependents: string[];
+  dependencies: string[];       // Raw IDs for tree building
+  dependents: string[];         // Raw IDs for tree building
+  dependencyTitles: string[];   // Titles for display in TaskDetail
+  dependentTitles: string[];    // Titles for display in TaskDetail
   progress?: number;
   error?: string;
   projectId?: string;  // Which project this task belongs to (for multi-project mode)

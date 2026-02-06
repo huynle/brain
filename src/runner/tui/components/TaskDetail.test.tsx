@@ -12,14 +12,20 @@ import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
 function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
+  // Extract dependencies/dependents to auto-generate title fields
+  const dependencies = overrides.dependencies ?? [];
+  const dependents = overrides.dependents ?? [];
   return {
     id: 'task-123',
     path: 'projects/test/task/task-123.md',
     title: 'Test Task',
     status: 'pending',
     priority: 'medium',
-    dependencies: [],
-    dependents: [],
+    dependencies,
+    dependents,
+    // Auto-generate title fields from ID fields (test uses IDs as titles)
+    dependencyTitles: overrides.dependencyTitles ?? dependencies,
+    dependentTitles: overrides.dependentTitles ?? dependents,
     ...overrides,
   };
 }

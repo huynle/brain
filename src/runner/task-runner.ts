@@ -28,6 +28,7 @@ import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
 import type { LogEntry } from "./tui/types";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
+import { getAvailableMemoryPercent } from "./system-utils";
 
 // =============================================================================
 // Types
@@ -221,12 +222,61 @@ export class TaskRunner {
       await this.processManager.killAll();
     }
 
-    // Clean up TUI mode tasks (tmux windows)
+    // Clean up TUI mode tasks (kill processes and tmux windows)
     if (this.tuiTasks.size > 0) {
-      this.logger.info("Cleaning up TUI task windows", {
+      this.logger.info("Cleaning up TUI tasks", {
         count: this.tuiTasks.size,
       });
+      
       for (const task of this.tuiTasks.values()) {
+        // SAFETY: Guard against dangerous PIDs that could kill multiple processes
+        // PID 0 = current process group, PID -1 = ALL user processes (catastrophic!)
+        if (task.pid <= 0) {
+          this.logger.warn("Skipping invalid PID in TUI task cleanup", {
+            taskId: task.id,
+            pid: task.pid,
+          });
+          continue;
+        }
+        
+        // First, explicitly kill the OpenCode process if still alive
+        if (isPidAlive(task.pid)) {
+          this.logger.warn("Killing orphan TUI task process", {
+            taskId: task.id,
+            pid: task.pid,
+          });
+          this.tuiLog("warn", `Killing orphan process ${task.pid} for task ${task.id}`);
+          
+          try {
+            // Send SIGTERM first for graceful shutdown
+            process.kill(task.pid, "SIGTERM");
+            
+            // Wait up to 2 seconds for graceful shutdown
+            const startWait = Date.now();
+            while (isPidAlive(task.pid) && Date.now() - startWait < 2000) {
+              await this.sleep(100);
+            }
+            
+            // If still alive, force kill with SIGKILL
+            if (isPidAlive(task.pid)) {
+              this.logger.warn("Process did not terminate gracefully, sending SIGKILL", {
+                taskId: task.id,
+                pid: task.pid,
+              });
+              this.tuiLog("warn", `Force killing process ${task.pid} for task ${task.id}`);
+              process.kill(task.pid, "SIGKILL");
+            }
+          } catch (err) {
+            // Process may have exited between check and kill
+            this.logger.debug("Error killing process (may have already exited)", {
+              taskId: task.id,
+              pid: task.pid,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+        
+        // Then clean up the tmux window
         await this.cleanupTaskTmux(task);
       }
       this.tuiTasks.clear();
@@ -465,6 +515,43 @@ export class TaskRunner {
             max: this.config.maxParallel,
           });
         }
+        return;
+      }
+
+      // Step 2b: Hard limit regardless of tracking state (safety net for tracking bugs)
+      // Note: runningCount already computed above combines processManager + tuiTasks
+      if (runningCount >= this.config.maxTotalProcesses) {
+        this.logger.error("Reached absolute process limit, refusing new tasks", {
+          totalRunning: runningCount,
+          maxTotalProcesses: this.config.maxTotalProcesses,
+          processManagerCount: this.processManager.runningCount(),
+          tuiTasksCount: this.tuiTasks.size,
+        });
+        this.tuiLog('error', `Process limit reached (${runningCount}/${this.config.maxTotalProcesses})`);
+        return;
+      }
+
+      // Warning when approaching process limit (80% threshold)
+      if (runningCount >= this.config.maxTotalProcesses * 0.8) {
+        this.logger.warn("Approaching process limit", {
+          totalRunning: runningCount,
+          maxTotalProcesses: this.config.maxTotalProcesses,
+        });
+      }
+
+      // Step 2c: Memory check - pause spawning if system memory is low
+      const availableMemory = getAvailableMemoryPercent();
+      if (availableMemory < this.config.memoryThresholdPercent) {
+        this.logger.warn("System memory low, pausing task spawning", {
+          availablePercent: availableMemory.toFixed(1),
+          threshold: this.config.memoryThresholdPercent,
+        });
+        this.tuiLog('warn', `Memory low (${availableMemory.toFixed(1)}%), pausing spawning`);
+        this.emitEvent({
+          type: "poll_complete",
+          readyCount: 0,
+          runningCount,
+        });
         return;
       }
 
@@ -753,6 +840,22 @@ export class TaskRunner {
   private async checkTuiTasks(): Promise<void> {
     for (const [taskId, task] of this.tuiTasks) {
       try {
+        // Check if TUI task process is still alive
+        if (!isPidAlive(task.pid)) {
+          this.logger.warn("Detected dead TUI task process, cleaning up", {
+            taskId,
+            pid: task.pid,
+            startedAt: task.startedAt,
+          });
+          
+          this.tuiLog('warn', `Task ${task.title} process died unexpectedly, cleaning up`, taskId, task.projectId);
+          
+          // Mark as crashed/failed
+          await this.handleTuiTaskCompletion(taskId, task, CompletionStatus.Crashed);
+          
+          continue; // Move to next task in loop
+        }
+
         // Check task status from brain API
         const encodedPath = encodeURIComponent(task.path);
         const response = await fetch(
@@ -770,9 +873,24 @@ export class TaskRunner {
             : CompletionStatus.Cancelled;
           
           await this.handleTuiTaskCompletion(taskId, task, completionStatus);
+          continue;
         }
         // Note: "blocked" status is NOT treated as completion
         // Blocked tasks stay in tuiTasks to allow resume detection
+
+        // Check for timeout
+        const elapsed = Date.now() - new Date(task.startedAt).getTime();
+        if (elapsed > this.config.taskTimeout) {
+          this.logger.warn("TUI task timed out", {
+            taskId,
+            elapsed,
+            timeout: this.config.taskTimeout,
+            elapsedMinutes: Math.round(elapsed / 60000),
+          });
+          
+          await this.handleTuiTaskCompletion(taskId, task, CompletionStatus.Timeout);
+          continue;
+        }
       } catch (error) {
         this.logger.debug("Failed to check TUI task status", {
           taskId,
@@ -1047,10 +1165,25 @@ export class TaskRunner {
     const duration =
       new Date(completedAt).getTime() - new Date(startedAt).getTime();
 
-    // Create result
+    // Create result - map CompletionStatus to TaskResult status
+    let resultStatus: TaskResult["status"];
+    switch (status) {
+      case CompletionStatus.Completed:
+        resultStatus = "completed";
+        break;
+      case CompletionStatus.Timeout:
+        resultStatus = "timeout";
+        break;
+      case CompletionStatus.Cancelled:
+        resultStatus = "cancelled";
+        break;
+      default:
+        resultStatus = "blocked";
+    }
+    
     const result: TaskResult = {
       taskId,
-      status: status === CompletionStatus.Completed ? "completed" : "blocked",
+      status: resultStatus,
       startedAt,
       completedAt,
       duration,
@@ -1782,6 +1915,10 @@ export class TaskRunner {
           this.processManager.getAll().map((info) => info.task),
         getStats: () => this.stats,
         getStartedAt: () => this.startedAt ?? new Date().toISOString(),
+        // onShutdown callback for graceful cleanup including tuiTasks
+        onShutdown: async () => {
+          await this.stop();
+        },
       },
       this.processManager
     );

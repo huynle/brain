@@ -5,9 +5,24 @@
  * Extracted from the OpenCode brain plugin.
  */
 
-import { serve } from "bun";
+import { serve, type TLSOptions } from "bun";
 import { getConfig } from "./config";
 import { createApp } from "./server";
+
+function buildTlsOptions(config: ReturnType<typeof getConfig>): TLSOptions | undefined {
+  const { tls } = config.server;
+  if (!tls.enabled) return undefined;
+
+  if (!tls.keyPath || !tls.certPath) {
+    console.error("TLS enabled but TLS_KEY and TLS_CERT environment variables not set");
+    process.exit(1);
+  }
+
+  return {
+    key: Bun.file(tls.keyPath),
+    cert: Bun.file(tls.certPath),
+  };
+}
 
 const config = getConfig();
 
@@ -27,17 +42,21 @@ console.log(`  Host:         ${config.server.host}`);
 console.log(`  Log Level:    ${config.server.logLevel}`);
 console.log(`  Auth:         ${config.server.enableAuth ? "enabled" : "disabled"}`);
 console.log(`  Tenants:      ${config.server.enableTenants ? "enabled" : "disabled"}`);
+console.log(`  TLS:          ${config.server.tls.enabled ? "enabled" : "disabled"}`);
 console.log();
 
 const app = createApp(config);
+const tlsOptions = buildTlsOptions(config);
 
 const server = serve({
   fetch: app.fetch,
   port: config.server.port,
   hostname: config.server.host,
+  tls: tlsOptions,
 });
 
-console.log(`🧠 Brain API listening on http://${config.server.host}:${config.server.port}`);
+const protocol = config.server.tls.enabled ? "https" : "http";
+console.log(`🧠 Brain API listening on ${protocol}://${config.server.host}:${config.server.port}`);
 console.log();
 console.log(`Endpoints:`);
 console.log(`  GET  /api/v1/health       - Health check`);

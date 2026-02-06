@@ -6,7 +6,7 @@
 
 import { join } from "path";
 import { homedir } from "os";
-import type { Config, BrainConfig, ServerConfig } from "./core/types";
+import type { Config, BrainConfig, ServerConfig, TlsConfig } from "./core/types";
 
 function getEnv(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
@@ -36,6 +36,13 @@ export function loadConfig(): Config {
     defaultProject: getEnv("DEFAULT_PROJECT", "default"),
   };
 
+  // TLS configuration
+  const tls: TlsConfig = {
+    enabled: getEnvBool("ENABLE_TLS", false),
+    keyPath: process.env.TLS_KEY,
+    certPath: process.env.TLS_CERT,
+  };
+
   // Server configuration
   const server: ServerConfig = {
     port: getEnvInt("PORT", 3000),
@@ -44,6 +51,7 @@ export function loadConfig(): Config {
     enableAuth: getEnvBool("ENABLE_AUTH", false),
     apiKey: process.env.API_KEY,
     enableTenants: getEnvBool("ENABLE_TENANTS", false),
+    tls,
   };
 
   return { brain, server };

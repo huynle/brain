@@ -241,6 +241,12 @@ export interface BrainConfig {
   defaultProject: string;
 }
 
+export interface TlsConfig {
+  enabled: boolean;
+  keyPath?: string;
+  certPath?: string;
+}
+
 export interface ServerConfig {
   port: number;
   host: string;
@@ -248,6 +254,7 @@ export interface ServerConfig {
   enableAuth: boolean;
   apiKey?: string;
   enableTenants: boolean;
+  tls: TlsConfig;
 }
 
 export interface Config {

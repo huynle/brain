@@ -55,7 +55,7 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
           {'  '}
           <Text bold>r</Text> Refresh
           {'  '}
-          <Text bold>q</Text> Quit
+          <Text bold>Ctrl-C</Text> Quit
         </Text>
       </Box>
       {focusedPanel && (

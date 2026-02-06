@@ -271,12 +271,7 @@ export function App({
     }
 
     // === Normal Mode ===
-    
-    // Quit
-    if (input === 'q') {
-      exit();
-      return;
-    }
+    // Note: Quit via Ctrl-C is handled by SIGINT handler (lines 487-500)
 
     // Refresh
     if (input === 'r') {
@@ -505,7 +500,7 @@ export function App({
       <Box flexDirection="column" padding={1}>
         <Text bold>Keyboard Shortcuts</Text>
         <Text />
-        <Text>  <Text bold>q</Text>         - Quit</Text>
+        <Text>  <Text bold>Ctrl-C</Text>    - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
         <Text>  <Text bold>x</Text>         - Cancel selected task</Text>
         <Text>  <Text bold>p</Text>         - Pause/Resume current project</Text>

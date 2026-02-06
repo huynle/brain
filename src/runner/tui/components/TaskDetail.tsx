@@ -55,6 +55,7 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
         borderColor="gray"
         padding={1}
         flexDirection="column"
+        flexGrow={1}
       >
         <Text dimColor>Select a task to view details</Text>
       </Box>
@@ -70,6 +71,7 @@ export const TaskDetail = React.memo(function TaskDetail({ task }: TaskDetailPro
       borderColor="cyan"
       padding={1}
       flexDirection="column"
+      flexGrow={1}
     >
       {/* Title */}
       <Text bold>{task.title}</Text>

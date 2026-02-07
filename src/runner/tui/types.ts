@@ -131,6 +131,27 @@ export interface FeatureDisplay {
 }
 
 /**
+ * Resource metrics for running OpenCode processes
+ */
+export interface ResourceMetrics {
+  /** Total CPU usage percentage across all processes */
+  cpuPercent: number;
+  /** Total memory usage in MB (formatted string) */
+  memoryMB: string;
+  /** Number of OpenCode processes being tracked */
+  processCount: number;
+}
+
+/**
+ * Per-project limit entry for settings display
+ */
+export interface ProjectLimitEntry {
+  projectId: string;
+  limit: number | undefined;  // undefined means "no limit"
+  running: number;            // current running count for context
+}
+
+/**
  * Props for the main App component
  */
 export interface AppProps {
@@ -155,4 +176,10 @@ export interface AppProps {
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
+  /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */
+  getResourceMetrics?: () => ResourceMetrics;
+  /** Get per-project concurrent task limits */
+  getProjectLimits?: () => ProjectLimitEntry[];
+  /** Set per-project concurrent task limit (undefined to remove limit) */
+  setProjectLimit?: (projectId: string, limit: number | undefined) => void;
 }

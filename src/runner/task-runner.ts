@@ -28,7 +28,8 @@ import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
 import type { LogEntry } from "./tui/types";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
-import { getAvailableMemoryPercent } from "./system-utils";
+import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-utils";
+import type { ResourceMetrics } from "./tui/types";
 
 // =============================================================================
 // Types
@@ -91,6 +92,10 @@ export class TaskRunner {
   // Paused projects are excluded from task polling
   private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
+
+  // Per-project concurrent task limits (in-memory only)
+  // Projects not in this map use no limit (only global maxParallel applies)
+  private projectLimits: Map<string, number> = new Map();
 
   // Pending resume queue: orphaned in_progress tasks detected on startup when paused
   // These are prioritized when resume/resumeAll is called
@@ -360,6 +365,37 @@ export class TaskRunner {
     };
   }
 
+  /**
+   * Get resource metrics (CPU/memory) for all running OpenCode processes.
+   * Used by TUI StatusBar to display system resource usage.
+   */
+  getResourceMetrics(): ResourceMetrics {
+    // Collect PIDs from both processManager and tuiTasks
+    const pids: number[] = [];
+    
+    // From processManager (background mode)
+    for (const info of this.processManager.getAll()) {
+      if (info.task.pid > 0) {
+        pids.push(info.task.pid);
+      }
+    }
+    
+    // From tuiTasks (TUI mode - tasks spawned in tmux windows)
+    for (const task of this.tuiTasks.values()) {
+      if (task.pid > 0) {
+        pids.push(task.pid);
+      }
+    }
+    
+    const usage = getProcessResourceUsage(pids);
+    
+    return {
+      cpuPercent: usage.cpuPercent,
+      memoryMB: usage.memoryMB,
+      processCount: usage.processCount,
+    };
+  }
+
   // ========================================
   // Pause/Resume Methods
   // ========================================
@@ -517,6 +553,71 @@ export class TaskRunner {
     return this.pauseCache.size === this.projects.length && this.projects.length > 0;
   }
 
+  // ========================================
+  // Per-Project Concurrent Task Limits
+  // ========================================
+
+  /**
+   * Set the concurrent task limit for a specific project.
+   * Set to 0 or undefined to remove the limit (use global maxParallel only).
+   */
+  setProjectLimit(projectId: string, limit: number | undefined): void {
+    if (limit === undefined || limit <= 0) {
+      this.projectLimits.delete(projectId);
+      this.logger.info("Removed per-project limit", { projectId });
+    } else {
+      this.projectLimits.set(projectId, limit);
+      this.logger.info("Set per-project limit", { projectId, limit });
+    }
+    this.tuiLog('info', `Project limit: ${projectId} = ${limit ?? 'no limit'}`, undefined, projectId);
+  }
+
+  /**
+   * Get the concurrent task limit for a specific project.
+   * Returns undefined if no limit is set (uses global maxParallel only).
+   */
+  getProjectLimit(projectId: string): number | undefined {
+    return this.projectLimits.get(projectId);
+  }
+
+  /**
+   * Get all per-project limits as a Map.
+   */
+  getProjectLimits(): Map<string, number> {
+    return new Map(this.projectLimits);
+  }
+
+  /**
+   * Get count of running tasks for a specific project.
+   */
+  getRunningCountForProject(projectId: string): number {
+    let count = 0;
+    for (const info of this.processManager.getAll()) {
+      if (info.task.projectId === projectId) {
+        count++;
+      }
+    }
+    for (const task of this.tuiTasks.values()) {
+      if (task.projectId === projectId) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Check if a project is at its per-project limit.
+   * Returns false if no per-project limit is set.
+   */
+  isProjectAtLimit(projectId: string): boolean {
+    const limit = this.projectLimits.get(projectId);
+    if (limit === undefined) {
+      return false; // No per-project limit
+    }
+    const running = this.getRunningCountForProject(projectId);
+    return running >= limit;
+  }
+
 // ========================================
   // Event Handling
   // ========================================
@@ -634,11 +735,25 @@ export class TaskRunner {
 
       // Step 3: Get next tasks from non-paused projects using feature-aware ordering
       // Uses getNextTask() which respects feature dependencies and priorities
-      const activeProjects = this.projects.filter(p => !this.pauseCache.has(p));
+      // Also filter out projects that are at their per-project concurrent task limit
+      const activeProjects = this.projects.filter(p => {
+        if (this.pauseCache.has(p)) return false;
+        if (this.isProjectAtLimit(p)) {
+          if (isDebugEnabled()) {
+            this.logger.debug("Project at per-project limit, skipping", {
+              projectId: p,
+              limit: this.getProjectLimit(p),
+              running: this.getRunningCountForProject(p),
+            });
+          }
+          return false;
+        }
+        return true;
+      });
       if (activeProjects.length === 0) {
-        // All projects are paused, skip fetching tasks
+        // All projects are paused or at limit, skip fetching tasks
         if (isDebugEnabled()) {
-          this.logger.debug("All projects paused, skipping task fetch");
+          this.logger.debug("All projects paused or at limit, skipping task fetch");
         }
         return;
       }
@@ -649,15 +764,34 @@ export class TaskRunner {
         ...Array.from(this.tuiTasks.values()).map((task) => `${task.projectId}:${task.id}`),
       ]);
 
+      // Track per-project running counts for this poll cycle (to enforce limits during multi-task selection)
+      const projectRunningCounts = new Map<string, number>();
+      for (const projectId of this.projects) {
+        projectRunningCounts.set(projectId, this.getRunningCountForProject(projectId));
+      }
+
       // Step 4: Fill available slots using feature-ordered task selection
       // For each slot, get the next task from each active project and pick the highest priority
       const slotsAvailable = this.config.maxParallel - runningCount;
       const tasksToStart: (ResolvedTask & { _pollProjectId: string })[] = [];
 
       for (let slot = 0; slot < slotsAvailable; slot++) {
-        // Get next task from each active project (respects feature ordering)
+        // Filter projects that aren't at their per-project limit for this iteration
+        const eligibleProjects = activeProjects.filter(projectId => {
+          const limit = this.projectLimits.get(projectId);
+          if (limit === undefined) return true; // No per-project limit
+          const running = projectRunningCounts.get(projectId) ?? 0;
+          return running < limit;
+        });
+
+        if (eligibleProjects.length === 0) {
+          // All projects are at their per-project limits
+          break;
+        }
+
+        // Get next task from each eligible project (respects feature ordering)
         const nextTaskResults = await Promise.allSettled(
-          activeProjects.map(async (projectId) => {
+          eligibleProjects.map(async (projectId) => {
             const task = await this.apiClient.getNextTask(projectId);
             if (task) {
               return { ...task, _pollProjectId: projectId };
@@ -703,6 +837,10 @@ export class TaskRunner {
         
         // Mark as "running" for next iteration's filter
         runningKeys.add(`${selectedTask._pollProjectId}:${selectedTask.id}`);
+        
+        // Update per-project running count for next iteration
+        const currentCount = projectRunningCounts.get(selectedTask._pollProjectId) ?? 0;
+        projectRunningCounts.set(selectedTask._pollProjectId, currentCount + 1);
 
         // Log feature context if task belongs to a feature
         if (selectedTask.feature_id) {
@@ -1707,6 +1845,13 @@ export class TaskRunner {
         onResumeAll: () => this.resumeAll(),
         getPausedProjects: () => this.getPausedProjects(),
         getRunningProcessCount: () => this.processManager.runningCount() + this.tuiTasks.size,
+        getResourceMetrics: () => this.getResourceMetrics(),
+        getProjectLimits: () => this.projects.map(projectId => ({
+          projectId,
+          limit: this.getProjectLimit(projectId),
+          running: this.getRunningCountForProject(projectId),
+        })),
+        setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

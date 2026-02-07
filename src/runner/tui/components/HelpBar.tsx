@@ -40,6 +40,8 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
               <Text bold>e</Text> Edit
               {'  '}
+              <Text bold>y</Text> Yank
+              {'  '}
               <Text bold>x</Text> Cancel
               {'  '}
             </>
@@ -55,6 +57,8 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
             </>
           )}
+          <Text bold>s</Text> Settings
+          {'  '}
           <Text bold>Tab</Text> Panel
           {'  '}
           <Text bold>L</Text> Logs

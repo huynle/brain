@@ -280,7 +280,22 @@ export class BrainService {
     }
 
     // Check if zk is available
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    let zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+
+    // Check if user_original_request contains characters that break zk CLI's --extra parser
+    // The zk CLI fails when values contain quotes, equals signs, newlines, or other special chars
+    // because it expects simple "key=value" format. When detected, force manual file creation.
+    if (zkAvailable && request.user_original_request) {
+      const hasNewlines = request.user_original_request.includes("\n");
+      const hasSpecialChars =
+        /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%\=]|^\s|\s$|^---|^\.\.\./.test(
+          request.user_original_request
+        );
+      if (hasNewlines || hasSpecialChars) {
+        // Force manual file creation path which handles escaping correctly via generateFrontmatter()
+        zkAvailable = false;
+      }
+    }
 
     let relativePath: string;
     let noteId: string;
@@ -333,29 +348,14 @@ export class BrainService {
         zkArgs.push("--extra", `git_branch=${request.git_branch}`);
       }
 
-      // User original request for validation - format for YAML
-      // For multiline content, we need to format it as YAML literal block scalar
+      // User original request for validation
+      // Note: Complex values (newlines, special chars) are handled above by forcing
+      // the manual file creation path. If we reach here, the value is safe for zk CLI.
       if (request.user_original_request) {
-        const hasNewlines = request.user_original_request.includes("\n");
-        const hasSpecialChars =
-          /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%]|^\s|\s$|^---|^\.\.\./.test(
-            request.user_original_request
-          );
-
-        if (hasNewlines || hasSpecialChars) {
-          // Format as YAML literal block scalar (|) with proper indentation
-          const indentedLines = request.user_original_request
-            .split("\n")
-            .map((line) => `  ${line}`)
-            .join("\n");
-          zkArgs.push("--extra", `user_original_request=|\n${indentedLines}`);
-        } else {
-          // Simple single-line value
-          zkArgs.push(
-            "--extra",
-            `user_original_request=${request.user_original_request}`
-          );
-        }
+        zkArgs.push(
+          "--extra",
+          `user_original_request=${request.user_original_request}`
+        );
       }
 
       if (!isGlobal) {

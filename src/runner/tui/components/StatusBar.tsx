@@ -182,7 +182,7 @@ export const StatusBar = React.memo(function StatusBar({
           </Box>
 
           <Box>
-            {resourceMetrics && resourceMetrics.processCount > 0 && (
+            {resourceMetrics && (
               <>
                 <ResourceMetricsDisplay metrics={resourceMetrics} />
                 <Text>   </Text>
@@ -247,7 +247,7 @@ export const StatusBar = React.memo(function StatusBar({
       </Box>
 
       <Box>
-        {resourceMetrics && resourceMetrics.processCount > 0 && (
+        {resourceMetrics && (
           <>
             <ResourceMetricsDisplay metrics={resourceMetrics} />
             <Text>   </Text>

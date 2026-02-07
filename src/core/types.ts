@@ -153,6 +153,10 @@ export interface UpdateEntryRequest {
   append?: string;
   note?: string;
   depends_on?: string[];
+  // Feature grouping (for task organization)
+  feature_id?: string;
+  feature_priority?: Priority;
+  feature_depends_on?: string[];
 }
 
 export interface ListEntriesRequest {

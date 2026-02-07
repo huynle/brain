@@ -610,9 +610,9 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
-    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on) {
+    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && !request.feature_id && !request.feature_priority && !request.feature_depends_on) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, feature_id, feature_priority, feature_depends_on"
       );
     }
 
@@ -634,6 +634,17 @@ export class BrainService {
     // Update depends_on if provided
     if (request.depends_on !== undefined) {
       updatedFrontmatter.depends_on = request.depends_on;
+    }
+
+    // Update feature grouping fields if provided
+    if (request.feature_id !== undefined) {
+      updatedFrontmatter.feature_id = request.feature_id;
+    }
+    if (request.feature_priority !== undefined) {
+      updatedFrontmatter.feature_priority = request.feature_priority;
+    }
+    if (request.feature_depends_on !== undefined) {
+      updatedFrontmatter.feature_depends_on = request.feature_depends_on;
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

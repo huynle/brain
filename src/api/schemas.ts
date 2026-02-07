@@ -163,9 +163,13 @@ export const UpdateEntryRequestSchema = z.object({
   append: z.string().optional().openapi({ description: "Content to append to the entry" }),
   note: z.string().optional().openapi({ description: "Note to add to the entry" }),
   depends_on: z.array(z.string()).optional().openapi({ description: "Task dependencies - list of task IDs or titles" }),
+  // Feature grouping for task organization
+  feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" }),
+  feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature group" }),
+  feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined,
-  { message: "At least one of status, title, content, append, note, or depends_on must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, feature_id, feature_priority, or feature_depends_on must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================

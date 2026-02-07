@@ -225,3 +225,139 @@ export function getMemoryInfo(): {
     totalGB: (total / (1024 * 1024 * 1024)).toFixed(2),
   };
 }
+
+/**
+ * Resource usage for a set of processes.
+ */
+export interface ProcessResourceUsage {
+  /** Total CPU usage percentage across all processes */
+  cpuPercent: number;
+  /** Total memory usage in bytes */
+  memoryBytes: number;
+  /** Total memory usage in MB (formatted) */
+  memoryMB: string;
+  /** Number of processes measured */
+  processCount: number;
+}
+
+/**
+ * Get aggregated CPU and memory usage for a set of process IDs.
+ * Uses the `ps` command to query process stats.
+ *
+ * @param pids - Array of process IDs to measure
+ * @returns Aggregated resource usage, or zeros if no valid processes
+ */
+/**
+ * Copy text to the system clipboard.
+ *
+ * Uses platform-specific commands:
+ * - macOS: pbcopy
+ * - Linux: xclip or xsel (falls back to xsel if xclip not available)
+ * - Windows: clip
+ *
+ * @param text - The text to copy to clipboard
+ * @returns true if successful, false otherwise
+ */
+export function copyToClipboard(text: string): boolean {
+  const currentPlatform = platform();
+
+  try {
+    if (currentPlatform === "darwin") {
+      // macOS: use pbcopy
+      execSync("pbcopy", { input: text, encoding: "utf-8", timeout: 5000 });
+      return true;
+    } else if (currentPlatform === "linux") {
+      // Linux: try xclip first, then xsel
+      try {
+        execSync("xclip -selection clipboard", {
+          input: text,
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        return true;
+      } catch {
+        // xclip not available, try xsel
+        execSync("xsel --clipboard --input", {
+          input: text,
+          encoding: "utf-8",
+          timeout: 5000,
+        });
+        return true;
+      }
+    } else if (currentPlatform === "win32") {
+      // Windows: use clip
+      execSync("clip", { input: text, encoding: "utf-8", timeout: 5000 });
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+export function getProcessResourceUsage(pids: number[]): ProcessResourceUsage {
+  // Filter out invalid PIDs (0, negative, or not alive)
+  const validPids = pids.filter((pid) => pid > 0);
+
+  if (validPids.length === 0) {
+    return {
+      cpuPercent: 0,
+      memoryBytes: 0,
+      memoryMB: "0",
+      processCount: 0,
+    };
+  }
+
+  try {
+    // Use ps command to get CPU% and RSS (resident set size in KB)
+    // Format: PID %CPU RSS
+    const pidList = validPids.join(",");
+    const output = execSync(`ps -p ${pidList} -o pid=,%cpu=,rss=`, {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    let totalCpu = 0;
+    let totalMemoryKB = 0;
+    let measuredCount = 0;
+
+    // Parse each line of output
+    for (const line of output.trim().split("\n")) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      // Format: "12345  2.5 123456" (PID, CPU%, RSS in KB)
+      const parts = trimmed.split(/\s+/);
+      if (parts.length >= 3) {
+        const cpu = parseFloat(parts[1]);
+        const rssKB = parseInt(parts[2], 10);
+
+        if (!isNaN(cpu)) {
+          totalCpu += cpu;
+        }
+        if (!isNaN(rssKB)) {
+          totalMemoryKB += rssKB;
+        }
+        measuredCount++;
+      }
+    }
+
+    const memoryBytes = totalMemoryKB * 1024;
+    const memoryMB = (memoryBytes / (1024 * 1024)).toFixed(1);
+
+    return {
+      cpuPercent: Math.round(totalCpu * 10) / 10, // Round to 1 decimal
+      memoryBytes,
+      memoryMB,
+      processCount: measuredCount,
+    };
+  } catch {
+    // ps command failed (processes may have exited)
+    return {
+      cpuPercent: 0,
+      memoryBytes: 0,
+      memoryMB: "0",
+      processCount: 0,
+    };
+  }
+}

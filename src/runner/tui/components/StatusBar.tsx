@@ -8,7 +8,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { ProjectTabs } from './ProjectTabs';
 import type { TaskStats } from '../hooks/useTaskPoller';
-import type { FeatureStats } from '../types';
+import type { FeatureStats, ResourceMetrics } from '../types';
 
 interface StatusBarProps {
   projectId: string;
@@ -29,6 +29,34 @@ interface StatusBarProps {
   activeFeatureName?: string;    // Name of active feature (when tasks running)
   /** Callback to get actual running OpenCode process count (overrides stats.inProgress) */
   getRunningProcessCount?: () => number;
+  /** Resource metrics for running OpenCode processes */
+  resourceMetrics?: ResourceMetrics | null;
+}
+
+/**
+ * Render resource metrics inline
+ * Format: "CPU: 12% | Mem: 1.2GB | 3 procs"
+ */
+function ResourceMetricsDisplay({
+  metrics,
+}: {
+  metrics: ResourceMetrics;
+}): React.ReactElement {
+  // Format memory: convert MB to GB if >= 1000MB
+  const memoryValue = parseFloat(metrics.memoryMB);
+  const memoryDisplay = memoryValue >= 1000
+    ? `${(memoryValue / 1024).toFixed(1)}GB`
+    : `${metrics.memoryMB}MB`;
+
+  return (
+    <>
+      <Text color="green">CPU: {metrics.cpuPercent}%</Text>
+      <Text>   </Text>
+      <Text color="green">Mem: {memoryDisplay}</Text>
+      <Text>   </Text>
+      <Text color="green">{metrics.processCount} procs</Text>
+    </>
+  );
 }
 
 /**
@@ -41,7 +69,7 @@ function FeatureStatsDisplay({
 }: { 
   featureStats: FeatureStats; 
   activeFeatureName?: string;
-}): React.ReactElement {
+}): React.ReactElement | null {
   // Calculate ready features: total - pending - inProgress - blocked
   const ready = featureStats.total - featureStats.pending - featureStats.inProgress - featureStats.blocked;
   
@@ -74,6 +102,7 @@ export const StatusBar = React.memo(function StatusBar({
   featureStats,
   activeFeatureName,
   getRunningProcessCount,
+  resourceMetrics,
 }: StatusBarProps): React.ReactElement {
   // Check if we have feature stats to display (total > 0 means features exist)
   const hasFeatures = featureStats && featureStats.total > 0;
@@ -153,6 +182,14 @@ export const StatusBar = React.memo(function StatusBar({
           </Box>
 
           <Box>
+            {resourceMetrics && resourceMetrics.processCount > 0 && (
+              <>
+                <ResourceMetricsDisplay metrics={resourceMetrics} />
+                <Text>   </Text>
+                <Text dimColor>|</Text>
+                <Text>   </Text>
+              </>
+            )}
             {isConnected ? (
               <Text color="green">● online</Text>
             ) : (
@@ -210,6 +247,14 @@ export const StatusBar = React.memo(function StatusBar({
       </Box>
 
       <Box>
+        {resourceMetrics && resourceMetrics.processCount > 0 && (
+          <>
+            <ResourceMetricsDisplay metrics={resourceMetrics} />
+            <Text>   </Text>
+            <Text dimColor>|</Text>
+            <Text>   </Text>
+          </>
+        )}
         {isConnected ? (
           <Text color="green">● online</Text>
         ) : (

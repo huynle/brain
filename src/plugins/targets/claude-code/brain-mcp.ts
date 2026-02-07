@@ -67,6 +67,10 @@ const ENTRY_STATUSES: BrainEntryStatus[] = [
   "completed", "validated", "superseded", "archived",
 ];
 
+type BrainPriority = "high" | "medium" | "low";
+
+const PRIORITIES: BrainPriority[] = ["high", "medium", "low"];
+
 // ============================================================================
 // Configuration
 // ============================================================================
@@ -436,7 +440,17 @@ Filename filtering supports:
   },
   {
     name: "brain_update",
-    description: "Update an existing brain entry's status, title, dependencies, or append content.",
+    description: `Update an existing brain entry's status, title, dependencies, or append content.
+
+Use cases:
+- Mark a plan as completed: brain_update(path: "...", status: "completed")
+- Mark as in-progress: brain_update(path: "...", status: "in_progress")  
+- Block with reason: brain_update(path: "...", status: "blocked", note: "Waiting on API design")
+- Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
+- Update title: brain_update(path: "...", title: "New Title")
+- Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+
+Statuses: draft, active, in_progress, blocked, completed, validated, superseded, archived`,
     inputSchema: {
       type: "object",
       properties: {
@@ -446,6 +460,9 @@ Filename filtering supports:
         append: { type: "string", description: "Content to append" },
         note: { type: "string", description: "Short note to add" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
+        feature_id: { type: "string", description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" },
+        feature_priority: { type: "string", enum: PRIORITIES, description: "Priority for this feature group" },
+        feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on" },
       },
       required: ["path"],
     },

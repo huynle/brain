@@ -12,6 +12,7 @@ import {
   getAvailableMemoryPercent,
   isMemoryLow,
   getMemoryInfo,
+  getProcessResourceUsage,
   setMemoryProvider,
   resetMemoryProvider,
   type MemoryProvider,
@@ -296,6 +297,77 @@ describe("system-utils", () => {
       const afterReset = getAvailableMemoryPercent();
       expect(afterReset).toBeGreaterThan(0);
       expect(afterReset).toBeLessThanOrEqual(100);
+    });
+  });
+
+  describe("getProcessResourceUsage", () => {
+    it("should return zeros for empty PID array", () => {
+      const result = getProcessResourceUsage([]);
+      expect(result.cpuPercent).toBe(0);
+      expect(result.memoryBytes).toBe(0);
+      expect(result.memoryMB).toBe("0");
+      expect(result.processCount).toBe(0);
+    });
+
+    it("should return zeros for invalid PIDs (0, negative)", () => {
+      const result = getProcessResourceUsage([0, -1, -100]);
+      expect(result.cpuPercent).toBe(0);
+      expect(result.memoryBytes).toBe(0);
+      expect(result.memoryMB).toBe("0");
+      expect(result.processCount).toBe(0);
+    });
+
+    it("should return zeros for non-existent PIDs", () => {
+      // Use very high PIDs that are unlikely to exist
+      const result = getProcessResourceUsage([999999999, 999999998]);
+      expect(result.cpuPercent).toBe(0);
+      expect(result.memoryBytes).toBe(0);
+      expect(result.memoryMB).toBe("0");
+      expect(result.processCount).toBe(0);
+    });
+
+    it("should measure current process", () => {
+      // process.pid is always valid
+      const result = getProcessResourceUsage([process.pid]);
+      
+      // Current process should have some CPU and memory
+      expect(result.processCount).toBe(1);
+      expect(result.cpuPercent).toBeGreaterThanOrEqual(0);
+      expect(result.memoryBytes).toBeGreaterThan(0);
+      expect(parseFloat(result.memoryMB)).toBeGreaterThan(0);
+    });
+
+    it("should aggregate multiple processes", () => {
+      // Measure current process and parent process (if available)
+      const pids = [process.pid];
+      if (process.ppid > 0) {
+        pids.push(process.ppid);
+      }
+
+      const result = getProcessResourceUsage(pids);
+      
+      // Should measure at least one process
+      expect(result.processCount).toBeGreaterThanOrEqual(1);
+      expect(result.memoryBytes).toBeGreaterThan(0);
+    });
+
+    it("should filter out zero and negative PIDs before measuring", () => {
+      // Mix of valid and invalid PIDs (only 0 and negative are filtered)
+      // Note: Very large PIDs may cause ps to fail on some systems
+      const result = getProcessResourceUsage([0, process.pid, -1]);
+      
+      // Should only measure the valid PID
+      expect(result.processCount).toBe(1);
+      expect(result.memoryBytes).toBeGreaterThan(0);
+    });
+
+    it("should format memoryMB with 1 decimal place", () => {
+      const result = getProcessResourceUsage([process.pid]);
+      
+      // Check format is X.X (one decimal place)
+      const parts = result.memoryMB.split(".");
+      expect(parts.length).toBe(2);
+      expect(parts[1].length).toBe(1);
     });
   });
 });

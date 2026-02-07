@@ -459,6 +459,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion by comparing implementation against original intent. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task."
             ),
+          target_workdir: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory."
+            ),
         },
         async execute(args) {
           try {
@@ -481,6 +487,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               project: args.project || projectId,
               relatedEntries: args.relatedEntries,
               // Execution context for tasks
+              target_workdir: args.type === "task" ? args.target_workdir : undefined,
               workdir: args.type === "task" ? context.workdir : undefined,
               worktree: args.type === "task" ? context.worktree : undefined,
               git_remote: args.type === "task" ? context.gitRemote : undefined,

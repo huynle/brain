@@ -373,6 +373,7 @@ const tools: Tool[] = [
         project: { type: "string", description: "Explicit project ID/name" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
         user_original_request: { type: "string", description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task." },
+        target_workdir: { type: "string", description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory." },
         feature_id: { type: "string", description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution." },
         feature_priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level for the feature group. Determines execution order relative to other features." },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start." },
@@ -693,6 +694,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         }>("POST", "/entries", {
           ...args,
           project: args.project || context.projectId,
+          target_workdir: args.type === "task" ? args.target_workdir : undefined,
           workdir: args.type === "task" ? context.workdir : undefined,
           worktree: args.type === "task" ? context.worktree : undefined,
           git_remote: args.type === "task" ? context.gitRemote : undefined,

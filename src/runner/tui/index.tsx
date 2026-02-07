@@ -18,7 +18,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { App } from './App';
-import type { TUIConfig } from './types';
+import type { TUIConfig, ResourceMetrics, ProjectLimitEntry } from './types';
 import type { LogEntry } from './types';
 import type { EntryStatus } from '../../core/types';
 
@@ -61,6 +61,12 @@ export interface DashboardOptions {
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
+  /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */
+  getResourceMetrics?: () => ResourceMetrics;
+  /** Get per-project concurrent task limits */
+  getProjectLimits?: () => ProjectLimitEntry[];
+  /** Set per-project concurrent task limit (undefined to remove limit) */
+  setProjectLimit?: (projectId: string, limit: number | undefined) => void;
 }
 
 export interface DashboardHandle {
@@ -135,6 +141,9 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onUpdateStatus={options.onUpdateStatus}
       onEditTask={options.onEditTask}
       getRunningProcessCount={options.getRunningProcessCount}
+      getResourceMetrics={options.getResourceMetrics}
+      getProjectLimits={options.getProjectLimits}
+      setProjectLimit={options.setProjectLimit}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

@@ -26,6 +26,7 @@ import { join } from 'path';
 import { spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
+import { copyToClipboard } from '../system-utils';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -42,12 +43,14 @@ import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { StatusPopup } from './components/StatusPopup';
+import { SettingsPopup } from './components/SettingsPopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
-import type { AppProps, TaskDisplay } from './types';
+import { useResourceMetrics } from './hooks/useResourceMetrics';
+import type { AppProps, TaskDisplay, ProjectLimitEntry } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'logs';
@@ -64,6 +67,9 @@ export function App({
   onUpdateStatus,
   onEditTask,
   getRunningProcessCount,
+  getResourceMetrics,
+  getProjectLimits,
+  setProjectLimit,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -80,6 +86,8 @@ export function App({
   const [showHelp, setShowHelp] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
+  const [showSettingsPopup, setShowSettingsPopup] = useState(false);
+  const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
@@ -153,6 +161,7 @@ export function App({
 
   const { logs, addLog } = useLogStream({ maxEntries: config.maxLogs, logFile });
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
+  const { metrics: resourceMetrics } = useResourceMetrics({ getResourceMetrics });
 
   // Calculate dynamic maxLines for log viewer based on terminal height
   // New layout: logs at bottom take ~40% of available height (when visible)
@@ -351,6 +360,81 @@ export function App({
       return;
     }
 
+    // === Settings Popup Mode ===
+    if (showSettingsPopup) {
+      // Escape to close popup
+      if (key.escape) {
+        setShowSettingsPopup(false);
+        return;
+      }
+
+      // Get current project limits for navigation bounds
+      const currentLimits = getProjectLimits ? getProjectLimits() : [];
+
+      // Navigate project list with j/k or arrows
+      if (key.upArrow || input === 'k') {
+        setSettingsSelectedIndex((prev) => Math.max(0, prev - 1));
+        return;
+      }
+
+      if (key.downArrow || input === 'j') {
+        setSettingsSelectedIndex((prev) => Math.min(currentLimits.length - 1, prev + 1));
+        return;
+      }
+
+      // + or = to increase limit
+      if ((input === '+' || input === '=') && setProjectLimit && currentLimits.length > 0) {
+        const entry = currentLimits[settingsSelectedIndex];
+        if (entry) {
+          const newLimit = (entry.limit ?? 0) + 1;
+          setProjectLimit(entry.projectId, newLimit);
+          addLog({
+            level: 'info',
+            message: `Set ${entry.projectId} limit: ${newLimit}`,
+          });
+        }
+        return;
+      }
+
+      // - to decrease limit (min 1, or remove limit if at 1)
+      if (input === '-' && setProjectLimit && currentLimits.length > 0) {
+        const entry = currentLimits[settingsSelectedIndex];
+        if (entry && entry.limit !== undefined) {
+          if (entry.limit <= 1) {
+            setProjectLimit(entry.projectId, undefined);
+            addLog({
+              level: 'info',
+              message: `Removed ${entry.projectId} limit`,
+            });
+          } else {
+            const newLimit = entry.limit - 1;
+            setProjectLimit(entry.projectId, newLimit);
+            addLog({
+              level: 'info',
+              message: `Set ${entry.projectId} limit: ${newLimit}`,
+            });
+          }
+        }
+        return;
+      }
+
+      // 0 to remove limit entirely
+      if (input === '0' && setProjectLimit && currentLimits.length > 0) {
+        const entry = currentLimits[settingsSelectedIndex];
+        if (entry) {
+          setProjectLimit(entry.projectId, undefined);
+          addLog({
+            level: 'info',
+            message: `Removed ${entry.projectId} limit`,
+          });
+        }
+        return;
+      }
+
+      // Block all other input when popup is open
+      return;
+    }
+
     // === Normal Mode ===
     // Note: Quit via Ctrl-C is handled by SIGINT handler (lines 487-500)
 
@@ -386,6 +470,25 @@ export function App({
       return;
     }
 
+    // Yank (copy) selected task name to clipboard
+    if (input === 'y' && selectedTask && focusedPanel === 'tasks') {
+      const success = copyToClipboard(selectedTask.title);
+      if (success) {
+        addLog({
+          level: 'info',
+          message: `Copied to clipboard: ${selectedTask.title}`,
+          taskId: selectedTask.id,
+        });
+      } else {
+        addLog({
+          level: 'warn',
+          message: 'Failed to copy to clipboard (clipboard tool not available)',
+          taskId: selectedTask.id,
+        });
+      }
+      return;
+    }
+
     // Toggle help
     if (input === '?') {
       setShowHelp(!showHelp);
@@ -411,6 +514,13 @@ export function App({
         }
         return newVisible;
       });
+      return;
+    }
+
+    // Open settings popup (s key)
+    if (input === 's' && getProjectLimits) {
+      setSettingsSelectedIndex(0);
+      setShowSettingsPopup(true);
       return;
     }
 
@@ -690,6 +800,19 @@ export function App({
     );
   }
 
+  // Settings popup overlay
+  if (showSettingsPopup && getProjectLimits) {
+    const currentLimits = getProjectLimits();
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <SettingsPopup
+          projects={currentLimits}
+          selectedIndex={settingsSelectedIndex}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" width="100%" height={terminalRows}>
       {/* Status bar at top */}
@@ -703,6 +826,7 @@ export function App({
         isConnected={isConnected}
         pausedProjects={pausedProjects}
         getRunningProcessCount={getRunningProcessCount}
+        resourceMetrics={resourceMetrics}
       />
 
       {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}

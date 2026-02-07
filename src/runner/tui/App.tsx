@@ -88,6 +88,7 @@ export function App({
   const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
+  const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
@@ -368,8 +369,8 @@ export function App({
         return;
       }
 
-      // Get current project limits for navigation bounds
-      const currentLimits = getProjectLimits ? getProjectLimits() : [];
+      // Use React state for navigation bounds (synced when popup opened)
+      const currentLimits = projectLimitsState;
 
       // Navigate project list with j/k or arrows
       if (key.upArrow || input === 'k') {
@@ -388,6 +389,10 @@ export function App({
         if (entry) {
           const newLimit = (entry.limit ?? 0) + 1;
           setProjectLimit(entry.projectId, newLimit);
+          // Update React state to trigger re-render
+          setProjectLimitsState(prev => prev.map((e, i) => 
+            i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
+          ));
           addLog({
             level: 'info',
             message: `Set ${entry.projectId} limit: ${newLimit}`,
@@ -402,6 +407,10 @@ export function App({
         if (entry && entry.limit !== undefined) {
           if (entry.limit <= 1) {
             setProjectLimit(entry.projectId, undefined);
+            // Update React state to trigger re-render
+            setProjectLimitsState(prev => prev.map((e, i) => 
+              i === settingsSelectedIndex ? { ...e, limit: undefined } : e
+            ));
             addLog({
               level: 'info',
               message: `Removed ${entry.projectId} limit`,
@@ -409,6 +418,10 @@ export function App({
           } else {
             const newLimit = entry.limit - 1;
             setProjectLimit(entry.projectId, newLimit);
+            // Update React state to trigger re-render
+            setProjectLimitsState(prev => prev.map((e, i) => 
+              i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
+            ));
             addLog({
               level: 'info',
               message: `Set ${entry.projectId} limit: ${newLimit}`,
@@ -423,6 +436,10 @@ export function App({
         const entry = currentLimits[settingsSelectedIndex];
         if (entry) {
           setProjectLimit(entry.projectId, undefined);
+          // Update React state to trigger re-render
+          setProjectLimitsState(prev => prev.map((e, i) => 
+            i === settingsSelectedIndex ? { ...e, limit: undefined } : e
+          ));
           addLog({
             level: 'info',
             message: `Removed ${entry.projectId} limit`,
@@ -520,6 +537,8 @@ export function App({
     // Open settings popup (s key)
     if (input === 's' && getProjectLimits) {
       setSettingsSelectedIndex(0);
+      // Sync React state with external limits when opening popup
+      setProjectLimitsState(getProjectLimits());
       setShowSettingsPopup(true);
       return;
     }
@@ -802,11 +821,10 @@ export function App({
 
   // Settings popup overlay
   if (showSettingsPopup && getProjectLimits) {
-    const currentLimits = getProjectLimits();
     return (
       <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
         <SettingsPopup
-          projects={currentLimits}
+          projects={projectLimitsState}
           selectedIndex={settingsSelectedIndex}
         />
       </Box>

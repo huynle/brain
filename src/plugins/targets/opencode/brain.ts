@@ -258,6 +258,10 @@ const ENTRY_STATUSES: BrainEntryStatus[] = [
   "archived",
 ];
 
+type BrainPriority = "high" | "medium" | "low";
+
+const PRIORITIES: BrainPriority[] = ["high", "medium", "low"];
+
 // ============================================================================
 // API Client
 // ============================================================================
@@ -1165,10 +1169,22 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .array(tool.schema.string())
             .optional()
             .describe("Task dependencies - list of task IDs or titles"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Feature group identifier (e.g., 'auth-system', 'payment-flow')"),
+          feature_priority: tool.schema
+            .enum(PRIORITIES)
+            .optional()
+            .describe("Priority for this feature group"),
+          feature_depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Feature IDs this feature depends on"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && !args.feature_id && !args.feature_priority && !args.feature_depends_on) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, feature_id, feature_priority, feature_depends_on`;
           }
 
           try {
@@ -1183,6 +1199,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               append: args.append,
               note: args.note,
               depends_on: args.depends_on,
+              feature_id: args.feature_id,
+              feature_priority: args.feature_priority,
+              feature_depends_on: args.feature_depends_on,
             });
 
             const changes: string[] = [];
@@ -1193,6 +1212,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Appended ${args.append.length} characters`);
             if (args.depends_on)
               changes.push(`Dependencies: ${args.depends_on.length} task(s)`);
+            if (args.feature_id)
+              changes.push(`Feature ID: ${args.feature_id}`);
+            if (args.feature_priority)
+              changes.push(`Feature Priority: ${args.feature_priority}`);
+            if (args.feature_depends_on)
+              changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
 
             return `Updated: ${args.path}
 

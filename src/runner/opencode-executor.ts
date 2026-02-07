@@ -94,7 +94,20 @@ Start now.`;
   // ========================================
 
   resolveWorkdir(task: ResolvedTask): string {
-    // Priority: task worktree > task workdir > resolved_workdir > config default
+    // Priority: target_workdir > task worktree > task workdir > resolved_workdir > config default
+
+    // target_workdir is an explicit override, check first (absolute path)
+    if (task.target_workdir) {
+      if (existsSync(task.target_workdir)) {
+        if (isDebugEnabled()) {
+          console.log(`[OpencodeExecutor] Using target_workdir: ${task.target_workdir}`);
+        }
+        return task.target_workdir;
+      }
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] target_workdir not found, falling back: ${task.target_workdir}`);
+      }
+    }
 
     if (task.worktree) {
       const worktreePath = join(homedir(), task.worktree);

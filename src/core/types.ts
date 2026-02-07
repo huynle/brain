@@ -102,6 +102,7 @@ export interface BrainEntry {
   last_verified?: string;
 
   // Execution context for tasks
+  target_workdir?: string; // Explicit workdir override for task execution (absolute path)
   workdir?: string; // $HOME-relative path to main worktree
   worktree?: string; // Specific worktree if different from main
   git_remote?: string; // Git remote URL for verification
@@ -128,6 +129,7 @@ export interface CreateEntryRequest {
   relatedEntries?: string[];
 
   // Execution context for tasks
+  target_workdir?: string; // Explicit workdir override for task execution (absolute path)
   workdir?: string;
   worktree?: string;
   git_remote?: string;
@@ -295,6 +297,7 @@ export interface Task {
   depends_on: string[];
   created: string;
   modified?: string; // ISO timestamp when last modified
+  target_workdir: string | null; // Explicit workdir override for task execution (absolute path)
   workdir: string | null;
   worktree: string | null;
   git_remote: string | null;

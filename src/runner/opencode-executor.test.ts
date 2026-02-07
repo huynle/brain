@@ -41,6 +41,7 @@ function createMockTask(
     depends_on: [],
 
     created: new Date().toISOString(),
+    target_workdir: null,
     workdir: null,
     worktree: null,
     git_remote: null,

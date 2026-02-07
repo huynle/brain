@@ -117,6 +117,7 @@ export class TaskService {
         depends_on: (note.metadata?.depends_on as string[]) || [],
         created: note.created || "",
         modified: note.modified,
+        target_workdir: (note.metadata?.target_workdir as string) || null,
         workdir: (note.metadata?.workdir as string) || null,
         worktree: (note.metadata?.worktree as string) || null,
         git_remote: (note.metadata?.git_remote as string) || null,

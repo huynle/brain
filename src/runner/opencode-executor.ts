@@ -250,7 +250,9 @@ Start now.`;
     promptFile: string,
     windowName?: string
   ): Promise<SpawnResult> {
-    const name = windowName ?? `task_${task.id}`;
+    // Use short ID (first 8 chars) with project prefix for cleaner tmux window names
+    const shortId = task.id.substring(0, 8);
+    const name = windowName ?? `${projectId}-${shortId}`;
 
     // Build runner script that OpenCode TUI runs in
     const runnerScript = join(

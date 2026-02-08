@@ -296,8 +296,8 @@ export function App({
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
   const navigationOrder = useMemo(
-    () => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed, visibleGroups, groupCollapsed), 
-    [tasks, completedCollapsed, draftCollapsed, visibleGroups, groupCollapsed]
+    () => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed), 
+    [tasks, completedCollapsed, draftCollapsed]
   );
 
   // Auto-scroll task list to keep selected task in view
@@ -1062,8 +1062,6 @@ export function App({
         <SettingsPopup
           projects={projectLimitsState}
           selectedIndex={settingsSelectedIndex}
-          section={settingsSection}
-          groups={groupVisibilityState}
         />
       </Box>
     );
@@ -1105,10 +1103,9 @@ export function App({
               draftCollapsed={draftCollapsed}
               onToggleDraft={handleToggleDraft}
               groupByProject={isMultiProject && activeProject === 'all'}
+              groupByFeature={true}
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
-              visibleGroups={visibleGroups}
-              groupCollapsed={groupCollapsed}
             />
           </Box>
 

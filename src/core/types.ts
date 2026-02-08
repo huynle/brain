@@ -155,6 +155,9 @@ export interface UpdateEntryRequest {
   append?: string;
   note?: string;
   depends_on?: string[];
+  tags?: string[];
+  priority?: Priority;
+  target_workdir?: string;
   // Feature grouping (for task organization)
   feature_id?: string;
   feature_priority?: Priority;

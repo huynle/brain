@@ -1369,16 +1369,42 @@ export const TaskTree = React.memo(function TaskTree({
       }
     }
 
+    // Combine all elements for viewport slicing
+    const allElements = [...featureElements, ...draftElements, ...completedElements];
+    
+    // Apply viewport slicing if viewportHeight is provided
+    let visibleElements: React.ReactElement[];
+    let hasMoreAbove = false;
+    let hasMoreBelow = false;
+    
+    if (viewportHeight && viewportHeight > 0) {
+      const startIndex = scrollOffset;
+      const endIndex = scrollOffset + viewportHeight;
+      visibleElements = allElements.slice(startIndex, endIndex);
+      hasMoreAbove = startIndex > 0;
+      hasMoreBelow = endIndex < allElements.length;
+    } else {
+      visibleElements = allElements;
+    }
+
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold underline>
-          Tasks ({tasks.length})
-        </Text>
-        <Box flexDirection="column" marginTop={1}>
-          {featureElements}
-          {draftElements}
-          {completedElements}
+        <Box>
+          <Text bold underline>
+            Tasks ({tasks.length})
+          </Text>
+          {hasMoreAbove && (
+            <Text dimColor> ↑{scrollOffset} more</Text>
+          )}
         </Box>
+        <Box flexDirection="column" marginTop={1}>
+          {visibleElements}
+        </Box>
+        {hasMoreBelow && (
+          <Box>
+            <Text dimColor>↓{allElements.length - scrollOffset - (viewportHeight || 0)} more</Text>
+          </Box>
+        )}
       </Box>
     );
   }

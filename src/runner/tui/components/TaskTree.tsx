@@ -40,6 +40,9 @@ export const DRAFT_HEADER_ID = '__draft_header__';
 // Special ID prefix for feature headers (used for navigation)
 export const FEATURE_HEADER_PREFIX = '__feature_header__';
 
+// Alias for backwards compatibility
+export const GROUP_HEADER_PREFIX = FEATURE_HEADER_PREFIX;
+
 // Status icons and colors are now imported from shared status-display.ts
 
 const PRIORITY_ORDER: Record<Priority, number> = {

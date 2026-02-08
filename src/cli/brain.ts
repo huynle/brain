@@ -154,6 +154,9 @@ Plugin Commands:
   install <target>     Install brain plugin to an AI coding assistant
   uninstall <target>   Remove brain plugin from an AI coding assistant
   plugin-status        Show plugin installation status for all targets
+  backups <target>     List backup files for a target
+  restore <target>     Restore the latest backup for each file
+  clean-backups <target>  Remove backup files
 
 Install Targets:
   opencode      OpenCode AI coding assistant
@@ -166,6 +169,13 @@ Install Options:
   brain install opencode --force      Overwrite existing plugin
   brain install opencode --dry-run    Show what would be installed
   brain install --api-url <url>       Use custom API URL
+
+Backup Options:
+  brain backups opencode              List all backups
+  brain restore opencode              Restore latest backup for each file
+  brain restore opencode --dry-run    Show what would be restored
+  brain clean-backups opencode        Delete all backups
+  brain clean-backups opencode --keep-latest  Keep only the latest backup per file
 
 Doctor Options:
   brain doctor              Run diagnostics (show failures only)
@@ -585,6 +595,98 @@ async function cmdPluginStatus(): Promise<void> {
   }
 }
 
+async function cmdBackups(args: string[]): Promise<void> {
+  const { listBackups, findBackups } = await import("../plugins/installer");
+
+  const target = args[0];
+
+  if (!target || target.startsWith("-")) {
+    console.log(`Usage: brain backups <target>`);
+    console.log(`\nAvailable targets: opencode, claude-code, cursor, antigravity`);
+    return;
+  }
+
+  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
+  if (!validTargets.includes(target)) {
+    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
+    process.exit(1);
+  }
+
+  console.log(`${COLORS.bold}Backups for ${target}${COLORS.reset}\n`);
+  console.log(listBackups(target as any));
+}
+
+async function cmdRestore(args: string[]): Promise<void> {
+  const { restoreBackups } = await import("../plugins/installer");
+
+  const target = args[0];
+  const dryRun = args.includes("--dry-run");
+
+  if (!target || target.startsWith("-")) {
+    console.log(`Usage: brain restore <target> [--dry-run]`);
+    console.log(`\nRestores the latest backup for each installed file.`);
+    console.log(`Available targets: opencode, claude-code, cursor, antigravity`);
+    return;
+  }
+
+  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
+  if (!validTargets.includes(target)) {
+    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
+    process.exit(1);
+  }
+
+  console.log(`${COLORS.bold}Restoring backups for ${target}...${COLORS.reset}\n`);
+
+  const result = await restoreBackups(target as any, { dryRun });
+
+  if (result.success) {
+    console.log(`${COLORS.green}${result.message}${COLORS.reset}`);
+  } else {
+    console.log(`${COLORS.yellow}${result.message}${COLORS.reset}`);
+  }
+}
+
+async function cmdCleanBackups(args: string[]): Promise<void> {
+  const { cleanBackups, findBackups } = await import("../plugins/installer");
+
+  const target = args[0];
+  const dryRun = args.includes("--dry-run");
+  const keepLatest = args.includes("--keep-latest");
+
+  if (!target || target.startsWith("-")) {
+    console.log(`Usage: brain clean-backups <target> [--dry-run] [--keep-latest]`);
+    console.log(`\nOptions:`);
+    console.log(`  --dry-run      Show what would be deleted without deleting`);
+    console.log(`  --keep-latest  Keep the most recent backup for each file`);
+    console.log(`\nAvailable targets: opencode, claude-code, cursor, antigravity`);
+    return;
+  }
+
+  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
+  if (!validTargets.includes(target)) {
+    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
+    process.exit(1);
+  }
+
+  // Show count before cleaning
+  const backups = findBackups(target as any);
+  if (backups.length === 0) {
+    console.log(`No backups found for ${target}.`);
+    return;
+  }
+
+  console.log(`${COLORS.bold}Cleaning backups for ${target}...${COLORS.reset}`);
+  console.log(`Found ${backups.length} backup(s).\n`);
+
+  const result = await cleanBackups(target as any, { dryRun, keepLatest });
+
+  if (result.success) {
+    console.log(`${COLORS.green}${result.message}${COLORS.reset}`);
+  } else {
+    console.log(`${COLORS.yellow}${result.message}${COLORS.reset}`);
+  }
+}
+
 // =============================================================================
 // Doctor Command
 // =============================================================================
@@ -669,6 +771,15 @@ async function main() {
     case "plugin-status":
     case "plugins":
       await cmdPluginStatus();
+      break;
+    case "backups":
+      await cmdBackups(args.slice(1));
+      break;
+    case "restore":
+      await cmdRestore(args.slice(1));
+      break;
+    case "clean-backups":
+      await cmdCleanBackups(args.slice(1));
       break;
     case "help":
     case "--help":

@@ -7,6 +7,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync, accessSync, constants } from "fs";
 import { join, dirname } from "path";
 import { createHash } from "crypto";
+import { homedir } from "os";
 import { isZkAvailable, getZkVersion, execZk } from "../zk-client";
 import { getDb } from "../db";
 import { ENTRY_TYPES, type EntryType } from "../types";
@@ -69,6 +70,10 @@ export class DoctorService {
       const versionChecks = await this.checkToolVersions();
       checks.push(...versionChecks);
     }
+
+    // OpenCode integration checks (if OpenCode is installed)
+    const opencodeChecks = await this.checkOpenCodeIntegration();
+    checks.push(...opencodeChecks);
 
     // Calculate summary
     const summary = {
@@ -464,6 +469,129 @@ export class DoctorService {
         details: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  /**
+   * Check OpenCode integration - plugin, skills, and commands are installed.
+   */
+  async checkOpenCodeIntegration(): Promise<Check[]> {
+    const checks: Check[] = [];
+    const home = homedir();
+    const opencodeConfigDir = join(home, ".config/opencode");
+
+    // First check if OpenCode is installed at all
+    if (!existsSync(opencodeConfigDir)) {
+      checks.push({
+        name: "opencode-installed",
+        status: "skip",
+        message: "OpenCode not installed (skipping integration checks)",
+        fixable: false,
+        details: `Expected at: ${opencodeConfigDir}`,
+      });
+      return checks;
+    }
+
+    // OpenCode is installed, now check brain integration
+    checks.push({
+      name: "opencode-installed",
+      status: "pass",
+      message: "OpenCode config directory exists",
+      fixable: false,
+    });
+
+    // Check main plugin
+    const pluginDir = join(opencodeConfigDir, "plugin");
+    const mainPluginPath = join(pluginDir, "brain.ts");
+    if (existsSync(mainPluginPath)) {
+      checks.push({
+        name: "opencode-plugin-brain",
+        status: "pass",
+        message: "brain.ts plugin installed",
+        fixable: false,
+      });
+    } else {
+      checks.push({
+        name: "opencode-plugin-brain",
+        status: "fail",
+        message: "brain.ts plugin not installed",
+        fixable: true,
+        details: "Run: brain install opencode",
+      });
+    }
+
+    // Check planning plugin
+    const planningPluginPath = join(pluginDir, "brain-planning.ts");
+    if (existsSync(planningPluginPath)) {
+      checks.push({
+        name: "opencode-plugin-planning",
+        status: "pass",
+        message: "brain-planning.ts plugin installed",
+        fixable: false,
+      });
+    } else {
+      checks.push({
+        name: "opencode-plugin-planning",
+        status: "warn",
+        message: "brain-planning.ts plugin not installed",
+        fixable: true,
+        details: "Run: brain install opencode --force",
+      });
+    }
+
+    // Check required skills
+    const requiredSkills = [
+      { name: "do-work", description: "task queue processing" },
+      { name: "brain-planning", description: "plan persistence" },
+      { name: "using-brain", description: "knowledge patterns" },
+    ];
+
+    for (const skill of requiredSkills) {
+      const skillPath = join(opencodeConfigDir, "skill", skill.name, "SKILL.md");
+      if (existsSync(skillPath)) {
+        checks.push({
+          name: `opencode-skill-${skill.name}`,
+          status: "pass",
+          message: `${skill.name} skill installed`,
+          fixable: false,
+        });
+      } else {
+        checks.push({
+          name: `opencode-skill-${skill.name}`,
+          status: "warn",
+          message: `${skill.name} skill not installed`,
+          fixable: true,
+          details: `Run: brain install opencode --force (${skill.description})`,
+        });
+      }
+    }
+
+    // Check required commands
+    const requiredCommands = [
+      { name: "do", description: "add tasks to queue" },
+      { name: "work", description: "process task queue" },
+    ];
+
+    for (const cmd of requiredCommands) {
+      const cmdPath = join(opencodeConfigDir, "command", `${cmd.name}.md`);
+      if (existsSync(cmdPath)) {
+        checks.push({
+          name: `opencode-command-${cmd.name}`,
+          status: "pass",
+          message: `/${cmd.name} command installed`,
+          fixable: false,
+        });
+      } else {
+        checks.push({
+          name: `opencode-command-${cmd.name}`,
+          status: "warn",
+          message: `/${cmd.name} command not installed`,
+          fixable: true,
+          details: `Run: brain install opencode --force (${cmd.description})`,
+        });
+      }
+    }
+
+    return checks;
   }
 
   // ===========================================================================

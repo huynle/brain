@@ -1622,6 +1622,132 @@ export class TaskRunner {
   }
 
   // ========================================
+  // Manual Task Execution
+  // ========================================
+
+  /**
+   * Execute a task manually from the TUI.
+   * This allows users to run a specific task on-demand via the 'x' key.
+   *
+   * @param taskId - The task ID
+   * @param taskPath - The task path in the brain
+   * @returns true if task was successfully spawned, false otherwise
+   */
+  async executeTaskManually(taskId: string, taskPath: string): Promise<boolean> {
+    // Step 1: Check capacity
+    const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
+    if (runningCount >= this.config.maxParallel) {
+      this.logger.warn("Cannot execute task manually: at max parallel capacity", {
+        taskId,
+        running: runningCount,
+        max: this.config.maxParallel,
+      });
+      this.tuiLog('error', `Cannot execute: at max parallel capacity (${runningCount}/${this.config.maxParallel})`, taskId);
+      return false;
+    }
+
+    // Step 2: Fetch task by path
+    const task = await this.apiClient.getTaskByPath(taskPath);
+    if (!task) {
+      this.logger.warn("Cannot execute task manually: task not found", { taskId, taskPath });
+      this.tuiLog('error', `Cannot execute: task not found`, taskId);
+      return false;
+    }
+
+    // Step 3: Determine project ID from task path (path format: projects/<project>/task/<id>.md)
+    const pathParts = taskPath.split('/');
+    const projectFromPath = pathParts.length >= 2 ? pathParts[1] : this.projectId;
+    const effectiveProjectId = projectFromPath || this.projectId;
+
+    // Step 4: Claim task
+    const claim = await this.apiClient.claimTask(
+      effectiveProjectId,
+      taskId,
+      this.runnerId
+    );
+
+    if (!claim.success) {
+      this.logger.info("Cannot execute task manually: claim failed", {
+        taskId,
+        claimedBy: claim.claimedBy,
+      });
+      this.tuiLog('warn', `Cannot execute: already claimed by ${claim.claimedBy}`, taskId);
+      return false;
+    }
+
+    // Step 5: Update status to in_progress
+    try {
+      await this.apiClient.updateTaskStatus(taskPath, "in_progress");
+    } catch (error) {
+      this.logger.error("Failed to update task status for manual execution", {
+        taskId,
+        error: String(error),
+      });
+      await this.apiClient.releaseTask(effectiveProjectId, taskId);
+      return false;
+    }
+
+    // Step 6: Spawn OpenCode process
+    const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
+    const useTui = this.mode === "tui";
+
+    try {
+      const result = await this.executor.spawn(task, effectiveProjectId, {
+        mode: effectiveMode,
+        paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
+        isResume: false,
+        useTui,
+      });
+
+      // Step 6: Track the process
+      const runningTask: RunningTask = {
+        id: taskId,
+        path: taskPath,
+        title: task.title,
+        priority: task.priority,
+        projectId: effectiveProjectId,
+        pid: result.pid,
+        paneId: result.paneId,
+        windowName: result.windowName,
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: this.executor.resolveWorkdir(task),
+        opencodePort: result.opencodePort,
+      };
+
+      // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
+      if (result.proc) {
+        this.processManager.add(taskId, runningTask, result.proc);
+      } else if (result.windowName) {
+        this.tuiTasks.set(taskId, runningTask);
+      }
+
+      this.logger.info("Task manually executed", {
+        taskId,
+        title: task.title,
+        pid: result.pid,
+        projectId: effectiveProjectId,
+      });
+      this.tuiLog('info', `Task started manually: ${task.title}`, taskId, effectiveProjectId);
+
+      // Handle dashboard task pane
+      await this.handleDashboardTaskStart(runningTask);
+
+      // Emit event
+      this.emitEvent({ type: "task_started", task: runningTask });
+
+      return true;
+    } catch (error) {
+      this.logger.error("Failed to spawn task for manual execution", {
+        taskId,
+        error: String(error),
+      });
+      await this.apiClient.releaseTask(effectiveProjectId, taskId);
+      return false;
+    }
+  }
+
+  // ========================================
   // Task Cancellation
   // ========================================
 
@@ -1838,6 +1964,7 @@ export class TaskRunner {
         onCancelTask: (taskId, taskPath) => this.cancelTask(taskId, taskPath),
         onUpdateStatus: (taskId, taskPath, newStatus) => this.updateTaskStatus(taskId, taskPath, newStatus),
         onEditTask: (taskId, taskPath) => this.editTask(taskId, taskPath),
+        onExecuteTask: (taskId, taskPath) => this.executeTaskManually(taskId, taskPath),
         // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),

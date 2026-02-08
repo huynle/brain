@@ -94,6 +94,7 @@ export function App({
   getPausedProjects,
   onUpdateStatus,
   onEditTask,
+  onExecuteTask,
   getRunningProcessCount,
   getResourceMetrics,
   getProjectLimits,
@@ -605,8 +606,40 @@ export function App({
       return;
     }
 
-    // Cancel selected task
-    if (input === 'x' && selectedTask && onCancelTask) {
+    // Execute selected task manually (x lowercase)
+    if (input === 'x' && selectedTask && onExecuteTask) {
+      addLog({
+        level: 'info',
+        message: `Executing task: ${selectedTask.title}`,
+        taskId: selectedTask.id,
+      });
+      onExecuteTask(selectedTask.id, selectedTask.path).then((success) => {
+        if (success) {
+          addLog({
+            level: 'info',
+            message: `Task execution started: ${selectedTask.title}`,
+            taskId: selectedTask.id,
+          });
+        } else {
+          addLog({
+            level: 'warn',
+            message: `Failed to execute task: ${selectedTask.title} (at capacity or not found)`,
+            taskId: selectedTask.id,
+          });
+        }
+        refetch(); // Refresh to show updated status
+      }).catch((err) => {
+        addLog({
+          level: 'error',
+          message: `Failed to execute task: ${err}`,
+          taskId: selectedTask.id,
+        });
+      });
+      return;
+    }
+
+    // Cancel selected task (X uppercase)
+    if (input === 'X' && selectedTask && onCancelTask) {
       addLog({
         level: 'warn',
         message: `Cancelling task: ${selectedTask.title}`,

@@ -49,7 +49,9 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
               <Text bold>y</Text> Yank
               {'  '}
-              <Text bold>x</Text> Cancel
+              <Text bold>x</Text> Execute
+              {'  '}
+              <Text bold>X</Text> Cancel
               {'  '}
             </>
           )}

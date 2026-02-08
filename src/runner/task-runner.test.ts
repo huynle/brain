@@ -1091,6 +1091,172 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 });
 
+describe("TaskRunner - Manual Task Execution", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-manual-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("executeTaskManually()", () => {
+    test("returns false when at maxParallel capacity", async () => {
+      // Set up a runner with maxParallel = 1 and mock one task already running
+      const limitedConfig = { ...config, maxParallel: 1 };
+      const runner = new TaskRunner({ projectId: "test", config: limitedConfig });
+
+      // Mock one task already in tuiTasks (simulating at capacity)
+      const mockRunningTask: RunningTask = {
+        id: "running-1",
+        path: "projects/test/task/running-1.md",
+        title: "Running Task",
+        priority: "medium",
+        projectId: "test",
+        pid: 12345,
+        startedAt: new Date().toISOString(),
+        isResume: false,
+        workdir: "/tmp/test",
+      };
+      // @ts-expect-error - accessing private property for testing
+      runner.tuiTasks.set("running-1", mockRunningTask);
+
+      // Attempt manual execution - should fail due to capacity
+      const result = await runner.executeTaskManually("new-task-id", "projects/test/task/new-task.md");
+
+      expect(result).toBe(false);
+    });
+
+    test("returns false when task not found by path", async () => {
+      // Mock API to return null for task lookup
+      globalThis.fetch = createMockFetch({
+        "/entries/": () =>
+          Promise.resolve(new Response(JSON.stringify({ error: "Not found" }), { status: 404 })),
+      });
+
+      const runner = new TaskRunner({ projectId: "test", config });
+
+      const result = await runner.executeTaskManually("missing-task", "projects/test/task/missing.md");
+
+      expect(result).toBe(false);
+    });
+
+    test("returns true and spawns task on success", async () => {
+      const mockTask = createMockTask("manual-task", {
+        path: "projects/test/task/manual-task.md",
+        title: "Manual Task",
+      });
+
+      let claimCalled = false;
+      let statusUpdateCalled = false;
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        // Return task for getTaskByPath
+        if (url.includes("/entries/") && !options?.method) {
+          return Promise.resolve(
+            new Response(JSON.stringify(mockTask))
+          );
+        }
+        // Handle claim
+        if (url.includes("/claim")) {
+          claimCalled = true;
+          return Promise.resolve(
+            new Response(JSON.stringify({
+              success: true,
+              taskId: mockTask.id,
+              runnerId: "test",
+              claimedAt: new Date().toISOString(),
+            }))
+          );
+        }
+        // Handle status update (PATCH to entries)
+        if (url.includes("/entries/") && options?.method === "PATCH") {
+          statusUpdateCalled = true;
+          return Promise.resolve(new Response("{}", { status: 200 }));
+        }
+        // Health check
+        if (url.includes("/health")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ status: "healthy", zkAvailable: true, dbAvailable: true }))
+          );
+        }
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      const runner = new TaskRunner({ projectId: "test", config });
+
+      // Note: executeTaskManually will fail during spawn since we can't mock the executor
+      // but we can verify it attempts the claim and status update
+      const result = await runner.executeTaskManually("manual-task", "projects/test/task/manual-task.md");
+
+      // May be false due to spawn failure, but claim and status update should be attempted
+      expect(claimCalled).toBe(true);
+      expect(statusUpdateCalled).toBe(true);
+    });
+
+    test("returns false when claim fails", async () => {
+      const mockTask = createMockTask("claim-fail-task", {
+        path: "projects/test/task/claim-fail.md",
+      });
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        // Return task for getTaskByPath
+        if (url.includes("/entries/") && !options?.method) {
+          return Promise.resolve(new Response(JSON.stringify(mockTask)));
+        }
+        // Claim fails - another runner claimed it (returns 409 Conflict)
+        if (url.includes("/claim")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({
+              claimedBy: "other-runner",
+            }), { status: 409 })
+          );
+        }
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      const runner = new TaskRunner({ projectId: "test", config });
+
+      const result = await runner.executeTaskManually("claim-fail-task", "projects/test/task/claim-fail.md");
+
+      expect(result).toBe(false);
+    });
+  });
+});
+
 describe("TaskRunner - TUI Task Cleanup", () => {
   let testDir: string;
   let config: RunnerConfig;

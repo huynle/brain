@@ -129,6 +129,19 @@ export function extractIdFromPath(path: string): string {
 }
 
 /**
+ * Generate an 8-character alphanumeric ID similar to what zk generates.
+ * Used as fallback when zk is not available or cannot handle special characters.
+ */
+export function generateShortId(): string {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  let id = "";
+  for (let i = 0; i < 8; i++) {
+    id += chars[Math.floor(Math.random() * chars.length)];
+  }
+  return id;
+}
+
+/**
  * Generate a markdown link to a brain entry.
  * Format: [title](id) or [id](id) if no title
  * zk can resolve IDs to full paths for navigation
@@ -836,6 +849,7 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.worktree) lines.push(`worktree: ${escapeYamlValue(fm.worktree as string)}`);
   if (fm.git_remote) lines.push(`git_remote: ${escapeYamlValue(fm.git_remote as string)}`);
   if (fm.git_branch) lines.push(`git_branch: ${escapeYamlValue(fm.git_branch as string)}`);
+  if (fm.target_workdir) lines.push(`target_workdir: ${escapeYamlValue(fm.target_workdir as string)}`);
 
   // User original request - use multiline format if contains newlines
   if (fm.user_original_request) {
@@ -862,6 +876,7 @@ export interface GenerateFrontmatterOptions {
   worktree?: string;
   git_remote?: string;
   git_branch?: string;
+  target_workdir?: string;
   // User intent for validation
   user_original_request?: string;
 }
@@ -928,6 +943,9 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.git_branch) {
     lines.push(`git_branch: ${escapeYamlValue(options.git_branch)}`);
+  }
+  if (options.target_workdir) {
+    lines.push(`target_workdir: ${escapeYamlValue(options.target_workdir)}`);
   }
 
   // User intent for validation - use YAML literal block scalar for multiline

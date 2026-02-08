@@ -24,6 +24,7 @@ import {
   execZkNew,
   extractIdFromPath,
   generateMarkdownLink,
+  generateShortId,
   isZkAvailable,
   getZkVersion,
   parseZkJsonOutput,
@@ -381,10 +382,11 @@ export class BrainService {
       }
       noteId = extractIdFromPath(relativePath);
     } else {
-      // Fallback: manual file creation
-      const filename = `${Date.now()}-${slugify(sanitizedTitle)}.md`;
+      // Fallback: manual file creation with 8-char ID (matching zk format)
+      const shortId = generateShortId();
+      const filename = `${shortId}.md`;
       relativePath = `${dir}/${filename}`;
-      noteId = filename.replace(".md", "");
+      noteId = shortId;
       const fullPath = join(this.config.brainDir, relativePath);
 
       const frontmatter = generateFrontmatter({
@@ -610,9 +612,9 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
-    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && !request.feature_id && !request.feature_priority && !request.feature_depends_on) {
+    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && request.tags === undefined && request.priority === undefined && !request.feature_id && !request.feature_priority && !request.feature_depends_on && request.target_workdir === undefined) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, feature_id, feature_priority, feature_depends_on"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir"
       );
     }
 
@@ -645,6 +647,21 @@ export class BrainService {
     }
     if (request.feature_depends_on !== undefined) {
       updatedFrontmatter.feature_depends_on = request.feature_depends_on;
+    }
+
+    // Update tags if provided (replaces existing tags)
+    if (request.tags !== undefined) {
+      updatedFrontmatter.tags = request.tags;
+    }
+
+    // Update priority if provided
+    if (request.priority !== undefined) {
+      updatedFrontmatter.priority = request.priority;
+    }
+
+    // Update target_workdir if provided
+    if (request.target_workdir !== undefined) {
+      updatedFrontmatter.target_workdir = request.target_workdir;
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

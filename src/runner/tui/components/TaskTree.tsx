@@ -43,6 +43,9 @@ export const FEATURE_HEADER_PREFIX = '__feature_header__';
 // Alias for backwards compatibility
 export const GROUP_HEADER_PREFIX = FEATURE_HEADER_PREFIX;
 
+// Special ID prefix for spacer elements (non-navigable, for visual index alignment)
+export const SPACER_PREFIX = '__spacer__';
+
 // Status icons and colors are now imported from shared status-display.ts
 
 const PRIORITY_ORDER: Record<Priority, number> = {
@@ -470,12 +473,22 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
     return a.localeCompare(b);
   });
   
-  // Add feature headers and tasks
+  // Track which features have active tasks (to match render spacer logic)
+  const activeFeatureIds: string[] = [];
   for (const featureId of featureIds) {
     const featureTasks = tasksByFeature.get(featureId) || [];
     const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
-    
-    if (activeFeatureTasks.length === 0) continue;
+    if (activeFeatureTasks.length > 0) {
+      activeFeatureIds.push(featureId);
+    }
+  }
+  
+  let spacerIndex = 0;
+  
+  // Add feature headers and tasks
+  activeFeatureIds.forEach((featureId, featureIndex) => {
+    const featureTasks = tasksByFeature.get(featureId) || [];
+    const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
     
     // Add feature header
     result.push(`${FEATURE_HEADER_PREFIX}${featureId}`);
@@ -493,11 +506,24 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
     }
     
     traverse(tree);
-  }
+    
+    // Add spacer after feature (except last) - matches render logic
+    if (featureIndex < activeFeatureIds.length - 1) {
+      result.push(`${SPACER_PREFIX}${spacerIndex++}`);
+    }
+  });
   
   // Add ungrouped tasks
   const ungroupedActive = ungrouped.filter(t => !isCompleted(t) && !isDraft(t));
   if (ungroupedActive.length > 0) {
+    // Add spacer before ungrouped section if there are features
+    if (activeFeatureIds.length > 0) {
+      result.push(`${SPACER_PREFIX}${spacerIndex++}`);
+    }
+    
+    // Add ungrouped header placeholder (matches render's <Box key="ungrouped-header">)
+    result.push(`${SPACER_PREFIX}ungrouped_header`);
+    
     const tree = buildTree(ungroupedActive, ungrouped);
     
     function traverse(nodes: TreeNode[]): void {
@@ -514,6 +540,8 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   
   // Add draft section
   if (draftTasks.length > 0) {
+    // Spacer before draft section
+    result.push(`${SPACER_PREFIX}${spacerIndex++}`);
     result.push(DRAFT_HEADER_ID);
     
     if (!draftCollapsed) {
@@ -523,6 +551,8 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   
   // Add completed section
   if (completedTasks.length > 0) {
+    // Spacer before completed section
+    result.push(`${SPACER_PREFIX}${spacerIndex++}`);
     result.push(COMPLETED_HEADER_ID);
     
     if (!completedCollapsed) {

@@ -296,7 +296,7 @@ export function App({
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
   const navigationOrder = useMemo(
-    () => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed), 
+    () => flattenFeatureOrder(tasks, completedCollapsed, draftCollapsed), 
     [tasks, completedCollapsed, draftCollapsed]
   );
 

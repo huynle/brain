@@ -192,6 +192,8 @@ export interface AppProps {
   onUpdateStatus?: (taskId: string, taskPath: string, newStatus: EntryStatus) => Promise<void>;
   /** Callback to edit a task in external editor. Returns new content or null if cancelled. */
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
+  /** Callback to execute a task manually. Returns true if task was started, false otherwise. */
+  onExecuteTask?: (taskId: string, taskPath: string) => Promise<boolean>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
   /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */

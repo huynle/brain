@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';

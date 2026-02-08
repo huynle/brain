@@ -55,6 +55,20 @@ import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 
+/** Cycle to the next panel (for Tab navigation) */
+function nextPanel(current: FocusedPanel, logsVisible: boolean): FocusedPanel {
+  if (logsVisible) {
+    // Full cycle: tasks -> details -> logs -> tasks
+    if (current === 'tasks') return 'details';
+    if (current === 'details') return 'logs';
+    return 'tasks';
+  } else {
+    // No logs: tasks -> details -> tasks
+    if (current === 'tasks') return 'details';
+    return 'tasks';
+  }
+}
+
 /** Display labels for each entry status */
 const STATUS_LABELS: Record<string, string> = {
   draft: 'Draft',
@@ -131,6 +145,7 @@ export function App({
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
+  const [detailsScrollOffset, setDetailsScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
@@ -212,6 +227,10 @@ export function App({
   // Calculate task viewport height for scrolling
   // Account for: TaskTree header (2 lines: title + margin) + border (2 lines) + padding (2 lines)
   const taskViewportHeight = Math.max(3, topRowHeight - 6);
+  
+  // Calculate details viewport height for scrolling
+  // Account for: header (1 line) + border (2 lines) + padding (2 lines) + scroll indicators (2 lines)
+  const detailsViewportHeight = Math.max(3, topRowHeight - 7);
   
   // Reset scroll offset when new logs arrive and we're at the bottom
   useEffect(() => {
@@ -296,6 +315,11 @@ export function App({
       setTaskScrollOffset(selectedIndex - taskViewportHeight + 1);
     }
   }, [selectedTaskId, navigationOrder, taskScrollOffset, taskViewportHeight]);
+
+  // Reset details scroll offset when selected task changes
+  useEffect(() => {
+    setDetailsScrollOffset(0);
+  }, [selectedTaskId]);
 
   // All project tabs including 'all' at the front
   const allProjectTabs = ['all', ...projects];
@@ -897,6 +921,34 @@ export function App({
         return;
       }
     }
+    
+    // Details scrolling (when focused on details panel)
+    if (focusedPanel === 'details') {
+      // k or up arrow: scroll up (decrease offset to see content above)
+      if (key.upArrow || input === 'k') {
+        setDetailsScrollOffset(prev => Math.max(0, prev - 1));
+        return;
+      }
+      
+      // j or down arrow: scroll down (increase offset to see content below)
+      if (key.downArrow || input === 'j') {
+        // Note: max offset will be enforced by TaskDetail component
+        setDetailsScrollOffset(prev => prev + 1);
+        return;
+      }
+      
+      // g or Home: jump to top
+      if (input === 'g' || key.home) {
+        setDetailsScrollOffset(0);
+        return;
+      }
+      
+      // G or End: jump to bottom (let TaskDetail handle max offset)
+      if (input === 'G' || key.end) {
+        setDetailsScrollOffset(999); // Large number, TaskDetail will clamp
+        return;
+      }
+    }
   });
 
   // Log errors when they occur
@@ -1030,11 +1082,14 @@ export function App({
           {/* Right panel: Task Detail */}
           <Box
             width="50%"
-            borderStyle="single"
-            borderColor={focusedPanel === 'details' ? 'cyan' : 'gray'}
             flexDirection="column"
           >
-            <TaskDetail task={selectedTask} />
+            <TaskDetail 
+              task={selectedTask} 
+              isFocused={focusedPanel === 'details'}
+              scrollOffset={detailsScrollOffset}
+              viewportHeight={detailsViewportHeight}
+            />
           </Box>
         </Box>
 

@@ -29,6 +29,12 @@ interface TaskTreeProps {
   scrollOffset?: number;
   /** Number of visible rows in the viewport (for virtual scrolling) */
   viewportHeight?: number;
+  /** Set of status values to display as groups (e.g., 'completed', 'draft', 'cancelled') */
+  visibleGroups?: Set<string>;
+  /** Collapsed state for each status group */
+  groupCollapsed?: Record<string, boolean>;
+  /** Callback to toggle a group's collapsed state */
+  onToggleGroup?: (status: string) => void;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -39,6 +45,37 @@ export const DRAFT_HEADER_ID = '__draft_header__';
 
 // Special ID prefix for feature headers (used for navigation)
 export const FEATURE_HEADER_PREFIX = '__feature_header__';
+
+// Special ID prefix for status group headers (used for navigation)
+export const GROUP_HEADER_PREFIX = '__group_header__';
+
+/** Display labels for each entry status */
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  pending: 'Pending',
+  active: 'Active',
+  in_progress: 'In Progress',
+  blocked: 'Blocked',
+  cancelled: 'Cancelled',
+  completed: 'Completed',
+  validated: 'Validated',
+  superseded: 'Superseded',
+  archived: 'Archived',
+};
+
+/** Colors for each status in collapsed headers */
+const STATUS_COLORS: Record<string, string> = {
+  draft: 'gray',
+  pending: 'yellow',
+  active: 'blue',
+  in_progress: 'blue',
+  blocked: 'red',
+  cancelled: 'red',
+  completed: 'green',
+  validated: 'green',
+  superseded: 'gray',
+  archived: 'gray',
+};
 
 // Status icons and colors are now imported from shared status-display.ts
 
@@ -73,6 +110,22 @@ const BRANCH = '├─';
 const LAST_BRANCH = '└─';
 const VERTICAL = '│ ';
 const EMPTY = '  ';
+
+// Color palette for feature badges
+const FEATURE_COLORS = ['cyan', 'magenta', 'yellow', 'green', 'blue'] as const;
+
+/**
+ * Hash a string to a consistent color from the palette.
+ * All tasks with the same feature_id will get the same color.
+ */
+function hashToColor(str: string): typeof FEATURE_COLORS[number] {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    hash = ((hash << 5) - hash) + str.charCodeAt(i);
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return FEATURE_COLORS[Math.abs(hash) % FEATURE_COLORS.length];
+}
 
 /**
  * Build tree structure from flat task list.
@@ -341,8 +394,16 @@ const isDraft = (t: TaskDisplay): boolean => t.status === 'draft';
  * @param tasks - All tasks
  * @param completedCollapsed - Whether the completed section is collapsed
  * @param draftCollapsed - Whether the draft section is collapsed
+ * @param visibleGroups - Set of status values to show as groups (optional, for dynamic groups)
+ * @param groupCollapsedState - Collapsed state for each group (optional, for dynamic groups)
  */
-export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
+export function flattenTreeOrder(
+  tasks: TaskDisplay[], 
+  completedCollapsed: boolean = true, 
+  draftCollapsed: boolean = true,
+  visibleGroups?: Set<string>,
+  groupCollapsedState?: Record<string, boolean>
+): string[] {
   // Separate active, completed, and draft tasks
   const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
   const completedTasks = tasks.filter(isCompleted).sort((a, b) => {
@@ -368,23 +429,51 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
 
   traverse(tree);
   
-  // Add draft header and tasks if there are any draft tasks
-  if (draftTasks.length > 0) {
-    result.push(DRAFT_HEADER_ID);
+  // Use dynamic groups if visibleGroups is provided
+  if (visibleGroups && groupCollapsedState) {
+    // Define statuses that should be rendered as collapsible groups
+    const groupStatuses = ['draft', 'cancelled', 'completed', 'validated', 'superseded', 'archived'];
     
-    // If expanded, add draft task IDs
-    if (!draftCollapsed) {
-      draftTasks.forEach(t => result.push(t.id));
+    for (const status of groupStatuses) {
+      if (!visibleGroups.has(status)) continue;
+      
+      const statusTasks = tasks.filter(t => t.status === status).sort((a, b) => {
+        const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+        const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+        return bTime - aTime;
+      });
+      
+      if (statusTasks.length === 0) continue;
+      
+      const headerId = `${GROUP_HEADER_PREFIX}${status}`;
+      const isCollapsed = groupCollapsedState[status] ?? true;
+      
+      result.push(headerId);
+      
+      if (!isCollapsed) {
+        statusTasks.forEach(t => result.push(t.id));
+      }
     }
-  }
-  
-  // Add completed header and tasks if there are any completed tasks
-  if (completedTasks.length > 0) {
-    result.push(COMPLETED_HEADER_ID);
+  } else {
+    // Legacy behavior: hardcoded Draft and Completed sections
+    // Add draft header and tasks if there are any draft tasks
+    if (draftTasks.length > 0) {
+      result.push(DRAFT_HEADER_ID);
+      
+      // If expanded, add draft task IDs
+      if (!draftCollapsed) {
+        draftTasks.forEach(t => result.push(t.id));
+      }
+    }
     
-    // If expanded, add completed task IDs
-    if (!completedCollapsed) {
-      completedTasks.forEach(t => result.push(t.id));
+    // Add completed header and tasks if there are any completed tasks
+    if (completedTasks.length > 0) {
+      result.push(COMPLETED_HEADER_ID);
+      
+      // If expanded, add completed task IDs
+      if (!completedCollapsed) {
+        completedTasks.forEach(t => result.push(t.id));
+      }
     }
   }
   
@@ -585,6 +674,39 @@ const DraftHeader = React.memo(function DraftHeader({
 });
 
 /**
+ * Generic group section header component (memoized)
+ * Used for any status group (completed, draft, cancelled, archived, etc.)
+ */
+const GroupHeader = React.memo(function GroupHeader({
+  status,
+  label,
+  count,
+  collapsed,
+  isSelected,
+}: {
+  status: string;
+  label: string;
+  count: number;
+  collapsed: boolean;
+  isSelected: boolean;
+}): React.ReactElement {
+  const icon = collapsed ? '▶' : '▾';
+  const color = STATUS_COLORS[status] || 'gray';
+  return (
+    <Box>
+      <Text
+        color={isSelected ? 'white' : color}
+        backgroundColor={isSelected ? 'blue' : undefined}
+        bold={isSelected}
+        dimColor={!isSelected}
+      >
+        {icon} {label} ({count})
+      </Text>
+    </Box>
+  );
+});
+
+/**
  * Task row component (memoized to prevent unnecessary re-renders)
  */
 const TaskRow = React.memo(function TaskRow({
@@ -613,6 +735,9 @@ const TaskRow = React.memo(function TaskRow({
   // Cycle indicator
   const cycleSuffix = inCycle ? ' ↺' : '';
 
+  // Feature badge color
+  const featureBadgeColor = task.feature_id ? hashToColor(task.feature_id) : undefined;
+
   return (
     <Box>
       <Text dimColor={isDim}>{prefix}</Text>
@@ -623,6 +748,15 @@ const TaskRow = React.memo(function TaskRow({
       >
         {icon}
       </Text>
+      {task.feature_id && (
+        <Text
+          color={isSelected ? 'white' : featureBadgeColor}
+          backgroundColor={isSelected ? 'blue' : undefined}
+          dimColor={isDim}
+        >
+          {' '}[{task.feature_id}]
+        </Text>
+      )}
       <Text
         color={isSelected ? 'white' : undefined}
         backgroundColor={isSelected ? 'blue' : undefined}
@@ -911,6 +1045,9 @@ export const TaskTree = React.memo(function TaskTree({
   groupByFeature = false,
   scrollOffset = 0,
   viewportHeight,
+  visibleGroups,
+  groupCollapsed,
+  onToggleGroup,
 }: TaskTreeProps): React.ReactElement {
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
@@ -1417,82 +1554,144 @@ export const TaskTree = React.memo(function TaskTree({
     }
   });
 
-  // Add draft section if there are draft tasks
-  const draftElements: React.ReactElement[] = [];
-  if (draftTasks.length > 0) {
-    // Add spacing before draft section
-    draftElements.push(
-      <Box key="draft-spacer">
-        <Text> </Text>
-      </Box>
-    );
-    
-    // Draft header
-    draftElements.push(
-      <DraftHeader
-        key={DRAFT_HEADER_ID}
-        count={draftTasks.length}
-        collapsed={draftCollapsed}
-        isSelected={selectedId === DRAFT_HEADER_ID}
-      />
-    );
-    
-    // Render draft tasks as flat list when expanded
-    if (!draftCollapsed) {
-      draftTasks.forEach(task => {
-        draftElements.push(
-          <TaskRow
-            key={task.id}
-            task={task}
-            prefix="  "
-            isSelected={task.id === selectedId}
-            inCycle={false}
-            isReady={false}
-          />
-        );
+  // Render status groups dynamically based on visibleGroups setting
+  const groupElements: React.ReactElement[] = [];
+  
+  // Define statuses that should be rendered as collapsible groups (not in main tree)
+  // Statuses in main tree: pending, active, in_progress, blocked
+  const groupStatuses = ['draft', 'cancelled', 'completed', 'validated', 'superseded', 'archived'];
+  
+  if (visibleGroups && groupCollapsed) {
+    // New dynamic group rendering
+    for (const status of groupStatuses) {
+      // Only show groups that are in visibleGroups
+      if (!visibleGroups.has(status)) continue;
+      
+      // Get tasks for this status
+      const statusTasks = tasks.filter(t => t.status === status).sort((a, b) => {
+        // Sort by modified time descending (most recent first)
+        const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+        const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+        return bTime - aTime;
       });
+      
+      if (statusTasks.length === 0) continue;
+      
+      const headerId = `${GROUP_HEADER_PREFIX}${status}`;
+      const isCollapsed = groupCollapsed[status] ?? true;
+      
+      // Add spacing before group section
+      groupElements.push(
+        <Box key={`${status}-spacer`}>
+          <Text> </Text>
+        </Box>
+      );
+      
+      // Group header
+      groupElements.push(
+        <GroupHeader
+          key={headerId}
+          status={status}
+          label={STATUS_LABELS[status] || status}
+          count={statusTasks.length}
+          collapsed={isCollapsed}
+          isSelected={selectedId === headerId}
+        />
+      );
+      
+      // Render tasks when expanded
+      if (!isCollapsed) {
+        statusTasks.forEach(task => {
+          groupElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
     }
-  }
+  } else {
+    // Legacy behavior: hardcoded Draft and Completed sections
+    // Add draft section if there are draft tasks
+    if (draftTasks.length > 0) {
+      // Add spacing before draft section
+      groupElements.push(
+        <Box key="draft-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      // Draft header
+      groupElements.push(
+        <DraftHeader
+          key={DRAFT_HEADER_ID}
+          count={draftTasks.length}
+          collapsed={draftCollapsed}
+          isSelected={selectedId === DRAFT_HEADER_ID}
+        />
+      );
+      
+      // Render draft tasks as flat list when expanded
+      if (!draftCollapsed) {
+        draftTasks.forEach(task => {
+          groupElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
+    }
 
-  // Add completed section if there are completed tasks
-  const completedElements: React.ReactElement[] = [];
-  if (completedTasks.length > 0) {
-    // Add spacing before completed section
-    completedElements.push(
-      <Box key="completed-spacer">
-        <Text> </Text>
-      </Box>
-    );
-    
-    // Completed header
-    completedElements.push(
-      <CompletedHeader
-        key={COMPLETED_HEADER_ID}
-        count={completedTasks.length}
-        collapsed={completedCollapsed}
-        isSelected={selectedId === COMPLETED_HEADER_ID}
-      />
-    );
-    
-    // Render completed tasks as flat list when expanded
-    if (!completedCollapsed) {
-      completedTasks.forEach(task => {
-        completedElements.push(
-          <TaskRow
-            key={task.id}
-            task={task}
-            prefix="  "
-            isSelected={task.id === selectedId}
-            inCycle={false}
-            isReady={false}
-          />
-        );
-      });
+    // Add completed section if there are completed tasks
+    if (completedTasks.length > 0) {
+      // Add spacing before completed section
+      groupElements.push(
+        <Box key="completed-spacer">
+          <Text> </Text>
+        </Box>
+      );
+      
+      // Completed header
+      groupElements.push(
+        <CompletedHeader
+          key={COMPLETED_HEADER_ID}
+          count={completedTasks.length}
+          collapsed={completedCollapsed}
+          isSelected={selectedId === COMPLETED_HEADER_ID}
+        />
+      );
+      
+      // Render completed tasks as flat list when expanded
+      if (!completedCollapsed) {
+        completedTasks.forEach(task => {
+          groupElements.push(
+            <TaskRow
+              key={task.id}
+              task={task}
+              prefix="  "
+              isSelected={task.id === selectedId}
+              inCycle={false}
+              isReady={false}
+            />
+          );
+        });
+      }
     }
   }
 
   // Combine all elements for viewport slicing
-  const allElements = [...elements, ...draftElements, ...completedElements];
+  const allElements = [...elements, ...groupElements];
   
   // Apply viewport slicing if viewportHeight is provided
   let visibleElements: React.ReactElement[];

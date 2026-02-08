@@ -24,6 +24,8 @@ import {
   ComputedFeatureSchema,
   FeatureListResponseSchema,
   NotFoundResponseSchema,
+  TaskStatusRequestSchema,
+  TaskStatusResponseSchema,
 } from "./schemas";
 
 // =============================================================================
@@ -335,6 +337,43 @@ const getClaimStatusRoute = createRoute({
       content: {
         "application/json": {
           schema: ClaimStatusResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// POST /:projectId/status - Batch task status with optional blocking wait
+const getTasksStatusRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/status",
+  tags: ["Tasks"],
+  summary: "Get batch task status with optional blocking wait",
+  description: "Query status of multiple tasks by ID. Optionally block until status changes or all tasks complete.",
+  request: {
+    params: ProjectIdParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: TaskStatusRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Task status response",
+      content: {
+        "application/json": {
+          schema: TaskStatusResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable (zk CLI required)",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
         },
       },
     },
@@ -712,6 +751,117 @@ export function createTaskRoutes(): OpenAPIHono {
       claimedAt: new Date(claim.claimedAt).toISOString(),
       isStale: isClaimStale(claim),
     }, 200);
+  });
+
+  // POST /:projectId/status - Batch task status with optional blocking wait
+  tasks.openapi(getTasksStatusRoute, async (c) => {
+    const { projectId } = c.req.valid("param");
+    const { taskIds, waitFor, timeout = 60000 } = c.req.valid("json");
+    const taskService = getTaskService();
+
+    try {
+      // Immediate mode - no waiting
+      if (!waitFor) {
+        const result = await taskService.getTasksByIds(projectId, taskIds);
+        return c.json({
+          tasks: result.tasks.map((t) => ({
+            id: t.id,
+            title: t.title,
+            status: t.status,
+            classification: t.classification,
+            priority: t.priority,
+          })),
+          notFound: result.notFound,
+          changed: false,
+          timedOut: false,
+        }, 200);
+      }
+
+      // Blocking mode - poll until condition met or timeout
+      const startTime = Date.now();
+      const pollInterval = 500; // ms
+      const maxTimeout = Math.min(timeout, 300000); // cap at 5 min
+
+      // Capture initial state
+      const initialResult = await taskService.getTasksByIds(projectId, taskIds);
+      const initialStatuses = new Map(initialResult.tasks.map((t) => [t.id, t.status]));
+
+      while (Date.now() - startTime < maxTimeout) {
+        const result = await taskService.getTasksByIds(projectId, taskIds);
+
+        // Check for changes
+        let changed = false;
+        // Only consider "all completed" if there are actual tasks AND all are completed
+        let allCompleted = result.tasks.length > 0;
+
+        for (const task of result.tasks) {
+          if (task.status !== initialStatuses.get(task.id)) {
+            changed = true;
+          }
+          if (task.status !== "completed" && task.status !== "validated") {
+            allCompleted = false;
+          }
+        }
+
+        // Return if condition met
+        if (waitFor === "any" && changed) {
+          return c.json({
+            tasks: result.tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              classification: t.classification,
+              priority: t.priority,
+            })),
+            notFound: result.notFound,
+            changed: true,
+            timedOut: false,
+          }, 200);
+        }
+        if (waitFor === "completed" && allCompleted) {
+          return c.json({
+            tasks: result.tasks.map((t) => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+              classification: t.classification,
+              priority: t.priority,
+            })),
+            notFound: result.notFound,
+            changed: true,
+            timedOut: false,
+          }, 200);
+        }
+
+        await Bun.sleep(pollInterval);
+      }
+
+      // Timeout - return current state
+      const finalResult = await taskService.getTasksByIds(projectId, taskIds);
+      return c.json({
+        tasks: finalResult.tasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: t.status,
+          classification: t.classification,
+          priority: t.priority,
+        })),
+        notFound: finalResult.notFound,
+        changed: false,
+        timedOut: true,
+      }, 200);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
   });
 
   // ==========================================================================

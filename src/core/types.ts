@@ -155,10 +155,14 @@ export interface UpdateEntryRequest {
   append?: string;
   note?: string;
   depends_on?: string[];
+  tags?: string[];
+  priority?: Priority;
   // Feature grouping (for task organization)
   feature_id?: string;
   feature_priority?: Priority;
   feature_depends_on?: string[];
+  // Execution context for tasks
+  target_workdir?: string; // Explicit workdir override for task execution (absolute path)
 }
 
 export interface ListEntriesRequest {

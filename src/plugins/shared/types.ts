@@ -230,4 +230,37 @@ export interface InstallResult {
   installedPath: string;
   message: string;
   backupPath?: string;
+  installedFiles?: InstalledFile[];
+}
+
+// ============================================================================
+// Additional File Installation
+// ============================================================================
+
+/**
+ * Describes an additional file to install alongside the main plugin.
+ * Used for skills, commands, and other related components.
+ */
+export interface AdditionalFile {
+  /** Source file path relative to plugin target directory (e.g., "skill/do-work/SKILL.md") */
+  sourcePath: string;
+  /** Target directory resolver (receives home directory) */
+  targetDir: (home: string) => string;
+  /** Target filename */
+  targetFile: string;
+  /** Description of the file for install output */
+  description: string;
+  /** Component type for doctor checks */
+  componentType: "plugin" | "skill" | "command" | "agent";
+}
+
+/**
+ * Result of installing a single file
+ */
+export interface InstalledFile {
+  sourcePath: string;
+  targetPath: string;
+  componentType: "plugin" | "skill" | "command" | "agent";
+  description: string;
+  backupPath?: string;
 }

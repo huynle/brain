@@ -196,4 +196,25 @@ describe("TaskService", () => {
       expect(projects).toEqual(["alpha", "beta", "zebra"]);
     });
   });
+
+  describe("getTasksByIds()", () => {
+    let service: TaskService;
+
+    beforeEach(() => {
+      service = new TaskService(createTestConfig(), "test-project");
+    });
+
+    test("returns empty result when no IDs provided", async () => {
+      const result = await service.getTasksByIds("test-project", []);
+      expect(result.tasks).toEqual([]);
+      expect(result.notFound).toEqual([]);
+    });
+
+    test("returns empty result when null IDs provided", async () => {
+      // @ts-expect-error Testing null input
+      const result = await service.getTasksByIds("test-project", null);
+      expect(result.tasks).toEqual([]);
+      expect(result.notFound).toEqual([]);
+    });
+  });
 });

@@ -163,13 +163,17 @@ export const UpdateEntryRequestSchema = z.object({
   append: z.string().optional().openapi({ description: "Content to append to the entry" }),
   note: z.string().optional().openapi({ description: "Note to add to the entry" }),
   depends_on: z.array(z.string()).optional().openapi({ description: "Task dependencies - list of task IDs or titles" }),
+  tags: z.array(z.string()).optional().openapi({ description: "Replace tags array (overwrites existing tags)" }),
+  priority: PrioritySchema.optional().openapi({ description: "Update task priority" }),
   // Feature grouping for task organization
   feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" }),
   feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature group" }),
   feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
+  // Execution context for tasks
+  target_workdir: z.string().optional().openapi({ description: "Update task execution directory (absolute path). Task runner will try this first before fallback." }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, feature_id, feature_priority, or feature_depends_on must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.target_workdir !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, or target_workdir must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -522,3 +526,48 @@ export const FeatureListResponseSchema = z.object({
     blocked: z.number(),
   }).optional().openapi({ description: "Aggregate statistics across all features" }),
 }).openapi("FeatureListResponse");
+
+// =============================================================================
+// Batch Task Status Schemas
+// =============================================================================
+
+export const TaskStatusRequestSchema = z.object({
+  taskIds: z.array(z.string().min(1)).min(1).max(100).openapi({
+    description: "Array of task IDs to query (max 100)",
+    example: ["abc12def", "xyz98765"],
+  }),
+  waitFor: z.enum(["any", "completed"]).optional().openapi({
+    description: "Block until status changes: 'any' = any status change, 'completed' = all tasks completed. Omit for immediate response.",
+    example: "completed",
+  }),
+  timeout: z.number().int().min(1000).max(300000).optional().openapi({
+    description: "Maximum wait time in milliseconds (1000-300000, default 60000)",
+    example: 60000,
+  }),
+}).openapi("TaskStatusRequest");
+
+export const TaskStatusItemSchema = z.object({
+  id: EntryIdSchema,
+  title: z.string(),
+  status: EntryStatusSchema,
+  classification: TaskClassificationSchema,
+  priority: PrioritySchema,
+}).openapi("TaskStatusItem");
+
+export const TaskStatusResponseSchema = z.object({
+  tasks: z.array(TaskStatusItemSchema).openapi({
+    description: "Current status of requested tasks",
+  }),
+  notFound: z.array(z.string()).openapi({
+    description: "Task IDs that were not found",
+    example: ["invalid123"],
+  }),
+  changed: z.boolean().openapi({
+    description: "Whether status changed during wait (only meaningful when waitFor was specified)",
+    example: true,
+  }),
+  timedOut: z.boolean().openapi({
+    description: "Whether the request timed out before condition was met",
+    example: false,
+  }),
+}).openapi("TaskStatusResponse");

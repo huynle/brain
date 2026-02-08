@@ -200,6 +200,47 @@ export class TaskService {
       });
   }
 
+  /**
+   * Get specific tasks by their IDs with full dependency resolution
+   * @param projectId - The project to search in
+   * @param taskIds - Array of task IDs to fetch
+   * @returns Tasks matching the provided IDs with dependency info, plus list of not found IDs
+   */
+  async getTasksByIds(
+    projectId: string,
+    taskIds: string[]
+  ): Promise<{
+    tasks: ResolvedTask[];
+    notFound: string[];
+  }> {
+    // Return empty result if no IDs provided
+    if (!taskIds || taskIds.length === 0) {
+      return { tasks: [], notFound: [] };
+    }
+
+    // Get all resolved tasks
+    const result = await this.getTasksWithDependencies(projectId);
+
+    // Normalize IDs for case-insensitive matching
+    const normalizedIds = new Set(taskIds.map((id) => id.toLowerCase()));
+
+    // Filter to matching tasks
+    const matchedTasks = result.tasks.filter((task) =>
+      normalizedIds.has(task.id.toLowerCase())
+    );
+
+    // Track which IDs were found
+    const foundIds = new Set(matchedTasks.map((t) => t.id.toLowerCase()));
+
+    // Identify not found IDs (preserving original case from input)
+    const notFound = taskIds.filter((id) => !foundIds.has(id.toLowerCase()));
+
+    return {
+      tasks: matchedTasks,
+      notFound,
+    };
+  }
+
   // ========================================
   // Workdir Resolution
   // ========================================

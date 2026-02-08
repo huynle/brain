@@ -373,7 +373,7 @@ const tools: Tool[] = [
         project: { type: "string", description: "Explicit project ID/name" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
         user_original_request: { type: "string", description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task." },
-        target_workdir: { type: "string", description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory." },
+        target_workdir: { type: "string", description: "Explicit working directory override for task execution (absolute path). PRIMARY USE CASE: Filing tasks across project boundaries - when an issue is detected in a dependent project, use target_workdir to file the task directly in the parent/target project so it executes there. The task runner will try this directory first before falling back to workdir resolution." },
         feature_id: { type: "string", description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution." },
         feature_priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level for the feature group. Determines execution order relative to other features." },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start." },
@@ -450,6 +450,8 @@ Use cases:
 - Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
 - Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
+- Update priority: brain_update(path: "...", priority: "high")
 
 Statuses: draft, active, in_progress, blocked, completed, validated, superseded, archived`,
     inputSchema: {
@@ -461,9 +463,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
         append: { type: "string", description: "Content to append" },
         note: { type: "string", description: "Short note to add" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
+        tags: { type: "array", items: { type: "string" }, description: "Replace tags array (overwrites existing tags)" },
+        priority: { type: "string", enum: PRIORITIES, description: "Update task priority" },
         feature_id: { type: "string", description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" },
         feature_priority: { type: "string", enum: PRIORITIES, description: "Priority for this feature group" },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on" },
+        target_workdir: { type: "string", description: "Update task execution directory (absolute path). PRIMARY USE CASE: Cross-project task filing - ensures task executes in the correct project. Task runner will try this first before fallback." },
       },
       required: ["path"],
     },
@@ -670,6 +675,53 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
         path: { type: "string", description: "Path to the plan entry" },
         title: { type: "string", description: "Title to search for" },
       },
+    },
+  },
+  {
+    name: "brain_tasks_status",
+    description: `Get status of multiple tasks by ID, with optional blocking wait.
+
+Use cases:
+- Check if spawned subtasks are complete before continuing
+- Wait for dependent tasks to finish before starting next phase  
+- Monitor multiple tasks from an orchestrator agent
+
+Parameters:
+- taskIds: Array of task IDs (8-char alphanumeric) to check
+- waitFor: Optional. "completed" (default) waits until all tasks completed/validated.
+           "any" returns as soon as any task status changes.
+           Omit for immediate response without waiting.
+- timeout: Max wait time in milliseconds (default: 60000, max: 300000)
+- project: Override auto-detected project
+
+Example - immediate check:
+  brain_tasks_status({ taskIds: ["abc12def", "xyz98765"] })
+
+Example - wait for completion:
+  brain_tasks_status({ taskIds: ["abc12def"], waitFor: "completed", timeout: 120000 })`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskIds: { 
+          type: "array", 
+          items: { type: "string" }, 
+          description: "Task IDs (8-char alphanumeric) to check" 
+        },
+        waitFor: { 
+          type: "string", 
+          enum: ["completed", "any"], 
+          description: "Wait mode: 'completed' (all done) or 'any' (first change). Omit for immediate." 
+        },
+        timeout: { 
+          type: "number", 
+          description: "Max wait time in ms (default: 60000, max: 300000)" 
+        },
+        project: { 
+          type: "string", 
+          description: "Override auto-detected project" 
+        },
+      },
+      required: ["taskIds"],
     },
   },
 ];
@@ -1505,6 +1557,77 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
         for (const section of response.sections) {
           const indent = "  ".repeat(section.level - 1);
           lines.push(`${indent}- ${section.title} (line ${section.line})`);
+        }
+
+        return lines.join("\n");
+      }
+
+      case "brain_tasks_status": {
+        if (!args.taskIds || !Array.isArray(args.taskIds) || args.taskIds.length === 0) {
+          return "Please provide at least one task ID";
+        }
+
+        const proj = (args.project as string) || context.projectId;
+
+        interface TaskStatusResponse {
+          tasks: Array<{
+            id: string;
+            title: string;
+            status: string;
+            classification: string;
+            priority?: string;
+          }>;
+          notFound: string[];
+          changed: boolean;
+          timedOut: boolean;
+        }
+
+        const response = await apiRequest<TaskStatusResponse>(
+          "POST",
+          `/tasks/${encodeURIComponent(proj)}/status`,
+          {
+            taskIds: args.taskIds,
+            waitFor: args.waitFor,
+            timeout: args.timeout,
+          }
+        );
+
+        const lines: string[] = [];
+
+        // Summary line
+        if (args.waitFor) {
+          if (response.timedOut) {
+            lines.push(`## Task Status (TIMED OUT after ${((args.timeout as number) || 60000) / 1000}s)`);
+          } else if (response.changed) {
+            lines.push(`## Task Status (condition met: ${args.waitFor})`);
+          }
+        } else {
+          lines.push("## Task Status");
+        }
+        lines.push("");
+
+        // Task statuses
+        for (const task of response.tasks) {
+          const priority = task.priority === "high" ? "[HIGH]" : 
+                           task.priority === "medium" ? "[MED]" : "[LOW]";
+          const statusIcon = task.status === "completed" ? "✓" : 
+                             task.status === "in_progress" ? "⋯" : "○";
+          lines.push(`${statusIcon} **${task.title}** (${task.id}) ${priority}`);
+          lines.push(`   Status: ${task.status} | Classification: ${task.classification}`);
+        }
+
+        // Not found IDs
+        if (response.notFound.length > 0) {
+          lines.push("");
+          lines.push(`**Not found:** ${response.notFound.join(", ")}`);
+        }
+
+        // Meta info
+        lines.push("");
+        if (response.timedOut) {
+          lines.push("*Request timed out - tasks may still be running*");
+        } else if (args.waitFor && response.changed) {
+          lines.push("*Condition met - returning current state*");
         }
 
         return lines.join("\n");

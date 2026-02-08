@@ -1,3 +1,4 @@
+// @ts-nocheck - This file is installed to OpenCode, not compiled by brain-api
 /**
  * Brain API Client Plugin for OpenCode
  *

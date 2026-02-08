@@ -21,8 +21,9 @@ export interface TaskDisplay {
   priority: Priority;
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
-  dependencyTitles: string[];   // Titles for display in TaskDetail
+  dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail
   dependentTitles: string[];    // Titles for display in TaskDetail
+  indirectAncestorTitles?: string[];  // Transitive (indirect) dependency titles
   progress?: number;
   error?: string;
   projectId?: string;  // Which project this task belongs to (for multi-project mode)
@@ -150,6 +151,23 @@ export interface ProjectLimitEntry {
   limit: number | undefined;  // undefined means "no limit"
   running: number;            // current running count for context
 }
+
+/**
+ * Group visibility entry for settings display
+ * Each status group can be toggled visible/hidden and expanded/collapsed
+ */
+export interface GroupVisibilityEntry {
+  status: string;             // Status value (e.g., "completed", "draft")
+  label: string;              // Display label (e.g., "Completed", "Draft")
+  visible: boolean;           // Whether to show this group
+  collapsed: boolean;         // Whether the group is collapsed
+  taskCount: number;          // Number of tasks in this group
+}
+
+/**
+ * Settings popup section type
+ */
+export type SettingsSection = 'limits' | 'groups';
 
 /**
  * Props for the main App component

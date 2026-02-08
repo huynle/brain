@@ -85,6 +85,62 @@ function resolveIdsToTitles(ids: string[] | undefined, idToTitle: Map<string, st
   return ids.map(id => idToTitle.get(id) || id);
 }
 
+/**
+ * Build a map from task ID to its direct dependency IDs.
+ */
+function buildDependencyMap(tasks: any[]): Map<string, string[]> {
+  const map = new Map<string, string[]>();
+  for (const task of tasks) {
+    if (task.id) {
+      const deps = task.resolved_deps || task.dependencies || [];
+      map.set(task.id, deps);
+    }
+  }
+  return map;
+}
+
+/**
+ * Compute all transitive ancestors (dependencies) for a task.
+ * Returns all task IDs that must complete before this task can run.
+ * Uses BFS to traverse the dependency graph upward.
+ * Handles cycles gracefully via visited set.
+ */
+function computeTransitiveAncestors(
+  taskId: string,
+  dependencyMap: Map<string, string[]>
+): { directAncestors: string[]; indirectAncestors: string[] } {
+  const directAncestors = dependencyMap.get(taskId) || [];
+  const allAncestors = new Set<string>();
+  const visited = new Set<string>();
+  const queue = [...directAncestors];
+  
+  // Mark direct ancestors
+  const directSet = new Set(directAncestors);
+  
+  while (queue.length > 0) {
+    const currentId = queue.shift()!;
+    if (visited.has(currentId)) continue;
+    visited.add(currentId);
+    allAncestors.add(currentId);
+    
+    // Add this task's dependencies to the queue
+    const deps = dependencyMap.get(currentId) || [];
+    for (const depId of deps) {
+      if (!visited.has(depId)) {
+        queue.push(depId);
+      }
+    }
+  }
+  
+  // Separate direct from indirect ancestors
+  const indirectAncestors = [...allAncestors].filter(id => !directSet.has(id));
+  
+  return {
+    directAncestors,
+    indirectAncestors,
+  };
+}
+
 const EMPTY_STATS: TaskStats = {
   total: 0,
   ready: 0,
@@ -179,6 +235,7 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
       // Build lookup map and compute reverse dependencies
       const idToTitle = buildIdToTitleMap(rawTasks);
       const dependentsMap = computeDependents(rawTasks);
+      const dependencyMap = buildDependencyMap(rawTasks);
 
       // Transform API response to TaskDisplay format
       // Include all frontmatter fields from the brain entry
@@ -187,6 +244,9 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         // Keep dependencies as IDs for tree building
         const depIds = task.resolved_deps || task.dependencies || [];
         const dependentIds = dependentsMap.get(task.id) || [];
+        
+        // Compute transitive ancestors (all tasks that must complete before this one)
+        const { indirectAncestors } = computeTransitiveAncestors(task.id, dependencyMap);
         
         return {
           id: task.id,
@@ -200,6 +260,8 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           // Resolve to titles for display (TaskDetail.tsx uses these)
           dependencyTitles: resolveIdsToTitles(depIds, idToTitle),
           dependentTitles: resolveIdsToTitles(dependentIds, idToTitle),
+          // Transitive (indirect) ancestors for full dependency chain display
+          indirectAncestorTitles: resolveIdsToTitles(indirectAncestors, idToTitle),
           progress: task.progress,
           error: task.error,
           parent_id: task.parent_id,
@@ -220,6 +282,10 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           waitingOn: resolveIdsToTitles(task.waiting_on, idToTitle),
           inCycle: task.in_cycle,
           resolvedWorkdir: task.resolved_workdir,
+          // Feature grouping fields
+          feature_id: task.feature_id,
+          feature_priority: task.feature_priority,
+          feature_depends_on: task.feature_depends_on,
         };
       });
 

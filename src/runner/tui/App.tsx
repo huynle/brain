@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID } from './components/TaskTree';
+import { TaskTree, flattenTreeOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -50,10 +50,24 @@ import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
-import type { AppProps, TaskDisplay, ProjectLimitEntry } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
-type FocusedPanel = 'tasks' | 'logs';
+type FocusedPanel = 'tasks' | 'details' | 'logs';
+
+/** Display labels for each entry status */
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  pending: 'Pending',
+  active: 'Active',
+  in_progress: 'In Progress',
+  blocked: 'Blocked',
+  cancelled: 'Cancelled',
+  completed: 'Completed',
+  validated: 'Validated',
+  superseded: 'Superseded',
+  archived: 'Archived',
+};
 
 export function App({ 
   config, 
@@ -91,6 +105,29 @@ export function App({
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
+  
+  // Group visibility settings - which status groups to display
+  // Default: show draft, pending, active, in_progress, blocked, completed
+  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(() => 
+    new Set(['draft', 'pending', 'active', 'in_progress', 'blocked', 'completed'])
+  );
+  // Collapsed state for each group (by status)
+  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>(() => ({
+    draft: true,
+    pending: false,
+    active: false,
+    in_progress: false,
+    blocked: false,
+    cancelled: true,
+    completed: true,
+    validated: true,
+    superseded: true,
+    archived: true,
+  }));
+  // Settings popup section
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('limits');
+  // Group visibility state for settings popup
+  const [groupVisibilityState, setGroupVisibilityState] = useState<GroupVisibilityEntry[]>([]);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
@@ -238,7 +275,10 @@ export function App({
 
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
-  const navigationOrder = useMemo(() => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed), [tasks, completedCollapsed, draftCollapsed]);
+  const navigationOrder = useMemo(
+    () => flattenTreeOrder(tasks, completedCollapsed, draftCollapsed, visibleGroups, groupCollapsed), 
+    [tasks, completedCollapsed, draftCollapsed, visibleGroups, groupCollapsed]
+  );
 
   // Auto-scroll task list to keep selected task in view
   useEffect(() => {
@@ -369,54 +409,34 @@ export function App({
         return;
       }
 
-      // Use React state for navigation bounds (synced when popup opened)
-      const currentLimits = projectLimitsState;
-
-      // Navigate project list with j/k or arrows
-      if (key.upArrow || input === 'k') {
-        setSettingsSelectedIndex((prev) => Math.max(0, prev - 1));
+      // Tab to switch between sections
+      if (key.tab) {
+        setSettingsSection(prev => prev === 'limits' ? 'groups' : 'limits');
+        setSettingsSelectedIndex(0);
         return;
       }
 
-      if (key.downArrow || input === 'j') {
-        setSettingsSelectedIndex((prev) => Math.min(currentLimits.length - 1, prev + 1));
-        return;
-      }
+      // Section-specific handling
+      if (settingsSection === 'limits') {
+        // Use React state for navigation bounds (synced when popup opened)
+        const currentLimits = projectLimitsState;
 
-      // + or = to increase limit
-      if ((input === '+' || input === '=') && setProjectLimit && currentLimits.length > 0) {
-        const entry = currentLimits[settingsSelectedIndex];
-        if (entry) {
-          const newLimit = (entry.limit ?? 0) + 1;
-          setProjectLimit(entry.projectId, newLimit);
-          // Update React state to trigger re-render
-          setProjectLimitsState(prev => prev.map((e, i) => 
-            i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
-          ));
-          addLog({
-            level: 'info',
-            message: `Set ${entry.projectId} limit: ${newLimit}`,
-          });
+        // Navigate project list with j/k or arrows
+        if (key.upArrow || input === 'k') {
+          setSettingsSelectedIndex((prev) => Math.max(0, prev - 1));
+          return;
         }
-        return;
-      }
 
-      // - to decrease limit (min 1, or remove limit if at 1)
-      if (input === '-' && setProjectLimit && currentLimits.length > 0) {
-        const entry = currentLimits[settingsSelectedIndex];
-        if (entry && entry.limit !== undefined) {
-          if (entry.limit <= 1) {
-            setProjectLimit(entry.projectId, undefined);
-            // Update React state to trigger re-render
-            setProjectLimitsState(prev => prev.map((e, i) => 
-              i === settingsSelectedIndex ? { ...e, limit: undefined } : e
-            ));
-            addLog({
-              level: 'info',
-              message: `Removed ${entry.projectId} limit`,
-            });
-          } else {
-            const newLimit = entry.limit - 1;
+        if (key.downArrow || input === 'j') {
+          setSettingsSelectedIndex((prev) => Math.min(currentLimits.length - 1, prev + 1));
+          return;
+        }
+
+        // + or = to increase limit
+        if ((input === '+' || input === '=') && setProjectLimit && currentLimits.length > 0) {
+          const entry = currentLimits[settingsSelectedIndex];
+          if (entry) {
+            const newLimit = (entry.limit ?? 0) + 1;
             setProjectLimit(entry.projectId, newLimit);
             // Update React state to trigger re-render
             setProjectLimitsState(prev => prev.map((e, i) => 
@@ -427,25 +447,124 @@ export function App({
               message: `Set ${entry.projectId} limit: ${newLimit}`,
             });
           }
+          return;
         }
-        return;
-      }
 
-      // 0 to remove limit entirely
-      if (input === '0' && setProjectLimit && currentLimits.length > 0) {
-        const entry = currentLimits[settingsSelectedIndex];
-        if (entry) {
-          setProjectLimit(entry.projectId, undefined);
-          // Update React state to trigger re-render
-          setProjectLimitsState(prev => prev.map((e, i) => 
-            i === settingsSelectedIndex ? { ...e, limit: undefined } : e
-          ));
-          addLog({
-            level: 'info',
-            message: `Removed ${entry.projectId} limit`,
-          });
+        // - to decrease limit (min 1, or remove limit if at 1)
+        if (input === '-' && setProjectLimit && currentLimits.length > 0) {
+          const entry = currentLimits[settingsSelectedIndex];
+          if (entry && entry.limit !== undefined) {
+            if (entry.limit <= 1) {
+              setProjectLimit(entry.projectId, undefined);
+              // Update React state to trigger re-render
+              setProjectLimitsState(prev => prev.map((e, i) => 
+                i === settingsSelectedIndex ? { ...e, limit: undefined } : e
+              ));
+              addLog({
+                level: 'info',
+                message: `Removed ${entry.projectId} limit`,
+              });
+            } else {
+              const newLimit = entry.limit - 1;
+              setProjectLimit(entry.projectId, newLimit);
+              // Update React state to trigger re-render
+              setProjectLimitsState(prev => prev.map((e, i) => 
+                i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
+              ));
+              addLog({
+                level: 'info',
+                message: `Set ${entry.projectId} limit: ${newLimit}`,
+              });
+            }
+          }
+          return;
         }
-        return;
+
+        // 0 to remove limit entirely
+        if (input === '0' && setProjectLimit && currentLimits.length > 0) {
+          const entry = currentLimits[settingsSelectedIndex];
+          if (entry) {
+            setProjectLimit(entry.projectId, undefined);
+            // Update React state to trigger re-render
+            setProjectLimitsState(prev => prev.map((e, i) => 
+              i === settingsSelectedIndex ? { ...e, limit: undefined } : e
+            ));
+            addLog({
+              level: 'info',
+              message: `Removed ${entry.projectId} limit`,
+            });
+          }
+          return;
+        }
+      } else {
+        // Groups section
+        const currentGroups = groupVisibilityState;
+
+        // Navigate group list with j/k or arrows
+        if (key.upArrow || input === 'k') {
+          setSettingsSelectedIndex((prev) => Math.max(0, prev - 1));
+          return;
+        }
+
+        if (key.downArrow || input === 'j') {
+          setSettingsSelectedIndex((prev) => Math.min(currentGroups.length - 1, prev + 1));
+          return;
+        }
+
+        // Space to toggle visibility
+        if (input === ' ' && currentGroups.length > 0) {
+          const entry = currentGroups[settingsSelectedIndex];
+          if (entry) {
+            const newVisible = !entry.visible;
+            // Update React state for popup
+            setGroupVisibilityState(prev => prev.map((e, i) => 
+              i === settingsSelectedIndex ? { ...e, visible: newVisible } : e
+            ));
+            // Update actual visible groups state
+            setVisibleGroups(prev => {
+              const next = new Set(prev);
+              if (newVisible) {
+                next.add(entry.status);
+              } else {
+                next.delete(entry.status);
+              }
+              return next;
+            });
+            addLog({
+              level: 'info',
+              message: `${entry.label} group: ${newVisible ? 'visible' : 'hidden'}`,
+            });
+          }
+          return;
+        }
+
+        // 'c' to toggle collapse state
+        if (input === 'c' && currentGroups.length > 0) {
+          const entry = currentGroups[settingsSelectedIndex];
+          if (entry && entry.visible) {
+            const newCollapsed = !entry.collapsed;
+            // Update React state for popup
+            setGroupVisibilityState(prev => prev.map((e, i) => 
+              i === settingsSelectedIndex ? { ...e, collapsed: newCollapsed } : e
+            ));
+            // Update actual collapsed state
+            setGroupCollapsed(prev => ({
+              ...prev,
+              [entry.status]: newCollapsed,
+            }));
+            // Also update legacy collapsed states for Draft and Completed
+            if (entry.status === 'draft') {
+              setDraftCollapsed(newCollapsed);
+            } else if (entry.status === 'completed') {
+              setCompletedCollapsed(newCollapsed);
+            }
+            addLog({
+              level: 'info',
+              message: `${entry.label} group: ${newCollapsed ? 'collapsed' : 'expanded'}`,
+            });
+          }
+          return;
+        }
       }
 
       // Block all other input when popup is open
@@ -512,12 +631,13 @@ export function App({
       return;
     }
 
-    // Tab to switch focus between panels (skip logs if hidden)
+    // Tab to switch focus between panels: tasks → details → logs → tasks (skip logs if hidden)
     if (key.tab) {
-      if (logsVisible) {
-        setFocusedPanel((prev) => (prev === 'tasks' ? 'logs' : 'tasks'));
-      }
-      // If logs hidden, Tab does nothing (only one panel to focus)
+      setFocusedPanel((prev) => {
+        if (prev === 'tasks') return 'details';
+        if (prev === 'details') return logsVisible ? 'logs' : 'tasks';
+        return 'tasks'; // logs → tasks
+      });
       return;
     }
 
@@ -535,10 +655,26 @@ export function App({
     }
 
     // Open settings popup (s key)
-    if (input === 's' && getProjectLimits) {
+    if (input === 's') {
       setSettingsSelectedIndex(0);
+      setSettingsSection('limits');
       // Sync React state with external limits when opening popup
-      setProjectLimitsState(getProjectLimits());
+      if (getProjectLimits) {
+        setProjectLimitsState(getProjectLimits());
+      }
+      // Compute group visibility entries from current tasks
+      const statusCounts: Record<string, number> = {};
+      for (const task of tasks) {
+        statusCounts[task.status] = (statusCounts[task.status] || 0) + 1;
+      }
+      const groupEntries: GroupVisibilityEntry[] = ENTRY_STATUSES.map(status => ({
+        status,
+        label: STATUS_LABELS[status] || status,
+        visible: visibleGroups.has(status),
+        collapsed: groupCollapsed[status] ?? true,
+        taskCount: statusCounts[status] || 0,
+      }));
+      setGroupVisibilityState(groupEntries);
       setShowSettingsPopup(true);
       return;
     }
@@ -692,16 +828,31 @@ export function App({
         return;
       }
 
-      // Enter to toggle completed/draft section when header is selected, or open status popup
+      // Enter to toggle group section when header is selected, or open status popup
       if (key.return) {
-        // Toggle completed section if header is selected
+        // Toggle completed section if header is selected (legacy)
         if (selectedTaskId === COMPLETED_HEADER_ID) {
           setCompletedCollapsed(prev => !prev);
           return;
         }
-        // Toggle draft section if header is selected
+        // Toggle draft section if header is selected (legacy)
         if (selectedTaskId === DRAFT_HEADER_ID) {
           setDraftCollapsed(prev => !prev);
+          return;
+        }
+        // Toggle dynamic group section if group header is selected
+        if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
+          const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');
+          setGroupCollapsed(prev => ({
+            ...prev,
+            [status]: !prev[status],
+          }));
+          // Also sync legacy collapsed states for Draft and Completed
+          if (status === 'draft') {
+            setDraftCollapsed(prev => !prev);
+          } else if (status === 'completed') {
+            setCompletedCollapsed(prev => !prev);
+          }
           return;
         }
         // Open status popup for selected task
@@ -820,12 +971,14 @@ export function App({
   }
 
   // Settings popup overlay
-  if (showSettingsPopup && getProjectLimits) {
+  if (showSettingsPopup) {
     return (
       <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
         <SettingsPopup
           projects={projectLimitsState}
           selectedIndex={settingsSelectedIndex}
+          section={settingsSection}
+          groups={groupVisibilityState}
         />
       </Box>
     );
@@ -869,12 +1022,16 @@ export function App({
               groupByProject={isMultiProject && activeProject === 'all'}
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
+              visibleGroups={visibleGroups}
+              groupCollapsed={groupCollapsed}
             />
           </Box>
 
           {/* Right panel: Task Detail */}
           <Box
             width="50%"
+            borderStyle="single"
+            borderColor={focusedPanel === 'details' ? 'cyan' : 'gray'}
             flexDirection="column"
           >
             <TaskDetail task={selectedTask} />

@@ -6,7 +6,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 
 interface HelpBarProps {
-  focusedPanel?: 'tasks' | 'logs';
+  focusedPanel?: 'tasks' | 'details' | 'logs';
   /** Whether in multi-project mode (shows tab shortcuts) */
   isMultiProject?: boolean;
 }
@@ -14,6 +14,8 @@ interface HelpBarProps {
 export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
+  const isDetailsFocused = focusedPanel === 'details';
+  const isTasksFocused = focusedPanel === 'tasks';
   
   return (
     <Box paddingX={1} justifyContent="space-between">
@@ -25,13 +27,18 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
             </>
           )}
-          <Text bold>j/k</Text> {isLogsFocused ? 'Scroll' : 'Navigate'}
+          <Text bold>j/k</Text> {isLogsFocused || isDetailsFocused ? 'Scroll' : 'Navigate'}
           {'  '}
           <Text bold>g/G</Text> Top/Bottom
           {'  '}
           {isLogsFocused ? (
             <>
               <Text bold>f</Text> Filter
+              {'  '}
+            </>
+          ) : isDetailsFocused ? (
+            <>
+              <Text bold>d</Text> Dependencies
               {'  '}
             </>
           ) : (

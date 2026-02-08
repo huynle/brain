@@ -9,9 +9,15 @@
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync } from "fs";
-import { join } from "path";
+import { join, dirname } from "path";
 import { homedir } from "os";
-import type { InstallTarget, InstallOptions, InstallResult } from "./shared/types";
+import type {
+  InstallTarget,
+  InstallOptions,
+  InstallResult,
+  AdditionalFile,
+  InstalledFile,
+} from "./shared/types";
 
 // ============================================================================
 // Embedded Plugin Sources
@@ -21,8 +27,33 @@ import type { InstallTarget, InstallOptions, InstallResult } from "./shared/type
 // When running as a compiled binary, they point to embedded data.
 // The `with { type: "file" }` syntax is Bun-specific and not recognized by tsc.
 
+// OpenCode main plugins
 // @ts-ignore - Bun import attribute syntax
 import opencodePluginPath from "./targets/opencode/brain.ts" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import opencodePlanningPluginPath from "./targets/opencode/brain-planning.ts" with { type: "file" };
+
+// OpenCode skills
+// @ts-ignore - Bun import attribute syntax
+import skillDoWorkPath from "./targets/opencode/skill/do-work/SKILL.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import skillBrainPlanningPath from "./targets/opencode/skill/brain-planning/SKILL.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import skillUsingBrainPath from "./targets/opencode/skill/using-brain/SKILL.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import skillProjectPlanningPath from "./targets/opencode/skill/project-planning/SKILL.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import skillWritingPlansPath from "./targets/opencode/skill/writing-plans/SKILL.md" with { type: "file" };
+
+// OpenCode commands
+// @ts-ignore - Bun import attribute syntax
+import commandDoPath from "./targets/opencode/command/do.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import commandWorkPath from "./targets/opencode/command/work.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import commandPlanToTasksPath from "./targets/opencode/command/plan-to-tasks.md" with { type: "file" };
+
+// Claude Code MCP server
 // @ts-ignore - Bun import attribute syntax
 import claudeCodePluginPath from "./targets/claude-code/brain-mcp.ts" with { type: "file" };
 // Note: cursor and antigravity plugins don't exist yet, we'll handle them gracefully
@@ -32,6 +63,58 @@ const EMBEDDED_PLUGINS: Partial<Record<InstallTarget, string>> = {
   opencode: opencodePluginPath,
   "claude-code": claudeCodePluginPath,
 };
+
+// Map of additional embedded files for each target
+const EMBEDDED_ADDITIONAL_FILES: Partial<Record<InstallTarget, Record<string, string>>> = {
+  opencode: {
+    "plugin/brain-planning.ts": opencodePlanningPluginPath,
+    "skill/do-work/SKILL.md": skillDoWorkPath,
+    "skill/brain-planning/SKILL.md": skillBrainPlanningPath,
+    "skill/using-brain/SKILL.md": skillUsingBrainPath,
+    "skill/project-planning/SKILL.md": skillProjectPlanningPath,
+    "skill/writing-plans/SKILL.md": skillWritingPlansPath,
+    "command/do.md": commandDoPath,
+    "command/work.md": commandWorkPath,
+    "command/plan-to-tasks.md": commandPlanToTasksPath,
+  },
+};
+
+// ============================================================================
+// Auto-Generated Header
+// ============================================================================
+
+/**
+ * Generate the auto-generated header comment for installed files.
+ */
+function generateHeader(fileType: "ts" | "md"): string {
+  const date = new Date().toISOString();
+  const lines = [
+    "AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY",
+    "",
+    "This file was installed by: brain install opencode",
+    "To update: brain install opencode --force",
+    "To check status: brain doctor",
+    "Source: https://github.com/huynle/brain-api",
+    `Generated: ${date}`,
+  ];
+
+  if (fileType === "ts") {
+    return [
+      "// ============================================================================",
+      ...lines.map((l) => (l ? `// ${l}` : "//")),
+      "// ============================================================================",
+      "",
+    ].join("\n");
+  } else {
+    // Markdown
+    return [
+      "<!--",
+      ...lines,
+      "-->",
+      "",
+    ].join("\n");
+  }
+}
 
 // ============================================================================
 // Target Configuration
@@ -46,18 +129,88 @@ interface TargetConfig {
   configFile?: string;
   configUpdater?: (configPath: string, pluginPath: string) => void;
   postInstall?: (pluginPath: string) => string[];
+  /** Additional files to install (skills, commands, etc.) */
+  additionalFiles?: AdditionalFile[];
 }
 
 const TARGETS: Record<InstallTarget, TargetConfig> = {
   opencode: {
     name: "OpenCode",
-    description: "OpenCode AI coding assistant",
-    configDir: (home) => join(home, "dot/config/opencode"),
-    pluginDir: (home) => join(home, "dot/config/opencode/plugin"),
+    description: "OpenCode AI coding assistant (with skills + commands)",
+    configDir: (home) => join(home, ".config/opencode"),
+    pluginDir: (home) => join(home, ".config/opencode/plugin"),
     pluginFile: "brain.ts",
     postInstall: () => [
-      "Plugin installed. OpenCode will automatically load it on next start.",
+      "All brain components installed. OpenCode will automatically load them on next start.",
       "Make sure the Brain API server is running: brain start",
+    ],
+    additionalFiles: [
+      // Additional plugin
+      {
+        sourcePath: "plugin/brain-planning.ts",
+        targetDir: (home) => join(home, ".config/opencode/plugin"),
+        targetFile: "brain-planning.ts",
+        description: "Brain planning enforcement plugin",
+        componentType: "plugin",
+      },
+      // Skills
+      {
+        sourcePath: "skill/do-work/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/do-work"),
+        targetFile: "SKILL.md",
+        description: "do-work skill (task queue processing)",
+        componentType: "skill",
+      },
+      {
+        sourcePath: "skill/brain-planning/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/brain-planning"),
+        targetFile: "SKILL.md",
+        description: "brain-planning skill (plan persistence)",
+        componentType: "skill",
+      },
+      {
+        sourcePath: "skill/using-brain/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/using-brain"),
+        targetFile: "SKILL.md",
+        description: "using-brain skill (knowledge patterns)",
+        componentType: "skill",
+      },
+      {
+        sourcePath: "skill/project-planning/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/project-planning"),
+        targetFile: "SKILL.md",
+        description: "project-planning skill (feature planning)",
+        componentType: "skill",
+      },
+      {
+        sourcePath: "skill/writing-plans/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/writing-plans"),
+        targetFile: "SKILL.md",
+        description: "writing-plans skill (implementation plans)",
+        componentType: "skill",
+      },
+      // Commands
+      {
+        sourcePath: "command/do.md",
+        targetDir: (home) => join(home, ".config/opencode/command"),
+        targetFile: "do.md",
+        description: "/do command (add tasks to queue)",
+        componentType: "command",
+      },
+      {
+        sourcePath: "command/work.md",
+        targetDir: (home) => join(home, ".config/opencode/command"),
+        targetFile: "work.md",
+        description: "/work command (process task queue)",
+        componentType: "command",
+      },
+      {
+        sourcePath: "command/plan-to-tasks.md",
+        targetDir: (home) => join(home, ".config/opencode/command"),
+        targetFile: "plan-to-tasks.md",
+        description: "/plan-to-tasks command (convert plan to tasks)",
+        componentType: "command",
+      },
     ],
   },
   "claude-code": {
@@ -155,9 +308,82 @@ export function checkTargetExists(target: InstallTarget): boolean {
   return existsSync(configDir);
 }
 
+/**
+ * Install a single file from embedded source.
+ * Helper function used by installPlugin for both main plugin and additional files.
+ */
+async function installSingleFile(
+  embeddedPath: string,
+  targetPath: string,
+  options: { force: boolean; dryRun: boolean; apiUrl?: string }
+): Promise<{ success: boolean; backupPath?: string; error?: string }> {
+  const { force, dryRun, apiUrl } = options;
+  const targetDir = dirname(targetPath);
+
+  // Ensure target directory exists
+  if (!existsSync(targetDir)) {
+    if (!dryRun) {
+      mkdirSync(targetDir, { recursive: true });
+    }
+  }
+
+  // Check if file already exists
+  let backupPath: string | undefined;
+  if (existsSync(targetPath)) {
+    if (!force) {
+      return { success: false, error: `File exists: ${targetPath}` };
+    }
+    // Create backup
+    backupPath = `${targetPath}.backup-${Date.now()}`;
+    if (!dryRun) {
+      renameSync(targetPath, backupPath);
+    }
+  }
+
+  if (!dryRun) {
+    // Read source from embedded file (works in both bun run and compiled binary)
+    let content = await Bun.file(embeddedPath).text();
+
+    // Determine file type for header
+    const fileType = targetPath.endsWith(".ts") ? "ts" : "md";
+
+    // Add auto-generated header at the top
+    const header = generateHeader(fileType);
+
+    // For TypeScript files, insert header after any existing // @ts-nocheck comment
+    if (fileType === "ts") {
+      // Check if file starts with @ts-nocheck
+      if (content.startsWith("// @ts-nocheck")) {
+        const firstNewline = content.indexOf("\n");
+        content = content.slice(0, firstNewline + 1) + header + content.slice(firstNewline + 1);
+      } else {
+        content = header + content;
+      }
+
+      // Replace template variables
+      content = content.replace(/\{\{GENERATED_DATE\}\}/g, new Date().toISOString());
+      if (apiUrl) {
+        content = content.replace(
+          /const BRAIN_API_URL = process\.env\.BRAIN_API_URL \|\| "http:\/\/localhost:3333"/,
+          `const BRAIN_API_URL = process.env.BRAIN_API_URL || "${apiUrl}"`
+        );
+      }
+    } else {
+      // For markdown files, add header at the top
+      content = header + content;
+    }
+
+    // Write file
+    writeFileSync(targetPath, content);
+  }
+
+  return { success: true, backupPath };
+}
+
 export async function installPlugin(options: InstallOptions): Promise<InstallResult> {
   const { target, force = false, dryRun = false, apiUrl } = options;
   const config = getTargetConfig(target);
+  const home = homedir();
   const { pluginDir, pluginPath, configPath } = resolveTargetPaths(target);
 
   // Get embedded plugin source (works in both bun run and compiled binary)
@@ -171,88 +397,149 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     };
   }
 
-  // Check if target directory exists
-  if (!existsSync(pluginDir)) {
-    if (dryRun) {
-      return {
-        success: true,
-        target,
-        installedPath: pluginPath,
-        message: `[DRY RUN] Would create directory: ${pluginDir}`,
-      };
-    }
-    mkdirSync(pluginDir, { recursive: true });
-  }
+  // Track all installed files
+  const installedFiles: InstalledFile[] = [];
+  const dryRunMessages: string[] = [];
 
-  // Check if plugin already exists
-  let backupPath: string | undefined;
-  if (existsSync(pluginPath)) {
-    if (!force) {
-      return {
-        success: false,
-        target,
-        installedPath: pluginPath,
-        message: `Plugin already exists at ${pluginPath}. Use --force to overwrite.`,
-      };
-    }
-    // Create backup
-    backupPath = `${pluginPath}.backup-${Date.now()}`;
-    if (!dryRun) {
-      renameSync(pluginPath, backupPath);
-    }
-  }
-
+  // -------------------------------------------------------------------------
+  // Install main plugin
+  // -------------------------------------------------------------------------
   if (dryRun) {
-    const messages = [
-      `[DRY RUN] Would install plugin to: ${pluginPath}`,
-      backupPath ? `[DRY RUN] Would backup existing to: ${backupPath}` : null,
-      configPath ? `[DRY RUN] Would update config: ${configPath}` : null,
-    ].filter(Boolean);
+    dryRunMessages.push(`[DRY RUN] Would install main plugin to: ${pluginPath}`);
+  }
+
+  const mainResult = await installSingleFile(embeddedPath, pluginPath, { force, dryRun, apiUrl });
+  if (!mainResult.success) {
+    return {
+      success: false,
+      target,
+      installedPath: pluginPath,
+      message: `${mainResult.error}. Use --force to overwrite.`,
+    };
+  }
+
+  installedFiles.push({
+    sourcePath: config.pluginFile,
+    targetPath: pluginPath,
+    componentType: "plugin",
+    description: `${config.name} main plugin`,
+    backupPath: mainResult.backupPath,
+  });
+
+  // -------------------------------------------------------------------------
+  // Install additional files (skills, commands, etc.)
+  // -------------------------------------------------------------------------
+  const additionalFiles = config.additionalFiles || [];
+  const embeddedAdditional = EMBEDDED_ADDITIONAL_FILES[target] || {};
+
+  for (const file of additionalFiles) {
+    const embeddedFilePath = embeddedAdditional[file.sourcePath];
+    if (!embeddedFilePath) {
+      // Skip if embedded file not found (shouldn't happen if config is correct)
+      console.warn(`Warning: Embedded file not found for ${file.sourcePath}`);
+      continue;
+    }
+
+    const targetDir = file.targetDir(home);
+    const targetFilePath = join(targetDir, file.targetFile);
+
+    if (dryRun) {
+      dryRunMessages.push(`[DRY RUN] Would install ${file.description} to: ${targetFilePath}`);
+    }
+
+    const result = await installSingleFile(embeddedFilePath, targetFilePath, { force, dryRun, apiUrl });
+    if (!result.success) {
+      // For additional files, we warn but continue
+      console.warn(`Warning: Could not install ${file.description}: ${result.error}`);
+      continue;
+    }
+
+    installedFiles.push({
+      sourcePath: file.sourcePath,
+      targetPath: targetFilePath,
+      componentType: file.componentType,
+      description: file.description,
+      backupPath: result.backupPath,
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // Update config if needed
+  // -------------------------------------------------------------------------
+  if (configPath && config.configUpdater) {
+    if (dryRun) {
+      dryRunMessages.push(`[DRY RUN] Would update config: ${configPath}`);
+    } else {
+      config.configUpdater(configPath, pluginPath);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Build result message
+  // -------------------------------------------------------------------------
+  if (dryRun) {
     return {
       success: true,
       target,
       installedPath: pluginPath,
-      message: messages.join("\n"),
-      backupPath,
+      message: dryRunMessages.join("\n"),
+      installedFiles,
     };
   }
 
-  // Read source from embedded file (works in both bun run and compiled binary)
-  // Bun.file() handles both regular paths and $bunfs:// paths
-  let content = await Bun.file(embeddedPath).text();
+  // Group installed files by component type
+  const plugins = installedFiles.filter((f) => f.componentType === "plugin");
+  const skills = installedFiles.filter((f) => f.componentType === "skill");
+  const commands = installedFiles.filter((f) => f.componentType === "command");
 
-  // Replace template variables
-  content = content.replace(/\{\{GENERATED_DATE\}\}/g, new Date().toISOString());
-  if (apiUrl) {
-    content = content.replace(
-      /const BRAIN_API_URL = process\.env\.BRAIN_API_URL \|\| "http:\/\/localhost:3333"/,
-      `const BRAIN_API_URL = process.env.BRAIN_API_URL || "${apiUrl}"`
-    );
-  }
-
-  // Write plugin file
-  writeFileSync(pluginPath, content);
-
-  // Update config if needed
-  if (configPath && config.configUpdater) {
-    config.configUpdater(configPath, pluginPath);
-  }
-
-  // Build result message
   const postInstallMessages = config.postInstall ? config.postInstall(pluginPath) : [];
-  const messages = [
-    `Successfully installed ${config.name} plugin to:`,
-    `  ${pluginPath}`,
-    backupPath ? `\nPrevious version backed up to:\n  ${backupPath}` : "",
-    postInstallMessages.length > 0 ? `\n${postInstallMessages.join("\n")}` : "",
-  ].filter(Boolean);
+
+  const messages: string[] = [
+    `Successfully installed ${config.name} components:`,
+    "",
+  ];
+
+  if (plugins.length > 0) {
+    messages.push(`Plugins (${plugins.length}):`);
+    for (const f of plugins) {
+      messages.push(`  - ${f.targetPath}`);
+    }
+    messages.push("");
+  }
+
+  if (skills.length > 0) {
+    messages.push(`Skills (${skills.length}):`);
+    for (const f of skills) {
+      messages.push(`  - ${f.description}`);
+    }
+    messages.push("");
+  }
+
+  if (commands.length > 0) {
+    messages.push(`Commands (${commands.length}):`);
+    for (const f of commands) {
+      messages.push(`  - ${f.description}`);
+    }
+    messages.push("");
+  }
+
+  // Show any backups
+  const backups = installedFiles.filter((f) => f.backupPath);
+  if (backups.length > 0) {
+    messages.push(`Backups created: ${backups.length}`);
+  }
+
+  if (postInstallMessages.length > 0) {
+    messages.push("");
+    messages.push(...postInstallMessages);
+  }
 
   return {
     success: true,
     target,
     installedPath: pluginPath,
     message: messages.join("\n"),
-    backupPath,
+    installedFiles,
   };
 }
 

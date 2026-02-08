@@ -250,8 +250,12 @@ Start now.`;
     promptFile: string,
     windowName?: string
   ): Promise<SpawnResult> {
-    // Use short ID (first 8 chars) with project prefix for cleaner tmux window names
-    const shortId = task.id.substring(0, 8);
+    // Use short ID for cleaner tmux window names
+    // For proper 8-char IDs: use as-is
+    // For timestamp-slug IDs (1770551481834-update-...): use last 8 chars from slug
+    const shortId = task.id.length > 8 
+      ? task.id.slice(-8)  // Last 8 chars (from slug portion)
+      : task.id;           // Already short
     const name = windowName ?? `${projectId}-${shortId}`;
 
     // Build runner script that OpenCode TUI runs in

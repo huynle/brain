@@ -391,6 +391,25 @@ export class BrainService {
         );
       }
 
+      // Target workdir for task execution
+      if (request.target_workdir) {
+        zkArgs.push("--extra", `target_workdir=${request.target_workdir}`);
+      }
+
+      // Feature grouping for tasks
+      if (request.feature_id) {
+        zkArgs.push("--extra", `feature_id=${request.feature_id}`);
+      }
+      if (request.feature_priority) {
+        zkArgs.push("--extra", `feature_priority=${request.feature_priority}`);
+      }
+      if (request.feature_depends_on && request.feature_depends_on.length > 0) {
+        const formattedFeatureDeps = request.feature_depends_on
+          .map((d) => `\n  - "${d.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+          .join("");
+        zkArgs.push("--extra", `feature_depends_on=${formattedFeatureDeps}`);
+      }
+
       if (!isGlobal) {
         zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
       }
@@ -433,8 +452,13 @@ export class BrainService {
         worktree: request.worktree,
         git_remote: request.git_remote,
         git_branch: request.git_branch,
+        target_workdir: request.target_workdir,
         // User intent for validation
         user_original_request: request.user_original_request,
+        // Feature grouping
+        feature_id: request.feature_id,
+        feature_priority: request.feature_priority,
+        feature_depends_on: request.feature_depends_on,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;

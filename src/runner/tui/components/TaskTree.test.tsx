@@ -1318,6 +1318,120 @@ describe('TaskTree groupByFeature', () => {
     });
   });
 
+  describe('pause indicator', () => {
+    it('shows pause indicator when feature is in pausedFeatures set', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      const pausedFeatures = new Set(['auth-system']);
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+          pausedFeatures={pausedFeatures}
+        />
+      );
+      // The pause indicator should be visible next to the feature name
+      expect(lastFrame()).toContain('⏸');
+      expect(lastFrame()).toContain('Feature: auth-system');
+    });
+
+    it('does not show pause indicator when feature is not paused', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      const pausedFeatures = new Set<string>(); // Empty set - no paused features
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+          pausedFeatures={pausedFeatures}
+        />
+      );
+      // No pause indicator should be visible
+      expect(lastFrame()).not.toContain('⏸');
+      expect(lastFrame()).toContain('Feature: auth-system');
+    });
+
+    it('shows pause indicator only for paused features when multiple features exist', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+        createTask({ id: '2', title: 'Task 2', feature_id: 'payment-flow' }),
+      ];
+      const pausedFeatures = new Set(['auth-system']); // Only auth-system is paused
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+          pausedFeatures={pausedFeatures}
+        />
+      );
+      const frame = lastFrame() || '';
+      // auth-system should have pause indicator
+      expect(frame).toContain('Feature: auth-system');
+      expect(frame).toContain('⏸');
+      // payment-flow should NOT have pause indicator
+      expect(frame).toContain('Feature: payment-flow');
+      // Count occurrences of pause indicator - should only be 1
+      const pauseCount = (frame.match(/⏸/g) || []).length;
+      expect(pauseCount).toBe(1);
+    });
+
+    it('pause indicator appears after feature name and before stats', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system', status: 'pending' }),
+        createTask({ id: '2', title: 'Task 2', feature_id: 'auth-system', status: 'completed' }),
+      ];
+      const pausedFeatures = new Set(['auth-system']);
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+          pausedFeatures={pausedFeatures}
+        />
+      );
+      const frame = lastFrame() || '';
+      // The order should be: Feature: auth-system ⏸ [1/2 complete]
+      const featureIndex = frame.indexOf('auth-system');
+      const pauseIndex = frame.indexOf('⏸');
+      const statsIndex = frame.indexOf('[1/2 complete]');
+      
+      expect(featureIndex).toBeLessThan(pauseIndex);
+      expect(pauseIndex).toBeLessThan(statsIndex);
+    });
+
+    it('defaults to empty set when pausedFeatures not provided', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Task 1', feature_id: 'auth-system' }),
+      ];
+      // Not passing pausedFeatures prop at all
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          groupByFeature={true}
+        />
+      );
+      // No pause indicator should be visible (default empty set)
+      expect(lastFrame()).not.toContain('⏸');
+      expect(lastFrame()).toContain('Feature: auth-system');
+    });
+  });
+
   describe('completed tasks in features', () => {
     it('hides completed tasks when completedCollapsed is true', () => {
       const tasks = [

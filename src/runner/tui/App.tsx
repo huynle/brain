@@ -38,12 +38,13 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { StatusPopup } from './components/StatusPopup';
 import { SettingsPopup } from './components/SettingsPopup';
+import { PausePopup, type PauseTarget } from './components/PausePopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
@@ -83,6 +84,9 @@ const STATUS_LABELS: Record<string, string> = {
   archived: 'Archived',
 };
 
+/** Allowed statuses for bulk feature status changes */
+const BULK_STATUS_OPTIONS: EntryStatus[] = ['pending', 'completed', 'cancelled', 'draft'];
+
 export function App({ 
   config, 
   onLogCallback, 
@@ -99,6 +103,9 @@ export function App({
   getResourceMetrics,
   getProjectLimits,
   setProjectLimit,
+  onPauseFeature,
+  onResumeFeature,
+  getPausedFeatures,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -115,11 +122,14 @@ export function App({
   const [showHelp, setShowHelp] = useState(false);
   const [showStatusPopup, setShowStatusPopup] = useState(false);
   const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
+  // Track bulk mode for feature header status changes
+  const [bulkStatusFeatureId, setBulkStatusFeatureId] = useState<string | null>(null);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
+  const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
   
   // Group visibility settings - which status groups to display
   // Default: show draft, pending, active, in_progress, blocked, completed
@@ -145,10 +155,13 @@ export function App({
   const [groupVisibilityState, setGroupVisibilityState] = useState<GroupVisibilityEntry[]>([]);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
+  const [pausedFeatures, setPausedFeatures] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
   const [detailsScrollOffset, setDetailsScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [showPausePopup, setShowPausePopup] = useState(false);
+  const [pausePopupTarget, setPausePopupTarget] = useState<PauseTarget>('project');
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(true);
 
@@ -281,6 +294,21 @@ export function App({
     });
   }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
 
+  // Sync pausedFeatures from TaskRunner
+  useEffect(() => {
+    if (!getPausedFeatures) return;
+    
+    const paused = getPausedFeatures();
+    const pausedSet = new Set(paused);
+    
+    setPausedFeatures(prev => {
+      if (setsEqual(prev, pausedSet)) {
+        return prev;
+      }
+      return pausedSet;
+    });
+  }, [getPausedFeatures, tasks]); // Re-sync when tasks change (poll interval)
+
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
     setCompletedCollapsed(prev => !prev);
@@ -296,8 +324,8 @@ export function App({
   // Get task IDs in visual tree order for navigation (j/k keys)
   // This ensures navigation follows the same order tasks appear on screen
   const navigationOrder = useMemo(
-    () => flattenFeatureOrder(tasks, completedCollapsed, draftCollapsed), 
-    [tasks, completedCollapsed, draftCollapsed]
+    () => flattenFeatureOrder(tasks, completedCollapsed, draftCollapsed, collapsedFeatures), 
+    [tasks, completedCollapsed, draftCollapsed, collapsedFeatures]
   );
 
   // Auto-scroll task list to keep selected task in view
@@ -365,18 +393,23 @@ export function App({
   useInput((input, key) => {
     // === Status Popup Mode ===
     if (showStatusPopup) {
+      // Determine which status list to use (bulk mode uses limited options)
+      const isBulkMode = bulkStatusFeatureId !== null;
+      const statusList = isBulkMode ? BULK_STATUS_OPTIONS : ENTRY_STATUSES;
+      
       // Escape to close popup
       if (key.escape) {
         setShowStatusPopup(false);
+        setBulkStatusFeatureId(null);
         return;
       }
 
       // Navigate status list with j/k or arrows
       if (key.upArrow || input === 'k') {
         setPopupSelectedStatus((prev) => {
-          const currentIndex = ENTRY_STATUSES.indexOf(prev);
+          const currentIndex = statusList.indexOf(prev);
           if (currentIndex > 0) {
-            return ENTRY_STATUSES[currentIndex - 1];
+            return statusList[currentIndex - 1];
           }
           return prev;
         });
@@ -385,9 +418,9 @@ export function App({
 
       if (key.downArrow || input === 'j') {
         setPopupSelectedStatus((prev) => {
-          const currentIndex = ENTRY_STATUSES.indexOf(prev);
-          if (currentIndex < ENTRY_STATUSES.length - 1) {
-            return ENTRY_STATUSES[currentIndex + 1];
+          const currentIndex = statusList.indexOf(prev);
+          if (currentIndex < statusList.length - 1) {
+            return statusList[currentIndex + 1];
           }
           return prev;
         });
@@ -395,32 +428,69 @@ export function App({
       }
 
       // Enter to confirm status change
-      if (key.return && selectedTask && onUpdateStatus) {
+      if (key.return && onUpdateStatus) {
         const newStatus = popupSelectedStatus;
         setShowStatusPopup(false);
         
-        addLog({
-          level: 'info',
-          message: `Updating status: ${selectedTask.title} → ${newStatus}`,
-          taskId: selectedTask.id,
-        });
-        
-        onUpdateStatus(selectedTask.id, selectedTask.path, newStatus)
-          .then(() => {
-            addLog({
-              level: 'info',
-              message: `Status updated: ${selectedTask.title} is now ${newStatus}`,
-              taskId: selectedTask.id,
-            });
-            refetch(); // Refresh to show updated status
-          })
-          .catch((err) => {
-            addLog({
-              level: 'error',
-              message: `Failed to update status: ${err}`,
-              taskId: selectedTask.id,
-            });
+        // Handle bulk update for feature headers
+        if (isBulkMode && bulkStatusFeatureId) {
+          // Get all tasks in this feature
+          const featureTasks = tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+          
+          addLog({
+            level: 'info',
+            message: `Bulk updating ${featureTasks.length} tasks in feature "${bulkStatusFeatureId}" → ${newStatus}`,
           });
+          
+          // Update all tasks in parallel
+          Promise.all(
+            featureTasks.map(task => 
+              onUpdateStatus(task.id, task.path, newStatus)
+            )
+          )
+            .then(() => {
+              addLog({
+                level: 'info',
+                message: `Updated ${featureTasks.length} tasks in feature "${bulkStatusFeatureId}" to ${newStatus}`,
+              });
+              refetch(); // Refresh to show updated statuses
+            })
+            .catch((err) => {
+              addLog({
+                level: 'error',
+                message: `Failed to bulk update status: ${err}`,
+              });
+            });
+          
+          setBulkStatusFeatureId(null);
+          return;
+        }
+        
+        // Single task update
+        if (selectedTask) {
+          addLog({
+            level: 'info',
+            message: `Updating status: ${selectedTask.title} → ${newStatus}`,
+            taskId: selectedTask.id,
+          });
+          
+          onUpdateStatus(selectedTask.id, selectedTask.path, newStatus)
+            .then(() => {
+              addLog({
+                level: 'info',
+                message: `Status updated: ${selectedTask.title} is now ${newStatus}`,
+                taskId: selectedTask.id,
+              });
+              refetch(); // Refresh to show updated status
+            })
+            .catch((err) => {
+              addLog({
+                level: 'error',
+                message: `Failed to update status: ${err}`,
+                taskId: selectedTask.id,
+              });
+            });
+        }
         return;
       }
 
@@ -598,6 +668,80 @@ export function App({
       return;
     }
 
+    // === Pause Popup Mode ===
+    if (showPausePopup) {
+      // Get the feature ID from the selected task
+      const pauseFeatureId = selectedTask?.feature_id;
+      const hasFeature = !!pauseFeatureId;
+
+      // Escape to close popup
+      if (key.escape) {
+        setShowPausePopup(false);
+        return;
+      }
+
+      // Navigate between project and feature (only if feature exists)
+      if (hasFeature && (key.upArrow || input === 'k' || key.downArrow || input === 'j')) {
+        setPausePopupTarget(prev => prev === 'project' ? 'feature' : 'project');
+        return;
+      }
+
+      // Enter to confirm selection
+      if (key.return) {
+        const targetProject = activeProject === 'all' 
+          ? (isMultiProject ? projects[0] : projects[0]) 
+          : activeProject;
+
+        if (pausePopupTarget === 'project') {
+          // Pause/resume project
+          const isPaused = pausedProjects.has(targetProject);
+          if (isPaused && onResume) {
+            addLog({ level: 'info', message: `Resuming ${targetProject}...` });
+            setPausedProjects(prev => {
+              const next = new Set(prev);
+              next.delete(targetProject);
+              return next;
+            });
+            Promise.resolve(onResume(targetProject)).catch((err) => {
+              addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
+            });
+          } else if (!isPaused && onPause) {
+            addLog({ level: 'info', message: `Pausing ${targetProject}...` });
+            setPausedProjects(prev => new Set([...prev, targetProject]));
+            Promise.resolve(onPause(targetProject)).catch((err) => {
+              addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
+            });
+          }
+        } else if (pausePopupTarget === 'feature' && pauseFeatureId) {
+          // Pause/resume feature
+          const isFeaturePaused = pausedFeatures.has(pauseFeatureId);
+          if (isFeaturePaused && onResumeFeature) {
+            addLog({ level: 'info', message: `Resuming feature: ${pauseFeatureId}...` });
+            setPausedFeatures(prev => {
+              const next = new Set(prev);
+              next.delete(pauseFeatureId);
+              return next;
+            });
+            Promise.resolve(onResumeFeature(pauseFeatureId)).catch((err) => {
+              addLog({ level: 'error', message: `Failed to resume feature ${pauseFeatureId}: ${err}` });
+            });
+          } else if (!isFeaturePaused && onPauseFeature) {
+            addLog({ level: 'info', message: `Pausing feature: ${pauseFeatureId}...` });
+            setPausedFeatures(prev => new Set([...prev, pauseFeatureId]));
+            Promise.resolve(onPauseFeature(pauseFeatureId)).catch((err) => {
+              addLog({ level: 'error', message: `Failed to pause feature ${pauseFeatureId}: ${err}` });
+            });
+          }
+        }
+
+        setShowPausePopup(false);
+        return;
+      }
+
+      // Block all other input when popup is open
+      return;
+    }
+
     // === Normal Mode ===
     // Note: Quit via Ctrl-C is handled by SIGINT handler (lines 487-500)
 
@@ -713,10 +857,29 @@ export function App({
       return;
     }
 
-    // Open status popup for selected task (s key) - only when focused on tasks panel
-    if (input === 's' && focusedPanel === 'tasks' && selectedTask) {
-      setPopupSelectedStatus(selectedTask.status);
-      setShowStatusPopup(true);
+    // Open status popup for selected task or feature header (s key) - only when focused on tasks panel
+    if (input === 's' && focusedPanel === 'tasks') {
+      // Check if a feature header is selected
+      if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+        const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+        const featureTasks = tasks.filter(t => t.feature_id === featureId);
+        
+        if (featureTasks.length > 0) {
+          // Set bulk mode with the feature ID
+          setBulkStatusFeatureId(featureId);
+          // Default to 'pending' for bulk operations
+          setPopupSelectedStatus('pending');
+          setShowStatusPopup(true);
+        }
+        return;
+      }
+      
+      // Single task status change
+      if (selectedTask) {
+        setBulkStatusFeatureId(null);
+        setPopupSelectedStatus(selectedTask.status);
+        setShowStatusPopup(true);
+      }
       return;
     }
 
@@ -780,7 +943,17 @@ export function App({
 
     // Pause/Resume handling (async — fire-and-forget with error logging)
     // 'p' - toggle pause for current project (or all if viewing "all")
+    // If selected task has a feature_id, show popup to choose project vs feature
     if (input === 'p') {
+      // Check if selected task has a feature_id
+      if (selectedTask?.feature_id) {
+        // Show popup to let user choose between project and feature pause
+        setPausePopupTarget('project'); // Default to project
+        setShowPausePopup(true);
+        return;
+      }
+
+      // No feature_id - pause project directly (original behavior)
       const targetProject = activeProject === 'all' 
         ? (isMultiProject ? 'all' : projects[0]) 
         : activeProject;
@@ -932,6 +1105,20 @@ export function App({
           setDraftCollapsed(prev => !prev);
           return;
         }
+        // Toggle feature section if feature header is selected
+        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+          const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            if (next.has(featureId)) {
+              next.delete(featureId);
+            } else {
+              next.add(featureId);
+            }
+            return next;
+          });
+          return;
+        }
         // Toggle dynamic group section if group header is selected
         if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
           const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');
@@ -1075,16 +1262,37 @@ export function App({
   }
 
   // Status popup overlay
-  if (showStatusPopup && selectedTask) {
-    return (
-      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
-        <StatusPopup
-          currentStatus={selectedTask.status}
-          selectedStatus={popupSelectedStatus}
-          taskTitle={selectedTask.title}
-        />
-      </Box>
-    );
+  if (showStatusPopup) {
+    // Bulk mode for feature headers
+    if (bulkStatusFeatureId) {
+      const featureTasks = tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+      return (
+        <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+          <StatusPopup
+            currentStatus="pending"
+            selectedStatus={popupSelectedStatus}
+            taskTitle=""
+            bulkMode={true}
+            bulkFeatureId={bulkStatusFeatureId}
+            bulkTaskCount={featureTasks.length}
+            allowedStatuses={BULK_STATUS_OPTIONS}
+          />
+        </Box>
+      );
+    }
+    
+    // Single task mode
+    if (selectedTask) {
+      return (
+        <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+          <StatusPopup
+            currentStatus={selectedTask.status}
+            selectedStatus={popupSelectedStatus}
+            taskTitle={selectedTask.title}
+          />
+        </Box>
+      );
+    }
   }
 
   // Settings popup overlay
@@ -1096,6 +1304,25 @@ export function App({
           selectedIndex={settingsSelectedIndex}
           section={settingsSection}
           groups={groupVisibilityState}
+        />
+      </Box>
+    );
+  }
+
+  // Pause popup overlay
+  if (showPausePopup && selectedTask) {
+    const targetProject = activeProject === 'all' 
+      ? (isMultiProject ? projects[0] : projects[0]) 
+      : activeProject;
+    
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <PausePopup
+          projectId={targetProject}
+          featureId={selectedTask.feature_id}
+          selectedTarget={pausePopupTarget}
+          isProjectPaused={pausedProjects.has(targetProject)}
+          isFeaturePaused={selectedTask.feature_id ? pausedFeatures.has(selectedTask.feature_id) : false}
         />
       </Box>
     );
@@ -1140,6 +1367,7 @@ export function App({
               groupByFeature={true}
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
+              collapsedFeatures={collapsedFeatures}
             />
           </Box>
 

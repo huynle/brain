@@ -34,6 +34,14 @@ export interface StatusPopupProps {
   selectedStatus: EntryStatus;
   /** Task title to show in header */
   taskTitle: string;
+  /** When true, shows bulk mode with limited status options */
+  bulkMode?: boolean;
+  /** Feature ID for bulk mode (shown in header) */
+  bulkFeatureId?: string;
+  /** Number of tasks to be updated in bulk mode */
+  bulkTaskCount?: number;
+  /** Custom list of allowed statuses (for bulk mode) */
+  allowedStatuses?: EntryStatus[];
 }
 
 // Status colors, icons, and labels are now imported from shared status-display.ts
@@ -42,6 +50,10 @@ export function StatusPopup({
   currentStatus,
   selectedStatus,
   taskTitle,
+  bulkMode = false,
+  bulkFeatureId,
+  bulkTaskCount,
+  allowedStatuses,
 }: StatusPopupProps): React.ReactElement {
   // Truncate title if too long
   const maxTitleLen = 30;
@@ -49,23 +61,35 @@ export function StatusPopup({
     ? taskTitle.slice(0, maxTitleLen - 3) + '...'
     : taskTitle;
 
+  // Use allowed statuses if provided, otherwise all statuses
+  const statusList = allowedStatuses ?? ENTRY_STATUSES;
+
   return (
     <Box
       flexDirection="column"
       borderStyle="round"
-      borderColor="cyan"
+      borderColor={bulkMode ? 'yellow' : 'cyan'}
       paddingX={2}
       paddingY={1}
     >
       {/* Header */}
-      <Box marginBottom={1}>
-        <Text bold color="cyan">Change Status</Text>
-        <Text dimColor> - {displayTitle}</Text>
+      <Box marginBottom={1} flexDirection="column">
+        {bulkMode ? (
+          <>
+            <Text bold color="yellow">Bulk Change Status</Text>
+            <Text dimColor>Feature: {bulkFeatureId} ({bulkTaskCount} tasks)</Text>
+          </>
+        ) : (
+          <>
+            <Text bold color="cyan">Change Status</Text>
+            <Text dimColor> - {displayTitle}</Text>
+          </>
+        )}
       </Box>
 
       {/* Status list */}
       <Box flexDirection="column">
-        {ENTRY_STATUSES.map((status) => {
+        {statusList.map((status) => {
           const isSelected = status === selectedStatus;
           const isCurrent = status === currentStatus;
           const color = getStatusColor(status);
@@ -92,7 +116,7 @@ export function StatusPopup({
               </Text>
               
               {/* Current indicator */}
-              {isCurrent && (
+              {isCurrent && !bulkMode && (
                 <Text dimColor> (current)</Text>
               )}
             </Box>

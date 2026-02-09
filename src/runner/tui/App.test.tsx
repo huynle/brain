@@ -602,3 +602,87 @@ describe('App - Logs Panel Visibility Toggle', () => {
     unmount();
   });
 });
+
+// =============================================================================
+// PausePopup Integration Tests
+// =============================================================================
+
+describe('App - PausePopup Integration', () => {
+  it('accepts onPauseFeature and onResumeFeature callback props', () => {
+    // Verify that feature pause callbacks can be passed as props without errors
+    const mockPauseFeature = async (_featureId: string): Promise<void> => {};
+    const mockResumeFeature = async (_featureId: string): Promise<void> => {};
+    
+    expect(() => {
+      const { unmount } = render(
+        <App 
+          config={defaultConfig} 
+          onPauseFeature={mockPauseFeature}
+          onResumeFeature={mockResumeFeature}
+        />
+      );
+      unmount();
+    }).not.toThrow();
+  });
+
+  it('accepts getPausedFeatures callback prop', () => {
+    // Verify that getPausedFeatures can be passed as a prop without errors
+    const mockGetPausedFeatures = (): string[] => ['feature-1', 'feature-2'];
+    
+    expect(() => {
+      const { unmount } = render(
+        <App 
+          config={defaultConfig} 
+          getPausedFeatures={mockGetPausedFeatures}
+        />
+      );
+      unmount();
+    }).not.toThrow();
+  });
+
+  it('can send p key without crashing', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Send 'p' for pause/resume
+    stdin.write('p');
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('p key does not show popup when no task is selected', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Send 'p' without selecting a task first
+    stdin.write('p');
+    
+    const frame = lastFrame() || '';
+    // Should NOT show pause popup (no task selected means no feature_id check)
+    // Instead it should directly pause/resume the project
+    expect(frame.includes('Pause/Resume')).toBe(false);
+    
+    unmount();
+  });
+
+  it('Escape key does not crash in normal mode', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Send Escape in normal mode (should do nothing)
+    stdin.write('\x1B'); // Escape key
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('p shortcut shown in help bar', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // HelpBar should include 'p' for pause
+    expect(frame).toContain('Pause');
+    unmount();
+  });
+});

@@ -24,6 +24,8 @@ import {
   ComputedFeatureSchema,
   FeatureListResponseSchema,
   NotFoundResponseSchema,
+  TaskStatusRequestSchema,
+  TaskStatusResponseSchema,
 } from "./schemas";
 
 // =============================================================================
@@ -335,6 +337,43 @@ const getClaimStatusRoute = createRoute({
       content: {
         "application/json": {
           schema: ClaimStatusResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// POST /:projectId/status - Get status of multiple tasks with optional long-polling
+const getTasksStatusRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/status",
+  tags: ["Tasks"],
+  summary: "Get status of multiple tasks with optional long-polling",
+  description: "Check the status of multiple tasks by ID. Optionally block until a condition is met (all completed or any change) with configurable timeout.",
+  request: {
+    params: ProjectIdParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: TaskStatusRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Task statuses",
+      content: {
+        "application/json": {
+          schema: TaskStatusResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable (zk CLI required)",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
         },
       },
     },
@@ -712,6 +751,154 @@ export function createTaskRoutes(): OpenAPIHono {
       claimedAt: new Date(claim.claimedAt).toISOString(),
       isStale: isClaimStale(claim),
     }, 200);
+  });
+
+  // POST /:projectId/status - Get status of multiple tasks with optional long-polling
+  tasks.openapi(getTasksStatusRoute, async (c) => {
+    const { projectId } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const { taskIds, waitFor, timeout = 60000 } = body;
+
+    // Enforce max timeout
+    const maxTimeout = Math.min(timeout, 300000);
+    const pollInterval = 1000; // 1 second
+    const startTime = Date.now();
+
+    const taskService = getTaskService();
+
+    // Helper to get current task statuses
+    const getStatuses = async () => {
+      try {
+        const result = await taskService.getTasksWithDependencies(projectId);
+        const taskMap = new Map(result.tasks.map((t) => [t.id, t]));
+
+        const foundTasks = [];
+        const notFound = [];
+
+        for (const id of taskIds) {
+          const task = taskMap.get(id);
+          if (task) {
+            foundTasks.push({
+              id: task.id,
+              title: task.title,
+              status: task.status,
+              priority: task.priority,
+              classification: task.classification,
+            });
+          } else {
+            notFound.push(id);
+          }
+        }
+
+        return { tasks: foundTasks, notFound };
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("zk CLI not available")) {
+          throw error; // Re-throw to be caught by outer handler
+        }
+        throw error;
+      }
+    };
+
+    try {
+      let previousStatuses: Record<string, string> = {};
+      let changed = false;
+
+      // Initial fetch
+      let current = await getStatuses();
+
+      // If no waitFor, return immediately
+      if (!waitFor) {
+        return c.json({
+          tasks: current.tasks,
+          notFound: current.notFound,
+          changed: false,
+          timedOut: false,
+        }, 200);
+      }
+
+      // Store initial statuses for comparison
+      for (const task of current.tasks) {
+        previousStatuses[task.id] = task.status;
+      }
+
+      // Long-polling loop
+      while (true) {
+        // Check conditions
+        if (waitFor === "completed") {
+          const allDone = current.tasks.every((t) =>
+            t.status === "completed" || t.status === "validated"
+          );
+          if (allDone) {
+            return c.json({
+              tasks: current.tasks,
+              notFound: current.notFound,
+              changed: true,
+              timedOut: false,
+            }, 200);
+          }
+        }
+
+        if (waitFor === "any") {
+          // Check if any status changed from previous poll
+          for (const task of current.tasks) {
+            if (previousStatuses[task.id] && previousStatuses[task.id] !== task.status) {
+              changed = true;
+              break;
+            }
+          }
+          if (changed) {
+            return c.json({
+              tasks: current.tasks,
+              notFound: current.notFound,
+              changed: true,
+              timedOut: false,
+            }, 200);
+          }
+        }
+
+        // Check timeout
+        if (Date.now() - startTime >= maxTimeout) {
+          return c.json({
+            tasks: current.tasks,
+            notFound: current.notFound,
+            changed,
+            timedOut: true,
+          }, 200);
+        }
+
+        // Wait before next poll
+        await new Promise((resolve) => setTimeout(resolve, pollInterval));
+
+        // Fetch new statuses
+        current = await getStatuses();
+
+        // Update previous statuses for "any" mode comparison
+        if (waitFor === "any") {
+          const newPrevious: Record<string, string> = {};
+          for (const task of current.tasks) {
+            newPrevious[task.id] = task.status;
+          }
+          // Check for changes before updating
+          for (const task of current.tasks) {
+            if (previousStatuses[task.id] && previousStatuses[task.id] !== task.status) {
+              changed = true;
+            }
+          }
+          previousStatuses = newPrevious;
+        }
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
   });
 
   // ==========================================================================

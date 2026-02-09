@@ -1262,13 +1262,15 @@ export const TaskTree = React.memo(function TaskTree({
         return a.localeCompare(b);
       });
     
-    featureIds.forEach((featureId, featureIndex) => {
+    // Pre-filter to features with active tasks (matches flattenFeatureOrder for navigation)
+    const activeFeatureIds = featureIds.filter(featureId => {
       const featureTasks = tasksByFeature.get(featureId) || [];
-      const featureActiveTasks = featureTasks.filter(t => !isCompleted(t));
+      return featureTasks.some(t => !isCompleted(t));
+    });
+    
+    activeFeatureIds.forEach((featureId, featureIndex) => {
+      const featureTasks = tasksByFeature.get(featureId) || [];
       const meta = featureMetadata.get(featureId);
-      
-      // Skip features with no active tasks
-      if (featureActiveTasks.length === 0) return;
       
       const headerId = `${FEATURE_HEADER_PREFIX}${featureId}`;
       
@@ -1291,7 +1293,7 @@ export const TaskTree = React.memo(function TaskTree({
       );
       
       // Add spacing between features (except last)
-      if (featureIndex < featureIds.length - 1) {
+      if (featureIndex < activeFeatureIds.length - 1) {
         featureElements.push(
           <Box key={`feature-spacer-${featureId}`}>
             <Text> </Text>

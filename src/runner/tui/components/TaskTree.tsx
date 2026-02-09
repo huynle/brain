@@ -514,7 +514,9 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   });
   
   // Add ungrouped tasks
-  const ungroupedActive = ungrouped.filter(t => !isCompleted(t) && !isDraft(t));
+  // Include drafts in ungrouped navigation - they're rendered in the ungrouped section
+  // (Draft section at bottom shows ALL drafts, but ungrouped section also displays drafts inline)
+  const ungroupedActive = ungrouped.filter(t => !isCompleted(t));
   if (ungroupedActive.length > 0) {
     // Add spacer before ungrouped section if there are features
     if (activeFeatureIds.length > 0) {

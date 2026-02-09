@@ -1091,6 +1091,195 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 });
 
+describe("TaskRunner - Feature Pause/Resume", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-feature-pause-test-${Date.now()}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("pauseFeature()", () => {
+    test("adds feature to pausedFeatures set", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      expect(runner.isPausedFeature("feature-1")).toBe(false);
+      runner.pauseFeature("feature-1");
+      expect(runner.isPausedFeature("feature-1")).toBe(true);
+    });
+
+    test("emits feature_paused event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pauseFeature("feature-1");
+
+      const pauseEvents = events.filter((e) => e.type === "feature_paused");
+      expect(pauseEvents.length).toBe(1);
+      expect(pauseEvents[0]).toEqual({ type: "feature_paused", featureId: "feature-1" });
+    });
+
+    test("is idempotent - pausing twice does not emit twice", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pauseFeature("feature-1");
+      runner.pauseFeature("feature-1"); // Second pause
+
+      const pauseEvents = events.filter((e) => e.type === "feature_paused");
+      expect(pauseEvents.length).toBe(1);
+    });
+  });
+
+  describe("resumeFeature()", () => {
+    test("removes feature from pausedFeatures set", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      runner.pauseFeature("feature-1");
+      expect(runner.isPausedFeature("feature-1")).toBe(true);
+      
+      runner.resumeFeature("feature-1");
+      expect(runner.isPausedFeature("feature-1")).toBe(false);
+    });
+
+    test("emits feature_resumed event", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.pauseFeature("feature-1");
+      runner.resumeFeature("feature-1");
+
+      const resumeEvents = events.filter((e) => e.type === "feature_resumed");
+      expect(resumeEvents.length).toBe(1);
+      expect(resumeEvents[0]).toEqual({ type: "feature_resumed", featureId: "feature-1" });
+    });
+
+    test("does nothing if feature is not paused", () => {
+      const events: RunnerEvent[] = [];
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+      runner.on((event) => events.push(event));
+
+      runner.resumeFeature("feature-1");
+
+      const resumeEvents = events.filter((e) => e.type === "feature_resumed");
+      expect(resumeEvents.length).toBe(0);
+    });
+  });
+
+  describe("isPausedFeature()", () => {
+    test("returns true for paused features", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      runner.pauseFeature("feature-1");
+      expect(runner.isPausedFeature("feature-1")).toBe(true);
+      expect(runner.isPausedFeature("feature-2")).toBe(false);
+    });
+  });
+
+  describe("getPausedFeatures()", () => {
+    test("returns array of paused feature IDs", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      runner.pauseFeature("feature-1");
+      runner.pauseFeature("feature-3");
+
+      const paused = runner.getPausedFeatures();
+      expect(paused.sort()).toEqual(["feature-1", "feature-3"].sort());
+    });
+
+    test("returns empty array when no features are paused", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      expect(runner.getPausedFeatures()).toEqual([]);
+    });
+  });
+
+  describe("feature pause with multiple features", () => {
+    test("can pause and resume multiple features independently", () => {
+      const runner = new TaskRunner({
+        projects: ["project-a"],
+        config,
+      });
+
+      runner.pauseFeature("feature-1");
+      runner.pauseFeature("feature-2");
+      runner.pauseFeature("feature-3");
+
+      expect(runner.isPausedFeature("feature-1")).toBe(true);
+      expect(runner.isPausedFeature("feature-2")).toBe(true);
+      expect(runner.isPausedFeature("feature-3")).toBe(true);
+
+      runner.resumeFeature("feature-2");
+
+      expect(runner.isPausedFeature("feature-1")).toBe(true);
+      expect(runner.isPausedFeature("feature-2")).toBe(false);
+      expect(runner.isPausedFeature("feature-3")).toBe(true);
+
+      expect(runner.getPausedFeatures().sort()).toEqual(["feature-1", "feature-3"].sort());
+    });
+  });
+});
+
 describe("TaskRunner - Manual Task Execution", () => {
   let testDir: string;
   let config: RunnerConfig;

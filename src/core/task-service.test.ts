@@ -5,10 +5,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdirSync, rmSync } from "fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { TaskService } from "./task-service";
+import { TaskService, normalizeDependencyRef } from "./task-service";
 
 // =============================================================================
 // Test Helpers
@@ -194,6 +194,61 @@ describe("TaskService", () => {
       
       const projects = service.listProjects();
       expect(projects).toEqual(["alpha", "beta", "zebra"]);
+    });
+  });
+
+  describe("normalizeDependencyRef()", () => {
+    test("strips .md extension", () => {
+      const result = normalizeDependencyRef("1770555889709-task-name.md");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBeUndefined();
+    });
+
+    test("strips projects/xxx/task/ path prefix", () => {
+      const result = normalizeDependencyRef("projects/brain-api/task/1770555889709-task-name");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBeUndefined();
+    });
+
+    test("strips both path prefix and .md extension", () => {
+      const result = normalizeDependencyRef("projects/brain-api/task/1770555889709-task-name.md");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBeUndefined();
+    });
+
+    test("parses cross-project syntax", () => {
+      const result = normalizeDependencyRef("other-project:1770555889709-task-name");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBe("other-project");
+    });
+
+    test("normalizes cross-project ref with .md extension", () => {
+      const result = normalizeDependencyRef("other-project:1770555889709-task-name.md");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBe("other-project");
+    });
+
+    test("normalizes cross-project ref with path prefix", () => {
+      const result = normalizeDependencyRef("other-project:projects/other-project/task/1770555889709-task-name");
+      expect(result.normalized).toBe("1770555889709-task-name");
+      expect(result.projectId).toBe("other-project");
+    });
+
+    test("handles simple task ID", () => {
+      const result = normalizeDependencyRef("1770555889709-simple-task");
+      expect(result.normalized).toBe("1770555889709-simple-task");
+      expect(result.projectId).toBeUndefined();
+    });
+
+    test("handles task title (no normalization needed)", () => {
+      const result = normalizeDependencyRef("My Task Title");
+      expect(result.normalized).toBe("My Task Title");
+      expect(result.projectId).toBeUndefined();
+    });
+
+    test("trims whitespace", () => {
+      const result = normalizeDependencyRef("  1770555889709-task-name  ");
+      expect(result.normalized).toBe("1770555889709-task-name");
     });
   });
 });

@@ -125,7 +125,9 @@ export type RunnerEvent =
   | { type: "project_paused"; projectId: string }
   | { type: "project_resumed"; projectId: string }
   | { type: "all_paused" }
-  | { type: "all_resumed" };
+  | { type: "all_resumed" }
+  | { type: "feature_paused"; featureId: string }
+  | { type: "feature_resumed"; featureId: string };
 
 export type EventHandler = (event: RunnerEvent) => void;
 

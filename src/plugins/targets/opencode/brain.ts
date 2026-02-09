@@ -416,7 +416,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .array(tool.schema.string())
             .optional()
             .describe(
-              "Task dependencies - list of task IDs or titles that must be completed before this task."
+              "Task dependencies - list of task IDs or titles that must be completed before this task. Validated on save. Use format: 'task-id' for same project, 'project:task-id' for cross-project. Common mistakes (full paths, .md extension) are auto-normalized."
             ),
           feature_id: tool.schema
             .string()
@@ -1178,7 +1178,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
           depends_on: tool.schema
             .array(tool.schema.string())
             .optional()
-            .describe("Task dependencies - list of task IDs or titles"),
+            .describe("Task dependencies - list of task IDs or titles. Validated on update. Use format: 'task-id' for same project, 'project:task-id' for cross-project."),
           tags: tool.schema
             .array(tool.schema.string())
             .optional()

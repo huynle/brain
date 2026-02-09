@@ -201,6 +201,106 @@ export class TaskService {
   }
 
   // ========================================
+  // Dependency Validation
+  // ========================================
+
+  /**
+   * Validate depends_on task IDs before save/update.
+   * 
+   * Validates that each dependency reference can be resolved to an existing task.
+   * Supports:
+   * - Task IDs (timestamp-slug format like "1770555889709-add-settings")
+   * - Task titles (exact match)
+   * - Cross-project syntax: "other-project:task-id"
+   * 
+   * Normalizes common mistakes:
+   * - Strips .md extension
+   * - Strips projects/xxx/task/ path prefix
+   * 
+   * @param depends_on - Array of dependency references
+   * @param currentProjectId - The project where the task is being created
+   * @returns Validation result with normalized IDs and any errors
+   */
+  async validateDependencies(
+    depends_on: string[],
+    currentProjectId: string
+  ): Promise<DependencyValidationResult> {
+    if (!depends_on || depends_on.length === 0) {
+      return { valid: true, normalized: [], errors: [] };
+    }
+
+    const normalized: string[] = [];
+    const errors: string[] = [];
+
+    // Get all projects that have tasks
+    const allProjects = this.listProjects();
+
+    for (const ref of depends_on) {
+      const { normalized: normalizedRef, projectId: refProjectId } = normalizeDependencyRef(ref);
+      const targetProject = refProjectId || currentProjectId;
+
+      // Check if the target project exists
+      if (refProjectId && !allProjects.includes(refProjectId)) {
+        errors.push(
+          `Project '${refProjectId}' not found. Available projects: ${allProjects.join(", ")}`
+        );
+        continue;
+      }
+
+      try {
+        // Get tasks from the target project
+        const tasks = await this.getAllTasks(targetProject);
+        
+        // Try to resolve: first by ID, then by title
+        const matchById = tasks.find((t) => t.id === normalizedRef);
+        const matchByTitle = tasks.find((t) => t.title === normalizedRef);
+
+        if (matchById) {
+          // Resolved by ID
+          if (refProjectId) {
+            normalized.push(`${refProjectId}:${matchById.id}`);
+          } else {
+            normalized.push(matchById.id);
+          }
+        } else if (matchByTitle) {
+          // Resolved by title - store the ID for consistency
+          if (refProjectId) {
+            normalized.push(`${refProjectId}:${matchByTitle.id}`);
+          } else {
+            normalized.push(matchByTitle.id);
+          }
+        } else {
+          // Could not resolve
+          const suggestions = tasks
+            .filter((t) => 
+              t.id.includes(normalizedRef) || 
+              t.title.toLowerCase().includes(normalizedRef.toLowerCase())
+            )
+            .slice(0, 3)
+            .map((t) => `'${t.id}' (${t.title})`);
+          
+          let errorMsg = `Task '${ref}' not found in project '${targetProject}'.`;
+          errorMsg += ` Use format: 'task-id' or 'project:task-id'.`;
+          if (suggestions.length > 0) {
+            errorMsg += ` Did you mean: ${suggestions.join(", ")}?`;
+          }
+          errors.push(errorMsg);
+        }
+      } catch {
+        errors.push(
+          `Failed to validate dependency '${ref}' in project '${targetProject}'.`
+        );
+      }
+    }
+
+    return {
+      valid: errors.length === 0,
+      normalized,
+      errors,
+    };
+  }
+
+  // ========================================
   // Workdir Resolution
   // ========================================
 
@@ -233,6 +333,61 @@ export class TaskService {
 
     return null;
   }
+}
+
+// =============================================================================
+// Dependency Validation
+// =============================================================================
+
+export interface DependencyValidationResult {
+  valid: boolean;
+  normalized: string[];
+  errors: string[];
+}
+
+/**
+ * Normalize a dependency reference by stripping common mistakes:
+ * - .md extension
+ * - projects/xxx/task/ path prefix
+ * - Extracts task ID from full paths
+ * 
+ * Also parses cross-project syntax: "project:task-id"
+ */
+export function normalizeDependencyRef(ref: string): { normalized: string; projectId?: string } {
+  let normalized = ref.trim();
+  
+  // Check for cross-project syntax: "project:task-id"
+  const crossProjectMatch = normalized.match(/^([^:]+):(.+)$/);
+  if (crossProjectMatch) {
+    const projectId = crossProjectMatch[1];
+    let taskRef = crossProjectMatch[2];
+    
+    // Normalize the task part
+    taskRef = taskRef
+      .replace(/\.md$/, "")  // Strip .md extension
+      .replace(/^projects\/[^/]+\/task\//, "");  // Strip path prefix
+    
+    // Extract ID if it's a full filename (timestamp-slug format)
+    const idMatch = taskRef.match(/^(\d{13}-[^/]+)$/);
+    if (idMatch) {
+      return { normalized: idMatch[1], projectId };
+    }
+    
+    return { normalized: taskRef, projectId };
+  }
+  
+  // Same-project reference - just normalize
+  normalized = normalized
+    .replace(/\.md$/, "")  // Strip .md extension
+    .replace(/^projects\/[^/]+\/task\//, "");  // Strip path prefix
+  
+  // Extract ID if it's a full filename (timestamp-slug format)
+  const idMatch = normalized.match(/^(\d{13}-[^/]+)$/);
+  if (idMatch) {
+    return { normalized: idMatch[1] };
+  }
+  
+  return { normalized };
 }
 
 // =============================================================================

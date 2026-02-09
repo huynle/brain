@@ -69,6 +69,12 @@ export interface DashboardOptions {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
+  /** Callback to pause a specific feature */
+  onPauseFeature?: (featureId: string) => void;
+  /** Callback to resume a specific feature */
+  onResumeFeature?: (featureId: string) => void;
+  /** Get current paused features from TaskRunner */
+  getPausedFeatures?: () => string[];
 }
 
 export interface DashboardHandle {
@@ -147,6 +153,9 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       getResourceMetrics={options.getResourceMetrics}
       getProjectLimits={options.getProjectLimits}
       setProjectLimit={options.setProjectLimit}
+      onPauseFeature={options.onPauseFeature}
+      onResumeFeature={options.onResumeFeature}
+      getPausedFeatures={options.getPausedFeatures}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

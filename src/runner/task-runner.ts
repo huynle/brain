@@ -2043,6 +2043,10 @@ export class TaskRunner {
           running: this.getRunningCountForProject(projectId),
         })),
         setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
+        // Feature pause/resume callbacks
+        onPauseFeature: (featureId) => this.pauseFeature(featureId),
+        onResumeFeature: (featureId) => this.resumeFeature(featureId),
+        getPausedFeatures: () => this.getPausedFeatures(),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

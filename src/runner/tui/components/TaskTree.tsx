@@ -29,6 +29,10 @@ interface TaskTreeProps {
   scrollOffset?: number;
   /** Number of visible rows in the viewport (for virtual scrolling) */
   viewportHeight?: number;
+  /** Set of feature IDs that are collapsed */
+  collapsedFeatures?: Set<string>;
+  /** Set of feature IDs that are paused */
+  pausedFeatures?: Set<string>;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -404,8 +408,9 @@ export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boole
  * @param tasks - All tasks
  * @param completedCollapsed - Whether the completed section is collapsed
  * @param draftCollapsed - Whether the draft section is collapsed
+ * @param collapsedFeatures - Set of feature IDs that are collapsed
  */
-export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
+export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true, collapsedFeatures: Set<string> = new Set()): string[] {
   const result: string[] = [];
   
   // Separate active, completed, and draft tasks
@@ -489,23 +494,27 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   activeFeatureIds.forEach((featureId, featureIndex) => {
     const featureTasks = tasksByFeature.get(featureId) || [];
     const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
+    const isFeatureCollapsed = collapsedFeatures.has(featureId);
     
     // Add feature header
     result.push(`${FEATURE_HEADER_PREFIX}${featureId}`);
     
-    // Build tree for this feature's tasks
-    const tree = buildTree(activeFeatureTasks, featureTasks);
-    
-    function traverse(nodes: TreeNode[]): void {
-      for (const node of nodes) {
-        result.push(node.task.id);
-        if (node.children.length > 0) {
-          traverse(node.children);
+    // Only add tasks if feature is not collapsed
+    if (!isFeatureCollapsed) {
+      // Build tree for this feature's tasks
+      const tree = buildTree(activeFeatureTasks, featureTasks);
+      
+      function traverse(nodes: TreeNode[]): void {
+        for (const node of nodes) {
+          result.push(node.task.id);
+          if (node.children.length > 0) {
+            traverse(node.children);
+          }
         }
       }
+      
+      traverse(tree);
     }
-    
-    traverse(tree);
     
     // Add spacer after feature (except last) - matches render logic
     if (featureIndex < activeFeatureIds.length - 1) {
@@ -649,7 +658,7 @@ const TaskRow = React.memo(function TaskRow({
   const cycleSuffix = inCycle ? ' ↺' : '';
 
   return (
-    <Box>
+    <Box flexDirection="row">
       <Text dimColor={isDim}>{prefix}</Text>
       <Text
         color={color}
@@ -667,12 +676,19 @@ const TaskRow = React.memo(function TaskRow({
         {' '}{task.title}
       </Text>
       {prioritySuffix && (
-        <Text color="red" bold backgroundColor={isSelected ? 'blue' : undefined}>
+        <Text
+          color="red"
+          bold
+          backgroundColor={isSelected ? 'blue' : undefined}
+        >
           {prioritySuffix}
         </Text>
       )}
       {cycleSuffix && (
-        <Text color="magenta" backgroundColor={isSelected ? 'blue' : undefined}>
+        <Text
+          color="magenta"
+          backgroundColor={isSelected ? 'blue' : undefined}
+        >
           {cycleSuffix}
         </Text>
       )}
@@ -741,7 +757,7 @@ const ProjectHeader = React.memo(function ProjectHeader({
 
 /**
  * Feature header component for feature grouping (memoized)
- * Shows: feature name, completion stats, status indicator
+ * Shows: feature name, completion stats, status indicator, collapse indicator, pause indicator
  */
 const FeatureHeader = React.memo(function FeatureHeader({
   featureId,
@@ -750,6 +766,8 @@ const FeatureHeader = React.memo(function FeatureHeader({
   status,
   blockedBy,
   isSelected,
+  isCollapsed,
+  isPaused,
 }: {
   featureId: string;
   completed: number;
@@ -757,7 +775,12 @@ const FeatureHeader = React.memo(function FeatureHeader({
   status: 'ready' | 'waiting' | 'blocked' | 'in_progress' | 'completed';
   blockedBy?: string[];
   isSelected?: boolean;
+  isCollapsed?: boolean;
+  isPaused?: boolean;
 }): React.ReactElement {
+  // Collapse indicator
+  const collapseIcon = isCollapsed ? '▶' : '▾';
+  
   // Status indicator and color
   let icon: string;
   let color: string;
@@ -793,7 +816,13 @@ const FeatureHeader = React.memo(function FeatureHeader({
     : '';
 
   return (
-    <Box marginTop={1}>
+    <Box marginTop={1} flexDirection="row">
+      <Text
+        color={isSelected ? 'white' : 'gray'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+      >
+        {collapseIcon}
+      </Text>
       <Text
         color={isSelected ? 'white' : color}
         backgroundColor={isSelected ? 'blue' : undefined}
@@ -808,6 +837,14 @@ const FeatureHeader = React.memo(function FeatureHeader({
       >
         {' '}Feature: {featureId}
       </Text>
+      {isPaused && (
+        <Text
+          color={isSelected ? 'white' : 'yellow'}
+          backgroundColor={isSelected ? 'blue' : undefined}
+        >
+          {' '}⏸
+        </Text>
+      )}
       <Text
         color={isSelected ? 'white' : 'gray'}
         backgroundColor={isSelected ? 'blue' : undefined}
@@ -946,6 +983,8 @@ export const TaskTree = React.memo(function TaskTree({
   groupByFeature = false,
   scrollOffset = 0,
   viewportHeight,
+  collapsedFeatures = new Set(),
+  pausedFeatures = new Set(),
 }: TaskTreeProps): React.ReactElement {
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
@@ -1273,6 +1312,7 @@ export const TaskTree = React.memo(function TaskTree({
     activeFeatureIds.forEach((featureId, featureIndex) => {
       const featureTasks = tasksByFeature.get(featureId) || [];
       const meta = featureMetadata.get(featureId);
+      const isFeatureCollapsed = collapsedFeatures.has(featureId);
       
       const headerId = `${FEATURE_HEADER_PREFIX}${featureId}`;
       
@@ -1286,13 +1326,17 @@ export const TaskTree = React.memo(function TaskTree({
           status={meta?.status ?? 'ready'}
           blockedBy={meta?.blockedBy}
           isSelected={selectedId === headerId}
+          isCollapsed={isFeatureCollapsed}
+          isPaused={pausedFeatures.has(featureId)}
         />
       );
       
-      // Feature's tasks
-      featureElements.push(
-        ...renderFeatureTasks(featureTasks, selectedId, readyIds)
-      );
+      // Feature's tasks (only render if not collapsed)
+      if (!isFeatureCollapsed) {
+        featureElements.push(
+          ...renderFeatureTasks(featureTasks, selectedId, readyIds)
+        );
+      }
       
       // Add spacing between features (except last)
       if (featureIndex < activeFeatureIds.length - 1) {

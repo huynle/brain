@@ -667,12 +667,12 @@ const TaskRow = React.memo(function TaskRow({
         {' '}{task.title}
       </Text>
       {prioritySuffix && (
-        <Text color="red" bold>
+        <Text color="red" bold backgroundColor={isSelected ? 'blue' : undefined}>
           {prioritySuffix}
         </Text>
       )}
       {cycleSuffix && (
-        <Text color="magenta">
+        <Text color="magenta" backgroundColor={isSelected ? 'blue' : undefined}>
           {cycleSuffix}
         </Text>
       )}

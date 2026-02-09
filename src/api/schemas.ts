@@ -186,6 +186,7 @@ export const UpdateEntryRequestSchema = z.object({
 export const ListEntriesQuerySchema = z.object({
   type: EntryTypeSchema.optional(),
   status: EntryStatusSchema.optional(),
+  feature_id: z.string().optional().openapi({ description: "Filter by feature group ID (e.g., 'auth-system')" }),
   filename: z.string().optional().openapi({ description: "Filter by filename pattern" }),
   limit: z.string().transform(Number).pipe(z.number().int().positive()).optional(),
   offset: z.string().transform(Number).pipe(z.number().int().nonnegative()).optional(),
@@ -228,6 +229,7 @@ export const SearchRequestSchema = z.object({
     .openapi({ example: "authentication" }),
   type: EntryTypeSchema.optional(),
   status: EntryStatusSchema.optional(),
+  feature_id: z.string().optional().openapi({ description: "Filter by feature group ID" }),
   limit: z.number({ message: "limit must be a positive integer" })
     .int({ message: "limit must be a positive integer" })
     .positive({ message: "limit must be a positive integer" })
@@ -529,3 +531,37 @@ export const FeatureListResponseSchema = z.object({
     blocked: z.number(),
   }).optional().openapi({ description: "Aggregate statistics across all features" }),
 }).openapi("FeatureListResponse");
+
+// =============================================================================
+// Task Status Polling Schemas
+// =============================================================================
+
+export const TaskStatusRequestSchema = z.object({
+  taskIds: z.array(z.string().regex(/^[a-zA-Z0-9_-]+$/)).min(1).openapi({
+    description: "Array of task IDs to check",
+    example: ["abc12def", "xyz98765"],
+  }),
+  waitFor: z.enum(["completed", "any"]).optional().openapi({
+    description: "Wait condition - 'completed' waits until all tasks are completed/validated, 'any' waits for any status change",
+    example: "completed",
+  }),
+  timeout: z.number().int().positive().max(300000).optional().openapi({
+    description: "Maximum wait time in milliseconds (default: 60000, max: 300000)",
+    example: 60000,
+  }),
+}).openapi("TaskStatusRequest");
+
+export const TaskStatusItemSchema = z.object({
+  id: EntryIdSchema,
+  title: z.string(),
+  status: EntryStatusSchema,
+  priority: PrioritySchema.optional(),
+  classification: TaskClassificationSchema,
+}).openapi("TaskStatusItem");
+
+export const TaskStatusResponseSchema = z.object({
+  tasks: z.array(TaskStatusItemSchema).openapi({ description: "Status of requested tasks" }),
+  notFound: z.array(z.string()).openapi({ description: "Task IDs that don't exist" }),
+  changed: z.boolean().openapi({ description: "Whether any status changed during wait" }),
+  timedOut: z.boolean().openapi({ description: "Whether timeout was reached" }),
+}).openapi("TaskStatusResponse");

@@ -141,6 +141,10 @@ export const CreateEntryRequestSchema = z.object({
     description: "Verbatim user request for validation during task completion. Highly recommended for tasks to enable intent verification. Supports multiline content, code blocks, and special characters.",
     example: "Add a dark mode toggle to the settings page with the following requirements:\n- Toggle should persist across sessions\n- Use CSS variables for theming"
   }),
+  target_workdir: z.string().optional().openapi({ description: "Target working directory for task execution" }),
+  feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system')" }),
+  feature_priority: PrioritySchema.optional().openapi({ description: "Priority for the feature group" }),
+  feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
 }).openapi("CreateEntryRequest");
 
 export const CreateEntryResponseSchema = z.object({

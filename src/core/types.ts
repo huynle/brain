@@ -137,6 +137,11 @@ export interface CreateEntryRequest {
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
+
+  // Feature grouping (for task organization)
+  feature_id?: string;
+  feature_priority?: Priority;
+  feature_depends_on?: string[];
 }
 
 export interface CreateEntryResponse {

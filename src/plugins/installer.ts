@@ -369,8 +369,29 @@ async function installSingleFile(
         );
       }
     } else {
-      // For markdown files, add header at the top
-      content = header + content;
+      // For markdown files with YAML frontmatter, insert header AFTER the frontmatter
+      // YAML frontmatter must be the very first thing in the file for parsers to work
+      if (content.startsWith("---")) {
+        // Find the closing --- of the frontmatter
+        const closingIndex = content.indexOf("\n---", 3);
+        if (closingIndex !== -1) {
+          // Find the end of the closing --- line
+          const afterFrontmatter = closingIndex + 4; // "\n---" is 4 chars
+          // Skip any newline after the closing ---
+          let insertPoint = afterFrontmatter;
+          if (content[insertPoint] === "\n") {
+            insertPoint++;
+          }
+          // Insert header after frontmatter
+          content = content.slice(0, insertPoint) + "\n" + header + content.slice(insertPoint);
+        } else {
+          // Malformed frontmatter - add at top anyway
+          content = header + content;
+        }
+      } else {
+        // No frontmatter - add header at the top
+        content = header + content;
+      }
     }
 
     // Write file

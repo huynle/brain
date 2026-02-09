@@ -713,8 +713,15 @@ export function App({
       return;
     }
 
-    // Open settings popup (s key)
-    if (input === 's') {
+    // Open status popup for selected task (s key) - only when focused on tasks panel
+    if (input === 's' && focusedPanel === 'tasks' && selectedTask) {
+      setPopupSelectedStatus(selectedTask.status);
+      setShowStatusPopup(true);
+      return;
+    }
+
+    // Open settings popup (S key - shift+s)
+    if (input === 'S') {
       setSettingsSelectedIndex(0);
       setSettingsSection('limits');
       // Sync React state with external limits when opening popup
@@ -913,7 +920,7 @@ export function App({
         return;
       }
 
-      // Enter to toggle group section when header is selected, or open status popup
+      // Enter to toggle group section when header is selected
       if (key.return) {
         // Toggle completed section if header is selected (legacy)
         if (selectedTaskId === COMPLETED_HEADER_ID) {
@@ -940,11 +947,7 @@ export function App({
           }
           return;
         }
-        // Open status popup for selected task
-        if (selectedTask) {
-          setPopupSelectedStatus(selectedTask.status);
-          setShowStatusPopup(true);
-        }
+        // Note: Individual task status change is now handled by 's' key
         return;
       }
     }
@@ -1053,7 +1056,8 @@ export function App({
         <Text>  <Text bold>L</Text>         - Toggle logs panel visibility</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
-        <Text>  <Text bold>s</Text>         - Change status / Toggle completed</Text>
+        <Text>  <Text bold>s</Text>         - Change task status</Text>
+        <Text>  <Text bold>S</Text>         - Open settings</Text>
         <Text>  <Text bold>f</Text>         - Filter logs by selected task (in logs panel)</Text>
         {isMultiProject && (
           <>

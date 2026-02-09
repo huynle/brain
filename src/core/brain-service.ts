@@ -65,6 +65,22 @@ import type {
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
+import { TaskService, normalizeDependencyRef } from "./task-service";
+import type { DependencyValidationResult } from "./task-service";
+
+// =============================================================================
+// Dependency Validation Error
+// =============================================================================
+
+export class DependencyValidationError extends Error {
+  constructor(
+    public readonly errors: string[],
+    message?: string
+  ) {
+    super(message || `Invalid dependencies: ${errors.join("; ")}`);
+    this.name = "DependencyValidationError";
+  }
+}
 
 // =============================================================================
 // Constants
@@ -144,6 +160,22 @@ export class BrainService {
     // Determine effective project ID
     const effectiveProjectId =
       request.project || (isGlobal ? "global" : this.projectId) || "global";
+
+    // Validate depends_on for task entries
+    if (entryType === "task" && request.depends_on && request.depends_on.length > 0) {
+      const taskService = new TaskService(this.config, effectiveProjectId);
+      const validation = await taskService.validateDependencies(
+        request.depends_on,
+        effectiveProjectId
+      );
+      
+      if (!validation.valid) {
+        throw new DependencyValidationError(validation.errors);
+      }
+      
+      // Replace with normalized IDs for consistency
+      request.depends_on = validation.normalized;
+    }
 
     // Determine directory for zk
     const projectDir =
@@ -621,6 +653,30 @@ export class BrainService {
     // Read existing content
     const content = readFileSync(fullPath, "utf-8");
     const { frontmatter, body } = parseFrontmatter(content);
+
+    // Check if this is a task entry (for dependency validation)
+    const entryType = frontmatter.type as string;
+    const isTask = entryType === "task" || path.includes("/task/");
+    
+    // Determine project ID from path or frontmatter
+    const projectMatch = path.match(/^projects\/([^/]+)\//);
+    const projectId = projectMatch ? projectMatch[1] : (frontmatter.projectId as string) || this.projectId;
+
+    // Validate depends_on for task entries
+    if (isTask && request.depends_on !== undefined && request.depends_on.length > 0) {
+      const taskService = new TaskService(this.config, projectId);
+      const validation = await taskService.validateDependencies(
+        request.depends_on,
+        projectId
+      );
+      
+      if (!validation.valid) {
+        throw new DependencyValidationError(validation.errors);
+      }
+      
+      // Replace with normalized IDs for consistency
+      request.depends_on = validation.normalized;
+    }
 
     // Update frontmatter fields
     const oldStatus = (frontmatter.status as string) || "active";

@@ -93,6 +93,10 @@ export class TaskRunner {
   private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
 
+  // Feature pause state: in-memory only (not persisted across restarts)
+  // Tasks with a paused feature_id are excluded from task polling
+  private pausedFeatures: Set<string> = new Set();
+
   // Per-project concurrent task limits (in-memory only)
   // Projects not in this map use no limit (only global maxParallel applies)
   private projectLimits: Map<string, number> = new Map();
@@ -554,6 +558,55 @@ export class TaskRunner {
   }
 
   // ========================================
+  // Feature Pause/Resume Methods
+  // ========================================
+
+  /**
+   * Pause a specific feature by ID.
+   * Tasks with this feature_id will be excluded from task polling.
+   * Running tasks will complete, but no new tasks for this feature will be picked up.
+   */
+  pauseFeature(featureId: string): void {
+    if (this.pausedFeatures.has(featureId)) {
+      return; // Already paused
+    }
+
+    this.pausedFeatures.add(featureId);
+    this.logger.info("Feature paused", { featureId });
+    this.tuiLog('warn', `Feature paused: ${featureId}`);
+    this.emitEvent({ type: "feature_paused", featureId });
+  }
+
+  /**
+   * Resume a paused feature.
+   * Removes the feature from pausedFeatures so new tasks can be picked up.
+   */
+  resumeFeature(featureId: string): void {
+    if (!this.pausedFeatures.has(featureId)) {
+      return; // Not paused
+    }
+
+    this.pausedFeatures.delete(featureId);
+    this.logger.info("Feature resumed", { featureId });
+    this.tuiLog('info', `Feature resumed: ${featureId}`);
+    this.emitEvent({ type: "feature_resumed", featureId });
+  }
+
+  /**
+   * Check if a specific feature is paused (synchronous, uses local cache).
+   */
+  isPausedFeature(featureId: string): boolean {
+    return this.pausedFeatures.has(featureId);
+  }
+
+  /**
+   * Get array of all paused feature IDs.
+   */
+  getPausedFeatures(): string[] {
+    return Array.from(this.pausedFeatures);
+  }
+
+  // ========================================
   // Per-Project Concurrent Task Limits
   // ========================================
 
@@ -807,9 +860,20 @@ export class TaskRunner {
             const task = result.value;
             // Skip if already running or already queued to start
             const key = `${task._pollProjectId}:${task.id}`;
-            if (!runningKeys.has(key)) {
-              candidateTasks.push(task);
+            if (runningKeys.has(key)) {
+              continue;
             }
+            // Skip if task's feature is paused
+            if (task.feature_id && this.pausedFeatures.has(task.feature_id)) {
+              if (isDebugEnabled()) {
+                this.logger.debug("Skipping task with paused feature", {
+                  taskId: task.id,
+                  featureId: task.feature_id,
+                });
+              }
+              continue;
+            }
+            candidateTasks.push(task);
           }
         }
 

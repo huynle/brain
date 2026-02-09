@@ -7,7 +7,7 @@
 
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
-import { getBrainService } from "../core/brain-service";
+import { getBrainService, DependencyValidationError } from "../core/brain-service";
 import type { BrainEntry } from "../core/types";
 import {
   CreateEntryRequestSchema,
@@ -249,9 +249,23 @@ export function createEntriesRoutes(): OpenAPIHono {
   entries.openapi(createEntryRoute, async (c) => {
     const body = c.req.valid("json");
     const service = getBrainService();
-    const result = await service.save(body);
-
-    return c.json(result, 201);
+    
+    try {
+      const result = await service.save(body);
+      return c.json(result, 201);
+    } catch (error) {
+      if (error instanceof DependencyValidationError) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: "Invalid task dependencies",
+            details: error.errors.map((e) => ({ field: "depends_on", message: e })),
+          },
+          400
+        );
+      }
+      throw error;
+    }
   });
 
   // GET /entries/{id} - Get entry by ID or path
@@ -370,6 +384,16 @@ export function createEntriesRoutes(): OpenAPIHono {
 
       return c.json(result, 200);
     } catch (error) {
+      if (error instanceof DependencyValidationError) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: "Invalid task dependencies",
+            details: error.errors.map((e) => ({ field: "depends_on", message: e })),
+          },
+          400
+        );
+      }
       if (error instanceof Error) {
         if (error.message.includes("Entry not found")) {
           return c.json(

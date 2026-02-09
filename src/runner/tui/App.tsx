@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -308,11 +308,13 @@ export function App({
     if (selectedIndex === -1) return;
     
     // Ensure selected task is visible in viewport
+    // Use consistent boundary checks: trigger scroll when selection reaches the edge
     if (selectedIndex < taskScrollOffset) {
-      // Selected is above viewport - scroll up
+      // Selected is above viewport - scroll up immediately
       setTaskScrollOffset(selectedIndex);
-    } else if (selectedIndex >= taskScrollOffset + taskViewportHeight) {
-      // Selected is below viewport - scroll down
+    } else if (selectedIndex > taskScrollOffset + taskViewportHeight - 1) {
+      // Selected is below viewport - scroll down immediately when hitting bottom edge
+      // Note: using > instead of >= and subtracting 1 to match up-scroll behavior
       setTaskScrollOffset(selectedIndex - taskViewportHeight + 1);
     }
   }, [selectedTaskId, navigationOrder, taskScrollOffset, taskViewportHeight]);
@@ -846,14 +848,30 @@ export function App({
       // Use navigationOrder (flattened tree) instead of raw tasks array
       // This ensures j/k navigation matches the visual tree order
       const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
+      
+      // Helper to find next navigable item (skip spacers)
+      const findNextNavigable = (startIndex: number, direction: 1 | -1): string | null => {
+        let idx = startIndex + direction;
+        while (idx >= 0 && idx < navigationOrder.length) {
+          const id = navigationOrder[idx];
+          // Skip spacer elements - they're for visual alignment only
+          if (!id.startsWith(SPACER_PREFIX)) {
+            return id;
+          }
+          idx += direction;
+        }
+        return null;
+      };
 
       // Up arrow or k (vim-style)
       if (key.upArrow || input === 'k') {
         if (currentIndex > 0) {
-          setSelectedTaskId(navigationOrder[currentIndex - 1]);
+          const nextId = findNextNavigable(currentIndex, -1);
+          if (nextId) setSelectedTaskId(nextId);
         } else if (currentIndex === -1 && navigationOrder.length > 0) {
-          // No selection - go to last item
-          setSelectedTaskId(navigationOrder[navigationOrder.length - 1]);
+          // No selection - go to last navigable item
+          const lastId = findNextNavigable(navigationOrder.length, -1);
+          if (lastId) setSelectedTaskId(lastId);
         }
         return;
       }
@@ -861,27 +879,37 @@ export function App({
       // Down arrow or j (vim-style)
       if (key.downArrow || input === 'j') {
         if (currentIndex === -1 && navigationOrder.length > 0) {
-          // No selection - go to first item
-          setSelectedTaskId(navigationOrder[0]);
+          // No selection - go to first navigable item
+          const firstId = findNextNavigable(-1, 1);
+          if (firstId) setSelectedTaskId(firstId);
         } else if (currentIndex < navigationOrder.length - 1) {
-          setSelectedTaskId(navigationOrder[currentIndex + 1]);
+          const nextId = findNextNavigable(currentIndex, 1);
+          if (nextId) setSelectedTaskId(nextId);
         }
         return;
       }
 
       // g - Jump to top of task list
       if (input === 'g' && navigationOrder.length > 0) {
-        setSelectedTaskId(navigationOrder[0]);
-        setTaskScrollOffset(0);
+        // Find first navigable item (skip spacers)
+        const firstId = findNextNavigable(-1, 1);
+        if (firstId) {
+          setSelectedTaskId(firstId);
+          setTaskScrollOffset(0);
+        }
         return;
       }
 
       // G - Jump to bottom of task list
       if (input === 'G' && navigationOrder.length > 0) {
-        setSelectedTaskId(navigationOrder[navigationOrder.length - 1]);
-        // Scroll to show last item
-        const maxOffset = Math.max(0, navigationOrder.length - taskViewportHeight);
-        setTaskScrollOffset(maxOffset);
+        // Find last navigable item (skip spacers)
+        const lastId = findNextNavigable(navigationOrder.length, -1);
+        if (lastId) {
+          setSelectedTaskId(lastId);
+          // Scroll to show last item
+          const maxOffset = Math.max(0, navigationOrder.length - taskViewportHeight);
+          setTaskScrollOffset(maxOffset);
+        }
         return;
       }
 
@@ -1062,6 +1090,8 @@ export function App({
         <SettingsPopup
           projects={projectLimitsState}
           selectedIndex={settingsSelectedIndex}
+          section={settingsSection}
+          groups={groupVisibilityState}
         />
       </Box>
     );

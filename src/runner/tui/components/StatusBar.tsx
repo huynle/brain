@@ -25,12 +25,15 @@ interface StatusBarProps {
   statsByProject?: Map<string, TaskStats>;  // Per-project stats for tab indicators
   isConnected: boolean;
   pausedProjects?: Set<string>;  // Set of paused project IDs
+  enabledFeatures?: Set<string>; // Set of enabled feature IDs (whitelist while paused)
   featureStats?: FeatureStats;   // Feature-level statistics
   activeFeatureName?: string;    // Name of active feature (when tasks running)
   /** Callback to get actual running OpenCode process count (overrides stats.inProgress) */
   getRunningProcessCount?: () => number;
   /** Resource metrics for running OpenCode processes */
   resourceMetrics?: ResourceMetrics | null;
+  /** Focus mode: feature being run to completion */
+  focusedFeature?: string | null;
 }
 
 /**
@@ -99,10 +102,12 @@ export const StatusBar = React.memo(function StatusBar({
   statsByProject,
   isConnected,
   pausedProjects,
+  enabledFeatures,
   featureStats,
   activeFeatureName,
   getRunningProcessCount,
   resourceMetrics,
+  focusedFeature,
 }: StatusBarProps): React.ReactElement {
   // Check if we have feature stats to display (total > 0 means features exist)
   const hasFeatures = featureStats && featureStats.total > 0;
@@ -154,9 +159,18 @@ export const StatusBar = React.memo(function StatusBar({
           justifyContent="space-between"
         >
           <Box>
-            {isPaused && (
+            {focusedFeature && (
+              <>
+                <Text color="magenta" bold>🎯 Focus: {focusedFeature}</Text>
+                <Text>   </Text>
+              </>
+            )}
+            {isPaused && !focusedFeature && (
               <>
                 <Text color="yellow" bold>⏸ PAUSED</Text>
+                {enabledFeatures && enabledFeatures.size > 0 && (
+                  <Text color="green"> [{enabledFeatures.size} feature{enabledFeatures.size > 1 ? 's' : ''} enabled]</Text>
+                )}
                 <Text>   </Text>
               </>
             )}
@@ -219,9 +233,18 @@ export const StatusBar = React.memo(function StatusBar({
       </Box>
 
       <Box>
-        {isPaused && (
+        {focusedFeature && (
+          <>
+            <Text color="magenta" bold>🎯 Focus: {focusedFeature}</Text>
+            <Text>   </Text>
+          </>
+        )}
+        {isPaused && !focusedFeature && (
           <>
             <Text color="yellow" bold>⏸ PAUSED</Text>
+            {enabledFeatures && enabledFeatures.size > 0 && (
+              <Text color="green"> [{enabledFeatures.size} feature{enabledFeatures.size > 1 ? 's' : ''} enabled]</Text>
+            )}
             <Text>   </Text>
           </>
         )}

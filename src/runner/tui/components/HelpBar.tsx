@@ -9,9 +9,11 @@ interface HelpBarProps {
   focusedPanel?: 'tasks' | 'details' | 'logs';
   /** Whether in multi-project mode (shows tab shortcuts) */
   isMultiProject?: boolean;
+  /** Whether a feature header or ungrouped header is selected (for context-aware 'x' hint) */
+  isFeatureHeaderSelected?: boolean;
 }
 
-export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject }: HelpBarProps): React.ReactElement {
+export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFeatureHeaderSelected }: HelpBarProps): React.ReactElement {
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
   const isDetailsFocused = focusedPanel === 'details';
@@ -49,10 +51,14 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
               <Text bold>y</Text> Yank
               {'  '}
-              <Text bold>x</Text> Execute
+              <Text bold>x</Text> {isFeatureHeaderSelected ? 'Run to completion' : 'Execute'}
               {'  '}
-              <Text bold>X</Text> Cancel
-              {'  '}
+              {!isFeatureHeaderSelected && (
+                <>
+                  <Text bold>X</Text> Cancel
+                  {'  '}
+                </>
+              )}
             </>
           )}
           {isMultiProject ? (

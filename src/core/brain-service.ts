@@ -443,6 +443,8 @@ export class BrainService {
         status: entryStatus,
         projectId: isGlobal ? undefined : this.projectId,
         priority: request.priority,
+        // Task dependencies (already normalized above)
+        depends_on: request.depends_on,
         // Execution context for tasks
         workdir: request.workdir,
         git_remote: request.git_remote,

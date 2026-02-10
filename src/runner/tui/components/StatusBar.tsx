@@ -32,8 +32,8 @@ interface StatusBarProps {
   getRunningProcessCount?: () => number;
   /** Resource metrics for running OpenCode processes */
   resourceMetrics?: ResourceMetrics | null;
-  /** Focus mode: feature being run to completion */
-  focusedFeature?: string | null;
+  /** Active features: features queued for execution via x key */
+  activeFeatures?: Set<string>;
 }
 
 /**
@@ -107,7 +107,7 @@ export const StatusBar = React.memo(function StatusBar({
   activeFeatureName,
   getRunningProcessCount,
   resourceMetrics,
-  focusedFeature,
+  activeFeatures,
 }: StatusBarProps): React.ReactElement {
   // Check if we have feature stats to display (total > 0 means features exist)
   const hasFeatures = featureStats && featureStats.total > 0;
@@ -159,13 +159,13 @@ export const StatusBar = React.memo(function StatusBar({
           justifyContent="space-between"
         >
           <Box>
-            {focusedFeature && (
+            {activeFeatures && activeFeatures.size > 0 && (
               <>
-                <Text color="magenta" bold>🎯 Focus: {focusedFeature}</Text>
+                <Text color="magenta" bold>▶ {activeFeatures.size} feature{activeFeatures.size > 1 ? 's' : ''} active</Text>
                 <Text>   </Text>
               </>
             )}
-            {isPaused && !focusedFeature && (
+            {isPaused && (!activeFeatures || activeFeatures.size === 0) && (
               <>
                 <Text color="yellow" bold>⏸ PAUSED</Text>
                 {enabledFeatures && enabledFeatures.size > 0 && (
@@ -233,13 +233,13 @@ export const StatusBar = React.memo(function StatusBar({
       </Box>
 
       <Box>
-        {focusedFeature && (
+        {activeFeatures && activeFeatures.size > 0 && (
           <>
-            <Text color="magenta" bold>🎯 Focus: {focusedFeature}</Text>
+            <Text color="magenta" bold>▶ {activeFeatures.size} feature{activeFeatures.size > 1 ? 's' : ''} active</Text>
             <Text>   </Text>
           </>
         )}
-        {isPaused && !focusedFeature && (
+        {isPaused && (!activeFeatures || activeFeatures.size === 0) && (
           <>
             <Text color="yellow" bold>⏸ PAUSED</Text>
             {enabledFeatures && enabledFeatures.size > 0 && (

@@ -8,6 +8,8 @@ import { render } from 'ink-testing-library';
 import { MetadataPopup, type MetadataField, type MetadataPopupMode } from './MetadataPopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../../core/types';
 
+import type { MetadataInteractionMode } from './MetadataPopup';
+
 const defaultProps = {
   mode: 'single' as MetadataPopupMode,
   taskTitle: 'Test Task',
@@ -18,7 +20,7 @@ const defaultProps = {
   workdirValue: '/path/to/project',
   selectedStatusIndex: 1, // pending is index 1 in ENTRY_STATUSES
   allowedStatuses: ENTRY_STATUSES,
-  editingField: null,
+  interactionMode: 'navigate' as MetadataInteractionMode,
 };
 
 describe('MetadataPopup', () => {
@@ -62,8 +64,9 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('Tab');
-      expect(frame).toContain('next');
+      // In navigate mode: "j/k: navigate  Enter: edit  Esc: close"
+      expect(frame).toContain('j/k');
+      expect(frame).toContain('navigate');
       expect(frame).toContain('Enter');
       expect(frame).toContain('edit');
       expect(frame).toContain('Esc');
@@ -110,13 +113,13 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('→');
     });
 
-    it('should show j/k hint for status field when focused', () => {
+    it('should show Enter to select hint for status field when focused in navigate mode', () => {
       const { lastFrame } = render(
-        <MetadataPopup {...defaultProps} focusedField="status" />
+        <MetadataPopup {...defaultProps} focusedField="status" interactionMode="navigate" />
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('j/k to change');
+      expect(frame).toContain('Enter to select');
     });
 
     it('should show Enter hint for text field when focused', () => {
@@ -198,12 +201,12 @@ describe('MetadataPopup', () => {
   });
 
   describe('edit mode', () => {
-    it('should show edit buffer when editing a field', () => {
+    it('should show edit buffer when editing a text field', () => {
       const { lastFrame } = render(
         <MetadataPopup 
           {...defaultProps} 
           focusedField="feature_id"
-          editingField="feature_id" 
+          interactionMode="edit_text" 
           editBuffer="new-feature"
         />
       );
@@ -212,32 +215,48 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('new-feature');
     });
 
-    it('should show confirm hint when editing', () => {
+    it('should show save hint when editing text', () => {
       const { lastFrame } = render(
         <MetadataPopup 
           {...defaultProps} 
           focusedField="git_branch"
-          editingField="git_branch" 
+          interactionMode="edit_text" 
           editBuffer="develop"
         />
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('Enter to confirm');
+      // Footer shows "Type to edit  Enter: save  Esc: cancel" in edit_text mode
+      expect(frame).toContain('Enter: save');
     });
 
-    it('should update footer text when in edit mode', () => {
+    it('should update footer text when in edit_text mode', () => {
       const { lastFrame } = render(
         <MetadataPopup 
           {...defaultProps} 
-          editingField="feature_id" 
+          focusedField="feature_id"
+          interactionMode="edit_text" 
           editBuffer="test"
         />
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('confirm');
-      expect(frame).toContain('Esc: exit edit');
+      expect(frame).toContain('Type to edit');
+      expect(frame).toContain('Esc: cancel');
+    });
+
+    it('should show status selection hint when in edit_status mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="edit_status" 
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('j/k: select status');
+      expect(frame).toContain('Enter: save');
     });
   });
 

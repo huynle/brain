@@ -42,7 +42,7 @@ import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GR
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
-import { MetadataPopup, type MetadataField, type MetadataPopupMode } from './components/MetadataPopup';
+import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
 
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
@@ -131,7 +131,8 @@ export function App({
   const [metadataBranchValue, setMetadataBranchValue] = useState('');
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
-  const [metadataEditingField, setMetadataEditingField] = useState<MetadataField | null>(null);
+  // 3-mode state machine: navigate (j/k fields), edit_text (typing), edit_status (j/k status)
+  const [metadataInteractionMode, setMetadataInteractionMode] = useState<MetadataInteractionMode>('navigate');
   const [metadataEditBuffer, setMetadataEditBuffer] = useState('');
   const [metadataTargetTasks, setMetadataTargetTasks] = useState<TaskDisplay[]>([]);
   // Original values for comparison (only send changed fields)
@@ -492,120 +493,166 @@ export function App({
 
   // Handle keyboard input
   useInput((input, key) => {
-    // === Metadata Popup Mode ===
+    // === Metadata Popup Mode (3-mode state machine) ===
+    // NAVIGATE: j/k moves between fields, Enter enters edit mode, Esc closes popup
+    // EDIT_TEXT: typing updates buffer, Enter saves field immediately, Esc discards
+    // EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
     if (showMetadataPopup) {
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
       
-        // Escape handling: exit edit mode OR cancel and close popup
-        if (key.escape) {
-          if (metadataEditingField) {
-            // In edit mode: commit buffer to local state and exit edit mode (do NOT close/save)
-            switch (metadataEditingField) {
+      // Helper: save a single field immediately to API
+      const saveField = (field: MetadataField, value: string | EntryStatus) => {
+        if (!onUpdateMetadata || metadataTargetTasks.length === 0) return;
+        
+        const updates: { [key: string]: string | EntryStatus } = { [field]: value };
+        
+        Promise.all(
+          metadataTargetTasks.map(task => onUpdateMetadata(task.path, updates))
+        ).then(() => {
+          addLog({ level: 'info', message: `Updated ${field}: ${value}` });
+          // Update original values to reflect the saved state
+          setMetadataOriginalValues(prev => ({ ...prev, [field]: value }));
+          refetch();
+        }).catch((err) => {
+          addLog({ level: 'error', message: `Failed to update ${field}: ${err}` });
+        });
+      };
+
+      // === ESCAPE KEY ===
+      if (key.escape) {
+        if (metadataInteractionMode === 'edit_text') {
+          // In text edit mode: discard buffer, back to NAVIGATE (no save)
+          setMetadataEditBuffer('');
+          setMetadataInteractionMode('navigate');
+        } else if (metadataInteractionMode === 'edit_status') {
+          // In status edit mode: discard selection, restore original, back to NAVIGATE
+          const originalIndex = ENTRY_STATUSES.indexOf(metadataOriginalValues.status);
+          setMetadataStatusIndex(Math.max(0, originalIndex));
+          setMetadataStatusValue(metadataOriginalValues.status);
+          setMetadataInteractionMode('navigate');
+        } else {
+          // In navigate mode: close popup entirely (no save)
+          setShowMetadataPopup(false);
+          setMetadataInteractionMode('navigate');
+          setMetadataEditBuffer('');
+        }
+        return;
+      }
+
+      // === NAVIGATE MODE ===
+      if (metadataInteractionMode === 'navigate') {
+        // j/k or Down/Up: navigate between fields
+        if (input === 'j' || key.downArrow) {
+          const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
+          const nextIndex = Math.min(currentIndex + 1, METADATA_FIELDS.length - 1);
+          setMetadataFocusedField(METADATA_FIELDS[nextIndex]);
+          return;
+        }
+        if (input === 'k' || key.upArrow) {
+          const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
+          const prevIndex = Math.max(currentIndex - 1, 0);
+          setMetadataFocusedField(METADATA_FIELDS[prevIndex]);
+          return;
+        }
+
+        // Enter: enter edit mode for focused field
+        if (key.return) {
+          if (metadataFocusedField === 'status') {
+            // Status field: transition to EDIT_STATUS mode
+            setMetadataInteractionMode('edit_status');
+          } else {
+            // Text field: transition to EDIT_TEXT mode with pre-filled buffer
+            let currentValue = '';
+            switch (metadataFocusedField) {
               case 'feature_id':
-                setMetadataFeatureIdValue(metadataEditBuffer);
+                currentValue = metadataFeatureIdValue;
                 break;
               case 'git_branch':
-                setMetadataBranchValue(metadataEditBuffer);
+                currentValue = metadataBranchValue;
                 break;
               case 'target_workdir':
-                setMetadataWorkdirValue(metadataEditBuffer);
+                currentValue = metadataWorkdirValue;
                 break;
             }
-            setMetadataEditingField(null);
-            setMetadataEditBuffer('');
-            // Stay in popup - user can continue editing other fields
-          } else {
-            // Not in edit mode: cancel and close popup (discard all changes, no API call)
-            setShowMetadataPopup(false);
-            setMetadataEditingField(null);
-            setMetadataEditBuffer('');
+            setMetadataEditBuffer(currentValue);
+            setMetadataInteractionMode('edit_text');
           }
           return;
         }
 
-        // 'a' key: save and close (apply changes to API)
-        if (input === 'a' && !metadataEditingField) {
-          applyMetadataChanges();
-          return;
-        }
-
-      // Tab: cycle focused field (only when not editing)
-      if (key.tab && !metadataEditingField) {
-        const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
-        const nextIndex = (currentIndex + 1) % METADATA_FIELDS.length;
-        setMetadataFocusedField(METADATA_FIELDS[nextIndex]);
+        // Block other input in navigate mode
         return;
       }
 
-      // j/k: cycle status dropdown (only when status field is focused and not editing)
-      if ((input === 'j' || key.downArrow) && metadataFocusedField === 'status' && !metadataEditingField) {
-        setMetadataStatusIndex(prev => Math.min(prev + 1, ENTRY_STATUSES.length - 1));
-        setMetadataStatusValue(ENTRY_STATUSES[Math.min(metadataStatusIndex + 1, ENTRY_STATUSES.length - 1)]);
-        return;
-      }
-      if ((input === 'k' || key.upArrow) && metadataFocusedField === 'status' && !metadataEditingField) {
-        setMetadataStatusIndex(prev => Math.max(prev - 1, 0));
-        setMetadataStatusValue(ENTRY_STATUSES[Math.max(metadataStatusIndex - 1, 0)]);
-        return;
-      }
-
-      // Enter handling
-      if (key.return) {
-        if (metadataEditingField) {
-          // Confirm edit: save buffer to value
-          switch (metadataEditingField) {
-            case 'feature_id':
-              setMetadataFeatureIdValue(metadataEditBuffer);
-              break;
-            case 'git_branch':
-              setMetadataBranchValue(metadataEditBuffer);
-              break;
-            case 'target_workdir':
-              setMetadataWorkdirValue(metadataEditBuffer);
-              break;
-          }
-          setMetadataEditingField(null);
-          setMetadataEditBuffer('');
-        } else if (metadataFocusedField === 'status') {
-          // Status field: apply changes immediately (already selected via j/k)
-          applyMetadataChanges();
-        } else {
-          // Text field: enter edit mode
-          let currentValue = '';
+      // === EDIT_TEXT MODE ===
+      if (metadataInteractionMode === 'edit_text') {
+        // Enter: save field immediately to API and return to NAVIGATE
+        if (key.return) {
+          const value = metadataEditBuffer;
+          // Update local state
           switch (metadataFocusedField) {
             case 'feature_id':
-              currentValue = metadataFeatureIdValue;
+              setMetadataFeatureIdValue(value);
               break;
             case 'git_branch':
-              currentValue = metadataBranchValue;
+              setMetadataBranchValue(value);
               break;
             case 'target_workdir':
-              currentValue = metadataWorkdirValue;
+              setMetadataWorkdirValue(value);
               break;
           }
-          setMetadataEditingField(metadataFocusedField);
-          setMetadataEditBuffer(currentValue);
+          // Save to API immediately
+          saveField(metadataFocusedField, value);
+          setMetadataEditBuffer('');
+          setMetadataInteractionMode('navigate');
+          return;
         }
-        return;
-      }
 
-      // Typing: update edit buffer when in edit mode
-      if (metadataEditingField) {
+        // Backspace: remove last character
         if (key.backspace || key.delete) {
           setMetadataEditBuffer(prev => prev.slice(0, -1));
-        } else if (input && input.length === 1 && !key.ctrl && !key.meta) {
-          setMetadataEditBuffer(prev => prev + input);
+          return;
         }
+
+        // Printable characters: append to buffer
+        if (input && input.length === 1 && !key.ctrl && !key.meta) {
+          setMetadataEditBuffer(prev => prev + input);
+          return;
+        }
+
+        // Block other input in edit_text mode
         return;
       }
 
-      // 'a' to apply changes without closing (confirm action)
-      if (input === 'a' && !metadataEditingField) {
-        applyMetadataChanges();
+      // === EDIT_STATUS MODE ===
+      if (metadataInteractionMode === 'edit_status') {
+        // j/k or Down/Up: cycle through status options
+        if (input === 'j' || key.downArrow) {
+          const nextIndex = Math.min(metadataStatusIndex + 1, ENTRY_STATUSES.length - 1);
+          setMetadataStatusIndex(nextIndex);
+          setMetadataStatusValue(ENTRY_STATUSES[nextIndex]);
+          return;
+        }
+        if (input === 'k' || key.upArrow) {
+          const prevIndex = Math.max(metadataStatusIndex - 1, 0);
+          setMetadataStatusIndex(prevIndex);
+          setMetadataStatusValue(ENTRY_STATUSES[prevIndex]);
+          return;
+        }
+
+        // Enter: save status immediately to API and return to NAVIGATE
+        if (key.return) {
+          const value = ENTRY_STATUSES[metadataStatusIndex];
+          saveField('status', value);
+          setMetadataInteractionMode('navigate');
+          return;
+        }
+
+        // Block other input in edit_status mode
         return;
       }
 
-      // Block all other input when popup is open
+      // Fallback: block all input when popup is open
       return;
     }
 
@@ -1033,7 +1080,7 @@ export function App({
           git_branch: prefillBranch,
           target_workdir: prefillWorkdir,
         });
-        setMetadataEditingField(null);
+        setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
         setShowMetadataPopup(true);
       };
@@ -1502,7 +1549,7 @@ export function App({
           workdirValue={metadataWorkdirValue}
           selectedStatusIndex={metadataStatusIndex}
           allowedStatuses={ENTRY_STATUSES}
-          editingField={metadataEditingField}
+          interactionMode={metadataInteractionMode}
           editBuffer={metadataEditBuffer}
         />
       </Box>

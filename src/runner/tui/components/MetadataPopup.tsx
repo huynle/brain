@@ -4,6 +4,11 @@
  * Displays editable fields for status, feature_id, git_branch, and target_workdir.
  * Supports single task, batch mode, and feature mode.
  *
+ * Uses a 3-mode state machine for keyboard navigation:
+ * - NAVIGATE: j/k moves between fields, Enter enters edit mode, Esc closes popup
+ * - EDIT_TEXT: typing updates buffer, Enter saves field immediately, Esc discards
+ * - EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
+ *
  * ┌─ Update Metadata ──────────────────────┐
  * │                                        │
  * │  3 tasks selected                      │
@@ -13,7 +18,7 @@
  * │  Branch:      feature/dark-mode        │
  * │  Workdir:     /path/to/project         │
  * │                                        │
- * │  Tab: next  Enter: edit  a: save  Esc: cancel │
+ * │  j/k: navigate  Enter: edit  Esc: close│
  * └────────────────────────────────────────┘
  */
 
@@ -27,6 +32,9 @@ export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_wor
 
 /** Mode for the metadata popup */
 export type MetadataPopupMode = 'single' | 'batch' | 'feature';
+
+/** Interaction mode for the 3-mode state machine */
+export type MetadataInteractionMode = 'navigate' | 'edit_text' | 'edit_status';
 
 export interface MetadataPopupProps {
   /** Mode: single task, batch of tasks, or feature group */
@@ -51,9 +59,9 @@ export interface MetadataPopupProps {
   selectedStatusIndex: number;
   /** Allowed statuses for the dropdown */
   allowedStatuses: readonly EntryStatus[];
-  /** Which text field is currently in edit mode (null if none) */
-  editingField: MetadataField | null;
-  /** Current edit buffer for text fields */
+  /** Current interaction mode (3-mode state machine) */
+  interactionMode: MetadataInteractionMode;
+  /** Current edit buffer for text fields or status selection */
   editBuffer?: string;
 }
 
@@ -77,7 +85,7 @@ export function MetadataPopup({
   workdirValue,
   selectedStatusIndex,
   allowedStatuses,
-  editingField,
+  interactionMode,
   editBuffer = '',
 }: MetadataPopupProps): React.ReactElement {
   // Truncate title if too long
@@ -100,9 +108,30 @@ export function MetadataPopup({
     }
   };
 
+  // Determine if a field is in edit mode based on interaction mode and focus
+  const isFieldEditing = (field: MetadataField): boolean => {
+    if (field === 'status') {
+      return interactionMode === 'edit_status' && focusedField === 'status';
+    }
+    return interactionMode === 'edit_text' && focusedField === field;
+  };
+
   // Determine border color based on mode
   const borderColor = mode === 'batch' ? 'yellow' : mode === 'feature' ? 'magenta' : 'cyan';
   const headerColor = borderColor;
+
+  // Help text based on interaction mode
+  const getHelpText = (): string => {
+    switch (interactionMode) {
+      case 'edit_status':
+        return 'j/k: select status  Enter: save  Esc: cancel';
+      case 'edit_text':
+        return 'Type to edit  Enter: save  Esc: cancel';
+      case 'navigate':
+      default:
+        return 'j/k: navigate  Enter: edit  Esc: close';
+    }
+  };
 
   return (
     <Box
@@ -130,7 +159,7 @@ export function MetadataPopup({
       <Box flexDirection="column">
         {FIELD_ORDER.map((field) => {
           const isFocused = field === focusedField;
-          const isEditing = field === editingField;
+          const isEditing = isFieldEditing(field);
           const label = FIELD_LABELS[field];
           const value = getFieldValue(field);
 
@@ -153,7 +182,7 @@ export function MetadataPopup({
 
               {/* Field value */}
               {field === 'status' ? (
-                // Status field: show icon and label
+                // Status field: show icon and label (with dropdown indicator when editing)
                 <Box>
                   <Text color={getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue)}>
                     {getStatusIcon(allowedStatuses[selectedStatusIndex] || statusValue)}
@@ -164,8 +193,11 @@ export function MetadataPopup({
                   >
                     {' '}{getStatusLabel(allowedStatuses[selectedStatusIndex] || statusValue)}
                   </Text>
-                  {isFocused && (
-                    <Text dimColor> (j/k to change)</Text>
+                  {isFocused && !isEditing && (
+                    <Text dimColor> (Enter to select)</Text>
+                  )}
+                  {isEditing && (
+                    <Text dimColor> (j/k to change, Enter to save)</Text>
                   )}
                 </Box>
               ) : isEditing ? (
@@ -177,7 +209,6 @@ export function MetadataPopup({
                   <Text color="cyan" bold inverse>
                     {' '}
                   </Text>
-                  <Text dimColor> (Enter to confirm, Esc to cancel)</Text>
                 </Box>
               ) : (
                 // Text field: show value
@@ -202,7 +233,7 @@ export function MetadataPopup({
       {/* Footer with shortcuts */}
       <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
         <Text dimColor>
-          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  {editingField ? 'Esc: exit edit' : 'a: save  Esc: cancel'}
+          {getHelpText()}
         </Text>
       </Box>
     </Box>

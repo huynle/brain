@@ -310,7 +310,7 @@ export function App({
     });
   }, [getEnabledFeatures, tasks]); // Re-sync when tasks change (poll interval)
 
-  // Detect when focused feature completes (all tasks completed/validated)
+  // Detect when focused feature completes (all tasks completed/blocked/cancelled)
   useEffect(() => {
     if (!focusedFeature) return;
     
@@ -322,12 +322,12 @@ export function App({
     
     if (featureTasks.length === 0) return;
     
-    // Check if all are completed/validated
-    const allComplete = featureTasks.every(t => 
-      t.status === 'completed' || t.status === 'validated'
+    // Check if any tasks are still actionable (pending, in_progress)
+    const actionableTasks = featureTasks.filter(t => 
+      t.status === 'pending' || t.status === 'in_progress'
     );
     
-    if (allComplete) {
+    if (actionableTasks.length === 0) {
       const displayName = isUngrouped ? 'ungrouped tasks' : `feature "${focusedFeature}"`;
       
       // Clear focus mode

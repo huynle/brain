@@ -179,7 +179,7 @@ export const TaskDetail = React.memo(function TaskDetail({
     }
     if (task.gitBranch) {
       contentLines.push(
-        <Box key="git-branch">
+        <Box key="workdir-branch">
           <Text dimColor>  branch: </Text>
           <Text>{task.gitBranch}</Text>
         </Box>

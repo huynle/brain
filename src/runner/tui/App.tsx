@@ -402,12 +402,22 @@ export function App({
   /**
    * Apply metadata changes to all target tasks.
    * Only sends fields that differ from their original values.
+   * @param overrides - Optional override values to use instead of state (for immediate Esc commit)
    */
-  const applyMetadataChanges = useCallback(() => {
+  const applyMetadataChanges = useCallback((overrides?: {
+    feature_id?: string;
+    git_branch?: string;
+    target_workdir?: string;
+  }) => {
     if (!onUpdateMetadata || metadataTargetTasks.length === 0) {
       setShowMetadataPopup(false);
       return;
     }
+
+    // Use overrides if provided, otherwise use state values
+    const effectiveFeatureId = overrides?.feature_id ?? metadataFeatureIdValue;
+    const effectiveBranch = overrides?.git_branch ?? metadataBranchValue;
+    const effectiveWorkdir = overrides?.target_workdir ?? metadataWorkdirValue;
 
     // Build changed fields object (only include fields that differ from original)
     const changedFields: {
@@ -420,14 +430,14 @@ export function App({
     if (metadataStatusValue !== metadataOriginalValues.status) {
       changedFields.status = metadataStatusValue;
     }
-    if (metadataFeatureIdValue !== metadataOriginalValues.feature_id) {
-      changedFields.feature_id = metadataFeatureIdValue;
+    if (effectiveFeatureId !== metadataOriginalValues.feature_id) {
+      changedFields.feature_id = effectiveFeatureId;
     }
-    if (metadataBranchValue !== metadataOriginalValues.git_branch) {
-      changedFields.git_branch = metadataBranchValue;
+    if (effectiveBranch !== metadataOriginalValues.git_branch) {
+      changedFields.git_branch = effectiveBranch;
     }
-    if (metadataWorkdirValue !== metadataOriginalValues.target_workdir) {
-      changedFields.target_workdir = metadataWorkdirValue;
+    if (effectiveWorkdir !== metadataOriginalValues.target_workdir) {
+      changedFields.target_workdir = effectiveWorkdir;
     }
 
     // Skip if no changes
@@ -486,12 +496,26 @@ export function App({
     if (showMetadataPopup) {
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
       
-        // Escape handling: cancel edit mode OR save and close popup
+        // Escape handling: commit edit and save, OR just save and close popup
         if (key.escape) {
           if (metadataEditingField) {
-            // Cancel editing, restore original value
+            // Commit edit buffer and save-and-close in one step
+            // Pass the buffer value as override since React state updates are batched
+            const overrides: { feature_id?: string; git_branch?: string; target_workdir?: string } = {};
+            switch (metadataEditingField) {
+              case 'feature_id':
+                overrides.feature_id = metadataEditBuffer;
+                break;
+              case 'git_branch':
+                overrides.git_branch = metadataEditBuffer;
+                break;
+              case 'target_workdir':
+                overrides.target_workdir = metadataEditBuffer;
+                break;
+            }
             setMetadataEditingField(null);
             setMetadataEditBuffer('');
+            applyMetadataChanges(overrides);
           } else {
             // Save changes and close popup (applyMetadataChanges closes popup after saving)
             applyMetadataChanges();

@@ -377,3 +377,88 @@ function saveSettingsToFileForTest(filePath: string, settings: TUISettings): voi
     // Silently fail
   }
 }
+
+// =============================================================================
+// Test debounce behavior
+// =============================================================================
+
+describe("useSettingsStorage - Debounce Behavior", () => {
+  it("should batch rapid file writes with debounce pattern", async () => {
+    // This tests the concept that debouncing should result in a single write
+    // for multiple rapid changes. The hook uses setTimeout for debouncing.
+    
+    let writeCount = 0;
+    const debouncedWrite = createDebouncedWriteForTest((settings: TUISettings) => {
+      writeCount++;
+      saveSettingsToFileForTest(testSettingsFile, settings);
+    }, 50);
+
+    // Simulate rapid changes
+    debouncedWrite({ visibleGroups: ['pending'], groupCollapsed: {} });
+    debouncedWrite({ visibleGroups: ['pending', 'active'], groupCollapsed: {} });
+    debouncedWrite({ visibleGroups: ['pending', 'active', 'blocked'], groupCollapsed: {} });
+    
+    // Should not have written yet (still within debounce window)
+    expect(writeCount).toBe(0);
+    
+    // Wait for debounce to complete
+    await new Promise(resolve => setTimeout(resolve, 100));
+    
+    // Should have written exactly once
+    expect(writeCount).toBe(1);
+    
+    // File should contain the last value
+    const content = readFileSync(testSettingsFile, 'utf-8');
+    const parsed = JSON.parse(content);
+    expect(parsed.visibleGroups).toEqual(['pending', 'active', 'blocked']);
+  });
+
+  it("should allow multiple writes after debounce window passes", async () => {
+    let writeCount = 0;
+    const debouncedWrite = createDebouncedWriteForTest((settings: TUISettings) => {
+      writeCount++;
+      saveSettingsToFileForTest(testSettingsFile, settings);
+    }, 30);
+
+    // First batch
+    debouncedWrite({ visibleGroups: ['pending'], groupCollapsed: {} });
+    debouncedWrite({ visibleGroups: ['active'], groupCollapsed: {} });
+    
+    // Wait for first debounce to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(writeCount).toBe(1);
+    
+    // Second batch (after debounce window)
+    debouncedWrite({ visibleGroups: ['blocked'], groupCollapsed: {} });
+    debouncedWrite({ visibleGroups: ['completed'], groupCollapsed: {} });
+    
+    // Wait for second debounce to complete
+    await new Promise(resolve => setTimeout(resolve, 50));
+    expect(writeCount).toBe(2);
+    
+    // File should contain the last value from second batch
+    const content = readFileSync(testSettingsFile, 'utf-8');
+    const parsed = JSON.parse(content);
+    expect(parsed.visibleGroups).toEqual(['completed']);
+  });
+});
+
+/**
+ * Create a debounced write function for testing.
+ * Mirrors the debounce logic in useSettingsStorage.
+ */
+function createDebouncedWriteForTest(
+  writeFn: (settings: TUISettings) => void,
+  debounceMs: number
+): (settings: TUISettings) => void {
+  let timeoutRef: ReturnType<typeof setTimeout> | null = null;
+  
+  return (settings: TUISettings) => {
+    if (timeoutRef) {
+      clearTimeout(timeoutRef);
+    }
+    timeoutRef = setTimeout(() => {
+      writeFn(settings);
+    }, debounceMs);
+  };
+}

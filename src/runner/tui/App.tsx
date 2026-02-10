@@ -486,18 +486,18 @@ export function App({
     if (showMetadataPopup) {
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
       
-      // Escape handling: cancel edit mode OR close popup
-      if (key.escape) {
-        if (metadataEditingField) {
-          // Cancel editing, restore original value
-          setMetadataEditingField(null);
-          setMetadataEditBuffer('');
-        } else {
-          // Close popup, preserve multi-select state
-          setShowMetadataPopup(false);
+        // Escape handling: cancel edit mode OR save and close popup
+        if (key.escape) {
+          if (metadataEditingField) {
+            // Cancel editing, restore original value
+            setMetadataEditingField(null);
+            setMetadataEditBuffer('');
+          } else {
+            // Save changes and close popup (applyMetadataChanges closes popup after saving)
+            applyMetadataChanges();
+          }
+          return;
         }
-        return;
-      }
 
       // Tab: cycle focused field (only when not editing)
       if (key.tab && !metadataEditingField) {

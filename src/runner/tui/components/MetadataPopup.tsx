@@ -202,7 +202,7 @@ export function MetadataPopup({
       {/* Footer with shortcuts */}
       <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
         <Text dimColor>
-          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  Esc: {editingField ? 'cancel edit' : 'close'}
+          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  Esc: {editingField ? 'cancel edit' : 'save & close'}
         </Text>
       </Box>
     </Box>

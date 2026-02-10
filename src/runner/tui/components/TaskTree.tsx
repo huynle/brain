@@ -31,6 +31,8 @@ interface TaskTreeProps {
   viewportHeight?: number;
   /** Set of feature IDs that are collapsed */
   collapsedFeatures?: Set<string>;
+  /** Set of feature IDs that are active (queued for execution via x key) */
+  activeFeatures?: Set<string>;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -890,6 +892,7 @@ const FeatureHeader = React.memo(function FeatureHeader({
   blockedBy,
   isSelected,
   isCollapsed,
+  isActive,
 }: {
   featureId: string;
   completed: number;
@@ -898,6 +901,8 @@ const FeatureHeader = React.memo(function FeatureHeader({
   blockedBy?: string[];
   isSelected?: boolean;
   isCollapsed?: boolean;
+  /** Whether this feature is active (queued for execution) */
+  isActive?: boolean;
 }): React.ReactElement {
   // Collapse indicator
   const collapseIcon = isCollapsed ? '▶' : '▾';
@@ -935,6 +940,9 @@ const FeatureHeader = React.memo(function FeatureHeader({
   const blockedText = blockedBy && blockedBy.length > 0 
     ? ` [waiting on: ${blockedBy.join(', ')}]`
     : '';
+  
+  // Active indicator
+  const activeIndicator = isActive ? ' ⚡' : '';
 
   return (
     <Box marginTop={1} flexDirection="row">
@@ -958,6 +966,15 @@ const FeatureHeader = React.memo(function FeatureHeader({
       >
         {' '}Feature: {featureId}
       </Text>
+      {isActive && (
+        <Text
+          color={isSelected ? 'white' : 'magenta'}
+          backgroundColor={isSelected ? 'blue' : undefined}
+          bold
+        >
+          {activeIndicator}
+        </Text>
+      )}
       <Text
         color={isSelected ? 'white' : 'gray'}
         backgroundColor={isSelected ? 'blue' : undefined}
@@ -1097,6 +1114,7 @@ export const TaskTree = React.memo(function TaskTree({
   scrollOffset = 0,
   viewportHeight,
   collapsedFeatures = new Set(),
+  activeFeatures = new Set(),
 }: TaskTreeProps): React.ReactElement {
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
@@ -1535,6 +1553,7 @@ export const TaskTree = React.memo(function TaskTree({
           blockedBy={meta?.blockedBy}
           isSelected={selectedId === headerId}
           isCollapsed={isFeatureCollapsed}
+          isActive={activeFeatures.has(featureId)}
         />
       );
       
@@ -1573,6 +1592,7 @@ export const TaskTree = React.memo(function TaskTree({
         // Ungrouped header (selectable, like feature headers)
         const isUngroupedSelected = selectedId === UNGROUPED_HEADER_ID;
         const isUngroupedCollapsed = collapsedFeatures.has(UNGROUPED_FEATURE_ID);
+        const isUngroupedActive = activeFeatures.has(UNGROUPED_FEATURE_ID);
         const collapseIcon = isUngroupedCollapsed ? '▶' : '▾';
         
         featureElements.push(
@@ -1590,6 +1610,15 @@ export const TaskTree = React.memo(function TaskTree({
             >
               {' '}Ungrouped ({ungroupedActive.length})
             </Text>
+            {isUngroupedActive && (
+              <Text
+                color={isUngroupedSelected ? 'white' : 'magenta'}
+                backgroundColor={isUngroupedSelected ? 'blue' : undefined}
+                bold
+              >
+                {' ⚡'}
+              </Text>
+            )}
           </Box>
         );
         

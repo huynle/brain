@@ -163,8 +163,8 @@ export function App({
   const [showPausePopup, setShowPausePopup] = useState(false);
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(true);
-  // Focus mode: run a single feature to completion
-  const [focusedFeature, setFocusedFeature] = useState<string | null>(null);
+  // Active features: features queued for execution (controlled by x key on feature headers)
+  const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -309,60 +309,6 @@ export function App({
       return enabledSet;
     });
   }, [getEnabledFeatures, tasks]); // Re-sync when tasks change (poll interval)
-
-  // Detect when focused feature completes (all tasks completed/blocked/cancelled)
-  // When complete: clear focus, disable feature, auto-pause project
-  useEffect(() => {
-    if (!focusedFeature) return;
-    
-    // Get all tasks for the focused feature
-    const isUngrouped = focusedFeature === UNGROUPED_FEATURE_ID;
-    const featureTasks = isUngrouped 
-      ? tasks.filter(t => !t.feature_id)
-      : tasks.filter(t => t.feature_id === focusedFeature);
-    
-    if (featureTasks.length === 0) return;
-    
-    // Check if any tasks are still actionable (pending, in_progress)
-    const actionableTasks = featureTasks.filter(t => 
-      t.status === 'pending' || t.status === 'in_progress'
-    );
-    
-    if (actionableTasks.length === 0) {
-      const displayName = isUngrouped ? 'ungrouped tasks' : `feature "${focusedFeature}"`;
-      
-      // Clear focus mode
-      setFocusedFeature(null);
-      
-      // Disable the feature (clean up whitelist)
-      if (onDisableFeature) {
-        onDisableFeature(focusedFeature);
-        setEnabledFeatures(prev => {
-          const next = new Set(prev);
-          next.delete(focusedFeature);
-          return next;
-        });
-      }
-      
-      // Auto-pause the project now that focused feature is complete
-      const targetProject = activeProject === 'all' 
-        ? (isMultiProject ? projects[0] : projects[0]) 
-        : (activeProject || config.project);
-      
-      if (onPause && !pausedProjects.has(targetProject)) {
-        setPausedProjects(prev => new Set([...prev, targetProject]));
-        Promise.resolve(onPause(targetProject)).catch((err: unknown) => {
-          addLog({ level: 'error', message: `Failed to auto-pause ${targetProject}: ${err}` });
-        });
-      }
-      
-      // Show notification
-      addLog({
-        level: 'info',
-        message: `✅ Focus mode complete: ${displayName} finished! Project auto-paused.`
-      });
-    }
-  }, [tasks, focusedFeature, onDisableFeature, onPause, activeProject, isMultiProject, projects, config.project, pausedProjects, addLog]);
 
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
@@ -779,36 +725,112 @@ export function App({
       return;
     }
 
-    // Execute selected task manually (x key - single task only)
-    // Note: Focus mode (feature execution) moved to 'f' key
-    if (input === 'x' && selectedTask && onExecuteTask) {
-      addLog({
-        level: 'info',
-        message: `Executing task: ${selectedTask.title}`,
-        taskId: selectedTask.id,
-      });
-      onExecuteTask(selectedTask.id, selectedTask.path).then((success) => {
-        if (success) {
+    // x key: Toggle feature activation or execute task
+    // - On feature header: toggle feature in/out of activeFeatures set
+    // - On ungrouped header: toggle ungrouped in/out of activeFeatures set
+    // - On task row: execute the task immediately
+    if (input === 'x') {
+      // Case 1: Feature header selected - toggle feature activation
+      if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+        const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+        
+        if (activeFeatures.has(featureId)) {
+          // Deactivate feature
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.delete(featureId);
+            return next;
+          });
+          if (onDisableFeature) {
+            onDisableFeature(featureId);
+          }
           addLog({
             level: 'info',
-            message: `Task execution started: ${selectedTask.title}`,
-            taskId: selectedTask.id,
+            message: `Deactivated feature: ${featureId}`,
           });
         } else {
+          // Activate feature
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.add(featureId);
+            return next;
+          });
+          if (onEnableFeature) {
+            onEnableFeature(featureId);
+          }
           addLog({
-            level: 'warn',
-            message: `Failed to execute task: ${selectedTask.title} (at capacity or not found)`,
-            taskId: selectedTask.id,
+            level: 'info',
+            message: `Activated feature: ${featureId}`,
           });
         }
-        refetch(); // Refresh to show updated status
-      }).catch((err) => {
+        return;
+      }
+      
+      // Case 2: Ungrouped header selected - toggle ungrouped activation
+      if (selectedTaskId === UNGROUPED_HEADER_ID) {
+        if (activeFeatures.has(UNGROUPED_FEATURE_ID)) {
+          // Deactivate ungrouped
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.delete(UNGROUPED_FEATURE_ID);
+            return next;
+          });
+          if (onDisableFeature) {
+            onDisableFeature(UNGROUPED_FEATURE_ID);
+          }
+          addLog({
+            level: 'info',
+            message: 'Deactivated ungrouped tasks',
+          });
+        } else {
+          // Activate ungrouped
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.add(UNGROUPED_FEATURE_ID);
+            return next;
+          });
+          if (onEnableFeature) {
+            onEnableFeature(UNGROUPED_FEATURE_ID);
+          }
+          addLog({
+            level: 'info',
+            message: 'Activated ungrouped tasks',
+          });
+        }
+        return;
+      }
+      
+      // Case 3: Task selected - execute immediately
+      if (selectedTask && onExecuteTask) {
         addLog({
-          level: 'error',
-          message: `Failed to execute task: ${err}`,
+          level: 'info',
+          message: `Executing task: ${selectedTask.title}`,
           taskId: selectedTask.id,
         });
-      });
+        onExecuteTask(selectedTask.id, selectedTask.path).then((success) => {
+          if (success) {
+            addLog({
+              level: 'info',
+              message: `Task execution started: ${selectedTask.title}`,
+              taskId: selectedTask.id,
+            });
+          } else {
+            addLog({
+              level: 'warn',
+              message: `Failed to execute task: ${selectedTask.title} (at capacity or not found)`,
+              taskId: selectedTask.id,
+            });
+          }
+          refetch(); // Refresh to show updated status
+        }).catch((err) => {
+          addLog({
+            level: 'error',
+            message: `Failed to execute task: ${err}`,
+            taskId: selectedTask.id,
+          });
+        });
+        return;
+      }
       return;
     }
 
@@ -992,41 +1014,8 @@ export function App({
       }
     }
 
-    // Pause/Resume handling - 'p' is context-aware based on focus mode
+    // Pause/Resume handling - always opens pause popup
     if (input === 'p') {
-      // If a feature is focused, pressing p should:
-      // 1. Unpause the project (if paused)
-      // 2. Run the focused feature to completion
-      // 3. Auto-pause when complete (handled by useEffect at lines 313-352)
-      if (focusedFeature) {
-        const targetProject = activeProject === 'all' 
-          ? (isMultiProject ? projects[0] : projects[0]) 
-          : (activeProject || config.project);
-        
-        // Resume the project if paused
-        if (pausedProjects.has(targetProject) && onResume) {
-          addLog({ 
-            level: 'info', 
-            message: `▶️ Running focused feature "${focusedFeature === UNGROUPED_FEATURE_ID ? 'ungrouped' : focusedFeature}" to completion...` 
-          });
-          setPausedProjects(prev => {
-            const next = new Set(prev);
-            next.delete(targetProject);
-            return next;
-          });
-          Promise.resolve(onResume(targetProject)).catch((err: unknown) => {
-            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
-          });
-        } else {
-          addLog({ 
-            level: 'info', 
-            message: `Already running: focused feature "${focusedFeature === UNGROUPED_FEATURE_ID ? 'ungrouped' : focusedFeature}"` 
-          });
-        }
-        return;
-      }
-      
-      // No focused feature - open pause popup as usual
       setShowPausePopup(true);
       return;
     }
@@ -1119,91 +1108,6 @@ export function App({
           const maxOffset = Math.max(0, navigationOrder.length - taskViewportHeight);
           setTaskScrollOffset(maxOffset);
         }
-        return;
-      }
-
-      // f - Toggle feature focus mode (focus on feature header or task's feature)
-      if (input === 'f') {
-        let targetFeatureId: string | null = null;
-        
-        // Case 1: Cursor on a feature header - focus that feature
-        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
-          targetFeatureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
-        }
-        // Case 2: Cursor on ungrouped header - focus ungrouped tasks
-        else if (selectedTaskId === UNGROUPED_HEADER_ID) {
-          targetFeatureId = UNGROUPED_FEATURE_ID;
-        }
-        // Case 3: Cursor on a task row - extract feature_id from the task
-        else if (selectedTask) {
-          if (selectedTask.feature_id) {
-            targetFeatureId = selectedTask.feature_id;
-          } else {
-            // Task has no feature_id - focus ungrouped
-            targetFeatureId = UNGROUPED_FEATURE_ID;
-          }
-        }
-        
-        // If no valid target, do nothing
-        if (!targetFeatureId) {
-          return;
-        }
-        
-        // Toggle logic: same feature = clear focus, different = switch
-        if (focusedFeature === targetFeatureId) {
-          // Clear focus mode
-          setFocusedFeature(null);
-          
-          // Disable the feature from the whitelist
-          if (onDisableFeature) {
-            onDisableFeature(targetFeatureId);
-            setEnabledFeatures(prev => {
-              const next = new Set(prev);
-              next.delete(targetFeatureId!);
-              return next;
-            });
-          }
-          
-          const displayName = targetFeatureId === UNGROUPED_FEATURE_ID 
-            ? 'ungrouped tasks' 
-            : `feature "${targetFeatureId}"`;
-          addLog({ 
-            level: 'info', 
-            message: `🔓 Focus mode cleared: ${displayName}` 
-          });
-        } else {
-          // Switch to new feature (or enable focus mode)
-          
-          // 1. Clear existing enabled features (if switching)
-          if (focusedFeature && onDisableFeature) {
-            onDisableFeature(focusedFeature);
-          }
-          if (onDisableFeature) {
-            for (const f of enabledFeatures) {
-              if (f !== targetFeatureId) {
-                onDisableFeature(f);
-              }
-            }
-          }
-          
-          // 2. Enable only the target feature
-          if (onEnableFeature) {
-            onEnableFeature(targetFeatureId);
-            setEnabledFeatures(new Set([targetFeatureId]));
-          }
-          
-          // 3. Set focused feature state
-          setFocusedFeature(targetFeatureId);
-          
-          const displayName = targetFeatureId === UNGROUPED_FEATURE_ID 
-            ? 'ungrouped tasks' 
-            : `feature "${targetFeatureId}"`;
-          addLog({ 
-            level: 'info', 
-            message: `🎯 Focus mode: ${displayName}` 
-          });
-        }
-        
         return;
       }
 
@@ -1360,8 +1264,9 @@ export function App({
         <Text>  <Text bold>Ctrl-C</Text>    - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
         <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
-        <Text>  <Text bold>x</Text>         - Cancel selected task</Text>
-        <Text>  <Text bold>p</Text>         - Pause/Resume current project</Text>
+        <Text>  <Text bold>x</Text>         - On feature: toggle active | On task: execute</Text>
+        <Text>  <Text bold>X</Text>         - Cancel running task (kill PID)</Text>
+        <Text>  <Text bold>p</Text>         - Open pause/resume popup</Text>
         {isMultiProject && (
           <Text>  <Text bold>P</Text>         - Pause/Resume ALL projects</Text>
         )}
@@ -1372,7 +1277,9 @@ export function App({
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
         <Text>  <Text bold>s</Text>         - Change task status</Text>
         <Text>  <Text bold>S</Text>         - Open settings</Text>
-        <Text>  <Text bold>f</Text>         - Filter logs by selected task (in logs panel)</Text>
+        <Text />
+        <Text bold dimColor>Logs Panel (when focused):</Text>
+        <Text>  <Text bold>f</Text>         - Filter logs by selected task</Text>
         {isMultiProject && (
           <>
             <Text />
@@ -1451,7 +1358,6 @@ export function App({
         <PausePopup
           projectId={targetProject}
           isProjectPaused={pausedProjects.has(targetProject)}
-          focusedFeature={focusedFeature}
           onPauseProject={() => onPause?.(targetProject)}
           onUnpauseProject={() => onResume?.(targetProject)}
           onClose={() => setShowPausePopup(false)}
@@ -1475,7 +1381,7 @@ export function App({
         enabledFeatures={enabledFeatures}
         getRunningProcessCount={getRunningProcessCount}
         resourceMetrics={resourceMetrics}
-        focusedFeature={focusedFeature}
+        activeFeatures={activeFeatures}
       />
 
       {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
@@ -1502,6 +1408,7 @@ export function App({
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
               collapsedFeatures={collapsedFeatures}
+              activeFeatures={activeFeatures}
             />
           </Box>
 
@@ -1539,10 +1446,6 @@ export function App({
       <HelpBar 
         focusedPanel={focusedPanel} 
         isMultiProject={isMultiProject}
-        isFeatureHeaderSelected={
-          selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX) || 
-          selectedTaskId === UNGROUPED_HEADER_ID
-        }
       />
     </Box>
   );

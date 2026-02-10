@@ -273,6 +273,45 @@ export class ApiClient {
     }
   }
 
+  /**
+   * Update metadata fields on an entry.
+   * Supports batch updates of multiple fields at once.
+   * Only provided fields are updated - undefined fields are not sent.
+   */
+  async updateEntryMetadata(
+    taskPath: string,
+    fields: {
+      status?: EntryStatus;
+      feature_id?: string;
+      git_branch?: string;
+      target_workdir?: string;
+      priority?: Priority;
+      tags?: string[];
+      depends_on?: string[];
+    }
+  ): Promise<void> {
+    const encodedPath = encodeURIComponent(taskPath);
+
+    // Build payload with only defined fields
+    const payload: Record<string, unknown> = {};
+    if (fields.status !== undefined) payload.status = fields.status;
+    if (fields.feature_id !== undefined) payload.feature_id = fields.feature_id;
+    if (fields.git_branch !== undefined) payload.git_branch = fields.git_branch;
+    if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
+    if (fields.priority !== undefined) payload.priority = fields.priority;
+    if (fields.tags !== undefined) payload.tags = fields.tags;
+    if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
+
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+  }
+
   // ========================================
   // Task Claiming
   // ========================================

@@ -75,6 +75,12 @@ export interface DashboardOptions {
   onResumeFeature?: (featureId: string) => void;
   /** Get current paused features from TaskRunner */
   getPausedFeatures?: () => string[];
+  /** Enable a feature to run while project is paused (whitelist) */
+  onEnableFeature?: (featureId: string) => void;
+  /** Disable a feature from whitelist */
+  onDisableFeature?: (featureId: string) => void;
+  /** Get currently enabled features from TaskRunner */
+  getEnabledFeatures?: () => string[];
 }
 
 export interface DashboardHandle {
@@ -156,6 +162,9 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onPauseFeature={options.onPauseFeature}
       onResumeFeature={options.onResumeFeature}
       getPausedFeatures={options.getPausedFeatures}
+      onEnableFeature={options.onEnableFeature}
+      onDisableFeature={options.onDisableFeature}
+      getEnabledFeatures={options.getEnabledFeatures}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

@@ -1,7 +1,8 @@
 /**
  * Task Service - Unit Tests
  *
- * Tests for workdir/worktree execution context in task management.
+ * Tests for workdir resolution and dependency normalization.
+ * Worktree paths are now derived from git_branch using deriveWorktreePath().
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
@@ -44,8 +45,9 @@ describe("TaskService", () => {
       expect(result).toBeNull();
     });
 
-    test("returns null when worktree path does not exist", () => {
-      const result = service.resolveWorkdir(null, "nonexistent/worktree/path");
+    test("returns null when git_branch has no existing worktree", () => {
+      // gitBranch alone doesn't create a path - needs workdir too for derivation
+      const result = service.resolveWorkdir(null, "feature/nonexistent");
       expect(result).toBeNull();
     });
 
@@ -64,59 +66,81 @@ describe("TaskService", () => {
       }
     });
 
-    test("resolves worktree path relative to HOME", () => {
-      // Create a temporary directory under home for testing
-      const testWorktree = `.test-worktree-${Date.now()}`;
-      const fullPath = join(homedir(), testWorktree);
-      
-      try {
-        mkdirSync(fullPath, { recursive: true });
-        
-        const result = service.resolveWorkdir(null, testWorktree);
-        expect(result).toBe(fullPath);
-      } finally {
-        try { rmSync(fullPath, { recursive: true, force: true }); } catch {}
-      }
-    });
-
-    test("prioritizes worktree over workdir when both exist", () => {
-      // Create both directories
-      const testWorkdir = `.test-workdir-priority-${Date.now()}`;
-      const testWorktree = `.test-worktree-priority-${Date.now()}`;
+    test("resolves derived worktree when it exists", () => {
+      // Create a workdir with a .worktrees subdirectory
+      const testWorkdir = `.test-workdir-derived-${Date.now()}`;
       const workdirPath = join(homedir(), testWorkdir);
-      const worktreePath = join(homedir(), testWorktree);
-      
+      const worktreePath = join(workdirPath, ".worktrees", "feature-auth");
+
       try {
-        mkdirSync(workdirPath, { recursive: true });
         mkdirSync(worktreePath, { recursive: true });
-        
-        const result = service.resolveWorkdir(testWorkdir, testWorktree);
+
+        // When git_branch is provided and derived worktree exists, use it
+        const result = service.resolveWorkdir(testWorkdir, "feature/auth");
         expect(result).toBe(worktreePath);
       } finally {
         try { rmSync(workdirPath, { recursive: true, force: true }); } catch {}
-        try { rmSync(worktreePath, { recursive: true, force: true }); } catch {}
       }
     });
 
-    test("falls back to workdir when worktree does not exist", () => {
+    test("falls back to workdir when derived worktree does not exist", () => {
       const testWorkdir = `.test-workdir-fallback-${Date.now()}`;
       const workdirPath = join(homedir(), testWorkdir);
-      
+
       try {
         mkdirSync(workdirPath, { recursive: true });
-        
-        const result = service.resolveWorkdir(testWorkdir, "nonexistent/worktree");
+
+        // When derived worktree doesn't exist, fall back to workdir
+        const result = service.resolveWorkdir(testWorkdir, "feature/nonexistent");
         expect(result).toBe(workdirPath);
       } finally {
         try { rmSync(workdirPath, { recursive: true, force: true }); } catch {}
       }
     });
 
-    test("returns null when both worktree and workdir do not exist", () => {
+    test("returns null when both derived worktree and workdir do not exist", () => {
       const result = service.resolveWorkdir(
         "nonexistent/workdir",
-        "nonexistent/worktree"
+        "feature/some-branch"
       );
+      expect(result).toBeNull();
+    });
+  });
+
+  describe("deriveWorktreePath()", () => {
+    let service: TaskService;
+
+    beforeEach(() => {
+      service = new TaskService(createTestConfig(), "test-project");
+    });
+
+    test("derives worktree path with simple branch", () => {
+      const result = service.deriveWorktreePath("projects/brain-api", "feature-x");
+      expect(result).toBe(`${homedir()}/projects/brain-api/.worktrees/feature-x`);
+    });
+
+    test("sanitizes slashes in branch names", () => {
+      const result = service.deriveWorktreePath("projects/brain-api", "feature/auth");
+      expect(result).toBe(`${homedir()}/projects/brain-api/.worktrees/feature-auth`);
+    });
+
+    test("sanitizes special characters in branch names", () => {
+      const result = service.deriveWorktreePath("projects/brain-api", "fix/bug#123@test");
+      expect(result).toBe(`${homedir()}/projects/brain-api/.worktrees/fix-bug123test`);
+    });
+
+    test("returns null when workdir is null", () => {
+      const result = service.deriveWorktreePath(null, "feature/auth");
+      expect(result).toBeNull();
+    });
+
+    test("returns null when gitBranch is null", () => {
+      const result = service.deriveWorktreePath("projects/brain-api", null);
+      expect(result).toBeNull();
+    });
+
+    test("returns null when both are null", () => {
+      const result = service.deriveWorktreePath(null, null);
       expect(result).toBeNull();
     });
   });

@@ -151,32 +151,32 @@ describe("OpencodeExecutor", () => {
   });
 
   describe("resolveWorkdir()", () => {
-    test("returns config workDir when task has no workdir fields", () => {
+    test("returns config workDir when task has no workdir fields", async () => {
       const task = createMockTask("task1");
-      const workdir = executor.resolveWorkdir(task);
+      const workdir = await executor.resolveWorkdir(task);
       expect(workdir).toBe(testConfig.workDir);
     });
 
-    test("returns resolved_workdir when set and exists", () => {
+    test("returns resolved_workdir when set and exists", async () => {
       const existingDir = testStateDir; // We know this exists
       const task = createMockTask("task1", {
         resolved_workdir: existingDir,
       });
 
-      const workdir = executor.resolveWorkdir(task);
+      const workdir = await executor.resolveWorkdir(task);
       expect(workdir).toBe(existingDir);
     });
 
-    test("returns config default when resolved_workdir does not exist", () => {
+    test("returns config default when resolved_workdir does not exist", async () => {
       const task = createMockTask("task1", {
         resolved_workdir: "/nonexistent/path/that/does/not/exist",
       });
 
-      const workdir = executor.resolveWorkdir(task);
+      const workdir = await executor.resolveWorkdir(task);
       expect(workdir).toBe(testConfig.workDir);
     });
 
-    test("prioritizes worktree over workdir when both exist under homedir", () => {
+    test("prioritizes worktree over workdir when both exist under homedir", async () => {
       // Create directories under homedir for this test
       const worktreeDir = join(homedir(), ".test-worktree-temp");
       const workdirDir = join(homedir(), ".test-workdir-temp");
@@ -190,7 +190,7 @@ describe("OpencodeExecutor", () => {
           workdir: ".test-workdir-temp",
         });
 
-        const workdir = executor.resolveWorkdir(task);
+        const workdir = await executor.resolveWorkdir(task);
         expect(workdir).toBe(worktreeDir);
       } finally {
         // Clean up
@@ -199,7 +199,7 @@ describe("OpencodeExecutor", () => {
       }
     });
 
-    test("falls back to workdir when worktree does not exist", () => {
+    test("falls back to workdir when worktree does not exist", async () => {
       // Create workdir under homedir
       const workdirDir = join(homedir(), ".test-workdir-temp");
       
@@ -211,7 +211,7 @@ describe("OpencodeExecutor", () => {
           workdir: ".test-workdir-temp",
         });
 
-        const workdir = executor.resolveWorkdir(task);
+        const workdir = await executor.resolveWorkdir(task);
         expect(workdir).toBe(workdirDir);
       } finally {
         // Clean up
@@ -219,7 +219,7 @@ describe("OpencodeExecutor", () => {
       }
     });
 
-    test("workdir resolution priority chain", () => {
+    test("workdir resolution priority chain", async () => {
       // Test the full priority chain: worktree > workdir > resolved_workdir > config
 
       // Create resolved_workdir
@@ -232,7 +232,7 @@ describe("OpencodeExecutor", () => {
         resolved_workdir: resolvedDir,
       });
 
-      const workdir = executor.resolveWorkdir(task);
+      const workdir = await executor.resolveWorkdir(task);
       expect(workdir).toBe(resolvedDir);
     });
   });

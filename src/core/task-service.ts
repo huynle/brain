@@ -7,6 +7,7 @@
 
 import { existsSync, readdirSync } from "fs";
 import { join } from "path";
+import { homedir } from "os";
 import { getConfig } from "../config";
 import type { BrainConfig, Task, ResolvedTask, DependencyResult } from "./types";
 import {
@@ -119,7 +120,7 @@ export class TaskService {
         modified: note.modified,
         target_workdir: (note.metadata?.target_workdir as string) || null,
         workdir: (note.metadata?.workdir as string) || null,
-        worktree: (note.metadata?.worktree as string) || null,
+        worktree: null, // Deprecated: now derived from git_branch via deriveWorktreePath()
         git_remote: (note.metadata?.git_remote as string) || null,
         git_branch: (note.metadata?.git_branch as string) || null,
         user_original_request:
@@ -141,7 +142,7 @@ export class TaskService {
     // Resolve workdirs for all tasks
     result.tasks = result.tasks.map((task) => ({
       ...task,
-      resolved_workdir: this.resolveWorkdir(task.workdir, task.worktree),
+      resolved_workdir: this.resolveWorkdir(task.workdir, task.git_branch),
     }));
 
     return result;
@@ -305,30 +306,54 @@ export class TaskService {
   // ========================================
 
   /**
-   * Resolve a $HOME-relative workdir to an absolute path
-   * Tries worktree first (more specific), then workdir
-   * Returns null if neither exists (caller decides fallback)
+   * Derive the standard worktree path from git_branch and workdir.
+   * Uses convention: <workdir>/.worktrees/<sanitized-branch>/
+   *
+   * @param workdir - $HOME-relative path to main repo (e.g., "projects/brain-api")
+   * @param gitBranch - Git branch name (e.g., "feature/auth")
+   * @returns Full worktree path or null if inputs missing
    */
-  resolveWorkdir(workdir: string | null, worktree: string | null): string | null {
-    const home = process.env.HOME || "";
+  deriveWorktreePath(workdir: string | null, gitBranch: string | null): string | null {
+    if (!workdir || !gitBranch) return null;
 
-    // Try worktree first (more specific)
-    if (worktree) {
-      const worktreePath = `${home}/${worktree}`;
-      if (existsSync(worktreePath)) {
-        return worktreePath;
-      }
-      // Log warning but continue to try workdir
-      console.warn(`Worktree not found: ${worktreePath}, trying workdir`);
+    // Sanitize branch name for filesystem
+    // feature/auth -> feature-auth
+    // fix/bug-123 -> fix-bug-123
+    const sanitizedBranch = gitBranch
+      .replace(/\//g, "-")
+      .replace(/[^a-zA-Z0-9-_]/g, "");
+
+    const home = homedir();
+    const mainRepoPath = `${home}/${workdir}`;
+    const worktreePath = `${mainRepoPath}/.worktrees/${sanitizedBranch}`;
+
+    return worktreePath;
+  }
+
+  /**
+   * Resolve working directory for task execution.
+   * First checks if a derived worktree exists, then falls back to workdir.
+   *
+   * @param workdir - $HOME-relative path to main repo
+   * @param gitBranch - Git branch name (for worktree derivation)
+   * @returns Resolved absolute path or null
+   */
+  resolveWorkdir(workdir: string | null, gitBranch: string | null): string | null {
+    const home = homedir();
+
+    // First, check if a worktree exists for this branch
+    const worktreePath = this.deriveWorktreePath(workdir, gitBranch);
+    if (worktreePath && existsSync(worktreePath)) {
+      return worktreePath;
     }
 
-    // Try main workdir
+    // Fall back to main workdir
     if (workdir) {
-      const workdirPath = `${home}/${workdir}`;
-      if (existsSync(workdirPath)) {
-        return workdirPath;
+      const mainPath = `${home}/${workdir}`;
+      if (existsSync(mainPath)) {
+        return mainPath;
       }
-      console.warn(`Workdir not found: ${workdirPath}`);
+      console.warn(`Workdir not found: ${mainPath}`);
     }
 
     return null;

@@ -41,14 +41,13 @@ export function getApiUrl(): string {
 export function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
 
-  // Get main worktree path (resolves worktrees to their main repo)
-  let mainWorktreePath = directory;
-  let currentWorktreePath: string | undefined;
+  // Get main repo path (resolves worktrees to their main repo)
+  let mainRepoPath = directory;
   let gitRemote: string | undefined;
   let gitBranch: string | undefined;
 
   try {
-    // Check if we're in a worktree and get the main worktree
+    // Check if we're in a worktree and get the main repo path
     const worktreeList = execSync("git worktree list --porcelain", {
       cwd: directory,
       encoding: "utf-8",
@@ -57,12 +56,7 @@ export function getExecutionContext(directory: string): ExecutionContext {
     const lines = worktreeList.split("\n");
     const firstWorktreeLine = lines.find((l) => l.startsWith("worktree "));
     if (firstWorktreeLine) {
-      mainWorktreePath = firstWorktreeLine.replace("worktree ", "");
-    }
-
-    // If current directory is different from main, we're in a worktree
-    if (directory !== mainWorktreePath) {
-      currentWorktreePath = directory;
+      mainRepoPath = firstWorktreeLine.replace("worktree ", "");
     }
 
     // Get git remote
@@ -71,7 +65,7 @@ export function getExecutionContext(directory: string): ExecutionContext {
       encoding: "utf-8",
     }).trim();
 
-    // Get current branch
+    // Get current branch (used to derive worktree path later)
     gitBranch = execSync("git branch --show-current", {
       cwd: directory,
       encoding: "utf-8",
@@ -88,16 +82,12 @@ export function getExecutionContext(directory: string): ExecutionContext {
     return path;
   };
 
-  const projectId = makeHomeRelative(mainWorktreePath);
-  const workdir = makeHomeRelative(mainWorktreePath);
-  const worktree = currentWorktreePath
-    ? makeHomeRelative(currentWorktreePath)
-    : undefined;
+  const projectId = makeHomeRelative(mainRepoPath);
+  const workdir = makeHomeRelative(mainRepoPath);
 
   return {
     projectId,
     workdir,
-    worktree,
     gitRemote,
     gitBranch,
   };
@@ -178,7 +168,6 @@ export const brainApi = {
     relatedEntries?: string[];
 
     workdir?: string;
-    worktree?: string;
     git_remote?: string;
     git_branch?: string;
   }): Promise<SaveResponse> {

@@ -127,7 +127,9 @@ export type RunnerEvent =
   | { type: "all_paused" }
   | { type: "all_resumed" }
   | { type: "feature_paused"; featureId: string }
-  | { type: "feature_resumed"; featureId: string };
+  | { type: "feature_resumed"; featureId: string }
+  | { type: "feature_enabled"; featureId: string }
+  | { type: "feature_disabled"; featureId: string };
 
 export type EventHandler = (event: RunnerEvent) => void;
 

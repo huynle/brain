@@ -694,7 +694,7 @@ describe("Integration: Workdir/Execution Context Flow", () => {
     expect(taskWithWorkdir.resolved_workdir).toBe("/home/user/projects/my-project");
   });
 
-  test("OpencodeExecutor.resolveWorkdir uses task workdir fields", () => {
+  test("OpencodeExecutor.resolveWorkdir uses task workdir fields", async () => {
     const executor = new OpencodeExecutor(config);
     
     // Task with no workdir fields - should use config default
@@ -703,19 +703,19 @@ describe("Integration: Workdir/Execution Context Flow", () => {
       worktree: null,
       resolved_workdir: null,
     });
-    expect(executor.resolveWorkdir(taskNoWorkdir)).toBe(config.workDir);
+    expect(await executor.resolveWorkdir(taskNoWorkdir)).toBe(config.workDir);
 
     // Task with resolved_workdir - should use it if directory exists
     const taskWithResolvedWorkdir = createMockTask("task2", {
       resolved_workdir: testDir, // Use test directory which exists
     });
-    expect(executor.resolveWorkdir(taskWithResolvedWorkdir)).toBe(testDir);
+    expect(await executor.resolveWorkdir(taskWithResolvedWorkdir)).toBe(testDir);
 
     // Task with non-existent resolved_workdir - should fall back to config
     const taskWithBadResolved = createMockTask("task3", {
       resolved_workdir: "/nonexistent/path/that/does/not/exist",
     });
-    expect(executor.resolveWorkdir(taskWithBadResolved)).toBe(config.workDir);
+    expect(await executor.resolveWorkdir(taskWithBadResolved)).toBe(config.workDir);
   });
 
   test("RunningTask preserves workdir from ResolvedTask", () => {
@@ -775,7 +775,7 @@ describe("Integration: Workdir/Execution Context Flow", () => {
     });
 
     // Verify workdir resolution - should use resolved_workdir since workdir/worktree are null
-    const resolvedWorkdir = executor.resolveWorkdir(task);
+    const resolvedWorkdir = await executor.resolveWorkdir(task);
     expect(resolvedWorkdir).toBe(testDir);
 
     // Mock Bun.spawn to capture spawn arguments

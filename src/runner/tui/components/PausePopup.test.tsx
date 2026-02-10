@@ -213,4 +213,130 @@ describe('PausePopup', () => {
       expect(frame).toContain('(paused)');
     });
   });
+
+  describe('feature enable/disable when project is paused', () => {
+    it('should show enable option when project is paused and feature is selected', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="feature"
+          isProjectPaused={true}
+          enabledFeatures={new Set()}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('e: Enable Feature');
+    });
+
+    it('should show disable option when feature is already enabled', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="feature"
+          isProjectPaused={true}
+          enabledFeatures={new Set(['auth-feature'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('e: Disable Feature');
+    });
+
+    it('should show enabled count when project is paused and features are enabled', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="project"
+          isProjectPaused={true}
+          enabledFeatures={new Set(['auth-feature', 'another-feature'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('2 features enabled');
+    });
+
+    it('should show singular form for 1 enabled feature', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="project"
+          isProjectPaused={true}
+          enabledFeatures={new Set(['auth-feature'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('1 feature enabled');
+    });
+
+    it('should show enabled state on the feature row when whitelisted', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="feature"
+          isProjectPaused={true}
+          enabledFeatures={new Set(['auth-feature'])}
+        />
+      );
+
+      const frame = lastFrame();
+      // Feature should show (enabled) state and have play icon
+      expect(frame).toContain('(enabled)');
+      expect(frame).toContain('▶');
+    });
+
+    it('should show "paused - project" state when feature is blocked by project pause', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="feature"
+          isProjectPaused={true}
+          enabledFeatures={new Set()}  // Feature NOT whitelisted
+        />
+      );
+
+      const frame = lastFrame();
+      // Feature should show it's paused due to project, not its own pause state
+      expect(frame).toContain('(paused - project)');
+      expect(frame).toContain('⏸');
+    });
+
+    it('should not show enable option when project is running', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          featureId="auth-feature"
+          selectedTarget="feature"
+          isProjectPaused={false}
+          enabledFeatures={new Set()}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('e: Enable Feature');
+      expect(frame).not.toContain('e: Disable Feature');
+    });
+
+    it('should not show enable option when no feature is selected', () => {
+      const { lastFrame } = render(
+        <PausePopup
+          projectId="my-project"
+          selectedTarget="project"
+          isProjectPaused={true}
+          enabledFeatures={new Set()}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('e: Enable Feature');
+    });
+  });
 });

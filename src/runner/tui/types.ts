@@ -193,6 +193,8 @@ export interface AppProps {
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
   /** Callback to execute a task manually. Returns true if task was started, false otherwise. */
   onExecuteTask?: (taskId: string, taskPath: string) => Promise<boolean>;
+  /** Callback to execute all ready tasks for a feature. Returns number of tasks started. */
+  onExecuteFeature?: (featureId: string) => Promise<number>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
   /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */
@@ -207,4 +209,14 @@ export interface AppProps {
   onDisableFeature?: (featureId: string) => void;
   /** Get currently enabled features from TaskRunner */
   getEnabledFeatures?: () => string[];
+  /** Callback to update entry metadata fields (status, feature_id, git_branch, target_workdir) */
+  onUpdateMetadata?: (
+    taskPath: string,
+    fields: {
+      status?: EntryStatus;
+      feature_id?: string;
+      git_branch?: string;
+      target_workdir?: string;
+    }
+  ) => Promise<void>;
 }

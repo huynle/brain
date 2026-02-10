@@ -17,12 +17,12 @@ File issues and feature requests. Dispatches a general subagent for root cause a
   <rule id="clarify_then_continue">If clarification needed, ask user, then dispatch NEW subagent with full context</rule>
   <rule id="clarify_complex_tasks">For complex multi-step features, ALWAYS ask clarifying questions before splitting into tasks</rule>
   <rule id="include_original_request">ALWAYS include exact user input in "## Original Request" section - used for validation</rule>
-  <rule id="split_large_tasks">For complex tasks with multiple discrete steps, create multiple tasks with depends_on relationships</rule>
+  <rule id="split_large_tasks">For complex tasks with multiple discrete steps, create multiple tasks with depends_on relationships and ALWAYS use feature_id to group them</rule>
   <rule id="use_project_arg">Use $1 as project name if provided, otherwise omit project parameter to use brain's default</rule>
   <rule id="reset_status_on_update">When updating existing task with new requirements, ALWAYS set status: "pending" to re-queue</rule>
   <rule id="keep_tasks_small">Tasks should be SMALL and focused - completable in 15-30 minutes. Split larger work into multiple tasks.</rule>
   <rule id="no_parent_tasks">NEVER create "parent" tasks that sit at in_progress as containers. Use feature_id to group related tasks instead.</rule>
-  <rule id="use_feature_id">Use feature_id to logically group related tasks (e.g., "auth-system", "dark-mode"). ALL tasks in a feature share the same feature_id.</rule>
+  <rule id="use_feature_id">MANDATORY: Any feature requiring 2+ tasks MUST use feature_id to group them (e.g., "auth-system", "dark-mode"). ALL tasks in a feature share the same feature_id. Single standalone tasks don't need feature_id.</rule>
   <rule id="checkout_task_optional">Only create a "final checkout" task if user EXPLICITLY requests verification OR the feature requires integration testing. The checkout task depends on ALL other tasks in the feature.</rule>
   <rule id="use_feature_depends_on">Use feature_depends_on when entire features must complete before another feature starts.</rule>
 </critical_rules>
@@ -42,6 +42,18 @@ File issues and feature requests. Dispatches a general subagent for root cause a
 - Prevents race condition where do-work executes tasks before all dependencies are filed
 - Ensures complex multi-task features have complete dependency graph before execution
 - Simple standalone tasks still go to pending immediately (no delay)
+
+**Feature ID Decision Tree:**
+```
+Is this a single standalone task?
+├── YES → No feature_id needed, status: "pending" immediately
+└── NO (2+ tasks required)
+    └── MUST use feature_id (MANDATORY)
+        ├── Generate slug from feature name: "Add dark mode" → "dark-mode"
+        ├── ALL tasks share the same feature_id
+        ├── Create all as "draft", then batch-promote to "pending"
+        └── Benefits: TUI grouping, pause/resume, focus mode ('x' key)
+```
 
 **This command does NOT:**
 - Investigate issues itself (dispatches subagent)
@@ -272,7 +284,14 @@ brain_save(
 
 **For complex tasks with multiple discrete steps (dependent task chain):**
 
-When the agent identifies that a task has multiple independent or sequential parts, create tasks grouped by `feature_id`. **Do NOT create a "parent" task that sits at in_progress as a container.**
+When the agent identifies that a task has multiple independent or sequential parts, **ALWAYS** create tasks grouped by `feature_id`. This is **MANDATORY** for any feature requiring 2+ tasks. **Do NOT create a "parent" task that sits at in_progress as a container.**
+
+**Why feature_id is required for multi-task features:**
+- Groups related tasks in the TUI dashboard for easy tracking
+- Enables pause/resume at the feature level
+- Allows "focus mode" (press 'x' on feature to run only that feature)
+- Provides clear visual organization of work
+- Makes it easy to see feature progress at a glance
 
 **Task structure using feature_id:**
 ```
@@ -414,7 +433,9 @@ Task C: Create UI components (depends_on: [Task B])
 
 The brain's task queue will only mark Task B as "ready" after Task A completes.
 
-### Using `feature_id` for Logical Grouping
+### Using `feature_id` for Logical Grouping (MANDATORY for 2+ tasks)
+
+**RULE: Any feature requiring 2 or more tasks MUST use `feature_id`.**
 
 Use `feature_id` to group related tasks that belong to the same feature:
 
@@ -437,9 +458,16 @@ brain_save(
 ```
 
 **Benefits of feature_id:**
-- Tasks grouped together in status displays
+- Tasks grouped together in TUI dashboard under collapsible feature headers
+- Enables feature-level actions: pause, resume, focus mode ('x' to run feature to completion)
 - Can query all tasks for a feature: `brain_list(type: "task", tags: ["dark-mode"])`
 - Provides logical organization beyond just dependencies
+- Shows feature completion progress (e.g., "2/5 tasks complete")
+
+**When to use feature_id:**
+- ✅ Feature requires 2+ tasks → MUST use feature_id
+- ✅ Related bug fixes that should be grouped → use feature_id
+- ❌ Single standalone task → no feature_id needed
 
 ### Using `feature_depends_on` for Feature-Level Dependencies
 
@@ -556,11 +584,12 @@ The orchestrator will get the answer and dispatch a new investigation.
 
 **TASK SIZING:** Keep tasks SMALL - each task should be completable in 15-30 minutes. If a task would take longer, split it into smaller pieces. Use `depends_on` for sequential tasks and `feature_id` to group related tasks together.
 
-**FEATURE GROUPING:** When splitting into multiple tasks:
-- Generate a `feature_id` slug from the feature name (e.g., "Add dark mode" -> "dark-mode")
-- ALL tasks in the feature share the same `feature_id`
-- Do NOT create a "parent" task - just use feature_id to group
+**FEATURE GROUPING (MANDATORY for 2+ tasks):** When splitting into multiple tasks:
+- **ALWAYS** generate a `feature_id` slug from the feature name (e.g., "Add dark mode" -> "dark-mode")
+- ALL tasks in the feature MUST share the same `feature_id` - this is NOT optional
+- Do NOT create a "parent" task - feature_id handles grouping in the TUI
 - Only suggest a "checkout" task if user explicitly wants verification
+- Feature_id enables: TUI grouping, pause/resume, focus mode ('x' key)
 
 ---
 
@@ -624,7 +653,7 @@ The orchestrator will get the answer and dispatch a new investigation.
 <simple|medium|complex> - <why>
 ```
 
-**For complex tasks that should be split:**
+**For complex tasks that should be split (2+ tasks REQUIRE feature_id):**
 ```markdown
 ## Issue: <title>
 
@@ -641,9 +670,11 @@ The orchestrator will get the answer and dispatch a new investigation.
 ### Recommended Task Split
 This task should be split into multiple dependent tasks.
 
-**Feature ID:** `<feature-slug>` (e.g., "dark-mode", "auth-system", "tui-task-detail-improvements")
+**Feature ID:** `<feature-slug>` (REQUIRED - e.g., "dark-mode", "auth-system", "worktree-bugfix")
 **Feature Priority:** <high|medium|low>
 **Needs Checkout Task:** <yes|no> (only "yes" if user explicitly requested verification)
+
+NOTE: feature_id is MANDATORY when creating 2+ tasks. It groups tasks in the TUI and enables feature-level controls.
 
 #### Task 1: <title>
 - **Files:** `path/to/file1`
@@ -674,8 +705,9 @@ This task should be split into multiple dependent tasks.
 ### Task Sizing Notes
 - Each task should be completable in 15-30 minutes
 - If a task would take longer, split it further
-- All tasks share the same feature_id for logical grouping
-- NO parent task needed - feature_id handles grouping
+- **MANDATORY:** All tasks in a multi-task feature share the same feature_id
+- NO parent task needed - feature_id handles grouping in TUI dashboard
+- feature_id enables: visual grouping, pause/resume, focus mode
 
 ### Complexity
 complex - <why it needs splitting>

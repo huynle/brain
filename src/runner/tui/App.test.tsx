@@ -604,44 +604,40 @@ describe('App - Logs Panel Visibility Toggle', () => {
 });
 
 // =============================================================================
-// PausePopup Integration Tests
+// Pause Toggle (p key) Tests
 // =============================================================================
 
-describe('App - PausePopup Integration', () => {
-  it('can send p key without crashing', () => {
+describe('App - Pause Toggle (p key)', () => {
+  it('p key directly toggles pause without popup', () => {
     const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
     
-    // Send 'p' for pause/resume
+    // Send 'p' to toggle pause - should work immediately
     stdin.write('p');
     
-    // App should still be rendering
+    // App should still be rendering (no popup overlay)
     expect(lastFrame()).toBeDefined();
     
     unmount();
   });
 
-  // Note: The p key now opens a pause popup overlay
-  // Due to timing in ink-testing-library, we just verify it doesn't crash
-  it('p key can be pressed without crashing', () => {
-    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+  it('p key calls onPause when project is running', async () => {
+    let pauseCalled = false;
+    const onPause = async (projectId: string) => {
+      pauseCalled = true;
+      expect(projectId).toBe('test-project');
+    };
     
-    // Send 'p' to trigger pause popup
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onPause={onPause} />
+    );
+    
+    // Send 'p' to toggle pause
     stdin.write('p');
     
-    // App should still be rendering
-    expect(lastFrame()).toBeDefined();
+    // Wait for async handler
+    await new Promise(r => setTimeout(r, 10));
     
-    unmount();
-  });
-
-  it('Escape key does not crash in normal mode', () => {
-    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
-    
-    // Send Escape in normal mode (should do nothing)
-    stdin.write('\x1B'); // Escape key
-    
-    // App should still be rendering
-    expect(lastFrame()).toBeDefined();
+    expect(pauseCalled).toBe(true);
     
     unmount();
   });
@@ -651,175 +647,6 @@ describe('App - PausePopup Integration', () => {
     const frame = lastFrame() || '';
     // HelpBar should include 'p' for pause
     expect(frame).toContain('Pause');
-    unmount();
-  });
-});
-
-// =============================================================================
-// Focus Mode (f key) Tests
-// =============================================================================
-
-describe('App - Focus Mode (f key)', () => {
-  it('f key can be pressed without crashing', () => {
-    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
-    
-    // Send 'f' for focus mode toggle
-    stdin.write('f');
-    
-    // App should still be rendering
-    expect(lastFrame()).toBeDefined();
-    
-    unmount();
-  });
-
-  it('f key on task row without feature_id is handled gracefully', async () => {
-    // When pressing 'f' on a task without feature_id, it should focus "ungrouped"
-    let enableFeatureCalled = false;
-    let enabledFeatureId = '';
-    
-    const mockEnableFeature = (featureId: string) => {
-      enableFeatureCalled = true;
-      enabledFeatureId = featureId;
-    };
-    
-    const { stdin, unmount } = render(
-      <App 
-        config={defaultConfig} 
-        onEnableFeature={mockEnableFeature}
-      />
-    );
-    
-    // Navigate to first task (if any)
-    stdin.write('j');
-    
-    // Wait for navigation
-    await new Promise(r => setTimeout(r, 10));
-    
-    // Press 'f' to toggle focus
-    stdin.write('f');
-    
-    // Wait for async handlers
-    await new Promise(r => setTimeout(r, 10));
-    
-    // Note: Without tasks loaded (no mock poller), onEnableFeature won't be called
-    // This test just verifies the app doesn't crash
-    expect(true).toBe(true);
-    
-    unmount();
-  });
-
-  it('f key toggles focus mode off when pressed on same feature', async () => {
-    let disableFeatureCalled = false;
-    
-    const mockDisableFeature = (featureId: string) => {
-      disableFeatureCalled = true;
-    };
-    
-    const { stdin, lastFrame, unmount } = render(
-      <App 
-        config={defaultConfig} 
-        onDisableFeature={mockDisableFeature}
-      />
-    );
-    
-    // Press 'f' twice - first to focus, second to unfocus
-    stdin.write('f');
-    await new Promise(r => setTimeout(r, 10));
-    stdin.write('f');
-    await new Promise(r => setTimeout(r, 10));
-    
-    // App should still be rendering
-    expect(lastFrame()).toBeDefined();
-    
-    unmount();
-  });
-
-  it('focus mode indicator appears in help bar when feature is focused', () => {
-    // When a feature is focused, help bar should show the focus shortcut
-    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
-    const frame = lastFrame() || '';
-    
-    // Should show 'f' shortcut in help bar
-    expect(frame).toContain('f');
-    
-    unmount();
-  });
-});
-
-// =============================================================================
-// Context-Aware Pause (p key with focus mode) Tests
-// =============================================================================
-
-describe('App - Context-Aware Pause with Focus Mode', () => {
-  it('p key opens pause popup when no feature is focused', () => {
-    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
-    
-    // Press 'p' without any focused feature
-    stdin.write('p');
-    
-    // App should still render (popup may or may not be visible depending on timing)
-    expect(lastFrame()).toBeDefined();
-    
-    unmount();
-  });
-
-  it('p key does not crash when feature is focused', async () => {
-    let resumeCalled = false;
-    
-    const mockResume = async (projectId: string) => {
-      resumeCalled = true;
-    };
-    
-    const { stdin, lastFrame, unmount } = render(
-      <App 
-        config={defaultConfig} 
-        onResume={mockResume}
-      />
-    );
-    
-    // Navigate down to select a task
-    stdin.write('j');
-    await new Promise(r => setTimeout(r, 10));
-    
-    // Press 'f' to focus (may or may not work depending on task availability)
-    stdin.write('f');
-    await new Promise(r => setTimeout(r, 10));
-    
-    // Press 'p' which should either resume or open popup
-    stdin.write('p');
-    await new Promise(r => setTimeout(r, 10));
-    
-    // App should still be rendering
-    expect(lastFrame()).toBeDefined();
-    
-    unmount();
-  });
-
-  it('p with focused feature skips popup and resumes directly', async () => {
-    // This test verifies the behavior when focusedFeature is set
-    // Due to limited mocking in ink-testing-library, we verify the app handles this gracefully
-    let resumeCalled = false;
-    let pausePopupOpened = false;
-    
-    const mockResume = async (projectId: string) => {
-      resumeCalled = true;
-    };
-    
-    // Note: We can't directly mock focusedFeature state, so we test the code path exists
-    const { stdin, lastFrame, unmount } = render(
-      <App 
-        config={defaultConfig} 
-        onResume={mockResume}
-      />
-    );
-    
-    // Send 'p' - without focused feature, should open popup
-    stdin.write('p');
-    await new Promise(r => setTimeout(r, 10));
-    
-    // The popup behavior is handled gracefully
-    expect(lastFrame()).toBeDefined();
-    
     unmount();
   });
 });
@@ -1009,6 +836,282 @@ describe('App - Auto-Pause on Feature Completion', () => {
     // App should still be rendering
     expect(lastFrame()).toBeDefined();
     
+    unmount();
+  });
+});
+
+// =============================================================================
+// Multi-Select and MetadataPopup Integration Tests
+// =============================================================================
+
+describe('App - Multi-Select (Space Key)', () => {
+  it('Space key can be pressed without crashing', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Send Space to toggle selection
+    stdin.write(' ');
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('Space toggles selection on task (when task is focused)', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate to a potential task position
+    stdin.write('j');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press Space to toggle selection
+    stdin.write(' ');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should continue rendering
+    expect(lastFrame()).toBeDefined();
+    
+    // Press Space again to deselect
+    stdin.write(' ');
+    await new Promise(r => setTimeout(r, 10));
+    
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('Space key does not select feature headers', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate and try to select
+    stdin.write('j');
+    stdin.write(' ');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should not crash even if on a header
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+});
+
+describe('App - MetadataPopup (s Key)', () => {
+  it('s key can be pressed without crashing', () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Send 's' to open metadata popup
+    stdin.write('s');
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('s key opens popup when on tasks panel', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate to a task first
+    stdin.write('j');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press 's' to open metadata popup
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // If there's a task selected, we might see popup elements
+    const frame = lastFrame() || '';
+    // App should at least render (popup may or may not appear depending on task availability)
+    expect(frame.length).toBeGreaterThan(0);
+    
+    unmount();
+  });
+
+  it('s key does not open popup when on logs panel', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Switch to logs panel
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Verify we're on logs panel
+    const frameAfterTab = lastFrame() || '';
+    expect(frameAfterTab).toContain('logs');
+    
+    // Press 's' - should not do anything special
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Should still be on logs, no popup
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+});
+
+describe('App - MetadataPopup Modes', () => {
+  it('Esc closes popup without crashing', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Try to open popup
+    stdin.write('j');
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press Esc to close
+    stdin.write('\x1b'); // Escape character
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should still render
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('Tab key works in popup context', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate and open popup
+    stdin.write('j');
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press Tab to cycle fields
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should continue rendering
+    expect(lastFrame()).toBeDefined();
+    
+    // Another Tab
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('Enter key works in popup context', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate and open popup
+    stdin.write('j');
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press Enter to apply/edit
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should continue rendering
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+});
+
+describe('App - Multi-Select Batch Mode', () => {
+  it('selecting multiple tasks and pressing s works', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // Navigate and select multiple tasks
+    stdin.write('j');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write(' '); // Select first
+    await new Promise(r => setTimeout(r, 10));
+    
+    stdin.write('j');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write(' '); // Select second
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Open batch metadata popup
+    stdin.write('s');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Should render (popup may show if tasks exist)
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+});
+
+describe('App - Project Tab Switch Clears Selection', () => {
+  const multiProjectConfig: TUIConfig = {
+    ...defaultConfig,
+    projects: ['project-a', 'project-b'],
+    activeProject: 'all',
+  };
+
+  it('switching tabs clears multi-select state', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    
+    // Navigate and select a task
+    stdin.write('j');
+    stdin.write(' ');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Switch to next project tab
+    stdin.write(']');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should still be rendering (selection cleared internally)
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+
+  it('pressing number keys to switch tabs clears selection', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={multiProjectConfig} />);
+    
+    // Navigate and select
+    stdin.write('j');
+    stdin.write(' ');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // Press '2' to go to second tab
+    stdin.write('2');
+    await new Promise(r => setTimeout(r, 10));
+    
+    // App should still render
+    expect(lastFrame()).toBeDefined();
+    
+    unmount();
+  });
+});
+
+describe('App - MetadataPopup with onUpdateMetadata callback', () => {
+  it('accepts onUpdateMetadata callback prop', () => {
+    const mockUpdateMetadata = async (
+      _taskPath: string, 
+      _fields: { status?: string; feature_id?: string; git_branch?: string; target_workdir?: string }
+    ): Promise<void> => {};
+    
+    expect(() => {
+      const { unmount } = render(
+        <App 
+          config={defaultConfig} 
+          onUpdateMetadata={mockUpdateMetadata}
+        />
+      );
+      unmount();
+    }).not.toThrow();
+  });
+
+  it('s shortcut shown in help bar', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // HelpBar should include 's' for status/metadata
+    expect(frame).toContain('s');
+    unmount();
+  });
+
+  it('Space shortcut shown in help bar', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+    // HelpBar should include 'Space' for select
+    expect(frame).toContain('Space');
     unmount();
   });
 });

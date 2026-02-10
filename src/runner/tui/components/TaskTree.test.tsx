@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, FEATURE_HEADER_PREFIX } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
@@ -475,6 +475,106 @@ describe('TaskTree', () => {
       expect(expandedFrame()).toContain('▾ Completed (2)');
       expect(expandedFrame()).toContain('Done Task 1');
       expect(expandedFrame()).toContain('Done Task 2');
+    });
+  });
+
+  describe('group status filtering', () => {
+    it('excludes archived tasks from main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Archived Task', status: 'archived' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      expect(lastFrame()).not.toContain('Archived Task');
+    });
+
+    it('excludes cancelled tasks from main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Cancelled Task', status: 'cancelled' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      expect(lastFrame()).not.toContain('Cancelled Task');
+    });
+
+    it('excludes superseded tasks from main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Superseded Task', status: 'superseded' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      expect(lastFrame()).not.toContain('Superseded Task');
+    });
+
+    it('excludes draft tasks from main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Draft Task', status: 'draft' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      // Draft tasks appear in their own section, not the main tree
+      // When collapsed, the Draft header appears but not the task title
+      expect(lastFrame()).toContain('Draft (1)');
+    });
+
+    it('counts all group statuses correctly in their respective sections', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active', status: 'pending' }),
+        createTask({ id: '2', title: 'Done', status: 'completed' }),
+        createTask({ id: '3', title: 'Validated', status: 'validated' }),
+        createTask({ id: '4', title: 'Draft One', status: 'draft' }),
+        createTask({ id: '5', title: 'Draft Two', status: 'draft' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} completedCollapsed={true} onToggleCompleted={() => {}} draftCollapsed={true} onToggleDraft={() => {}} />
+      );
+      // Active tree should only show the pending task
+      expect(lastFrame()).toContain('Tasks (5)'); // Total count
+      expect(lastFrame()).toContain('Active'); // Active task visible
+      // Completed section shows 2 (completed + validated)
+      expect(lastFrame()).toContain('Completed (2)');
+      // Draft section shows 2
+      expect(lastFrame()).toContain('Draft (2)');
+    });
+
+    it('excludes all group statuses from active tree count in navigation', () => {
+      const tasks = [
+        createTask({ id: 'active1', title: 'Active 1', status: 'pending' }),
+        createTask({ id: 'active2', title: 'Active 2', status: 'in_progress' }),
+        createTask({ id: 'archived', title: 'Archived', status: 'archived' }),
+        createTask({ id: 'cancelled', title: 'Cancelled', status: 'cancelled' }),
+        createTask({ id: 'superseded', title: 'Superseded', status: 'superseded' }),
+        createTask({ id: 'completed', title: 'Completed', status: 'completed' }),
+        createTask({ id: 'draft', title: 'Draft', status: 'draft' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true);
+      // Only active1 and active2 should be in the main navigation, 
+      // followed by draft header, then completed header
+      // Group status tasks (archived, cancelled, superseded) have no dedicated section,
+      // so they don't appear in navigation at all
+      expect(order).toContain('active1');
+      expect(order).toContain('active2');
+      expect(order).not.toContain('archived');
+      expect(order).not.toContain('cancelled');
+      expect(order).not.toContain('superseded');
+      // Completed tasks are in their section (collapsed, so only header)
+      expect(order).toContain(COMPLETED_HEADER_ID);
+      expect(order).not.toContain('completed'); // collapsed
+      // Draft tasks are in their section (collapsed, so only header)
+      expect(order).toContain(DRAFT_HEADER_ID);
+      expect(order).not.toContain('draft'); // collapsed
     });
   });
 });
@@ -1463,6 +1563,160 @@ describe('flattenFeatureOrder', () => {
       const featuredIndex = order.indexOf('1');
       const ungroupedIndex = order.indexOf('2');
       expect(featuredIndex).toBeLessThan(ungroupedIndex);
+    });
+  });
+});
+
+// =============================================================================
+// Group Status Filtering Tests
+// =============================================================================
+
+describe('TaskTree group status filtering', () => {
+  describe('archived tasks', () => {
+    it('does NOT show archived tasks in main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Archived Task', status: 'archived' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      // Archived task should NOT be in the main task list
+      expect(lastFrame()).not.toContain('Archived Task');
+    });
+
+    it('includes archived task in navigation order only in group section', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'archived', title: 'Archived', status: 'archived' }),
+      ];
+      const order = flattenTreeOrder(tasks, true); // collapsed
+      // Active task should be in the order
+      expect(order).toContain('active');
+      // Archived task should NOT be in the main navigation order
+      expect(order).not.toContain('archived');
+    });
+  });
+
+  describe('cancelled tasks', () => {
+    it('does NOT show cancelled tasks in main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Cancelled Task', status: 'cancelled' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      // Cancelled task should NOT be in the main task list
+      expect(lastFrame()).not.toContain('Cancelled Task');
+    });
+
+    it('includes cancelled task in navigation order only in group section', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'cancelled', title: 'Cancelled', status: 'cancelled' }),
+      ];
+      const order = flattenTreeOrder(tasks, true); // collapsed
+      // Active task should be in the order
+      expect(order).toContain('active');
+      // Cancelled task should NOT be in the main navigation order
+      expect(order).not.toContain('cancelled');
+    });
+  });
+
+  describe('superseded tasks', () => {
+    it('does NOT show superseded tasks in main active tree', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Superseded Task', status: 'superseded' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+      // Superseded task should NOT be in the main task list
+      expect(lastFrame()).not.toContain('Superseded Task');
+    });
+
+    it('includes superseded task in navigation order only in group section', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'superseded', title: 'Superseded', status: 'superseded' }),
+      ];
+      const order = flattenTreeOrder(tasks, true); // collapsed
+      // Active task should be in the order
+      expect(order).toContain('active');
+      // Superseded task should NOT be in the main navigation order
+      expect(order).not.toContain('superseded');
+    });
+  });
+
+  describe('active statuses still shown in main tree', () => {
+    it('shows pending tasks in main tree', () => {
+      const tasks = [createTask({ id: '1', title: 'Pending Task', status: 'pending' })];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Pending Task');
+    });
+
+    it('shows in_progress tasks in main tree', () => {
+      const tasks = [createTask({ id: '1', title: 'Running Task', status: 'in_progress' })];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Running Task');
+    });
+
+    it('shows blocked tasks in main tree', () => {
+      const tasks = [createTask({ id: '1', title: 'Blocked Task', status: 'blocked' })];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Blocked Task');
+    });
+
+    it('shows active tasks in main tree', () => {
+      const tasks = [createTask({ id: '1', title: 'Active Task', status: 'active' })];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      expect(lastFrame()).toContain('Active Task');
+    });
+  });
+
+  describe('dependency handling with group statuses', () => {
+    it('pending task with archived dependency is still shown in main tree', () => {
+      // A pending task depends on an archived task
+      // The pending task should still appear in the main tree
+      const tasks = [
+        createTask({ id: 'archived-dep', title: 'Archived Dep', status: 'archived' }),
+        createTask({ id: 'pending', title: 'Pending Task', status: 'pending', dependencies: ['archived-dep'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      // Pending task should be shown
+      expect(lastFrame()).toContain('Pending Task');
+      // Archived dependency should NOT be shown in main tree
+      expect(lastFrame()).not.toContain('Archived Dep');
+    });
+
+    it('pending task with parent_id pointing to archived parent still appears as root', () => {
+      // When parent is archived (filtered out), child should become a root
+      const tasks = [
+        createTask({ id: 'archived-parent', title: 'Archived Parent', status: 'archived' }),
+        createTask({ id: 'child', title: 'Child Task', status: 'pending', parent_id: 'archived-parent' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+      // Child should be shown as root since parent is filtered
+      expect(lastFrame()).toContain('Child Task');
+      // Archived parent should NOT be shown
+      expect(lastFrame()).not.toContain('Archived Parent');
     });
   });
 });

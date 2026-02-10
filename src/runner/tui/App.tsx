@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -106,6 +106,9 @@ export function App({
   onPauseFeature,
   onResumeFeature,
   getPausedFeatures,
+  onEnableFeature,
+  onDisableFeature,
+  getEnabledFeatures,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -156,14 +159,19 @@ export function App({
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [pausedFeatures, setPausedFeatures] = useState<Set<string>>(new Set());
+  const [enabledFeatures, setEnabledFeatures] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
   const [detailsScrollOffset, setDetailsScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showPausePopup, setShowPausePopup] = useState(false);
   const [pausePopupTarget, setPausePopupTarget] = useState<PauseTarget>('project');
+  // Store feature ID for pause popup when feature header is selected (selectedTask is null for headers)
+  const [pausePopupFeatureId, setPausePopupFeatureId] = useState<string | null>(null);
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(true);
+  // Focus mode: run a single feature to completion
+  const [focusedFeature, setFocusedFeature] = useState<string | null>(null);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -309,6 +317,62 @@ export function App({
     });
   }, [getPausedFeatures, tasks]); // Re-sync when tasks change (poll interval)
 
+  // Sync enabledFeatures from TaskRunner
+  useEffect(() => {
+    if (!getEnabledFeatures) return;
+    
+    const enabled = getEnabledFeatures();
+    const enabledSet = new Set(enabled);
+    
+    setEnabledFeatures(prev => {
+      if (setsEqual(prev, enabledSet)) {
+        return prev;
+      }
+      return enabledSet;
+    });
+  }, [getEnabledFeatures, tasks]); // Re-sync when tasks change (poll interval)
+
+  // Detect when focused feature completes (all tasks completed/validated)
+  useEffect(() => {
+    if (!focusedFeature) return;
+    
+    // Get all tasks for the focused feature
+    const isUngrouped = focusedFeature === UNGROUPED_FEATURE_ID;
+    const featureTasks = isUngrouped 
+      ? tasks.filter(t => !t.feature_id)
+      : tasks.filter(t => t.feature_id === focusedFeature);
+    
+    if (featureTasks.length === 0) return;
+    
+    // Check if all are completed/validated
+    const allComplete = featureTasks.every(t => 
+      t.status === 'completed' || t.status === 'validated'
+    );
+    
+    if (allComplete) {
+      const displayName = isUngrouped ? 'ungrouped tasks' : `feature "${focusedFeature}"`;
+      
+      // Clear focus mode
+      setFocusedFeature(null);
+      
+      // Disable the feature (clean up whitelist)
+      if (onDisableFeature) {
+        onDisableFeature(focusedFeature);
+        setEnabledFeatures(prev => {
+          const next = new Set(prev);
+          next.delete(focusedFeature);
+          return next;
+        });
+      }
+      
+      // Show notification
+      addLog({
+        level: 'info',
+        message: `✅ Focus mode complete: ${displayName} finished! Project remains paused.`
+      });
+    }
+  }, [tasks, focusedFeature, onDisableFeature, addLog]);
+
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
     setCompletedCollapsed(prev => !prev);
@@ -432,26 +496,30 @@ export function App({
         const newStatus = popupSelectedStatus;
         setShowStatusPopup(false);
         
-        // Handle bulk update for feature headers
+        // Handle bulk update for feature headers or ungrouped
         if (isBulkMode && bulkStatusFeatureId) {
-          // Get all tasks in this feature
-          const featureTasks = tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+          // Get all tasks in this feature (or ungrouped)
+          const isUngrouped = bulkStatusFeatureId === '__ungrouped__';
+          const targetTasks = isUngrouped 
+            ? tasks.filter(t => !t.feature_id)
+            : tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+          const displayName = isUngrouped ? 'Ungrouped' : bulkStatusFeatureId;
           
           addLog({
             level: 'info',
-            message: `Bulk updating ${featureTasks.length} tasks in feature "${bulkStatusFeatureId}" → ${newStatus}`,
+            message: `Bulk updating ${targetTasks.length} tasks in ${displayName} → ${newStatus}`,
           });
           
           // Update all tasks in parallel
           Promise.all(
-            featureTasks.map(task => 
+            targetTasks.map(task => 
               onUpdateStatus(task.id, task.path, newStatus)
             )
           )
             .then(() => {
               addLog({
                 level: 'info',
-                message: `Updated ${featureTasks.length} tasks in feature "${bulkStatusFeatureId}" to ${newStatus}`,
+                message: `Updated ${targetTasks.length} tasks in ${displayName} to ${newStatus}`,
               });
               refetch(); // Refresh to show updated statuses
             })
@@ -670,13 +738,14 @@ export function App({
 
     // === Pause Popup Mode ===
     if (showPausePopup) {
-      // Get the feature ID from the selected task
-      const pauseFeatureId = selectedTask?.feature_id;
+      // Get the feature ID from state (header selection) or selected task
+      const pauseFeatureId = pausePopupFeatureId || selectedTask?.feature_id;
       const hasFeature = !!pauseFeatureId;
 
       // Escape to close popup
       if (key.escape) {
         setShowPausePopup(false);
+        setPausePopupFeatureId(null); // Clear stored feature ID
         return;
       }
 
@@ -735,7 +804,39 @@ export function App({
         }
 
         setShowPausePopup(false);
+        setPausePopupFeatureId(null); // Clear stored feature ID
         return;
+      }
+
+      // 'e' to enable/disable feature when project is paused
+      // Only works when: project is paused AND a feature is selected
+      if (input === 'e' && pauseFeatureId) {
+        const targetProject = activeProject === 'all' 
+          ? (isMultiProject ? projects[0] : projects[0]) 
+          : activeProject;
+        const isPaused = pausedProjects.has(targetProject);
+        
+        if (isPaused) {
+          const isEnabled = enabledFeatures.has(pauseFeatureId);
+          if (isEnabled && onDisableFeature) {
+            // Disable the feature
+            addLog({ level: 'info', message: `Disabling feature: ${pauseFeatureId}...` });
+            setEnabledFeatures(prev => {
+              const next = new Set(prev);
+              next.delete(pauseFeatureId);
+              return next;
+            });
+            onDisableFeature(pauseFeatureId);
+          } else if (!isEnabled && onEnableFeature) {
+            // Enable the feature
+            addLog({ level: 'info', message: `Enabling feature: ${pauseFeatureId} (will run while project is paused)...` });
+            setEnabledFeatures(prev => new Set([...prev, pauseFeatureId]));
+            onEnableFeature(pauseFeatureId);
+          }
+          setShowPausePopup(false);
+          setPausePopupFeatureId(null); // Clear stored feature ID
+          return;
+        }
       }
 
       // Block all other input when popup is open
@@ -749,6 +850,89 @@ export function App({
     if (input === 'r') {
       addLog({ level: 'info', message: 'Manual refresh triggered' });
       refetch();
+      return;
+    }
+
+    // Execute feature to completion (x on feature header) - "Focus Mode"
+    if (input === 'x' && selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+      const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+      const targetProject = activeProject === 'all' 
+        ? (isMultiProject ? projects[0] : projects[0]) 
+        : (activeProject || config.project);
+      
+      // 1. Pause project if not paused
+      if (!pausedProjects.has(targetProject)) {
+        if (onPause) {
+          addLog({ level: 'info', message: `Pausing ${targetProject} for focus mode...` });
+          setPausedProjects(prev => new Set([...prev, targetProject]));
+          onPause(targetProject);
+        }
+      }
+      
+      // 2. Clear existing enabled features
+      if (onDisableFeature) {
+        for (const f of enabledFeatures) {
+          onDisableFeature(f);
+        }
+        setEnabledFeatures(new Set());
+      }
+      
+      // 3. Enable only this feature
+      if (onEnableFeature) {
+        onEnableFeature(featureId);
+        setEnabledFeatures(new Set([featureId]));
+      }
+      
+      // 4. Track focused feature for UI
+      setFocusedFeature(featureId);
+      
+      // 5. Log
+      addLog({ 
+        level: 'info', 
+        message: `🎯 Focus mode: Running feature "${featureId}" to completion` 
+      });
+      
+      return;
+    }
+    
+    // Execute Ungrouped tasks to completion (x on ungrouped header)
+    if (input === 'x' && selectedTaskId === UNGROUPED_HEADER_ID) {
+      const targetProject = activeProject === 'all' 
+        ? (isMultiProject ? projects[0] : projects[0]) 
+        : (activeProject || config.project);
+      
+      // 1. Pause project if not paused
+      if (!pausedProjects.has(targetProject)) {
+        if (onPause) {
+          addLog({ level: 'info', message: `Pausing ${targetProject} for focus mode...` });
+          setPausedProjects(prev => new Set([...prev, targetProject]));
+          onPause(targetProject);
+        }
+      }
+      
+      // 2. Clear existing enabled features
+      if (onDisableFeature) {
+        for (const f of enabledFeatures) {
+          onDisableFeature(f);
+        }
+        setEnabledFeatures(new Set());
+      }
+      
+      // 3. Enable only ungrouped
+      if (onEnableFeature) {
+        onEnableFeature(UNGROUPED_FEATURE_ID);
+        setEnabledFeatures(new Set([UNGROUPED_FEATURE_ID]));
+      }
+      
+      // 4. Track focused feature for UI
+      setFocusedFeature(UNGROUPED_FEATURE_ID);
+      
+      // 5. Log
+      addLog({ 
+        level: 'info', 
+        message: `🎯 Focus mode: Running ungrouped tasks to completion` 
+      });
+      
       return;
     }
 
@@ -859,6 +1043,20 @@ export function App({
 
     // Open status popup for selected task or feature header (s key) - only when focused on tasks panel
     if (input === 's' && focusedPanel === 'tasks') {
+      // Check if ungrouped header is selected - bulk select all ungrouped tasks
+      if (selectedTaskId === UNGROUPED_HEADER_ID) {
+        const ungroupedTasks = tasks.filter(t => !t.feature_id);
+        
+        if (ungroupedTasks.length > 0) {
+          // Set bulk mode with special '__ungrouped__' marker
+          setBulkStatusFeatureId('__ungrouped__');
+          // Default to 'pending' for bulk operations
+          setPopupSelectedStatus('pending');
+          setShowStatusPopup(true);
+        }
+        return;
+      }
+      
       // Check if a feature header is selected
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
@@ -945,10 +1143,37 @@ export function App({
     // 'p' - toggle pause for current project (or all if viewing "all")
     // If selected task has a feature_id, show popup to choose project vs feature
     if (input === 'p') {
+      // Check if Ungrouped header is selected
+      if (selectedTaskId === UNGROUPED_HEADER_ID) {
+        setPausePopupFeatureId(UNGROUPED_FEATURE_ID);
+        setPausePopupTarget('feature'); // Default to feature since that's what's selected
+        setShowPausePopup(true);
+        return;
+      }
+      
+      // Check if a feature header is selected (e.g., "__feature_header__tui-status-filter")
+      if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+        const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+        // Store the feature ID for the popup (since selectedTask is null for headers)
+        setPausePopupFeatureId(featureId);
+        setPausePopupTarget('feature'); // Default to feature since that's what's selected
+        setShowPausePopup(true);
+        return;
+      }
+      
       // Check if selected task has a feature_id
       if (selectedTask?.feature_id) {
         // Show popup to let user choose between project and feature pause
+        setPausePopupFeatureId(null); // Clear header feature ID, will use selectedTask.feature_id
         setPausePopupTarget('project'); // Default to project
+        setShowPausePopup(true);
+        return;
+      }
+      
+      // Check if selected task is ungrouped (no feature_id)
+      if (selectedTask && !selectedTask.feature_id) {
+        setPausePopupFeatureId(UNGROUPED_FEATURE_ID);
+        setPausePopupTarget('feature'); // Treat as feature pause for ungrouped
         setShowPausePopup(true);
         return;
       }
@@ -1103,6 +1328,19 @@ export function App({
         // Toggle draft section if header is selected (legacy)
         if (selectedTaskId === DRAFT_HEADER_ID) {
           setDraftCollapsed(prev => !prev);
+          return;
+        }
+        // Toggle ungrouped section if ungrouped header is selected
+        if (selectedTaskId === UNGROUPED_HEADER_ID) {
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            if (next.has(UNGROUPED_FEATURE_ID)) {
+              next.delete(UNGROUPED_FEATURE_ID);
+            } else {
+              next.add(UNGROUPED_FEATURE_ID);
+            }
+            return next;
+          });
           return;
         }
         // Toggle feature section if feature header is selected
@@ -1263,9 +1501,13 @@ export function App({
 
   // Status popup overlay
   if (showStatusPopup) {
-    // Bulk mode for feature headers
+    // Bulk mode for feature headers or ungrouped
     if (bulkStatusFeatureId) {
-      const featureTasks = tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+      const isUngrouped = bulkStatusFeatureId === '__ungrouped__';
+      const targetTasks = isUngrouped
+        ? tasks.filter(t => !t.feature_id)
+        : tasks.filter(t => t.feature_id === bulkStatusFeatureId);
+      const displayFeatureId = isUngrouped ? 'Ungrouped' : bulkStatusFeatureId;
       return (
         <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
           <StatusPopup
@@ -1273,8 +1515,8 @@ export function App({
             selectedStatus={popupSelectedStatus}
             taskTitle=""
             bulkMode={true}
-            bulkFeatureId={bulkStatusFeatureId}
-            bulkTaskCount={featureTasks.length}
+            bulkFeatureId={displayFeatureId}
+            bulkTaskCount={targetTasks.length}
             allowedStatuses={BULK_STATUS_OPTIONS}
           />
         </Box>
@@ -1310,19 +1552,24 @@ export function App({
   }
 
   // Pause popup overlay
-  if (showPausePopup && selectedTask) {
+  // Show if popup is open AND either: a task is selected OR a feature header is selected (pausePopupFeatureId set)
+  if (showPausePopup && (selectedTask || pausePopupFeatureId)) {
     const targetProject = activeProject === 'all' 
       ? (isMultiProject ? projects[0] : projects[0]) 
       : activeProject;
+    
+    // Use pausePopupFeatureId (from header) or selectedTask.feature_id
+    const featureIdForPopup = pausePopupFeatureId || selectedTask?.feature_id;
     
     return (
       <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
         <PausePopup
           projectId={targetProject}
-          featureId={selectedTask.feature_id}
+          featureId={featureIdForPopup}
           selectedTarget={pausePopupTarget}
           isProjectPaused={pausedProjects.has(targetProject)}
-          isFeaturePaused={selectedTask.feature_id ? pausedFeatures.has(selectedTask.feature_id) : false}
+          isFeaturePaused={featureIdForPopup ? pausedFeatures.has(featureIdForPopup) : false}
+          enabledFeatures={enabledFeatures}
         />
       </Box>
     );
@@ -1340,8 +1587,10 @@ export function App({
         statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
         isConnected={isConnected}
         pausedProjects={pausedProjects}
+        enabledFeatures={enabledFeatures}
         getRunningProcessCount={getRunningProcessCount}
         resourceMetrics={resourceMetrics}
+        focusedFeature={focusedFeature}
       />
 
       {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
@@ -1368,6 +1617,7 @@ export function App({
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
               collapsedFeatures={collapsedFeatures}
+              pausedFeatures={pausedFeatures}
             />
           </Box>
 
@@ -1402,7 +1652,14 @@ export function App({
       </Box>
 
       {/* Help bar at bottom */}
-      <HelpBar focusedPanel={focusedPanel} isMultiProject={isMultiProject} />
+      <HelpBar 
+        focusedPanel={focusedPanel} 
+        isMultiProject={isMultiProject}
+        isFeatureHeaderSelected={
+          selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX) || 
+          selectedTaskId === UNGROUPED_HEADER_ID
+        }
+      />
     </Box>
   );
 }

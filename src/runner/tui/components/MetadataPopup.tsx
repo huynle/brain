@@ -1,0 +1,212 @@
+/**
+ * MetadataPopup - A modal popup for batch updating task metadata
+ *
+ * Displays editable fields for status, feature_id, git_branch, and target_workdir.
+ * Supports single task, batch mode, and feature mode.
+ *
+ * ┌─ Update Metadata ──────────────────────┐
+ * │                                        │
+ * │  3 tasks selected                      │
+ * │                                        │
+ * │  Status:      ● pending                │
+ * │  Feature ID:  dark-mode                │
+ * │  Branch:      feature/dark-mode        │
+ * │  Workdir:     /path/to/project         │
+ * │                                        │
+ * │  Tab: next  Enter: edit  Esc: cancel   │
+ * └────────────────────────────────────────┘
+ */
+
+import React from 'react';
+import { Box, Text } from 'ink';
+import type { EntryStatus } from '../../../core/types';
+import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
+
+/** Fields that can be focused in the metadata popup */
+export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir';
+
+/** Mode for the metadata popup */
+export type MetadataPopupMode = 'single' | 'batch' | 'feature';
+
+export interface MetadataPopupProps {
+  /** Mode: single task, batch of tasks, or feature group */
+  mode: MetadataPopupMode;
+  /** Task title (for single mode header) */
+  taskTitle?: string;
+  /** Number of tasks selected (for batch mode) */
+  batchCount?: number;
+  /** Feature ID (for feature mode header) */
+  featureId?: string;
+  /** Which field is currently focused */
+  focusedField: MetadataField;
+  /** Current status value */
+  statusValue: EntryStatus;
+  /** Current feature_id value */
+  featureIdValue: string;
+  /** Current git_branch value */
+  branchValue: string;
+  /** Current target_workdir value */
+  workdirValue: string;
+  /** Index of selected status in dropdown (for status field navigation) */
+  selectedStatusIndex: number;
+  /** Allowed statuses for the dropdown */
+  allowedStatuses: readonly EntryStatus[];
+  /** Which text field is currently in edit mode (null if none) */
+  editingField: MetadataField | null;
+  /** Current edit buffer for text fields */
+  editBuffer?: string;
+}
+
+const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
+const FIELD_LABELS: Record<MetadataField, string> = {
+  status: 'Status',
+  feature_id: 'Feature ID',
+  git_branch: 'Branch',
+  target_workdir: 'Workdir',
+};
+
+export function MetadataPopup({
+  mode,
+  taskTitle,
+  batchCount,
+  featureId,
+  focusedField,
+  statusValue,
+  featureIdValue,
+  branchValue,
+  workdirValue,
+  selectedStatusIndex,
+  allowedStatuses,
+  editingField,
+  editBuffer = '',
+}: MetadataPopupProps): React.ReactElement {
+  // Truncate title if too long
+  const maxTitleLen = 30;
+  const displayTitle = taskTitle && taskTitle.length > maxTitleLen
+    ? taskTitle.slice(0, maxTitleLen - 3) + '...'
+    : taskTitle;
+
+  // Get value for a field
+  const getFieldValue = (field: MetadataField): string => {
+    switch (field) {
+      case 'status':
+        return getStatusLabel(statusValue);
+      case 'feature_id':
+        return featureIdValue || '(none)';
+      case 'git_branch':
+        return branchValue || '(none)';
+      case 'target_workdir':
+        return workdirValue || '(none)';
+    }
+  };
+
+  // Determine border color based on mode
+  const borderColor = mode === 'batch' ? 'yellow' : mode === 'feature' ? 'magenta' : 'cyan';
+  const headerColor = borderColor;
+
+  return (
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={borderColor}
+      paddingX={2}
+      paddingY={1}
+    >
+      {/* Header */}
+      <Box marginBottom={1} flexDirection="column">
+        <Text bold color={headerColor}>Update Metadata</Text>
+        {mode === 'single' && displayTitle && (
+          <Text dimColor> - {displayTitle}</Text>
+        )}
+        {mode === 'batch' && batchCount !== undefined && (
+          <Text dimColor>{batchCount} tasks selected</Text>
+        )}
+        {mode === 'feature' && featureId && (
+          <Text dimColor>Feature: {featureId}{batchCount !== undefined ? ` (${batchCount} tasks)` : ''}</Text>
+        )}
+      </Box>
+
+      {/* Fields */}
+      <Box flexDirection="column">
+        {FIELD_ORDER.map((field) => {
+          const isFocused = field === focusedField;
+          const isEditing = field === editingField;
+          const label = FIELD_LABELS[field];
+          const value = getFieldValue(field);
+
+          return (
+            <Box key={field}>
+              {/* Selection indicator */}
+              <Text color={isFocused ? 'cyan' : undefined}>
+                {isFocused ? '→ ' : '  '}
+              </Text>
+
+              {/* Field label (fixed width for alignment) */}
+              <Box width={14}>
+                <Text
+                  color={isFocused ? 'cyan' : undefined}
+                  bold={isFocused}
+                >
+                  {label}:
+                </Text>
+              </Box>
+
+              {/* Field value */}
+              {field === 'status' ? (
+                // Status field: show icon and label
+                <Box>
+                  <Text color={getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue)}>
+                    {getStatusIcon(allowedStatuses[selectedStatusIndex] || statusValue)}
+                  </Text>
+                  <Text
+                    color={isFocused ? getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue) : undefined}
+                    bold={isFocused}
+                  >
+                    {' '}{getStatusLabel(allowedStatuses[selectedStatusIndex] || statusValue)}
+                  </Text>
+                  {isFocused && (
+                    <Text dimColor> (j/k to change)</Text>
+                  )}
+                </Box>
+              ) : isEditing ? (
+                // Text field in edit mode: show edit buffer with cursor
+                <Box>
+                  <Text color="cyan" bold>
+                    {editBuffer}
+                  </Text>
+                  <Text color="cyan" bold inverse>
+                    {' '}
+                  </Text>
+                  <Text dimColor> (Enter to confirm, Esc to cancel)</Text>
+                </Box>
+              ) : (
+                // Text field: show value
+                <Box>
+                  <Text
+                    color={isFocused ? 'cyan' : undefined}
+                    bold={isFocused}
+                    dimColor={!isFocused && (value === '(none)')}
+                  >
+                    {value}
+                  </Text>
+                  {isFocused && (
+                    <Text dimColor> (Enter to edit)</Text>
+                  )}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+      </Box>
+
+      {/* Footer with shortcuts */}
+      <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
+        <Text dimColor>
+          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  Esc: {editingField ? 'cancel edit' : 'close'}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
+export default MetadataPopup;

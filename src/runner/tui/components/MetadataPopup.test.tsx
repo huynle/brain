@@ -237,7 +237,7 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).toContain('confirm');
-      expect(frame).toContain('cancel edit');
+      expect(frame).toContain('Esc: exit edit');
     });
   });
 

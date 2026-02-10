@@ -388,7 +388,6 @@ type: task
 status: pending
 priority: high
 workdir: projects/my-project
-worktree: projects/my-project-wt
 git_remote: git@github.com:user/repo.git
 git_branch: feature/test
 ---
@@ -401,11 +400,6 @@ Task content here.
     test("should recall workdir from task", async () => {
       const result = await service.recall(taskPath);
       expect(result.workdir).toBe("projects/my-project");
-    });
-
-    test("should recall worktree from task", async () => {
-      const result = await service.recall(taskPath);
-      expect(result.worktree).toBe("projects/my-project-wt");
     });
 
     test("should recall git_remote from task", async () => {
@@ -426,7 +420,6 @@ Task content here.
       expect(result.status).toBe("pending");
       expect(result.priority).toBe("high");
       expect(result.workdir).toBe("projects/my-project");
-      expect(result.worktree).toBe("projects/my-project-wt");
       expect(result.git_remote).toBe("git@github.com:user/repo.git");
       expect(result.git_branch).toBe("feature/test");
     });
@@ -459,7 +452,6 @@ Task content.
       const result = await service.recall(taskPath);
       
       expect(result.workdir).toBeUndefined();
-      expect(result.worktree).toBeUndefined();
       expect(result.git_remote).toBeUndefined();
       expect(result.git_branch).toBeUndefined();
     });
@@ -555,7 +547,6 @@ depends_on:
   - "dep1"
   - "dep2"
 workdir: projects/test
-worktree: projects/test-wt
 git_remote: git@github.com:user/repo
 git_branch: main
 user_original_request: Original request
@@ -575,11 +566,6 @@ Task content here.
     test("preserves workdir when updating status", async () => {
       const result = await service.update(taskPath, { status: "in_progress" });
       expect(result.workdir).toBe("projects/test");
-    });
-
-    test("preserves worktree when updating status", async () => {
-      const result = await service.update(taskPath, { status: "in_progress" });
-      expect(result.worktree).toBe("projects/test-wt");
     });
 
     test("preserves git_remote when updating status", async () => {

@@ -166,15 +166,13 @@ Brain tools will not work until the server is running.`;
 interface ExecutionContext {
   projectId: string;
   workdir: string;
-  worktree?: string;
   gitRemote?: string;
-  gitBranch?: string;
+  gitBranch?: string; // Used to derive worktree path
 }
 
 function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
-  let mainWorktreePath = directory;
-  let currentWorktreePath: string | undefined;
+  let mainRepoPath = directory;
   let gitRemote: string | undefined;
   let gitBranch: string | undefined;
 
@@ -187,11 +185,7 @@ function getExecutionContext(directory: string): ExecutionContext {
     const lines = worktreeList.split("\n");
     const firstWorktreeLine = lines.find((l) => l.startsWith("worktree "));
     if (firstWorktreeLine) {
-      mainWorktreePath = firstWorktreeLine.replace("worktree ", "");
-    }
-
-    if (directory !== mainWorktreePath) {
-      currentWorktreePath = directory;
+      mainRepoPath = firstWorktreeLine.replace("worktree ", "");
     }
 
     gitRemote = execSync("git remote get-url origin", {
@@ -215,9 +209,8 @@ function getExecutionContext(directory: string): ExecutionContext {
   };
 
   return {
-    projectId: makeHomeRelative(mainWorktreePath),
-    workdir: makeHomeRelative(mainWorktreePath),
-    worktree: currentWorktreePath ? makeHomeRelative(currentWorktreePath) : undefined,
+    projectId: makeHomeRelative(mainRepoPath),
+    workdir: makeHomeRelative(mainRepoPath),
     gitRemote,
     gitBranch,
   };
@@ -401,6 +394,7 @@ const tools: Tool[] = [
         query: { type: "string", description: "Search query" },
         type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
         status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by status" },
+        feature_id: { type: "string", description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')" },
         limit: { type: "number", description: "Maximum results (default: 10)" },
         global: { type: "boolean", description: "Search only global entries" },
       },
@@ -419,6 +413,7 @@ Filename filtering supports:
       properties: {
         type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
         status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by status" },
+        feature_id: { type: "string", description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')" },
         limit: { type: "number", description: "Maximum entries to return (default: 20)" },
         global: { type: "boolean", description: "List only global entries" },
         sortBy: { type: "string", enum: ["created", "modified", "priority"], description: "Sort order" },
@@ -508,6 +503,7 @@ Use this to see:
       properties: {
         status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by task status (pending, in_progress, completed, etc.)" },
         classification: { type: "string", enum: ["ready", "waiting", "blocked"], description: "Filter by dependency classification" },
+        feature_id: { type: "string", description: "Filter tasks by feature group ID (e.g., 'auth-system', 'dark-mode')" },
         limit: { type: "number", description: "Maximum results to return (default: 50)" },
         project: { type: "string", description: "Override auto-detected project" },
       },
@@ -547,6 +543,53 @@ Use this to get detailed information about a specific task including:
         project: { type: "string", description: "Override auto-detected project" },
       },
       required: ["taskId"],
+    },
+  },
+  {
+    name: "brain_tasks_status",
+    description: `Get status of multiple tasks by ID, with optional blocking wait.
+
+Use cases:
+- Check if spawned subtasks are complete before continuing
+- Wait for dependent tasks to finish before starting next phase
+- Monitor multiple tasks from an orchestrator agent
+
+Parameters:
+- taskIds: Array of task IDs (8-char alphanumeric) to check
+- waitFor: Optional. "completed" (default) waits until all tasks completed/validated.
+           "any" returns as soon as any task status changes.
+           Omit for immediate response without waiting.
+- timeout: Max wait time in milliseconds (default: 60000, max: 300000)
+- project: Override auto-detected project
+
+Example - immediate check:
+  brain_tasks_status({ taskIds: ["abc12def", "xyz98765"] })
+
+Example - wait for completion:
+  brain_tasks_status({ taskIds: ["abc12def"], waitFor: "completed", timeout: 120000 })`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskIds: { 
+          type: "array", 
+          items: { type: "string" }, 
+          description: "Array of task IDs (8-char alphanumeric) to check" 
+        },
+        waitFor: { 
+          type: "string", 
+          enum: ["completed", "any"], 
+          description: "Wait condition: 'completed' waits for all done, 'any' waits for any change" 
+        },
+        timeout: { 
+          type: "number", 
+          description: "Max wait time in milliseconds (default: 60000, max: 300000)" 
+        },
+        project: { 
+          type: "string", 
+          description: "Override auto-detected project" 
+        },
+      },
+      required: ["taskIds"],
     },
   },
   {
@@ -696,7 +739,6 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           project: args.project || context.projectId,
           target_workdir: args.type === "task" ? args.target_workdir : undefined,
           workdir: args.type === "task" ? context.workdir : undefined,
-          worktree: args.type === "task" ? context.worktree : undefined,
           git_remote: args.type === "task" ? context.gitRemote : undefined,
           git_branch: args.type === "task" ? context.gitBranch : undefined,
           // Only include user_original_request for tasks
@@ -861,6 +903,7 @@ Brain tools will not work until the server is running.`;
           title: string;
           status: string;
           priority?: string;
+          feature_id?: string;
           classification: string;
           dependsOn?: Array<{ id: string; title: string; status: string }>;
           blockedBy?: string;
@@ -893,6 +936,10 @@ Brain tools will not work until the server is running.`;
         
         if (args.classification) {
           filteredTasks = filteredTasks.filter(t => t.classification === args.classification);
+        }
+        
+        if (args.feature_id) {
+          filteredTasks = filteredTasks.filter(t => t.feature_id === args.feature_id);
         }
         
         const limit = (args.limit as number) ?? 50;
@@ -1202,6 +1249,88 @@ Use brain_tasks to see the full task list and dependency status.`;
         lines.push("---");
         lines.push("");
         lines.push(entry.content);
+
+        return lines.join("\n");
+      }
+
+      case "brain_tasks_status": {
+        const taskIds = args.taskIds as string[];
+        if (!taskIds || taskIds.length === 0) {
+          return "Please provide at least one task ID";
+        }
+
+        const proj = (args.project as string) || context.projectId;
+        const waitFor = args.waitFor as "completed" | "any" | undefined;
+        const timeout = Math.min((args.timeout as number) || 60000, 300000);
+
+        interface TaskStatusResponse {
+          tasks: Array<{
+            id: string;
+            title: string;
+            status: string;
+            priority?: string;
+            classification: string;
+          }>;
+          notFound: string[];
+          changed: boolean;
+          timedOut: boolean;
+        }
+
+        const response = await apiRequest<TaskStatusResponse>(
+          "POST",
+          `/tasks/${encodeURIComponent(proj)}/status`,
+          {
+            taskIds,
+            waitFor,
+            timeout,
+          }
+        );
+
+        const lines: string[] = [];
+        lines.push(`## Task Status Check`);
+        lines.push("");
+
+        if (response.timedOut) {
+          lines.push("**Status:** Timed out waiting for condition");
+          lines.push("");
+        } else if (response.changed) {
+          lines.push("**Status:** Condition met");
+          lines.push("");
+        } else {
+          lines.push("**Status:** Immediate check (no wait)");
+          lines.push("");
+        }
+
+        // Show task statuses
+        if (response.tasks.length > 0) {
+          lines.push("### Tasks");
+          for (const task of response.tasks) {
+            const statusEmoji = 
+              task.status === "completed" || task.status === "validated" ? "✓" :
+              task.status === "in_progress" ? "⋯" :
+              task.status === "blocked" ? "✗" : "○";
+            const priority = task.priority === "high" ? "[HIGH]" : 
+                             task.priority === "medium" ? "[MED]" : "[LOW]";
+            lines.push(`- ${statusEmoji} **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+          }
+          lines.push("");
+        }
+
+        // Show not found tasks
+        if (response.notFound.length > 0) {
+          lines.push("### Not Found");
+          for (const id of response.notFound) {
+            lines.push(`- \`${id}\` - task not found`);
+          }
+          lines.push("");
+        }
+
+        // Summary
+        const completed = response.tasks.filter(t => 
+          t.status === "completed" || t.status === "validated"
+        ).length;
+        const total = response.tasks.length;
+        lines.push(`**Summary:** ${completed}/${total} tasks completed`);
 
         return lines.join("\n");
       }

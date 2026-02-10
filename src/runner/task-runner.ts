@@ -93,9 +93,10 @@ export class TaskRunner {
   private pauseCache: Set<string> = new Set();
   private readonly startPaused: boolean;
 
-  // Feature pause state: in-memory only (not persisted across restarts)
-  // Tasks with a paused feature_id are excluded from task polling
-  private pausedFeatures: Set<string> = new Set();
+  // Enabled features when project is paused (whitelist approach)
+  // Only used when pauseCache contains the project - in-memory only
+  // These features can run even when their project is paused
+  private enabledFeatures: Set<string> = new Set();
 
   // Per-project concurrent task limits (in-memory only)
   // Projects not in this map use no limit (only global maxParallel applies)
@@ -428,6 +429,7 @@ export class TaskRunner {
    * Resume a paused project.
    * Removes the project from pauseCache so new tasks can be picked up.
    * PRIORITY: First processes any pending orphaned in_progress tasks for this project.
+   * NOTE: Clears enabled features since they're no longer needed when project is fully unpaused.
    */
   async resume(projectId: string): Promise<void> {
     if (!this.pauseCache.has(projectId)) {
@@ -435,6 +437,18 @@ export class TaskRunner {
     }
 
     this.pauseCache.delete(projectId);
+    
+    // Clear enabled features when project is fully unpaused
+    // (they're no longer needed since all features can run)
+    if (this.enabledFeatures.size > 0) {
+      const clearedCount = this.enabledFeatures.size;
+      this.enabledFeatures.clear();
+      this.logger.info("Cleared enabled features on project resume", { 
+        projectId, 
+        clearedCount,
+      });
+    }
+    
     this.logger.info("Project resumed", { projectId });
     this.tuiLog('info', `Project resumed: ${projectId}`, undefined, projectId);
     this.emitEvent({ type: "project_resumed", projectId });
@@ -514,6 +528,7 @@ export class TaskRunner {
   /**
    * Resume all paused projects.
    * PRIORITY: First processes any pending orphaned in_progress tasks.
+   * NOTE: Clears enabled features since they're no longer needed when all projects are unpaused.
    */
   async resumeAll(): Promise<void> {
     const count = this.pauseCache.size;
@@ -524,6 +539,14 @@ export class TaskRunner {
     for (const projectId of pausedIds) {
       this.pauseCache.delete(projectId);
       this.emitEvent({ type: "project_resumed", projectId });
+    }
+    
+    // Clear enabled features when all projects are fully unpaused
+    // (they're no longer needed since all features can run)
+    if (this.enabledFeatures.size > 0) {
+      const clearedCount = this.enabledFeatures.size;
+      this.enabledFeatures.clear();
+      this.logger.info("Cleared enabled features on resumeAll", { clearedCount });
     }
     
     this.logger.info("All projects resumed", { count, pendingOrphanedTasks: pendingCount });
@@ -604,6 +627,48 @@ export class TaskRunner {
    */
   getPausedFeatures(): string[] {
     return Array.from(this.pausedFeatures);
+  }
+
+  // ========================================
+  // Feature Enable/Disable Methods (Whitelist for Paused Projects)
+  // ========================================
+
+  /**
+   * Enable a feature to run while project is paused (whitelist approach).
+   * Only has effect when the project containing this feature is paused.
+   * When a project is paused, normally no tasks run. But if a feature is enabled,
+   * tasks from that feature can still run.
+   */
+  enableFeature(featureId: string): void {
+    this.enabledFeatures.add(featureId);
+    this.logger.info("Enabled feature (will run even when project paused)", { featureId });
+    this.tuiLog('info', `Feature enabled: ${featureId} (will run when project paused)`);
+    this.emitEvent({ type: "feature_enabled", featureId });
+  }
+
+  /**
+   * Disable a feature from running while project is paused.
+   * Removes the feature from the enabled whitelist.
+   */
+  disableFeature(featureId: string): void {
+    this.enabledFeatures.delete(featureId);
+    this.logger.info("Disabled feature", { featureId });
+    this.tuiLog('info', `Feature disabled: ${featureId}`);
+    this.emitEvent({ type: "feature_disabled", featureId });
+  }
+
+  /**
+   * Get all enabled features.
+   */
+  getEnabledFeatures(): string[] {
+    return Array.from(this.enabledFeatures);
+  }
+
+  /**
+   * Check if a feature is enabled (can run when project is paused).
+   */
+  isEnabledFeature(featureId: string): boolean {
+    return this.enabledFeatures.has(featureId);
   }
 
   // ========================================
@@ -789,8 +854,22 @@ export class TaskRunner {
       // Step 3: Get next tasks from non-paused projects using feature-aware ordering
       // Uses getNextTask() which respects feature dependencies and priorities
       // Also filter out projects that are at their per-project concurrent task limit
+      // EXCEPTION: Paused projects with enabled features are still included (tasks filtered later)
       const activeProjects = this.projects.filter(p => {
-        if (this.pauseCache.has(p)) return false;
+        if (this.pauseCache.has(p)) {
+          // Project is paused, but check if any features are enabled
+          if (this.enabledFeatures.size > 0) {
+            // Allow project - we'll filter by enabled features later
+            if (isDebugEnabled()) {
+              this.logger.debug("Project paused but has enabled features, allowing for feature-filtered polling", {
+                projectId: p,
+                enabledFeatures: this.getEnabledFeatures(),
+              });
+            }
+            return true;
+          }
+          return false;
+        }
         if (this.isProjectAtLimit(p)) {
           if (isDebugEnabled()) {
             this.logger.debug("Project at per-project limit, skipping", {
@@ -872,6 +951,30 @@ export class TaskRunner {
                 });
               }
               continue;
+            }
+            // Skip if ungrouped tasks are paused and this task has no feature_id
+            // UNGROUPED_FEATURE_ID = '__ungrouped__'
+            if (!task.feature_id && this.pausedFeatures.has('__ungrouped__')) {
+              if (isDebugEnabled()) {
+                this.logger.debug("Skipping ungrouped task - ungrouped is paused", {
+                  taskId: task.id,
+                });
+              }
+              continue;
+            }
+            // When project is paused but has enabled features, only allow those features
+            if (this.pauseCache.has(task._pollProjectId)) {
+              if (!task.feature_id || !this.enabledFeatures.has(task.feature_id)) {
+                if (isDebugEnabled()) {
+                  this.logger.debug("Skipping task - project paused and feature not enabled", {
+                    taskId: task.id,
+                    projectId: task._pollProjectId,
+                    featureId: task.feature_id,
+                    enabledFeatures: this.getEnabledFeatures(),
+                  });
+                }
+                continue;
+              }
             }
             candidateTasks.push(task);
           }
@@ -994,7 +1097,48 @@ export class TaskRunner {
       return false;
     }
 
-    // Step 3: Spawn OpenCode process
+    // Step 3: Resolve workdir (may create worktree if needed)
+    let workdir: string;
+    try {
+      workdir = await this.executor.resolveWorkdir(task);
+    } catch (error) {
+      // Worktree creation or setup failed - mark task as blocked
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      this.logger.error("Worktree setup failed", {
+        taskId: task.id,
+        error: errorMessage,
+      });
+
+      try {
+        await this.apiClient.updateTaskStatus(task.path, "blocked");
+
+        const sanitizedBranch = task.git_branch?.replace(/\//g, "-") ?? "unknown";
+        const blockNote =
+          `\n\n## Blocked: Worktree Setup Failed\n\n` +
+          `**Time:** ${new Date().toISOString()}\n` +
+          `**Error:** ${errorMessage}\n\n` +
+          `The task runner attempted to create a git worktree for branch \`${task.git_branch}\` ` +
+          `but setup failed. Please:\n` +
+          `1. Check if the branch exists and is valid\n` +
+          `2. Manually create the worktree: \`git worktree add .worktrees/${sanitizedBranch} ${task.git_branch}\`\n` +
+          `3. Run any necessary setup (npm install, etc.)\n` +
+          `4. Update this task to \`pending\` to retry\n`;
+
+        await this.apiClient.appendToTask(task.path, blockNote);
+      } catch (updateError) {
+        this.logger.error("Failed to update task status after worktree failure", {
+          taskId: task.id,
+          error: String(updateError),
+        });
+      }
+
+      await this.apiClient.releaseTask(effectiveProjectId, task.id);
+      this.tuiLog("error", `Worktree setup failed: ${task.title}`, task.id, effectiveProjectId);
+      return false;
+    }
+
+    // Step 4: Spawn OpenCode process
     // When dashboard is active (TUI mode), spawn as panes not windows
     // But preserve TUI flag to use interactive command
     const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
@@ -1005,9 +1149,10 @@ export class TaskRunner {
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: false,
         useTui,
+        workdir, // Pass pre-resolved workdir to avoid redundant resolution
       });
 
-      // Step 4: Track the process
+      // Step 5: Track the process
       const runningTask: RunningTask = {
         id: task.id,
         path: task.path,
@@ -1019,7 +1164,7 @@ export class TaskRunner {
         windowName: result.windowName,
         startedAt: new Date().toISOString(),
         isResume: false,
-        workdir: this.executor.resolveWorkdir(task),
+        workdir,
         opencodePort: result.opencodePort,
       };
 
@@ -1037,7 +1182,7 @@ export class TaskRunner {
         pid: result.pid,
         projectId: effectiveProjectId,
       });
-      this.tuiLog('info', `Task started: ${task.title}`, task.id, effectiveProjectId);
+      this.tuiLog("info", `Task started: ${task.title}`, task.id, effectiveProjectId);
 
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
@@ -1580,6 +1725,20 @@ export class TaskRunner {
             paused: this.pauseCache.has(projectId),
           });
 
+          // Resolve workdir (may fail if worktree setup needed)
+          let workdir: string;
+          try {
+            workdir = await this.executor.resolveWorkdir(task);
+          } catch (error) {
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            this.logger.warn("Failed to resolve workdir for orphaned task", {
+              taskId: task.id,
+              error: errorMessage,
+            });
+            // Skip this task for now - let claimAndSpawn handle blocking later
+            continue;
+          }
+
           // Create a RunningTask placeholder to resume
           const runningTask: RunningTask = {
             id: task.id,
@@ -1590,7 +1749,7 @@ export class TaskRunner {
             pid: 0, // No running process
             startedAt: new Date().toISOString(),
             isResume: true,
-            workdir: this.executor.resolveWorkdir(task),
+            workdir,
           };
 
           // If project is paused, queue for later. Otherwise resume immediately.
@@ -1751,7 +1910,47 @@ export class TaskRunner {
       return false;
     }
 
-    // Step 6: Spawn OpenCode process
+    // Step 6: Resolve workdir (may create worktree if needed)
+    let workdir: string;
+    try {
+      workdir = await this.executor.resolveWorkdir(task);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+
+      this.logger.error("Worktree setup failed for manual execution", {
+        taskId,
+        error: errorMessage,
+      });
+
+      try {
+        await this.apiClient.updateTaskStatus(taskPath, "blocked");
+
+        const sanitizedBranch = task.git_branch?.replace(/\//g, "-") ?? "unknown";
+        const blockNote =
+          `\n\n## Blocked: Worktree Setup Failed\n\n` +
+          `**Time:** ${new Date().toISOString()}\n` +
+          `**Error:** ${errorMessage}\n\n` +
+          `The task runner attempted to create a git worktree for branch \`${task.git_branch}\` ` +
+          `but setup failed. Please:\n` +
+          `1. Check if the branch exists and is valid\n` +
+          `2. Manually create the worktree: \`git worktree add .worktrees/${sanitizedBranch} ${task.git_branch}\`\n` +
+          `3. Run any necessary setup (npm install, etc.)\n` +
+          `4. Update this task to \`pending\` to retry\n`;
+
+        await this.apiClient.appendToTask(taskPath, blockNote);
+      } catch (updateError) {
+        this.logger.error("Failed to update task status after worktree failure", {
+          taskId,
+          error: String(updateError),
+        });
+      }
+
+      await this.apiClient.releaseTask(effectiveProjectId, taskId);
+      this.tuiLog("error", `Worktree setup failed: ${task.title}`, taskId, effectiveProjectId);
+      return false;
+    }
+
+    // Step 7: Spawn OpenCode process
     const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
     const useTui = this.mode === "tui";
 
@@ -1761,9 +1960,10 @@ export class TaskRunner {
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: false,
         useTui,
+        workdir, // Pass pre-resolved workdir
       });
 
-      // Step 6: Track the process
+      // Step 8: Track the process
       const runningTask: RunningTask = {
         id: taskId,
         path: taskPath,
@@ -1775,7 +1975,7 @@ export class TaskRunner {
         windowName: result.windowName,
         startedAt: new Date().toISOString(),
         isResume: false,
-        workdir: this.executor.resolveWorkdir(task),
+        workdir,
         opencodePort: result.opencodePort,
       };
 
@@ -2047,6 +2247,10 @@ export class TaskRunner {
         onPauseFeature: (featureId) => this.pauseFeature(featureId),
         onResumeFeature: (featureId) => this.resumeFeature(featureId),
         getPausedFeatures: () => this.getPausedFeatures(),
+        // Feature enable/disable callbacks (whitelist for paused projects)
+        onEnableFeature: (featureId) => this.enableFeature(featureId),
+        onDisableFeature: (featureId) => this.disableFeature(featureId),
+        getEnabledFeatures: () => this.getEnabledFeatures(),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

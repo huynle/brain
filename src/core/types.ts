@@ -103,8 +103,8 @@ export interface BrainEntry {
 
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
-  workdir?: string; // $HOME-relative path to main worktree
-  worktree?: string; // Specific worktree if different from main
+  workdir?: string; // $HOME-relative path to main repo
+  worktree?: string; // Specific git worktree path (legacy, prefer git_branch + ensureWorktree)
   git_remote?: string; // Git remote URL for verification
   git_branch?: string; // Branch context when task was created
 
@@ -131,7 +131,6 @@ export interface CreateEntryRequest {
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
   workdir?: string;
-  worktree?: string;
   git_remote?: string;
   git_branch?: string;
 
@@ -172,6 +171,7 @@ export interface UpdateEntryRequest {
 export interface ListEntriesRequest {
   type?: EntryType;
   status?: EntryStatus;
+  feature_id?: string;
   filename?: string;
   limit?: number;
   offset?: number;
@@ -190,6 +190,7 @@ export interface SearchRequest {
   query: string;
   type?: EntryType;
   status?: EntryStatus;
+  feature_id?: string;
   limit?: number;
   global?: boolean;
 }
@@ -307,7 +308,7 @@ export interface Task {
   modified?: string; // ISO timestamp when last modified
   target_workdir: string | null; // Explicit workdir override for task execution (absolute path)
   workdir: string | null;
-  worktree: string | null;
+  worktree: string | null; // Specific git worktree path (legacy, prefer git_branch + ensureWorktree)
   git_remote: string | null;
   git_branch: string | null;
   user_original_request: string | null; // Verbatim user request for validation during task completion

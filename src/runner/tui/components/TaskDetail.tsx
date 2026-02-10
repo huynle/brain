@@ -163,7 +163,7 @@ export const TaskDetail = React.memo(function TaskDetail({
   }
 
   // Working directory
-  if (task.workdir || task.worktree || task.resolvedWorkdir) {
+  if (task.workdir || task.gitBranch || task.resolvedWorkdir) {
     contentLines.push(
       <Box key="workdir-header" flexDirection="column" marginTop={1}>
         <Text underline>Working Directory:</Text>
@@ -177,11 +177,11 @@ export const TaskDetail = React.memo(function TaskDetail({
         </Box>
       );
     }
-    if (task.worktree) {
+    if (task.gitBranch) {
       contentLines.push(
-        <Box key="worktree">
-          <Text dimColor>  worktree: </Text>
-          <Text>{task.worktree}</Text>
+        <Box key="git-branch">
+          <Text dimColor>  branch: </Text>
+          <Text>{task.gitBranch}</Text>
         </Box>
       );
     }

@@ -154,7 +154,6 @@ async function fetchProjectTasks(
       // Frontmatter fields
       created: task.created,
       workdir: task.workdir,
-      worktree: task.worktree,
       gitRemote: task.git_remote,
       gitBranch: task.git_branch,
       userOriginalRequest: task.user_original_request,

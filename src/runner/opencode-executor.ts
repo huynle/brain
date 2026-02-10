@@ -93,8 +93,8 @@ Start now.`;
   // Workdir Resolution
   // ========================================
 
-  resolveWorkdir(task: ResolvedTask): string {
-    // Priority: target_workdir > task worktree > task workdir > resolved_workdir > config default
+  async resolveWorkdir(task: ResolvedTask): Promise<string> {
+    // Priority: target_workdir > ensured worktree > task worktree > task workdir > resolved_workdir > config default
 
     // target_workdir is an explicit override, check first (absolute path)
     if (task.target_workdir) {
@@ -109,13 +109,19 @@ Start now.`;
       }
     }
 
+    // Try to ensure worktree exists (creates if needed with git_branch)
+    const worktreePath = await this.ensureWorktree(task);
+    if (worktreePath) {
+      return worktreePath;
+    }
+
     if (task.worktree) {
-      const worktreePath = join(homedir(), task.worktree);
-      if (existsSync(worktreePath)) {
-        return worktreePath;
+      const worktreePathExisting = join(homedir(), task.worktree);
+      if (existsSync(worktreePathExisting)) {
+        return worktreePathExisting;
       }
       if (isDebugEnabled()) {
-        console.log(`[OpencodeExecutor] Worktree not found: ${worktreePath}`);
+        console.log(`[OpencodeExecutor] Worktree not found: ${worktreePathExisting}`);
       }
     }
 
@@ -156,7 +162,7 @@ Start now.`;
     await Bun.write(promptFile, prompt);
 
     // Resolve workdir
-    const workdir = options.workdir ?? this.resolveWorkdir(task);
+    const workdir = options.workdir ?? await this.resolveWorkdir(task);
 
     if (isDebugEnabled()) {
       console.log(`[OpencodeExecutor] Spawning OpenCode for: ${task.title}`);
@@ -491,6 +497,242 @@ exit $exit_code
   private async ensureStateDir(): Promise<void> {
     if (!existsSync(this.stateDir)) {
       await Bun.$`mkdir -p ${this.stateDir}`;
+    }
+  }
+
+  // ========================================
+  // Git Worktree Support
+  // ========================================
+
+  /**
+   * Ensure worktree exists for task. Creates it if missing and runs setup agent.
+   * 
+   * @returns The worktree path if created/exists
+   * @throws Error if worktree creation or setup fails (caller should mark task as blocked)
+   */
+  async ensureWorktree(task: ResolvedTask): Promise<string | null> {
+    if (!task.workdir || !task.git_branch) {
+      return null; // No branch context, use main workdir
+    }
+    
+    const home = homedir();
+    const mainRepoPath = join(home, task.workdir);
+    
+    // Skip worktree for default branch (main/master)
+    // These should use the main repo directly
+    const defaultBranches = ['main', 'master'];
+    if (defaultBranches.includes(task.git_branch)) {
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Skipping worktree for default branch: ${task.git_branch}`);
+      }
+      return null;
+    }
+
+    // Check if this branch is currently checked out in main repo
+    try {
+      const currentBranch = await Bun.$`git -C ${mainRepoPath} branch --show-current`.text();
+      if (currentBranch.trim() === task.git_branch) {
+        if (isDebugEnabled()) {
+          console.log(`[OpencodeExecutor] Branch ${task.git_branch} already checked out in main repo`);
+        }
+        return null;
+      }
+    } catch (error) {
+      // If we can't determine current branch, proceed with worktree attempt
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Could not determine current branch: ${error}`);
+      }
+    }
+
+    // Check if branch is already checked out in ANY worktree (handles sibling pattern)
+    try {
+      const worktreeList = await Bun.$`git -C ${mainRepoPath} worktree list --porcelain`.text();
+      const existingPath = this.findWorktreeForBranch(worktreeList, task.git_branch);
+      if (existingPath) {
+        if (isDebugEnabled()) {
+          console.log(`[OpencodeExecutor] Found existing worktree for ${task.git_branch} at ${existingPath}`);
+        }
+        return existingPath;
+      }
+    } catch (error) {
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Could not list worktrees: ${error}`);
+      }
+    }
+    
+    const sanitizedBranch = task.git_branch.replace(/\//g, '-').replace(/[^a-zA-Z0-9-_]/g, '');
+    const worktreePath = join(mainRepoPath, '.worktrees', sanitizedBranch);
+    
+    // Check if worktree already exists
+    if (existsSync(worktreePath)) {
+      return worktreePath;
+    }
+    
+    // Check if main repo exists
+    if (!existsSync(mainRepoPath)) {
+      throw new Error(`Main repo not found: ${mainRepoPath}`);
+    }
+    
+    // Ensure .worktrees is in .gitignore
+    await this.ensureWorktreesIgnored(mainRepoPath);
+    
+    // Create .worktrees directory if needed
+    const worktreesDir = join(mainRepoPath, '.worktrees');
+    if (!existsSync(worktreesDir)) {
+      await Bun.$`mkdir -p ${worktreesDir}`;
+    }
+    
+    // Check if branch exists
+    const branchExists = await this.checkBranchExists(mainRepoPath, task.git_branch);
+    
+    if (isDebugEnabled()) {
+      console.log(`[OpencodeExecutor] Creating worktree: ${worktreePath} for branch: ${task.git_branch}`);
+    }
+    
+    try {
+      if (branchExists) {
+        await Bun.$`git -C ${mainRepoPath} worktree add ${worktreePath} ${task.git_branch}`;
+      } else {
+        const defaultBranch = await this.getDefaultBranch(mainRepoPath);
+        await Bun.$`git -C ${mainRepoPath} worktree add -b ${task.git_branch} ${worktreePath} ${defaultBranch}`;
+      }
+    } catch (error) {
+      throw new Error(`Failed to create worktree: ${error}`);
+    }
+    
+    if (isDebugEnabled()) {
+      console.log(`[OpencodeExecutor] Worktree created, running setup agent`);
+    }
+    
+    // Run setup agent (throws on failure)
+    await this.runSetupAgent(worktreePath, task);
+    
+    return worktreePath;
+  }
+
+  /**
+   * Parse git worktree list --porcelain output to find worktree path for a branch
+   * 
+   * Output format:
+   * worktree /path/to/worktree
+   * HEAD abc123
+   * branch refs/heads/branch-name
+   * 
+   * worktree /path/to/another
+   * ...
+   */
+  private findWorktreeForBranch(porcelainOutput: string, branch: string): string | null {
+    const lines = porcelainOutput.split('\n');
+    let currentPath: string | null = null;
+    
+    for (const line of lines) {
+      if (line.startsWith('worktree ')) {
+        currentPath = line.substring('worktree '.length);
+      } else if (line.startsWith('branch refs/heads/')) {
+        const branchName = line.substring('branch refs/heads/'.length);
+        if (branchName === branch && currentPath) {
+          return currentPath;
+        }
+      } else if (line === '') {
+        currentPath = null; // Reset for next worktree block
+      }
+    }
+    
+    return null;
+  }
+
+  private async checkBranchExists(repoPath: string, branch: string): Promise<boolean> {
+    try {
+      await Bun.$`git -C ${repoPath} rev-parse --verify ${branch}`.quiet();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async getDefaultBranch(repoPath: string): Promise<string> {
+    try {
+      const result = await Bun.$`git -C ${repoPath} symbolic-ref refs/remotes/origin/HEAD`.text();
+      return result.trim().replace('refs/remotes/origin/', '');
+    } catch {
+      try {
+        await Bun.$`git -C ${repoPath} rev-parse --verify main`.quiet();
+        return 'main';
+      } catch {
+        return 'master';
+      }
+    }
+  }
+
+  private async ensureWorktreesIgnored(repoPath: string): Promise<void> {
+    const gitignorePath = join(repoPath, '.gitignore');
+    
+    try {
+      if (existsSync(gitignorePath)) {
+        const content = await Bun.file(gitignorePath).text();
+        if (content.includes('.worktrees')) {
+          return; // Already ignored
+        }
+        await Bun.write(gitignorePath, content.trimEnd() + '\n\n# Local git worktrees\n.worktrees/\n');
+      } else {
+        await Bun.write(gitignorePath, '# Local git worktrees\n.worktrees/\n');
+      }
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Added .worktrees/ to .gitignore`);
+      }
+    } catch (error) {
+      console.warn(`[OpencodeExecutor] Failed to update .gitignore: ${error}`);
+    }
+  }
+
+  private async runSetupAgent(worktreePath: string, task: ResolvedTask): Promise<void> {
+    const setupPrompt = `You are setting up a new git worktree for development.
+
+Worktree path: ${worktreePath}
+Branch: ${task.git_branch}
+Task that will run here: ${task.title}
+
+Please:
+1. Check if there's a setup script (setup.sh, Makefile setup, etc.)
+2. Install dependencies (npm install, pip install, etc.) based on project type
+3. Set up any necessary environment (copy .env.example to .env, etc.)
+4. Verify the setup works (run a quick build/typecheck if applicable)
+
+Keep it brief - just ensure the environment is ready for development.
+If setup succeeds, output "SETUP_SUCCESS" at the end.
+If setup fails, output "SETUP_FAILED: <reason>" at the end.`;
+
+    const TIMEOUT_MS = 120000; // 2 minutes
+
+    try {
+      const shellPromise = Bun.$`${this.config.opencode.bin} run --agent ${this.config.opencode.agent} --model ${this.config.opencode.model} ${setupPrompt}`
+        .cwd(worktreePath)
+        .text();
+      
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('TIMEOUT')), TIMEOUT_MS);
+      });
+
+      const result = await Promise.race([shellPromise, timeoutPromise]);
+      
+      if (result.includes('SETUP_FAILED:')) {
+        const failureMatch = result.match(/SETUP_FAILED:\s*(.+)/);
+        const reason = failureMatch?.[1] ?? 'Unknown reason';
+        throw new Error(`Setup agent reported failure: ${reason}`);
+      }
+      
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Setup agent completed successfully`);
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const isTimeout = errorMessage === 'TIMEOUT';
+      
+      throw new Error(
+        isTimeout 
+          ? `Setup agent timed out after 2 minutes` 
+          : `Setup agent failed: ${errorMessage}`
+      );
     }
   }
 }

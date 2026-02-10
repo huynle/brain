@@ -205,10 +205,9 @@ export interface SectionsResponse {
 
 export interface ExecutionContext {
   projectId: string; // Human-readable, $HOME-relative
-  workdir: string; // $HOME-relative path to main worktree
-  worktree?: string; // Specific worktree path if in a worktree
+  workdir: string; // $HOME-relative path to main repo
   gitRemote?: string; // Git remote URL
-  gitBranch?: string; // Current branch
+  gitBranch?: string; // Current branch (worktree derived from this)
 }
 
 // ============================================================================

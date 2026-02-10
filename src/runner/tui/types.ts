@@ -38,9 +38,8 @@ export interface TaskDisplay {
   created?: string;                  // ISO timestamp when created
   modified?: string;                 // ISO timestamp when last modified
   workdir?: string | null;           // $HOME-relative working directory
-  worktree?: string | null;          // Specific git worktree path
   gitRemote?: string | null;         // Git remote URL
-  gitBranch?: string | null;         // Branch context
+  gitBranch?: string | null;         // Branch context (worktree derived from this)
   userOriginalRequest?: string | null; // Original user request for validation
   
   // Dependency resolution fields
@@ -208,4 +207,10 @@ export interface AppProps {
   onResumeFeature?: (featureId: string) => void;
   /** Get current paused features from TaskRunner */
   getPausedFeatures?: () => string[];
+  /** Enable a feature to run while project is paused (whitelist) */
+  onEnableFeature?: (featureId: string) => void;
+  /** Disable a feature from whitelist */
+  onDisableFeature?: (featureId: string) => void;
+  /** Get currently enabled features from TaskRunner */
+  getEnabledFeatures?: () => string[];
 }

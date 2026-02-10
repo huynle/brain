@@ -161,23 +161,21 @@ The brain tools will automatically reconnect when the server becomes available.`
 
 interface ExecutionContext {
   projectId: string; // Human-readable, $HOME-relative
-  workdir: string; // $HOME-relative path to main worktree
-  worktree?: string; // Specific worktree path if in a worktree
+  workdir: string; // $HOME-relative path to main repo
   gitRemote?: string; // Git remote URL
-  gitBranch?: string; // Current branch
+  gitBranch?: string; // Current branch (worktree derived from this)
 }
 
 function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
 
-  // Get main worktree path (resolves worktrees to their main repo)
-  let mainWorktreePath = directory;
-  let currentWorktreePath: string | undefined;
+  // Get main repo path (resolves worktrees to their main repo)
+  let mainRepoPath = directory;
   let gitRemote: string | undefined;
   let gitBranch: string | undefined;
 
   try {
-    // Check if we're in a worktree and get the main worktree
+    // Check if we're in a worktree and get the main repo path
     const worktreeList = execSync("git worktree list --porcelain", {
       cwd: directory,
       encoding: "utf-8",
@@ -186,12 +184,7 @@ function getExecutionContext(directory: string): ExecutionContext {
     const lines = worktreeList.split("\n");
     const firstWorktreeLine = lines.find((l) => l.startsWith("worktree "));
     if (firstWorktreeLine) {
-      mainWorktreePath = firstWorktreeLine.replace("worktree ", "");
-    }
-
-    // If current directory is different from main, we're in a worktree
-    if (directory !== mainWorktreePath) {
-      currentWorktreePath = directory;
+      mainRepoPath = firstWorktreeLine.replace("worktree ", "");
     }
 
     // Get git remote
@@ -200,7 +193,7 @@ function getExecutionContext(directory: string): ExecutionContext {
       encoding: "utf-8",
     }).trim();
 
-    // Get current branch
+    // Get current branch (used to derive worktree path later)
     gitBranch = execSync("git branch --show-current", {
       cwd: directory,
       encoding: "utf-8",
@@ -217,16 +210,12 @@ function getExecutionContext(directory: string): ExecutionContext {
     return path;
   };
 
-  const projectId = makeHomeRelative(mainWorktreePath);
-  const workdir = makeHomeRelative(mainWorktreePath);
-  const worktree = currentWorktreePath
-    ? makeHomeRelative(currentWorktreePath)
-    : undefined;
+  const projectId = makeHomeRelative(mainRepoPath);
+  const workdir = makeHomeRelative(mainRepoPath);
 
   return {
     projectId,
     workdir,
-    worktree,
     gitRemote,
     gitBranch,
   };
@@ -490,7 +479,6 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               // Execution context for tasks
               target_workdir: args.type === "task" ? args.target_workdir : undefined,
               workdir: args.type === "task" ? context.workdir : undefined,
-              worktree: args.type === "task" ? context.worktree : undefined,
               git_remote: args.type === "task" ? context.gitRemote : undefined,
               git_branch: args.type === "task" ? context.gitBranch : undefined,
               // User intent for validation
@@ -630,6 +618,10 @@ ${response.content}`;
             .describe(
               "Filter by status (e.g., 'active', 'completed', 'in_progress')"
             ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
           limit: tool.schema
             .number()
             .optional()
@@ -655,6 +647,7 @@ ${response.content}`;
               query: args.query,
               type: args.type,
               status: args.status,
+              feature_id: args.feature_id,
               limit: args.limit ?? 10,
               global: args.global,
             });
@@ -704,6 +697,10 @@ Filename filtering supports:
             .describe(
               "Filter by status (e.g., 'active', 'completed', 'in_progress')"
             ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
           filename: tool.schema
             .string()
             .optional()
@@ -745,6 +742,7 @@ Filename filtering supports:
               {
                 type: args.type,
                 status: args.status,
+                feature_id: args.feature_id,
                 filename: args.filename,
                 limit: args.limit ?? 20,
                 global: args.global,
@@ -1552,6 +1550,10 @@ Use this to see:
             .enum(["ready", "waiting", "blocked"])
             .optional()
             .describe("Filter by dependency classification"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter tasks by feature group ID (e.g., 'auth-system', 'dark-mode')"),
           limit: tool.schema
             .number()
             .optional()
@@ -1570,6 +1572,7 @@ Use this to see:
               title: string;
               status: string;
               priority?: string;
+              feature_id?: string;
               classification: string;
               dependsOn?: Array<{ id: string; title: string; status: string }>;
               blockedBy?: string;
@@ -1602,6 +1605,10 @@ Use this to see:
             
             if (args.classification) {
               filteredTasks = filteredTasks.filter(t => t.classification === args.classification);
+            }
+            
+            if (args.feature_id) {
+              filteredTasks = filteredTasks.filter(t => t.feature_id === args.feature_id);
             }
             
             const limit = args.limit ?? 50;

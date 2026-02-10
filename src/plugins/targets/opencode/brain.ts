@@ -1718,6 +1718,7 @@ If no ready tasks, shows current queue state.`,
             interface TaskNextResponse {
               task: {
                 id: string;
+                path: string;
                 title: string;
                 status: string;
                 priority?: string;
@@ -1784,7 +1785,7 @@ Use \`brain_tasks\` to see the full task list and dependency status.`;
               content: string;
               tags: string[];
               user_original_request?: string;
-            }>("GET", `/entries/${task.id}`);
+            }>("GET", `/entries/${task.path}`);
 
             const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
             const depsCount = task.resolved_deps?.length || 0;
@@ -1920,7 +1921,7 @@ Use this to get detailed information about a specific task including:
               content: string;
               tags: string[];
               user_original_request?: string;
-            }>("GET", `/entries/${task.id}`);
+            }>("GET", `/entries/${task.path}`);
 
             const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
             

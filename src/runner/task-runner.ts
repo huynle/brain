@@ -622,6 +622,115 @@ export class TaskRunner {
     return this.enabledFeatures.has(featureId);
   }
 
+  /**
+   * Execute all ready tasks for a feature immediately, regardless of pause state.
+   * This is a force-execute operation triggered by 'x' on a feature header in the TUI.
+   * 
+   * @param featureId - The feature ID to execute
+   * @returns Number of tasks started
+   */
+  async executeFeature(featureId: string): Promise<number> {
+    this.logger.info("Executing feature", { featureId });
+    this.tuiLog('info', `Executing feature: ${featureId}`);
+
+    // Step 1: Check remaining parallel capacity
+    const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
+    const availableSlots = this.config.maxParallel - runningCount;
+    
+    if (availableSlots <= 0) {
+      this.logger.warn("Cannot execute feature: at max parallel capacity", {
+        featureId,
+        running: runningCount,
+        max: this.config.maxParallel,
+      });
+      this.tuiLog('error', `Cannot execute feature: at max parallel capacity (${runningCount}/${this.config.maxParallel})`);
+      return 0;
+    }
+
+    // Step 2: Get ready tasks from all active projects and filter by feature_id
+    // Special case: '__ungrouped__' matches tasks with no feature_id
+    const isUngrouped = featureId === '__ungrouped__';
+    const readyTasksForFeature: { task: ResolvedTask; projectId: string }[] = [];
+    
+    for (const projectId of this.projects) {
+      try {
+        const readyTasks = await this.apiClient.getReadyTasks(projectId);
+        for (const task of readyTasks) {
+          // Match by feature_id, or match ungrouped tasks (no feature_id)
+          const matches = isUngrouped ? !task.feature_id : task.feature_id === featureId;
+          if (matches) {
+            readyTasksForFeature.push({ task, projectId });
+          }
+        }
+      } catch (error) {
+        this.logger.error("Failed to get ready tasks for project", {
+          projectId,
+          featureId,
+          error: String(error),
+        });
+      }
+    }
+
+    if (readyTasksForFeature.length === 0) {
+      this.logger.info("No ready tasks found for feature", { featureId });
+      this.tuiLog('warn', `No ready tasks for feature: ${featureId}`);
+      return 0;
+    }
+
+    // Step 3: Sort by priority (high > medium > low)
+    const priorityOrder: Record<string, number> = { high: 0, medium: 1, low: 2 };
+    readyTasksForFeature.sort((a, b) => {
+      const aPriority = priorityOrder[a.task.priority] ?? 1;
+      const bPriority = priorityOrder[b.task.priority] ?? 1;
+      if (aPriority !== bPriority) return aPriority - bPriority;
+      // Secondary: by created date (older first)
+      return (a.task.created || "").localeCompare(b.task.created || "");
+    });
+
+    // Step 4: Build set of already running tasks to avoid duplicates
+    const runningKeys = new Set([
+      ...this.processManager.getAll().map((info) => `${info.task.projectId}:${info.task.id}`),
+      ...Array.from(this.tuiTasks.values()).map((task) => `${task.projectId}:${task.id}`),
+    ]);
+
+    // Step 5: Execute tasks up to available capacity
+    let tasksStarted = 0;
+    
+    for (const { task, projectId } of readyTasksForFeature) {
+      // Check if we still have capacity
+      if (tasksStarted >= availableSlots) {
+        this.logger.info("Reached parallel capacity during feature execution", {
+          featureId,
+          started: tasksStarted,
+          remaining: readyTasksForFeature.length - tasksStarted,
+        });
+        break;
+      }
+
+      // Skip if already running
+      const key = `${projectId}:${task.id}`;
+      if (runningKeys.has(key)) {
+        continue;
+      }
+
+      // Execute the task manually (this handles claiming, status update, and spawning)
+      const success = await this.executeTaskManually(task.id, task.path);
+      if (success) {
+        tasksStarted++;
+        runningKeys.add(key); // Prevent duplicate execution in this loop
+      }
+    }
+
+    this.logger.info("Feature execution complete", {
+      featureId,
+      tasksStarted,
+      totalReady: readyTasksForFeature.length,
+    });
+    this.tuiLog('info', `Feature ${featureId}: started ${tasksStarted}/${readyTasksForFeature.length} ready tasks`);
+
+    return tasksStarted;
+  }
+
   // ========================================
   // Per-Project Concurrent Task Limits
   // ========================================
@@ -872,14 +981,35 @@ export class TaskRunner {
           break;
         }
 
-        // Get next task from each eligible project (respects feature ordering)
+        // Get next task from each eligible project
+        // For paused projects with enabled features, use getReadyTasks() and filter by enabled features
+        // For non-paused projects, use getNextTask() which respects feature ordering
         const nextTaskResults = await Promise.allSettled(
           eligibleProjects.map(async (projectId) => {
-            const task = await this.apiClient.getNextTask(projectId);
-            if (task) {
-              return { ...task, _pollProjectId: projectId };
+            const isPaused = this.pauseCache.has(projectId);
+            const hasEnabledFeatures = [...this.enabledFeatures].some(fid => {
+              // Check if any enabled feature belongs to this project
+              // Feature IDs don't encode project, so check against tasks we've seen
+              return true; // We'll filter by feature_id below
+            });
+            
+            if (isPaused && this.enabledFeatures.size > 0) {
+              // For paused projects with enabled features, get ALL ready tasks and filter
+              // This ensures we don't miss enabled-feature tasks when a non-enabled task ranks higher
+              const allReady = await this.apiClient.getReadyTasks(projectId);
+              const enabledTasks = allReady.filter(t => 
+                t.feature_id && this.enabledFeatures.has(t.feature_id)
+              );
+              // Return all enabled tasks for this project, caller will pick the best one
+              return enabledTasks.map(t => ({ ...t, _pollProjectId: projectId }));
+            } else {
+              // Non-paused: use getNextTask which respects feature ordering
+              const task = await this.apiClient.getNextTask(projectId);
+              if (task) {
+                return [{ ...task, _pollProjectId: projectId }];
+              }
+              return [];
             }
-            return null;
           })
         );
 
@@ -887,27 +1017,30 @@ export class TaskRunner {
         const candidateTasks: (ResolvedTask & { _pollProjectId: string })[] = [];
         for (const result of nextTaskResults) {
           if (result.status === 'fulfilled' && result.value) {
-            const task = result.value;
-            // Skip if already running or already queued to start
-            const key = `${task._pollProjectId}:${task.id}`;
-            if (runningKeys.has(key)) {
-              continue;
-            }
-            // When project is paused but has enabled features, only allow those features
-            if (this.pauseCache.has(task._pollProjectId)) {
-              if (!task.feature_id || !this.enabledFeatures.has(task.feature_id)) {
-                if (isDebugEnabled()) {
-                  this.logger.debug("Skipping task - project paused and feature not enabled", {
-                    taskId: task.id,
-                    projectId: task._pollProjectId,
-                    featureId: task.feature_id,
-                    enabledFeatures: this.getEnabledFeatures(),
-                  });
-                }
+            const tasks = result.value;
+            for (const task of tasks) {
+              // Skip if already running or already queued to start
+              const key = `${task._pollProjectId}:${task.id}`;
+              if (runningKeys.has(key)) {
                 continue;
               }
+              // When project is paused but has enabled features, only allow those features
+              // (This check is still needed for non-paused projects that we used getNextTask for)
+              if (this.pauseCache.has(task._pollProjectId)) {
+                if (!task.feature_id || !this.enabledFeatures.has(task.feature_id)) {
+                  if (isDebugEnabled()) {
+                    this.logger.debug("Skipping task - project paused and feature not enabled", {
+                      taskId: task.id,
+                      projectId: task._pollProjectId,
+                      featureId: task.feature_id,
+                      enabledFeatures: this.getEnabledFeatures(),
+                    });
+                  }
+                  continue;
+                }
+              }
+              candidateTasks.push(task);
             }
-            candidateTasks.push(task);
           }
         }
 
@@ -2086,6 +2219,41 @@ export class TaskRunner {
   }
 
   /**
+   * Update entry metadata fields via the API.
+   * Called from TUI when user edits metadata via the MetadataPopup.
+   */
+  async updateEntryMetadata(
+    taskPath: string,
+    fields: {
+      status?: EntryStatus;
+      feature_id?: string;
+      git_branch?: string;
+      target_workdir?: string;
+    }
+  ): Promise<void> {
+    this.logger.info("Updating entry metadata", { taskPath, fields });
+
+    try {
+      await this.apiClient.updateEntryMetadata(taskPath, fields);
+      this.logger.info("Entry metadata updated", { taskPath, fields });
+      
+      // Build description of what changed
+      const changes = Object.entries(fields)
+        .filter(([_, v]) => v !== undefined)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ');
+      this.tuiLog('info', `Metadata updated: ${changes}`, undefined);
+    } catch (error) {
+      this.logger.error("Failed to update entry metadata", {
+        taskPath,
+        fields,
+        error: String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Edit a task in an external editor.
    * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
    * Returns the new content if changes were made, null if cancelled/unchanged.
@@ -2204,6 +2372,7 @@ export class TaskRunner {
         onUpdateStatus: (taskId, taskPath, newStatus) => this.updateTaskStatus(taskId, taskPath, newStatus),
         onEditTask: (taskId, taskPath) => this.editTask(taskId, taskPath),
         onExecuteTask: (taskId, taskPath) => this.executeTaskManually(taskId, taskPath),
+        onExecuteFeature: (featureId) => this.executeFeature(featureId),
         // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),
@@ -2222,6 +2391,8 @@ export class TaskRunner {
         onEnableFeature: (featureId) => this.enableFeature(featureId),
         onDisableFeature: (featureId) => this.disableFeature(featureId),
         getEnabledFeatures: () => this.getEnabledFeatures(),
+        // Metadata update callback for batch metadata edits
+        onUpdateMetadata: (taskPath, fields) => this.updateEntryMetadata(taskPath, fields),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

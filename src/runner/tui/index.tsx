@@ -61,6 +61,8 @@ export interface DashboardOptions {
   onEditTask?: (taskId: string, taskPath: string) => Promise<string | null>;
   /** Callback to execute a task manually. Returns true if task was started, false otherwise. */
   onExecuteTask?: (taskId: string, taskPath: string) => Promise<boolean>;
+  /** Callback to execute all ready tasks for a feature. Returns number of tasks started. */
+  onExecuteFeature?: (featureId: string) => Promise<number>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
   /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */
@@ -75,6 +77,16 @@ export interface DashboardOptions {
   onDisableFeature?: (featureId: string) => void;
   /** Get currently enabled features from TaskRunner */
   getEnabledFeatures?: () => string[];
+  /** Callback to update entry metadata fields (status, feature_id, git_branch, target_workdir) */
+  onUpdateMetadata?: (
+    taskPath: string,
+    fields: {
+      status?: EntryStatus;
+      feature_id?: string;
+      git_branch?: string;
+      target_workdir?: string;
+    }
+  ) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -149,6 +161,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onUpdateStatus={options.onUpdateStatus}
       onEditTask={options.onEditTask}
       onExecuteTask={options.onExecuteTask}
+      onExecuteFeature={options.onExecuteFeature}
       getRunningProcessCount={options.getRunningProcessCount}
       getResourceMetrics={options.getResourceMetrics}
       getProjectLimits={options.getProjectLimits}
@@ -156,6 +169,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onEnableFeature={options.onEnableFeature}
       onDisableFeature={options.onDisableFeature}
       getEnabledFeatures={options.getEnabledFeatures}
+      onUpdateMetadata={options.onUpdateMetadata}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

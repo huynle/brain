@@ -66,6 +66,22 @@ export const UNGROUPED_FEATURE_ID = '__ungrouped__';
 
 // Status icons and colors are now imported from shared status-display.ts
 
+/**
+ * Statuses that belong to group sections (draft, completed, etc.)
+ * These should NOT appear in the main active task tree.
+ */
+export const GROUP_STATUSES: EntryStatus[] = [
+  'draft',
+  'cancelled',
+  'completed',
+  'validated',
+  'superseded',
+  'archived',
+];
+
+// Helper to check if a task has a group status (should be in a section, not active tree)
+const isGroupStatus = (t: TaskDisplay): boolean => GROUP_STATUSES.includes(t.status);
+
 const PRIORITY_ORDER: Record<Priority, number> = {
   high: 0,
   medium: 1,
@@ -368,7 +384,8 @@ const isDraft = (t: TaskDisplay): boolean => t.status === 'draft';
  */
 export function flattenTreeOrder(tasks: TaskDisplay[], completedCollapsed: boolean = true, draftCollapsed: boolean = true): string[] {
   // Separate active, completed, and draft tasks
-  const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
+  // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
+  const activeTasks = tasks.filter(t => !isGroupStatus(t));
   const completedTasks = tasks.filter(isCompleted).sort((a, b) => {
     // Sort by modified time descending (most recent first)
     const aTime = a.modified ? new Date(a.modified).getTime() : 0;
@@ -428,7 +445,8 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   const result: string[] = [];
   
   // Separate active, completed, and draft tasks
-  const activeTasks = tasks.filter(t => !isCompleted(t) && !isDraft(t));
+  // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
+  const activeTasks = tasks.filter(t => !isGroupStatus(t));
   const completedTasks = tasks.filter(isCompleted).sort((a, b) => {
     // Sort by modified time descending (most recent first)
     const aTime = a.modified ? new Date(a.modified).getTime() : 0;
@@ -496,7 +514,7 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   const activeFeatureIds: string[] = [];
   for (const featureId of featureIds) {
     const featureTasks = tasksByFeature.get(featureId) || [];
-    const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
+    const activeFeatureTasks = featureTasks.filter(t => !isGroupStatus(t));
     if (activeFeatureTasks.length > 0) {
       activeFeatureIds.push(featureId);
     }
@@ -507,7 +525,7 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   // Add feature headers and tasks
   activeFeatureIds.forEach((featureId, featureIndex) => {
     const featureTasks = tasksByFeature.get(featureId) || [];
-    const activeFeatureTasks = featureTasks.filter(t => !isCompleted(t));
+    const activeFeatureTasks = featureTasks.filter(t => !isGroupStatus(t));
     const isFeatureCollapsed = collapsedFeatures.has(featureId);
     
     // Add feature header
@@ -537,9 +555,8 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
   });
   
   // Add ungrouped tasks
-  // Include drafts in ungrouped navigation - they're rendered in the ungrouped section
-  // (Draft section at bottom shows ALL drafts, but ungrouped section also displays drafts inline)
-  const ungroupedActive = ungrouped.filter(t => !isCompleted(t));
+  // Exclude all group statuses from ungrouped navigation
+  const ungroupedActive = ungrouped.filter(t => !isGroupStatus(t));
   if (ungroupedActive.length > 0) {
     // Add spacer before ungrouped section if there are features
     if (activeFeatureIds.length > 0) {
@@ -1031,8 +1048,9 @@ function renderProjectTasks(
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
   
-  // Separate active and completed tasks
-  const activeTasks = projectTasks.filter(t => !isCompleted(t));
+  // Separate active and group-status tasks
+  // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
+  const activeTasks = projectTasks.filter(t => !isGroupStatus(t));
   
   // Build tree structure from active tasks, passing all project tasks for parent_id chain walking
   const tree = buildTree(activeTasks, projectTasks);
@@ -1079,8 +1097,9 @@ function renderFeatureTasks(
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
   
-  // Separate active and completed tasks
-  const activeTasks = featureTasks.filter(t => !isCompleted(t));
+  // Separate active and group-status tasks
+  // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
+  const activeTasks = featureTasks.filter(t => !isGroupStatus(t));
   
   // Build tree structure from active tasks, passing all feature tasks for parent_id chain walking
   const tree = buildTree(activeTasks, featureTasks);
@@ -1158,7 +1177,8 @@ export const TaskTree = React.memo(function TaskTree({
   // Compute whether to show checkboxes (when any tasks are multi-selected)
   const showCheckboxes = selectedTaskIds.size > 0;
   // Separate active, completed, and draft tasks
-  const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
+  // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
+  const activeTasks = useMemo(() => tasks.filter(t => !isGroupStatus(t)), [tasks]);
   const completedTasks = useMemo(() => 
     tasks.filter(isCompleted).sort((a, b) => {
       // Sort by modified time descending (most recent first)
@@ -1226,7 +1246,7 @@ export const TaskTree = React.memo(function TaskTree({
     for (const [featureId, featureTasks] of tasksByFeature) {
       if (featureId === '__ungrouped__') continue;
       
-      const activeFeatTasks = featureTasks.filter(t => !isCompleted(t));
+      const activeFeatTasks = featureTasks.filter(t => !isGroupStatus(t));
       const completedCount = featureTasks.filter(isCompleted).length;
       
       // Determine feature priority (from feature_priority or highest task priority)
@@ -1258,7 +1278,7 @@ export const TaskTree = React.memo(function TaskTree({
       for (const depFeatureId of dependsOn) {
         const depFeatureTasks = tasksByFeature.get(depFeatureId);
         if (depFeatureTasks) {
-          const depActiveCount = depFeatureTasks.filter(t => !isCompleted(t)).length;
+          const depActiveCount = depFeatureTasks.filter(t => !isGroupStatus(t)).length;
           if (depActiveCount > 0) {
             blockedByFeatures.push(depFeatureId);
           }
@@ -1337,7 +1357,7 @@ export const TaskTree = React.memo(function TaskTree({
     
     projectIds.forEach((projectId, projectIndex) => {
       const projectTasks = tasksByProject.get(projectId) || [];
-      const projectActiveTasks = projectTasks.filter(t => !isCompleted(t));
+      const projectActiveTasks = projectTasks.filter(t => !isGroupStatus(t));
       
       // Skip projects with no active tasks in grouped view
       if (projectActiveTasks.length === 0) return;
@@ -1584,7 +1604,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Pre-filter to features with active tasks (matches flattenFeatureOrder for navigation)
     const activeFeatureIds = featureIds.filter(featureId => {
       const featureTasks = tasksByFeature.get(featureId) || [];
-      return featureTasks.some(t => !isCompleted(t));
+      return featureTasks.some(t => !isGroupStatus(t));
     });
     
     activeFeatureIds.forEach((featureId, featureIndex) => {
@@ -1629,7 +1649,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Handle ungrouped tasks
     const ungroupedTasks = tasksByFeature.get('__ungrouped__');
     if (ungroupedTasks && ungroupedTasks.length > 0) {
-      const ungroupedActive = ungroupedTasks.filter(t => !isCompleted(t) && !isDraft(t));
+      const ungroupedActive = ungroupedTasks.filter(t => !isGroupStatus(t));
       
       if (ungroupedActive.length > 0) {
         // Add spacing before ungrouped section

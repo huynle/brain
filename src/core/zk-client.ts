@@ -356,7 +356,7 @@ export function sanitizeTag(tag: string): string | null {
 }
 
 /**
- * Sanitize a simple value (workdir, worktree, git_remote, git_branch, projectId).
+ * Sanitize a simple value (workdir, git_remote, git_branch, projectId).
  * - Strips control characters (newlines, carriage returns, null bytes)
  * - Replaces newlines with spaces
  * - Collapses multiple spaces to single space
@@ -527,13 +527,6 @@ export function parseFrontmatter(content: string): {
     const workdirMatch = line.match(/^workdir:\s*(.+)$/);
     if (workdirMatch) {
       frontmatter.workdir = parseYamlStringValue(workdirMatch[1]);
-      inTags = false;
-      continue;
-    }
-
-    const worktreeMatch = line.match(/^worktree:\s*(.+)$/);
-    if (worktreeMatch) {
-      frontmatter.worktree = parseYamlStringValue(worktreeMatch[1]);
       inTags = false;
       continue;
     }
@@ -846,7 +839,6 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
 
   // Execution context fields
   if (fm.workdir) lines.push(`workdir: ${escapeYamlValue(fm.workdir as string)}`);
-  if (fm.worktree) lines.push(`worktree: ${escapeYamlValue(fm.worktree as string)}`);
   if (fm.git_remote) lines.push(`git_remote: ${escapeYamlValue(fm.git_remote as string)}`);
   if (fm.git_branch) lines.push(`git_branch: ${escapeYamlValue(fm.git_branch as string)}`);
   if (fm.target_workdir) lines.push(`target_workdir: ${escapeYamlValue(fm.target_workdir as string)}`);
@@ -873,7 +865,6 @@ export interface GenerateFrontmatterOptions {
   feature_depends_on?: string[];
   // Execution context for tasks
   workdir?: string;
-  worktree?: string;
   git_remote?: string;
   git_branch?: string;
   target_workdir?: string;
@@ -934,9 +925,6 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   // Execution context for tasks
   if (options.workdir) {
     lines.push(`workdir: ${escapeYamlValue(options.workdir)}`);
-  }
-  if (options.worktree) {
-    lines.push(`worktree: ${escapeYamlValue(options.worktree)}`);
   }
   if (options.git_remote) {
     lines.push(`git_remote: ${escapeYamlValue(options.git_remote)}`);

@@ -94,16 +94,6 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("workdir: projects/my-project");
     });
 
-    test("includes worktree when provided", () => {
-      const fm = generateFrontmatter({
-        title: "Task with worktree",
-        type: "task",
-        worktree: "projects/my-project-feature-branch",
-      });
-      
-      expect(fm).toContain("worktree: projects/my-project-feature-branch");
-    });
-
     test("includes git_remote when provided", () => {
       const fm = generateFrontmatter({
         title: "Task with git_remote",
@@ -132,7 +122,6 @@ describe("generateFrontmatter()", () => {
         status: "pending",
         priority: "high",
         workdir: "projects/my-project",
-        worktree: "projects/my-project-wt",
         git_remote: "git@github.com:user/repo.git",
         git_branch: "main",
       });
@@ -142,7 +131,6 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("status: pending");
       expect(fm).toContain("priority: high");
       expect(fm).toContain("workdir: projects/my-project");
-      expect(fm).toContain("worktree: projects/my-project-wt");
       // git_remote contains special characters (@ and :) so it gets quoted
       expect(fm).toContain('git_remote: "git@github.com:user/repo.git"');
       expect(fm).toContain("git_branch: main");

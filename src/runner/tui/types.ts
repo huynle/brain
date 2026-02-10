@@ -201,12 +201,6 @@ export interface AppProps {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
-  /** Callback to pause a specific feature */
-  onPauseFeature?: (featureId: string) => void;
-  /** Callback to resume a specific feature */
-  onResumeFeature?: (featureId: string) => void;
-  /** Get current paused features from TaskRunner */
-  getPausedFeatures?: () => string[];
   /** Enable a feature to run while project is paused (whitelist) */
   onEnableFeature?: (featureId: string) => void;
   /** Disable a feature from whitelist */

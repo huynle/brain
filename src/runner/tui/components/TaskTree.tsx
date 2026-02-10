@@ -31,8 +31,6 @@ interface TaskTreeProps {
   viewportHeight?: number;
   /** Set of feature IDs that are collapsed */
   collapsedFeatures?: Set<string>;
-  /** Set of feature IDs that are paused */
-  pausedFeatures?: Set<string>;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -892,7 +890,6 @@ const FeatureHeader = React.memo(function FeatureHeader({
   blockedBy,
   isSelected,
   isCollapsed,
-  isPaused,
 }: {
   featureId: string;
   completed: number;
@@ -901,7 +898,6 @@ const FeatureHeader = React.memo(function FeatureHeader({
   blockedBy?: string[];
   isSelected?: boolean;
   isCollapsed?: boolean;
-  isPaused?: boolean;
 }): React.ReactElement {
   // Collapse indicator
   const collapseIcon = isCollapsed ? '▶' : '▾';
@@ -962,14 +958,6 @@ const FeatureHeader = React.memo(function FeatureHeader({
       >
         {' '}Feature: {featureId}
       </Text>
-      {isPaused && (
-        <Text
-          color={isSelected ? 'white' : 'yellow'}
-          backgroundColor={isSelected ? 'blue' : undefined}
-        >
-          {' '}⏸
-        </Text>
-      )}
       <Text
         color={isSelected ? 'white' : 'gray'}
         backgroundColor={isSelected ? 'blue' : undefined}
@@ -1109,7 +1097,6 @@ export const TaskTree = React.memo(function TaskTree({
   scrollOffset = 0,
   viewportHeight,
   collapsedFeatures = new Set(),
-  pausedFeatures = new Set(),
 }: TaskTreeProps): React.ReactElement {
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
@@ -1548,7 +1535,6 @@ export const TaskTree = React.memo(function TaskTree({
           blockedBy={meta?.blockedBy}
           isSelected={selectedId === headerId}
           isCollapsed={isFeatureCollapsed}
-          isPaused={pausedFeatures.has(featureId)}
         />
       );
       
@@ -1587,7 +1573,6 @@ export const TaskTree = React.memo(function TaskTree({
         // Ungrouped header (selectable, like feature headers)
         const isUngroupedSelected = selectedId === UNGROUPED_HEADER_ID;
         const isUngroupedCollapsed = collapsedFeatures.has(UNGROUPED_FEATURE_ID);
-        const isUngroupedPaused = pausedFeatures.has(UNGROUPED_FEATURE_ID);
         const collapseIcon = isUngroupedCollapsed ? '▶' : '▾';
         
         featureElements.push(
@@ -1605,14 +1590,6 @@ export const TaskTree = React.memo(function TaskTree({
             >
               {' '}Ungrouped ({ungroupedActive.length})
             </Text>
-            {isUngroupedPaused && (
-              <Text
-                color={isUngroupedSelected ? 'white' : 'yellow'}
-                backgroundColor={isUngroupedSelected ? 'blue' : undefined}
-              >
-                {' '}⏸
-              </Text>
-            )}
           </Box>
         );
         

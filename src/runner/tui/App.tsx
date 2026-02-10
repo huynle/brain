@@ -44,7 +44,7 @@ import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { StatusPopup } from './components/StatusPopup';
 import { SettingsPopup } from './components/SettingsPopup';
-import { PausePopup, type PauseTarget } from './components/PausePopup';
+import { PausePopup } from './components/PausePopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
@@ -103,9 +103,6 @@ export function App({
   getResourceMetrics,
   getProjectLimits,
   setProjectLimit,
-  onPauseFeature,
-  onResumeFeature,
-  getPausedFeatures,
   onEnableFeature,
   onDisableFeature,
   getEnabledFeatures,
@@ -158,16 +155,12 @@ export function App({
   const [groupVisibilityState, setGroupVisibilityState] = useState<GroupVisibilityEntry[]>([]);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
-  const [pausedFeatures, setPausedFeatures] = useState<Set<string>>(new Set());
   const [enabledFeatures, setEnabledFeatures] = useState<Set<string>>(new Set());
   const [logScrollOffset, setLogScrollOffset] = useState(0);
   const [detailsScrollOffset, setDetailsScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [showPausePopup, setShowPausePopup] = useState(false);
-  const [pausePopupTarget, setPausePopupTarget] = useState<PauseTarget>('project');
-  // Store feature ID for pause popup when feature header is selected (selectedTask is null for headers)
-  const [pausePopupFeatureId, setPausePopupFeatureId] = useState<string | null>(null);
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(true);
   // Focus mode: run a single feature to completion
@@ -301,21 +294,6 @@ export function App({
       return derivedPaused;
     });
   }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
-
-  // Sync pausedFeatures from TaskRunner
-  useEffect(() => {
-    if (!getPausedFeatures) return;
-    
-    const paused = getPausedFeatures();
-    const pausedSet = new Set(paused);
-    
-    setPausedFeatures(prev => {
-      if (setsEqual(prev, pausedSet)) {
-        return prev;
-      }
-      return pausedSet;
-    });
-  }, [getPausedFeatures, tasks]); // Re-sync when tasks change (poll interval)
 
   // Sync enabledFeatures from TaskRunner
   useEffect(() => {
@@ -738,105 +716,40 @@ export function App({
 
     // === Pause Popup Mode ===
     if (showPausePopup) {
-      // Get the feature ID from state (header selection) or selected task
-      const pauseFeatureId = pausePopupFeatureId || selectedTask?.feature_id;
-      const hasFeature = !!pauseFeatureId;
-
       // Escape to close popup
       if (key.escape) {
         setShowPausePopup(false);
-        setPausePopupFeatureId(null); // Clear stored feature ID
         return;
       }
 
-      // Navigate between project and feature (only if feature exists)
-      if (hasFeature && (key.upArrow || input === 'k' || key.downArrow || input === 'j')) {
-        setPausePopupTarget(prev => prev === 'project' ? 'feature' : 'project');
-        return;
-      }
-
-      // Enter to confirm selection
+      // Enter to toggle project pause
       if (key.return) {
         const targetProject = activeProject === 'all' 
           ? (isMultiProject ? projects[0] : projects[0]) 
           : activeProject;
 
-        if (pausePopupTarget === 'project') {
-          // Pause/resume project
-          const isPaused = pausedProjects.has(targetProject);
-          if (isPaused && onResume) {
-            addLog({ level: 'info', message: `Resuming ${targetProject}...` });
-            setPausedProjects(prev => {
-              const next = new Set(prev);
-              next.delete(targetProject);
-              return next;
-            });
-            Promise.resolve(onResume(targetProject)).catch((err) => {
-              addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
-            });
-          } else if (!isPaused && onPause) {
-            addLog({ level: 'info', message: `Pausing ${targetProject}...` });
-            setPausedProjects(prev => new Set([...prev, targetProject]));
-            Promise.resolve(onPause(targetProject)).catch((err) => {
-              addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
-            });
-          }
-        } else if (pausePopupTarget === 'feature' && pauseFeatureId) {
-          // Pause/resume feature
-          const isFeaturePaused = pausedFeatures.has(pauseFeatureId);
-          if (isFeaturePaused && onResumeFeature) {
-            addLog({ level: 'info', message: `Resuming feature: ${pauseFeatureId}...` });
-            setPausedFeatures(prev => {
-              const next = new Set(prev);
-              next.delete(pauseFeatureId);
-              return next;
-            });
-            Promise.resolve(onResumeFeature(pauseFeatureId)).catch((err) => {
-              addLog({ level: 'error', message: `Failed to resume feature ${pauseFeatureId}: ${err}` });
-            });
-          } else if (!isFeaturePaused && onPauseFeature) {
-            addLog({ level: 'info', message: `Pausing feature: ${pauseFeatureId}...` });
-            setPausedFeatures(prev => new Set([...prev, pauseFeatureId]));
-            Promise.resolve(onPauseFeature(pauseFeatureId)).catch((err) => {
-              addLog({ level: 'error', message: `Failed to pause feature ${pauseFeatureId}: ${err}` });
-            });
-          }
+        // Toggle project pause
+        const isPaused = pausedProjects.has(targetProject);
+        if (isPaused && onResume) {
+          addLog({ level: 'info', message: `Resuming ${targetProject}...` });
+          setPausedProjects(prev => {
+            const next = new Set(prev);
+            next.delete(targetProject);
+            return next;
+          });
+          Promise.resolve(onResume(targetProject)).catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
+          });
+        } else if (!isPaused && onPause) {
+          addLog({ level: 'info', message: `Pausing ${targetProject}...` });
+          setPausedProjects(prev => new Set([...prev, targetProject]));
+          Promise.resolve(onPause(targetProject)).catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
+          });
         }
 
         setShowPausePopup(false);
-        setPausePopupFeatureId(null); // Clear stored feature ID
         return;
-      }
-
-      // 'e' to enable/disable feature when project is paused
-      // Only works when: project is paused AND a feature is selected
-      if (input === 'e' && pauseFeatureId) {
-        const targetProject = activeProject === 'all' 
-          ? (isMultiProject ? projects[0] : projects[0]) 
-          : activeProject;
-        const isPaused = pausedProjects.has(targetProject);
-        
-        if (isPaused) {
-          const isEnabled = enabledFeatures.has(pauseFeatureId);
-          if (isEnabled && onDisableFeature) {
-            // Disable the feature
-            addLog({ level: 'info', message: `Disabling feature: ${pauseFeatureId}...` });
-            setEnabledFeatures(prev => {
-              const next = new Set(prev);
-              next.delete(pauseFeatureId);
-              return next;
-            });
-            onDisableFeature(pauseFeatureId);
-          } else if (!isEnabled && onEnableFeature) {
-            // Enable the feature
-            addLog({ level: 'info', message: `Enabling feature: ${pauseFeatureId} (will run while project is paused)...` });
-            setEnabledFeatures(prev => new Set([...prev, pauseFeatureId]));
-            onEnableFeature(pauseFeatureId);
-          }
-          setShowPausePopup(false);
-          setPausePopupFeatureId(null); // Clear stored feature ID
-          return;
-        }
       }
 
       // Block all other input when popup is open
@@ -1139,91 +1052,9 @@ export function App({
       }
     }
 
-    // Pause/Resume handling (async — fire-and-forget with error logging)
-    // 'p' - toggle pause for current project (or all if viewing "all")
-    // If selected task has a feature_id, show popup to choose project vs feature
+    // Pause/Resume handling - 'p' opens pause popup for project-level control
     if (input === 'p') {
-      // Check if Ungrouped header is selected
-      if (selectedTaskId === UNGROUPED_HEADER_ID) {
-        setPausePopupFeatureId(UNGROUPED_FEATURE_ID);
-        setPausePopupTarget('feature'); // Default to feature since that's what's selected
-        setShowPausePopup(true);
-        return;
-      }
-      
-      // Check if a feature header is selected (e.g., "__feature_header__tui-status-filter")
-      if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
-        const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
-        // Store the feature ID for the popup (since selectedTask is null for headers)
-        setPausePopupFeatureId(featureId);
-        setPausePopupTarget('feature'); // Default to feature since that's what's selected
-        setShowPausePopup(true);
-        return;
-      }
-      
-      // Check if selected task has a feature_id
-      if (selectedTask?.feature_id) {
-        // Show popup to let user choose between project and feature pause
-        setPausePopupFeatureId(null); // Clear header feature ID, will use selectedTask.feature_id
-        setPausePopupTarget('project'); // Default to project
-        setShowPausePopup(true);
-        return;
-      }
-      
-      // Check if selected task is ungrouped (no feature_id)
-      if (selectedTask && !selectedTask.feature_id) {
-        setPausePopupFeatureId(UNGROUPED_FEATURE_ID);
-        setPausePopupTarget('feature'); // Treat as feature pause for ungrouped
-        setShowPausePopup(true);
-        return;
-      }
-
-      // No feature_id - pause project directly (original behavior)
-      const targetProject = activeProject === 'all' 
-        ? (isMultiProject ? 'all' : projects[0]) 
-        : activeProject;
-      
-      if (targetProject === 'all') {
-        // Toggle all projects
-        const allPaused = pausedProjects.size === projects.length;
-        if (allPaused && onResumeAll) {
-          addLog({ level: 'info', message: 'Resuming all projects...' });
-          // Optimistic update: clear all paused projects
-          setPausedProjects(new Set());
-          Promise.resolve(onResumeAll()).catch((err) => {
-            addLog({ level: 'error', message: `Failed to resume all: ${err}` });
-          });
-        } else if (!allPaused && onPauseAll) {
-          addLog({ level: 'info', message: 'Pausing all projects...' });
-          // Optimistic update: mark all projects as paused
-          setPausedProjects(new Set(projects));
-          Promise.resolve(onPauseAll()).catch((err) => {
-            addLog({ level: 'error', message: `Failed to pause all: ${err}` });
-          });
-        }
-      } else {
-        // Toggle single project
-        const isPaused = pausedProjects.has(targetProject);
-        if (isPaused && onResume) {
-          addLog({ level: 'info', message: `Resuming ${targetProject}...` });
-          // Optimistic update: remove project from paused set
-          setPausedProjects(prev => {
-            const next = new Set(prev);
-            next.delete(targetProject);
-            return next;
-          });
-          Promise.resolve(onResume(targetProject)).catch((err) => {
-            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
-          });
-        } else if (!isPaused && onPause) {
-          addLog({ level: 'info', message: `Pausing ${targetProject}...` });
-          // Optimistic update: add project to paused set
-          setPausedProjects(prev => new Set([...prev, targetProject]));
-          Promise.resolve(onPause(targetProject)).catch((err) => {
-            addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
-          });
-        }
-      }
+      setShowPausePopup(true);
       return;
     }
 
@@ -1552,24 +1383,20 @@ export function App({
   }
 
   // Pause popup overlay
-  // Show if popup is open AND either: a task is selected OR a feature header is selected (pausePopupFeatureId set)
-  if (showPausePopup && (selectedTask || pausePopupFeatureId)) {
+  if (showPausePopup) {
     const targetProject = activeProject === 'all' 
       ? (isMultiProject ? projects[0] : projects[0]) 
       : activeProject;
-    
-    // Use pausePopupFeatureId (from header) or selectedTask.feature_id
-    const featureIdForPopup = pausePopupFeatureId || selectedTask?.feature_id;
     
     return (
       <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
         <PausePopup
           projectId={targetProject}
-          featureId={featureIdForPopup}
-          selectedTarget={pausePopupTarget}
           isProjectPaused={pausedProjects.has(targetProject)}
-          isFeaturePaused={featureIdForPopup ? pausedFeatures.has(featureIdForPopup) : false}
-          enabledFeatures={enabledFeatures}
+          focusedFeature={focusedFeature}
+          onPauseProject={() => onPause?.(targetProject)}
+          onUnpauseProject={() => onResume?.(targetProject)}
+          onClose={() => setShowPausePopup(false)}
         />
       </Box>
     );
@@ -1617,7 +1444,6 @@ export function App({
               scrollOffset={taskScrollOffset}
               viewportHeight={taskViewportHeight}
               collapsedFeatures={collapsedFeatures}
-              pausedFeatures={pausedFeatures}
             />
           </Box>
 

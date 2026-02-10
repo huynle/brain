@@ -581,55 +581,6 @@ export class TaskRunner {
   }
 
   // ========================================
-  // Feature Pause/Resume Methods
-  // ========================================
-
-  /**
-   * Pause a specific feature by ID.
-   * Tasks with this feature_id will be excluded from task polling.
-   * Running tasks will complete, but no new tasks for this feature will be picked up.
-   */
-  pauseFeature(featureId: string): void {
-    if (this.pausedFeatures.has(featureId)) {
-      return; // Already paused
-    }
-
-    this.pausedFeatures.add(featureId);
-    this.logger.info("Feature paused", { featureId });
-    this.tuiLog('warn', `Feature paused: ${featureId}`);
-    this.emitEvent({ type: "feature_paused", featureId });
-  }
-
-  /**
-   * Resume a paused feature.
-   * Removes the feature from pausedFeatures so new tasks can be picked up.
-   */
-  resumeFeature(featureId: string): void {
-    if (!this.pausedFeatures.has(featureId)) {
-      return; // Not paused
-    }
-
-    this.pausedFeatures.delete(featureId);
-    this.logger.info("Feature resumed", { featureId });
-    this.tuiLog('info', `Feature resumed: ${featureId}`);
-    this.emitEvent({ type: "feature_resumed", featureId });
-  }
-
-  /**
-   * Check if a specific feature is paused (synchronous, uses local cache).
-   */
-  isPausedFeature(featureId: string): boolean {
-    return this.pausedFeatures.has(featureId);
-  }
-
-  /**
-   * Get array of all paused feature IDs.
-   */
-  getPausedFeatures(): string[] {
-    return Array.from(this.pausedFeatures);
-  }
-
-  // ========================================
   // Feature Enable/Disable Methods (Whitelist for Paused Projects)
   // ========================================
 
@@ -940,26 +891,6 @@ export class TaskRunner {
             // Skip if already running or already queued to start
             const key = `${task._pollProjectId}:${task.id}`;
             if (runningKeys.has(key)) {
-              continue;
-            }
-            // Skip if task's feature is paused
-            if (task.feature_id && this.pausedFeatures.has(task.feature_id)) {
-              if (isDebugEnabled()) {
-                this.logger.debug("Skipping task with paused feature", {
-                  taskId: task.id,
-                  featureId: task.feature_id,
-                });
-              }
-              continue;
-            }
-            // Skip if ungrouped tasks are paused and this task has no feature_id
-            // UNGROUPED_FEATURE_ID = '__ungrouped__'
-            if (!task.feature_id && this.pausedFeatures.has('__ungrouped__')) {
-              if (isDebugEnabled()) {
-                this.logger.debug("Skipping ungrouped task - ungrouped is paused", {
-                  taskId: task.id,
-                });
-              }
               continue;
             }
             // When project is paused but has enabled features, only allow those features
@@ -2243,10 +2174,6 @@ export class TaskRunner {
           running: this.getRunningCountForProject(projectId),
         })),
         setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
-        // Feature pause/resume callbacks
-        onPauseFeature: (featureId) => this.pauseFeature(featureId),
-        onResumeFeature: (featureId) => this.resumeFeature(featureId),
-        getPausedFeatures: () => this.getPausedFeatures(),
         // Feature enable/disable callbacks (whitelist for paused projects)
         onEnableFeature: (featureId) => this.enableFeature(featureId),
         onDisableFeature: (featureId) => this.disableFeature(featureId),

@@ -13,7 +13,7 @@
  * │  Branch:      feature/dark-mode        │
  * │  Workdir:     /path/to/project         │
  * │                                        │
- * │  Tab: next  Enter: edit  Esc: cancel   │
+ * │  Tab: next  Enter: edit  a: save  Esc: cancel │
  * └────────────────────────────────────────┘
  */
 
@@ -202,7 +202,7 @@ export function MetadataPopup({
       {/* Footer with shortcuts */}
       <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
         <Text dimColor>
-          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  Esc: {editingField ? 'cancel edit' : 'save & close'}
+          Tab: next  Enter: {editingField ? 'confirm' : 'edit'}  {editingField ? 'Esc: exit edit' : 'a: save  Esc: cancel'}
         </Text>
       </Box>
     </Box>

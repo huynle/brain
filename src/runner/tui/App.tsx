@@ -496,30 +496,36 @@ export function App({
     if (showMetadataPopup) {
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
       
-        // Escape handling: commit edit and save, OR just save and close popup
+        // Escape handling: exit edit mode OR cancel and close popup
         if (key.escape) {
           if (metadataEditingField) {
-            // Commit edit buffer and save-and-close in one step
-            // Pass the buffer value as override since React state updates are batched
-            const overrides: { feature_id?: string; git_branch?: string; target_workdir?: string } = {};
+            // In edit mode: commit buffer to local state and exit edit mode (do NOT close/save)
             switch (metadataEditingField) {
               case 'feature_id':
-                overrides.feature_id = metadataEditBuffer;
+                setMetadataFeatureIdValue(metadataEditBuffer);
                 break;
               case 'git_branch':
-                overrides.git_branch = metadataEditBuffer;
+                setMetadataBranchValue(metadataEditBuffer);
                 break;
               case 'target_workdir':
-                overrides.target_workdir = metadataEditBuffer;
+                setMetadataWorkdirValue(metadataEditBuffer);
                 break;
             }
             setMetadataEditingField(null);
             setMetadataEditBuffer('');
-            applyMetadataChanges(overrides);
+            // Stay in popup - user can continue editing other fields
           } else {
-            // Save changes and close popup (applyMetadataChanges closes popup after saving)
-            applyMetadataChanges();
+            // Not in edit mode: cancel and close popup (discard all changes, no API call)
+            setShowMetadataPopup(false);
+            setMetadataEditingField(null);
+            setMetadataEditBuffer('');
           }
+          return;
+        }
+
+        // 'a' key: save and close (apply changes to API)
+        if (input === 'a' && !metadataEditingField) {
+          applyMetadataChanges();
           return;
         }
 

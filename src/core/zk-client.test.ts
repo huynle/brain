@@ -173,6 +173,50 @@ describe("generateFrontmatter()", () => {
       expect(fm).not.toContain("git_branch:");
     });
   });
+
+  describe("depends_on field", () => {
+    test("includes depends_on when provided", () => {
+      const fm = generateFrontmatter({
+        title: "Task with deps",
+        type: "task",
+        depends_on: ["abc12def", "xyz99876"],
+      });
+      
+      expect(fm).toContain("depends_on:");
+      expect(fm).toContain('  - "abc12def"');
+      expect(fm).toContain('  - "xyz99876"');
+    });
+
+    test("omits depends_on when empty array", () => {
+      const fm = generateFrontmatter({
+        title: "Task without deps",
+        type: "task",
+        depends_on: [],
+      });
+      
+      expect(fm).not.toContain("depends_on:");
+    });
+
+    test("omits depends_on when not provided", () => {
+      const fm = generateFrontmatter({
+        title: "Task without deps",
+        type: "task",
+      });
+      
+      expect(fm).not.toContain("depends_on:");
+    });
+
+    test("escapes special characters in depends_on entries", () => {
+      const fm = generateFrontmatter({
+        title: "Task",
+        type: "task",
+        depends_on: ['abc"def', "xyz\\123"],
+      });
+      
+      expect(fm).toContain('  - "abc\\"def"');
+      expect(fm).toContain('  - "xyz\\\\123"');
+    });
+  });
 });
 
 // =============================================================================

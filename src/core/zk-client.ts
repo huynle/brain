@@ -859,6 +859,8 @@ export interface GenerateFrontmatterOptions {
   projectId?: string;
   name?: string;
   priority?: Priority;
+  // Task dependencies (normalized to short IDs)
+  depends_on?: string[];
   // Feature group fields for task grouping
   feature_id?: string;
   feature_priority?: Priority;
@@ -901,6 +903,15 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.priority) {
     lines.push(`priority: ${options.priority}`);
+  }
+
+  // Task dependencies
+  if (options.depends_on && options.depends_on.length > 0) {
+    lines.push("depends_on:");
+    for (const dep of options.depends_on) {
+      const escaped = String(dep).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+      lines.push(`  - "${escaped}"`);
+    }
   }
 
   if (options.projectId) {

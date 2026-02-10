@@ -93,8 +93,7 @@ export const BrainEntrySchema = z.object({
   modified: z.string().optional().openapi({ example: "2024-01-15T12:00:00Z" }),
   access_count: z.number().optional(),
   last_verified: z.string().optional(),
-  workdir: z.string().optional().openapi({ description: "$HOME-relative path to main worktree" }),
-  worktree: z.string().optional().openapi({ description: "Specific worktree if different from main" }),
+  workdir: z.string().optional().openapi({ description: "$HOME-relative path to main repo" }),
   git_remote: z.string().optional().openapi({ description: "Git remote URL for verification" }),
   git_branch: z.string().optional().openapi({ description: "Branch context when entry was created" }),
   user_original_request: z.string().optional().openapi({ 
@@ -134,7 +133,6 @@ export const CreateEntryRequestSchema = z.object({
   project: z.string().optional().openapi({ description: "Project name" }),
   relatedEntries: z.array(z.string()).optional().openapi({ description: "Related entry paths/IDs to link" }),
   workdir: z.string().optional(),
-  worktree: z.string().optional(),
   git_remote: z.string().optional(),
   git_branch: z.string().optional(),
   user_original_request: z.string().optional().openapi({
@@ -402,7 +400,6 @@ export const TaskSchema = z.object({
   depends_on: z.array(z.string()),
   created: z.string(),
   workdir: z.string().nullable(),
-  worktree: z.string().nullable(),
   git_remote: z.string().nullable(),
   git_branch: z.string().nullable(),
   // Feature grouping (optional)

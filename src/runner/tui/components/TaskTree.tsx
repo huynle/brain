@@ -33,6 +33,8 @@ interface TaskTreeProps {
   collapsedFeatures?: Set<string>;
   /** Set of feature IDs that are active (queued for execution via x key) */
   activeFeatures?: Set<string>;
+  /** Set of task IDs that are multi-selected (via Space key) */
+  selectedTaskIds?: Set<string>;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -729,12 +731,18 @@ const TaskRow = React.memo(function TaskRow({
   isSelected,
   inCycle,
   isReady,
+  isChecked,
+  showCheckboxes = false,
 }: {
   task: TaskDisplay;
   prefix: string;
   isSelected: boolean;
   inCycle: boolean;
   isReady: boolean;
+  /** Whether this task is checked (multi-selected) */
+  isChecked?: boolean;
+  /** Whether to show checkboxes (when any tasks are multi-selected) */
+  showCheckboxes?: boolean;
 }): React.ReactElement {
   // Determine icon and color based on status and readiness
   const icon = getStatusIcon(task.status, isReady);
@@ -748,10 +756,22 @@ const TaskRow = React.memo(function TaskRow({
   
   // Cycle indicator
   const cycleSuffix = inCycle ? ' ↺' : '';
+  
+  // Checkbox indicator (only when multi-select is active)
+  const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
 
   return (
     <Box flexDirection="row">
       <Text dimColor={isDim}>{prefix}</Text>
+      {showCheckboxes && (
+        <Text
+          color={isChecked ? 'green' : 'gray'}
+          backgroundColor={isSelected ? 'blue' : undefined}
+          bold={isChecked}
+        >
+          {checkboxPrefix}
+        </Text>
+      )}
       <Text
         color={color}
         dimColor={isDim}
@@ -796,14 +816,17 @@ function renderTree(
   selectedId: string | null,
   prefix: string = '',
   readyIds: Set<string>,
+  selectedTaskIds: Set<string> = new Set(),
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
+  const showCheckboxes = selectedTaskIds.size > 0;
 
   nodes.forEach((node, index) => {
     const isLast = index === nodes.length - 1;
     const branchChar = isLast ? LAST_BRANCH : BRANCH;
     const isSelected = node.task.id === selectedId;
     const isReady = readyIds.has(node.task.id);
+    const isChecked = selectedTaskIds.has(node.task.id);
 
     elements.push(
       <TaskRow
@@ -813,6 +836,8 @@ function renderTree(
         isSelected={isSelected}
         inCycle={node.inCycle}
         isReady={isReady}
+        isChecked={isChecked}
+        showCheckboxes={showCheckboxes}
       />
     );
 
@@ -820,7 +845,7 @@ function renderTree(
     if (node.children.length > 0) {
       const childPrefix = prefix + (isLast ? EMPTY : VERTICAL);
       elements.push(
-        ...renderTree(node.children, selectedId, childPrefix, readyIds)
+        ...renderTree(node.children, selectedId, childPrefix, readyIds, selectedTaskIds)
       );
     }
   });
@@ -1001,8 +1026,10 @@ function renderProjectTasks(
   projectTasks: TaskDisplay[],
   selectedId: string | null,
   readyIds: Set<string>,
+  selectedTaskIds: Set<string> = new Set(),
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
+  const showCheckboxes = selectedTaskIds.size > 0;
   
   // Separate active and completed tasks
   const activeTasks = projectTasks.filter(t => !isCompleted(t));
@@ -1013,6 +1040,7 @@ function renderProjectTasks(
   tree.forEach((rootNode, rootIndex) => {
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
+    const isChecked = selectedTaskIds.has(rootNode.task.id);
 
     // Root task with indent for project grouping
     elements.push(
@@ -1023,13 +1051,15 @@ function renderProjectTasks(
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
+        isChecked={isChecked}
+        showCheckboxes={showCheckboxes}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '  ', readyIds)
+        ...renderTree(rootNode.children, selectedId, '  ', readyIds, selectedTaskIds)
       );
     }
   });
@@ -1044,8 +1074,10 @@ function renderFeatureTasks(
   featureTasks: TaskDisplay[],
   selectedId: string | null,
   readyIds: Set<string>,
+  selectedTaskIds: Set<string> = new Set(),
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
+  const showCheckboxes = selectedTaskIds.size > 0;
   
   // Separate active and completed tasks
   const activeTasks = featureTasks.filter(t => !isCompleted(t));
@@ -1056,6 +1088,7 @@ function renderFeatureTasks(
   tree.forEach((rootNode) => {
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
+    const isChecked = selectedTaskIds.has(rootNode.task.id);
 
     // Root task with indent for feature grouping
     elements.push(
@@ -1066,13 +1099,15 @@ function renderFeatureTasks(
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
+        isChecked={isChecked}
+        showCheckboxes={showCheckboxes}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '│ ', readyIds)
+        ...renderTree(rootNode.children, selectedId, '│ ', readyIds, selectedTaskIds)
       );
     }
   });
@@ -1087,6 +1122,7 @@ function renderFeatureTasks(
         const isSelected = (lastElement.props as { isSelected: boolean }).isSelected;
         const inCycle = (lastElement.props as { inCycle: boolean }).inCycle;
         const isReady = (lastElement.props as { isReady: boolean }).isReady;
+        const isChecked = (lastElement.props as { isChecked: boolean }).isChecked;
         elements[elements.length - 1] = (
           <TaskRow
             key={task.id}
@@ -1095,6 +1131,8 @@ function renderFeatureTasks(
             isSelected={isSelected}
             inCycle={inCycle}
             isReady={isReady}
+            isChecked={isChecked}
+            showCheckboxes={showCheckboxes}
           />
         );
       }
@@ -1115,7 +1153,10 @@ export const TaskTree = React.memo(function TaskTree({
   viewportHeight,
   collapsedFeatures = new Set(),
   activeFeatures = new Set(),
+  selectedTaskIds = new Set(),
 }: TaskTreeProps): React.ReactElement {
+  // Compute whether to show checkboxes (when any tasks are multi-selected)
+  const showCheckboxes = selectedTaskIds.size > 0;
   // Separate active, completed, and draft tasks
   const activeTasks = useMemo(() => tasks.filter(t => !isCompleted(t) && !isDraft(t)), [tasks]);
   const completedTasks = useMemo(() => 
@@ -1312,7 +1353,7 @@ export const TaskTree = React.memo(function TaskTree({
       
       // Project's tasks
       projectElements.push(
-        ...renderProjectTasks(projectTasks, selectedId, readyIds)
+        ...renderProjectTasks(projectTasks, selectedId, readyIds, selectedTaskIds)
       );
       
       // Add spacing between projects (except last)
@@ -1384,6 +1425,7 @@ export const TaskTree = React.memo(function TaskTree({
           tree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === tree.length - 1;
             const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+            const isChecked = selectedTaskIds.has(rootNode.task.id);
             
             draftElements.push(
               <TaskRow
@@ -1393,13 +1435,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isSelected={rootNode.task.id === selectedId}
                 inCycle={rootNode.inCycle}
                 isReady={false}
+                isChecked={isChecked}
+                showCheckboxes={showCheckboxes}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               draftElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
               );
             }
           });
@@ -1466,6 +1510,7 @@ export const TaskTree = React.memo(function TaskTree({
           tree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === tree.length - 1;
             const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+            const isChecked = selectedTaskIds.has(rootNode.task.id);
             
             completedElements.push(
               <TaskRow
@@ -1475,13 +1520,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isSelected={rootNode.task.id === selectedId}
                 inCycle={rootNode.inCycle}
                 isReady={false}
+                isChecked={isChecked}
+                showCheckboxes={showCheckboxes}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               completedElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
               );
             }
           });
@@ -1491,9 +1538,14 @@ export const TaskTree = React.memo(function TaskTree({
 
     return (
       <Box flexDirection="column" padding={1}>
-        <Text bold underline>
-          Tasks ({tasks.length})
-        </Text>
+        <Box>
+          <Text bold underline>
+            Tasks ({tasks.length})
+          </Text>
+          {showCheckboxes && (
+            <Text color="cyan"> - {selectedTaskIds.size} selected</Text>
+          )}
+        </Box>
         <Box flexDirection="column" marginTop={1}>
           {projectElements}
           {draftElements}
@@ -1560,7 +1612,7 @@ export const TaskTree = React.memo(function TaskTree({
       // Feature's tasks (only render if not collapsed)
       if (!isFeatureCollapsed) {
         featureElements.push(
-          ...renderFeatureTasks(featureTasks, selectedId, readyIds)
+          ...renderFeatureTasks(featureTasks, selectedId, readyIds, selectedTaskIds)
         );
       }
       
@@ -1625,7 +1677,7 @@ export const TaskTree = React.memo(function TaskTree({
         // Ungrouped tasks (only render if not collapsed)
         if (!isUngroupedCollapsed) {
           featureElements.push(
-            ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds)
+            ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds, selectedTaskIds)
           );
         }
       }
@@ -1690,6 +1742,7 @@ export const TaskTree = React.memo(function TaskTree({
           tree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === tree.length - 1;
             const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+            const isChecked = selectedTaskIds.has(rootNode.task.id);
             
             draftElements.push(
               <TaskRow
@@ -1699,13 +1752,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isSelected={rootNode.task.id === selectedId}
                 inCycle={rootNode.inCycle}
                 isReady={false}
+                isChecked={isChecked}
+                showCheckboxes={showCheckboxes}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               draftElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
               );
             }
           });
@@ -1772,6 +1827,7 @@ export const TaskTree = React.memo(function TaskTree({
           tree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === tree.length - 1;
             const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+            const isChecked = selectedTaskIds.has(rootNode.task.id);
             
             completedElements.push(
               <TaskRow
@@ -1781,13 +1837,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isSelected={rootNode.task.id === selectedId}
                 inCycle={rootNode.inCycle}
                 isReady={false}
+                isChecked={isChecked}
+                showCheckboxes={showCheckboxes}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               completedElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
               );
             }
           });
@@ -1819,6 +1877,9 @@ export const TaskTree = React.memo(function TaskTree({
           <Text bold underline>
             Tasks ({tasks.length})
           </Text>
+          {showCheckboxes && (
+            <Text color="cyan"> - {selectedTaskIds.size} selected</Text>
+          )}
           {hasMoreAbove && (
             <Text dimColor> ↑{scrollOffset} more</Text>
           )}
@@ -1842,6 +1903,7 @@ export const TaskTree = React.memo(function TaskTree({
   tree.forEach((rootNode, rootIndex) => {
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
+    const isChecked = selectedTaskIds.has(rootNode.task.id);
 
     // Root task (no tree prefix)
     elements.push(
@@ -1852,13 +1914,15 @@ export const TaskTree = React.memo(function TaskTree({
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
+        isChecked={isChecked}
+        showCheckboxes={showCheckboxes}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '', readyIds)
+        ...renderTree(rootNode.children, selectedId, '', readyIds, selectedTaskIds)
       );
     }
 
@@ -1934,6 +1998,7 @@ export const TaskTree = React.memo(function TaskTree({
         draftTree.forEach((rootNode, rootIndex) => {
           const isLast = rootIndex === draftTree.length - 1;
           const branchChar = draftTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+          const isChecked = selectedTaskIds.has(rootNode.task.id);
           
           draftElements.push(
             <TaskRow
@@ -1943,13 +2008,15 @@ export const TaskTree = React.memo(function TaskTree({
               isSelected={rootNode.task.id === selectedId}
               inCycle={rootNode.inCycle}
               isReady={false}
+              isChecked={isChecked}
+              showCheckboxes={showCheckboxes}
             />
           );
           
           if (rootNode.children.length > 0) {
             const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
             draftElements.push(
-              ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+              ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
             );
           }
         });
@@ -2019,6 +2086,7 @@ export const TaskTree = React.memo(function TaskTree({
         completedTree.forEach((rootNode, rootIndex) => {
           const isLast = rootIndex === completedTree.length - 1;
           const branchChar = completedTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
+          const isChecked = selectedTaskIds.has(rootNode.task.id);
           
           completedElements.push(
             <TaskRow
@@ -2028,13 +2096,15 @@ export const TaskTree = React.memo(function TaskTree({
               isSelected={rootNode.task.id === selectedId}
               inCycle={rootNode.inCycle}
               isReady={false}
+              isChecked={isChecked}
+              showCheckboxes={showCheckboxes}
             />
           );
           
           if (rootNode.children.length > 0) {
             const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
             completedElements.push(
-              ...renderTree(rootNode.children, selectedId, childPrefix, new Set())
+              ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
             );
           }
         });
@@ -2066,6 +2136,9 @@ export const TaskTree = React.memo(function TaskTree({
         <Text bold underline>
           Tasks ({tasks.length})
         </Text>
+        {showCheckboxes && (
+          <Text color="cyan"> - {selectedTaskIds.size} selected</Text>
+        )}
         {hasMoreAbove && (
           <Text dimColor> ↑{scrollOffset} more</Text>
         )}

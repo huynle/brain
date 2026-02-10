@@ -1149,6 +1149,91 @@ export function App({
         return;
       }
 
+      // f - Toggle feature focus mode (focus on feature header or task's feature)
+      if (input === 'f') {
+        let targetFeatureId: string | null = null;
+        
+        // Case 1: Cursor on a feature header - focus that feature
+        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+          targetFeatureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+        }
+        // Case 2: Cursor on ungrouped header - focus ungrouped tasks
+        else if (selectedTaskId === UNGROUPED_HEADER_ID) {
+          targetFeatureId = UNGROUPED_FEATURE_ID;
+        }
+        // Case 3: Cursor on a task row - extract feature_id from the task
+        else if (selectedTask) {
+          if (selectedTask.feature_id) {
+            targetFeatureId = selectedTask.feature_id;
+          } else {
+            // Task has no feature_id - focus ungrouped
+            targetFeatureId = UNGROUPED_FEATURE_ID;
+          }
+        }
+        
+        // If no valid target, do nothing
+        if (!targetFeatureId) {
+          return;
+        }
+        
+        // Toggle logic: same feature = clear focus, different = switch
+        if (focusedFeature === targetFeatureId) {
+          // Clear focus mode
+          setFocusedFeature(null);
+          
+          // Disable the feature from the whitelist
+          if (onDisableFeature) {
+            onDisableFeature(targetFeatureId);
+            setEnabledFeatures(prev => {
+              const next = new Set(prev);
+              next.delete(targetFeatureId!);
+              return next;
+            });
+          }
+          
+          const displayName = targetFeatureId === UNGROUPED_FEATURE_ID 
+            ? 'ungrouped tasks' 
+            : `feature "${targetFeatureId}"`;
+          addLog({ 
+            level: 'info', 
+            message: `🔓 Focus mode cleared: ${displayName}` 
+          });
+        } else {
+          // Switch to new feature (or enable focus mode)
+          
+          // 1. Clear existing enabled features (if switching)
+          if (focusedFeature && onDisableFeature) {
+            onDisableFeature(focusedFeature);
+          }
+          if (onDisableFeature) {
+            for (const f of enabledFeatures) {
+              if (f !== targetFeatureId) {
+                onDisableFeature(f);
+              }
+            }
+          }
+          
+          // 2. Enable only the target feature
+          if (onEnableFeature) {
+            onEnableFeature(targetFeatureId);
+            setEnabledFeatures(new Set([targetFeatureId]));
+          }
+          
+          // 3. Set focused feature state
+          setFocusedFeature(targetFeatureId);
+          
+          const displayName = targetFeatureId === UNGROUPED_FEATURE_ID 
+            ? 'ungrouped tasks' 
+            : `feature "${targetFeatureId}"`;
+          addLog({ 
+            level: 'info', 
+            message: `🎯 Focus mode: ${displayName}` 
+          });
+        }
+        
+        return;
+      }
+
       // Enter to toggle group section when header is selected
       if (key.return) {
         // Toggle completed section if header is selected (legacy)

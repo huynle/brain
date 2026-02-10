@@ -311,6 +311,7 @@ export function App({
   }, [getEnabledFeatures, tasks]); // Re-sync when tasks change (poll interval)
 
   // Detect when focused feature completes (all tasks completed/blocked/cancelled)
+  // When complete: clear focus, disable feature, auto-pause project
   useEffect(() => {
     if (!focusedFeature) return;
     
@@ -343,13 +344,25 @@ export function App({
         });
       }
       
+      // Auto-pause the project now that focused feature is complete
+      const targetProject = activeProject === 'all' 
+        ? (isMultiProject ? projects[0] : projects[0]) 
+        : (activeProject || config.project);
+      
+      if (onPause && !pausedProjects.has(targetProject)) {
+        setPausedProjects(prev => new Set([...prev, targetProject]));
+        Promise.resolve(onPause(targetProject)).catch((err: unknown) => {
+          addLog({ level: 'error', message: `Failed to auto-pause ${targetProject}: ${err}` });
+        });
+      }
+      
       // Show notification
       addLog({
         level: 'info',
-        message: `✅ Focus mode complete: ${displayName} finished! Project remains paused.`
+        message: `✅ Focus mode complete: ${displayName} finished! Project auto-paused.`
       });
     }
-  }, [tasks, focusedFeature, onDisableFeature, addLog]);
+  }, [tasks, focusedFeature, onDisableFeature, onPause, activeProject, isMultiProject, projects, config.project, pausedProjects, addLog]);
 
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
@@ -881,8 +894,17 @@ export function App({
       return;
     }
 
-    // Cancel selected task (X uppercase)
+    // Cancel selected task (X uppercase) - only works on in_progress tasks
     if (input === 'X' && selectedTask && onCancelTask) {
+      // Guard: only cancel tasks that are currently running (in_progress)
+      if (selectedTask.status !== 'in_progress') {
+        addLog({
+          level: 'warn',
+          message: `Cannot cancel task: ${selectedTask.title} (status: ${selectedTask.status}, must be in_progress)`,
+          taskId: selectedTask.id,
+        });
+        return;
+      }
       addLog({
         level: 'warn',
         message: `Cancelling task: ${selectedTask.title}`,
@@ -1052,8 +1074,41 @@ export function App({
       }
     }
 
-    // Pause/Resume handling - 'p' opens pause popup for project-level control
+    // Pause/Resume handling - 'p' is context-aware based on focus mode
     if (input === 'p') {
+      // If a feature is focused, pressing p should:
+      // 1. Unpause the project (if paused)
+      // 2. Run the focused feature to completion
+      // 3. Auto-pause when complete (handled by useEffect at lines 313-352)
+      if (focusedFeature) {
+        const targetProject = activeProject === 'all' 
+          ? (isMultiProject ? projects[0] : projects[0]) 
+          : (activeProject || config.project);
+        
+        // Resume the project if paused
+        if (pausedProjects.has(targetProject) && onResume) {
+          addLog({ 
+            level: 'info', 
+            message: `▶️ Running focused feature "${focusedFeature === UNGROUPED_FEATURE_ID ? 'ungrouped' : focusedFeature}" to completion...` 
+          });
+          setPausedProjects(prev => {
+            const next = new Set(prev);
+            next.delete(targetProject);
+            return next;
+          });
+          Promise.resolve(onResume(targetProject)).catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
+          });
+        } else {
+          addLog({ 
+            level: 'info', 
+            message: `Already running: focused feature "${focusedFeature === UNGROUPED_FEATURE_ID ? 'ungrouped' : focusedFeature}"` 
+          });
+        }
+        return;
+      }
+      
+      // No focused feature - open pause popup as usual
       setShowPausePopup(true);
       return;
     }

@@ -1948,7 +1948,7 @@ export class TaskRunner {
 
   /**
    * Cancel a task by ID.
-   * - Kills the running process if active
+   * - Kills the running process if active (explicit PID kill for TUI tasks)
    * - Updates task status to 'cancelled' in brain
    * - Releases any claim
    * - Child tasks will be blocked on next poll
@@ -1968,6 +1968,50 @@ export class TaskRunner {
     // 2. Check if task is in TUI tasks (tmux windows without proc handles)
     const tuiTask = this.tuiTasks.get(taskId);
     if (tuiTask) {
+      // Explicitly kill the PID before tmux cleanup (same pattern as stop() method)
+      // SAFETY: Guard against dangerous PIDs that could kill multiple processes
+      // PID 0 = current process group, PID -1 = ALL user processes (catastrophic!)
+      if (tuiTask.pid > 0 && isPidAlive(tuiTask.pid)) {
+        this.logger.info("Killing TUI task process", { taskId, pid: tuiTask.pid });
+        this.tuiLog('warn', `Killing process ${tuiTask.pid} for task ${tuiTask.title}`, taskId, tuiTask.projectId);
+        
+        try {
+          // Send SIGTERM first for graceful shutdown
+          process.kill(tuiTask.pid, "SIGTERM");
+          
+          // Wait up to 2 seconds for graceful shutdown
+          const startWait = Date.now();
+          while (isPidAlive(tuiTask.pid) && Date.now() - startWait < 2000) {
+            await this.sleep(100);
+          }
+          
+          // If still alive, force kill with SIGKILL
+          if (isPidAlive(tuiTask.pid)) {
+            this.logger.warn("Process did not terminate gracefully, sending SIGKILL", {
+              taskId,
+              pid: tuiTask.pid,
+            });
+            this.tuiLog('warn', `Force killing process ${tuiTask.pid}`, taskId, tuiTask.projectId);
+            process.kill(tuiTask.pid, "SIGKILL");
+          }
+          
+          this.logger.info("Killed TUI task process", { taskId, pid: tuiTask.pid });
+        } catch (err) {
+          // Process may have exited between check and kill
+          this.logger.debug("Error killing process (may have already exited)", {
+            taskId,
+            pid: tuiTask.pid,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      } else if (tuiTask.pid <= 0) {
+        this.logger.warn("Skipping invalid PID in TUI task cancellation", {
+          taskId,
+          pid: tuiTask.pid,
+        });
+      }
+      
+      // Then clean up the tmux window
       await this.cleanupTaskTmux(tuiTask);
       this.tuiTasks.delete(taskId);
       this.logger.info("Cleaned up TUI task window", { taskId });

@@ -664,9 +664,9 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
-    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && request.tags === undefined && request.priority === undefined && !request.feature_id && !request.feature_priority && !request.feature_depends_on && request.target_workdir === undefined) {
+    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && request.tags === undefined && request.priority === undefined && !request.feature_id && !request.feature_priority && !request.feature_depends_on && request.target_workdir === undefined && request.git_branch === undefined) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch"
       );
     }
 
@@ -738,6 +738,11 @@ export class BrainService {
     // Update target_workdir if provided
     if (request.target_workdir !== undefined) {
       updatedFrontmatter.target_workdir = request.target_workdir;
+    }
+
+    // Update git_branch if provided
+    if (request.git_branch !== undefined) {
+      updatedFrontmatter.git_branch = request.git_branch;
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

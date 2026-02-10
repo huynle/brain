@@ -162,6 +162,7 @@ export interface UpdateEntryRequest {
   tags?: string[];
   priority?: Priority;
   target_workdir?: string;
+  git_branch?: string;
   // Feature grouping (for task organization)
   feature_id?: string;
   feature_priority?: Priority;

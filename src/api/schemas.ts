@@ -168,13 +168,14 @@ export const UpdateEntryRequestSchema = z.object({
   tags: z.array(z.string()).optional().openapi({ description: "Tags for the entry (replaces existing tags)" }),
   priority: PrioritySchema.optional().openapi({ description: "Priority level for the entry" }),
   target_workdir: z.string().optional().openapi({ description: "Target working directory for the task" }),
+  git_branch: z.string().optional().openapi({ description: "Git branch for task execution context" }),
   // Feature grouping for task organization
   feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" }),
   feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature group" }),
   feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.target_workdir !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, target_workdir, feature_id, feature_priority, or feature_depends_on must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, target_workdir, git_branch, feature_id, feature_priority, or feature_depends_on must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================

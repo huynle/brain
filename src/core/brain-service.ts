@@ -137,7 +137,6 @@ export class BrainService {
         .filter((t): t is string => t !== null); // Drop tags that sanitize to empty
     }
     if (request.workdir) request.workdir = sanitizeSimpleValue(request.workdir);
-    if (request.worktree) request.worktree = sanitizeSimpleValue(request.worktree);
     if (request.git_remote) request.git_remote = sanitizeSimpleValue(request.git_remote);
     if (request.git_branch) request.git_branch = sanitizeSimpleValue(request.git_branch);
     if (request.project) request.project = sanitizeSimpleValue(request.project);
@@ -371,9 +370,6 @@ export class BrainService {
       if (request.workdir) {
         zkArgs.push("--extra", `workdir=${request.workdir}`);
       }
-      if (request.worktree) {
-        zkArgs.push("--extra", `worktree=${request.worktree}`);
-      }
       if (request.git_remote) {
         zkArgs.push("--extra", `git_remote=${request.git_remote}`);
       }
@@ -449,7 +445,6 @@ export class BrainService {
         priority: request.priority,
         // Execution context for tasks
         workdir: request.workdir,
-        worktree: request.worktree,
         git_remote: request.git_remote,
         git_branch: request.git_branch,
         target_workdir: request.target_workdir,
@@ -651,7 +646,6 @@ export class BrainService {
         : undefined,
       // Execution context for tasks
       workdir: frontmatter.workdir as string | undefined,
-      worktree: frontmatter.worktree as string | undefined,
       git_remote: frontmatter.git_remote as string | undefined,
       git_branch: frontmatter.git_branch as string | undefined,
       // User intent for validation
@@ -822,7 +816,8 @@ export class BrainService {
       );
     }
 
-    const fetchLimit = request.status ? limit * 5 : limit;
+    const needsCodeFiltering = request.status || request.feature_id;
+    const fetchLimit = needsCodeFiltering ? limit * 5 : limit;
     const zkArgs = [
       "list",
       "--format",
@@ -852,6 +847,14 @@ export class BrainService {
 
     if (request.status) {
       notes = notes.filter((note) => extractStatus(note) === request.status);
+    }
+
+    // Feature ID filtering (in code since zk doesn't support frontmatter filtering)
+    if (request.feature_id) {
+      notes = notes.filter((note) => {
+        const fm = note.metadata || {};
+        return fm.feature_id === request.feature_id;
+      });
     }
 
     notes = notes.slice(0, limit);
@@ -886,7 +889,7 @@ export class BrainService {
       );
     }
 
-    const needsCodeFiltering = request.status || request.filename;
+    const needsCodeFiltering = request.status || request.filename || request.feature_id;
     const fetchLimit = needsCodeFiltering ? Math.max(limit * 5, 100) : limit + offset;
     const zkArgs = [
       "list",
@@ -921,6 +924,14 @@ export class BrainService {
       notes = notes.filter((note) => {
         const noteFilename = extractIdFromPath(note.path);
         return matchesFilenamePattern(noteFilename, request.filename!);
+      });
+    }
+
+    // Feature ID filtering (in code since zk doesn't support frontmatter filtering)
+    if (request.feature_id) {
+      notes = notes.filter((note) => {
+        const fm = note.metadata || {};
+        return fm.feature_id === request.feature_id;
       });
     }
 

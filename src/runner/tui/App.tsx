@@ -38,19 +38,20 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
-import { StatusPopup } from './components/StatusPopup';
+import { MetadataPopup, type MetadataField, type MetadataPopupMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
-import { PausePopup } from './components/PausePopup';
+
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
+import { useSettingsStorage } from './hooks/useSettingsStorage';
 import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
@@ -84,8 +85,7 @@ const STATUS_LABELS: Record<string, string> = {
   archived: 'Archived',
 };
 
-/** Allowed statuses for bulk feature status changes */
-const BULK_STATUS_OPTIONS: EntryStatus[] = ['pending', 'completed', 'cancelled', 'draft'];
+
 
 export function App({ 
   config, 
@@ -99,6 +99,7 @@ export function App({
   onUpdateStatus,
   onEditTask,
   onExecuteTask,
+  onExecuteFeature,
   getRunningProcessCount,
   getResourceMetrics,
   getProjectLimits,
@@ -106,6 +107,7 @@ export function App({
   onEnableFeature,
   onDisableFeature,
   getEnabledFeatures,
+  onUpdateMetadata,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -120,10 +122,25 @@ export function App({
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [showHelp, setShowHelp] = useState(false);
-  const [showStatusPopup, setShowStatusPopup] = useState(false);
-  const [popupSelectedStatus, setPopupSelectedStatus] = useState<EntryStatus>('pending');
-  // Track bulk mode for feature header status changes
-  const [bulkStatusFeatureId, setBulkStatusFeatureId] = useState<string | null>(null);
+  // MetadataPopup state
+  const [showMetadataPopup, setShowMetadataPopup] = useState(false);
+  const [metadataPopupMode, setMetadataPopupMode] = useState<MetadataPopupMode>('single');
+  const [metadataFocusedField, setMetadataFocusedField] = useState<MetadataField>('status');
+  const [metadataStatusValue, setMetadataStatusValue] = useState<EntryStatus>('pending');
+  const [metadataFeatureIdValue, setMetadataFeatureIdValue] = useState('');
+  const [metadataBranchValue, setMetadataBranchValue] = useState('');
+  const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
+  const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
+  const [metadataEditingField, setMetadataEditingField] = useState<MetadataField | null>(null);
+  const [metadataEditBuffer, setMetadataEditBuffer] = useState('');
+  const [metadataTargetTasks, setMetadataTargetTasks] = useState<TaskDisplay[]>([]);
+  // Original values for comparison (only send changed fields)
+  const [metadataOriginalValues, setMetadataOriginalValues] = useState<{
+    status: EntryStatus;
+    feature_id: string;
+    git_branch: string;
+    target_workdir: string;
+  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '' });
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -131,24 +148,14 @@ export function App({
   const [draftCollapsed, setDraftCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
   
-  // Group visibility settings - which status groups to display
+  // Group visibility settings - persisted to ~/.brain/tui-settings.json
   // Default: show draft, pending, active, in_progress, blocked, completed
-  const [visibleGroups, setVisibleGroups] = useState<Set<string>>(() => 
-    new Set(['draft', 'pending', 'active', 'in_progress', 'blocked', 'completed'])
-  );
-  // Collapsed state for each group (by status)
-  const [groupCollapsed, setGroupCollapsed] = useState<Record<string, boolean>>(() => ({
-    draft: true,
-    pending: false,
-    active: false,
-    in_progress: false,
-    blocked: false,
-    cancelled: true,
-    completed: true,
-    validated: true,
-    superseded: true,
-    archived: true,
-  }));
+  const {
+    visibleGroups,
+    groupCollapsed,
+    setVisibleGroups,
+    setGroupCollapsed,
+  } = useSettingsStorage();
   // Settings popup section
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('limits');
   // Group visibility state for settings popup
@@ -160,11 +167,13 @@ export function App({
   const [detailsScrollOffset, setDetailsScrollOffset] = useState(0);
   const [filterLogsByTask, setFilterLogsByTask] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
-  const [showPausePopup, setShowPausePopup] = useState(false);
+
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(true);
   // Active features: features queued for execution (controlled by x key on feature headers)
   const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
+  // Multi-select state: tasks selected via Space key for batch operations
+  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -390,112 +399,179 @@ export function App({
     }
   }, [onEditTask, addLog, refetch]);
 
+  /**
+   * Apply metadata changes to all target tasks.
+   * Only sends fields that differ from their original values.
+   */
+  const applyMetadataChanges = useCallback(() => {
+    if (!onUpdateMetadata || metadataTargetTasks.length === 0) {
+      setShowMetadataPopup(false);
+      return;
+    }
+
+    // Build changed fields object (only include fields that differ from original)
+    const changedFields: {
+      status?: EntryStatus;
+      feature_id?: string;
+      git_branch?: string;
+      target_workdir?: string;
+    } = {};
+
+    if (metadataStatusValue !== metadataOriginalValues.status) {
+      changedFields.status = metadataStatusValue;
+    }
+    if (metadataFeatureIdValue !== metadataOriginalValues.feature_id) {
+      changedFields.feature_id = metadataFeatureIdValue;
+    }
+    if (metadataBranchValue !== metadataOriginalValues.git_branch) {
+      changedFields.git_branch = metadataBranchValue;
+    }
+    if (metadataWorkdirValue !== metadataOriginalValues.target_workdir) {
+      changedFields.target_workdir = metadataWorkdirValue;
+    }
+
+    // Skip if no changes
+    if (Object.keys(changedFields).length === 0) {
+      addLog({ level: 'info', message: 'No metadata changes to apply' });
+      setShowMetadataPopup(false);
+      setSelectedTaskIds(new Set());
+      return;
+    }
+
+    const changeDescription = Object.entries(changedFields)
+      .map(([key, value]) => `${key}=${value}`)
+      .join(', ');
+
+    addLog({
+      level: 'info',
+      message: `Updating ${metadataTargetTasks.length} task(s): ${changeDescription}`,
+    });
+
+    // Update all tasks in parallel
+    Promise.all(
+      metadataTargetTasks.map(task => onUpdateMetadata(task.path, changedFields))
+    )
+      .then(() => {
+        addLog({
+          level: 'info',
+          message: `Updated ${metadataTargetTasks.length} task(s) successfully`,
+        });
+        refetch();
+      })
+      .catch((err) => {
+        addLog({
+          level: 'error',
+          message: `Failed to update metadata: ${err}`,
+        });
+      });
+
+    // Close popup and clear multi-select
+    setShowMetadataPopup(false);
+    setSelectedTaskIds(new Set());
+  }, [
+    onUpdateMetadata,
+    metadataTargetTasks,
+    metadataStatusValue,
+    metadataFeatureIdValue,
+    metadataBranchValue,
+    metadataWorkdirValue,
+    metadataOriginalValues,
+    addLog,
+    refetch,
+  ]);
+
   // Handle keyboard input
   useInput((input, key) => {
-    // === Status Popup Mode ===
-    if (showStatusPopup) {
-      // Determine which status list to use (bulk mode uses limited options)
-      const isBulkMode = bulkStatusFeatureId !== null;
-      const statusList = isBulkMode ? BULK_STATUS_OPTIONS : ENTRY_STATUSES;
+    // === Metadata Popup Mode ===
+    if (showMetadataPopup) {
+      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
       
-      // Escape to close popup
+      // Escape handling: cancel edit mode OR close popup
       if (key.escape) {
-        setShowStatusPopup(false);
-        setBulkStatusFeatureId(null);
-        return;
-      }
-
-      // Navigate status list with j/k or arrows
-      if (key.upArrow || input === 'k') {
-        setPopupSelectedStatus((prev) => {
-          const currentIndex = statusList.indexOf(prev);
-          if (currentIndex > 0) {
-            return statusList[currentIndex - 1];
-          }
-          return prev;
-        });
-        return;
-      }
-
-      if (key.downArrow || input === 'j') {
-        setPopupSelectedStatus((prev) => {
-          const currentIndex = statusList.indexOf(prev);
-          if (currentIndex < statusList.length - 1) {
-            return statusList[currentIndex + 1];
-          }
-          return prev;
-        });
-        return;
-      }
-
-      // Enter to confirm status change
-      if (key.return && onUpdateStatus) {
-        const newStatus = popupSelectedStatus;
-        setShowStatusPopup(false);
-        
-        // Handle bulk update for feature headers or ungrouped
-        if (isBulkMode && bulkStatusFeatureId) {
-          // Get all tasks in this feature (or ungrouped)
-          const isUngrouped = bulkStatusFeatureId === '__ungrouped__';
-          const targetTasks = isUngrouped 
-            ? tasks.filter(t => !t.feature_id)
-            : tasks.filter(t => t.feature_id === bulkStatusFeatureId);
-          const displayName = isUngrouped ? 'Ungrouped' : bulkStatusFeatureId;
-          
-          addLog({
-            level: 'info',
-            message: `Bulk updating ${targetTasks.length} tasks in ${displayName} → ${newStatus}`,
-          });
-          
-          // Update all tasks in parallel
-          Promise.all(
-            targetTasks.map(task => 
-              onUpdateStatus(task.id, task.path, newStatus)
-            )
-          )
-            .then(() => {
-              addLog({
-                level: 'info',
-                message: `Updated ${targetTasks.length} tasks in ${displayName} to ${newStatus}`,
-              });
-              refetch(); // Refresh to show updated statuses
-            })
-            .catch((err) => {
-              addLog({
-                level: 'error',
-                message: `Failed to bulk update status: ${err}`,
-              });
-            });
-          
-          setBulkStatusFeatureId(null);
-          return;
+        if (metadataEditingField) {
+          // Cancel editing, restore original value
+          setMetadataEditingField(null);
+          setMetadataEditBuffer('');
+        } else {
+          // Close popup, preserve multi-select state
+          setShowMetadataPopup(false);
         }
-        
-        // Single task update
-        if (selectedTask) {
-          addLog({
-            level: 'info',
-            message: `Updating status: ${selectedTask.title} → ${newStatus}`,
-            taskId: selectedTask.id,
-          });
-          
-          onUpdateStatus(selectedTask.id, selectedTask.path, newStatus)
-            .then(() => {
-              addLog({
-                level: 'info',
-                message: `Status updated: ${selectedTask.title} is now ${newStatus}`,
-                taskId: selectedTask.id,
-              });
-              refetch(); // Refresh to show updated status
-            })
-            .catch((err) => {
-              addLog({
-                level: 'error',
-                message: `Failed to update status: ${err}`,
-                taskId: selectedTask.id,
-              });
-            });
+        return;
+      }
+
+      // Tab: cycle focused field (only when not editing)
+      if (key.tab && !metadataEditingField) {
+        const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
+        const nextIndex = (currentIndex + 1) % METADATA_FIELDS.length;
+        setMetadataFocusedField(METADATA_FIELDS[nextIndex]);
+        return;
+      }
+
+      // j/k: cycle status dropdown (only when status field is focused and not editing)
+      if ((input === 'j' || key.downArrow) && metadataFocusedField === 'status' && !metadataEditingField) {
+        setMetadataStatusIndex(prev => Math.min(prev + 1, ENTRY_STATUSES.length - 1));
+        setMetadataStatusValue(ENTRY_STATUSES[Math.min(metadataStatusIndex + 1, ENTRY_STATUSES.length - 1)]);
+        return;
+      }
+      if ((input === 'k' || key.upArrow) && metadataFocusedField === 'status' && !metadataEditingField) {
+        setMetadataStatusIndex(prev => Math.max(prev - 1, 0));
+        setMetadataStatusValue(ENTRY_STATUSES[Math.max(metadataStatusIndex - 1, 0)]);
+        return;
+      }
+
+      // Enter handling
+      if (key.return) {
+        if (metadataEditingField) {
+          // Confirm edit: save buffer to value
+          switch (metadataEditingField) {
+            case 'feature_id':
+              setMetadataFeatureIdValue(metadataEditBuffer);
+              break;
+            case 'git_branch':
+              setMetadataBranchValue(metadataEditBuffer);
+              break;
+            case 'target_workdir':
+              setMetadataWorkdirValue(metadataEditBuffer);
+              break;
+          }
+          setMetadataEditingField(null);
+          setMetadataEditBuffer('');
+        } else if (metadataFocusedField === 'status') {
+          // Status field: apply changes immediately (already selected via j/k)
+          applyMetadataChanges();
+        } else {
+          // Text field: enter edit mode
+          let currentValue = '';
+          switch (metadataFocusedField) {
+            case 'feature_id':
+              currentValue = metadataFeatureIdValue;
+              break;
+            case 'git_branch':
+              currentValue = metadataBranchValue;
+              break;
+            case 'target_workdir':
+              currentValue = metadataWorkdirValue;
+              break;
+          }
+          setMetadataEditingField(metadataFocusedField);
+          setMetadataEditBuffer(currentValue);
         }
+        return;
+      }
+
+      // Typing: update edit buffer when in edit mode
+      if (metadataEditingField) {
+        if (key.backspace || key.delete) {
+          setMetadataEditBuffer(prev => prev.slice(0, -1));
+        } else if (input && input.length === 1 && !key.ctrl && !key.meta) {
+          setMetadataEditBuffer(prev => prev + input);
+        }
+        return;
+      }
+
+      // 'a' to apply changes without closing (confirm action)
+      if (input === 'a' && !metadataEditingField) {
+        applyMetadataChanges();
         return;
       }
 
@@ -673,48 +749,6 @@ export function App({
       return;
     }
 
-    // === Pause Popup Mode ===
-    if (showPausePopup) {
-      // Escape to close popup
-      if (key.escape) {
-        setShowPausePopup(false);
-        return;
-      }
-
-      // Enter to toggle project pause
-      if (key.return) {
-        const targetProject = activeProject === 'all' 
-          ? (isMultiProject ? projects[0] : projects[0]) 
-          : activeProject;
-
-        // Toggle project pause
-        const isPaused = pausedProjects.has(targetProject);
-        if (isPaused && onResume) {
-          addLog({ level: 'info', message: `Resuming ${targetProject}...` });
-          setPausedProjects(prev => {
-            const next = new Set(prev);
-            next.delete(targetProject);
-            return next;
-          });
-          Promise.resolve(onResume(targetProject)).catch((err: unknown) => {
-            addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
-          });
-        } else if (!isPaused && onPause) {
-          addLog({ level: 'info', message: `Pausing ${targetProject}...` });
-          setPausedProjects(prev => new Set([...prev, targetProject]));
-          Promise.resolve(onPause(targetProject)).catch((err: unknown) => {
-            addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
-          });
-        }
-
-        setShowPausePopup(false);
-        return;
-      }
-
-      // Block all other input when popup is open
-      return;
-    }
-
     // === Normal Mode ===
     // Note: Quit via Ctrl-C is handled by SIGINT handler (lines 487-500)
 
@@ -725,31 +759,17 @@ export function App({
       return;
     }
 
-    // x key: Toggle feature activation or execute task
-    // - On feature header: toggle feature in/out of activeFeatures set
-    // - On ungrouped header: toggle ungrouped in/out of activeFeatures set
+    // x key: Execute feature immediately or execute single task
+    // - On feature header: enable feature AND immediately execute ready tasks
+    // - On ungrouped header: enable ungrouped AND immediately execute ready tasks
     // - On task row: execute the task immediately
     if (input === 'x') {
-      // Case 1: Feature header selected - toggle feature activation
+      // Case 1: Feature header selected - enable AND execute immediately
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
         
-        if (activeFeatures.has(featureId)) {
-          // Deactivate feature
-          setActiveFeatures(prev => {
-            const next = new Set(prev);
-            next.delete(featureId);
-            return next;
-          });
-          if (onDisableFeature) {
-            onDisableFeature(featureId);
-          }
-          addLog({
-            level: 'info',
-            message: `Deactivated feature: ${featureId}`,
-          });
-        } else {
-          // Activate feature
+        // Always enable the feature (add to whitelist so tasks can run even when paused)
+        if (!activeFeatures.has(featureId)) {
           setActiveFeatures(prev => {
             const next = new Set(prev);
             next.add(featureId);
@@ -758,6 +778,34 @@ export function App({
           if (onEnableFeature) {
             onEnableFeature(featureId);
           }
+        }
+        
+        // Execute ready tasks for this feature immediately
+        if (onExecuteFeature) {
+          addLog({
+            level: 'info',
+            message: `Executing feature: ${featureId}`,
+          });
+          onExecuteFeature(featureId).then((tasksStarted) => {
+            if (tasksStarted > 0) {
+              addLog({
+                level: 'info',
+                message: `Started ${tasksStarted} task(s) for feature: ${featureId}`,
+              });
+            } else {
+              addLog({
+                level: 'warn',
+                message: `No ready tasks to execute for feature: ${featureId}`,
+              });
+            }
+            refetch(); // Refresh to show updated status
+          }).catch((err) => {
+            addLog({
+              level: 'error',
+              message: `Failed to execute feature: ${err}`,
+            });
+          });
+        } else {
           addLog({
             level: 'info',
             message: `Activated feature: ${featureId}`,
@@ -766,24 +814,10 @@ export function App({
         return;
       }
       
-      // Case 2: Ungrouped header selected - toggle ungrouped activation
+      // Case 2: Ungrouped header selected - enable AND execute immediately
       if (selectedTaskId === UNGROUPED_HEADER_ID) {
-        if (activeFeatures.has(UNGROUPED_FEATURE_ID)) {
-          // Deactivate ungrouped
-          setActiveFeatures(prev => {
-            const next = new Set(prev);
-            next.delete(UNGROUPED_FEATURE_ID);
-            return next;
-          });
-          if (onDisableFeature) {
-            onDisableFeature(UNGROUPED_FEATURE_ID);
-          }
-          addLog({
-            level: 'info',
-            message: 'Deactivated ungrouped tasks',
-          });
-        } else {
-          // Activate ungrouped
+        // Always enable ungrouped (add to whitelist so tasks can run even when paused)
+        if (!activeFeatures.has(UNGROUPED_FEATURE_ID)) {
           setActiveFeatures(prev => {
             const next = new Set(prev);
             next.add(UNGROUPED_FEATURE_ID);
@@ -792,6 +826,34 @@ export function App({
           if (onEnableFeature) {
             onEnableFeature(UNGROUPED_FEATURE_ID);
           }
+        }
+        
+        // Execute ready tasks for ungrouped immediately
+        if (onExecuteFeature) {
+          addLog({
+            level: 'info',
+            message: 'Executing ungrouped tasks',
+          });
+          onExecuteFeature(UNGROUPED_FEATURE_ID).then((tasksStarted) => {
+            if (tasksStarted > 0) {
+              addLog({
+                level: 'info',
+                message: `Started ${tasksStarted} ungrouped task(s)`,
+              });
+            } else {
+              addLog({
+                level: 'warn',
+                message: 'No ready ungrouped tasks to execute',
+              });
+            }
+            refetch(); // Refresh to show updated status
+          }).catch((err) => {
+            addLog({
+              level: 'error',
+              message: `Failed to execute ungrouped tasks: ${err}`,
+            });
+          });
+        } else {
           addLog({
             level: 'info',
             message: 'Activated ungrouped tasks',
@@ -916,48 +978,93 @@ export function App({
       return;
     }
 
-    // Open status popup for selected task or feature header (s key) - only when focused on tasks panel
+    // Open metadata popup for selected task, feature header, or batch (s key) - only when focused on tasks panel
     if (input === 's' && focusedPanel === 'tasks') {
-      // Check if ungrouped header is selected - bulk select all ungrouped tasks
-      if (selectedTaskId === UNGROUPED_HEADER_ID) {
-        const ungroupedTasks = tasks.filter(t => !t.feature_id);
-        
-        if (ungroupedTasks.length > 0) {
-          // Set bulk mode with special '__ungrouped__' marker
-          setBulkStatusFeatureId('__ungrouped__');
-          // Default to 'pending' for bulk operations
-          setPopupSelectedStatus('pending');
-          setShowStatusPopup(true);
+      // Helper to open popup with common setup
+      const openMetadataPopup = (
+        mode: MetadataPopupMode,
+        targetTasks: TaskDisplay[],
+        prefillStatus: EntryStatus = 'pending',
+        prefillFeatureId: string = '',
+        prefillBranch: string = '',
+        prefillWorkdir: string = ''
+      ) => {
+        setMetadataTargetTasks(targetTasks);
+        setMetadataPopupMode(mode);
+        setMetadataFocusedField('status');
+        setMetadataStatusValue(prefillStatus);
+        setMetadataStatusIndex(ENTRY_STATUSES.indexOf(prefillStatus));
+        setMetadataFeatureIdValue(prefillFeatureId);
+        setMetadataBranchValue(prefillBranch);
+        setMetadataWorkdirValue(prefillWorkdir);
+        setMetadataOriginalValues({
+          status: prefillStatus,
+          feature_id: prefillFeatureId,
+          git_branch: prefillBranch,
+          target_workdir: prefillWorkdir,
+        });
+        setMetadataEditingField(null);
+        setMetadataEditBuffer('');
+        setShowMetadataPopup(true);
+      };
+
+      // Case 1: Multi-select active - batch mode
+      if (selectedTaskIds.size > 0) {
+        // Resolve all selected task IDs to TaskDisplay objects
+        const batchTasks = tasks.filter(t => selectedTaskIds.has(t.id));
+        if (batchTasks.length > 0) {
+          // Use first task's values as defaults (or empty for truly mixed)
+          const first = batchTasks[0];
+          openMetadataPopup(
+            'batch',
+            batchTasks,
+            first.status,
+            first.feature_id || '',
+            first.gitBranch || '',
+            first.resolvedWorkdir || first.workdir || ''
+          );
         }
         return;
       }
       
-      // Check if a feature header is selected
+      // Case 2: Ungrouped header selected - feature mode for ungrouped tasks
+      if (selectedTaskId === UNGROUPED_HEADER_ID) {
+        const ungroupedTasks = tasks.filter(t => !t.feature_id);
+        if (ungroupedTasks.length > 0) {
+          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '');
+        }
+        return;
+      }
+      
+      // Case 3: Feature header selected - feature mode
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
         const featureTasks = tasks.filter(t => t.feature_id === featureId);
-        
         if (featureTasks.length > 0) {
-          // Set bulk mode with the feature ID
-          setBulkStatusFeatureId(featureId);
-          // Default to 'pending' for bulk operations
-          setPopupSelectedStatus('pending');
-          setShowStatusPopup(true);
+          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '');
         }
         return;
       }
       
-      // Single task status change
+      // Case 4: Single task selected - single mode
       if (selectedTask) {
-        setBulkStatusFeatureId(null);
-        setPopupSelectedStatus(selectedTask.status);
-        setShowStatusPopup(true);
+        openMetadataPopup(
+          'single',
+          [selectedTask],
+          selectedTask.status,
+          selectedTask.feature_id || '',
+          selectedTask.gitBranch || '',
+          selectedTask.resolvedWorkdir || selectedTask.workdir || ''
+        );
       }
       return;
     }
 
     // Open settings popup (S key - shift+s)
     if (input === 'S') {
+      // Clear multi-select when opening popup
+      setSelectedTaskIds(new Set());
+      
       setSettingsSelectedIndex(0);
       setSettingsSection('limits');
       // Sync React state with external limits when opening popup
@@ -988,6 +1095,7 @@ export function App({
         const currentIndex = allProjectTabs.indexOf(activeProject);
         if (currentIndex > 0) {
           setActiveProject(allProjectTabs[currentIndex - 1]);
+          setSelectedTaskIds(new Set()); // Clear multi-select on tab switch
           addLog({ level: 'info', message: `Switched to: ${allProjectTabs[currentIndex - 1]}` });
         }
         return;
@@ -998,6 +1106,7 @@ export function App({
         const currentIndex = allProjectTabs.indexOf(activeProject);
         if (currentIndex < allProjectTabs.length - 1) {
           setActiveProject(allProjectTabs[currentIndex + 1]);
+          setSelectedTaskIds(new Set()); // Clear multi-select on tab switch
           addLog({ level: 'info', message: `Switched to: ${allProjectTabs[currentIndex + 1]}` });
         }
         return;
@@ -1008,15 +1117,38 @@ export function App({
         const index = parseInt(input, 10) - 1;
         if (index < allProjectTabs.length) {
           setActiveProject(allProjectTabs[index]);
+          setSelectedTaskIds(new Set()); // Clear multi-select on tab switch
           addLog({ level: 'info', message: `Switched to: ${allProjectTabs[index]}` });
         }
         return;
       }
     }
 
-    // Pause/Resume handling - always opens pause popup
+    // Pause/Resume handling - directly toggle pause for active project
     if (input === 'p') {
-      setShowPausePopup(true);
+      const targetProject = activeProject === 'all' 
+        ? (isMultiProject ? projects[0] : projects[0]) 
+        : activeProject;
+
+      // Toggle project pause
+      const isPaused = pausedProjects.has(targetProject);
+      if (isPaused && onResume) {
+        addLog({ level: 'info', message: `Resuming ${targetProject}...` });
+        setPausedProjects(prev => {
+          const next = new Set(prev);
+          next.delete(targetProject);
+          return next;
+        });
+        Promise.resolve(onResume(targetProject)).catch((err: unknown) => {
+          addLog({ level: 'error', message: `Failed to resume ${targetProject}: ${err}` });
+        });
+      } else if (!isPaused && onPause) {
+        addLog({ level: 'info', message: `Pausing ${targetProject}...` });
+        setPausedProjects(prev => new Set([...prev, targetProject]));
+        Promise.resolve(onPause(targetProject)).catch((err: unknown) => {
+          addLog({ level: 'error', message: `Failed to pause ${targetProject}: ${err}` });
+        });
+      }
       return;
     }
 
@@ -1168,6 +1300,34 @@ export function App({
         // Note: Individual task status change is now handled by 's' key
         return;
       }
+
+      // Space key: Toggle multi-select for the currently cursor'd task
+      if (input === ' ') {
+        // Only toggle selection for actual tasks, not headers or spacers
+        if (
+          selectedTaskId &&
+          !selectedTaskId.startsWith(FEATURE_HEADER_PREFIX) &&
+          !selectedTaskId.startsWith(COMPLETED_FEATURE_PREFIX) &&
+          !selectedTaskId.startsWith(DRAFT_FEATURE_PREFIX) &&
+          !selectedTaskId.startsWith(GROUP_HEADER_PREFIX) &&
+          !selectedTaskId.startsWith(SPACER_PREFIX) &&
+          selectedTaskId !== COMPLETED_HEADER_ID &&
+          selectedTaskId !== DRAFT_HEADER_ID &&
+          selectedTaskId !== UNGROUPED_HEADER_ID &&
+          navigationOrder.includes(selectedTaskId)
+        ) {
+          setSelectedTaskIds(prev => {
+            const next = new Set(prev);
+            if (next.has(selectedTaskId)) {
+              next.delete(selectedTaskId);
+            } else {
+              next.add(selectedTaskId);
+            }
+            return next;
+          });
+        }
+        return;
+      }
     }
     
     // Log scrolling (when focused on logs panel)
@@ -1264,9 +1424,10 @@ export function App({
         <Text>  <Text bold>Ctrl-C</Text>    - Quit</Text>
         <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
         <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
-        <Text>  <Text bold>x</Text>         - On feature: toggle active | On task: execute</Text>
+        <Text>  <Text bold>f</Text>         - Focus on feature (task panel)</Text>
+        <Text>  <Text bold>x</Text>         - Execute highlighted task immediately</Text>
         <Text>  <Text bold>X</Text>         - Cancel running task (kill PID)</Text>
-        <Text>  <Text bold>p</Text>         - Open pause/resume popup</Text>
+        <Text>  <Text bold>p</Text>         - Toggle pause/resume</Text>
         {isMultiProject && (
           <Text>  <Text bold>P</Text>         - Pause/Resume ALL projects</Text>
         )}
@@ -1295,42 +1456,27 @@ export function App({
     );
   }
 
-  // Status popup overlay
-  if (showStatusPopup) {
-    // Bulk mode for feature headers or ungrouped
-    if (bulkStatusFeatureId) {
-      const isUngrouped = bulkStatusFeatureId === '__ungrouped__';
-      const targetTasks = isUngrouped
-        ? tasks.filter(t => !t.feature_id)
-        : tasks.filter(t => t.feature_id === bulkStatusFeatureId);
-      const displayFeatureId = isUngrouped ? 'Ungrouped' : bulkStatusFeatureId;
-      return (
-        <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
-          <StatusPopup
-            currentStatus="pending"
-            selectedStatus={popupSelectedStatus}
-            taskTitle=""
-            bulkMode={true}
-            bulkFeatureId={displayFeatureId}
-            bulkTaskCount={targetTasks.length}
-            allowedStatuses={BULK_STATUS_OPTIONS}
-          />
-        </Box>
-      );
-    }
-    
-    // Single task mode
-    if (selectedTask) {
-      return (
-        <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
-          <StatusPopup
-            currentStatus={selectedTask.status}
-            selectedStatus={popupSelectedStatus}
-            taskTitle={selectedTask.title}
-          />
-        </Box>
-      );
-    }
+  // Metadata popup overlay
+  if (showMetadataPopup && metadataTargetTasks.length > 0) {
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <MetadataPopup
+          mode={metadataPopupMode}
+          taskTitle={metadataPopupMode === 'single' ? metadataTargetTasks[0]?.title : undefined}
+          batchCount={metadataTargetTasks.length}
+          featureId={metadataPopupMode === 'feature' ? metadataFeatureIdValue || 'Ungrouped' : undefined}
+          focusedField={metadataFocusedField}
+          statusValue={metadataStatusValue}
+          featureIdValue={metadataFeatureIdValue}
+          branchValue={metadataBranchValue}
+          workdirValue={metadataWorkdirValue}
+          selectedStatusIndex={metadataStatusIndex}
+          allowedStatuses={ENTRY_STATUSES}
+          editingField={metadataEditingField}
+          editBuffer={metadataEditBuffer}
+        />
+      </Box>
+    );
   }
 
   // Settings popup overlay
@@ -1342,25 +1488,6 @@ export function App({
           selectedIndex={settingsSelectedIndex}
           section={settingsSection}
           groups={groupVisibilityState}
-        />
-      </Box>
-    );
-  }
-
-  // Pause popup overlay
-  if (showPausePopup) {
-    const targetProject = activeProject === 'all' 
-      ? (isMultiProject ? projects[0] : projects[0]) 
-      : activeProject;
-    
-    return (
-      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
-        <PausePopup
-          projectId={targetProject}
-          isProjectPaused={pausedProjects.has(targetProject)}
-          onPauseProject={() => onPause?.(targetProject)}
-          onUnpauseProject={() => onResume?.(targetProject)}
-          onClose={() => setShowPausePopup(false)}
         />
       </Box>
     );
@@ -1409,6 +1536,7 @@ export function App({
               viewportHeight={taskViewportHeight}
               collapsedFeatures={collapsedFeatures}
               activeFeatures={activeFeatures}
+              selectedTaskIds={selectedTaskIds}
             />
           </Box>
 

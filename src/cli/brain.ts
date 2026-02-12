@@ -148,6 +148,9 @@ Server Commands:
   logs -f     Follow logs
   dev         Start in development mode (foreground with hot reload)
   config      Show current configuration
+
+Setup Commands:
+  init        Initialize brain directory with templates and zk config
   doctor      Diagnose and fix brain configuration
 
 Plugin Commands:
@@ -176,6 +179,11 @@ Backup Options:
   brain restore opencode --dry-run    Show what would be restored
   brain clean-backups opencode        Delete all backups
   brain clean-backups opencode --keep-latest  Keep only the latest backup per file
+
+Init Options:
+  brain init                Initialize brain directory (skip existing files)
+  brain init --force        Overwrite existing files
+  brain init --dry-run      Show what would be created
 
 Doctor Options:
   brain doctor              Run diagnostics (show failures only)
@@ -688,6 +696,154 @@ async function cmdCleanBackups(args: string[]): Promise<void> {
 }
 
 // =============================================================================
+// Init Command
+// =============================================================================
+
+async function cmdInit(args: string[]): Promise<void> {
+  const force = args.includes("--force");
+  const dryRun = args.includes("--dry-run");
+
+  // Get BRAIN_DIR from config
+  const { getConfig } = await import("../config");
+  const config = getConfig();
+  const brainDir = config.brain.brainDir;
+
+  // Assets paths
+  // import.meta.dir is /path/to/src/cli
+  // We need /path/to/src/assets
+  const assetsDir = join(dirname(import.meta.dir), "assets");
+  const referenceConfigPath = join(assetsDir, "zk-config.toml");
+  const referenceTemplatesDir = join(assetsDir, "templates");
+
+  // Target paths
+  const zkDir = join(brainDir, ".zk");
+  const templatesDir = join(zkDir, "templates");
+  const configPath = join(zkDir, "config.toml");
+
+  console.log(`${COLORS.bold}Initializing brain at ${brainDir}...${COLORS.reset}\n`);
+
+  if (dryRun) {
+    console.log(`${COLORS.yellow}Dry run mode - no changes will be made${COLORS.reset}\n`);
+  }
+
+  let created = 0;
+  let skipped = 0;
+
+  // Helper to write file with skip/force logic
+  const writeFile = (targetPath: string, content: string, label: string): void => {
+    if (existsSync(targetPath) && !force) {
+      console.log(`${COLORS.gray}\u2298 Skipped ${label} (already exists, use --force to overwrite)${COLORS.reset}`);
+      skipped++;
+      return;
+    }
+
+    if (dryRun) {
+      console.log(`${COLORS.yellow}\u2713 Would write ${label}${COLORS.reset}`);
+      created++;
+      return;
+    }
+
+    // Ensure parent directory exists
+    const parentDir = dirname(targetPath);
+    if (!existsSync(parentDir)) {
+      mkdirSync(parentDir, { recursive: true });
+    }
+
+    writeFileSync(targetPath, content, "utf-8");
+    console.log(`${COLORS.green}\u2713 Wrote ${label}${COLORS.reset}`);
+    created++;
+  };
+
+  // 1. Create brain directory
+  if (!existsSync(brainDir)) {
+    if (dryRun) {
+      console.log(`${COLORS.yellow}\u2713 Would create directory: ${brainDir}${COLORS.reset}`);
+    } else {
+      mkdirSync(brainDir, { recursive: true });
+      console.log(`${COLORS.green}\u2713 Created directory: ${brainDir}${COLORS.reset}`);
+    }
+  }
+
+  // 2. Initialize zk notebook if zk is available
+  const { isZkAvailable, execZk } = await import("../core/zk-client");
+  if (await isZkAvailable()) {
+    if (!existsSync(zkDir) || force) {
+      if (dryRun) {
+        console.log(`${COLORS.yellow}\u2713 Would initialize zk notebook${COLORS.reset}`);
+      } else {
+        const result = await execZk(["init", "--no-input", brainDir]);
+        if (result.exitCode === 0) {
+          console.log(`${COLORS.green}\u2713 Initialized zk notebook${COLORS.reset}`);
+        } else {
+          console.log(`${COLORS.yellow}\u26A0 zk init returned non-zero (may already exist)${COLORS.reset}`);
+        }
+      }
+    } else {
+      console.log(`${COLORS.gray}\u2298 Skipped zk init (.zk directory exists, use --force to reinitialize)${COLORS.reset}`);
+    }
+  } else {
+    console.log(`${COLORS.yellow}\u26A0 zk CLI not found - skipping zk init (install from https://github.com/zk-org/zk)${COLORS.reset}`);
+    // Ensure .zk directory exists anyway
+    if (!existsSync(zkDir)) {
+      if (dryRun) {
+        console.log(`${COLORS.yellow}\u2713 Would create directory: ${zkDir}${COLORS.reset}`);
+      } else {
+        mkdirSync(zkDir, { recursive: true });
+        console.log(`${COLORS.green}\u2713 Created directory: ${zkDir}${COLORS.reset}`);
+      }
+    }
+  }
+
+  // 3. Copy zk config
+  if (existsSync(referenceConfigPath)) {
+    const content = readFileSync(referenceConfigPath, "utf-8");
+    writeFile(configPath, content, ".zk/config.toml");
+  } else {
+    console.log(`${COLORS.red}\u2717 Reference config not found: ${referenceConfigPath}${COLORS.reset}`);
+  }
+
+  // 4. Copy all templates
+  const { ENTRY_TYPES } = await import("../core/types");
+
+  // Create templates directory
+  if (!existsSync(templatesDir) && !dryRun) {
+    mkdirSync(templatesDir, { recursive: true });
+  }
+
+  // Copy entry type templates
+  for (const type of ENTRY_TYPES) {
+    const srcPath = join(referenceTemplatesDir, `${type}.md`);
+    const destPath = join(templatesDir, `${type}.md`);
+
+    if (existsSync(srcPath)) {
+      const content = readFileSync(srcPath, "utf-8");
+      writeFile(destPath, content, `.zk/templates/${type}.md`);
+    } else {
+      console.log(`${COLORS.yellow}\u26A0 Template not found: ${srcPath}${COLORS.reset}`);
+    }
+  }
+
+  // Copy default.md template (used by zk when no --template is specified)
+  const defaultSrcPath = join(referenceTemplatesDir, "default.md");
+  const defaultDestPath = join(templatesDir, "default.md");
+  if (existsSync(defaultSrcPath)) {
+    const content = readFileSync(defaultSrcPath, "utf-8");
+    writeFile(defaultDestPath, content, ".zk/templates/default.md");
+  }
+
+  // Summary
+  console.log();
+  if (dryRun) {
+    console.log(`${COLORS.bold}Would create ${created} file(s), skip ${skipped} file(s).${COLORS.reset}`);
+  } else {
+    console.log(`${COLORS.bold}Created ${created} file(s), skipped ${skipped} file(s).${COLORS.reset}`);
+    if (created > 0) {
+      console.log(`\nRun ${COLORS.green}brain start${COLORS.reset} to start the API server.`);
+    }
+  }
+}
+
+// =============================================================================
 // Doctor Command
 // =============================================================================
 
@@ -761,6 +917,9 @@ async function main() {
       break;
     case "doctor":
       await cmdDoctor(args.slice(1));
+      break;
+    case "init":
+      await cmdInit(args.slice(1));
       break;
     case "install":
       await cmdInstall(args.slice(1));

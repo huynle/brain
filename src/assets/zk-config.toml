@@ -1,6 +1,3 @@
-[notebook]
-dir = "."
-
 [note]
 id-charset = "alphanum"
 id-length = 8

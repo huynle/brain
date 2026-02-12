@@ -6,6 +6,19 @@ import { useReducer, useEffect, useCallback, useRef } from 'react';
 import type { TaskDisplay } from '../types';
 
 /**
+ * Simple hash function for change detection.
+ * Uses FNV-1a algorithm for fast, reasonably collision-resistant hashing.
+ */
+function simpleHash(str: string): number {
+  let hash = 2166136261; // FNV offset basis
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0; // FNV prime, keep as uint32
+  }
+  return hash;
+}
+
+/**
  * Stats for tasks returned from the API
  */
 export interface TaskStats {
@@ -213,6 +226,9 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
 
   // Track if this is the initial fetch vs subsequent polls
   const isInitialFetchRef = useRef(true);
+  
+  // Track previous data hash to avoid unnecessary re-renders
+  const prevDataHashRef = useRef<number | null>(null);
 
   const fetchTasks = useCallback(async () => {
     // Only set loading on initial fetch
@@ -300,8 +316,24 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         completed: taskDisplays.filter((t) => t.status === 'completed' || t.status === 'validated').length,
       };
 
-      // Single dispatch replaces 4 separate setState calls
-      dispatch({ type: 'FETCH_SUCCESS', tasks: taskDisplays, stats: calculatedStats });
+      // Compute hash of the data to detect changes
+      // Only include fields that affect display to avoid spurious updates
+      const dataForHash = taskDisplays.map(t => ({
+        id: t.id,
+        title: t.title,
+        status: t.status,
+        priority: t.priority,
+        dependencies: t.dependencies,
+        classification: t.classification,
+        inCycle: t.inCycle,
+      }));
+      const newHash = simpleHash(JSON.stringify({ tasks: dataForHash, stats: calculatedStats }));
+      
+      // Only dispatch if data actually changed (prevents flickering)
+      if (newHash !== prevDataHashRef.current) {
+        prevDataHashRef.current = newHash;
+        dispatch({ type: 'FETCH_SUCCESS', tasks: taskDisplays, stats: calculatedStats });
+      }
     } catch (err) {
       const errorObj = err instanceof Error ? err : new Error('Unknown error');
       // Single dispatch replaces 2 separate setState calls

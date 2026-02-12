@@ -5,8 +5,22 @@
  * to display real-time resource usage in the TUI StatusBar.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ResourceMetrics } from '../types';
+
+/**
+ * Check if two ResourceMetrics objects are equal.
+ * Returns true if they have the same values, avoiding unnecessary state updates.
+ */
+function metricsEqual(a: ResourceMetrics | null, b: ResourceMetrics | null): boolean {
+  if (a === b) return true;
+  if (a === null || b === null) return false;
+  return (
+    a.cpuPercent === b.cpuPercent &&
+    a.memoryMB === b.memoryMB &&
+    a.processCount === b.processCount
+  );
+}
 
 export interface UseResourceMetricsOptions {
   /** Callback to get current resource metrics */
@@ -45,6 +59,9 @@ export function useResourceMetrics(options: UseResourceMetricsOptions): UseResou
 
   const [metrics, setMetrics] = useState<ResourceMetrics | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  
+  // Track previous metrics to avoid unnecessary state updates
+  const prevMetricsRef = useRef<ResourceMetrics | null>(null);
 
   const fetchMetrics = useCallback(() => {
     if (!getResourceMetrics) {
@@ -53,13 +70,22 @@ export function useResourceMetrics(options: UseResourceMetricsOptions): UseResou
 
     try {
       const result = getResourceMetrics();
-      setMetrics(result);
-      setIsConnected(true);
+      // Only update state if metrics actually changed (prevents flickering)
+      if (!metricsEqual(result, prevMetricsRef.current)) {
+        prevMetricsRef.current = result;
+        setMetrics(result);
+      }
+      // Only update isConnected if it's changing from false to true
+      setIsConnected(prev => prev ? prev : true);
     } catch {
       // If the callback fails, keep the last known metrics
       // but mark as disconnected if we haven't connected yet
       if (!isConnected) {
-        setMetrics(EMPTY_METRICS);
+        const empty = EMPTY_METRICS;
+        if (!metricsEqual(empty, prevMetricsRef.current)) {
+          prevMetricsRef.current = empty;
+          setMetrics(empty);
+        }
       }
     }
   }, [getResourceMetrics, isConnected]);

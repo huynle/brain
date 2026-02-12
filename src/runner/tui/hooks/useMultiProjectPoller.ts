@@ -10,6 +10,57 @@ import type { TaskDisplay } from '../types';
 import type { TaskStats } from './useTaskPoller';
 
 /**
+ * Simple hash function for change detection.
+ * Uses FNV-1a algorithm for fast, reasonably collision-resistant hashing.
+ */
+function simpleHash(str: string): number {
+  let hash = 2166136261; // FNV offset basis
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i);
+    hash = (hash * 16777619) >>> 0; // FNV prime, keep as uint32
+  }
+  return hash;
+}
+
+/**
+ * Create a hashable representation of the multi-project state.
+ * Only includes fields that affect display to avoid spurious updates.
+ */
+function createStateHash(
+  tasksByProject: Map<string, TaskDisplay[]>,
+  statsByProject: Map<string, TaskStats>,
+  connectionByProject: Map<string, boolean>,
+  errorsByProject: Map<string, Error>
+): number {
+  const tasksData: Record<string, Array<{ id: string; status: string; priority: string; classification?: string }>> = {};
+  for (const [projectId, tasks] of tasksByProject) {
+    tasksData[projectId] = tasks.map(t => ({
+      id: t.id,
+      status: t.status,
+      priority: t.priority,
+      classification: t.classification,
+    }));
+  }
+  
+  const statsData: Record<string, TaskStats> = {};
+  for (const [projectId, stats] of statsByProject) {
+    statsData[projectId] = stats;
+  }
+  
+  const connectionData: Record<string, boolean> = {};
+  for (const [projectId, connected] of connectionByProject) {
+    connectionData[projectId] = connected;
+  }
+  
+  const errorData: Record<string, string> = {};
+  for (const [projectId, error] of errorsByProject) {
+    errorData[projectId] = error.message;
+  }
+  
+  return simpleHash(JSON.stringify({ tasks: tasksData, stats: statsData, conn: connectionData, err: errorData }));
+}
+
+/**
  * Options for multi-project polling
  */
 export interface UseMultiProjectPollerOptions {
@@ -319,6 +370,9 @@ export function useMultiProjectPoller(
   const statsByProjectRef = useRef(state.statsByProject);
   tasksByProjectRef.current = state.tasksByProject;
   statsByProjectRef.current = state.statsByProject;
+  
+  // Track previous data hash to avoid unnecessary re-renders
+  const prevDataHashRef = useRef<number | null>(null);
 
   // Fetch all projects in parallel
   const fetchAllProjects = useCallback(async () => {
@@ -370,14 +424,25 @@ export function useMultiProjectPoller(
       }
     }
 
-    // Single dispatch replaces 5 separate setState calls
-    dispatch({
-      type: 'FETCH_SUCCESS',
-      tasksByProject: newTasksByProject,
-      statsByProject: newStatsByProject,
-      connectionByProject: newConnectionByProject,
-      errorsByProject: newErrorsByProject,
-    });
+    // Compute hash of the data to detect changes
+    const newHash = createStateHash(
+      newTasksByProject,
+      newStatsByProject,
+      newConnectionByProject,
+      newErrorsByProject
+    );
+    
+    // Only dispatch if data actually changed (prevents flickering)
+    if (newHash !== prevDataHashRef.current) {
+      prevDataHashRef.current = newHash;
+      dispatch({
+        type: 'FETCH_SUCCESS',
+        tasksByProject: newTasksByProject,
+        statsByProject: newStatsByProject,
+        connectionByProject: newConnectionByProject,
+        errorsByProject: newErrorsByProject,
+      });
+    }
     isInitialFetchRef.current = false;
   }, [apiUrl, projectsKey]); // Use projectsKey for stable comparison; removed tasksByProject, statsByProject - using refs
 

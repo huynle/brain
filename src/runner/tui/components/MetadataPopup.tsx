@@ -182,22 +182,53 @@ export function MetadataPopup({
 
               {/* Field value */}
               {field === 'status' ? (
-                // Status field: show icon and label (with dropdown indicator when editing)
-                <Box>
-                  <Text color={getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue)}>
-                    {getStatusIcon(allowedStatuses[selectedStatusIndex] || statusValue)}
-                  </Text>
-                  <Text
-                    color={isFocused ? getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue) : undefined}
-                    bold={isFocused}
-                  >
-                    {' '}{getStatusLabel(allowedStatuses[selectedStatusIndex] || statusValue)}
-                  </Text>
-                  {isFocused && !isEditing && (
-                    <Text dimColor> (Enter to select)</Text>
-                  )}
+                // Status field: show icon and label
+                <Box flexDirection="column">
+                  <Box>
+                    <Text color={getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue)}>
+                      {getStatusIcon(allowedStatuses[selectedStatusIndex] || statusValue)}
+                    </Text>
+                    <Text
+                      color={isFocused ? getStatusColor(allowedStatuses[selectedStatusIndex] || statusValue) : undefined}
+                      bold={isFocused}
+                    >
+                      {' '}{getStatusLabel(allowedStatuses[selectedStatusIndex] || statusValue)}
+                    </Text>
+                    {isFocused && !isEditing && (
+                      <Text dimColor> (Enter to select)</Text>
+                    )}
+                  </Box>
+                  {/* Status sub-popup when in edit_status mode */}
                   {isEditing && (
-                    <Text dimColor> (j/k to change, Enter to save)</Text>
+                    <Box
+                      flexDirection="column"
+                      borderStyle="round"
+                      borderColor="cyan"
+                      marginTop={1}
+                      marginLeft={2}
+                      paddingX={1}
+                    >
+                      <Text bold color="cyan">Select Status</Text>
+                      {allowedStatuses.map((status, idx) => {
+                        const isSelected = idx === selectedStatusIndex;
+                        return (
+                          <Box key={status}>
+                            <Text color={isSelected ? 'cyan' : undefined}>
+                              {isSelected ? '→ ' : '  '}
+                            </Text>
+                            <Text color={getStatusColor(status)}>
+                              {isSelected ? '●' : '○'}
+                            </Text>
+                            <Text
+                              color={isSelected ? getStatusColor(status) : undefined}
+                              bold={isSelected}
+                            >
+                              {' '}{getStatusLabel(status)}
+                            </Text>
+                          </Box>
+                        );
+                      })}
+                    </Box>
                   )}
                 </Box>
               ) : isEditing ? (

@@ -228,16 +228,28 @@ describe("TaskService", () => {
       expect(result.projectId).toBeUndefined();
     });
 
-    test("strips projects/xxx/task/ path prefix", () => {
+    test("extracts projectId from full path", () => {
       const result = normalizeDependencyRef("projects/brain-api/task/1770555889709-task-name");
       expect(result.normalized).toBe("1770555889709-task-name");
-      expect(result.projectId).toBeUndefined();
+      expect(result.projectId).toBe("brain-api");
     });
 
-    test("strips both path prefix and .md extension", () => {
+    test("extracts projectId from full path with .md extension", () => {
       const result = normalizeDependencyRef("projects/brain-api/task/1770555889709-task-name.md");
       expect(result.normalized).toBe("1770555889709-task-name");
-      expect(result.projectId).toBeUndefined();
+      expect(result.projectId).toBe("brain-api");
+    });
+
+    test("extracts projectId from full path for different projects", () => {
+      const result = normalizeDependencyRef("projects/pwa/task/l60p1j59.md");
+      expect(result.normalized).toBe("l60p1j59");
+      expect(result.projectId).toBe("pwa");
+    });
+
+    test("extracts projectId from full path without .md", () => {
+      const result = normalizeDependencyRef("projects/other-project/task/abc123");
+      expect(result.normalized).toBe("abc123");
+      expect(result.projectId).toBe("other-project");
     });
 
     test("parses cross-project syntax", () => {

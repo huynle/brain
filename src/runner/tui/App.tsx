@@ -58,17 +58,17 @@ import type { TaskStats } from './hooks/useTaskPoller';
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 
 /** Cycle to the next panel (for Tab navigation) */
-function nextPanel(current: FocusedPanel, logsVisible: boolean): FocusedPanel {
-  if (logsVisible) {
-    // Full cycle: tasks -> details -> logs -> tasks
-    if (current === 'tasks') return 'details';
-    if (current === 'details') return 'logs';
-    return 'tasks';
-  } else {
-    // No logs: tasks -> details -> tasks
-    if (current === 'tasks') return 'details';
-    return 'tasks';
-  }
+function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
+  // Build available panels list based on visibility
+  const panels: FocusedPanel[] = ['tasks'];
+  if (detailVisible) panels.push('details');
+  if (logsVisible) panels.push('logs');
+  
+  // Find current index and cycle to next
+  const currentIndex = panels.indexOf(current);
+  if (currentIndex === -1) return 'tasks'; // Fallback if current panel is hidden
+  const nextIndex = (currentIndex + 1) % panels.length;
+  return panels[nextIndex];
 }
 
 /** Display labels for each entry status */
@@ -170,7 +170,8 @@ export function App({
   const [isEditing, setIsEditing] = useState(false);
 
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
-  const [logsVisible, setLogsVisible] = useState(true);
+  const [logsVisible, setLogsVisible] = useState(false);
+  const [detailVisible, setDetailVisible] = useState(false);
   // Active features: features queued for execution (controlled by x key on feature headers)
   const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
   // Multi-select state: tasks selected via Space key for batch operations
@@ -1032,13 +1033,9 @@ export function App({
       return;
     }
 
-    // Tab to switch focus between panels: tasks → details → logs → tasks (skip logs if hidden)
+    // Tab to switch focus between panels: tasks → details → logs → tasks (skip hidden panels)
     if (key.tab) {
-      setFocusedPanel((prev) => {
-        if (prev === 'tasks') return 'details';
-        if (prev === 'details') return logsVisible ? 'logs' : 'tasks';
-        return 'tasks'; // logs → tasks
-      });
+      setFocusedPanel((prev) => nextPanel(prev, logsVisible, detailVisible));
       return;
     }
 
@@ -1048,6 +1045,19 @@ export function App({
         const newVisible = !prev;
         // If hiding logs and logs are focused, switch focus to tasks
         if (!newVisible && focusedPanel === 'logs') {
+          setFocusedPanel('tasks');
+        }
+        return newVisible;
+      });
+      return;
+    }
+
+    // Toggle detail panel visibility
+    if (input === 'T') {
+      setDetailVisible(prev => {
+        const newVisible = !prev;
+        // If hiding detail and detail is focused, switch focus to tasks
+        if (!newVisible && focusedPanel === 'details') {
           setFocusedPanel('tasks');
         }
         return newVisible;
@@ -1590,11 +1600,11 @@ export function App({
 
       {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
       <Box flexGrow={1} flexDirection="column">
-        {/* Top row: Task Tree (left) + Task Detail (right) */}
+        {/* Top row: Task Tree (left) + Task Detail (right, when visible) */}
         <Box height={topRowHeight} flexDirection="row">
           {/* Left panel: Task Tree */}
           <Box
-            width="50%"
+            width={detailVisible ? "50%" : "100%"}
             borderStyle="single"
             borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
             flexDirection="column"
@@ -1617,18 +1627,20 @@ export function App({
             />
           </Box>
 
-          {/* Right panel: Task Detail */}
-          <Box
-            width="50%"
-            flexDirection="column"
-          >
-            <TaskDetail 
-              task={selectedTask} 
-              isFocused={focusedPanel === 'details'}
-              scrollOffset={detailsScrollOffset}
-              viewportHeight={detailsViewportHeight}
-            />
-          </Box>
+          {/* Right panel: Task Detail (conditionally rendered) */}
+          {detailVisible && (
+            <Box
+              width="50%"
+              flexDirection="column"
+            >
+              <TaskDetail 
+                task={selectedTask} 
+                isFocused={focusedPanel === 'details'}
+                scrollOffset={detailsScrollOffset}
+                viewportHeight={detailsViewportHeight}
+              />
+            </Box>
+          )}
         </Box>
 
         {/* Bottom row: Logs (full width) - conditionally rendered */}

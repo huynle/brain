@@ -260,6 +260,82 @@ describe('MetadataPopup', () => {
     });
   });
 
+  describe('status sub-popup', () => {
+    it('should render status sub-popup when in edit_status mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="edit_status" 
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Select Status');
+    });
+
+    it('should show all allowed statuses in the sub-popup', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="edit_status" 
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('draft');
+      expect(frame).toContain('pending');
+      expect(frame).toContain('active');
+      expect(frame).toContain('in progress');
+      expect(frame).toContain('blocked');
+      expect(frame).toContain('completed');
+    });
+
+    it('should show arrow indicator on selected status', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="edit_status"
+          selectedStatusIndex={3} // in_progress
+        />
+      );
+
+      const frame = lastFrame();
+      // The selected status should have an arrow and filled circle
+      expect(frame).toContain('→');
+      expect(frame).toContain('●');
+    });
+
+    it('should not show sub-popup when in navigate mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="navigate" 
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('Select Status');
+    });
+
+    it('should not show old j/k to change hint on status field', () => {
+      const { lastFrame } = render(
+        <MetadataPopup 
+          {...defaultProps} 
+          focusedField="status"
+          interactionMode="edit_status" 
+        />
+      );
+
+      const frame = lastFrame();
+      // Old hint should be removed
+      expect(frame).not.toContain('(j/k to change, Enter to save)');
+    });
+  });
+
   describe('border colors', () => {
     it('should have cyan border in single mode', () => {
       const { lastFrame } = render(

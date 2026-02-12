@@ -153,12 +153,14 @@ describe('App - Keyboard Interactions', () => {
       // Initial focus should be tasks
       expect(lastFrame()).toContain('tasks');
       
-      // Send Tab to switch focus
+      // With logs and details hidden by default, Tab just cycles back to tasks
+      // Send Tab key and verify the app doesn't crash
       stdin.write('\t');
       
-      // Should now focus logs
+      // App should still be rendering - focus stays on tasks when other panels hidden
       const frameAfterTab = lastFrame() || '';
-      expect(frameAfterTab).toContain('logs');
+      expect(frameAfterTab).toBeDefined();
+      expect(frameAfterTab).toContain('tasks'); // Should cycle back to tasks
       unmount();
     });
 
@@ -542,23 +544,21 @@ describe('App - Manual Task Execution', () => {
 });
 
 describe('App - Logs Panel Visibility Toggle', () => {
-  it('shows logs panel by default', () => {
+  it('hides logs panel by default', () => {
     const { lastFrame, unmount } = render(<App config={defaultConfig} />);
     const frame = lastFrame() || '';
-    // Should show "No logs yet" when logs panel is visible (from LogViewer)
-    expect(frame).toContain('No logs yet');
+    // Logs panel is hidden by default, so "No logs yet" should NOT appear
+    expect(frame).not.toContain('No logs yet');
     unmount();
   });
 
   it('can send L key without crashing', () => {
     const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
     
-    // Initial render should show logs panel content
-    expect(lastFrame()).toContain('No logs yet');
+    // Initial render should NOT show logs panel content (hidden by default)
+    expect(lastFrame()).not.toContain('No logs yet');
     
     // Send 'L' to toggle logs visibility
-    // Note: ink-testing-library may not properly handle shift+key for uppercase
-    // This test verifies the app doesn't crash when receiving the key
     stdin.write('L');
     
     // App should still be rendering
@@ -572,21 +572,21 @@ describe('App - Logs Panel Visibility Toggle', () => {
     unmount();
   });
 
-  it('Tab switches focus between panels', () => {
+  it('Tab key works without crashing', () => {
     const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
     
-    // Initial state - logs panel is visible
+    // Initial state - only tasks panel is visible (logs and details hidden by default)
     const initialFrame = lastFrame() || '';
-    expect(initialFrame).toContain('No logs yet');
+    expect(initialFrame).toContain('Focus:');
+    expect(initialFrame).toContain('tasks');
     
-    // Tab to switch focus
+    // Tab should cycle back to tasks (only panel visible by default)
     stdin.write('\t');
     
-    // Focus should now be on logs
-    const afterTab = lastFrame() || '';
-    expect(afterTab.includes('Focus:')).toBe(true);
+    // App should still render
+    expect(lastFrame()).toBeDefined();
     
-    // Tab again to switch back
+    // Tab again
     stdin.write('\t');
     
     expect(lastFrame()).toBeDefined();
@@ -594,11 +594,12 @@ describe('App - Logs Panel Visibility Toggle', () => {
     unmount();
   });
 
-  it('shows L shortcut in help bar', () => {
+  it('shows L and T shortcuts in help bar', () => {
     const { lastFrame, unmount } = render(<App config={defaultConfig} />);
     const frame = lastFrame() || '';
-    // HelpBar should show "L Logs" shortcut - this appears in the help bar text
+    // HelpBar should show "L Logs" and "T Detail" shortcuts
     expect(frame).toContain('L');
+    expect(frame).toContain('T');
     unmount();
   });
 });
@@ -929,6 +930,10 @@ describe('App - MetadataPopup (s Key)', () => {
 
   it('s key does not open popup when on logs panel', async () => {
     const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+    
+    // First enable logs panel (hidden by default)
+    stdin.write('L');
+    await new Promise(r => setTimeout(r, 10));
     
     // Switch to logs panel
     stdin.write('\t');

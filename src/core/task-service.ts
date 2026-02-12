@@ -377,9 +377,24 @@ export interface DependencyValidationResult {
  * - Extracts task ID from full paths
  * 
  * Also parses cross-project syntax: "project:task-id"
+ * 
+ * Supported formats:
+ * - "l60p1j59" — plain task ID (same project)
+ * - "projects/pwa/task/l60p1j59.md" — full path with .md
+ * - "projects/pwa/task/l60p1j59" — full path without .md
+ * - "pwa:l60p1j59" — colon syntax (cross-project)
  */
 export function normalizeDependencyRef(ref: string): { normalized: string; projectId?: string } {
   let normalized = ref.trim();
+  
+  // Check for full path syntax: "projects/pwa/task/l60p1j59.md"
+  // MUST come before colon check since paths contain slashes
+  const pathMatch = normalized.match(/^projects\/([^/]+)\/task\/(.+?)(?:\.md)?$/);
+  if (pathMatch) {
+    const projectId = pathMatch[1];
+    const taskRef = pathMatch[2];
+    return { normalized: taskRef, projectId };
+  }
   
   // Check for cross-project syntax: "project:task-id"
   const crossProjectMatch = normalized.match(/^([^:]+):(.+)$/);

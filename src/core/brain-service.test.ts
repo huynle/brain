@@ -204,6 +204,114 @@ Original content.
         "No updates specified"
       );
     });
+
+    test("should accept empty string for feature_id (clearing field)", async () => {
+      // Create a test entry with feature_id for this test
+      const testDir = join(TEST_DIR, "projects", "test-project", "scratch");
+      const testFile = join(testDir, "feature-id-test.md");
+      const featureTestPath = "projects/test-project/scratch/feature-id-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Feature ID Test Entry
+type: scratch
+tags:
+  - scratch
+status: active
+feature_id: test-feature
+---
+
+Test content.
+`
+      );
+
+      // Verify initial state
+      const initialContent = readFileSync(testFile, "utf-8");
+      expect(initialContent).toContain("feature_id: test-feature");
+
+      // Clear with empty string - this should NOT throw "No updates specified"
+      // The key fix: previously this would throw 400 because !("") === true
+      const result = await service.update(featureTestPath, { feature_id: "" });
+      
+      // Verify the update succeeded (the field is cleared from frontmatter by serializer)
+      expect(result).toBeDefined();
+      const updatedContent = readFileSync(testFile, "utf-8");
+      // The serializer removes empty string values, which is expected behavior
+      expect(updatedContent).not.toContain("feature_id: test-feature");
+    });
+
+    test("should accept empty string for git_branch (clearing field)", async () => {
+      // Create a test entry with git_branch for this test
+      const testDir = join(TEST_DIR, "projects", "test-project", "scratch");
+      const testFile = join(testDir, "git-branch-test.md");
+      const gitBranchTestPath = "projects/test-project/scratch/git-branch-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Git Branch Test Entry
+type: scratch
+tags:
+  - scratch
+status: active
+git_branch: feature/test
+---
+
+Test content.
+`
+      );
+
+      // Verify initial state
+      const initialContent = readFileSync(testFile, "utf-8");
+      expect(initialContent).toContain("git_branch: feature/test");
+
+      // Clear with empty string - this should NOT throw "No updates specified"
+      // The key fix: previously this would throw 400 because !("") === true
+      const result = await service.update(gitBranchTestPath, { git_branch: "" });
+      
+      // Verify the update succeeded (the field is cleared from frontmatter by serializer)
+      expect(result).toBeDefined();
+      const updatedContent = readFileSync(testFile, "utf-8");
+      // The serializer removes empty string values, which is expected behavior
+      expect(updatedContent).not.toContain("git_branch: feature/test");
+    });
+
+    test("should accept empty string for target_workdir (clearing field)", async () => {
+      // Create a test entry with target_workdir for this test
+      const testDir = join(TEST_DIR, "projects", "test-project", "scratch");
+      const testFile = join(testDir, "target-workdir-test.md");
+      const targetWorkdirTestPath = "projects/test-project/scratch/target-workdir-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Target Workdir Test Entry
+type: scratch
+tags:
+  - scratch
+status: active
+target_workdir: /path/to/dir
+---
+
+Test content.
+`
+      );
+
+      // Verify initial state
+      const initialContent = readFileSync(testFile, "utf-8");
+      expect(initialContent).toContain("target_workdir: /path/to/dir");
+
+      // Clear with empty string - this should NOT throw "No updates specified"
+      // The key fix: previously this would throw 400 because !("") === true
+      const result = await service.update(targetWorkdirTestPath, { target_workdir: "" });
+      
+      // Verify the update succeeded (the field is cleared from frontmatter by serializer)
+      expect(result).toBeDefined();
+      const updatedContent = readFileSync(testFile, "utf-8");
+      // The serializer removes empty string values, which is expected behavior
+      expect(updatedContent).not.toContain("target_workdir: /path/to/dir");
+    });
   });
 
   describe("delete", () => {

@@ -664,7 +664,21 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
-    if (!request.status && !request.title && !request.content && !request.append && !request.note && !request.depends_on && request.tags === undefined && request.priority === undefined && !request.feature_id && !request.feature_priority && !request.feature_depends_on && request.target_workdir === undefined && request.git_branch === undefined) {
+    if (
+      request.status === undefined &&
+      request.title === undefined &&
+      request.content === undefined &&
+      request.append === undefined &&
+      request.note === undefined &&
+      request.depends_on === undefined &&
+      request.tags === undefined &&
+      request.priority === undefined &&
+      request.feature_id === undefined &&
+      request.feature_priority === undefined &&
+      request.feature_depends_on === undefined &&
+      request.target_workdir === undefined &&
+      request.git_branch === undefined
+    ) {
       throw new Error(
         "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch"
       );

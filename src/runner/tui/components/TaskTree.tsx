@@ -547,21 +547,14 @@ export function flattenFeatureOrder(tasks: TaskDisplay[], completedCollapsed: bo
       
       traverse(tree);
     }
-    
-    // Add spacer after feature (except last) - matches render logic
-    if (featureIndex < activeFeatureIds.length - 1) {
-      result.push(`${SPACER_PREFIX}${spacerIndex++}`);
-    }
+    // Note: No spacer between features - FeatureHeader has marginTop={1}
   });
   
   // Add ungrouped tasks
   // Exclude all group statuses from ungrouped navigation
   const ungroupedActive = ungrouped.filter(t => !isGroupStatus(t));
   if (ungroupedActive.length > 0) {
-    // Add spacer before ungrouped section if there are features
-    if (activeFeatureIds.length > 0) {
-      result.push(`${SPACER_PREFIX}${spacerIndex++}`);
-    }
+    // Note: No spacer before ungrouped section - header has marginTop={1}
     
     // Add ungrouped header (navigable, like feature headers)
     result.push(UNGROUPED_HEADER_ID);
@@ -1635,15 +1628,7 @@ export const TaskTree = React.memo(function TaskTree({
           ...renderFeatureTasks(featureTasks, selectedId, readyIds, selectedTaskIds)
         );
       }
-      
-      // Add spacing between features (except last)
-      if (featureIndex < activeFeatureIds.length - 1) {
-        featureElements.push(
-          <Box key={`feature-spacer-${featureId}`}>
-            <Text> </Text>
-          </Box>
-        );
-      }
+      // Note: No spacer between features - FeatureHeader has marginTop={1}
     });
     
     // Handle ungrouped tasks
@@ -1652,14 +1637,7 @@ export const TaskTree = React.memo(function TaskTree({
       const ungroupedActive = ungroupedTasks.filter(t => !isGroupStatus(t));
       
       if (ungroupedActive.length > 0) {
-        // Add spacing before ungrouped section
-        if (featureElements.length > 0) {
-          featureElements.push(
-            <Box key="ungrouped-spacer">
-              <Text> </Text>
-            </Box>
-          );
-        }
+        // Note: No explicit spacer - header has marginTop={1}
         
         // Ungrouped header (selectable, like feature headers)
         const isUngroupedSelected = selectedId === UNGROUPED_HEADER_ID;

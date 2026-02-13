@@ -2424,6 +2424,8 @@ export class TaskRunner {
         onUpdateMetadata: (taskPath, fields) => this.updateEntryMetadata(taskPath, fields),
         // Move task to different project
         onMoveTask: (taskPath, newProjectId) => this.moveTask(taskPath, newProjectId),
+        // List all available projects from API (for project picker)
+        onListProjects: () => this.apiClient.listProjects(),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

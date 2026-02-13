@@ -111,6 +111,7 @@ export function App({
   getEnabledFeatures,
   onUpdateMetadata,
   onMoveTask,
+  onListProjects,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -148,6 +149,8 @@ export function App({
     target_workdir: string;
     project: string;
   }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '' });
+  // All projects from API (for project picker in metadata popup)
+  const [allProjects, setAllProjects] = useState<string[]>([]);
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -1230,7 +1233,7 @@ export function App({
     // Open metadata popup for selected task, feature header, or batch (s key) - only when focused on tasks panel
     if (input === 's' && focusedPanel === 'tasks') {
       // Helper to open popup with common setup
-      const openMetadataPopup = (
+      const openMetadataPopup = async (
         mode: MetadataPopupMode,
         targetTasks: TaskDisplay[],
         prefillStatus: EntryStatus = 'pending',
@@ -1239,6 +1242,18 @@ export function App({
         prefillWorkdir: string = '',
         prefillProject: string = ''
       ) => {
+        // Fetch all projects from API for the project picker
+        let fetchedProjects = projects; // fallback to monitored projects
+        if (onListProjects) {
+          try {
+            fetchedProjects = await onListProjects();
+          } catch {
+            // Fallback to monitored projects on error
+            fetchedProjects = projects;
+          }
+        }
+        setAllProjects(fetchedProjects);
+        
         setMetadataTargetTasks(targetTasks);
         setMetadataPopupMode(mode);
         setMetadataFocusedField('status');
@@ -1248,7 +1263,7 @@ export function App({
         setMetadataBranchValue(prefillBranch);
         setMetadataWorkdirValue(prefillWorkdir);
         setMetadataProjectValue(prefillProject);
-        setMetadataProjectIndex(projects.indexOf(prefillProject) >= 0 ? projects.indexOf(prefillProject) : 0);
+        setMetadataProjectIndex(fetchedProjects.indexOf(prefillProject) >= 0 ? fetchedProjects.indexOf(prefillProject) : 0);
         setMetadataOriginalValues({
           status: prefillStatus,
           feature_id: prefillFeatureId,
@@ -1728,7 +1743,7 @@ export function App({
           branchValue={metadataBranchValue}
           workdirValue={metadataWorkdirValue}
           projectValue={metadataProjectValue}
-          availableProjects={projects}
+          availableProjects={allProjects.length > 0 ? allProjects : projects}
           selectedProjectIndex={metadataProjectIndex}
           selectedStatusIndex={metadataStatusIndex}
           allowedStatuses={ENTRY_STATUSES}

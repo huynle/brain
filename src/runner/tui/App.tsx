@@ -151,6 +151,8 @@ export function App({
   }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '' });
   // All projects from API (for project picker in metadata popup)
   const [allProjects, setAllProjects] = useState<string[]>([]);
+  // Computed: the effective project list used by the project picker (same as availableProjects prop)
+  const effectiveProjects = allProjects.length > 0 ? allProjects : projects;
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -582,7 +584,7 @@ export function App({
           setMetadataInteractionMode('navigate');
         } else if (metadataInteractionMode === 'edit_project') {
           // In project edit mode: discard selection, restore original, back to NAVIGATE
-          const originalIndex = projects.indexOf(metadataOriginalValues.project);
+          const originalIndex = effectiveProjects.indexOf(metadataOriginalValues.project);
           setMetadataProjectIndex(Math.max(0, originalIndex));
           setMetadataProjectValue(metadataOriginalValues.project);
           setMetadataInteractionMode('navigate');
@@ -715,21 +717,21 @@ export function App({
       if (metadataInteractionMode === 'edit_project') {
         // j/k or Down/Up: cycle through project options
         if (input === 'j' || key.downArrow) {
-          const nextIndex = Math.min(metadataProjectIndex + 1, projects.length - 1);
+          const nextIndex = Math.min(metadataProjectIndex + 1, effectiveProjects.length - 1);
           setMetadataProjectIndex(nextIndex);
-          setMetadataProjectValue(projects[nextIndex]);
+          setMetadataProjectValue(effectiveProjects[nextIndex]);
           return;
         }
         if (input === 'k' || key.upArrow) {
           const prevIndex = Math.max(metadataProjectIndex - 1, 0);
           setMetadataProjectIndex(prevIndex);
-          setMetadataProjectValue(projects[prevIndex]);
+          setMetadataProjectValue(effectiveProjects[prevIndex]);
           return;
         }
 
         // Enter: move task(s) to selected project and return to NAVIGATE
         if (key.return) {
-          const newProjectId = projects[metadataProjectIndex];
+          const newProjectId = effectiveProjects[metadataProjectIndex];
           moveTaskToProject(newProjectId);
           setMetadataInteractionMode('navigate');
           return;
@@ -1743,7 +1745,7 @@ export function App({
           branchValue={metadataBranchValue}
           workdirValue={metadataWorkdirValue}
           projectValue={metadataProjectValue}
-          availableProjects={allProjects.length > 0 ? allProjects : projects}
+          availableProjects={effectiveProjects}
           selectedProjectIndex={metadataProjectIndex}
           selectedStatusIndex={metadataStatusIndex}
           allowedStatuses={ENTRY_STATUSES}

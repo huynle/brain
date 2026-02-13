@@ -92,6 +92,8 @@ export interface DashboardOptions {
     taskPath: string,
     newProjectId: string
   ) => Promise<{ oldPath: string; newPath: string }>;
+  /** Callback to list all available projects from the API (not just monitored projects) */
+  onListProjects?: () => Promise<string[]>;
 }
 
 export interface DashboardHandle {
@@ -176,6 +178,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       getEnabledFeatures={options.getEnabledFeatures}
       onUpdateMetadata={options.onUpdateMetadata}
       onMoveTask={options.onMoveTask}
+      onListProjects={options.onListProjects}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

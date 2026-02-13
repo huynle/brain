@@ -225,4 +225,6 @@ export interface AppProps {
     taskPath: string,
     newProjectId: string
   ) => Promise<{ oldPath: string; newPath: string }>;
+  /** Callback to list all available projects from the API (not just monitored projects) */
+  onListProjects?: () => Promise<string[]>;
 }

@@ -116,6 +116,7 @@ export class TaskService {
         priority: (note.metadata?.priority as Task["priority"]) || "medium",
         status: (note.metadata?.status as Task["status"]) || "pending",
         depends_on: (note.metadata?.depends_on as string[]) || [],
+        tags: note.tags || [],
         created: note.created || "",
         modified: note.modified,
         target_workdir: (note.metadata?.target_workdir as string) || null,

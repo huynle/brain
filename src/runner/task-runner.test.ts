@@ -69,6 +69,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
+    tags: [],
 
     created: new Date().toISOString(),
     target_workdir: null,

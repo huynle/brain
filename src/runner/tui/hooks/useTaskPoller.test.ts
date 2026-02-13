@@ -251,7 +251,7 @@ describe('useTaskPoller - pollerReducer', () => {
 
   it('should handle FETCH_SUCCESS with tasks and stats in a single state object', () => {
     const tasks = [
-      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, tags: [], dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
     ];
     const stats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
 
@@ -270,7 +270,7 @@ describe('useTaskPoller - pollerReducer', () => {
 
   it('should handle FETCH_ERROR by preserving existing tasks and stats', () => {
     const existingTasks = [
-      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, tags: [], dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
     ];
     const existingStats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
     const stateWithData = {
@@ -297,7 +297,7 @@ describe('useTaskPoller - pollerReducer', () => {
 
   it('should produce a new state reference on FETCH_SUCCESS (enables React re-render)', () => {
     const tasks = [
-      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
+      { id: '1', path: '/p', title: 'Task 1', status: 'pending' as any, priority: 'medium' as any, tags: [], dependencies: [], dependents: [], dependencyTitles: [], dependentTitles: [] },
     ];
     const stats = { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 };
 

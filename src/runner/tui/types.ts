@@ -19,6 +19,7 @@ export interface TaskDisplay {
   title: string;
   status: EntryStatus;
   priority: Priority;
+  tags: string[];               // Tags for filtering and categorization
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
   dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail

@@ -254,7 +254,7 @@ describe('useMultiProjectPoller - multiProjectReducer', () => {
   });
 
   it('should handle FETCH_SUCCESS with all project data in a single state object', () => {
-    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[] }]]]);
+    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, tags: [] as string[], dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[] }]]]);
     const statsByProject = new Map([['p1', { total: 1, ready: 1, waiting: 0, blocked: 0, inProgress: 0, completed: 0 }]]);
     const connectionByProject = new Map([['p1', true]]);
     const errorsByProject = new Map<string, Error>();
@@ -287,7 +287,7 @@ describe('useMultiProjectPoller - multiProjectReducer', () => {
   });
 
   it('should handle FETCH_START without losing existing data', () => {
-    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[] }]]]);
+    const tasksByProject = new Map([['p1', [{ id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, tags: [] as string[], dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[] }]]]);
     const stateWithData = {
       ...initialState,
       tasksByProject,
@@ -327,10 +327,10 @@ describe('useMultiProjectPoller - Exported derived-state helpers', () => {
     it('should merge tasks from multiple projects into a flat array', () => {
       const tasksByProject = new Map([
         ['p1', [
-          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p1' },
+          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, tags: [] as string[], dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p1' },
         ]],
         ['p2', [
-          { id: 't2', path: '/p', title: 'T2', status: 'completed' as any, priority: 'low' as any, dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p2' },
+          { id: 't2', path: '/p', title: 'T2', status: 'completed' as any, priority: 'low' as any, tags: [] as string[], dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p2' },
         ]],
       ]);
 
@@ -349,7 +349,7 @@ describe('useMultiProjectPoller - Exported derived-state helpers', () => {
       // This tests that the function is pure and suitable for useMemo
       const tasksByProject = new Map([
         ['p1', [
-          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p1' },
+          { id: 't1', path: '/p', title: 'T1', status: 'pending' as any, priority: 'medium' as any, tags: [] as string[], dependencies: [] as string[], dependents: [] as string[], dependencyTitles: [] as string[], dependentTitles: [] as string[], projectId: 'p1' },
         ]],
       ]);
 

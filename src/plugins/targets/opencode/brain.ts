@@ -1264,6 +1264,58 @@ Use \`brain_recall\` to view the full entry.`;
       }),
 
       // ========================================
+      // brain_move
+      // ========================================
+      brain_move: tool({
+        description: `Move a brain entry (typically a task) to a different project.
+
+Use cases:
+- Bulk reassign tasks to a different project
+- Move a task filed in the wrong project to the correct one
+- Reorganize tasks across projects
+
+Cannot move entries that are currently in_progress.
+
+Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
+        args: {
+          path: tool.schema
+            .string()
+            .describe("Path to the entry to move (e.g., 'projects/old/task/abc12def.md')"),
+          project: tool.schema
+            .string()
+            .describe("Target project ID to move the entry to (e.g., 'my-other-project')"),
+        },
+        async execute(args) {
+          if (!args.path || !args.project) {
+            return "Please provide both path and target project";
+          }
+
+          try {
+            const response = await apiRequest<{
+              oldPath: string;
+              newPath: string;
+              project: string;
+              id: string;
+              title: string;
+            }>("POST", `/entries/${args.path}/move`, {
+              project: args.project,
+            });
+
+            return `Moved entry to project: ${response.project}
+
+**Title:** ${response.title}
+**ID:** \`${response.id}\`
+**Old Path:** \`${response.oldPath}\`
+**New Path:** \`${response.newPath}\`
+
+Use \`brain_recall\` with the new path to verify.`;
+          } catch (error) {
+            return `Failed to move: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
       // brain_stats
       // ========================================
       brain_stats: tool({

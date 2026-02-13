@@ -28,13 +28,13 @@ import type { EntryStatus } from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 /** Fields that can be focused in the metadata popup */
-export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir';
+export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'project';
 
 /** Mode for the metadata popup */
 export type MetadataPopupMode = 'single' | 'batch' | 'feature';
 
 /** Interaction mode for the 3-mode state machine */
-export type MetadataInteractionMode = 'navigate' | 'edit_text' | 'edit_status';
+export type MetadataInteractionMode = 'navigate' | 'edit_text' | 'edit_status' | 'edit_project';
 
 export interface MetadataPopupProps {
   /** Mode: single task, batch of tasks, or feature group */
@@ -55,6 +55,12 @@ export interface MetadataPopupProps {
   branchValue: string;
   /** Current target_workdir value */
   workdirValue: string;
+  /** Current project value */
+  projectValue: string;
+  /** Available projects for the dropdown */
+  availableProjects: string[];
+  /** Index of selected project in dropdown */
+  selectedProjectIndex: number;
   /** Index of selected status in dropdown (for status field navigation) */
   selectedStatusIndex: number;
   /** Allowed statuses for the dropdown */
@@ -65,12 +71,13 @@ export interface MetadataPopupProps {
   editBuffer?: string;
 }
 
-const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
+const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project'];
 const FIELD_LABELS: Record<MetadataField, string> = {
   status: 'Status',
   feature_id: 'Feature ID',
   git_branch: 'Branch',
   target_workdir: 'Workdir',
+  project: 'Project',
 };
 
 export function MetadataPopup({
@@ -83,6 +90,9 @@ export function MetadataPopup({
   featureIdValue,
   branchValue,
   workdirValue,
+  projectValue,
+  availableProjects,
+  selectedProjectIndex,
   selectedStatusIndex,
   allowedStatuses,
   interactionMode,
@@ -105,6 +115,8 @@ export function MetadataPopup({
         return branchValue || '(none)';
       case 'target_workdir':
         return workdirValue || '(none)';
+      case 'project':
+        return projectValue || '(none)';
     }
   };
 
@@ -112,6 +124,9 @@ export function MetadataPopup({
   const isFieldEditing = (field: MetadataField): boolean => {
     if (field === 'status') {
       return interactionMode === 'edit_status' && focusedField === 'status';
+    }
+    if (field === 'project') {
+      return interactionMode === 'edit_project' && focusedField === 'project';
     }
     return interactionMode === 'edit_text' && focusedField === field;
   };
@@ -125,6 +140,8 @@ export function MetadataPopup({
     switch (interactionMode) {
       case 'edit_status':
         return 'j/k: select status  Enter: save  Esc: cancel';
+      case 'edit_project':
+        return 'j/k: select project  Enter: move  Esc: cancel';
       case 'edit_text':
         return 'Type to edit  Enter: save  Esc: cancel';
       case 'navigate':
@@ -225,6 +242,60 @@ export function MetadataPopup({
                             >
                               {' '}{getStatusLabel(status)}
                             </Text>
+                          </Box>
+                        );
+                      })}
+                    </Box>
+                  )}
+                </Box>
+              ) : field === 'project' ? (
+                // Project field: show dropdown (similar to status)
+                <Box flexDirection="column">
+                  <Box>
+                    <Text color="green">
+                      {'📁'}
+                    </Text>
+                    <Text
+                      color={isFocused ? 'green' : undefined}
+                      bold={isFocused}
+                    >
+                      {' '}{availableProjects[selectedProjectIndex] || projectValue || '(none)'}
+                    </Text>
+                    {isFocused && !isEditing && (
+                      <Text dimColor> (Enter to select)</Text>
+                    )}
+                  </Box>
+                  {/* Project sub-popup when in edit_project mode */}
+                  {isEditing && (
+                    <Box
+                      flexDirection="column"
+                      borderStyle="round"
+                      borderColor="green"
+                      marginTop={1}
+                      marginLeft={2}
+                      paddingX={1}
+                    >
+                      <Text bold color="green">Select Project</Text>
+                      {availableProjects.map((project, idx) => {
+                        const isSelected = idx === selectedProjectIndex;
+                        const isCurrent = project === projectValue;
+                        return (
+                          <Box key={project}>
+                            <Text color={isSelected ? 'green' : undefined}>
+                              {isSelected ? '→ ' : '  '}
+                            </Text>
+                            <Text color={isSelected ? 'green' : undefined}>
+                              {isSelected ? '●' : '○'}
+                            </Text>
+                            <Text
+                              color={isSelected ? 'green' : undefined}
+                              bold={isSelected}
+                            >
+                              {' '}{project}
+                            </Text>
+                            {isCurrent && (
+                              <Text dimColor> (current)</Text>
+                            )}
                           </Box>
                         );
                       })}

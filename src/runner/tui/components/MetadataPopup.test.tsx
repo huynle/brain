@@ -18,6 +18,9 @@ const defaultProps = {
   featureIdValue: 'my-feature',
   branchValue: 'feature/test',
   workdirValue: '/path/to/project',
+  projectValue: 'my-project',
+  availableProjects: ['my-project', 'other-project', 'another-project'],
+  selectedProjectIndex: 0,
   selectedStatusIndex: 1, // pending is index 1 in ENTRY_STATUSES
   allowedStatuses: ENTRY_STATUSES,
   interactionMode: 'navigate' as MetadataInteractionMode,

@@ -110,6 +110,7 @@ export function App({
   onDisableFeature,
   getEnabledFeatures,
   onUpdateMetadata,
+  onMoveTask,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -133,7 +134,9 @@ export function App({
   const [metadataBranchValue, setMetadataBranchValue] = useState('');
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
-  // 3-mode state machine: navigate (j/k fields), edit_text (typing), edit_status (j/k status)
+  const [metadataProjectValue, setMetadataProjectValue] = useState('');
+  const [metadataProjectIndex, setMetadataProjectIndex] = useState(0);
+  // 3-mode state machine: navigate (j/k fields), edit_text (typing), edit_status (j/k status), edit_project (j/k project)
   const [metadataInteractionMode, setMetadataInteractionMode] = useState<MetadataInteractionMode>('navigate');
   const [metadataEditBuffer, setMetadataEditBuffer] = useState('');
   const [metadataTargetTasks, setMetadataTargetTasks] = useState<TaskDisplay[]>([]);
@@ -143,7 +146,8 @@ export function App({
     feature_id: string;
     git_branch: string;
     target_workdir: string;
-  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '' });
+    project: string;
+  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '' });
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -514,8 +518,9 @@ export function App({
     // NAVIGATE: j/k moves between fields, Enter enters edit mode, Esc closes popup
     // EDIT_TEXT: typing updates buffer, Enter saves field immediately, Esc discards
     // EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
+    // EDIT_PROJECT: j/k cycles project options, Enter moves task, Esc discards
     if (showMetadataPopup) {
-      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir'];
+      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project'];
       
       // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
@@ -534,6 +539,31 @@ export function App({
           addLog({ level: 'error', message: `Failed to update ${field}: ${err}` });
         });
       };
+      
+      // Helper: move task(s) to a different project
+      const moveTaskToProject = (newProjectId: string) => {
+        if (!onMoveTask || metadataTargetTasks.length === 0) return;
+        
+        // Skip if no change
+        if (newProjectId === metadataOriginalValues.project) {
+          addLog({ level: 'info', message: 'No project change' });
+          return;
+        }
+        
+        addLog({ level: 'info', message: `Moving ${metadataTargetTasks.length} task(s) to project: ${newProjectId}` });
+        
+        Promise.all(
+          metadataTargetTasks.map(task => onMoveTask(task.path, newProjectId))
+        ).then((results) => {
+          addLog({ level: 'info', message: `Moved ${results.length} task(s) to project: ${newProjectId}` });
+          // Update original values to reflect the saved state
+          setMetadataOriginalValues(prev => ({ ...prev, project: newProjectId }));
+          setMetadataProjectValue(newProjectId);
+          refetch();
+        }).catch((err) => {
+          addLog({ level: 'error', message: `Failed to move task(s): ${err}` });
+        });
+      };
 
       // === ESCAPE KEY ===
       if (key.escape) {
@@ -546,6 +576,12 @@ export function App({
           const originalIndex = ENTRY_STATUSES.indexOf(metadataOriginalValues.status);
           setMetadataStatusIndex(Math.max(0, originalIndex));
           setMetadataStatusValue(metadataOriginalValues.status);
+          setMetadataInteractionMode('navigate');
+        } else if (metadataInteractionMode === 'edit_project') {
+          // In project edit mode: discard selection, restore original, back to NAVIGATE
+          const originalIndex = projects.indexOf(metadataOriginalValues.project);
+          setMetadataProjectIndex(Math.max(0, originalIndex));
+          setMetadataProjectValue(metadataOriginalValues.project);
           setMetadataInteractionMode('navigate');
         } else {
           // In navigate mode: close popup entirely (no save)
@@ -577,6 +613,9 @@ export function App({
           if (metadataFocusedField === 'status') {
             // Status field: transition to EDIT_STATUS mode
             setMetadataInteractionMode('edit_status');
+          } else if (metadataFocusedField === 'project') {
+            // Project field: transition to EDIT_PROJECT mode
+            setMetadataInteractionMode('edit_project');
           } else {
             // Text field: transition to EDIT_TEXT mode with pre-filled buffer
             let currentValue = '';
@@ -666,6 +705,34 @@ export function App({
         }
 
         // Block other input in edit_status mode
+        return;
+      }
+
+      // === EDIT_PROJECT MODE ===
+      if (metadataInteractionMode === 'edit_project') {
+        // j/k or Down/Up: cycle through project options
+        if (input === 'j' || key.downArrow) {
+          const nextIndex = Math.min(metadataProjectIndex + 1, projects.length - 1);
+          setMetadataProjectIndex(nextIndex);
+          setMetadataProjectValue(projects[nextIndex]);
+          return;
+        }
+        if (input === 'k' || key.upArrow) {
+          const prevIndex = Math.max(metadataProjectIndex - 1, 0);
+          setMetadataProjectIndex(prevIndex);
+          setMetadataProjectValue(projects[prevIndex]);
+          return;
+        }
+
+        // Enter: move task(s) to selected project and return to NAVIGATE
+        if (key.return) {
+          const newProjectId = projects[metadataProjectIndex];
+          moveTaskToProject(newProjectId);
+          setMetadataInteractionMode('navigate');
+          return;
+        }
+
+        // Block other input in edit_project mode
         return;
       }
 
@@ -1169,7 +1236,8 @@ export function App({
         prefillStatus: EntryStatus = 'pending',
         prefillFeatureId: string = '',
         prefillBranch: string = '',
-        prefillWorkdir: string = ''
+        prefillWorkdir: string = '',
+        prefillProject: string = ''
       ) => {
         setMetadataTargetTasks(targetTasks);
         setMetadataPopupMode(mode);
@@ -1179,11 +1247,14 @@ export function App({
         setMetadataFeatureIdValue(prefillFeatureId);
         setMetadataBranchValue(prefillBranch);
         setMetadataWorkdirValue(prefillWorkdir);
+        setMetadataProjectValue(prefillProject);
+        setMetadataProjectIndex(projects.indexOf(prefillProject) >= 0 ? projects.indexOf(prefillProject) : 0);
         setMetadataOriginalValues({
           status: prefillStatus,
           feature_id: prefillFeatureId,
           git_branch: prefillBranch,
           target_workdir: prefillWorkdir,
+          project: prefillProject,
         });
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
@@ -1203,7 +1274,8 @@ export function App({
             first.status,
             first.feature_id || '',
             first.gitBranch || '',
-            first.resolvedWorkdir || first.workdir || ''
+            first.resolvedWorkdir || first.workdir || '',
+            first.projectId || ''
           );
         }
         return;
@@ -1213,7 +1285,8 @@ export function App({
       if (selectedTaskId === UNGROUPED_HEADER_ID) {
         const ungroupedTasks = tasks.filter(t => !t.feature_id);
         if (ungroupedTasks.length > 0) {
-          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '');
+          const firstUngrouped = ungroupedTasks[0];
+          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', firstUngrouped.projectId || '');
         }
         return;
       }
@@ -1223,7 +1296,8 @@ export function App({
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
         const featureTasks = tasks.filter(t => t.feature_id === featureId);
         if (featureTasks.length > 0) {
-          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '');
+          const firstFeatureTask = featureTasks[0];
+          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '');
         }
         return;
       }
@@ -1236,7 +1310,8 @@ export function App({
           selectedTask.status,
           selectedTask.feature_id || '',
           selectedTask.gitBranch || '',
-          selectedTask.resolvedWorkdir || selectedTask.workdir || ''
+          selectedTask.resolvedWorkdir || selectedTask.workdir || '',
+          selectedTask.projectId || ''
         );
       }
       return;
@@ -1652,6 +1727,9 @@ export function App({
           featureIdValue={metadataFeatureIdValue}
           branchValue={metadataBranchValue}
           workdirValue={metadataWorkdirValue}
+          projectValue={metadataProjectValue}
+          availableProjects={projects}
+          selectedProjectIndex={metadataProjectIndex}
           selectedStatusIndex={metadataStatusIndex}
           allowedStatuses={ENTRY_STATUSES}
           interactionMode={metadataInteractionMode}

@@ -274,6 +274,27 @@ export class ApiClient {
   }
 
   /**
+   * Move a task to a different project.
+   * This relocates the file in the brain docs folder.
+   */
+  async moveTask(
+    taskPath: string,
+    newProjectId: string
+  ): Promise<{ oldPath: string; newPath: string }> {
+    const encodedPath = encodeURIComponent(taskPath);
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}/move`, {
+      method: "POST",
+      body: JSON.stringify({ project: newProjectId }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as { oldPath: string; newPath: string };
+  }
+
+  /**
    * Update metadata fields on an entry.
    * Supports batch updates of multiple fields at once.
    * Only provided fields are updated - undefined fields are not sent.

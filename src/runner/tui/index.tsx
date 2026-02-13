@@ -87,6 +87,11 @@ export interface DashboardOptions {
       target_workdir?: string;
     }
   ) => Promise<void>;
+  /** Callback to move a task to a different project */
+  onMoveTask?: (
+    taskPath: string,
+    newProjectId: string
+  ) => Promise<{ oldPath: string; newPath: string }>;
 }
 
 export interface DashboardHandle {
@@ -170,6 +175,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onDisableFeature={options.onDisableFeature}
       getEnabledFeatures={options.getEnabledFeatures}
       onUpdateMetadata={options.onUpdateMetadata}
+      onMoveTask={options.onMoveTask}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

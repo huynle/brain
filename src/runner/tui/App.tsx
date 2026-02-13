@@ -1734,6 +1734,7 @@ export function App({
       <HelpBar 
         focusedPanel={focusedPanel} 
         isMultiProject={isMultiProject}
+        isFilterActive={filterMode === 'locked'}
       />
     </Box>
   );

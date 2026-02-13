@@ -464,6 +464,27 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
     },
   },
   {
+    name: "brain_move",
+    description: `Move a brain entry (typically a task) to a different project.
+
+Use cases:
+- Bulk reassign tasks to a different project
+- Move a task filed in the wrong project to the correct one
+- Reorganize tasks across projects
+
+Cannot move entries that are currently in_progress.
+
+Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Path to the entry to move (e.g., 'projects/old/task/abc12def.md')" },
+        project: { type: "string", description: "Target project ID to move the entry to (e.g., 'my-other-project')" },
+      },
+      required: ["path", "project"],
+    },
+  },
+  {
     name: "brain_stats",
     description: "Get statistics about the brain storage.",
     inputSchema: {
@@ -844,6 +865,22 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           status: string;
         }>("PATCH", `/entries/${args.path}`, args);
         return `Updated: ${response.path}\nStatus: ${response.status}\nTitle: ${response.title}`;
+      }
+
+      case "brain_move": {
+        if (!args.path || !args.project) {
+          return "Please provide both path and target project";
+        }
+        const response = await apiRequest<{
+          oldPath: string;
+          newPath: string;
+          project: string;
+          id: string;
+          title: string;
+        }>("POST", `/entries/${args.path}/move`, {
+          project: args.project,
+        });
+        return `Moved: ${response.title}\nOld Path: ${response.oldPath}\nNew Path: ${response.newPath}\nProject: ${response.project}`;
       }
 
       case "brain_stats": {

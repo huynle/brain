@@ -907,12 +907,27 @@ export function App({
     // - On ungrouped header: enable ungrouped AND immediately execute ready tasks
     // - On task row: execute the task immediately
     if (input === 'x') {
-      // Case 1: Feature header selected - enable AND execute immediately
+      // Case 1: Feature header selected - toggle enable/disable
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
         
-        // Always enable the feature (add to whitelist so tasks can run even when paused)
-        if (!activeFeatures.has(featureId)) {
+        // Toggle: if already active, disable; if not active, enable and execute
+        if (activeFeatures.has(featureId)) {
+          // Disable the feature (remove from whitelist)
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.delete(featureId);
+            return next;
+          });
+          if (onDisableFeature) {
+            onDisableFeature(featureId);
+          }
+          addLog({
+            level: 'info',
+            message: `Deactivated feature: ${featureId}`,
+          });
+        } else {
+          // Enable the feature (add to whitelist so tasks can run even when paused)
           setActiveFeatures(prev => {
             const next = new Set(prev);
             next.add(featureId);
@@ -921,46 +936,61 @@ export function App({
           if (onEnableFeature) {
             onEnableFeature(featureId);
           }
-        }
-        
-        // Execute ready tasks for this feature immediately
-        if (onExecuteFeature) {
-          addLog({
-            level: 'info',
-            message: `Executing feature: ${featureId}`,
-          });
-          onExecuteFeature(featureId).then((tasksStarted) => {
-            if (tasksStarted > 0) {
-              addLog({
-                level: 'info',
-                message: `Started ${tasksStarted} task(s) for feature: ${featureId}`,
-              });
-            } else {
-              addLog({
-                level: 'warn',
-                message: `No ready tasks to execute for feature: ${featureId}`,
-              });
-            }
-            refetch(); // Refresh to show updated status
-          }).catch((err) => {
+          
+          // Execute ready tasks for this feature immediately
+          if (onExecuteFeature) {
             addLog({
-              level: 'error',
-              message: `Failed to execute feature: ${err}`,
+              level: 'info',
+              message: `Executing feature: ${featureId}`,
             });
-          });
-        } else {
-          addLog({
-            level: 'info',
-            message: `Activated feature: ${featureId}`,
-          });
+            onExecuteFeature(featureId).then((tasksStarted) => {
+              if (tasksStarted > 0) {
+                addLog({
+                  level: 'info',
+                  message: `Started ${tasksStarted} task(s) for feature: ${featureId}`,
+                });
+              } else {
+                addLog({
+                  level: 'warn',
+                  message: `No ready tasks to execute for feature: ${featureId}`,
+                });
+              }
+              refetch(); // Refresh to show updated status
+            }).catch((err) => {
+              addLog({
+                level: 'error',
+                message: `Failed to execute feature: ${err}`,
+              });
+            });
+          } else {
+            addLog({
+              level: 'info',
+              message: `Activated feature: ${featureId}`,
+            });
+          }
         }
         return;
       }
       
-      // Case 2: Ungrouped header selected - enable AND execute immediately
+      // Case 2: Ungrouped header selected - toggle enable/disable
       if (selectedTaskId === UNGROUPED_HEADER_ID) {
-        // Always enable ungrouped (add to whitelist so tasks can run even when paused)
-        if (!activeFeatures.has(UNGROUPED_FEATURE_ID)) {
+        // Toggle: if already active, disable; if not active, enable and execute
+        if (activeFeatures.has(UNGROUPED_FEATURE_ID)) {
+          // Disable ungrouped (remove from whitelist)
+          setActiveFeatures(prev => {
+            const next = new Set(prev);
+            next.delete(UNGROUPED_FEATURE_ID);
+            return next;
+          });
+          if (onDisableFeature) {
+            onDisableFeature(UNGROUPED_FEATURE_ID);
+          }
+          addLog({
+            level: 'info',
+            message: 'Deactivated ungrouped tasks',
+          });
+        } else {
+          // Enable ungrouped (add to whitelist so tasks can run even when paused)
           setActiveFeatures(prev => {
             const next = new Set(prev);
             next.add(UNGROUPED_FEATURE_ID);
@@ -969,38 +999,38 @@ export function App({
           if (onEnableFeature) {
             onEnableFeature(UNGROUPED_FEATURE_ID);
           }
-        }
-        
-        // Execute ready tasks for ungrouped immediately
-        if (onExecuteFeature) {
-          addLog({
-            level: 'info',
-            message: 'Executing ungrouped tasks',
-          });
-          onExecuteFeature(UNGROUPED_FEATURE_ID).then((tasksStarted) => {
-            if (tasksStarted > 0) {
-              addLog({
-                level: 'info',
-                message: `Started ${tasksStarted} ungrouped task(s)`,
-              });
-            } else {
-              addLog({
-                level: 'warn',
-                message: 'No ready ungrouped tasks to execute',
-              });
-            }
-            refetch(); // Refresh to show updated status
-          }).catch((err) => {
+          
+          // Execute ready tasks for ungrouped immediately
+          if (onExecuteFeature) {
             addLog({
-              level: 'error',
-              message: `Failed to execute ungrouped tasks: ${err}`,
+              level: 'info',
+              message: 'Executing ungrouped tasks',
             });
-          });
-        } else {
-          addLog({
-            level: 'info',
-            message: 'Activated ungrouped tasks',
-          });
+            onExecuteFeature(UNGROUPED_FEATURE_ID).then((tasksStarted) => {
+              if (tasksStarted > 0) {
+                addLog({
+                  level: 'info',
+                  message: `Started ${tasksStarted} ungrouped task(s)`,
+                });
+              } else {
+                addLog({
+                  level: 'warn',
+                  message: 'No ready ungrouped tasks to execute',
+                });
+              }
+              refetch(); // Refresh to show updated status
+            }).catch((err) => {
+              addLog({
+                level: 'error',
+                message: `Failed to execute ungrouped tasks: ${err}`,
+              });
+            });
+          } else {
+            addLog({
+              level: 'info',
+              message: 'Activated ungrouped tasks',
+            });
+          }
         }
         return;
       }

@@ -220,4 +220,9 @@ export interface AppProps {
       target_workdir?: string;
     }
   ) => Promise<void>;
+  /** Callback to move a task to a different project */
+  onMoveTask?: (
+    taskPath: string,
+    newProjectId: string
+  ) => Promise<{ oldPath: string; newPath: string }>;
 }

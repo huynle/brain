@@ -2254,6 +2254,35 @@ export class TaskRunner {
   }
 
   /**
+   * Move a task to a different project.
+   * Calls the API to relocate the file in the brain docs folder.
+   */
+  async moveTask(
+    taskPath: string,
+    newProjectId: string
+  ): Promise<{ oldPath: string; newPath: string }> {
+    this.logger.info("Moving task to different project", { taskPath, newProjectId });
+
+    try {
+      const result = await this.apiClient.moveTask(taskPath, newProjectId);
+      this.logger.info("Task moved successfully", { 
+        oldPath: result.oldPath, 
+        newPath: result.newPath,
+        newProjectId,
+      });
+      this.tuiLog('info', `Task moved to project: ${newProjectId}`, undefined, newProjectId);
+      return result;
+    } catch (error) {
+      this.logger.error("Failed to move task", {
+        taskPath,
+        newProjectId,
+        error: String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Edit a task in an external editor.
    * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
    * Returns the new content if changes were made, null if cancelled/unchanged.
@@ -2393,6 +2422,8 @@ export class TaskRunner {
         getEnabledFeatures: () => this.getEnabledFeatures(),
         // Metadata update callback for batch metadata edits
         onUpdateMetadata: (taskPath, fields) => this.updateEntryMetadata(taskPath, fields),
+        // Move task to different project
+        onMoveTask: (taskPath, newProjectId) => this.moveTask(taskPath, newProjectId),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

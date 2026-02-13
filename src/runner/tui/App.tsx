@@ -1571,7 +1571,11 @@ export function App({
           }
           return;
         }
-        // Note: Individual task status change is now handled by 's' key
+        // Enter on a regular task: open in editor (same as 'e')
+        if (selectedTask && focusedPanel === 'tasks') {
+          editTaskInEditor(selectedTask.id, selectedTask.path);
+          return;
+        }
         return;
       }
 

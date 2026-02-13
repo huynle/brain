@@ -843,6 +843,55 @@ export function App({
       return;
     }
 
+    // === Filter Mode Handling (intercepts before normal-mode shortcuts) ===
+    // Must come BEFORE normal shortcuts to properly capture keys when typing in filter
+    if (focusedPanel === 'tasks') {
+      // Typing mode: route all input to filter, block normal navigation
+      if (filterMode === 'typing') {
+        // Escape: deactivate filter and clear
+        if (key.escape) {
+          deactivateFilter();
+          return;
+        }
+        // Enter: lock in filter
+        if (key.return) {
+          lockInFilter();
+          return;
+        }
+        // Backspace: delete last character
+        if (key.backspace || key.delete) {
+          handleFilterBackspace();
+          return;
+        }
+        // Printable characters: add to filter
+        if (input && input.length === 1 && !key.ctrl && !key.meta) {
+          handleFilterChar(input);
+          return;
+        }
+        // Block all other input in typing mode
+        return;
+      }
+
+      // Locked mode: Esc clears filter, "/" re-enters typing, other keys pass through
+      if (filterMode === 'locked') {
+        if (key.escape) {
+          deactivateFilter();
+          return;
+        }
+        if (input === '/') {
+          activateFilter();
+          return;
+        }
+        // Other keys fall through to normal navigation on filtered list
+      }
+
+      // Off mode (normal): "/" activates filter
+      if (filterMode === 'off' && input === '/') {
+        activateFilter();
+        return;
+      }
+    }
+
     // === Normal Mode ===
     // Note: Quit via Ctrl-C is handled by SIGINT handler (lines 487-500)
 
@@ -1274,55 +1323,6 @@ export function App({
         });
       }
       return;
-    }
-
-    // === Filter Mode Handling (intercepts before normal navigation) ===
-    // Must come BEFORE tasks panel navigation to properly capture keys in filter modes
-    if (focusedPanel === 'tasks') {
-      // Typing mode: route all input to filter, block normal navigation
-      if (filterMode === 'typing') {
-        // Escape: deactivate filter and clear
-        if (key.escape) {
-          deactivateFilter();
-          return;
-        }
-        // Enter: lock in filter
-        if (key.return) {
-          lockInFilter();
-          return;
-        }
-        // Backspace: delete last character
-        if (key.backspace || key.delete) {
-          handleFilterBackspace();
-          return;
-        }
-        // Printable characters: add to filter
-        if (input && input.length === 1 && !key.ctrl && !key.meta) {
-          handleFilterChar(input);
-          return;
-        }
-        // Block all other input in typing mode
-        return;
-      }
-
-      // Locked mode: Esc clears filter, "/" re-enters typing, other keys pass through
-      if (filterMode === 'locked') {
-        if (key.escape) {
-          deactivateFilter();
-          return;
-        }
-        if (input === '/') {
-          activateFilter();
-          return;
-        }
-        // Other keys fall through to normal navigation on filtered list
-      }
-
-      // Off mode (normal): "/" activates filter
-      if (filterMode === 'off' && input === '/') {
-        activateFilter();
-        return;
-      }
     }
 
     // Navigation (only when focused on tasks panel)

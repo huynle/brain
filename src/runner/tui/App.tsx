@@ -52,6 +52,8 @@ import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
 import { useSettingsStorage } from './hooks/useSettingsStorage';
+import { useTaskFilter } from './hooks/useTaskFilter';
+import { FilterBar } from './components/FilterBar';
 import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
@@ -333,12 +335,26 @@ export function App({
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
 
-  // Get task IDs in visual tree order for navigation (j/k keys)
-  // This ensures navigation follows the same order tasks appear on screen
-  const navigationOrder = useMemo(
-    () => flattenFeatureOrder(tasks, completedCollapsed, draftCollapsed, collapsedFeatures), 
-    [tasks, completedCollapsed, draftCollapsed, collapsedFeatures]
-  );
+  // Task filter hook - provides filtered tasks and navigation order
+  // Replaces direct flattenFeatureOrder call with filter-aware version
+  const {
+    filterText,
+    filterMode,
+    filteredTasks,
+    navigationOrder,
+    matchCount,
+    totalCount,
+    activate: activateFilter,
+    deactivate: deactivateFilter,
+    lockIn: lockInFilter,
+    handleChar: handleFilterChar,
+    handleBackspace: handleFilterBackspace,
+  } = useTaskFilter({
+    tasks,
+    completedCollapsed,
+    draftCollapsed,
+    collapsedFeatures,
+  });
 
   // Auto-scroll task list to keep selected task in view
   useEffect(() => {
@@ -1260,6 +1276,55 @@ export function App({
       return;
     }
 
+    // === Filter Mode Handling (intercepts before normal navigation) ===
+    // Must come BEFORE tasks panel navigation to properly capture keys in filter modes
+    if (focusedPanel === 'tasks') {
+      // Typing mode: route all input to filter, block normal navigation
+      if (filterMode === 'typing') {
+        // Escape: deactivate filter and clear
+        if (key.escape) {
+          deactivateFilter();
+          return;
+        }
+        // Enter: lock in filter
+        if (key.return) {
+          lockInFilter();
+          return;
+        }
+        // Backspace: delete last character
+        if (key.backspace || key.delete) {
+          handleFilterBackspace();
+          return;
+        }
+        // Printable characters: add to filter
+        if (input && input.length === 1 && !key.ctrl && !key.meta) {
+          handleFilterChar(input);
+          return;
+        }
+        // Block all other input in typing mode
+        return;
+      }
+
+      // Locked mode: Esc clears filter, "/" re-enters typing, other keys pass through
+      if (filterMode === 'locked') {
+        if (key.escape) {
+          deactivateFilter();
+          return;
+        }
+        if (input === '/') {
+          activateFilter();
+          return;
+        }
+        // Other keys fall through to normal navigation on filtered list
+      }
+
+      // Off mode (normal): "/" activates filter
+      if (filterMode === 'off' && input === '/') {
+        activateFilter();
+        return;
+      }
+    }
+
     // Navigation (only when focused on tasks panel)
     if (focusedPanel === 'tasks') {
       // Use navigationOrder (flattened tree) instead of raw tasks array
@@ -1609,8 +1674,14 @@ export function App({
             borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
             flexDirection="column"
           >
+            <FilterBar
+              filterText={filterText}
+              filterMode={filterMode}
+              matchCount={matchCount}
+              totalCount={totalCount}
+            />
             <TaskTree
-              tasks={tasks}
+              tasks={filteredTasks}
               selectedId={selectedTaskId}
               onSelect={setSelectedTaskId}
               completedCollapsed={completedCollapsed}

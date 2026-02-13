@@ -18,6 +18,7 @@ import {
   getStaleEntries,
   getTrackedEntryCount,
   deleteEntryMeta,
+  moveEntryMeta,
 } from "./db";
 import {
   execZk,
@@ -818,6 +819,108 @@ export class BrainService {
 
     // Remove from database
     deleteEntryMeta(path);
+  }
+
+  /**
+   * Move an entry to a different project (brain_move)
+   * 
+   * Moves a brain entry from one project to another:
+   * 1. Validates source entry exists
+   * 2. Validates target project directory (creates if needed)
+   * 3. Checks for ID collision in target
+   * 4. Prevents moving in_progress tasks
+   * 5. Updates frontmatter projectId
+   * 6. Writes file to new path
+   * 7. Deletes old file
+   * 8. Updates SQLite atomically
+   * 9. Runs zk index to update zk's internal index
+   */
+  async moveEntry(
+    path: string,
+    newProjectId: string
+  ): Promise<{ oldPath: string; newPath: string; project: string; id: string; title: string }> {
+    const fullPath = join(this.config.brainDir, path);
+    if (!existsSync(fullPath)) {
+      throw new Error(`Entry not found: ${path}`);
+    }
+
+    // Read existing content and frontmatter
+    const content = readFileSync(fullPath, "utf-8");
+    const { frontmatter, body } = parseFrontmatter(content);
+    
+    // Extract entry type from path or frontmatter
+    const pathMatch = path.match(/\/([^/]+)\/[^/]+\.md$/);
+    const entryType = (frontmatter.type as string) || (pathMatch ? pathMatch[1] : "scratch");
+    
+    // Extract entry ID from filename
+    const id = extractIdFromPath(path);
+    const title = (frontmatter.title as string) || path;
+    
+    // Get current project from path
+    const currentProjectMatch = path.match(/^projects\/([^/]+)\//);
+    const currentProjectId = currentProjectMatch ? currentProjectMatch[1] : null;
+    
+    // Validate not moving to same project
+    if (currentProjectId === newProjectId) {
+      throw new Error(`Entry is already in project: ${newProjectId}`);
+    }
+    
+    // Prevent moving in_progress tasks (agent may be actively working)
+    const status = frontmatter.status as string;
+    if (status === "in_progress") {
+      throw new Error(`Cannot move in_progress task: ${id}. Complete or block it first.`);
+    }
+    
+    // Build new path
+    const newDir = `projects/${newProjectId}/${entryType}`;
+    const newPath = `${newDir}/${id}.md`;
+    const newFullDir = join(this.config.brainDir, newDir);
+    const newFullPath = join(this.config.brainDir, newPath);
+    
+    // Check for ID collision in target
+    if (existsSync(newFullPath)) {
+      throw new Error(`Entry with ID ${id} already exists in project ${newProjectId}`);
+    }
+    
+    // Create target directory if needed
+    if (!existsSync(newFullDir)) {
+      mkdirSync(newFullDir, { recursive: true });
+    }
+    
+    // Update frontmatter with new projectId
+    const updatedFrontmatter = { ...frontmatter };
+    updatedFrontmatter.projectId = newProjectId;
+    const newFrontmatterStr = serializeFrontmatter(updatedFrontmatter);
+    
+    // Build new file content
+    const newContent = `---\n${newFrontmatterStr}---\n\n${body}\n`;
+    
+    // Write to new location
+    writeFileSync(newFullPath, newContent, "utf-8");
+    
+    // Delete old file
+    unlinkSync(fullPath);
+    
+    // Update SQLite atomically
+    moveEntryMeta(path, newPath, newProjectId);
+    
+    // Run zk index to update zk's internal index
+    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    if (zkAvailable) {
+      try {
+        await execZk(["index", "--quiet"]);
+      } catch {
+        // Index may fail but move was successful
+      }
+    }
+    
+    return {
+      oldPath: path,
+      newPath,
+      project: newProjectId,
+      id,
+      title,
+    };
   }
 
   // ========================================

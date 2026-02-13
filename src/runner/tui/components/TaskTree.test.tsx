@@ -28,6 +28,7 @@ function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
     title: 'Test Task',
     status: 'pending',
     priority: 'medium',
+    tags: [],
     dependencies,
     dependents,
     // Auto-generate title fields from ID fields (test uses IDs as titles)

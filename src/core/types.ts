@@ -305,6 +305,7 @@ export interface Task {
   priority: Priority;
   status: EntryStatus;
   depends_on: string[];
+  tags: string[]; // Tags for filtering and categorization
   created: string;
   modified?: string; // ISO timestamp when last modified
   target_workdir: string | null; // Explicit workdir override for task execution (absolute path)

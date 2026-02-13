@@ -192,6 +192,7 @@ async function fetchProjectTasks(
       title: task.title,
       status: task.status,
       priority: task.priority || 'medium',
+      tags: task.tags || [],
       // Keep IDs for tree building (TaskTree.tsx needs these)
       dependencies: depIds,
       dependents: dependentIds,

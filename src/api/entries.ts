@@ -22,6 +22,8 @@ import {
   NotFoundResponseSchema,
   ServiceUnavailableResponseSchema,
   EntryIdOrPathSchema,
+  MoveEntryRequestSchema,
+  MoveEntryResponseSchema,
 } from "./schemas";
 
 // =============================================================================
@@ -183,6 +185,48 @@ const deleteEntryRoute = createRoute({
     404: {
       content: { "application/json": { schema: NotFoundResponseSchema } },
       description: "Entry not found",
+    },
+  },
+});
+
+// POST /entries/:id/move - Move entry to a different project
+const moveEntryRoute = createRoute({
+  method: "post",
+  path: "/:id/move",
+  tags: ["Entries"],
+  summary: "Move entry to different project",
+  description: "Moves an entry to a different project. Cannot move in_progress tasks.",
+  request: {
+    params: z.object({
+      id: EntryIdOrPathSchema.openapi({
+        param: { name: "id", in: "path" },
+        description: "Entry ID (8-char alphanumeric)",
+      }),
+    }),
+    body: {
+      content: {
+        "application/json": {
+          schema: MoveEntryRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: { "application/json": { schema: MoveEntryResponseSchema } },
+      description: "Entry moved successfully",
+    },
+    400: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Validation error (e.g., same project, in_progress task)",
+    },
+    404: {
+      content: { "application/json": { schema: NotFoundResponseSchema } },
+      description: "Entry not found",
+    },
+    409: {
+      content: { "application/json": { schema: ErrorResponseSchema } },
+      description: "Conflict (e.g., ID collision in target project)",
     },
   },
 });
@@ -462,6 +506,78 @@ export function createEntriesRoutes(): OpenAPIHono {
               message: `Entry not found: ${id}`,
             },
             404
+          );
+        }
+      }
+      throw error;
+    }
+  });
+
+  // POST /entries/:id/move - Move entry to different project
+  entries.openapi(moveEntryRoute, async (c) => {
+    const { id } = c.req.valid("param");
+    const body = c.req.valid("json");
+
+    try {
+      const service = getBrainService();
+
+      // First, resolve the ID to a path
+      let entryPath = id;
+      if (/^[a-z0-9]{8}$/.test(id)) {
+        // It's an ID, need to find the path
+        try {
+          const entry = await service.recall(id);
+          entryPath = entry.path;
+        } catch {
+          return c.json(
+            {
+              error: "Not Found",
+              message: `Entry not found: ${id}`,
+            },
+            404
+          );
+        }
+      }
+
+      const result = await service.moveEntry(entryPath, body.project);
+
+      return c.json(result, 200);
+    } catch (error) {
+      if (error instanceof Error) {
+        if (error.message.includes("Entry not found")) {
+          return c.json(
+            {
+              error: "Not Found",
+              message: `Entry not found: ${id}`,
+            },
+            404
+          );
+        }
+        if (error.message.includes("already in project")) {
+          return c.json(
+            {
+              error: "Validation Error",
+              message: error.message,
+            },
+            400
+          );
+        }
+        if (error.message.includes("Cannot move in_progress")) {
+          return c.json(
+            {
+              error: "Validation Error",
+              message: error.message,
+            },
+            400
+          );
+        }
+        if (error.message.includes("already exists in project")) {
+          return c.json(
+            {
+              error: "Conflict",
+              message: error.message,
+            },
+            409
           );
         }
       }

@@ -292,3 +292,47 @@ export function updateEntryProject(path: string, projectId: string): boolean {
   );
   return result.changes > 0;
 }
+
+/**
+ * Move an entry to a new path and project atomically.
+ * Deletes old row and inserts new row in a transaction.
+ * Returns true if successful, false if old path not found.
+ */
+export function moveEntryMeta(
+  oldPath: string,
+  newPath: string,
+  newProjectId: string
+): boolean {
+  const database = getDb();
+
+  // Get existing metadata
+  const existing = getEntryMeta(oldPath);
+  if (!existing) {
+    return false;
+  }
+
+  const now = Date.now();
+
+  // Use a transaction to ensure atomicity
+  const moveTransaction = database.transaction(() => {
+    // Delete old entry
+    database.run("DELETE FROM entries_meta WHERE path = ?", [oldPath]);
+
+    // Insert new entry with preserved metadata
+    database.run(
+      `INSERT INTO entries_meta (path, project_id, access_count, accessed_at, last_verified, created_at) 
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        newPath,
+        newProjectId,
+        existing.access_count,
+        existing.accessed_at,
+        existing.last_verified,
+        existing.created_at,
+      ]
+    );
+  });
+
+  moveTransaction();
+  return true;
+}

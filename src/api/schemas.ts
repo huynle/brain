@@ -563,3 +563,22 @@ export const TaskStatusResponseSchema = z.object({
   changed: z.boolean().openapi({ description: "Whether any status changed during wait" }),
   timedOut: z.boolean().openapi({ description: "Whether timeout was reached" }),
 }).openapi("TaskStatusResponse");
+
+// =============================================================================
+// Move Entry Schemas
+// =============================================================================
+
+export const MoveEntryRequestSchema = z.object({
+  project: z.string().regex(/^[a-zA-Z0-9_-]+$/).openapi({
+    description: "Target project ID to move the entry to",
+    example: "my-other-project",
+  }),
+}).openapi("MoveEntryRequest");
+
+export const MoveEntryResponseSchema = z.object({
+  oldPath: z.string().openapi({ example: "projects/old-project/task/abc12def.md" }),
+  newPath: z.string().openapi({ example: "projects/new-project/task/abc12def.md" }),
+  project: z.string().openapi({ example: "new-project" }),
+  id: EntryIdSchema,
+  title: z.string(),
+}).openapi("MoveEntryResponse");

@@ -119,8 +119,8 @@ describe('App', () => {
     it('shows connection indicator', () => {
       const { lastFrame, unmount } = render(<App config={defaultConfig} />);
       const frame = lastFrame() || '';
-      // Should show either online or offline
-      expect(frame.includes('online') || frame.includes('offline')).toBe(true);
+      // Should show connection dot (● or ○)
+      expect(frame.includes('●') || frame.includes('○')).toBe(true);
       unmount();
     });
   });

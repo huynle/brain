@@ -53,10 +53,10 @@ function ResourceMetricsDisplay({
 
   return (
     <>
-      <Text color="green">CPU: {metrics.cpuPercent}%</Text>
-      <Text>   </Text>
-      <Text color="green">Mem: {memoryDisplay}</Text>
-      <Text>   </Text>
+      <Text color="green">CPU:{metrics.cpuPercent}%</Text>
+      <Text> </Text>
+      <Text color="green">Mem:{memoryDisplay}</Text>
+      <Text> </Text>
       <Text color="green">{metrics.processCount} procs</Text>
     </>
   );
@@ -78,8 +78,7 @@ function FeatureStatsDisplay({
   
   return (
     <>
-      <Text dimColor>|</Text>
-      <Text>   </Text>
+      <Text> </Text>
       <Text color="magenta">
         Features: {ready}/{featureStats.total} ready
       </Text>
@@ -161,29 +160,29 @@ export const StatusBar = React.memo(function StatusBar({
           <Box>
             {activeFeatures && activeFeatures.size > 0 && (
               <>
-                <Text color="magenta" bold>▶ {activeFeatures.size} feature{activeFeatures.size > 1 ? 's' : ''} active</Text>
-                <Text>   </Text>
+                <Text color="magenta" bold>▶{activeFeatures.size}</Text>
+                <Text> </Text>
               </>
             )}
             {isPaused && (!activeFeatures || activeFeatures.size === 0) && (
               <>
-                <Text color="yellow" bold>⏸ PAUSED</Text>
+                <Text color="yellow" bold>⏸</Text>
                 {enabledFeatures && enabledFeatures.size > 0 && (
                   <Text color="green"> [{enabledFeatures.size} feature{enabledFeatures.size > 1 ? 's' : ''} enabled]</Text>
                 )}
-                <Text>   </Text>
+                <Text> </Text>
               </>
             )}
             <Text color="green">● {stats.ready} ready</Text>
-            <Text>   </Text>
+            <Text> </Text>
             <Text color="yellow">○ {stats.waiting} waiting</Text>
-            <Text>   </Text>
+            <Text> </Text>
             <Text color="blue">▶ {activeCount} active</Text>
-            <Text>   </Text>
+            <Text> </Text>
             <Text color="green" dimColor>✓ {stats.completed} done</Text>
             {stats.blocked > 0 && (
               <>
-                <Text>   </Text>
+                <Text> </Text>
                 <Text color="red">✗ {stats.blocked} blocked</Text>
               </>
             )}
@@ -199,15 +198,13 @@ export const StatusBar = React.memo(function StatusBar({
             {resourceMetrics && (
               <>
                 <ResourceMetricsDisplay metrics={resourceMetrics} />
-                <Text>   </Text>
-                <Text dimColor>|</Text>
-                <Text>   </Text>
+                <Text> </Text>
               </>
             )}
             {isConnected ? (
-              <Text color="green">● online</Text>
+              <Text color="green">●</Text>
             ) : (
-              <Text color="red">○ offline</Text>
+              <Text color="red">○</Text>
             )}
           </Box>
         </Box>
@@ -235,29 +232,29 @@ export const StatusBar = React.memo(function StatusBar({
       <Box>
         {activeFeatures && activeFeatures.size > 0 && (
           <>
-            <Text color="magenta" bold>▶ {activeFeatures.size} feature{activeFeatures.size > 1 ? 's' : ''} active</Text>
-            <Text>   </Text>
+            <Text color="magenta" bold>▶{activeFeatures.size}</Text>
+            <Text> </Text>
           </>
         )}
         {isPaused && (!activeFeatures || activeFeatures.size === 0) && (
           <>
-            <Text color="yellow" bold>⏸ PAUSED</Text>
+            <Text color="yellow" bold>⏸</Text>
             {enabledFeatures && enabledFeatures.size > 0 && (
               <Text color="green"> [{enabledFeatures.size} feature{enabledFeatures.size > 1 ? 's' : ''} enabled]</Text>
             )}
-            <Text>   </Text>
+            <Text> </Text>
           </>
         )}
         <Text color="green">● {stats.ready} ready</Text>
-        <Text>   </Text>
+        <Text> </Text>
         <Text color="yellow">○ {stats.waiting} waiting</Text>
-        <Text>   </Text>
+        <Text> </Text>
         <Text color="blue">▶ {activeCount} active</Text>
-        <Text>   </Text>
+        <Text> </Text>
         <Text color="green" dimColor>✓ {stats.completed} done</Text>
         {stats.blocked > 0 && (
           <>
-            <Text>   </Text>
+            <Text> </Text>
             <Text color="red">✗ {stats.blocked} blocked</Text>
           </>
         )}
@@ -273,15 +270,13 @@ export const StatusBar = React.memo(function StatusBar({
         {resourceMetrics && (
           <>
             <ResourceMetricsDisplay metrics={resourceMetrics} />
-            <Text>   </Text>
-            <Text dimColor>|</Text>
-            <Text>   </Text>
+            <Text> </Text>
           </>
         )}
         {isConnected ? (
-          <Text color="green">● online</Text>
+          <Text color="green">●</Text>
         ) : (
-          <Text color="red">○ offline</Text>
+          <Text color="red">○</Text>
         )}
       </Box>
     </Box>

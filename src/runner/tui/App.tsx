@@ -1556,6 +1556,36 @@ export function App({
           });
           return;
         }
+        // Toggle completed feature section
+        if (selectedTaskId?.startsWith(COMPLETED_FEATURE_PREFIX)) {
+          const featureId = selectedTaskId.replace(COMPLETED_FEATURE_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            const key = `completed:${featureId}`;
+            if (next.has(key)) {
+              next.delete(key);
+            } else {
+              next.add(key);
+            }
+            return next;
+          });
+          return;
+        }
+        // Toggle draft feature section
+        if (selectedTaskId?.startsWith(DRAFT_FEATURE_PREFIX)) {
+          const featureId = selectedTaskId.replace(DRAFT_FEATURE_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            const key = `draft:${featureId}`;
+            if (next.has(key)) {
+              next.delete(key);
+            } else {
+              next.add(key);
+            }
+            return next;
+          });
+          return;
+        }
         // Toggle dynamic group section if group header is selected
         if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
           const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');

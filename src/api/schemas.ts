@@ -187,6 +187,7 @@ export const ListEntriesQuerySchema = z.object({
   status: EntryStatusSchema.optional(),
   feature_id: z.string().optional().openapi({ description: "Filter by feature group ID (e.g., 'auth-system')" }),
   filename: z.string().optional().openapi({ description: "Filter by filename pattern" }),
+  tags: z.string().optional().openapi({ description: "Filter by tags (comma-separated, OR logic)" }),
   limit: z.string().transform(Number).pipe(z.number().int().positive()).optional(),
   offset: z.string().transform(Number).pipe(z.number().int().nonnegative()).optional(),
   global: z.string().transform((v) => v === "true").optional(),
@@ -229,6 +230,7 @@ export const SearchRequestSchema = z.object({
   type: EntryTypeSchema.optional(),
   status: EntryStatusSchema.optional(),
   feature_id: z.string().optional().openapi({ description: "Filter by feature group ID" }),
+  tags: z.array(z.string()).optional().openapi({ description: "Filter by tags (OR logic - matches entries with any specified tag)" }),
   limit: z.number({ message: "limit must be a positive integer" })
     .int({ message: "limit must be a positive integer" })
     .positive({ message: "limit must be a positive integer" })

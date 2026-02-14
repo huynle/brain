@@ -174,6 +174,7 @@ export interface ListEntriesRequest {
   status?: EntryStatus;
   feature_id?: string;
   filename?: string;
+  tags?: string[];
   limit?: number;
   offset?: number;
   global?: boolean;
@@ -192,6 +193,7 @@ export interface SearchRequest {
   type?: EntryType;
   status?: EntryStatus;
   feature_id?: string;
+  tags?: string[];
   limit?: number;
   global?: boolean;
 }

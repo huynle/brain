@@ -940,7 +940,7 @@ export class BrainService {
       );
     }
 
-    const needsCodeFiltering = request.status || request.feature_id;
+    const needsCodeFiltering = request.status || request.feature_id || request.tags;
     const fetchLimit = needsCodeFiltering ? limit * 5 : limit;
     const zkArgs = [
       "list",
@@ -981,6 +981,14 @@ export class BrainService {
       });
     }
 
+    // Tag filtering (OR logic - matches entries with any of the specified tags)
+    if (request.tags && request.tags.length > 0) {
+      notes = notes.filter((note) => {
+        const noteTags = note.tags || [];
+        return request.tags!.some(tag => noteTags.includes(tag));
+      });
+    }
+
     notes = notes.slice(0, limit);
 
     const results: BrainEntry[] = notes.map((note) => ({
@@ -1013,7 +1021,7 @@ export class BrainService {
       );
     }
 
-    const needsCodeFiltering = request.status || request.filename || request.feature_id;
+    const needsCodeFiltering = request.status || request.filename || request.feature_id || request.tags;
     const fetchLimit = needsCodeFiltering ? Math.max(limit * 5, 100) : limit + offset;
     const zkArgs = [
       "list",
@@ -1056,6 +1064,14 @@ export class BrainService {
       notes = notes.filter((note) => {
         const fm = note.metadata || {};
         return fm.feature_id === request.feature_id;
+      });
+    }
+
+    // Tag filtering (OR logic - matches entries with any of the specified tags)
+    if (request.tags && request.tags.length > 0) {
+      notes = notes.filter((note) => {
+        const noteTags = note.tags || [];
+        return request.tags!.some(tag => noteTags.includes(tag));
       });
     }
 

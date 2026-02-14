@@ -395,6 +395,7 @@ const tools: Tool[] = [
         type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
         status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by status" },
         feature_id: { type: "string", description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')" },
+        tags: { type: "array", items: { type: "string" }, description: "Filter by tags (OR logic - matches entries with any of the specified tags)" },
         limit: { type: "number", description: "Maximum results (default: 10)" },
         global: { type: "boolean", description: "Search only global entries" },
       },
@@ -414,6 +415,7 @@ Filename filtering supports:
         type: { type: "string", enum: ENTRY_TYPES, description: "Filter by entry type" },
         status: { type: "string", enum: ENTRY_STATUSES, description: "Filter by status" },
         feature_id: { type: "string", description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')" },
+        tags: { type: "array", items: { type: "string" }, description: "Filter by tags (OR logic - matches entries with any of the specified tags)" },
         limit: { type: "number", description: "Maximum entries to return (default: 20)" },
         global: { type: "boolean", description: "List only global entries" },
         sortBy: { type: "string", enum: ["created", "modified", "priority"], description: "Sort order" },
@@ -826,6 +828,12 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
       }
 
       case "brain_list": {
+        // Convert tags array to comma-separated string for GET query params
+        const tagsArray = args.tags as string[] | undefined;
+        const queryParams: Record<string, string | number | boolean | undefined> = {
+          ...args,
+          tags: tagsArray?.join(","),
+        };
         const response = await apiRequest<{
           entries: Array<{
             id: string;
@@ -836,7 +844,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
             priority?: string;
           }>;
           total: number;
-        }>("GET", "/entries", undefined, args as Record<string, string | number | boolean | undefined>);
+        }>("GET", "/entries", undefined, queryParams);
         if (response.entries.length === 0) {
           return "No entries found";
         }

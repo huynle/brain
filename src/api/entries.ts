@@ -372,7 +372,9 @@ export function createEntriesRoutes(): OpenAPIHono {
     const request = {
       type: query.type,
       status: query.status,
+      feature_id: query.feature_id,
       filename: query.filename,
+      tags: query.tags ? query.tags.split(",").map((t: string) => t.trim()) : undefined,
       limit: query.limit,
       offset: query.offset,
       global: query.global,

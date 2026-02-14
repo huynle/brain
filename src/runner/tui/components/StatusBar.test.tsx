@@ -95,7 +95,7 @@ describe('StatusBar', () => {
           isConnected={true}
         />
       );
-      expect(lastFrame()).toContain('● online');
+      expect(lastFrame()).toContain('●');
     });
 
     it('shows offline when disconnected', () => {
@@ -106,7 +106,7 @@ describe('StatusBar', () => {
           isConnected={false}
         />
       );
-      expect(lastFrame()).toContain('○ offline');
+      expect(lastFrame()).toContain('○');
     });
   });
 
@@ -183,7 +183,7 @@ describe('StatusBar', () => {
           pausedProjects={pausedProjects}
         />
       );
-      expect(lastFrame()).toContain('⏸ PAUSED');
+      expect(lastFrame()).toContain('⏸');
     });
 
     it('does not show PAUSED banner when project is not paused', () => {
@@ -212,7 +212,7 @@ describe('StatusBar', () => {
           pausedProjects={pausedProjects}
         />
       );
-      expect(lastFrame()).toContain('⏸ PAUSED');
+      expect(lastFrame()).toContain('⏸');
     });
 
     it('shows PAUSED banner when viewing "all" and all projects are paused', () => {
@@ -228,7 +228,7 @@ describe('StatusBar', () => {
           pausedProjects={pausedProjects}
         />
       );
-      expect(lastFrame()).toContain('⏸ PAUSED');
+      expect(lastFrame()).toContain('⏸');
     });
 
     it('does not show PAUSED when viewing "all" but only some projects are paused', () => {

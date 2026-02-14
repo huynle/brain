@@ -197,6 +197,43 @@ describe("Search API", () => {
       }
     });
 
+    test("should accept tags array for filtering", async () => {
+      const res = await app.request("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "authentication",
+          tags: ["bug", "urgent"],
+        }),
+      });
+
+      // Might be 200 (success) or 503 (zk not available)
+      expect([200, 503]).toContain(res.status);
+
+      const json = await res.json();
+      if (res.status === 200) {
+        expect(json).toHaveProperty("results");
+        expect(json).toHaveProperty("total");
+      } else {
+        expect(json.error).toBe("Service Unavailable");
+      }
+    });
+
+    test("should reject invalid tags (non-array)", async () => {
+      const res = await app.request("/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: "authentication",
+          tags: "not-an-array",
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("Validation Error");
+    });
+
     test("should trim whitespace from query", async () => {
       const res = await app.request("/search", {
         method: "POST",

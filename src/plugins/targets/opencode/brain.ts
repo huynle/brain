@@ -622,6 +622,10 @@ ${response.content}`;
             .string()
             .optional()
             .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Filter by tags (OR logic - matches entries with any of the specified tags)"),
           limit: tool.schema
             .number()
             .optional()
@@ -701,6 +705,10 @@ Filename filtering supports:
             .string()
             .optional()
             .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Filter by tags (OR logic - matches entries with any of the specified tags)"),
           filename: tool.schema
             .string()
             .optional()
@@ -743,6 +751,7 @@ Filename filtering supports:
                 type: args.type,
                 status: args.status,
                 feature_id: args.feature_id,
+                tags: args.tags?.join(","),
                 filename: args.filename,
                 limit: args.limit ?? 20,
                 global: args.global,
@@ -754,6 +763,7 @@ Filename filtering supports:
               args.type,
               args.status,
               args.filename ? `filename:${args.filename}` : null,
+              args.tags?.length ? `tags:${args.tags.join(",")}` : null,
             ].filter(Boolean);
             const filterDesc = filterParts.join(", ");
 

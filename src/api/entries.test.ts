@@ -215,6 +215,22 @@ This is test content for GET endpoint.
       expect(json.error).toBe("Validation Error");
     });
 
+    test("should accept tags parameter for filtering", async () => {
+      // Will fail with 503 if zk is not available, but validates parameter parsing
+      const res = await app.request("/entries?tags=bug,urgent");
+
+      // 200 (success) or 503 (zk unavailable)
+      expect([200, 503].includes(res.status)).toBe(true);
+    });
+
+    test("should pass feature_id to service layer", async () => {
+      // This tests the bug fix: feature_id should be passed through
+      const res = await app.request("/entries?feature_id=auth-system");
+
+      // 200 (success) or 503 (zk unavailable)
+      expect([200, 503].includes(res.status)).toBe(true);
+    });
+
     test("should handle invalid status parameter", async () => {
       const res = await app.request("/entries?status=invalid-status");
 

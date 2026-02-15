@@ -302,6 +302,10 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           feature_id: task.feature_id,
           feature_priority: task.feature_priority,
           feature_depends_on: task.feature_depends_on,
+          // Execution override fields
+          agent: task.agent,
+          model: task.model,
+          direct_prompt: task.direct_prompt,
         };
       });
 

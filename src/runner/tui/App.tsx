@@ -363,6 +363,7 @@ export function App({
     completedCollapsed,
     draftCollapsed,
     collapsedFeatures,
+    visibleGroups,
   });
 
   // Auto-scroll task list to keep selected task in view
@@ -1854,6 +1855,7 @@ export function App({
               collapsedFeatures={collapsedFeatures}
               activeFeatures={activeFeatures}
               selectedTaskIds={selectedTaskIds}
+              visibleGroups={visibleGroups}
             />
           </Box>
 

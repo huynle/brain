@@ -35,6 +35,8 @@ interface TaskTreeProps {
   activeFeatures?: Set<string>;
   /** Set of task IDs that are multi-selected (via Space key) */
   selectedTaskIds?: Set<string>;
+  /** Set of status groups that should be visible (from Settings > Groups) */
+  visibleGroups?: Set<string>;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -1179,20 +1181,45 @@ export const TaskTree = React.memo(function TaskTree({
   collapsedFeatures = new Set(),
   activeFeatures = new Set(),
   selectedTaskIds = new Set(),
+  visibleGroups,
 }: TaskTreeProps): React.ReactElement {
   // Compute whether to show checkboxes (when any tasks are multi-selected)
   const showCheckboxes = selectedTaskIds.size > 0;
   // Separate active, completed, and draft tasks
   // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
-  const activeTasks = useMemo(() => tasks.filter(t => !isGroupStatus(t)), [tasks]);
-  const completedTasks = useMemo(() => 
-    tasks.filter(isCompleted).sort((a, b) => {
+  // Also filter by visibleGroups if provided
+  const activeTasks = useMemo(() => {
+    let result = tasks.filter(t => !isGroupStatus(t));
+    if (visibleGroups) {
+      result = result.filter(t => visibleGroups.has(t.status));
+    }
+    return result;
+  }, [tasks, visibleGroups]);
+  const completedTasks = useMemo(() => {
+    // If visibleGroups is provided, check if completed/validated are visible
+    if (visibleGroups) {
+      return tasks
+        .filter(t => isCompleted(t) && visibleGroups.has(t.status))
+        .sort((a, b) => {
+          const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+          const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+          return bTime - aTime;
+        });
+    }
+    return tasks.filter(isCompleted).sort((a, b) => {
       // Sort by modified time descending (most recent first)
       const aTime = a.modified ? new Date(a.modified).getTime() : 0;
       const bTime = b.modified ? new Date(b.modified).getTime() : 0;
       return bTime - aTime;
-    }), [tasks]);
-  const draftTasks = useMemo(() => tasks.filter(isDraft), [tasks]);
+    });
+  }, [tasks, visibleGroups]);
+  const draftTasks = useMemo(() => {
+    // If visibleGroups is provided, check if draft is visible
+    if (visibleGroups && !visibleGroups.has('draft')) {
+      return [];
+    }
+    return tasks.filter(isDraft);
+  }, [tasks, visibleGroups]);
   
   // Build tree structure from active tasks, passing all tasks for parent_id chain walking
   const tree = useMemo(() => buildTree(activeTasks, tasks), [activeTasks, tasks]);

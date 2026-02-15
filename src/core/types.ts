@@ -110,6 +110,9 @@ export interface BrainEntry {
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
+
+  // Session traceability
+  session_ids?: string[]; // OpenCode session IDs that have worked on this entry (for audit/tracing)
 }
 
 // =============================================================================
@@ -176,6 +179,9 @@ export interface UpdateEntryRequest {
   direct_prompt?: string;
   agent?: string;
   model?: string;
+
+  // Session traceability (append semantics - new IDs are added to existing)
+  session_ids?: string[];
 }
 
 export interface ListEntriesRequest {
@@ -335,6 +341,9 @@ export interface Task {
   direct_prompt: string | null; // Direct prompt to execute, bypassing do-work skill workflow
   agent: string | null; // Override agent for this task (e.g., "explore", "tdd-dev", "build")
   model: string | null; // Override model for this task (e.g., "anthropic/claude-sonnet-4-20250514")
+
+  // Session traceability
+  session_ids: string[]; // OpenCode session IDs that have worked on this task (for audit/tracing)
 }
 
 // Task with resolved dependencies

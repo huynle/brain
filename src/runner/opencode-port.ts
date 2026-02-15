@@ -170,6 +170,75 @@ export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus>
 }
 
 /**
+ * Session object as returned by OpenCode's /session endpoint.
+ */
+interface Session {
+  id: string;
+  [key: string]: unknown;
+}
+
+/**
+ * Discover the session ID for an OpenCode instance via its HTTP API.
+ * 
+ * GET http://localhost:<port>/session
+ * Response: Array of Session objects, each with an `id` field.
+ * 
+ * Returns the first session's ID if available, null otherwise.
+ * Session IDs have format `ses_` + 27 alphanumeric chars (e.g., `ses_3f632f303ffeoDM6TxgC2KbByL`).
+ */
+export async function discoverSessionId(port: number): Promise<string | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+  try {
+    const response = await fetch(`http://localhost:${port}/session`, {
+      signal: controller.signal,
+      headers: {
+        Accept: "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      if (isDebugEnabled()) {
+        console.log(
+          `[OpenCodePort] Session discovery failed for port ${port}: HTTP ${response.status}`
+        );
+      }
+      return null;
+    }
+
+    const sessions = await response.json() as Session[];
+
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      if (isDebugEnabled()) {
+        console.log(`[OpenCodePort] No sessions found for port ${port}`);
+      }
+      return null;
+    }
+
+    const sessionId = sessions[0].id;
+    if (sessionId && typeof sessionId === 'string') {
+      if (isDebugEnabled()) {
+        console.log(`[OpenCodePort] Discovered session ID for port ${port}: ${sessionId}`);
+      }
+      return sessionId;
+    }
+
+    return null;
+  } catch (error) {
+    if (isDebugEnabled()) {
+      console.log(
+        `[OpenCodePort] Session discovery error for port ${port}:`,
+        error instanceof Error ? error.message : String(error)
+      );
+    }
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * Check if a PID is still alive using signal 0.
  * 
  * SAFETY: PIDs <= 0 are dangerous on POSIX systems:

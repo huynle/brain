@@ -309,6 +309,7 @@ export class ApiClient {
       priority?: Priority;
       tags?: string[];
       depends_on?: string[];
+      session_ids?: string[];
     }
   ): Promise<void> {
     const encodedPath = encodeURIComponent(taskPath);
@@ -322,6 +323,7 @@ export class ApiClient {
     if (fields.priority !== undefined) payload.priority = fields.priority;
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
+    if (fields.session_ids !== undefined) payload.session_ids = fields.session_ids;
 
     const response = await this.fetch(`/api/v1/entries/${encodedPath}`, {
       method: "PATCH",

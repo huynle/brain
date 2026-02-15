@@ -59,6 +59,7 @@ export interface RunningTask {
   isResume: boolean;
   workdir: string;
   opencodePort?: number;   // OpenCode HTTP API port (discovered via lsof)
+  sessionId?: string;      // OpenCode session ID (discovered via /session endpoint)
   idleSince?: string;      // ISO timestamp when idle was first detected
 }
 

@@ -435,9 +435,11 @@ export function parseFrontmatter(content: string): {
   const tags: string[] = [];
   const dependsOn: string[] = [];
   const featureDependsOn: string[] = [];
+  const sessionIds: string[] = [];
   let inTags = false;
   let inDependsOn = false;
   let inFeatureDependsOn = false;
+  let inSessionIds = false;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -598,6 +600,7 @@ export function parseFrontmatter(content: string): {
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
       inDependsOn = false;
+      inSessionIds = false;
       continue;
     }
 
@@ -606,6 +609,7 @@ export function parseFrontmatter(content: string): {
       inDependsOn = true;
       inTags = false;
       inFeatureDependsOn = false;
+      inSessionIds = false;
       continue;
     }
 
@@ -614,6 +618,16 @@ export function parseFrontmatter(content: string): {
       inFeatureDependsOn = true;
       inTags = false;
       inDependsOn = false;
+      inSessionIds = false;
+      continue;
+    }
+
+    // Handle session_ids array
+    if (line.match(/^session_ids:\s*$/)) {
+      inSessionIds = true;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
       continue;
     }
 
@@ -646,6 +660,16 @@ export function parseFrontmatter(content: string): {
         inFeatureDependsOn = false;
       }
     }
+
+    if (inSessionIds) {
+      const sessionMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (sessionMatch) {
+        sessionIds.push(parseYamlStringValue(sessionMatch[1]));
+      } else if (!line.match(/^\s/)) {
+        // No longer indented, exit session_ids section
+        inSessionIds = false;
+      }
+    }
   }
 
   if (tags.length > 0) {
@@ -658,6 +682,10 @@ export function parseFrontmatter(content: string): {
 
   if (featureDependsOn.length > 0) {
     frontmatter.feature_depends_on = featureDependsOn;
+  }
+
+  if (sessionIds.length > 0) {
+    frontmatter.session_ids = sessionIds;
   }
 
   // Handle multi-line literal block scalars for user_original_request and direct_prompt
@@ -886,6 +914,14 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.agent) lines.push(`agent: ${escapeYamlValue(fm.agent as string)}`);
   if (fm.model) lines.push(`model: ${escapeYamlValue(fm.model as string)}`);
 
+  // Session traceability
+  if (Array.isArray(fm.session_ids) && fm.session_ids.length > 0) {
+    lines.push("session_ids:");
+    for (const sessionId of fm.session_ids) {
+      lines.push(`  - ${escapeYamlValue(String(sessionId))}`);
+    }
+  }
+
   return lines.join("\n") + "\n";
 }
 
@@ -914,6 +950,8 @@ export interface GenerateFrontmatterOptions {
   direct_prompt?: string;
   agent?: string;
   model?: string;
+  // Session traceability
+  session_ids?: string[];
 }
 
 /**
@@ -1003,6 +1041,14 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.model) {
     lines.push(`model: ${escapeYamlValue(options.model)}`);
+  }
+
+  // Session traceability
+  if (options.session_ids && options.session_ids.length > 0) {
+    lines.push("session_ids:");
+    for (const sessionId of options.session_ids) {
+      lines.push(`  - ${escapeYamlValue(sessionId)}`);
+    }
   }
 
   return lines.join("\n") + "\n";

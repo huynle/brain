@@ -100,6 +100,10 @@ export const BrainEntrySchema = z.object({
     description: "Verbatim user request for validation during task completion",
     example: "Add a dark mode toggle to the settings page" 
   }),
+  session_ids: z.array(z.string()).optional().openapi({ 
+    description: "OpenCode session IDs that have worked on this entry (for audit/tracing)",
+    example: ["ses_3f632f303ffeoDM6TxgC2KbByL", "ses_4a891b202ffe8xK9QpR3mNwZyT"] 
+  }),
 }).openapi("BrainEntry");
 
 export const BrainEntrySummarySchema = z.object({
@@ -199,9 +203,14 @@ export const UpdateEntryRequestSchema = z.object({
     description: "Override model (format: 'provider/model-id')",
     example: "anthropic/claude-sonnet-4-20250514" 
   }),
+  // Session traceability (append semantics - new IDs are added to existing)
+  session_ids: z.array(z.string()).optional().openapi({ 
+    description: "OpenCode session IDs to add (uses append semantics - merges with existing, dedupes)",
+    example: ["ses_3f632f303ffeoDM6TxgC2KbByL"] 
+  }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, or model must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.session_ids !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, or session_ids must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================

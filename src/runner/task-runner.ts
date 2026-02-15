@@ -1230,6 +1230,7 @@ export class TaskRunner {
         isResume: false,
         workdir,
         opencodePort: result.opencodePort,
+        sessionId: result.sessionId,
       };
 
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
@@ -1250,6 +1251,26 @@ export class TaskRunner {
 
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
+
+      // Persist session ID to task frontmatter for traceability
+      if (runningTask.sessionId) {
+        try {
+          await this.apiClient.updateEntryMetadata(task.path, {
+            session_ids: [runningTask.sessionId],
+          });
+          this.logger.debug("Session ID persisted to task", {
+            taskId: task.id,
+            sessionId: runningTask.sessionId,
+          });
+        } catch (error) {
+          // Log warning but don't fail the spawn - traceability is nice-to-have
+          this.logger.warn("Failed to persist session ID to task", {
+            taskId: task.id,
+            sessionId: runningTask.sessionId,
+            error: String(error),
+          });
+        }
+      }
 
       // Emit event
       this.emitEvent({ type: "task_started", task: runningTask });
@@ -1889,6 +1910,7 @@ export class TaskRunner {
         startedAt: new Date().toISOString(),
         isResume: true,
         opencodePort: result.opencodePort,
+        sessionId: result.sessionId,
         idleSince: undefined, // Clear any previous idle state
       };
 
@@ -1897,6 +1919,26 @@ export class TaskRunner {
       } else if (result.windowName || result.paneId) {
         // TUI/Dashboard mode: track separately since we can't get proc handle
         this.tuiTasks.set(task.id, newRunningTask);
+      }
+
+      // Persist session ID to task frontmatter for traceability
+      if (newRunningTask.sessionId) {
+        try {
+          await this.apiClient.updateEntryMetadata(task.path, {
+            session_ids: [newRunningTask.sessionId],
+          });
+          this.logger.debug("Session ID persisted to resumed task", {
+            taskId: task.id,
+            sessionId: newRunningTask.sessionId,
+          });
+        } catch (error) {
+          // Log warning but don't fail - traceability is nice-to-have
+          this.logger.warn("Failed to persist session ID to resumed task", {
+            taskId: task.id,
+            sessionId: newRunningTask.sessionId,
+            error: String(error),
+          });
+        }
       }
 
       this.emitEvent({ type: "task_started", task: newRunningTask });
@@ -2041,6 +2083,7 @@ export class TaskRunner {
         isResume: false,
         workdir,
         opencodePort: result.opencodePort,
+        sessionId: result.sessionId,
       };
 
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
@@ -2060,6 +2103,26 @@ export class TaskRunner {
 
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
+
+      // Persist session ID to task frontmatter for traceability
+      if (runningTask.sessionId) {
+        try {
+          await this.apiClient.updateEntryMetadata(taskPath, {
+            session_ids: [runningTask.sessionId],
+          });
+          this.logger.debug("Session ID persisted to manually executed task", {
+            taskId,
+            sessionId: runningTask.sessionId,
+          });
+        } catch (error) {
+          // Log warning but don't fail - traceability is nice-to-have
+          this.logger.warn("Failed to persist session ID to manually executed task", {
+            taskId,
+            sessionId: runningTask.sessionId,
+            error: String(error),
+          });
+        }
+      }
 
       // Emit event
       this.emitEvent({ type: "task_started", task: runningTask });

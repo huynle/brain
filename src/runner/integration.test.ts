@@ -83,6 +83,8 @@ function createMockTask(
     direct_prompt: null,
     agent: null,
     model: null,
+    // Session traceability
+    session_ids: [],
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

@@ -16,7 +16,7 @@ import type {
 } from "./types";
 import type { ResolvedTask } from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
-import { discoverOpencodePort } from "./opencode-port";
+import { discoverOpencodePort, discoverSessionId } from "./opencode-port";
 
 // =============================================================================
 // Types
@@ -39,6 +39,7 @@ export interface SpawnResult {
   windowName?: string;
   promptFile: string;
   opencodePort?: number;  // OpenCode HTTP API port (discovered via lsof)
+  sessionId?: string;     // OpenCode session ID (discovered via /session endpoint)
 }
 
 // =============================================================================
@@ -338,10 +339,17 @@ exit $exit_code
     // Wait for OpenCode to start its HTTP server and discover the port
     await new Promise((resolve) => setTimeout(resolve, 2500));
     const opencodePort = await discoverOpencodePort(pid);
+    
+    // Discover session ID if we have a port
+    let sessionId: string | undefined;
+    if (opencodePort) {
+      const discoveredSessionId = await discoverSessionId(opencodePort);
+      sessionId = discoveredSessionId ?? undefined;
+    }
 
     if (isDebugEnabled()) {
       console.log(
-        `[OpencodeExecutor] Created tmux window: ${name} (pid: ${pid}, port: ${opencodePort ?? 'unknown'})`
+        `[OpencodeExecutor] Created tmux window: ${name} (pid: ${pid}, port: ${opencodePort ?? 'unknown'}, session: ${sessionId ?? 'unknown'})`
       );
     }
 
@@ -351,6 +359,7 @@ exit $exit_code
       windowName: name,
       promptFile,
       opencodePort: opencodePort ?? undefined,
+      sessionId,
     };
   }
 
@@ -450,18 +459,25 @@ exit $exit_code
       task.title.substring(0, 20) + (task.title.length > 20 ? "..." : "");
     await Bun.$`tmux select-pane -t ${paneId} -T "Task:${shortTitle}"`.quiet();
 
-    // Discover OpenCode port if using TUI mode (--port 0)
+    // Discover OpenCode port and session ID if using TUI mode (--port 0)
     let opencodePort: number | undefined;
+    let sessionId: string | undefined;
     if (useTui && pid > 0) {
       // Wait for OpenCode to start its HTTP server
       await Bun.sleep(2500);
       const discoveredPort = await discoverOpencodePort(pid);
       opencodePort = discoveredPort ?? undefined;
+      
+      // Discover session ID if we have a port
+      if (opencodePort) {
+        const discoveredSessionId = await discoverSessionId(opencodePort);
+        sessionId = discoveredSessionId ?? undefined;
+      }
     }
 
     if (isDebugEnabled()) {
       console.log(
-        `[OpencodeExecutor] Created dashboard pane: ${paneId} (pid: ${pid}, port: ${opencodePort ?? 'unknown'})`
+        `[OpencodeExecutor] Created dashboard pane: ${paneId} (pid: ${pid}, port: ${opencodePort ?? 'unknown'}, session: ${sessionId ?? 'unknown'})`
       );
     }
 
@@ -471,6 +487,7 @@ exit $exit_code
       paneId,
       promptFile,
       opencodePort,
+      sessionId,
     };
   }
 

@@ -693,6 +693,8 @@ export class BrainService {
       git_branch: frontmatter.git_branch as string | undefined,
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
+      // Session traceability
+      session_ids: frontmatter.session_ids as string[] | undefined,
     };
   }
 
@@ -721,10 +723,11 @@ export class BrainService {
       request.git_branch === undefined &&
       request.direct_prompt === undefined &&
       request.agent === undefined &&
-      request.model === undefined
+      request.model === undefined &&
+      request.session_ids === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, session_ids"
       );
     }
 
@@ -812,6 +815,17 @@ export class BrainService {
     }
     if (request.model !== undefined) {
       updatedFrontmatter.model = request.model;
+    }
+
+    // Update session_ids with APPEND semantics (merge and dedupe)
+    if (request.session_ids !== undefined && request.session_ids.length > 0) {
+      const existingSessionIds = Array.isArray(frontmatter.session_ids)
+        ? (frontmatter.session_ids as string[])
+        : [];
+      // Merge existing + new, deduplicate
+      updatedFrontmatter.session_ids = [
+        ...new Set([...existingSessionIds, ...request.session_ids]),
+      ];
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

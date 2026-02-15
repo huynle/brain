@@ -134,6 +134,8 @@ export class TaskService {
         direct_prompt: (note.metadata?.direct_prompt as string) || null,
         agent: (note.metadata?.agent as string) || null,
         model: (note.metadata?.model as string) || null,
+        // Session traceability
+        session_ids: (note.metadata?.session_ids as string[]) || [],
       }));
   }
 

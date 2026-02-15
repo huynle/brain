@@ -197,6 +197,41 @@ This is test content for GET endpoint.
       expect(json.content).toContain("test content for GET");
     });
 
+    test("should return session_ids from frontmatter", async () => {
+      // Create entry with session_ids in frontmatter
+      createTestEntry(
+        `${TEST_PATH_PREFIX}/task/session-ids-test.md`,
+        `---
+title: Session IDs Test Entry
+type: task
+tags:
+  - task
+status: pending
+session_ids:
+  - ses_test111aaa
+  - ses_test222bbb
+  - ses_test333ccc
+---
+
+This entry has session_ids for traceability.
+`
+      );
+
+      const res = await app.request(
+        `/entries/${TEST_PATH_PREFIX}/task/session-ids-test.md`
+      );
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+      expect(json.title).toBe("Session IDs Test Entry");
+      expect(json.session_ids).toBeDefined();
+      expect(json.session_ids).toBeInstanceOf(Array);
+      expect(json.session_ids).toHaveLength(3);
+      expect(json.session_ids).toContain("ses_test111aaa");
+      expect(json.session_ids).toContain("ses_test222bbb");
+      expect(json.session_ids).toContain("ses_test333ccc");
+    });
+
     test("should return 404 for non-existent entry", async () => {
       const res = await app.request("/entries/non/existent/path.md");
 

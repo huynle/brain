@@ -141,6 +141,11 @@ export interface CreateEntryRequest {
   feature_id?: string;
   feature_priority?: Priority;
   feature_depends_on?: string[];
+
+  // OpenCode execution options (task-specific)
+  direct_prompt?: string;
+  agent?: string;
+  model?: string;
 }
 
 export interface CreateEntryResponse {
@@ -167,6 +172,10 @@ export interface UpdateEntryRequest {
   feature_id?: string;
   feature_priority?: Priority;
   feature_depends_on?: string[];
+  // OpenCode execution options (task-specific)
+  direct_prompt?: string;
+  agent?: string;
+  model?: string;
 }
 
 export interface ListEntriesRequest {
@@ -321,6 +330,11 @@ export interface Task {
   feature_id?: string; // e.g., "auth-system", "payment-flow"
   feature_priority?: Priority; // Priority for this feature
   feature_depends_on?: string[]; // Feature IDs this feature depends on
+
+  // OpenCode execution options (optional)
+  direct_prompt: string | null; // Direct prompt to execute, bypassing do-work skill workflow
+  agent: string | null; // Override agent for this task (e.g., "explore", "tdd-dev", "build")
+  model: string | null; // Override model for this task (e.g., "anthropic/claude-sonnet-4-20250514")
 }
 
 // Task with resolved dependencies

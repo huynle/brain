@@ -799,6 +799,288 @@ describe("serializeFrontmatter()", () => {
   });
 });
 
+// =============================================================================
+// Tests for direct_prompt, agent, model in generateFrontmatter
+// =============================================================================
+
+describe("generateFrontmatter() with OpenCode execution options", () => {
+  test("includes simple direct_prompt", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      direct_prompt: "Run the tests and fix failures",
+    });
+    expect(fm).toContain("direct_prompt: Run the tests and fix failures");
+  });
+
+  test("formats multiline direct_prompt as literal block scalar", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      direct_prompt: "Step 1: Read the code\nStep 2: Fix the bug\nStep 3: Run tests",
+    });
+    expect(fm).toContain("direct_prompt: |");
+    expect(fm).toContain("  Step 1: Read the code");
+    expect(fm).toContain("  Step 2: Fix the bug");
+    expect(fm).toContain("  Step 3: Run tests");
+  });
+
+  test("formats direct_prompt with special YAML characters using block scalar", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      direct_prompt: 'Use the @decorator and handle "quotes" properly',
+    });
+    expect(fm).toContain("direct_prompt: |");
+    expect(fm).toContain('  Use the @decorator and handle "quotes" properly');
+  });
+
+  test("includes agent when provided", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      agent: "explore",
+    });
+    expect(fm).toContain("agent: explore");
+  });
+
+  test("includes model when provided", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+      model: "anthropic/claude-sonnet-4-20250514",
+    });
+    // model contains '/' which doesn't need quoting
+    expect(fm).toContain("model: anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("includes all three OpenCode execution options together", () => {
+    const fm = generateFrontmatter({
+      title: "Full Task",
+      type: "task",
+      direct_prompt: "Do the work",
+      agent: "tdd-dev",
+      model: "anthropic/claude-sonnet-4-20250514",
+    });
+    expect(fm).toContain("direct_prompt: Do the work");
+    expect(fm).toContain("agent: tdd-dev");
+    expect(fm).toContain("model: anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("omits OpenCode execution options when not provided", () => {
+    const fm = generateFrontmatter({
+      title: "Test Task",
+      type: "task",
+    });
+    expect(fm).not.toContain("direct_prompt:");
+    expect(fm).not.toContain("agent:");
+    expect(fm).not.toContain("model:");
+  });
+});
+
+// =============================================================================
+// Tests for direct_prompt, agent, model in serializeFrontmatter
+// =============================================================================
+
+describe("serializeFrontmatter() with OpenCode execution options", () => {
+  test("serializes simple direct_prompt", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      direct_prompt: "Run the tests",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("direct_prompt: Run the tests");
+  });
+
+  test("serializes multiline direct_prompt as literal block scalar", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      direct_prompt: "Line 1\nLine 2\nLine 3",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("direct_prompt: |");
+    expect(result).toContain("  Line 1");
+    expect(result).toContain("  Line 2");
+  });
+
+  test("serializes agent", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      agent: "explore",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("agent: explore");
+  });
+
+  test("serializes model", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      model: "anthropic/claude-sonnet-4-20250514",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("model: anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("omits OpenCode execution options when not present", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).not.toContain("direct_prompt:");
+    expect(result).not.toContain("agent:");
+    expect(result).not.toContain("model:");
+  });
+});
+
+// =============================================================================
+// Tests for direct_prompt, agent, model in parseFrontmatter
+// =============================================================================
+
+describe("parseFrontmatter() with OpenCode execution options", () => {
+  test("parses simple direct_prompt", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+direct_prompt: Run the tests
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.direct_prompt).toBe("Run the tests");
+  });
+
+  test("parses multiline direct_prompt (literal block scalar)", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+direct_prompt: |
+  Step 1: Read the code
+  Step 2: Fix the bug
+  Step 3: Run tests
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.direct_prompt).toBe(
+      "Step 1: Read the code\nStep 2: Fix the bug\nStep 3: Run tests"
+    );
+  });
+
+  test("parses agent field", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+agent: explore
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.agent).toBe("explore");
+  });
+
+  test("parses model field", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+model: anthropic/claude-sonnet-4-20250514
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.model).toBe("anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("parses all three OpenCode execution options together", () => {
+    const content = `---
+title: Full Task
+type: task
+status: pending
+direct_prompt: Do the work
+agent: tdd-dev
+model: anthropic/claude-sonnet-4-20250514
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.direct_prompt).toBe("Do the work");
+    expect(frontmatter.agent).toBe("tdd-dev");
+    expect(frontmatter.model).toBe("anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("handles missing OpenCode execution options gracefully", () => {
+    const content = `---
+title: Test Task
+type: task
+status: pending
+---
+
+Content`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.direct_prompt).toBeUndefined();
+    expect(frontmatter.agent).toBeUndefined();
+    expect(frontmatter.model).toBeUndefined();
+  });
+
+  test("round-trip: generateFrontmatter -> parseFrontmatter preserves all OpenCode options", () => {
+    const fm = generateFrontmatter({
+      title: "Round Trip Task",
+      type: "task",
+      status: "pending",
+      direct_prompt: "Step 1: Read\nStep 2: Fix\nSpecial: @#$%",
+      agent: "tdd-dev",
+      model: "anthropic/claude-sonnet-4-20250514",
+    });
+
+    const fullContent = `---\n${fm}---\n\nTask body`;
+    const { frontmatter } = parseFrontmatter(fullContent);
+
+    expect(frontmatter.direct_prompt).toBe("Step 1: Read\nStep 2: Fix\nSpecial: @#$%");
+    expect(frontmatter.agent).toBe("tdd-dev");
+    expect(frontmatter.model).toBe("anthropic/claude-sonnet-4-20250514");
+  });
+
+  test("round-trip preserves direct_prompt with code blocks", () => {
+    const prompt = `Fix this function:
+\`\`\`typescript
+function add(a: number, b: number): number {
+  return a - b; // bug: should be +
+}
+\`\`\`
+Then run the tests.`;
+
+    const fm = generateFrontmatter({
+      title: "Fix Bug",
+      type: "task",
+      direct_prompt: prompt,
+    });
+
+    const fullContent = `---\n${fm}---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(fullContent);
+
+    expect(frontmatter.direct_prompt).toBe(prompt);
+  });
+});
+
 describe("parseFrontmatter() with user_original_request", () => {
   test("parses simple single-line user_original_request", () => {
     const content = `---

@@ -214,7 +214,6 @@ Start now.`;
           workdir,
           promptFile,
           options.paneId,
-          options.useTui ?? false
         );
 
       default:
@@ -252,8 +251,6 @@ Start now.`;
         agent,
         "--model",
         model,
-        "--port",
-        "0",
         promptContent,
       ],
       cwd: workdir,
@@ -267,23 +264,14 @@ Start now.`;
       );
     }
 
-    // Wait for OpenCode to start its HTTP server and discover the port
-    await new Promise((resolve) => setTimeout(resolve, 2500));
-    const opencodePort = await discoverOpencodePort(proc.pid);
-
-    // Discover session ID if we have a port
-    let sessionId: string | undefined;
-    if (opencodePort) {
-      const discoveredSessionId = await discoverSessionId(opencodePort);
-      sessionId = discoveredSessionId ?? undefined;
-    }
+    // Note: `opencode run` does not start an HTTP server, so session ID
+    // discovery is not possible in background mode. Session IDs are only
+    // available in TUI and dashboard modes which use `opencode --port 0 --prompt`.
 
     return {
       pid: proc.pid,
       proc,
       promptFile,
-      opencodePort: opencodePort ?? undefined,
-      sessionId,
     };
   }
 
@@ -388,21 +376,21 @@ exit $exit_code
     workdir: string,
     promptFile: string,
     targetPane?: string,
-    useTui: boolean = false
   ): Promise<SpawnResult> {
     // Use task-level overrides if provided
     const agent = this.getEffectiveAgent(task);
     const model = this.getEffectiveModel(task);
 
     // Build runner script
-    // When useTui is true, use interactive command (--port 0 --prompt) instead of headless (run)
+    // Always use TUI command (--port 0 --prompt) in dashboard panes because:
+    // 1. `opencode run` does NOT start an HTTP server, so session ID discovery is impossible
+    // 2. Dashboard panes have a terminal, so TUI mode works
+    // 3. TUI mode provides richer output in the pane
     const runnerScript = join(
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
-    const opencodeCmd = useTui
-      ? `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`
-      : `"${this.config.opencode.bin}" run --agent "${agent}" --model "${model}" --port 0 "$(cat '${promptFile}')"`;
+    const opencodeCmd = `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}
@@ -461,7 +449,7 @@ exit $exit_code
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
         const panePidResult =
-          await Bun.$`tmux list-panes -F '#{pane_id} #{pane_pid}' | grep "^${paneId} "`.text();
+          await Bun.$`tmux list-panes -a -F '#{pane_id} #{pane_pid}' | grep "^${paneId} "`.text();
         pid = parseInt(panePidResult.split(" ")[1]?.trim() ?? "0", 10);
         if (pid > 0) break;
       } catch {
@@ -480,6 +468,20 @@ exit $exit_code
     if (pid > 0) {
       // Wait for OpenCode to start its HTTP server
       await Bun.sleep(2500);
+
+      // Try to find the actual OpenCode child PID (pane PID is the shell running the script)
+      const shellPid = pid;
+      try {
+        const pgrepResult =
+          await Bun.$`pgrep -P ${shellPid} -f opencode`.text();
+        const opencodePid = parseInt(pgrepResult.trim(), 10);
+        if (!isNaN(opencodePid)) {
+          pid = opencodePid;
+        }
+      } catch {
+        // pgrep failed, use pane pid
+      }
+
       const discoveredPort = await discoverOpencodePort(pid);
       opencodePort = discoveredPort ?? undefined;
       

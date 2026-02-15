@@ -557,7 +557,7 @@ Step 3: Commit changes`;
       }
     });
 
-    test("includes --port 0 for session discovery", async () => {
+    test("does not include --port in background mode (opencode run has no HTTP server)", async () => {
       const task = createMockTask("task1");
       let spawnArgs: any = null;
 
@@ -579,10 +579,9 @@ Step 3: Commit changes`;
           mode: "background",
         });
 
-        // Should include --port 0 for HTTP API / session discovery
-        expect(spawnArgs.cmd).toContain("--port");
-        const portIndex = spawnArgs.cmd.indexOf("--port");
-        expect(spawnArgs.cmd[portIndex + 1]).toBe("0");
+        // `opencode run` does not support --port (no HTTP server)
+        // Session ID discovery only works in TUI and dashboard modes
+        expect(spawnArgs.cmd).not.toContain("--port");
       } finally {
         Bun.spawn = originalSpawn;
       }

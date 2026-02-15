@@ -94,6 +94,8 @@ export interface DashboardOptions {
   ) => Promise<{ oldPath: string; newPath: string }>;
   /** Callback to list all available projects from the API (not just monitored projects) */
   onListProjects?: () => Promise<string[]>;
+  /** Callback to delete tasks completely from the brain. Used by multi-select + backspace. */
+  onDeleteTasks?: (taskPaths: string[]) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -179,6 +181,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onUpdateMetadata={options.onUpdateMetadata}
       onMoveTask={options.onMoveTask}
       onListProjects={options.onListProjects}
+      onDeleteTasks={options.onDeleteTasks}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

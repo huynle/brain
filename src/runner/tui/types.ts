@@ -232,4 +232,6 @@ export interface AppProps {
   ) => Promise<{ oldPath: string; newPath: string }>;
   /** Callback to list all available projects from the API (not just monitored projects) */
   onListProjects?: () => Promise<string[]>;
+  /** Callback to delete tasks completely from the brain. Used by multi-select + backspace. */
+  onDeleteTasks?: (taskPaths: string[]) => Promise<void>;
 }

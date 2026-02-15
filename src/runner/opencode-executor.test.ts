@@ -153,6 +153,57 @@ describe("OpencodeExecutor", () => {
       expect(newPrompt).toContain("projects/myproject/task/abc123.md");
       expect(resumePrompt).toContain("projects/myproject/task/abc123.md");
     });
+
+    test("returns direct_prompt verbatim when set", () => {
+      const task = createMockTask("task1", {
+        direct_prompt: "/lint --fix src/",
+      });
+
+      const prompt = executor.buildPrompt(task, false);
+
+      expect(prompt).toBe("/lint --fix src/");
+      expect(prompt).not.toContain("do-work-queue");
+    });
+
+    test("returns direct_prompt verbatim even for resume", () => {
+      const task = createMockTask("task1", {
+        direct_prompt: "Run tests and fix failures",
+      });
+
+      // Even with isResume=true, direct_prompt takes precedence
+      const prompt = executor.buildPrompt(task, true);
+
+      expect(prompt).toBe("Run tests and fix failures");
+      expect(prompt).not.toContain("RESUME");
+    });
+
+    test("returns multiline direct_prompt verbatim", () => {
+      const multilinePrompt = `Step 1: Run tests
+Step 2: Fix failures
+Step 3: Commit changes`;
+      
+      const task = createMockTask("task1", {
+        direct_prompt: multilinePrompt,
+      });
+
+      const prompt = executor.buildPrompt(task, false);
+
+      expect(prompt).toBe(multilinePrompt);
+      expect(prompt).toContain("Step 1:");
+      expect(prompt).toContain("Step 2:");
+      expect(prompt).toContain("Step 3:");
+    });
+
+    test("falls back to do-work prompt when direct_prompt is null", () => {
+      const task = createMockTask("task1", {
+        direct_prompt: null,
+      });
+
+      const prompt = executor.buildPrompt(task, false);
+
+      expect(prompt).toContain("Load the do-work-queue skill");
+      expect(prompt).toContain(task.path);
+    });
   });
 
   describe("resolveWorkdir()", () => {
@@ -362,6 +413,143 @@ describe("OpencodeExecutor", () => {
         });
 
         expect(spawnArgs.cwd).toBe("/custom/workdir");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("uses task-level agent override", async () => {
+      const task = createMockTask("task1", {
+        agent: "tdd-dev",
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+        });
+
+        // Should use task's agent, not config default
+        expect(spawnArgs.cmd).toContain("--agent");
+        const agentIndex = spawnArgs.cmd.indexOf("--agent");
+        expect(spawnArgs.cmd[agentIndex + 1]).toBe("tdd-dev");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("uses task-level model override", async () => {
+      const task = createMockTask("task1", {
+        model: "anthropic/claude-sonnet-4-20250514",
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+        });
+
+        // Should use task's model, not config default
+        expect(spawnArgs.cmd).toContain("--model");
+        const modelIndex = spawnArgs.cmd.indexOf("--model");
+        expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-sonnet-4-20250514");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("uses direct_prompt in prompt file content", async () => {
+      const task = createMockTask("task1", {
+        direct_prompt: "/lint --fix src/",
+      });
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = () => mockProc;
+
+      try {
+        const result = await executor.spawn(task, "test-project", {
+          mode: "background",
+        });
+
+        // Check prompt file contains direct_prompt content
+        const content = readFileSync(result.promptFile, "utf-8");
+        expect(content).toBe("/lint --fix src/");
+        expect(content).not.toContain("do-work-queue");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("uses all task-level overrides together", async () => {
+      const task = createMockTask("task1", {
+        direct_prompt: "Run tests",
+        agent: "explore",
+        model: "anthropic/claude-opus-4",
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        const result = await executor.spawn(task, "test-project", {
+          mode: "background",
+        });
+
+        // Check prompt file contains direct_prompt
+        const content = readFileSync(result.promptFile, "utf-8");
+        expect(content).toBe("Run tests");
+
+        // Check agent override
+        const agentIndex = spawnArgs.cmd.indexOf("--agent");
+        expect(spawnArgs.cmd[agentIndex + 1]).toBe("explore");
+
+        // Check model override
+        const modelIndex = spawnArgs.cmd.indexOf("--model");
+        expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-opus-4");
       } finally {
         Bun.spawn = originalSpawn;
       }

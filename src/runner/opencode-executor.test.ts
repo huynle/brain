@@ -556,6 +556,37 @@ Step 3: Commit changes`;
         Bun.spawn = originalSpawn;
       }
     });
+
+    test("includes --port 0 for session discovery", async () => {
+      const task = createMockTask("task1");
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+        });
+
+        // Should include --port 0 for HTTP API / session discovery
+        expect(spawnArgs.cmd).toContain("--port");
+        const portIndex = spawnArgs.cmd.indexOf("--port");
+        expect(spawnArgs.cmd[portIndex + 1]).toBe("0");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
   });
 
   describe("spawn() - invalid mode", () => {

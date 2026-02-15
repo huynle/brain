@@ -252,6 +252,8 @@ Start now.`;
         agent,
         "--model",
         model,
+        "--port",
+        "0",
         promptContent,
       ],
       cwd: workdir,
@@ -265,10 +267,23 @@ Start now.`;
       );
     }
 
+    // Wait for OpenCode to start its HTTP server and discover the port
+    await new Promise((resolve) => setTimeout(resolve, 2500));
+    const opencodePort = await discoverOpencodePort(proc.pid);
+
+    // Discover session ID if we have a port
+    let sessionId: string | undefined;
+    if (opencodePort) {
+      const discoveredSessionId = await discoverSessionId(opencodePort);
+      sessionId = discoveredSessionId ?? undefined;
+    }
+
     return {
       pid: proc.pid,
       proc,
       promptFile,
+      opencodePort: opencodePort ?? undefined,
+      sessionId,
     };
   }
 
@@ -387,7 +402,7 @@ exit $exit_code
     );
     const opencodeCmd = useTui
       ? `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`
-      : `"${this.config.opencode.bin}" run --agent "${agent}" --model "${model}" "$(cat '${promptFile}')"`;
+      : `"${this.config.opencode.bin}" run --agent "${agent}" --model "${model}" --port 0 "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}
@@ -459,10 +474,10 @@ exit $exit_code
       task.title.substring(0, 20) + (task.title.length > 20 ? "..." : "");
     await Bun.$`tmux select-pane -t ${paneId} -T "Task:${shortTitle}"`.quiet();
 
-    // Discover OpenCode port and session ID if using TUI mode (--port 0)
+    // Discover OpenCode port and session ID (all modes now use --port 0)
     let opencodePort: number | undefined;
     let sessionId: string | undefined;
-    if (useTui && pid > 0) {
+    if (pid > 0) {
       // Wait for OpenCode to start its HTTP server
       await Bun.sleep(2500);
       const discoveredPort = await discoverOpencodePort(pid);

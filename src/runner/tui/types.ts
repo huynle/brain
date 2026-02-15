@@ -237,4 +237,6 @@ export interface AppProps {
   onListProjects?: () => Promise<string[]>;
   /** Callback to delete tasks completely from the brain. Used by multi-select + backspace. */
   onDeleteTasks?: (taskPaths: string[]) => Promise<void>;
+  /** Callback to open an OpenCode session in fullscreen mode. Used by 'o' key on tasks with session_ids. */
+  onOpenSession?: (sessionId: string) => Promise<void>;
 }

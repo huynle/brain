@@ -96,6 +96,8 @@ export interface DashboardOptions {
   onListProjects?: () => Promise<string[]>;
   /** Callback to delete tasks completely from the brain. Used by multi-select + backspace. */
   onDeleteTasks?: (taskPaths: string[]) => Promise<void>;
+  /** Callback to open an OpenCode session in fullscreen mode. Used by 'o' key on tasks with session_ids. */
+  onOpenSession?: (sessionId: string) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -182,6 +184,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onMoveTask={options.onMoveTask}
       onListProjects={options.onListProjects}
       onDeleteTasks={options.onDeleteTasks}
+      onOpenSession={options.onOpenSession}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

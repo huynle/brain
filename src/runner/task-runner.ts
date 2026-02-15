@@ -2385,6 +2385,52 @@ export class TaskRunner {
   }
 
   /**
+   * Open an OpenCode session in fullscreen mode.
+   * Uses screen takeover pattern (exit/re-enter alternate screen buffer).
+   * Spawns `opencode -s <sessionId>` synchronously with inherited stdio.
+   */
+  async openSession(sessionId: string): Promise<void> {
+    this.logger.info("Opening OpenCode session", { sessionId });
+
+    const { spawnSync } = await import("child_process");
+
+    try {
+      // Step 1: Find opencode binary (same logic as Claude-executor)
+      const opencodeBin = process.env.OPENCODE_BIN || "opencode";
+
+      // Step 2: Exit alternate screen buffer (restore normal terminal)
+      process.stdout.write("\x1b[?1049l");
+
+      // Step 3: Spawn opencode synchronously with session ID
+      this.logger.info("Spawning opencode", { opencodeBin, sessionId });
+      const result = spawnSync(opencodeBin, ["-s", sessionId], {
+        stdio: "inherit",
+        env: process.env,
+      });
+
+      // Step 4: Re-enter alternate screen buffer
+      process.stdout.write("\x1b[?1049h");
+      process.stdout.write("\x1b[H");
+      process.stdout.write("\x1b[2J");
+
+      // Step 5: Check if opencode exited successfully
+      if (result.status !== 0) {
+        this.logger.warn("OpenCode exited with non-zero status", { status: result.status, sessionId });
+      }
+
+      this.logger.info("OpenCode session closed", { sessionId });
+    } catch (error) {
+      this.logger.error("Failed to open OpenCode session", {
+        sessionId,
+        error: String(error),
+      });
+      // Re-enter alternate screen in case of early error
+      process.stdout.write("\x1b[?1049h");
+      throw error;
+    }
+  }
+
+  /**
    * Edit a task in an external editor.
    * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
    * Returns the new content if changes were made, null if cancelled/unchanged.
@@ -2530,6 +2576,8 @@ export class TaskRunner {
         onListProjects: () => this.apiClient.listProjects(),
         // Delete tasks (multi-select + backspace)
         onDeleteTasks: (taskPaths) => this.deleteTasks(taskPaths),
+        // Open OpenCode session in fullscreen (o key)
+        onOpenSession: (sessionId) => this.openSession(sessionId),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

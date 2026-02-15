@@ -218,6 +218,14 @@ async function fetchProjectTasks(
       waitingOn: resolveIdsToTitles(task.waiting_on, idToTitle),
       inCycle: task.in_cycle,
       resolvedWorkdir: task.resolved_workdir,
+      // Feature grouping fields
+      feature_id: task.feature_id,
+      feature_priority: task.feature_priority,
+      feature_depends_on: task.feature_depends_on,
+      // Execution override fields
+      agent: task.agent,
+      model: task.model,
+      direct_prompt: task.direct_prompt,
     };
   });
 

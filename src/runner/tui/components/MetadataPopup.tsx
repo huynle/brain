@@ -28,7 +28,7 @@ import type { EntryStatus } from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 /** Fields that can be focused in the metadata popup */
-export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'project';
+export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'project' | 'agent' | 'model' | 'direct_prompt';
 
 /** Mode for the metadata popup */
 export type MetadataPopupMode = 'single' | 'batch' | 'feature';
@@ -57,6 +57,12 @@ export interface MetadataPopupProps {
   workdirValue: string;
   /** Current project value */
   projectValue: string;
+  /** Current agent value (OpenCode agent override) */
+  agentValue: string;
+  /** Current model value (LLM model override) */
+  modelValue: string;
+  /** Current direct_prompt value (bypasses do-work skill) */
+  directPromptValue: string;
   /** Available projects for the dropdown */
   availableProjects: string[];
   /** Index of selected project in dropdown */
@@ -71,13 +77,16 @@ export interface MetadataPopupProps {
   editBuffer?: string;
 }
 
-const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project'];
+const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project', 'agent', 'model', 'direct_prompt'];
 const FIELD_LABELS: Record<MetadataField, string> = {
   status: 'Status',
   feature_id: 'Feature ID',
   git_branch: 'Branch',
   target_workdir: 'Workdir',
   project: 'Project',
+  agent: 'Agent',
+  model: 'Model',
+  direct_prompt: 'Prompt',
 };
 
 export function MetadataPopup({
@@ -91,6 +100,9 @@ export function MetadataPopup({
   branchValue,
   workdirValue,
   projectValue,
+  agentValue,
+  modelValue,
+  directPromptValue,
   availableProjects,
   selectedProjectIndex,
   selectedStatusIndex,
@@ -117,6 +129,12 @@ export function MetadataPopup({
         return workdirValue || '(none)';
       case 'project':
         return projectValue || '(none)';
+      case 'agent':
+        return agentValue || '(default)';
+      case 'model':
+        return modelValue || '(default)';
+      case 'direct_prompt':
+        return directPromptValue || '(none)';
     }
   };
 

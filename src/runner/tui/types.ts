@@ -52,6 +52,11 @@ export interface TaskDisplay {
   waitingOn?: string[];              // IDs of incomplete dependencies
   inCycle?: boolean;                 // Whether task is in a dependency cycle
   resolvedWorkdir?: string | null;   // Absolute path after resolution
+  
+  // Execution override fields
+  agent?: string | null;             // OpenCode agent override (bypasses config default)
+  model?: string | null;             // LLM model override (bypasses config default)
+  direct_prompt?: string | null;     // Direct prompt (bypasses do-work skill)
 }
 
 /**

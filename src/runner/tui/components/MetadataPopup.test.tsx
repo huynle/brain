@@ -19,6 +19,9 @@ const defaultProps = {
   branchValue: 'feature/test',
   workdirValue: '/path/to/project',
   projectValue: 'my-project',
+  agentValue: '',
+  modelValue: '',
+  directPromptValue: '',
   availableProjects: ['my-project', 'other-project', 'another-project'],
   selectedProjectIndex: 0,
   selectedStatusIndex: 1, // pending is index 1 in ENTRY_STATUSES
@@ -49,7 +52,7 @@ describe('MetadataPopup', () => {
       expect(frame).not.toContain(longTitle);
     });
 
-    it('should render all four fields', () => {
+    it('should render all eight fields', () => {
       const { lastFrame } = render(
         <MetadataPopup {...defaultProps} />
       );
@@ -59,6 +62,39 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Feature ID:');
       expect(frame).toContain('Branch:');
       expect(frame).toContain('Workdir:');
+      expect(frame).toContain('Project:');
+      expect(frame).toContain('Agent:');
+      expect(frame).toContain('Model:');
+      expect(frame).toContain('Prompt:');
+    });
+
+    it('should display execution override values', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          agentValue="tdd-dev"
+          modelValue="anthropic/claude-sonnet-4-20250514"
+          directPromptValue="Run the tests"
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('tdd-dev');
+      expect(frame).toContain('anthropic/claude-sonnet-4-20250514');
+      expect(frame).toContain('Run the tests');
+    });
+
+    it('should show (default) for empty agent/model', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          agentValue=""
+          modelValue=""
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(default)');
     });
 
     it('should show keyboard shortcuts in footer', () => {

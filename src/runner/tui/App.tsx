@@ -137,6 +137,9 @@ export function App({
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
   const [metadataProjectValue, setMetadataProjectValue] = useState('');
   const [metadataProjectIndex, setMetadataProjectIndex] = useState(0);
+  const [metadataAgentValue, setMetadataAgentValue] = useState('');
+  const [metadataModelValue, setMetadataModelValue] = useState('');
+  const [metadataDirectPromptValue, setMetadataDirectPromptValue] = useState('');
   // 3-mode state machine: navigate (j/k fields), edit_text (typing), edit_status (j/k status), edit_project (j/k project)
   const [metadataInteractionMode, setMetadataInteractionMode] = useState<MetadataInteractionMode>('navigate');
   const [metadataEditBuffer, setMetadataEditBuffer] = useState('');
@@ -148,7 +151,10 @@ export function App({
     git_branch: string;
     target_workdir: string;
     project: string;
-  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '' });
+    agent: string;
+    model: string;
+    direct_prompt: string;
+  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '', agent: '', model: '', direct_prompt: '' });
   // All projects from API (for project picker in metadata popup)
   const [allProjects, setAllProjects] = useState<string[]>([]);
   // Computed: the effective project list used by the project picker (same as availableProjects prop)
@@ -532,7 +538,7 @@ export function App({
     // EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
     // EDIT_PROJECT: j/k cycles project options, Enter moves task, Esc discards
     if (showMetadataPopup) {
-      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project'];
+      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project', 'agent', 'model', 'direct_prompt'];
       
       // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
@@ -641,6 +647,15 @@ export function App({
               case 'target_workdir':
                 currentValue = metadataWorkdirValue;
                 break;
+              case 'agent':
+                currentValue = metadataAgentValue;
+                break;
+              case 'model':
+                currentValue = metadataModelValue;
+                break;
+              case 'direct_prompt':
+                currentValue = metadataDirectPromptValue;
+                break;
             }
             setMetadataEditBuffer(currentValue);
             setMetadataInteractionMode('edit_text');
@@ -667,6 +682,15 @@ export function App({
               break;
             case 'target_workdir':
               setMetadataWorkdirValue(value);
+              break;
+            case 'agent':
+              setMetadataAgentValue(value);
+              break;
+            case 'model':
+              setMetadataModelValue(value);
+              break;
+            case 'direct_prompt':
+              setMetadataDirectPromptValue(value);
               break;
           }
           // Save to API immediately
@@ -1249,7 +1273,10 @@ export function App({
         prefillFeatureId: string = '',
         prefillBranch: string = '',
         prefillWorkdir: string = '',
-        prefillProject: string = ''
+        prefillProject: string = '',
+        prefillAgent: string = '',
+        prefillModel: string = '',
+        prefillDirectPrompt: string = ''
       ) => {
         // Fetch all projects from API for the project picker
         let fetchedProjects = projects; // fallback to monitored projects
@@ -1273,12 +1300,18 @@ export function App({
         setMetadataWorkdirValue(prefillWorkdir);
         setMetadataProjectValue(prefillProject);
         setMetadataProjectIndex(fetchedProjects.indexOf(prefillProject) >= 0 ? fetchedProjects.indexOf(prefillProject) : 0);
+        setMetadataAgentValue(prefillAgent);
+        setMetadataModelValue(prefillModel);
+        setMetadataDirectPromptValue(prefillDirectPrompt);
         setMetadataOriginalValues({
           status: prefillStatus,
           feature_id: prefillFeatureId,
           git_branch: prefillBranch,
           target_workdir: prefillWorkdir,
           project: prefillProject,
+          agent: prefillAgent,
+          model: prefillModel,
+          direct_prompt: prefillDirectPrompt,
         });
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
@@ -1299,7 +1332,10 @@ export function App({
             first.feature_id || '',
             first.gitBranch || '',
             first.resolvedWorkdir || first.workdir || '',
-            first.projectId || ''
+            first.projectId || '',
+            first.agent || '',
+            first.model || '',
+            first.direct_prompt || ''
           );
         }
         return;
@@ -1310,7 +1346,7 @@ export function App({
         const ungroupedTasks = tasks.filter(t => !t.feature_id);
         if (ungroupedTasks.length > 0) {
           const firstUngrouped = ungroupedTasks[0];
-          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', firstUngrouped.projectId || '');
+          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', firstUngrouped.projectId || '', '', '', '');
         }
         return;
       }
@@ -1321,7 +1357,7 @@ export function App({
         const featureTasks = tasks.filter(t => t.feature_id === featureId);
         if (featureTasks.length > 0) {
           const firstFeatureTask = featureTasks[0];
-          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '');
+          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '', '', '', '');
         }
         return;
       }
@@ -1335,7 +1371,10 @@ export function App({
           selectedTask.feature_id || '',
           selectedTask.gitBranch || '',
           selectedTask.resolvedWorkdir || selectedTask.workdir || '',
-          selectedTask.projectId || ''
+          selectedTask.projectId || '',
+          selectedTask.agent || '',
+          selectedTask.model || '',
+          selectedTask.direct_prompt || ''
         );
       }
       return;
@@ -1852,6 +1891,9 @@ export function App({
           branchValue={metadataBranchValue}
           workdirValue={metadataWorkdirValue}
           projectValue={metadataProjectValue}
+          agentValue={metadataAgentValue}
+          modelValue={metadataModelValue}
+          directPromptValue={metadataDirectPromptValue}
           availableProjects={effectiveProjects}
           selectedProjectIndex={metadataProjectIndex}
           selectedStatusIndex={metadataStatusIndex}

@@ -68,7 +68,7 @@ const EMBEDDED_PLUGINS: Partial<Record<InstallTarget, string>> = {
 const EMBEDDED_ADDITIONAL_FILES: Partial<Record<InstallTarget, Record<string, string>>> = {
   opencode: {
     "plugin/brain-planning.ts": opencodePlanningPluginPath,
-    "skill/do-work/SKILL.md": skillDoWorkPath,
+    "skill/do-work-queue/SKILL.md": skillDoWorkPath,
     "skill/brain-planning/SKILL.md": skillBrainPlanningPath,
     "skill/using-brain/SKILL.md": skillUsingBrainPath,
     "skill/project-planning/SKILL.md": skillProjectPlanningPath,
@@ -155,10 +155,10 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
       },
       // Skills
       {
-        sourcePath: "skill/do-work/SKILL.md",
-        targetDir: (home) => join(home, ".config/opencode/skill/do-work"),
+        sourcePath: "skill/do-work-queue/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/do-work-queue"),
         targetFile: "SKILL.md",
-        description: "do-work skill (task queue processing)",
+        description: "do-work-queue skill (task queue processing)",
         componentType: "skill",
       },
       {

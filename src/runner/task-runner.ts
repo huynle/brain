@@ -2346,6 +2346,45 @@ export class TaskRunner {
   }
 
   /**
+   * Delete multiple tasks from the brain.
+   * Used by multi-select + backspace in the TUI.
+   * Handles partial failures - continues deleting even if some fail.
+   * 
+   * @param taskPaths - Array of task paths to delete
+   * @throws Error if ALL deletions fail
+   */
+  async deleteTasks(taskPaths: string[]): Promise<void> {
+    this.logger.info("Deleting tasks", { count: taskPaths.length, paths: taskPaths });
+
+    const results: { path: string; success: boolean; error?: string }[] = [];
+
+    for (const taskPath of taskPaths) {
+      try {
+        await this.apiClient.deleteEntry(taskPath);
+        results.push({ path: taskPath, success: true });
+        this.logger.info("Task deleted", { taskPath });
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        results.push({ path: taskPath, success: false, error: errorMessage });
+        this.logger.error("Failed to delete task", { taskPath, error: errorMessage });
+      }
+    }
+
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+
+    if (successCount > 0) {
+      this.tuiLog('info', `Deleted ${successCount} task(s)${failCount > 0 ? `, ${failCount} failed` : ''}`);
+    }
+
+    // If ALL deletions failed, throw an error
+    if (successCount === 0 && failCount > 0) {
+      const errors = results.filter(r => !r.success).map(r => `${r.path}: ${r.error}`).join('; ');
+      throw new Error(`All deletions failed: ${errors}`);
+    }
+  }
+
+  /**
    * Edit a task in an external editor.
    * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
    * Returns the new content if changes were made, null if cancelled/unchanged.
@@ -2489,6 +2528,8 @@ export class TaskRunner {
         onMoveTask: (taskPath, newProjectId) => this.moveTask(taskPath, newProjectId),
         // List all available projects from API (for project picker)
         onListProjects: () => this.apiClient.listProjects(),
+        // Delete tasks (multi-select + backspace)
+        onDeleteTasks: (taskPaths) => this.deleteTasks(taskPaths),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

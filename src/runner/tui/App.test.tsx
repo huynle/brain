@@ -1122,6 +1122,169 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
 });
 
 // =============================================================================
+// Bulk Metadata Update - Feature Header Filtering Tests (Bug Fix)
+// =============================================================================
+
+import { GROUP_STATUSES } from './components/TaskTree';
+import { getVisibleTasksForFeature, getVisibleTasksForUngrouped } from './App';
+import type { TaskDisplay } from './types';
+
+describe('App - Bulk Metadata Update filters out group-status tasks', () => {
+  // GROUP_STATUSES includes: draft, cancelled, completed, validated, superseded, archived
+  // When pressing 's' on a feature header, only active tasks should be collected
+  
+  it('GROUP_STATUSES contains expected statuses', () => {
+    // Verify the GROUP_STATUSES constant has the expected values
+    expect(GROUP_STATUSES).toContain('draft');
+    expect(GROUP_STATUSES).toContain('cancelled');
+    expect(GROUP_STATUSES).toContain('completed');
+    expect(GROUP_STATUSES).toContain('validated');
+    expect(GROUP_STATUSES).toContain('superseded');
+    expect(GROUP_STATUSES).toContain('archived');
+    // Active statuses should NOT be in GROUP_STATUSES
+    expect(GROUP_STATUSES).not.toContain('pending');
+    expect(GROUP_STATUSES).not.toContain('active');
+    expect(GROUP_STATUSES).not.toContain('in_progress');
+    expect(GROUP_STATUSES).not.toContain('blocked');
+  });
+
+  describe('getVisibleTasksForFeature', () => {
+    const createTask = (id: string, status: string, feature_id?: string): TaskDisplay => ({
+      id,
+      title: `Task ${id}`,
+      status: status as TaskDisplay['status'],
+      priority: 'medium',
+      dependencies: [],
+      dependents: [],
+      dependencyTitles: [],
+      dependentTitles: [],
+      tags: [],
+      path: `/path/to/${id}`,
+      feature_id,
+    });
+
+    it('returns only active tasks for a feature, excluding group-status tasks', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'pending', 'feature-a'),
+        createTask('2', 'in_progress', 'feature-a'),
+        createTask('3', 'completed', 'feature-a'),  // Should be excluded
+        createTask('4', 'draft', 'feature-a'),       // Should be excluded
+        createTask('5', 'cancelled', 'feature-a'),   // Should be excluded
+        createTask('6', 'validated', 'feature-a'),   // Should be excluded
+        createTask('7', 'superseded', 'feature-a'),  // Should be excluded
+        createTask('8', 'archived', 'feature-a'),    // Should be excluded
+        createTask('9', 'blocked', 'feature-a'),
+        createTask('10', 'pending', 'feature-b'),    // Different feature
+      ];
+
+      const result = getVisibleTasksForFeature(tasks, 'feature-a');
+      
+      // Should only include active tasks (pending, in_progress, blocked)
+      expect(result).toHaveLength(3);
+      expect(result.map((t: TaskDisplay) => t.id)).toEqual(['1', '2', '9']);
+      
+      // Should NOT include any group-status tasks
+      const resultIds = result.map((t: TaskDisplay) => t.id);
+      expect(resultIds).not.toContain('3'); // completed
+      expect(resultIds).not.toContain('4'); // draft
+      expect(resultIds).not.toContain('5'); // cancelled
+      expect(resultIds).not.toContain('6'); // validated
+      expect(resultIds).not.toContain('7'); // superseded
+      expect(resultIds).not.toContain('8'); // archived
+      expect(resultIds).not.toContain('10'); // different feature
+    });
+
+    it('returns empty array when all tasks have group statuses', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'completed', 'feature-a'),
+        createTask('2', 'draft', 'feature-a'),
+        createTask('3', 'archived', 'feature-a'),
+      ];
+
+      const result = getVisibleTasksForFeature(tasks, 'feature-a');
+      expect(result).toHaveLength(0);
+    });
+
+    it('returns empty array when feature has no tasks', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'pending', 'feature-b'),
+      ];
+
+      const result = getVisibleTasksForFeature(tasks, 'feature-a');
+      expect(result).toHaveLength(0);
+    });
+  });
+
+  describe('getVisibleTasksForUngrouped', () => {
+    const createTask = (id: string, status: string, feature_id?: string): TaskDisplay => ({
+      id,
+      title: `Task ${id}`,
+      status: status as TaskDisplay['status'],
+      priority: 'medium',
+      dependencies: [],
+      dependents: [],
+      dependencyTitles: [],
+      dependentTitles: [],
+      tags: [],
+      path: `/path/to/${id}`,
+      feature_id,
+    });
+
+    it('returns only active ungrouped tasks, excluding group-status tasks', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'pending'),           // Ungrouped, active - include
+        createTask('2', 'in_progress'),       // Ungrouped, active - include
+        createTask('3', 'completed'),         // Ungrouped, group-status - exclude
+        createTask('4', 'draft'),             // Ungrouped, group-status - exclude
+        createTask('5', 'cancelled'),         // Ungrouped, group-status - exclude
+        createTask('6', 'validated'),         // Ungrouped, group-status - exclude
+        createTask('7', 'superseded'),        // Ungrouped, group-status - exclude
+        createTask('8', 'archived'),          // Ungrouped, group-status - exclude
+        createTask('9', 'blocked'),           // Ungrouped, active - include
+        createTask('10', 'pending', 'feature-a'), // Has feature_id - exclude
+      ];
+
+      const result = getVisibleTasksForUngrouped(tasks);
+      
+      // Should only include active ungrouped tasks (pending, in_progress, blocked)
+      expect(result).toHaveLength(3);
+      expect(result.map((t: TaskDisplay) => t.id)).toEqual(['1', '2', '9']);
+      
+      // Should NOT include any group-status tasks
+      const resultIds = result.map((t: TaskDisplay) => t.id);
+      expect(resultIds).not.toContain('3'); // completed
+      expect(resultIds).not.toContain('4'); // draft
+      expect(resultIds).not.toContain('5'); // cancelled
+      expect(resultIds).not.toContain('6'); // validated
+      expect(resultIds).not.toContain('7'); // superseded
+      expect(resultIds).not.toContain('8'); // archived
+      expect(resultIds).not.toContain('10'); // has feature_id
+    });
+
+    it('returns empty array when all ungrouped tasks have group statuses', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'completed'),
+        createTask('2', 'draft'),
+        createTask('3', 'archived'),
+      ];
+
+      const result = getVisibleTasksForUngrouped(tasks);
+      expect(result).toHaveLength(0);
+    });
+
+    it('returns empty array when all tasks have feature_id', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'pending', 'feature-a'),
+        createTask('2', 'in_progress', 'feature-b'),
+      ];
+
+      const result = getVisibleTasksForUngrouped(tasks);
+      expect(result).toHaveLength(0);
+    });
+  });
+});
+
+// =============================================================================
 // Task Filter Mode Integration Tests
 // =============================================================================
 

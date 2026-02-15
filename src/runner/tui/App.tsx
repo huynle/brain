@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -87,7 +87,29 @@ const STATUS_LABELS: Record<string, string> = {
   archived: 'Archived',
 };
 
+/**
+ * Get visible (active) tasks for a feature, excluding group-status tasks.
+ * Used when pressing 's' on a feature header to bulk update metadata.
+ * 
+ * GROUP_STATUSES (draft, cancelled, completed, validated, superseded, archived)
+ * are rendered in collapsed sections at the bottom of the TUI, not under feature headers.
+ * This function ensures bulk updates only affect the visible active tasks.
+ */
+export function getVisibleTasksForFeature(tasks: TaskDisplay[], featureId: string): TaskDisplay[] {
+  return tasks.filter(t => t.feature_id === featureId && !GROUP_STATUSES.includes(t.status));
+}
 
+/**
+ * Get visible (active) ungrouped tasks, excluding group-status tasks.
+ * Used when pressing 's' on the ungrouped header to bulk update metadata.
+ * 
+ * GROUP_STATUSES (draft, cancelled, completed, validated, superseded, archived)
+ * are rendered in collapsed sections at the bottom of the TUI, not under the ungrouped header.
+ * This function ensures bulk updates only affect the visible active tasks.
+ */
+export function getVisibleTasksForUngrouped(tasks: TaskDisplay[]): TaskDisplay[] {
+  return tasks.filter(t => !t.feature_id && !GROUP_STATUSES.includes(t.status));
+}
 
 export function App({ 
   config, 
@@ -1342,8 +1364,9 @@ export function App({
       }
       
       // Case 2: Ungrouped header selected - feature mode for ungrouped tasks
+      // Only include active tasks (exclude group statuses: draft, completed, etc.)
       if (selectedTaskId === UNGROUPED_HEADER_ID) {
-        const ungroupedTasks = tasks.filter(t => !t.feature_id);
+        const ungroupedTasks = getVisibleTasksForUngrouped(tasks);
         if (ungroupedTasks.length > 0) {
           const firstUngrouped = ungroupedTasks[0];
           openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', firstUngrouped.projectId || '', '', '', '');
@@ -1352,9 +1375,10 @@ export function App({
       }
       
       // Case 3: Feature header selected - feature mode
+      // Only include active tasks (exclude group statuses: draft, completed, etc.)
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
-        const featureTasks = tasks.filter(t => t.feature_id === featureId);
+        const featureTasks = getVisibleTasksForFeature(tasks, featureId);
         if (featureTasks.length > 0) {
           const firstFeatureTask = featureTasks[0];
           openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '', '', '', '');

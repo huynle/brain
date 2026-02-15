@@ -627,6 +627,164 @@ Task content.
     });
   });
 
+  describe("update() OpenCode execution options", () => {
+    test("should update direct_prompt field", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "update-prompt-test.md");
+      const testPath = "projects/test-project/task/update-prompt-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task to Update Prompt
+type: task
+tags:
+  - task
+status: pending
+---
+
+Task content.
+`
+      );
+
+      const result = await service.update(testPath, {
+        direct_prompt: "Run the tests and fix failures",
+      });
+
+      // Verify the file was updated
+      const content = readFileSync(testFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.direct_prompt).toBe("Run the tests and fix failures");
+    });
+
+    test("should update agent field", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "update-agent-test.md");
+      const testPath = "projects/test-project/task/update-agent-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task to Update Agent
+type: task
+tags:
+  - task
+status: pending
+---
+
+Task content.
+`
+      );
+
+      const result = await service.update(testPath, {
+        agent: "explore",
+      });
+
+      const content = readFileSync(testFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.agent).toBe("explore");
+    });
+
+    test("should update model field", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "update-model-test.md");
+      const testPath = "projects/test-project/task/update-model-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task to Update Model
+type: task
+tags:
+  - task
+status: pending
+---
+
+Task content.
+`
+      );
+
+      const result = await service.update(testPath, {
+        model: "anthropic/claude-sonnet-4-20250514",
+      });
+
+      const content = readFileSync(testFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.model).toBe("anthropic/claude-sonnet-4-20250514");
+    });
+
+    test("should update multiline direct_prompt correctly", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "update-multiline-prompt.md");
+      const testPath = "projects/test-project/task/update-multiline-prompt.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task with Multiline Prompt
+type: task
+tags:
+  - task
+status: pending
+---
+
+Task content.
+`
+      );
+
+      const multilinePrompt = "Step 1: Read the code\nStep 2: Fix the bug\nStep 3: Run tests";
+      const result = await service.update(testPath, {
+        direct_prompt: multilinePrompt,
+      });
+
+      const content = readFileSync(testFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.direct_prompt).toBe(multilinePrompt);
+    });
+
+    test("should preserve existing OpenCode options when updating other fields", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "preserve-oc-options.md");
+      const testPath = "projects/test-project/task/preserve-oc-options.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task with OC Options
+type: task
+tags:
+  - task
+status: pending
+direct_prompt: Do the work
+agent: tdd-dev
+model: anthropic/claude-sonnet-4-20250514
+---
+
+Task content.
+`
+      );
+
+      // Update only status - should preserve direct_prompt, agent, model
+      const result = await service.update(testPath, { status: "in_progress" });
+
+      const content = readFileSync(testFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.direct_prompt).toBe("Do the work");
+      expect(frontmatter.agent).toBe("tdd-dev");
+      expect(frontmatter.model).toBe("anthropic/claude-sonnet-4-20250514");
+    });
+  });
+
   describe("update() field preservation", () => {
     let taskPath: string;
 

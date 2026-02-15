@@ -565,6 +565,35 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    // Handle direct_prompt - same pattern as user_original_request (single-line or block scalar)
+    const directPromptSingleMatch = line.match(/^direct_prompt:\s*(.+)$/);
+    if (directPromptSingleMatch && directPromptSingleMatch[1].trim() !== "|") {
+      frontmatter.direct_prompt = parseYamlStringValue(directPromptSingleMatch[1]);
+      inTags = false;
+      continue;
+    }
+    const directPromptBlockMatch = line.match(/^direct_prompt:\s*\|\s*$/);
+    if (directPromptBlockMatch) {
+      inTags = false;
+      continue;
+    }
+
+    // Handle agent field
+    const agentMatch = line.match(/^agent:\s*(.+)$/);
+    if (agentMatch) {
+      frontmatter.agent = parseYamlStringValue(agentMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    // Handle model field
+    const modelMatch = line.match(/^model:\s*(.+)$/);
+    if (modelMatch) {
+      frontmatter.model = parseYamlStringValue(modelMatch[1]);
+      inTags = false;
+      continue;
+    }
+
     // Handle tags array
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
@@ -631,37 +660,39 @@ export function parseFrontmatter(content: string): {
     frontmatter.feature_depends_on = featureDependsOn;
   }
 
-  // Handle multi-line user_original_request (literal block scalar)
-  // This needs special handling because it spans multiple lines
+  // Handle multi-line literal block scalars for user_original_request and direct_prompt
+  // This needs special handling because they span multiple lines
   // The block continues while lines are either empty OR indented with 2+ spaces
   // It stops at non-empty, non-indented lines (like --- or other YAML keys)
-  const userRequestBlockStart = yaml.indexOf("user_original_request: |");
-  if (userRequestBlockStart !== -1) {
-    const afterHeader = yaml.slice(userRequestBlockStart + "user_original_request: |".length);
-    const lines = afterHeader.split("\n").slice(1); // Skip the line with just "|"
-    
-    const blockLines: string[] = [];
-    for (const line of lines) {
-      // Stop at non-empty lines that don't start with spaces (like --- or other keys)
-      if (line.length > 0 && !line.startsWith("  ") && !line.startsWith("\t")) {
-        break;
+  for (const blockKey of ["user_original_request", "direct_prompt"]) {
+    const blockStart = yaml.indexOf(`${blockKey}: |`);
+    if (blockStart !== -1) {
+      const afterHeader = yaml.slice(blockStart + `${blockKey}: |`.length);
+      const lines = afterHeader.split("\n").slice(1); // Skip the line with just "|"
+      
+      const blockLines: string[] = [];
+      for (const line of lines) {
+        // Stop at non-empty lines that don't start with spaces (like --- or other keys)
+        if (line.length > 0 && !line.startsWith("  ") && !line.startsWith("\t")) {
+          break;
+        }
+        blockLines.push(line);
       }
-      blockLines.push(line);
+      
+      // Find the last non-empty line to trim trailing empty lines
+      let lastContentIdx = blockLines.length - 1;
+      while (lastContentIdx >= 0 && blockLines[lastContentIdx].trim() === "") {
+        lastContentIdx--;
+      }
+      const contentLines = blockLines.slice(0, lastContentIdx + 1);
+      
+      // Remove the 2-space indent from each line
+      // Empty lines in literal blocks are preserved (they just don't have indent)
+      const unindentedLines = contentLines.map((l) => 
+        l.startsWith("  ") ? l.slice(2) : l
+      );
+      frontmatter[blockKey] = unindentedLines.join("\n");
     }
-    
-    // Find the last non-empty line to trim trailing empty lines
-    let lastContentIdx = blockLines.length - 1;
-    while (lastContentIdx >= 0 && blockLines[lastContentIdx].trim() === "") {
-      lastContentIdx--;
-    }
-    const contentLines = blockLines.slice(0, lastContentIdx + 1);
-    
-    // Remove the 2-space indent from each line
-    // Empty lines in literal blocks are preserved (they just don't have indent)
-    const unindentedLines = contentLines.map((l) => 
-      l.startsWith("  ") ? l.slice(2) : l
-    );
-    frontmatter.user_original_request = unindentedLines.join("\n");
   }
 
   return { frontmatter, body };
@@ -848,6 +879,13 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
     lines.push(formatYamlMultilineValue("user_original_request", fm.user_original_request as string));
   }
 
+  // OpenCode execution options
+  if (fm.direct_prompt) {
+    lines.push(formatYamlMultilineValue("direct_prompt", fm.direct_prompt as string));
+  }
+  if (fm.agent) lines.push(`agent: ${escapeYamlValue(fm.agent as string)}`);
+  if (fm.model) lines.push(`model: ${escapeYamlValue(fm.model as string)}`);
+
   return lines.join("\n") + "\n";
 }
 
@@ -872,6 +910,10 @@ export interface GenerateFrontmatterOptions {
   target_workdir?: string;
   // User intent for validation
   user_original_request?: string;
+  // OpenCode execution options (task-specific)
+  direct_prompt?: string;
+  agent?: string;
+  model?: string;
 }
 
 /**
@@ -950,6 +992,17 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   // User intent for validation - use YAML literal block scalar for multiline
   if (options.user_original_request) {
     lines.push(formatYamlMultilineValue("user_original_request", options.user_original_request));
+  }
+
+  // OpenCode execution options
+  if (options.direct_prompt) {
+    lines.push(formatYamlMultilineValue("direct_prompt", options.direct_prompt));
+  }
+  if (options.agent) {
+    lines.push(`agent: ${escapeYamlValue(options.agent)}`);
+  }
+  if (options.model) {
+    lines.push(`model: ${escapeYamlValue(options.model)}`);
   }
 
   return lines.join("\n") + "\n";

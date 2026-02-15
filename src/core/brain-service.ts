@@ -150,6 +150,15 @@ export class BrainService {
         .replace(/\r/g, "")
         .replace(/\0/g, "");
     }
+    // direct_prompt: allow multiline but strip \r and \0 (same as user_original_request)
+    if (request.direct_prompt) {
+      request.direct_prompt = request.direct_prompt
+        .replace(/\r/g, "")
+        .replace(/\0/g, "");
+    }
+    // agent and model: sanitize as simple values (no newlines)
+    if (request.agent) request.agent = sanitizeSimpleValue(request.agent);
+    if (request.model) request.model = sanitizeSimpleValue(request.model);
 
     const entryType = request.type;
     // Tasks default to 'draft' status (user reviews before promoting to 'pending')
@@ -330,6 +339,20 @@ export class BrainService {
       }
     }
 
+    // Check if direct_prompt contains characters that break zk CLI's --extra parser
+    // Same handling as user_original_request - force manual file creation for complex values
+    if (zkAvailable && request.direct_prompt) {
+      const hasNewlines = request.direct_prompt.includes("\n");
+      const hasSpecialChars =
+        /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%\=]|^\s|\s$|^---|^\.\.\./.test(
+          request.direct_prompt
+        );
+      if (hasNewlines || hasSpecialChars) {
+        // Force manual file creation path which handles escaping correctly via generateFrontmatter()
+        zkAvailable = false;
+      }
+    }
+
     let relativePath: string;
     let noteId: string;
 
@@ -386,6 +409,19 @@ export class BrainService {
           "--extra",
           `user_original_request=${request.user_original_request}`
         );
+      }
+
+      // OpenCode execution options
+      // Note: Complex direct_prompt values (newlines, special chars) are handled above
+      // by forcing the manual file creation path. If we reach here, the value is safe.
+      if (request.direct_prompt) {
+        zkArgs.push("--extra", `direct_prompt=${request.direct_prompt}`);
+      }
+      if (request.agent) {
+        zkArgs.push("--extra", `agent=${request.agent}`);
+      }
+      if (request.model) {
+        zkArgs.push("--extra", `model=${request.model}`);
       }
 
       // Target workdir for task execution
@@ -457,6 +493,10 @@ export class BrainService {
         feature_id: request.feature_id,
         feature_priority: request.feature_priority,
         feature_depends_on: request.feature_depends_on,
+        // OpenCode execution options
+        direct_prompt: request.direct_prompt,
+        agent: request.agent,
+        model: request.model,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;
@@ -678,10 +718,13 @@ export class BrainService {
       request.feature_priority === undefined &&
       request.feature_depends_on === undefined &&
       request.target_workdir === undefined &&
-      request.git_branch === undefined
+      request.git_branch === undefined &&
+      request.direct_prompt === undefined &&
+      request.agent === undefined &&
+      request.model === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model"
       );
     }
 
@@ -758,6 +801,17 @@ export class BrainService {
     // Update git_branch if provided
     if (request.git_branch !== undefined) {
       updatedFrontmatter.git_branch = request.git_branch;
+    }
+
+    // Update OpenCode execution options if provided
+    if (request.direct_prompt !== undefined) {
+      updatedFrontmatter.direct_prompt = request.direct_prompt;
+    }
+    if (request.agent !== undefined) {
+      updatedFrontmatter.agent = request.agent;
+    }
+    if (request.model !== undefined) {
+      updatedFrontmatter.model = request.model;
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

@@ -57,6 +57,9 @@ export interface TaskDisplay {
   agent?: string | null;             // OpenCode agent override (bypasses config default)
   model?: string | null;             // LLM model override (bypasses config default)
   direct_prompt?: string | null;     // Direct prompt (bypasses do-work skill)
+  
+  // Session tracking
+  session_ids?: string[];            // OpenCode session IDs that worked on this task
 }
 
 /**

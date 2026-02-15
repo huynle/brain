@@ -306,6 +306,8 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           agent: task.agent,
           model: task.model,
           direct_prompt: task.direct_prompt,
+          // Session tracking
+          session_ids: task.session_ids,
         };
       });
 

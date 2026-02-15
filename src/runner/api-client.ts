@@ -295,6 +295,21 @@ export class ApiClient {
   }
 
   /**
+   * Delete an entry from the brain.
+   * Requires confirmation to prevent accidental deletion.
+   */
+  async deleteEntry(entryPath: string): Promise<void> {
+    const encodedPath = encodeURIComponent(entryPath);
+    const response = await this.fetch(`/api/v1/entries/${encodedPath}?confirm=true`, {
+      method: "DELETE",
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+  }
+
+  /**
    * Update metadata fields on an entry.
    * Supports batch updates of multiple fields at once.
    * Only provided fields are updated - undefined fields are not sent.

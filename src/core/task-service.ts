@@ -130,6 +130,10 @@ export class TaskService {
         feature_id: (note.metadata?.feature_id as string) ?? undefined,
         feature_priority: (note.metadata?.feature_priority as Task["feature_priority"]) ?? undefined,
         feature_depends_on: (note.metadata?.feature_depends_on as string[]) ?? undefined,
+        // OpenCode execution options
+        direct_prompt: (note.metadata?.direct_prompt as string) || null,
+        agent: (note.metadata?.agent as string) || null,
+        model: (note.metadata?.model as string) || null,
       }));
   }
 

@@ -370,6 +370,9 @@ const tools: Tool[] = [
         feature_id: { type: "string", description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution." },
         feature_priority: { type: "string", enum: ["high", "medium", "low"], description: "Priority level for the feature group. Determines execution order relative to other features." },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start." },
+        direct_prompt: { type: "string", description: "Direct prompt to execute, bypassing do-work skill workflow. The prompt is sent verbatim when the task runs." },
+        agent: { type: "string", description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')" },
+        model: { type: "string", description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')" },
       },
       required: ["type", "title", "content"],
     },
@@ -461,6 +464,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
         feature_id: { type: "string", description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" },
         feature_priority: { type: "string", enum: PRIORITIES, description: "Priority for this feature group" },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on" },
+        direct_prompt: { type: "string", description: "Direct prompt to execute, bypassing do-work skill workflow" },
+        agent: { type: "string", description: "Override agent for this task (e.g., 'explore', 'tdd-dev')" },
+        model: { type: "string", description: "Override model (format: 'provider/model-id')" },
       },
       required: ["path"],
     },
@@ -771,6 +777,10 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           feature_id: args.type === "task" ? args.feature_id : undefined,
           feature_priority: args.type === "task" ? args.feature_priority : undefined,
           feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
+          // OpenCode execution options for tasks
+          direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
+          agent: args.type === "task" ? args.agent : undefined,
+          model: args.type === "task" ? args.model : undefined,
         });
         return `Saved to brain\n\nPath: ${response.path}\nID: ${response.id}\nTitle: ${response.title}\nType: ${response.type}\nStatus: ${response.status}`;
       }

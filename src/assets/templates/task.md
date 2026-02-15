@@ -12,6 +12,9 @@ created: {{format-date now}}
 {{/if}}{{#if extra.git_remote}}git_remote: "{{extra.git_remote}}"
 {{/if}}{{#if extra.git_branch}}git_branch: "{{extra.git_branch}}"
 {{/if}}{{#if extra.user_original_request}}user_original_request: {{extra.user_original_request}}
+{{/if}}{{#if extra.direct_prompt}}direct_prompt: {{extra.direct_prompt}}
+{{/if}}{{#if extra.agent}}agent: "{{extra.agent}}"
+{{/if}}{{#if extra.model}}model: "{{extra.model}}"
 {{/if}}---
 
 {{content}}

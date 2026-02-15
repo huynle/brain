@@ -44,6 +44,7 @@ import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
 import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
+import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
@@ -134,6 +135,7 @@ export function App({
   onUpdateMetadata,
   onMoveTask,
   onListProjects,
+  onDeleteTasks,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -218,6 +220,9 @@ export function App({
   const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
   // Multi-select state: tasks selected via Space key for batch operations
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  // Delete confirmation popup state
+  const [deletePopupOpen, setDeletePopupOpen] = useState(false);
+  const [tasksToDelete, setTasksToDelete] = useState<Array<{id: string, title: string, path: string}>>([]);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -795,6 +800,51 @@ export function App({
       }
 
       // Fallback: block all input when popup is open
+      return;
+    }
+
+    // === Delete Confirmation Popup Mode ===
+    if (deletePopupOpen) {
+      // Escape: cancel and close popup
+      if (key.escape) {
+        setDeletePopupOpen(false);
+        setTasksToDelete([]);
+        return;
+      }
+      
+      // Enter: confirm delete
+      if (key.return) {
+        if (onDeleteTasks && tasksToDelete.length > 0) {
+          const paths = tasksToDelete.map(t => t.path);
+          addLog({
+            level: 'info',
+            message: `Deleting ${tasksToDelete.length} task(s)...`,
+          });
+          
+          onDeleteTasks(paths)
+            .then(() => {
+              addLog({
+                level: 'info',
+                message: `Deleted ${tasksToDelete.length} task(s) successfully`,
+              });
+              refetch();
+            })
+            .catch((err: unknown) => {
+              addLog({
+                level: 'error',
+                message: `Failed to delete tasks: ${err}`,
+              });
+            });
+        }
+        
+        // Clear selection and close popup
+        setSelectedTaskIds(new Set());
+        setDeletePopupOpen(false);
+        setTasksToDelete([]);
+        return;
+      }
+      
+      // Block all other input when popup is open
       return;
     }
 
@@ -1772,6 +1822,58 @@ export function App({
         }
         return;
       }
+
+      // Backspace key: Delete selected tasks or tasks in selected feature
+      if (key.backspace || key.delete) {
+        // Case 1: Multi-select active - delete all selected tasks
+        if (selectedTaskIds.size > 0) {
+          const tasksInfo = tasks
+            .filter(t => selectedTaskIds.has(t.id))
+            .map(t => ({ id: t.id, title: t.title, path: t.path }));
+          
+          if (tasksInfo.length > 0) {
+            setTasksToDelete(tasksInfo);
+            setDeletePopupOpen(true);
+          }
+          return;
+        }
+        
+        // Case 2: Feature header selected - delete all tasks in feature
+        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
+          const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
+          const featureTasks = tasks
+            .filter(t => t.feature_id === featureId)
+            .map(t => ({ id: t.id, title: t.title, path: t.path }));
+          
+          if (featureTasks.length > 0) {
+            setTasksToDelete(featureTasks);
+            setDeletePopupOpen(true);
+          }
+          return;
+        }
+        
+        // Case 3: Ungrouped header selected - delete all ungrouped tasks
+        if (selectedTaskId === UNGROUPED_HEADER_ID) {
+          const ungroupedTasks = tasks
+            .filter(t => !t.feature_id)
+            .map(t => ({ id: t.id, title: t.title, path: t.path }));
+          
+          if (ungroupedTasks.length > 0) {
+            setTasksToDelete(ungroupedTasks);
+            setDeletePopupOpen(true);
+          }
+          return;
+        }
+        
+        // Case 4: Single task selected (cursor on task row) - delete that task
+        if (selectedTask) {
+          setTasksToDelete([{ id: selectedTask.id, title: selectedTask.title, path: selectedTask.path }]);
+          setDeletePopupOpen(true);
+          return;
+        }
+        
+        return;
+      }
     }
     
     // Log scrolling (when focused on logs panel)
@@ -1938,6 +2040,25 @@ export function App({
           selectedIndex={settingsSelectedIndex}
           section={settingsSection}
           groups={groupVisibilityState}
+        />
+      </Box>
+    );
+  }
+
+  // Delete confirmation popup overlay
+  if (deletePopupOpen && tasksToDelete.length > 0) {
+    // Determine featureId if all tasks share the same feature
+    const featureIds = new Set(tasksToDelete.map(t => {
+      const task = tasks.find(task => task.id === t.id);
+      return task?.feature_id;
+    }));
+    const sharedFeatureId = featureIds.size === 1 ? [...featureIds][0] : undefined;
+
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <DeleteConfirmPopup
+          taskTitles={tasksToDelete.map(t => t.title)}
+          featureId={sharedFeatureId}
         />
       </Box>
     );

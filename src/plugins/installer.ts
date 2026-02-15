@@ -35,7 +35,7 @@ import opencodePlanningPluginPath from "./targets/opencode/brain-planning.ts" wi
 
 // OpenCode skills
 // @ts-ignore - Bun import attribute syntax
-import skillDoWorkPath from "./targets/opencode/skill/do-work/SKILL.md" with { type: "file" };
+import skillDoWorkPath from "./targets/opencode/skill/do-work-queue/SKILL.md" with { type: "file" };
 // @ts-ignore - Bun import attribute syntax
 import skillBrainPlanningPath from "./targets/opencode/skill/brain-planning/SKILL.md" with { type: "file" };
 // @ts-ignore - Bun import attribute syntax

@@ -2158,6 +2158,7 @@ export function App({
         focusedPanel={focusedPanel} 
         isMultiProject={isMultiProject}
         isFilterActive={filterMode === 'locked'}
+        hasSelectedTasks={selectedTaskIds.size > 0}
       />
     </Box>
   );

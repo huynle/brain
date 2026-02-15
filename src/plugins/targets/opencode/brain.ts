@@ -455,6 +455,24 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Explicit working directory override for task execution (absolute path). PRIMARY USE CASE: Filing tasks across project boundaries - when an issue is detected in a dependent project, use target_workdir to file the task directly in the parent/target project so it executes there. The task runner will try this directory first before falling back to workdir resolution."
             ),
+          direct_prompt: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Direct prompt to execute, bypassing do-work skill workflow. The prompt is sent verbatim to OpenCode when the task runs. Use for simple, self-contained commands like '/fix-tests src/' or '/lint'."
+            ),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Override the default agent for this task (e.g., 'explore', 'tdd-dev', 'build', or custom agent names)"
+            ),
+          model: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Override the default model for this task (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"
+            ),
         },
         async execute(args) {
           try {
@@ -488,6 +506,10 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               feature_id: args.type === "task" ? args.feature_id : undefined,
               feature_priority: args.type === "task" ? args.feature_priority : undefined,
               feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
+              // OpenCode execution options for tasks
+              direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
+              agent: args.type === "task" ? args.agent : undefined,
+              model: args.type === "task" ? args.model : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";
@@ -1211,10 +1233,22 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Update task execution directory (absolute path). PRIMARY USE CASE: Cross-project task filing - ensures task executes in the correct project. Task runner will try this first before fallback."),
+          direct_prompt: tool.schema
+            .string()
+            .optional()
+            .describe("Direct prompt to execute, bypassing do-work skill workflow"),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe("Override agent for this task (e.g., 'explore', 'tdd-dev')"),
+          model: tool.schema
+            .string()
+            .optional()
+            .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, direct_prompt, agent, model`;
           }
 
           try {
@@ -1235,6 +1269,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               feature_priority: args.feature_priority,
               feature_depends_on: args.feature_depends_on,
               target_workdir: args.target_workdir,
+              direct_prompt: args.direct_prompt,
+              agent: args.agent,
+              model: args.model,
             });
 
             const changes: string[] = [];
@@ -1257,6 +1294,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
             if (args.target_workdir)
               changes.push(`Target Workdir: ${args.target_workdir}`);
+            if (args.direct_prompt)
+              changes.push(`Direct Prompt: set`);
+            if (args.agent)
+              changes.push(`Agent: ${args.agent}`);
+            if (args.model)
+              changes.push(`Model: ${args.model}`);
 
             return `Updated: ${args.path}
 

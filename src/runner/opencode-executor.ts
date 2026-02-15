@@ -59,6 +59,14 @@ export class OpencodeExecutor {
   // ========================================
 
   buildPrompt(task: ResolvedTask, isResume: boolean): string {
+    // If direct_prompt is set, use it verbatim (bypasses do-work skill workflow)
+    if (task.direct_prompt) {
+      if (isDebugEnabled()) {
+        console.log(`[OpencodeExecutor] Using direct_prompt for task: ${task.id}`);
+      }
+      return task.direct_prompt;
+    }
+
     if (isResume) {
       return `Load the do-work-queue skill and RESUME the interrupted task at brain path: ${task.path}
 
@@ -87,6 +95,20 @@ Use brain_recall to read the task details, then follow the do-work-queue skill w
 6. Create atomic git commit
 
 Start now.`;
+  }
+
+  /**
+   * Get the effective agent for a task (task override or config default)
+   */
+  private getEffectiveAgent(task: ResolvedTask): string {
+    return task.agent ?? this.config.opencode.agent;
+  }
+
+  /**
+   * Get the effective model for a task (task override or config default)
+   */
+  private getEffectiveModel(task: ResolvedTask): string {
+    return task.model ?? this.config.opencode.model;
   }
 
   // ========================================
@@ -217,14 +239,18 @@ Start now.`;
     // Read prompt content
     const promptContent = await Bun.file(promptFile).text();
 
+    // Use task-level overrides if provided
+    const agent = this.getEffectiveAgent(task);
+    const model = this.getEffectiveModel(task);
+
     const proc = Bun.spawn({
       cmd: [
         this.config.opencode.bin,
         "run",
         "--agent",
-        this.config.opencode.agent,
+        agent,
         "--model",
-        this.config.opencode.model,
+        model,
         promptContent,
       ],
       cwd: workdir,
@@ -234,7 +260,7 @@ Start now.`;
 
     if (isDebugEnabled()) {
       console.log(
-        `[OpencodeExecutor] Background process started (PID: ${proc.pid})`
+        `[OpencodeExecutor] Background process started (PID: ${proc.pid}, agent: ${agent}, model: ${model})`
       );
     }
 
@@ -264,6 +290,10 @@ Start now.`;
       : task.id;           // Already short
     const name = windowName ?? `${projectId}-${shortId}`;
 
+    // Use task-level overrides if provided
+    const agent = this.getEffectiveAgent(task);
+    const model = this.getEffectiveModel(task);
+
     // Build runner script that OpenCode TUI runs in
     const runnerScript = join(
       this.stateDir,
@@ -271,7 +301,7 @@ Start now.`;
     );
     const script = `#!/bin/bash
 cd "${workdir}"
-"${this.config.opencode.bin}" --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" --port 0 --prompt "$(cat '${promptFile}')"
+"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
@@ -336,6 +366,10 @@ exit $exit_code
     targetPane?: string,
     useTui: boolean = false
   ): Promise<SpawnResult> {
+    // Use task-level overrides if provided
+    const agent = this.getEffectiveAgent(task);
+    const model = this.getEffectiveModel(task);
+
     // Build runner script
     // When useTui is true, use interactive command (--port 0 --prompt) instead of headless (run)
     const runnerScript = join(
@@ -343,8 +377,8 @@ exit $exit_code
       `runner_${projectId}_${task.id}.sh`
     );
     const opencodeCmd = useTui
-      ? `"${this.config.opencode.bin}" --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" --port 0 --prompt "$(cat '${promptFile}')"`
-      : `"${this.config.opencode.bin}" run --agent "${this.config.opencode.agent}" --model "${this.config.opencode.model}" "$(cat '${promptFile}')"`;
+      ? `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`
+      : `"${this.config.opencode.bin}" run --agent "${agent}" --model "${model}" "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}

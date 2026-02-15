@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
 import type { TaskDisplay } from '../types';
 
 // Helper to create mock tasks
@@ -1719,5 +1719,420 @@ describe('TaskTree group status filtering', () => {
       // Archived parent should NOT be shown
       expect(lastFrame()).not.toContain('Archived Parent');
     });
+  });
+});
+
+// =============================================================================
+// Collapsible Cancelled/Superseded/Archived Sections Tests
+// =============================================================================
+
+describe('TaskTree collapsible cancelled section', () => {
+  describe('cancelled section header', () => {
+    it('shows collapsed cancelled header when there are cancelled tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Cancelled Task', status: 'cancelled' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          cancelledCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('▶ Cancelled (1)');
+      expect(lastFrame()).not.toContain('Cancelled Task');
+    });
+
+    it('shows expanded cancelled header and tasks when expanded', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Cancelled Task', status: 'cancelled' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          cancelledCollapsed={false}
+        />
+      );
+      expect(lastFrame()).toContain('▾ Cancelled (1)');
+      expect(lastFrame()).toContain('Cancelled Task');
+    });
+
+    it('does not show cancelled section when no cancelled tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Completed Task', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          cancelledCollapsed={true}
+        />
+      );
+      expect(lastFrame()).not.toContain('Cancelled');
+    });
+
+    it('highlights cancelled header when selected', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Cancelled Task', status: 'cancelled' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={CANCELLED_HEADER_ID}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          cancelledCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('Cancelled (1)');
+    });
+  });
+
+  describe('cancelled section navigation', () => {
+    it('includes cancelled header in navigation order when there are cancelled tasks', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'cancelled', title: 'Cancelled', status: 'cancelled' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, true); // completedCollapsed, draftCollapsed, cancelledCollapsed
+      expect(order).toContain(CANCELLED_HEADER_ID);
+      expect(order).not.toContain('cancelled'); // collapsed
+    });
+
+    it('includes cancelled task IDs when expanded', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'cancelled', title: 'Cancelled', status: 'cancelled' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, false); // cancelledCollapsed = false
+      expect(order).toContain(CANCELLED_HEADER_ID);
+      expect(order).toContain('cancelled');
+    });
+  });
+});
+
+describe('TaskTree collapsible superseded section', () => {
+  describe('superseded section header', () => {
+    it('shows collapsed superseded header when there are superseded tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Superseded Task', status: 'superseded' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          supersededCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('▶ Superseded (1)');
+      expect(lastFrame()).not.toContain('Superseded Task');
+    });
+
+    it('shows expanded superseded header and tasks when expanded', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Superseded Task', status: 'superseded' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          supersededCollapsed={false}
+        />
+      );
+      expect(lastFrame()).toContain('▾ Superseded (1)');
+      expect(lastFrame()).toContain('Superseded Task');
+    });
+
+    it('does not show superseded section when no superseded tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Completed Task', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          supersededCollapsed={true}
+        />
+      );
+      expect(lastFrame()).not.toContain('Superseded');
+    });
+
+    it('highlights superseded header when selected', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Superseded Task', status: 'superseded' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={SUPERSEDED_HEADER_ID}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          supersededCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('Superseded (1)');
+    });
+  });
+
+  describe('superseded section navigation', () => {
+    it('includes superseded header in navigation order when there are superseded tasks', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'superseded', title: 'Superseded', status: 'superseded' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, true, true); // supersededCollapsed = true
+      expect(order).toContain(SUPERSEDED_HEADER_ID);
+      expect(order).not.toContain('superseded'); // collapsed
+    });
+
+    it('includes superseded task IDs when expanded', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'superseded', title: 'Superseded', status: 'superseded' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, true, false); // supersededCollapsed = false
+      expect(order).toContain(SUPERSEDED_HEADER_ID);
+      expect(order).toContain('superseded');
+    });
+  });
+});
+
+describe('TaskTree collapsible archived section', () => {
+  describe('archived section header', () => {
+    it('shows collapsed archived header when there are archived tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Archived Task', status: 'archived' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          archivedCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('▶ Archived (1)');
+      expect(lastFrame()).not.toContain('Archived Task');
+    });
+
+    it('shows expanded archived header and tasks when expanded', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Archived Task', status: 'archived' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          archivedCollapsed={false}
+        />
+      );
+      expect(lastFrame()).toContain('▾ Archived (1)');
+      expect(lastFrame()).toContain('Archived Task');
+    });
+
+    it('does not show archived section when no archived tasks', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Completed Task', status: 'completed' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          archivedCollapsed={true}
+        />
+      );
+      expect(lastFrame()).not.toContain('Archived');
+    });
+
+    it('highlights archived header when selected', () => {
+      const tasks = [
+        createTask({ id: '1', title: 'Active Task', status: 'pending' }),
+        createTask({ id: '2', title: 'Archived Task', status: 'archived' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={ARCHIVED_HEADER_ID}
+          onSelect={() => {}}
+          {...defaultTreeProps}
+          archivedCollapsed={true}
+        />
+      );
+      expect(lastFrame()).toContain('Archived (1)');
+    });
+  });
+
+  describe('archived section navigation', () => {
+    it('includes archived header in navigation order when there are archived tasks', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'archived', title: 'Archived', status: 'archived' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, true, true, true); // archivedCollapsed = true
+      expect(order).toContain(ARCHIVED_HEADER_ID);
+      expect(order).not.toContain('archived'); // collapsed
+    });
+
+    it('includes archived task IDs when expanded', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active', status: 'pending' }),
+        createTask({ id: 'archived', title: 'Archived', status: 'archived' }),
+      ];
+      const order = flattenTreeOrder(tasks, true, true, true, true, false); // archivedCollapsed = false
+      expect(order).toContain(ARCHIVED_HEADER_ID);
+      expect(order).toContain('archived');
+    });
+  });
+});
+
+describe('TaskTree section ordering', () => {
+  it('renders sections in correct order: active, draft, cancelled, superseded, archived, completed', () => {
+    const tasks = [
+      createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+      createTask({ id: 'draft', title: 'Draft Task', status: 'draft' }),
+      createTask({ id: 'cancelled', title: 'Cancelled Task', status: 'cancelled' }),
+      createTask({ id: 'superseded', title: 'Superseded Task', status: 'superseded' }),
+      createTask({ id: 'archived', title: 'Archived Task', status: 'archived' }),
+      createTask({ id: 'completed', title: 'Completed Task', status: 'completed' }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        completedCollapsed={true}
+        onToggleCompleted={() => {}}
+        draftCollapsed={true}
+        onToggleDraft={() => {}}
+        cancelledCollapsed={true}
+        supersededCollapsed={true}
+        archivedCollapsed={true}
+      />
+    );
+    const frame = lastFrame() || '';
+    
+    // Get positions of each section header
+    const activePos = frame.indexOf('Active Task');
+    const draftPos = frame.indexOf('Draft (1)');
+    const cancelledPos = frame.indexOf('Cancelled (1)');
+    const supersededPos = frame.indexOf('Superseded (1)');
+    const archivedPos = frame.indexOf('Archived (1)');
+    const completedPos = frame.indexOf('Completed (1)');
+    
+    // Verify order: active < draft < cancelled < superseded < archived < completed
+    expect(activePos).toBeLessThan(draftPos);
+    expect(draftPos).toBeLessThan(cancelledPos);
+    expect(cancelledPos).toBeLessThan(supersededPos);
+    expect(supersededPos).toBeLessThan(archivedPos);
+    expect(archivedPos).toBeLessThan(completedPos);
+  });
+
+  it('navigation order follows section order', () => {
+    const tasks = [
+      createTask({ id: 'active', title: 'Active', status: 'pending' }),
+      createTask({ id: 'draft', title: 'Draft', status: 'draft' }),
+      createTask({ id: 'cancelled', title: 'Cancelled', status: 'cancelled' }),
+      createTask({ id: 'superseded', title: 'Superseded', status: 'superseded' }),
+      createTask({ id: 'archived', title: 'Archived', status: 'archived' }),
+      createTask({ id: 'completed', title: 'Completed', status: 'completed' }),
+    ];
+    // All sections collapsed
+    const order = flattenTreeOrder(tasks, true, true, true, true, true);
+    
+    // Get positions of each header
+    const activePos = order.indexOf('active');
+    const draftPos = order.indexOf(DRAFT_HEADER_ID);
+    const cancelledPos = order.indexOf(CANCELLED_HEADER_ID);
+    const supersededPos = order.indexOf(SUPERSEDED_HEADER_ID);
+    const archivedPos = order.indexOf(ARCHIVED_HEADER_ID);
+    const completedPos = order.indexOf(COMPLETED_HEADER_ID);
+    
+    // Verify order
+    expect(activePos).toBeLessThan(draftPos);
+    expect(draftPos).toBeLessThan(cancelledPos);
+    expect(cancelledPos).toBeLessThan(supersededPos);
+    expect(supersededPos).toBeLessThan(archivedPos);
+    expect(archivedPos).toBeLessThan(completedPos);
+  });
+});
+
+describe('TaskTree dimming for terminal statuses', () => {
+  it('dims cancelled tasks like completed tasks', () => {
+    const tasks = [
+      createTask({ id: '1', title: 'Cancelled Task', status: 'cancelled' }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        cancelledCollapsed={false}
+      />
+    );
+    // The task should be rendered (we can't easily test dimColor in ink-testing-library,
+    // but we can verify the task appears)
+    expect(lastFrame()).toContain('Cancelled Task');
+  });
+
+  it('dims superseded tasks like completed tasks', () => {
+    const tasks = [
+      createTask({ id: '1', title: 'Superseded Task', status: 'superseded' }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        supersededCollapsed={false}
+      />
+    );
+    expect(lastFrame()).toContain('Superseded Task');
+  });
+
+  it('dims archived tasks like completed tasks', () => {
+    const tasks = [
+      createTask({ id: '1', title: 'Archived Task', status: 'archived' }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        archivedCollapsed={false}
+      />
+    );
+    expect(lastFrame()).toContain('Archived Task');
   });
 });

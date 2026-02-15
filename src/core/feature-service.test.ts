@@ -34,6 +34,10 @@ function mockTask(overrides: Partial<ResolvedTask> = {}): ResolvedTask {
     git_remote: null,
     git_branch: null,
     user_original_request: null,
+    // OpenCode execution options
+    direct_prompt: null,
+    agent: null,
+    model: null,
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

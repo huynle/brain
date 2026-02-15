@@ -38,7 +38,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { HelpBar } from './components/HelpBar';
@@ -158,6 +158,9 @@ export function App({
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
+  const [cancelledCollapsed, setCancelledCollapsed] = useState(true);
+  const [supersededCollapsed, setSupersededCollapsed] = useState(true);
+  const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
   
   // Group visibility settings - persisted to ~/.brain/tui-settings.json
@@ -364,6 +367,9 @@ export function App({
     draftCollapsed,
     collapsedFeatures,
     visibleGroups,
+    cancelledCollapsed,
+    supersededCollapsed,
+    archivedCollapsed,
   });
 
   // Auto-scroll task list to keep selected task in view
@@ -1530,6 +1536,21 @@ export function App({
           setDraftCollapsed(prev => !prev);
           return;
         }
+        // Toggle cancelled section if header is selected
+        if (selectedTaskId === CANCELLED_HEADER_ID) {
+          setCancelledCollapsed(prev => !prev);
+          return;
+        }
+        // Toggle superseded section if header is selected
+        if (selectedTaskId === SUPERSEDED_HEADER_ID) {
+          setSupersededCollapsed(prev => !prev);
+          return;
+        }
+        // Toggle archived section if header is selected
+        if (selectedTaskId === ARCHIVED_HEADER_ID) {
+          setArchivedCollapsed(prev => !prev);
+          return;
+        }
         // Toggle ungrouped section if ungrouped header is selected
         if (selectedTaskId === UNGROUPED_HEADER_ID) {
           setCollapsedFeatures(prev => {
@@ -1587,6 +1608,51 @@ export function App({
           });
           return;
         }
+        // Toggle cancelled feature section
+        if (selectedTaskId?.startsWith(CANCELLED_FEATURE_PREFIX)) {
+          const featureId = selectedTaskId.replace(CANCELLED_FEATURE_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            const key = `cancelled:${featureId}`;
+            if (next.has(key)) {
+              next.delete(key);
+            } else {
+              next.add(key);
+            }
+            return next;
+          });
+          return;
+        }
+        // Toggle superseded feature section
+        if (selectedTaskId?.startsWith(SUPERSEDED_FEATURE_PREFIX)) {
+          const featureId = selectedTaskId.replace(SUPERSEDED_FEATURE_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            const key = `superseded:${featureId}`;
+            if (next.has(key)) {
+              next.delete(key);
+            } else {
+              next.add(key);
+            }
+            return next;
+          });
+          return;
+        }
+        // Toggle archived feature section
+        if (selectedTaskId?.startsWith(ARCHIVED_FEATURE_PREFIX)) {
+          const featureId = selectedTaskId.replace(ARCHIVED_FEATURE_PREFIX, '');
+          setCollapsedFeatures(prev => {
+            const next = new Set(prev);
+            const key = `archived:${featureId}`;
+            if (next.has(key)) {
+              next.delete(key);
+            } else {
+              next.add(key);
+            }
+            return next;
+          });
+          return;
+        }
         // Toggle dynamic group section if group header is selected
         if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
           const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');
@@ -1618,10 +1684,16 @@ export function App({
           !selectedTaskId.startsWith(FEATURE_HEADER_PREFIX) &&
           !selectedTaskId.startsWith(COMPLETED_FEATURE_PREFIX) &&
           !selectedTaskId.startsWith(DRAFT_FEATURE_PREFIX) &&
+          !selectedTaskId.startsWith(CANCELLED_FEATURE_PREFIX) &&
+          !selectedTaskId.startsWith(SUPERSEDED_FEATURE_PREFIX) &&
+          !selectedTaskId.startsWith(ARCHIVED_FEATURE_PREFIX) &&
           !selectedTaskId.startsWith(GROUP_HEADER_PREFIX) &&
           !selectedTaskId.startsWith(SPACER_PREFIX) &&
           selectedTaskId !== COMPLETED_HEADER_ID &&
           selectedTaskId !== DRAFT_HEADER_ID &&
+          selectedTaskId !== CANCELLED_HEADER_ID &&
+          selectedTaskId !== SUPERSEDED_HEADER_ID &&
+          selectedTaskId !== ARCHIVED_HEADER_ID &&
           selectedTaskId !== UNGROUPED_HEADER_ID &&
           navigationOrder.includes(selectedTaskId)
         ) {
@@ -1848,6 +1920,9 @@ export function App({
               onToggleCompleted={handleToggleCompleted}
               draftCollapsed={draftCollapsed}
               onToggleDraft={handleToggleDraft}
+              cancelledCollapsed={cancelledCollapsed}
+              supersededCollapsed={supersededCollapsed}
+              archivedCollapsed={archivedCollapsed}
               groupByProject={isMultiProject && activeProject === 'all'}
               groupByFeature={true}
               scrollOffset={taskScrollOffset}

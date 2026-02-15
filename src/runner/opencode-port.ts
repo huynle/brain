@@ -174,6 +174,11 @@ export async function checkOpencodeStatus(port: number): Promise<OpencodeStatus>
  */
 interface Session {
   id: string;
+  parentID?: string | null;
+  time?: {
+    created?: number;
+    updated?: number;
+  };
   [key: string]: unknown;
 }
 
@@ -183,7 +188,10 @@ interface Session {
  * GET http://localhost:<port>/session
  * Response: Array of Session objects, each with an `id` field.
  * 
- * Returns the first session's ID if available, null otherwise.
+ * IMPORTANT: Filters for ROOT sessions only (parentID is null/undefined).
+ * Subagent sessions (spawned by Task tool) have parentID set and are excluded.
+ * Returns the most recently created root session's ID, null if none found.
+ * 
  * Session IDs have format `ses_` + 27 alphanumeric chars (e.g., `ses_3f632f303ffeoDM6TxgC2KbByL`).
  */
 export async function discoverSessionId(port: number): Promise<string | null> {
@@ -216,10 +224,24 @@ export async function discoverSessionId(port: number): Promise<string | null> {
       return null;
     }
 
-    const sessionId = sessions[0].id;
+    // Filter for root sessions only (parentID is null or undefined)
+    // Subagent sessions have parentID set and should be excluded
+    const rootSessions = sessions.filter(s => !s.parentID);
+
+    if (rootSessions.length === 0) {
+      if (isDebugEnabled()) {
+        console.log(`[OpenCodePort] No root sessions found for port ${port} (all ${sessions.length} sessions are subagents)`);
+      }
+      return null;
+    }
+
+    // Sort by created time descending to get the most recent root session
+    rootSessions.sort((a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0));
+
+    const sessionId = rootSessions[0].id;
     if (sessionId && typeof sessionId === 'string') {
       if (isDebugEnabled()) {
-        console.log(`[OpenCodePort] Discovered session ID for port ${port}: ${sessionId}`);
+        console.log(`[OpenCodePort] Discovered root session ID for port ${port}: ${sessionId} (filtered from ${sessions.length} total sessions)`);
       }
       return sessionId;
     }

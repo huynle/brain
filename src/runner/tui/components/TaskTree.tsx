@@ -98,6 +98,9 @@ export const UNGROUPED_FEATURE_ID = '__ungrouped__';
 const FEATURE_HEADER_BG = '#2d4a6f';
 const FEATURE_HEADER_BG_SELECTED = '#4a7ab0';
 
+// Muted blue text color for feature header titles
+const FEATURE_HEADER_COLOR = '#6699cc';
+
 /**
  * Statuses that belong to group sections (draft, completed, etc.)
  * These should NOT appear in the main active task tree.
@@ -1322,7 +1325,7 @@ const FeatureHeader = React.memo(function FeatureHeader({
         {icon}
       </Text>
       <Text
-        color={isSelected ? 'white' : 'cyan'}
+        color={isSelected ? 'white' : FEATURE_HEADER_COLOR}
         backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
         bold
       >

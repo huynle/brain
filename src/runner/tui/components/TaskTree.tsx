@@ -1210,7 +1210,7 @@ const ProjectHeader = React.memo(function ProjectHeader({
 
 /**
  * Dimmed feature header for completed/draft sections (memoized)
- * Shows feature name with muted colors
+ * Shows feature name with muted blue color (consistent with active FeatureHeader)
  */
 const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
   featureId,
@@ -1228,13 +1228,16 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
     <Box flexDirection="row" marginLeft={1}>
       <Text
         color={isSelected ? 'white' : 'gray'}
-        dimColor={!isSelected}
       >
-        {collapseIcon} Feature: {featureId}
+        {collapseIcon}
+      </Text>
+      <Text
+        color={isSelected ? 'white' : FEATURE_HEADER_COLOR}
+      >
+        {' '}Feature: {featureId}
       </Text>
       <Text
         color={isSelected ? 'white' : 'gray'}
-        dimColor={!isSelected}
       >
         {' '}[{taskCount}]
       </Text>

@@ -92,6 +92,12 @@ export const UNGROUPED_FEATURE_ID = '__ungrouped__';
 
 // Status icons and colors are now imported from shared status-display.ts
 
+// Muted blue background colors for feature headers
+// Default: dark navy blue background for all feature headers (makes them visually distinct)
+// Selected: brighter blue to indicate selection state
+const FEATURE_HEADER_BG = '#2d4a6f';
+const FEATURE_HEADER_BG_SELECTED = '#4a7ab0';
+
 /**
  * Statuses that belong to group sections (draft, completed, etc.)
  * These should NOT appear in the main active task tree.
@@ -1220,14 +1226,14 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
     <Box flexDirection="row" marginLeft={1}>
       <Text
         color={isSelected ? 'white' : 'gray'}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
         dimColor={!isSelected}
       >
         {collapseIcon} Feature: {featureId}
       </Text>
       <Text
         color={isSelected ? 'white' : 'gray'}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
         dimColor={!isSelected}
       >
         {' '}[{taskCount}]
@@ -1304,20 +1310,20 @@ const FeatureHeader = React.memo(function FeatureHeader({
     <Box marginTop={1} flexDirection="row">
       <Text
         color={isSelected ? 'white' : 'gray'}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
       >
         {collapseIcon}
       </Text>
       <Text
         color={isSelected ? 'white' : color}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
         bold
       >
         {icon}
       </Text>
       <Text
         color={isSelected ? 'white' : 'cyan'}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
         bold
       >
         {' '}Feature: {featureId}
@@ -1325,7 +1331,7 @@ const FeatureHeader = React.memo(function FeatureHeader({
       {isActive && (
         <Text
           color={isSelected ? 'white' : 'magenta'}
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
           bold
         >
           {activeIndicator}
@@ -1333,14 +1339,14 @@ const FeatureHeader = React.memo(function FeatureHeader({
       )}
       <Text
         color={isSelected ? 'white' : 'gray'}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
       >
         {' '}{statsText}
       </Text>
       {blockedText && (
         <Text
           color={isSelected ? 'white' : 'yellow'}
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={isSelected ? FEATURE_HEADER_BG_SELECTED : FEATURE_HEADER_BG}
           dimColor
         >
           {blockedText}

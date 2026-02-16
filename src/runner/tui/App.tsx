@@ -45,6 +45,7 @@ import { HelpBar } from './components/HelpBar';
 import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
 import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
+import { SessionSelectPopup } from './components/SessionSelectPopup';
 
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
@@ -112,6 +113,30 @@ export function getVisibleTasksForUngrouped(tasks: TaskDisplay[]): TaskDisplay[]
   return tasks.filter(t => !t.feature_id && !GROUP_STATUSES.includes(t.status));
 }
 
+/**
+ * Map from status-group feature prefix to the statuses that belong in that group.
+ * Used to determine which tasks to target when pressing 's' on a status-group feature header.
+ */
+export const STATUS_GROUP_MAP: Record<string, EntryStatus[]> = {
+  [COMPLETED_FEATURE_PREFIX]: ['completed', 'validated'],
+  [DRAFT_FEATURE_PREFIX]: ['draft'],
+  [CANCELLED_FEATURE_PREFIX]: ['cancelled'],
+  [SUPERSEDED_FEATURE_PREFIX]: ['superseded'],
+  [ARCHIVED_FEATURE_PREFIX]: ['archived'],
+};
+
+/**
+ * Get tasks for a feature within a specific status group section.
+ * Used when pressing 's' on a feature header inside completed/draft/etc sections.
+ */
+export function getTasksForStatusGroupFeature(
+  tasks: TaskDisplay[],
+  featureId: string,
+  groupStatuses: EntryStatus[]
+): TaskDisplay[] {
+  return tasks.filter(t => t.feature_id === featureId && groupStatuses.includes(t.status));
+}
+
 export function App({ 
   config, 
   onLogCallback, 
@@ -136,6 +161,7 @@ export function App({
   onMoveTask,
   onListProjects,
   onDeleteTasks,
+  onOpenSession,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -223,6 +249,11 @@ export function App({
   // Delete confirmation popup state
   const [deletePopupOpen, setDeletePopupOpen] = useState(false);
   const [tasksToDelete, setTasksToDelete] = useState<Array<{id: string, title: string, path: string}>>([]);
+  
+  // Session select popup state (for 'o' key to open sessions)
+  const [sessionPopupOpen, setSessionPopupOpen] = useState(false);
+  const [sessionPopupIds, setSessionPopupIds] = useState<string[]>([]);
+  const [sessionPopupSelectedIndex, setSessionPopupSelectedIndex] = useState(0);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -848,6 +879,51 @@ export function App({
       return;
     }
 
+    // === Session Select Popup Mode ===
+    if (sessionPopupOpen) {
+      // Escape: cancel and close popup
+      if (key.escape) {
+        setSessionPopupOpen(false);
+        setSessionPopupIds([]);
+        setSessionPopupSelectedIndex(0);
+        return;
+      }
+      
+      // j/k or Down/Up: navigate sessions
+      if (input === 'j' || key.downArrow) {
+        setSessionPopupSelectedIndex(prev => Math.min(prev + 1, sessionPopupIds.length - 1));
+        return;
+      }
+      if (input === 'k' || key.upArrow) {
+        setSessionPopupSelectedIndex(prev => Math.max(prev - 1, 0));
+        return;
+      }
+      
+      // Enter: open selected session
+      if (key.return) {
+        const sessionId = sessionPopupIds[sessionPopupSelectedIndex];
+        if (sessionId && onOpenSession) {
+          addLog({
+            level: 'info',
+            message: `Opening session: ${sessionId}`,
+          });
+          onOpenSession(sessionId).catch((err: unknown) => {
+            addLog({
+              level: 'error',
+              message: `Failed to open session: ${err}`,
+            });
+          });
+        }
+        setSessionPopupOpen(false);
+        setSessionPopupIds([]);
+        setSessionPopupSelectedIndex(0);
+        return;
+      }
+      
+      // Block all other input when popup is open
+      return;
+    }
+
     // === Settings Popup Mode ===
     if (showSettingsPopup) {
       // Escape to close popup
@@ -1278,6 +1354,42 @@ export function App({
       return;
     }
 
+    // Open session for selected task
+    if (input === 'o' && selectedTask && focusedPanel === 'tasks') {
+      const sessionIds = selectedTask.session_ids || [];
+      if (sessionIds.length === 0) {
+        addLog({
+          level: 'warn',
+          message: `No sessions available for: ${selectedTask.title}`,
+          taskId: selectedTask.id,
+        });
+        return;
+      }
+      if (sessionIds.length === 1) {
+        // Single session - open directly
+        if (onOpenSession) {
+          addLog({
+            level: 'info',
+            message: `Opening session: ${sessionIds[0]}`,
+            taskId: selectedTask.id,
+          });
+          onOpenSession(sessionIds[0]).catch((err: unknown) => {
+            addLog({
+              level: 'error',
+              message: `Failed to open session: ${err}`,
+              taskId: selectedTask.id,
+            });
+          });
+        }
+      } else {
+        // Multiple sessions - show popup (latest first, so index 0 is selected by default)
+        setSessionPopupIds(sessionIds);
+        setSessionPopupSelectedIndex(0);
+        setSessionPopupOpen(true);
+      }
+      return;
+    }
+
     // Yank (copy) selected task name to clipboard
     if (input === 'y' && selectedTask && focusedPanel === 'tasks') {
       const success = copyToClipboard(selectedTask.title);
@@ -1434,6 +1546,26 @@ export function App({
           openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '', '', '', '');
         }
         return;
+      }
+      
+      // Case 3b: Status-group feature header selected (e.g. __completed_feature__auth-system)
+      // Open metadata popup targeting only tasks in that feature within that status group
+      for (const [prefix, groupStatuses] of Object.entries(STATUS_GROUP_MAP)) {
+        if (selectedTaskId?.startsWith(prefix)) {
+          const featureId = selectedTaskId.replace(prefix, '');
+          const featureTasks = getTasksForStatusGroupFeature(tasks, featureId, groupStatuses);
+          if (featureTasks.length > 0) {
+            const firstTask = featureTasks[0];
+            openMetadataPopup(
+              'feature',
+              featureTasks,
+              firstTask.status,
+              featureId,
+              '', '', firstTask.projectId || '', '', '', ''
+            );
+          }
+          return;
+        }
       }
       
       // Case 4: Single task selected - single mode
@@ -2064,6 +2196,18 @@ export function App({
     );
   }
 
+  // Session select popup overlay
+  if (sessionPopupOpen && sessionPopupIds.length > 0) {
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <SessionSelectPopup
+          sessionIds={sessionPopupIds}
+          selectedIndex={sessionPopupSelectedIndex}
+        />
+      </Box>
+    );
+  }
+
   return (
     <Box flexDirection="column" width="100%" height={terminalRows}>
       {/* Status bar at top */}
@@ -2159,6 +2303,7 @@ export function App({
         isMultiProject={isMultiProject}
         isFilterActive={filterMode === 'locked'}
         hasSelectedTasks={selectedTaskIds.size > 0}
+        hasTaskSessions={selectedTask?.session_ids && selectedTask.session_ids.length > 0}
       />
     </Box>
   );

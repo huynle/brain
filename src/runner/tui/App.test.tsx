@@ -1125,8 +1125,8 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
 // Bulk Metadata Update - Feature Header Filtering Tests (Bug Fix)
 // =============================================================================
 
-import { GROUP_STATUSES } from './components/TaskTree';
-import { getVisibleTasksForFeature, getVisibleTasksForUngrouped } from './App';
+import { GROUP_STATUSES, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX } from './components/TaskTree';
+import { getVisibleTasksForFeature, getVisibleTasksForUngrouped, getTasksForStatusGroupFeature, STATUS_GROUP_MAP } from './App';
 import type { TaskDisplay } from './types';
 
 describe('App - Bulk Metadata Update filters out group-status tasks', () => {
@@ -1279,6 +1279,128 @@ describe('App - Bulk Metadata Update filters out group-status tasks', () => {
       ];
 
       const result = getVisibleTasksForUngrouped(tasks);
+      expect(result).toHaveLength(0);
+    });
+  });
+});
+
+// =============================================================================
+// Status-Group Feature Header 's' Key Tests
+// =============================================================================
+
+describe('App - Status-group feature header batch metadata update', () => {
+  const createTask = (id: string, status: string, feature_id?: string): TaskDisplay => ({
+    id,
+    title: `Task ${id}`,
+    status: status as TaskDisplay['status'],
+    priority: 'medium',
+    dependencies: [],
+    dependents: [],
+    dependencyTitles: [],
+    dependentTitles: [],
+    tags: [],
+    path: `/path/to/${id}`,
+    feature_id,
+  });
+
+  describe('STATUS_GROUP_MAP', () => {
+    it('maps completed prefix to completed and validated statuses', () => {
+      expect(STATUS_GROUP_MAP[COMPLETED_FEATURE_PREFIX]).toEqual(['completed', 'validated']);
+    });
+
+    it('maps draft prefix to draft status', () => {
+      expect(STATUS_GROUP_MAP[DRAFT_FEATURE_PREFIX]).toEqual(['draft']);
+    });
+
+    it('maps cancelled prefix to cancelled status', () => {
+      expect(STATUS_GROUP_MAP[CANCELLED_FEATURE_PREFIX]).toEqual(['cancelled']);
+    });
+
+    it('maps superseded prefix to superseded status', () => {
+      expect(STATUS_GROUP_MAP[SUPERSEDED_FEATURE_PREFIX]).toEqual(['superseded']);
+    });
+
+    it('maps archived prefix to archived status', () => {
+      expect(STATUS_GROUP_MAP[ARCHIVED_FEATURE_PREFIX]).toEqual(['archived']);
+    });
+  });
+
+  describe('getTasksForStatusGroupFeature', () => {
+    it('returns only completed/validated tasks for a feature when using completed group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'completed', 'auth-system'),
+        createTask('2', 'validated', 'auth-system'),
+        createTask('3', 'pending', 'auth-system'),       // Wrong status
+        createTask('4', 'in_progress', 'auth-system'),   // Wrong status
+        createTask('5', 'completed', 'payment-flow'),    // Wrong feature
+        createTask('6', 'draft', 'auth-system'),         // Wrong status
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['completed', 'validated']);
+      expect(result).toHaveLength(2);
+      expect(result.map((t: TaskDisplay) => t.id)).toEqual(['1', '2']);
+    });
+
+    it('returns only draft tasks for a feature when using draft group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'draft', 'auth-system'),
+        createTask('2', 'draft', 'auth-system'),
+        createTask('3', 'pending', 'auth-system'),
+        createTask('4', 'draft', 'payment-flow'),
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['draft']);
+      expect(result).toHaveLength(2);
+      expect(result.map((t: TaskDisplay) => t.id)).toEqual(['1', '2']);
+    });
+
+    it('returns only cancelled tasks for a feature when using cancelled group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'cancelled', 'auth-system'),
+        createTask('2', 'pending', 'auth-system'),
+        createTask('3', 'cancelled', 'other-feature'),
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['cancelled']);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('1');
+    });
+
+    it('returns only superseded tasks for a feature when using superseded group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'superseded', 'auth-system'),
+        createTask('2', 'completed', 'auth-system'),
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['superseded']);
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe('1');
+    });
+
+    it('returns only archived tasks for a feature when using archived group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'archived', 'auth-system'),
+        createTask('2', 'archived', 'auth-system'),
+        createTask('3', 'completed', 'auth-system'),
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['archived']);
+      expect(result).toHaveLength(2);
+      expect(result.map((t: TaskDisplay) => t.id)).toEqual(['1', '2']);
+    });
+
+    it('returns empty array when no tasks match feature + status group', () => {
+      const tasks: TaskDisplay[] = [
+        createTask('1', 'pending', 'auth-system'),
+        createTask('2', 'completed', 'payment-flow'),
+      ];
+
+      const result = getTasksForStatusGroupFeature(tasks, 'auth-system', ['completed', 'validated']);
+      expect(result).toHaveLength(0);
+    });
+
+    it('returns empty array for empty task list', () => {
+      const result = getTasksForStatusGroupFeature([], 'auth-system', ['completed', 'validated']);
       expect(result).toHaveLength(0);
     });
   });

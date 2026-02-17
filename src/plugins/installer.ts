@@ -8,7 +8,7 @@
  * from both `bun run` and compiled standalone executables.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, statSync } from "fs";
 import { join, dirname, basename } from "path";
 import { homedir } from "os";
 import type {
@@ -625,55 +625,94 @@ export interface BackupInfo {
 }
 
 /**
- * Find all backup files for a target.
+ * Infer component type from a file path relative to the config directory.
+ * Maps directory prefixes like "skill/", "command/", "agent/", "plugin/" to their types.
  */
-export function findBackups(target: InstallTarget): BackupInfo[] {
-  const config = getTargetConfig(target);
-  const home = homedir();
-  const backupsMap = new Map<string, BackupInfo>(); // Use path as key to deduplicate
-
-  // Patterns to match: .backup-{timestamp} and .uninstalled-{timestamp}
-  const backupPattern = /^(.+)\.(backup|uninstalled)-(\d+)$/;
-
-  // Check plugin directory
-  const pluginDir = typeof config.pluginDir === "function" ? config.pluginDir(home) : config.pluginDir;
-  if (existsSync(pluginDir)) {
-    const files = readdirSync(pluginDir);
-    for (const file of files) {
-      const match = file.match(backupPattern);
-      if (match) {
-        const fullPath = join(pluginDir, file);
-        backupsMap.set(fullPath, {
-          path: fullPath,
-          originalFile: match[1],
-          timestamp: parseInt(match[3], 10),
-          type: match[2] as "backup" | "uninstalled",
-          componentType: "plugin",
-        });
-      }
+function inferComponentType(relativePath: string): BackupInfo["componentType"] | null {
+  const componentDirs: Record<string, BackupInfo["componentType"]> = {
+    "plugin/": "plugin",
+    "skill/": "skill",
+    "command/": "command",
+    "agent/": "agent",
+  };
+  for (const [prefix, type] of Object.entries(componentDirs)) {
+    if (relativePath.startsWith(prefix)) {
+      return type;
     }
   }
+  return null;
+}
 
-  // Check additional files (skills, commands) if target has them
-  const additionalFiles = config.additionalFiles || [];
-  for (const file of additionalFiles) {
-    const targetDir = file.targetDir(home);
-    if (existsSync(targetDir)) {
-      const files = readdirSync(targetDir);
-      for (const f of files) {
-        const match = f.match(backupPattern);
-        if (match) {
-          const fullPath = join(targetDir, f);
+/**
+ * Recursively scan a directory for backup/uninstalled files.
+ * Returns all matching files with their full paths.
+ */
+function scanDirForBackups(
+  dir: string,
+  backupPattern: RegExp,
+  configDir: string,
+  backupsMap: Map<string, BackupInfo>,
+): void {
+  if (!existsSync(dir)) return;
+
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch {
+    return; // Permission denied or other read error
+  }
+
+  for (const entry of entries) {
+    const fullPath = join(dir, entry);
+    let stat;
+    try {
+      stat = statSync(fullPath);
+    } catch {
+      continue; // Skip inaccessible entries
+    }
+
+    if (stat.isDirectory()) {
+      // Recurse into subdirectories
+      scanDirForBackups(fullPath, backupPattern, configDir, backupsMap);
+    } else if (stat.isFile()) {
+      const match = entry.match(backupPattern);
+      if (match) {
+        // Infer component type from path relative to configDir
+        const relativePath = fullPath.slice(configDir.length + 1); // +1 for trailing /
+        const componentType = inferComponentType(relativePath);
+        if (componentType) {
           backupsMap.set(fullPath, {
             path: fullPath,
             originalFile: match[1],
             timestamp: parseInt(match[3], 10),
             type: match[2] as "backup" | "uninstalled",
-            componentType: file.componentType,
+            componentType,
           });
         }
       }
     }
+  }
+}
+
+/**
+ * Find all backup files for a target.
+ *
+ * Recursively scans all component directories (plugin/, skill/, command/, agent/)
+ * under the target's configDir to find .backup-{timestamp} and .uninstalled-{timestamp} files.
+ */
+export function findBackups(target: InstallTarget): BackupInfo[] {
+  const backupsMap = new Map<string, BackupInfo>(); // Use path as key to deduplicate
+
+  // Patterns to match: .backup-{timestamp} and .uninstalled-{timestamp}
+  const backupPattern = /^(.+)\.(backup|uninstalled)-(\d+)$/;
+
+  const { configDir } = resolveTargetPaths(target);
+
+  // Recursively scan all component directories under configDir
+  const componentDirs = ["plugin", "skill", "command", "agent"];
+  for (const componentDir of componentDirs) {
+    const dir = join(configDir, componentDir);
+    scanDirForBackups(dir, backupPattern, configDir, backupsMap);
   }
 
   // Convert to array and sort by timestamp descending (newest first)

@@ -26,7 +26,7 @@ import { SignalHandler, setupSignalHandler } from "./signals";
 import { getLogger } from "./logger";
 import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
-import type { LogEntry } from "./tui/types";
+import type { LogEntry, OpenSessionTaskContext } from "./tui/types";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
 import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-utils";
 import type { ResourceMetrics } from "./tui/types";
@@ -2434,8 +2434,12 @@ export class TaskRunner {
    * Open an OpenCode session in a new tmux window (non-blocking).
    * Unlike openSession() which takes over the terminal, this creates a separate
    * tmux window so the user can switch between TUI and session.
+   *
+   * When taskContext is provided, the session is tracked in tuiTasks for idle
+   * monitoring — just like newly spawned tasks. This enables the idle detection
+   * loop (checkOpencodeIdleStatus) to monitor reopened sessions.
    */
-  async openSessionInTmux(sessionId: string): Promise<void> {
+  async openSessionInTmux(sessionId: string, taskContext?: OpenSessionTaskContext): Promise<void> {
     this.logger.info("Opening OpenCode session in tmux window", { sessionId });
 
     try {
@@ -2443,9 +2447,76 @@ export class TaskRunner {
       const shortId = sessionId.length > 12 ? sessionId.slice(-8) : sessionId;
       const windowName = `ses-${shortId}`;
 
-      await Bun.$`tmux new-window -d -n ${windowName} ${opencodeBin} -s ${sessionId}`;
+      // Add --port 0 so the HTTP API is available for idle monitoring
+      await Bun.$`tmux new-window -d -n ${windowName} ${opencodeBin} -s ${sessionId} --port 0`;
 
       this.logger.info("OpenCode session opened in tmux window", { sessionId, windowName });
+
+      // If we have task context, track this session for idle monitoring
+      if (taskContext) {
+        // Wait for window to be created and process to start
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        // Discover PID from tmux pane
+        let pid = 0;
+        try {
+          const panePidResult = await Bun.$`tmux list-panes -t ${windowName} -F '#{pane_pid}'`.text();
+          const panePid = parseInt(panePidResult.trim(), 10);
+          if (!isNaN(panePid) && panePid > 0) {
+            pid = panePid;
+          }
+
+          // Try to find actual OpenCode PID (child of shell)
+          if (pid > 0) {
+            try {
+              const pgrepResult = await Bun.$`pgrep -P ${pid} -f opencode`.text();
+              const opencodePid = parseInt(pgrepResult.trim(), 10);
+              if (!isNaN(opencodePid) && opencodePid > 0) {
+                pid = opencodePid;
+              }
+            } catch {
+              // pgrep failed, use pane pid
+            }
+          }
+        } catch (err) {
+          this.logger.warn("Failed to discover PID for reopened session", {
+            sessionId,
+            error: String(err),
+          });
+        }
+
+        // Wait for HTTP server to start, then discover port
+        let opencodePort: number | undefined;
+        if (pid > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          const port = await discoverOpencodePort(pid);
+          opencodePort = port ?? undefined;
+        }
+
+        // Create RunningTask and register in tuiTasks
+        const runningTask: RunningTask = {
+          id: taskContext.taskId,
+          path: taskContext.path,
+          title: taskContext.title,
+          priority: taskContext.priority,
+          projectId: taskContext.projectId,
+          pid,
+          windowName,
+          startedAt: new Date().toISOString(),
+          isResume: true,
+          workdir: taskContext.workdir,
+          opencodePort,
+          sessionId,
+        };
+
+        this.tuiTasks.set(taskContext.taskId, runningTask);
+        this.logger.info("Reopened session registered for idle monitoring", {
+          taskId: taskContext.taskId,
+          pid,
+          opencodePort,
+          windowName,
+        });
+      }
     } catch (error) {
       this.logger.error("Failed to open OpenCode session in tmux window", {
         sessionId,
@@ -2603,8 +2674,8 @@ export class TaskRunner {
         onDeleteTasks: (taskPaths) => this.deleteTasks(taskPaths),
         // Open OpenCode session in fullscreen (o key)
         onOpenSession: (sessionId) => this.openSession(sessionId),
-        // Open OpenCode session in tmux window (O key)
-        onOpenSessionTmux: (sessionId) => this.openSessionInTmux(sessionId),
+        // Open OpenCode session in tmux window (O key) - with task context for idle monitoring
+        onOpenSessionTmux: (sessionId, taskContext) => this.openSessionInTmux(sessionId, taskContext),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

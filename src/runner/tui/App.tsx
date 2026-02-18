@@ -4,21 +4,27 @@
  * Layout:
  * ┌─ project-name ──────────────────────────────────────────────────────────┐
  * │  ● 2 ready   ○ 3 waiting   ▶ 1 active   ✓ 2 done                        │
- * ├──────────────────────────┬───────────────────────────────────────────────┤
- * │ Tasks                    │ Task Details                                  │
- * │ ──────────────────────── │ ───────────────────────────────────────────── │
- * │ ● Setup base config      │ Title: Setup base config                      │
- * │ └─○ Create utils module  │ Status: pending (ready)                       │
- * │   └─○ Create main entry  │ Priority: high                                │
- * ├──────────────────────────┴───────────────────────────────────────────────┤
- * │ Logs                                                                     │
+ * ├──────────────────────────────────────────────────────────────────────────┤
+ * │ Tasks (full width)                                                       │
+ * │ ──────────────────────────────────────────────────────────────────────── │
+ * │ ● Setup base config                                                      │
+ * │ └─○ Create utils module                                                  │
+ * │   └─○ Create main entry                                                  │
+ * ├──────────────────────────────────────────────────────────────────────────┤
+ * │ Task Details (hidden by default, toggle with T)                          │
+ * │ ───────────────────────────────────────────────────────────────────────  │
+ * │ Title: Setup base config   Status: pending   Priority: high              │
+ * ├──────────────────────────────────────────────────────────────────────────┤
+ * │ Logs (hidden by default, toggle with L)                                  │
  * │ ───────────────────────────────────────────────────────────────────────  │
  * │ 17:30:45 INFO  Runner started                                            │
- * │ 17:30:46 INFO  Task started...                                           │
- * │ 17:30:47 DEBUG Polling...                                                │
  * ├──────────────────────────────────────────────────────────────────────────┤
  * │ ↑↓/j/k Navigate  Enter: Details  Tab: Switch  r: Refresh  q: Quit       │
  * └──────────────────────────────────────────────────────────────────────────┘
+ *
+ * Bottom area stacking (when both visible):
+ *   Task Detail takes 70% of bottom area, Logs takes 30%
+ *   When only one visible, it takes 100% of bottom area
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
@@ -56,7 +62,7 @@ import { useResourceMetrics } from './hooks/useResourceMetrics';
 import { useSettingsStorage } from './hooks/useSettingsStorage';
 import { useTaskFilter } from './hooks/useTaskFilter';
 import { FilterBar } from './components/FilterBar';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
@@ -324,26 +330,41 @@ export function App({
   const { rows: terminalRows, columns: terminalColumns } = useTerminalSize();
   const { metrics: resourceMetrics } = useResourceMetrics({ getResourceMetrics });
 
-  // Calculate dynamic maxLines for log viewer based on terminal height
-  // New layout: logs at bottom take ~40% of available height (when visible)
-  // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders (4 lines for top row, 2 for bottom)
-  const topRowHeight = logsVisible 
-    ? Math.floor((terminalRows - 6) * 0.6) // ~60% for top row when logs visible
-    : terminalRows - 6; // Full height when logs hidden
-  const logMaxLines = Math.max(5, terminalRows - 6 - topRowHeight - 2); // remaining height minus log panel chrome
+  // Calculate dynamic layout heights
+  // Account for: StatusBar (3 lines) + HelpBar (1 line) + borders/chrome (2 lines)
+  const availableHeight = terminalRows - 6;
+  const anyBottomVisible = logsVisible || detailVisible;
+  
+  // Top row (TaskTree) height: 60% when bottom area visible, full otherwise
+  const topRowHeight = anyBottomVisible
+    ? Math.floor(availableHeight * 0.6)
+    : availableHeight;
+  
+  // Bottom area height: remaining space after top row
+  const bottomAreaHeight = availableHeight - topRowHeight;
+  
+  // When both bottom panels visible: TaskDetail 70%, Logs 30%
+  // When only one visible: it gets 100% of bottom area
+  const bothBottomVisible = logsVisible && detailVisible;
+  const detailHeight = bothBottomVisible
+    ? Math.floor(bottomAreaHeight * 0.7)
+    : bottomAreaHeight;
+  const logHeight = bothBottomVisible
+    ? bottomAreaHeight - detailHeight
+    : bottomAreaHeight;
+  
+  const logMaxLines = Math.max(5, logHeight - 2); // minus log panel chrome
   
   // Calculate task viewport height for scrolling
   // Account for: TaskTree header (2 lines: title + margin) + border (2 lines) + padding (2 lines)
   const taskViewportHeight = Math.max(3, topRowHeight - 6);
   
-  // Calculate details viewport height for scrolling
+  // Calculate details viewport height for scrolling (now in bottom area)
   // Account for: header (1 line) + border (2 lines) + padding (2 lines) + scroll indicators (2 lines)
-  const detailsViewportHeight = Math.max(3, topRowHeight - 7);
+  const detailsViewportHeight = Math.max(3, detailHeight - 7);
   
-  // Calculate task panel width for text truncation
-  // When detail panel is visible, task tree gets ~50% of terminal width minus border (2 chars)
-  // When detail panel is hidden, task tree gets full width minus border (2 chars)
-  const taskPanelWidth = detailVisible ? Math.floor(terminalColumns / 2) - 2 : terminalColumns - 2;
+  // Task tree is always full width now (detail moved to bottom)
+  const taskPanelWidth = terminalColumns - 2;
   
   // Reset scroll offset when new logs arrive and we're at the bottom
   useEffect(() => {
@@ -954,19 +975,36 @@ export function App({
       // Enter: open selected session (fullscreen or tmux depending on mode)
       if (key.return) {
         const sessionId = sessionPopupIds[sessionPopupSelectedIndex];
-        const openFn = sessionPopupTmuxMode ? onOpenSessionTmux : onOpenSession;
         const modeLabel = sessionPopupTmuxMode ? 'tmux window' : 'fullscreen';
-        if (sessionId && openFn) {
+        if (sessionId) {
           addLog({
             level: 'info',
             message: `Opening session in ${modeLabel}: ${sessionId}`,
           });
-          openFn(sessionId).catch((err: unknown) => {
-            addLog({
-              level: 'error',
-              message: `Failed to open session: ${err}`,
+          if (sessionPopupTmuxMode && onOpenSessionTmux) {
+            // Build task context for idle monitoring tracking
+            const taskCtx: OpenSessionTaskContext | undefined = selectedTask ? {
+              taskId: selectedTask.id,
+              path: selectedTask.path,
+              title: selectedTask.title,
+              priority: selectedTask.priority,
+              projectId: selectedTask.projectId || 'unknown',
+              workdir: selectedTask.resolvedWorkdir || selectedTask.workdir || process.cwd(),
+            } : undefined;
+            onOpenSessionTmux(sessionId, taskCtx).catch((err: unknown) => {
+              addLog({
+                level: 'error',
+                message: `Failed to open session: ${err}`,
+              });
             });
-          });
+          } else if (!sessionPopupTmuxMode && onOpenSession) {
+            onOpenSession(sessionId).catch((err: unknown) => {
+              addLog({
+                level: 'error',
+                message: `Failed to open session: ${err}`,
+              });
+            });
+          }
         }
         setSessionPopupOpen(false);
         setSessionPopupIds([]);
@@ -1496,12 +1534,20 @@ export function App({
       if (sessionIds.length === 1) {
         // Single session - open directly in tmux window
         if (onOpenSessionTmux) {
+          const taskCtx: OpenSessionTaskContext = {
+            taskId: selectedTask.id,
+            path: selectedTask.path,
+            title: selectedTask.title,
+            priority: selectedTask.priority,
+            projectId: selectedTask.projectId || 'unknown',
+            workdir: selectedTask.resolvedWorkdir || selectedTask.workdir || process.cwd(),
+          };
           addLog({
             level: 'info',
             message: `Opening session in tmux window: ${sessionIds[0]}`,
             taskId: selectedTask.id,
           });
-          onOpenSessionTmux(sessionIds[0]).catch((err: unknown) => {
+          onOpenSessionTmux(sessionIds[0], taskCtx).catch((err: unknown) => {
             addLog({
               level: 'error',
               message: `Failed to open session in tmux window: ${err}`,
@@ -2361,13 +2407,12 @@ export function App({
         activeFeatures={activeFeatures}
       />
 
-      {/* Main content area: Top row (Tasks + Details) | Bottom row (Logs) */}
+      {/* Main content area: Top row (Tasks) | Bottom area (Details + Logs) */}
       <Box flexGrow={1} flexDirection="column">
-        {/* Top row: Task Tree (left) + Task Detail (right, when visible) */}
+        {/* Top row: Task Tree (always full width) */}
         <Box height={topRowHeight} flexDirection="row">
-          {/* Left panel: Task Tree */}
           <Box
-            width={detailVisible ? "50%" : "100%"}
+            width="100%"
             borderStyle="single"
             borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
             flexDirection="column"
@@ -2401,35 +2446,37 @@ export function App({
               panelWidth={taskPanelWidth}
             />
           </Box>
-
-          {/* Right panel: Task Detail (conditionally rendered) */}
-          {detailVisible && (
-            <Box
-              width="50%"
-              flexDirection="column"
-            >
-              <TaskDetail 
-                task={selectedTask} 
-                isFocused={focusedPanel === 'details'}
-                scrollOffset={detailsScrollOffset}
-                viewportHeight={detailsViewportHeight}
-              />
-            </Box>
-          )}
         </Box>
 
-        {/* Bottom row: Logs (full width) - conditionally rendered */}
-        {logsVisible && (
-          <Box flexGrow={1}>
-            <LogViewer 
-              logs={logs} 
-              maxLines={logMaxLines} 
-              showProjectPrefix={isMultiProject}
-              isFocused={focusedPanel === 'logs'}
-              scrollOffset={logScrollOffset}
-              filterByTaskId={selectedTaskId}
-              isFiltering={filterLogsByTask}
-            />
+        {/* Bottom area: Task Detail + Logs (stacked vertically, hidden by default) */}
+        {anyBottomVisible && (
+          <Box flexDirection="column" height={bottomAreaHeight}>
+            {/* Task Detail (toggle with T) */}
+            {detailVisible && (
+              <Box height={detailHeight} flexDirection="column">
+                <TaskDetail 
+                  task={selectedTask} 
+                  isFocused={focusedPanel === 'details'}
+                  scrollOffset={detailsScrollOffset}
+                  viewportHeight={detailsViewportHeight}
+                />
+              </Box>
+            )}
+
+            {/* Logs (toggle with L) */}
+            {logsVisible && (
+              <Box flexGrow={1}>
+                <LogViewer 
+                  logs={logs} 
+                  maxLines={logMaxLines} 
+                  showProjectPrefix={isMultiProject}
+                  isFocused={focusedPanel === 'logs'}
+                  scrollOffset={logScrollOffset}
+                  filterByTaskId={selectedTaskId}
+                  isFiltering={filterLogsByTask}
+                />
+              </Box>
+            )}
           </Box>
         )}
       </Box>

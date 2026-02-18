@@ -240,5 +240,15 @@ export interface AppProps {
   /** Callback to open an OpenCode session in fullscreen mode. Used by 'o' key on tasks with session_ids. */
   onOpenSession?: (sessionId: string) => Promise<void>;
   /** Callback to open an OpenCode session in a new tmux window. Used by 'O' key on tasks with session_ids. */
-  onOpenSessionTmux?: (sessionId: string) => Promise<void>;
+  onOpenSessionTmux?: (sessionId: string, taskContext?: OpenSessionTaskContext) => Promise<void>;
+}
+
+/** Context needed to track a reopened session for idle monitoring */
+export interface OpenSessionTaskContext {
+  taskId: string;
+  path: string;
+  title: string;
+  priority: Priority;
+  projectId: string;
+  workdir: string;
 }

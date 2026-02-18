@@ -1943,3 +1943,229 @@ describe("TaskRunner - Cancel Task", () => {
     });
   });
 });
+
+// =============================================================================
+// TaskRunner - Open Session in Tmux with Tracking
+// =============================================================================
+
+describe("TaskRunner - openSessionInTmux tracking", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-session-tmux-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  describe("openSessionInTmux()", () => {
+    test("spawns with --port 0 flag for HTTP API access", async () => {
+      const tmuxCommands: string[] = [];
+
+      // Mock Bun.$ to capture tmux commands
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        tmuxCommands.push(command);
+
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve('12345'),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '12345', stderr: '' }),
+        };
+      };
+
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        const runner = new TaskRunner({ projectId: "test-project", config });
+
+        await runner.openSessionInTmux("ses_abc123def456");
+
+        // Find the tmux new-window command
+        const newWindowCmd = tmuxCommands.find(cmd => cmd.includes('new-window'));
+        expect(newWindowCmd).toBeDefined();
+
+        // Verify --port 0 is included in the command
+        expect(newWindowCmd).toContain('--port 0');
+
+        // Verify -s flag with session ID is included
+        expect(newWindowCmd).toContain('-s ses_abc123def456');
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("registers RunningTask in tuiTasks when taskContext is provided", async () => {
+      // Mock Bun.$ to simulate tmux commands
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+
+        // Return a mock pane PID for list-panes
+        if (command.includes('list-panes')) {
+          return {
+            quiet: () => Promise.resolve({ exitCode: 0, stdout: '99999', stderr: '' }),
+            text: () => Promise.resolve('99999'),
+            then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '99999', stderr: '' }),
+          };
+        }
+
+        // pgrep will fail (no child opencode process found)
+        if (command.includes('pgrep')) {
+          return {
+            quiet: () => Promise.reject(new Error('no match')),
+            text: () => Promise.reject(new Error('no match')),
+            then: (_: unknown, reject: (err: Error) => void) => reject(new Error('no match')),
+          };
+        }
+
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      // Mock fetch for port discovery (lsof) - return unavailable
+      globalThis.fetch = ((url: string) => {
+        return Promise.resolve(new Response("", { status: 404 }));
+      }) as typeof fetch;
+
+      try {
+        const runner = new TaskRunner({ projectId: "test-project", config });
+
+        const taskContext = {
+          taskId: "task-abc123",
+          path: "projects/test/task/task-abc123.md",
+          title: "My Test Task",
+          priority: "high" as const,
+          projectId: "test-project",
+          workdir: "/tmp/test-workdir",
+        };
+
+        await runner.openSessionInTmux("ses_abc123def456", taskContext);
+
+        // Verify the task was registered in tuiTasks
+        // @ts-expect-error - accessing private property for testing
+        const registeredTask = runner.tuiTasks.get("task-abc123");
+        expect(registeredTask).toBeDefined();
+        expect(registeredTask!.id).toBe("task-abc123");
+        expect(registeredTask!.title).toBe("My Test Task");
+        expect(registeredTask!.priority).toBe("high");
+        expect(registeredTask!.projectId).toBe("test-project");
+        expect(registeredTask!.workdir).toBe("/tmp/test-workdir");
+        expect(registeredTask!.sessionId).toBe("ses_abc123def456");
+        expect(registeredTask!.isResume).toBe(true);
+        expect(registeredTask!.windowName).toContain("ses-");
+        expect(registeredTask!.startedAt).toBeDefined();
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("does NOT register in tuiTasks when taskContext is not provided", async () => {
+      // Mock Bun.$ to simulate tmux commands
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        const runner = new TaskRunner({ projectId: "test-project", config });
+
+        // Call without taskContext (backward compatible)
+        await runner.openSessionInTmux("ses_abc123def456");
+
+        // Verify NO task was registered in tuiTasks
+        // @ts-expect-error - accessing private property for testing
+        expect(runner.tuiTasks.size).toBe(0);
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+
+    test("uses short session ID suffix for window name", async () => {
+      const tmuxCommands: string[] = [];
+
+      const originalBunShell = Bun.$;
+      const mockBunShell = (strings: TemplateStringsArray, ...values: unknown[]) => {
+        const command = strings.reduce((acc, str, i) => {
+          return acc + str + (values[i] !== undefined ? String(values[i]) : '');
+        }, '');
+        tmuxCommands.push(command);
+
+        return {
+          quiet: () => Promise.resolve({ exitCode: 0, stdout: '', stderr: '' }),
+          text: () => Promise.resolve(''),
+          then: (resolve: (value: unknown) => void) => resolve({ exitCode: 0, stdout: '', stderr: '' }),
+        };
+      };
+
+      // @ts-expect-error - mocking Bun.$
+      Bun.$ = mockBunShell;
+
+      try {
+        const runner = new TaskRunner({ projectId: "test-project", config });
+
+        await runner.openSessionInTmux("ses_3f632f303ffeoDM6TxgC2KbByL");
+
+        // Find the tmux new-window command
+        const newWindowCmd = tmuxCommands.find(cmd => cmd.includes('new-window'));
+        expect(newWindowCmd).toBeDefined();
+
+        // Window name should use last 8 chars of session ID
+        expect(newWindowCmd).toContain('ses-gC2KbByL');
+      } finally {
+        Bun.$ = originalBunShell;
+      }
+    });
+  });
+});

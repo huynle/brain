@@ -38,6 +38,17 @@ export function getApiUrl(): string {
 // Execution Context
 // ============================================================================
 
+/**
+ * Extract a short project name from a $HOME-relative path.
+ * e.g. "projects/brain-api" → "brain-api", "brain-api" → "brain-api"
+ * The task API validates project IDs with /^[a-zA-Z0-9_-]+$/ (no slashes).
+ */
+export function resolveProjectName(homeRelativePath: string): string {
+  // Take the last path segment — handles both "projects/foo" and "foo"
+  const segments = homeRelativePath.split("/").filter(Boolean);
+  return segments[segments.length - 1] || homeRelativePath;
+}
+
 export function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
 
@@ -82,8 +93,11 @@ export function getExecutionContext(directory: string): ExecutionContext {
     return path;
   };
 
-  const projectId = makeHomeRelative(mainRepoPath);
-  const workdir = makeHomeRelative(mainRepoPath);
+  // projectId = short name (last path segment), used by task API which validates
+  // with ProjectIdSchema (alphanumeric, hyphens, underscores only — no slashes)
+  const homePath = makeHomeRelative(mainRepoPath);
+  const projectId = resolveProjectName(homePath);
+  const workdir = homePath;
 
   return {
     projectId,

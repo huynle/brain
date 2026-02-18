@@ -100,7 +100,7 @@ export function loadConfig(): RunnerConfig {
     agent: getEnv("OPENCODE_AGENT", fileConfig.opencode?.agent ?? "general"),
     model: getEnv(
       "OPENCODE_MODEL",
-      fileConfig.opencode?.model ?? "anthropic/claude-opus-4-5"
+      fileConfig.opencode?.model ?? "anthropic/claude-opus-4-6"
     ),
   };
 
@@ -130,7 +130,7 @@ export function loadConfig(): RunnerConfig {
     apiTimeout: getEnvInt("RUNNER_API_TIMEOUT", fileConfig.apiTimeout ?? 5000),
     taskTimeout: getEnvInt(
       "RUNNER_TASK_TIMEOUT",
-      fileConfig.taskTimeout ?? 1800000
+      fileConfig.taskTimeout ?? 0
     ),
     idleDetectionThreshold: getEnvInt(
       "RUNNER_IDLE_THRESHOLD",

@@ -399,6 +399,48 @@ export function App({
     });
   }, [getEnabledFeatures, tasks]); // Re-sync when tasks change (poll interval)
 
+  // Auto-clear activeFeatures when ALL tasks for a feature reach terminal state
+  // Terminal states: completed, validated, cancelled, superseded, archived
+  useEffect(() => {
+    if (activeFeatures.size === 0) return;
+
+    const TERMINAL_STATUSES: Set<string> = new Set([
+      'completed', 'validated', 'cancelled', 'superseded', 'archived',
+    ]);
+
+    const featuresToClear: string[] = [];
+    for (const featureId of activeFeatures) {
+      // Get all tasks for this feature (or ungrouped tasks)
+      const featureTasks = featureId === UNGROUPED_FEATURE_ID
+        ? tasks.filter(t => !t.feature_id)
+        : tasks.filter(t => t.feature_id === featureId);
+
+      // If there are tasks and ALL are in terminal state, auto-clear
+      if (featureTasks.length > 0 && featureTasks.every(t => TERMINAL_STATUSES.has(t.status))) {
+        featuresToClear.push(featureId);
+      }
+    }
+
+    if (featuresToClear.length > 0) {
+      setActiveFeatures(prev => {
+        const next = new Set(prev);
+        for (const fid of featuresToClear) {
+          next.delete(fid);
+        }
+        return next;
+      });
+      for (const fid of featuresToClear) {
+        if (onDisableFeature) {
+          onDisableFeature(fid);
+        }
+        addLog({
+          level: 'info',
+          message: `Auto-deactivated feature (all tasks complete): ${fid}`,
+        });
+      }
+    }
+  }, [tasks, activeFeatures, onDisableFeature, addLog]);
+
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {
     setCompletedCollapsed(prev => !prev);
@@ -1284,6 +1326,43 @@ export function App({
           }
         }
         return;
+      }
+      
+      // Case 2b: Status-group feature header (e.g. completed/draft/cancelled section)
+      // Allow toggling off activeFeatures from these sections
+      const statusGroupPrefixes = [
+        COMPLETED_FEATURE_PREFIX,
+        DRAFT_FEATURE_PREFIX,
+        CANCELLED_FEATURE_PREFIX,
+        SUPERSEDED_FEATURE_PREFIX,
+        ARCHIVED_FEATURE_PREFIX,
+      ];
+      for (const prefix of statusGroupPrefixes) {
+        if (selectedTaskId?.startsWith(prefix)) {
+          const featureId = selectedTaskId.replace(prefix, '');
+          
+          if (activeFeatures.has(featureId)) {
+            // Disable the feature (remove from whitelist)
+            setActiveFeatures(prev => {
+              const next = new Set(prev);
+              next.delete(featureId);
+              return next;
+            });
+            if (onDisableFeature) {
+              onDisableFeature(featureId);
+            }
+            addLog({
+              level: 'info',
+              message: `Deactivated feature: ${featureId}`,
+            });
+          } else {
+            addLog({
+              level: 'info',
+              message: `Feature not active: ${featureId} (nothing to toggle)`,
+            });
+          }
+          return;
+        }
       }
       
       // Case 3: Task selected - execute immediately

@@ -98,6 +98,8 @@ export interface DashboardOptions {
   onDeleteTasks?: (taskPaths: string[]) => Promise<void>;
   /** Callback to open an OpenCode session in fullscreen mode. Used by 'o' key on tasks with session_ids. */
   onOpenSession?: (sessionId: string) => Promise<void>;
+  /** Callback to open an OpenCode session in a new tmux window. Used by 'O' key on tasks with session_ids. */
+  onOpenSessionTmux?: (sessionId: string) => Promise<void>;
 }
 
 export interface DashboardHandle {
@@ -185,6 +187,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       onListProjects={options.onListProjects}
       onDeleteTasks={options.onDeleteTasks}
       onOpenSession={options.onOpenSession}
+      onOpenSessionTmux={options.onOpenSessionTmux}
     />,
     {
       // Patch console to prevent any stray console.log from corrupting the TUI

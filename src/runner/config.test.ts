@@ -55,10 +55,10 @@ describe("config", () => {
       expect(config.logDir).toBe(join(homedir(), ".local", "log"));
       expect(config.workDir).toBe(homedir());
       expect(config.apiTimeout).toBe(5000);
-      expect(config.taskTimeout).toBe(1800000);
+      expect(config.taskTimeout).toBe(0);
       expect(config.opencode.bin).toBe("opencode");
       expect(config.opencode.agent).toBe("general");
-      expect(config.opencode.model).toBe("anthropic/claude-opus-4-5");
+      expect(config.opencode.model).toBe("anthropic/claude-opus-4-6");
       expect(config.excludeProjects).toEqual([]);
     });
 

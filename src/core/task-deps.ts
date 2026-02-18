@@ -44,11 +44,30 @@ export function buildLookupMaps(tasks: Task[]): TaskLookupMaps {
 
 /**
  * Resolve a dependency reference to a task ID
- * Supports both ID and title references
+ * Supports: bare ID ("abc12def"), project-prefixed ("project:abc12def"),
+ * full path ("projects/project/task/abc12def.md"), and title references
  */
 export function resolveDep(ref: string, maps: TaskLookupMaps): string | null {
+  // Direct ID match
   if (maps.byId.has(ref)) return ref;
+
+  // Handle "project:taskId" format (e.g., "brain-api:4ea0k6uk")
+  const colonIdx = ref.indexOf(":");
+  if (colonIdx !== -1) {
+    const bareId = ref.slice(colonIdx + 1);
+    if (maps.byId.has(bareId)) return bareId;
+  }
+
+  // Handle full path format (e.g., "projects/brain-api/task/4ea0k6uk.md")
+  const pathMatch = ref.match(/^projects\/[^/]+\/task\/(.+?)(?:\.md)?$/);
+  if (pathMatch) {
+    const bareId = pathMatch[1];
+    if (maps.byId.has(bareId)) return bareId;
+  }
+
+  // Title match
   if (maps.titleToId.has(ref)) return maps.titleToId.get(ref)!;
+
   return null;
 }
 

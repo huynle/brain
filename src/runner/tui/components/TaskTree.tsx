@@ -987,10 +987,9 @@ const CompletedHeader = React.memo(function CompletedHeader({
   return (
     <Box>
       <Text
-        color={isSelected ? 'white' : 'green'}
+        color={isSelected ? 'white' : '#66cc66'}
         backgroundColor={isSelected ? 'blue' : undefined}
         bold={isSelected}
-        dimColor={!isSelected}
       >
         {icon} Completed ({count})
       </Text>
@@ -1014,10 +1013,9 @@ const DraftHeader = React.memo(function DraftHeader({
   return (
     <Box>
       <Text
-        color={isSelected ? 'white' : 'gray'}
+        color={isSelected ? 'white' : '#aaaaaa'}
         backgroundColor={isSelected ? 'blue' : undefined}
         bold={isSelected}
-        dimColor={!isSelected}
       >
         {icon} Draft ({count})
       </Text>
@@ -1049,7 +1047,6 @@ const GroupSectionHeader = React.memo(function GroupSectionHeader({
         color={isSelected ? 'white' : color}
         backgroundColor={isSelected ? 'blue' : undefined}
         bold={isSelected}
-        dimColor={!isSelected}
       >
         {icon} {label} ({count})
       </Text>
@@ -1954,7 +1951,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={cancelledTasks.length}
           collapsed={cancelledCollapsed}
           isSelected={selectedId === CANCELLED_HEADER_ID}
-          color="red"
+          color="#ff6666"
         />
       );
       
@@ -2046,7 +2043,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={supersededTasks.length}
           collapsed={supersededCollapsed}
           isSelected={selectedId === SUPERSEDED_HEADER_ID}
-          color="yellow"
+          color="#ffcc00"
         />
       );
       
@@ -2138,7 +2135,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={archivedTasks.length}
           collapsed={archivedCollapsed}
           isSelected={selectedId === ARCHIVED_HEADER_ID}
-          color="gray"
+          color="#aaaaaa"
         />
       );
       
@@ -2316,14 +2313,14 @@ export const TaskTree = React.memo(function TaskTree({
         featureElements.push(
           <Box key={UNGROUPED_HEADER_ID} marginTop={1} flexDirection="row">
             <Text
-              color={isUngroupedSelected ? 'white' : 'gray'}
+              color={isUngroupedSelected ? 'white' : '#aaaaaa'}
               backgroundColor={isUngroupedSelected ? 'blue' : undefined}
             >
               {collapseIcon}
             </Text>
             <Text
               bold
-              color={isUngroupedSelected ? 'white' : 'gray'}
+              color={isUngroupedSelected ? 'white' : '#aaaaaa'}
               backgroundColor={isUngroupedSelected ? 'blue' : undefined}
             >
               {' '}Ungrouped ({ungroupedActive.length})
@@ -2455,7 +2452,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={cancelledTasks.length}
           collapsed={cancelledCollapsed}
           isSelected={selectedId === CANCELLED_HEADER_ID}
-          color="red"
+          color="#ff6666"
         />
       );
       
@@ -2547,7 +2544,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={supersededTasks.length}
           collapsed={supersededCollapsed}
           isSelected={selectedId === SUPERSEDED_HEADER_ID}
-          color="yellow"
+          color="#ffcc00"
         />
       );
       
@@ -2639,7 +2636,7 @@ export const TaskTree = React.memo(function TaskTree({
           count={archivedTasks.length}
           collapsed={archivedCollapsed}
           isSelected={selectedId === ARCHIVED_HEADER_ID}
-          color="gray"
+          color="#aaaaaa"
         />
       );
       
@@ -3092,7 +3089,7 @@ export const TaskTree = React.memo(function TaskTree({
         count={cancelledTasks.length}
         collapsed={cancelledCollapsed}
         isSelected={selectedId === CANCELLED_HEADER_ID}
-        color="red"
+        color="#ff6666"
       />
     );
     
@@ -3187,7 +3184,7 @@ export const TaskTree = React.memo(function TaskTree({
         count={supersededTasks.length}
         collapsed={supersededCollapsed}
         isSelected={selectedId === SUPERSEDED_HEADER_ID}
-        color="yellow"
+        color="#ffcc00"
       />
     );
     
@@ -3282,7 +3279,7 @@ export const TaskTree = React.memo(function TaskTree({
         count={archivedTasks.length}
         collapsed={archivedCollapsed}
         isSelected={selectedId === ARCHIVED_HEADER_ID}
-        color="gray"
+        color="#aaaaaa"
       />
     );
     

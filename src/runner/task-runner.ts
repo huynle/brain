@@ -1387,9 +1387,9 @@ export class TaskRunner {
         // Note: "blocked" status is NOT treated as completion
         // Blocked tasks stay in tuiTasks to allow resume detection
 
-        // Check for timeout
+        // Check for timeout (0 = no timeout)
         const elapsed = Date.now() - new Date(task.startedAt).getTime();
-        if (elapsed > this.config.taskTimeout) {
+        if (this.config.taskTimeout > 0 && elapsed > this.config.taskTimeout) {
           this.logger.warn("TUI task timed out", {
             taskId,
             elapsed,
@@ -2431,6 +2431,31 @@ export class TaskRunner {
   }
 
   /**
+   * Open an OpenCode session in a new tmux window (non-blocking).
+   * Unlike openSession() which takes over the terminal, this creates a separate
+   * tmux window so the user can switch between TUI and session.
+   */
+  async openSessionInTmux(sessionId: string): Promise<void> {
+    this.logger.info("Opening OpenCode session in tmux window", { sessionId });
+
+    try {
+      const opencodeBin = process.env.OPENCODE_BIN || "opencode";
+      const shortId = sessionId.length > 12 ? sessionId.slice(-8) : sessionId;
+      const windowName = `ses-${shortId}`;
+
+      await Bun.$`tmux new-window -d -n ${windowName} ${opencodeBin} -s ${sessionId}`;
+
+      this.logger.info("OpenCode session opened in tmux window", { sessionId, windowName });
+    } catch (error) {
+      this.logger.error("Failed to open OpenCode session in tmux window", {
+        sessionId,
+        error: String(error),
+      });
+      throw error;
+    }
+  }
+
+  /**
    * Edit a task in an external editor.
    * Fetches task content, writes to temp file, spawns $EDITOR, reads back and syncs.
    * Returns the new content if changes were made, null if cancelled/unchanged.
@@ -2578,6 +2603,8 @@ export class TaskRunner {
         onDeleteTasks: (taskPaths) => this.deleteTasks(taskPaths),
         // Open OpenCode session in fullscreen (o key)
         onOpenSession: (sessionId) => this.openSession(sessionId),
+        // Open OpenCode session in tmux window (O key)
+        onOpenSessionTmux: (sessionId) => this.openSessionInTmux(sessionId),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

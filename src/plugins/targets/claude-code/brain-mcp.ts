@@ -170,6 +170,16 @@ interface ExecutionContext {
   gitBranch?: string; // Used to derive worktree path
 }
 
+/**
+ * Extract a short project name from a $HOME-relative path.
+ * e.g. "projects/brain-api" → "brain-api", "brain-api" → "brain-api"
+ * The task API validates project IDs with /^[a-zA-Z0-9_-]+$/ (no slashes).
+ */
+function resolveProjectName(homeRelativePath: string): string {
+  const segments = homeRelativePath.split("/").filter(Boolean);
+  return segments[segments.length - 1] || homeRelativePath;
+}
+
 function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
   let mainRepoPath = directory;
@@ -208,9 +218,13 @@ function getExecutionContext(directory: string): ExecutionContext {
     return path;
   };
 
+  // projectId = short name (last path segment), used by task API which validates
+  // with ProjectIdSchema (alphanumeric, hyphens, underscores only — no slashes)
+  const homePath = makeHomeRelative(mainRepoPath);
+
   return {
-    projectId: makeHomeRelative(mainRepoPath),
-    workdir: makeHomeRelative(mainRepoPath),
+    projectId: resolveProjectName(homePath),
+    workdir: homePath,
     gitRemote,
     gitBranch,
   };

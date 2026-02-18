@@ -185,10 +185,10 @@ export class ProcessManager {
       return CompletionStatus.Crashed;
     }
 
-    // Check for timeout
+    // Check for timeout (0 = no timeout)
     const startedAt = new Date(info.task.startedAt).getTime();
     const elapsed = Date.now() - startedAt;
-    if (elapsed > this.config.taskTimeout) {
+    if (this.config.taskTimeout > 0 && elapsed > this.config.taskTimeout) {
       return CompletionStatus.Timeout;
     }
 

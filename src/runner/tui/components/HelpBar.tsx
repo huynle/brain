@@ -13,9 +13,11 @@ interface HelpBarProps {
   isFilterActive?: boolean;
   /** Whether tasks are currently selected (shows delete shortcut) */
   hasSelectedTasks?: boolean;
+  /** Whether selected task has sessions (shows 'o Session' shortcut) */
+  hasTaskSessions?: boolean;
 }
 
-export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFilterActive, hasSelectedTasks }: HelpBarProps): React.ReactElement {
+export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFilterActive, hasSelectedTasks, hasTaskSessions }: HelpBarProps): React.ReactElement {
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
   const isDetailsFocused = focusedPanel === 'details';
@@ -60,6 +62,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
               <Text bold>e</Text> Edit
               {'  '}
+              {hasTaskSessions && (
+                <>
+                  <Text bold>o</Text> Session
+                  {'  '}
+                </>
+              )}
               <Text bold>y</Text> Yank
               {'  '}
               <Text bold>x</Text> Execute

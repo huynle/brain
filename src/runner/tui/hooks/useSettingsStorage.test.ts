@@ -357,9 +357,13 @@ function loadSettingsFromFileForTest(filePath: string): TUISettings | null {
       }
     }
     
+    // textWrap is optional, defaults to false
+    const textWrap = typeof parsed.textWrap === 'boolean' ? parsed.textWrap : false;
+
     return {
       visibleGroups: parsed.visibleGroups,
       groupCollapsed: parsed.groupCollapsed,
+      textWrap,
     };
   } catch {
     return null;
@@ -440,6 +444,79 @@ describe("useSettingsStorage - Debounce Behavior", () => {
     const content = readFileSync(testSettingsFile, 'utf-8');
     const parsed = JSON.parse(content);
     expect(parsed.visibleGroups).toEqual(['completed']);
+  });
+});
+
+// =============================================================================
+// Test textWrap setting
+// =============================================================================
+
+describe("useSettingsStorage - textWrap Setting", () => {
+  it("should default textWrap to false when not present in file", () => {
+    // File with no textWrap field
+    const settings: TUISettings = {
+      visibleGroups: DEFAULT_VISIBLE_GROUPS,
+      groupCollapsed: DEFAULT_GROUP_COLLAPSED,
+    };
+    writeFileSync(testSettingsFile, JSON.stringify(settings, null, 2));
+
+    const loaded = loadSettingsFromFileForTest(testSettingsFile);
+    expect(loaded).not.toBeNull();
+    // textWrap should default to false when not in file
+    expect(loaded!.textWrap).toBe(false);
+  });
+
+  it("should load textWrap=true from file", () => {
+    const settings = {
+      visibleGroups: DEFAULT_VISIBLE_GROUPS,
+      groupCollapsed: DEFAULT_GROUP_COLLAPSED,
+      textWrap: true,
+    };
+    writeFileSync(testSettingsFile, JSON.stringify(settings, null, 2));
+
+    const loaded = loadSettingsFromFileForTest(testSettingsFile);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.textWrap).toBe(true);
+  });
+
+  it("should load textWrap=false from file", () => {
+    const settings = {
+      visibleGroups: DEFAULT_VISIBLE_GROUPS,
+      groupCollapsed: DEFAULT_GROUP_COLLAPSED,
+      textWrap: false,
+    };
+    writeFileSync(testSettingsFile, JSON.stringify(settings, null, 2));
+
+    const loaded = loadSettingsFromFileForTest(testSettingsFile);
+    expect(loaded).not.toBeNull();
+    expect(loaded!.textWrap).toBe(false);
+  });
+
+  it("should save textWrap to file", () => {
+    const settings: TUISettings = {
+      visibleGroups: DEFAULT_VISIBLE_GROUPS,
+      groupCollapsed: DEFAULT_GROUP_COLLAPSED,
+      textWrap: true,
+    };
+    saveSettingsToFileForTest(testSettingsFile, settings);
+
+    const content = readFileSync(testSettingsFile, 'utf-8');
+    const parsed = JSON.parse(content);
+    expect(parsed.textWrap).toBe(true);
+  });
+
+  it("should treat non-boolean textWrap as false (default)", () => {
+    const settings = {
+      visibleGroups: DEFAULT_VISIBLE_GROUPS,
+      groupCollapsed: DEFAULT_GROUP_COLLAPSED,
+      textWrap: "not a boolean",
+    };
+    writeFileSync(testSettingsFile, JSON.stringify(settings, null, 2));
+
+    const loaded = loadSettingsFromFileForTest(testSettingsFile);
+    expect(loaded).not.toBeNull();
+    // Invalid textWrap should default to false
+    expect(loaded!.textWrap).toBe(false);
   });
 });
 

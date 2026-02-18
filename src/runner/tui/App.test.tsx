@@ -1784,3 +1784,34 @@ describe('App - Multi-Select with Active Filter', () => {
     unmount();
   });
 });
+
+// =============================================================================
+// Text wrap toggle tests (w key)
+// =============================================================================
+
+describe('App - Text Wrap Toggle', () => {
+  it('w key does not crash the app', () => {
+    const { stdin, lastFrame, unmount } = render(
+      <App config={defaultConfig} />
+    );
+    
+    // Send 'w' to toggle text wrap
+    stdin.write('w');
+    
+    // App should still be rendering
+    expect(lastFrame()).toBeDefined();
+    unmount();
+  });
+
+  it('help bar shows w shortcut for text wrap toggle', () => {
+    const { lastFrame, unmount } = render(
+      <App config={defaultConfig} />
+    );
+    const frame = lastFrame() || '';
+    
+    // Should show 'w' shortcut in help bar with Trunc label (default is truncate mode)
+    expect(frame).toContain('Trunc');
+    
+    unmount();
+  });
+});

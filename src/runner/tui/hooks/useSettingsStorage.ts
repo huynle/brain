@@ -22,6 +22,8 @@ export interface TUISettings {
   visibleGroups: string[];
   /** Collapsed state for each status group */
   groupCollapsed: Record<string, boolean>;
+  /** Whether task titles wrap (true) or truncate (false). Default: false (truncate) */
+  textWrap?: boolean;
 }
 
 export interface UseSettingsStorageOptions {
@@ -39,10 +41,14 @@ export interface UseSettingsStorageResult {
   visibleGroups: Set<string>;
   /** Collapsed state for each group */
   groupCollapsed: Record<string, boolean>;
+  /** Whether task titles wrap (true) or truncate (false) */
+  textWrap: boolean;
   /** Update visible groups (supports functional updates) */
   setVisibleGroups: (action: SetStateAction<Set<string>>) => void;
   /** Update collapsed state (supports functional updates) */
   setGroupCollapsed: (action: SetStateAction<Record<string, boolean>>) => void;
+  /** Update text wrap setting (supports functional updates) */
+  setTextWrap: (action: SetStateAction<boolean>) => void;
   /** Check if settings file exists and was loaded */
   isLoaded: boolean;
 }
@@ -114,6 +120,7 @@ function loadSettingsFromFile(filePath: string): TUISettings | null {
     return {
       visibleGroups: parsed.visibleGroups,
       groupCollapsed: parsed.groupCollapsed,
+      textWrap: typeof parsed.textWrap === 'boolean' ? parsed.textWrap : false,
     };
   } catch {
     // Corrupted JSON or read error - fall back to defaults
@@ -194,6 +201,11 @@ export function useSettingsStorage(options?: UseSettingsStorageOptions): UseSett
     return { ...DEFAULT_GROUP_COLLAPSED };
   });
 
+  const [textWrap, setTextWrapState] = useState<boolean>(() => {
+    const loaded = loadSettingsFromFile(settingsPath);
+    return loaded?.textWrap ?? false;
+  });
+
   // Mark as loaded after initial render
   useEffect(() => {
     setIsLoaded(true);
@@ -205,7 +217,7 @@ export function useSettingsStorage(options?: UseSettingsStorageOptions): UseSett
   settingsPathRef.current = settingsPath;
 
   // Save function (debounced)
-  const scheduleSave = useCallback((groups: Set<string>, collapsed: Record<string, boolean>) => {
+  const scheduleSave = useCallback((groups: Set<string>, collapsed: Record<string, boolean>, wrap: boolean) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
@@ -213,6 +225,7 @@ export function useSettingsStorage(options?: UseSettingsStorageOptions): UseSett
       const settings: TUISettings = {
         visibleGroups: Array.from(groups),
         groupCollapsed: collapsed,
+        textWrap: wrap,
       };
       saveSettingsToFile(settingsPathRef.current, settings);
     }, debounceMs);
@@ -231,9 +244,12 @@ export function useSettingsStorage(options?: UseSettingsStorageOptions): UseSett
   const setVisibleGroups = useCallback((action: SetStateAction<Set<string>>) => {
     setVisibleGroupsState(currentGroups => {
       const newGroups = typeof action === 'function' ? action(currentGroups) : action;
-      // Schedule save with latest collapsed state
+      // Schedule save with latest collapsed state and textWrap
       setGroupCollapsedState(currentCollapsed => {
-        scheduleSave(newGroups, currentCollapsed);
+        setTextWrapState(currentWrap => {
+          scheduleSave(newGroups, currentCollapsed, currentWrap);
+          return currentWrap;
+        });
         return currentCollapsed;
       });
       return newGroups;
@@ -244,20 +260,41 @@ export function useSettingsStorage(options?: UseSettingsStorageOptions): UseSett
   const setGroupCollapsed = useCallback((action: SetStateAction<Record<string, boolean>>) => {
     setGroupCollapsedState(currentCollapsed => {
       const newCollapsed = typeof action === 'function' ? action(currentCollapsed) : action;
-      // Schedule save with latest visible groups
+      // Schedule save with latest visible groups and textWrap
       setVisibleGroupsState(currentGroups => {
-        scheduleSave(currentGroups, newCollapsed);
+        setTextWrapState(currentWrap => {
+          scheduleSave(currentGroups, newCollapsed, currentWrap);
+          return currentWrap;
+        });
         return currentGroups;
       });
       return newCollapsed;
     });
   }, [scheduleSave]);
 
+  // Wrapper to update textWrap and trigger save
+  const setTextWrap = useCallback((action: SetStateAction<boolean>) => {
+    setTextWrapState(currentWrap => {
+      const newWrap = typeof action === 'function' ? action(currentWrap) : action;
+      // Schedule save with latest visible groups and collapsed state
+      setVisibleGroupsState(currentGroups => {
+        setGroupCollapsedState(currentCollapsed => {
+          scheduleSave(currentGroups, currentCollapsed, newWrap);
+          return currentCollapsed;
+        });
+        return currentGroups;
+      });
+      return newWrap;
+    });
+  }, [scheduleSave]);
+
   return {
     visibleGroups,
     groupCollapsed,
+    textWrap,
     setVisibleGroups,
     setGroupCollapsed,
+    setTextWrap,
     isLoaded,
   };
 }

@@ -15,9 +15,11 @@ interface HelpBarProps {
   hasSelectedTasks?: boolean;
   /** Whether selected task has sessions (shows 'o Session' shortcut) */
   hasTaskSessions?: boolean;
+  /** Whether text wrapping is enabled (false = truncate mode) */
+  textWrap?: boolean;
 }
 
-export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFilterActive, hasSelectedTasks, hasTaskSessions }: HelpBarProps): React.ReactElement {
+export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFilterActive, hasSelectedTasks, hasTaskSessions, textWrap }: HelpBarProps): React.ReactElement {
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
   const isDetailsFocused = focusedPanel === 'details';
@@ -66,6 +68,8 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
                 <>
                   <Text bold>o</Text> Session
                   {'  '}
+                  <Text bold>O</Text> Tmux
+                  {'  '}
                 </>
               )}
               <Text bold>y</Text> Yank
@@ -93,6 +97,8 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
               {'  '}
             </>
           )}
+          <Text bold>w</Text> {textWrap ? 'Wrap' : 'Trunc'}
+          {'  '}
           <Text bold>S</Text> Settings
           {'  '}
           <Text bold>Tab</Text> Panel

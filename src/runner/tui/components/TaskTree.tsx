@@ -43,6 +43,10 @@ interface TaskTreeProps {
   selectedTaskIds?: Set<string>;
   /** Set of status groups that should be visible (from Settings > Groups) */
   visibleGroups?: Set<string>;
+  /** Whether task titles wrap (true) or truncate (false). Default: true (wrap/no truncation) */
+  textWrap?: boolean;
+  /** Panel width in columns (used for truncation calculation when textWrap=false) */
+  panelWidth?: number;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -1057,6 +1061,17 @@ const GroupSectionHeader = React.memo(function GroupSectionHeader({
 /**
  * Task row component (memoized to prevent unnecessary re-renders)
  */
+/**
+ * Truncate a string to fit within maxWidth columns, appending '…' if truncated.
+ * Uses simple character length (sufficient for ASCII task titles).
+ */
+function truncateTitle(title: string, maxWidth: number): string {
+  if (maxWidth <= 0) return '';
+  if (title.length <= maxWidth) return title;
+  if (maxWidth <= 1) return '…';
+  return title.slice(0, maxWidth - 1) + '…';
+}
+
 const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
@@ -1065,6 +1080,8 @@ const TaskRow = React.memo(function TaskRow({
   isReady,
   isChecked,
   showCheckboxes = false,
+  textWrap,
+  panelWidth,
 }: {
   task: TaskDisplay;
   prefix: string;
@@ -1075,6 +1092,10 @@ const TaskRow = React.memo(function TaskRow({
   isChecked?: boolean;
   /** Whether to show checkboxes (when any tasks are multi-selected) */
   showCheckboxes?: boolean;
+  /** Whether task titles wrap (true) or truncate (false) */
+  textWrap?: boolean;
+  /** Panel width in columns for truncation */
+  panelWidth?: number;
 }): React.ReactElement {
   // Determine icon and color based on status and readiness
   const icon = getStatusIcon(task.status, isReady);
@@ -1092,6 +1113,21 @@ const TaskRow = React.memo(function TaskRow({
   
   // Checkbox indicator (only when multi-select is active)
   const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
+
+  // Calculate display title (truncated or full)
+  let displayTitle = task.title;
+  if (!textWrap && panelWidth && panelWidth > 0) {
+    // Calculate available width for title:
+    // panelWidth - prefix - checkbox - icon(1) - space(1) - prioritySuffix - cycleSuffix - border/padding(4)
+    const prefixWidth = prefix.length;
+    const checkboxWidth = showCheckboxes ? checkboxPrefix.length : 0;
+    const iconWidth = 1; // status icon is 1 char (but some are multi-byte, use 2 to be safe)
+    const spaceWidth = 1; // space before title
+    const suffixWidth = (prioritySuffix ? prioritySuffix.length : 0) + (cycleSuffix ? cycleSuffix.length : 0);
+    const borderPadding = 4; // box border (2) + padding (2)
+    const availableWidth = panelWidth - prefixWidth - checkboxWidth - iconWidth - spaceWidth - suffixWidth - borderPadding;
+    displayTitle = truncateTitle(task.title, availableWidth);
+  }
 
   return (
     <Box flexDirection="row">
@@ -1118,7 +1154,7 @@ const TaskRow = React.memo(function TaskRow({
         bold={isSelected}
         dimColor={isDim}
       >
-        {' '}{task.title}
+        {' '}{displayTitle}
       </Text>
       {prioritySuffix && (
         <Text
@@ -1150,6 +1186,8 @@ function renderTree(
   prefix: string = '',
   readyIds: Set<string>,
   selectedTaskIds: Set<string> = new Set(),
+  textWrap?: boolean,
+  panelWidth?: number,
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
@@ -1171,6 +1209,8 @@ function renderTree(
         isReady={isReady}
         isChecked={isChecked}
         showCheckboxes={showCheckboxes}
+        textWrap={textWrap}
+        panelWidth={panelWidth}
       />
     );
 
@@ -1178,7 +1218,7 @@ function renderTree(
     if (node.children.length > 0) {
       const childPrefix = prefix + (isLast ? EMPTY : VERTICAL);
       elements.push(
-        ...renderTree(node.children, selectedId, childPrefix, readyIds, selectedTaskIds)
+        ...renderTree(node.children, selectedId, childPrefix, readyIds, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1358,6 +1398,8 @@ function renderProjectTasks(
   selectedId: string | null,
   readyIds: Set<string>,
   selectedTaskIds: Set<string> = new Set(),
+  textWrap?: boolean,
+  panelWidth?: number,
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
@@ -1385,13 +1427,15 @@ function renderProjectTasks(
         isReady={isReady}
         isChecked={isChecked}
         showCheckboxes={showCheckboxes}
+        textWrap={textWrap}
+        panelWidth={panelWidth}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '  ', readyIds, selectedTaskIds)
+        ...renderTree(rootNode.children, selectedId, '  ', readyIds, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1407,6 +1451,8 @@ function renderFeatureTasks(
   selectedId: string | null,
   readyIds: Set<string>,
   selectedTaskIds: Set<string> = new Set(),
+  textWrap?: boolean,
+  panelWidth?: number,
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
@@ -1434,13 +1480,15 @@ function renderFeatureTasks(
         isReady={isReady}
         isChecked={isChecked}
         showCheckboxes={showCheckboxes}
+        textWrap={textWrap}
+        panelWidth={panelWidth}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '│ ', readyIds, selectedTaskIds)
+        ...renderTree(rootNode.children, selectedId, '│ ', readyIds, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1466,6 +1514,8 @@ function renderFeatureTasks(
             isReady={isReady}
             isChecked={isChecked}
             showCheckboxes={showCheckboxes}
+            textWrap={textWrap}
+            panelWidth={panelWidth}
           />
         );
       }
@@ -1491,6 +1541,8 @@ export const TaskTree = React.memo(function TaskTree({
   activeFeatures = new Set(),
   selectedTaskIds = new Set(),
   visibleGroups,
+  textWrap,
+  panelWidth,
 }: TaskTreeProps): React.ReactElement {
   // Compute whether to show checkboxes (when any tasks are multi-selected)
   const showCheckboxes = selectedTaskIds.size > 0;
@@ -1742,7 +1794,7 @@ export const TaskTree = React.memo(function TaskTree({
       
       // Project's tasks
       projectElements.push(
-        ...renderProjectTasks(projectTasks, selectedId, readyIds, selectedTaskIds)
+        ...renderProjectTasks(projectTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
       );
       
       // Add spacing between projects (except last)
@@ -1830,13 +1882,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 draftElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -1920,13 +1974,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 completedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2012,13 +2068,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 cancelledElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2104,13 +2162,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 supersededElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2196,13 +2256,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 archivedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2290,7 +2352,7 @@ export const TaskTree = React.memo(function TaskTree({
       // Feature's tasks (only render if not collapsed)
       if (!isFeatureCollapsed) {
         featureElements.push(
-          ...renderFeatureTasks(featureTasks, selectedId, readyIds, selectedTaskIds)
+          ...renderFeatureTasks(featureTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
         );
       }
       // Note: No spacer between features - FeatureHeader has marginTop={1}
@@ -2340,7 +2402,7 @@ export const TaskTree = React.memo(function TaskTree({
         // Ungrouped tasks (only render if not collapsed)
         if (!isUngroupedCollapsed) {
           featureElements.push(
-            ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds, selectedTaskIds)
+            ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
           );
         }
       }
@@ -2421,13 +2483,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 draftElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2513,13 +2577,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 cancelledElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2605,13 +2671,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 supersededElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2697,13 +2765,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 archivedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2787,13 +2857,15 @@ export const TaskTree = React.memo(function TaskTree({
                   isReady={false}
                   isChecked={isChecked}
                   showCheckboxes={showCheckboxes}
+                textWrap={textWrap}
+                panelWidth={panelWidth}
                 />
               );
               
               if (rootNode.children.length > 0) {
                 const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
                 completedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
                 );
               }
             });
@@ -2865,13 +2937,15 @@ export const TaskTree = React.memo(function TaskTree({
         isReady={isReady}
         isChecked={isChecked}
         showCheckboxes={showCheckboxes}
+      textWrap={textWrap}
+      panelWidth={panelWidth}
       />
     );
 
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '', readyIds, selectedTaskIds)
+        ...renderTree(rootNode.children, selectedId, '', readyIds, selectedTaskIds, textWrap, panelWidth)
       );
     }
 
@@ -2963,13 +3037,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isReady={false}
                 isChecked={isChecked}
                 showCheckboxes={showCheckboxes}
+              textWrap={textWrap}
+              panelWidth={panelWidth}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               draftElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
               );
             }
           });
@@ -3056,13 +3132,15 @@ export const TaskTree = React.memo(function TaskTree({
               isReady={false}
               isChecked={isChecked}
               showCheckboxes={showCheckboxes}
+            textWrap={textWrap}
+            panelWidth={panelWidth}
             />
           );
           
           if (rootNode.children.length > 0) {
             const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
             completedElements.push(
-              ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+              ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
             );
           }
         });
@@ -3151,13 +3229,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isReady={false}
                 isChecked={isChecked}
                 showCheckboxes={showCheckboxes}
+              textWrap={textWrap}
+              panelWidth={panelWidth}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               cancelledElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
               );
             }
           });
@@ -3246,13 +3326,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isReady={false}
                 isChecked={isChecked}
                 showCheckboxes={showCheckboxes}
+              textWrap={textWrap}
+              panelWidth={panelWidth}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               supersededElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
               );
             }
           });
@@ -3341,13 +3423,15 @@ export const TaskTree = React.memo(function TaskTree({
                 isReady={false}
                 isChecked={isChecked}
                 showCheckboxes={showCheckboxes}
+              textWrap={textWrap}
+              panelWidth={panelWidth}
               />
             );
             
             if (rootNode.children.length > 0) {
               const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
               archivedElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds)
+                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
               );
             }
           });

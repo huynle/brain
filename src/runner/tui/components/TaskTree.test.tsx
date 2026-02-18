@@ -2136,3 +2136,91 @@ describe('TaskTree dimming for terminal statuses', () => {
     expect(lastFrame()).toContain('Archived Task');
   });
 });
+
+// =============================================================================
+// Text truncation tests
+// =============================================================================
+
+describe('TaskTree text truncation', () => {
+  it('truncates long task titles when textWrap=false and panelWidth is set', () => {
+    const longTitle = 'This is a very long task title that should be truncated when the panel is narrow';
+    const tasks = [
+      createTask({ id: '1', title: longTitle }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        textWrap={false}
+        panelWidth={40}
+      />
+    );
+    const frame = lastFrame() || '';
+    // Should NOT contain the full title
+    expect(frame).not.toContain(longTitle);
+    // Should contain the truncation indicator
+    expect(frame).toContain('…');
+  });
+
+  it('does not truncate short task titles when textWrap=false', () => {
+    const shortTitle = 'Short';
+    const tasks = [
+      createTask({ id: '1', title: shortTitle }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        textWrap={false}
+        panelWidth={80}
+      />
+    );
+    const frame = lastFrame() || '';
+    // Short title should appear in full
+    expect(frame).toContain(shortTitle);
+    // No truncation indicator
+    expect(frame).not.toContain('…');
+  });
+
+  it('shows full title when textWrap=true regardless of panelWidth', () => {
+    const longTitle = 'This is a very long task title that should wrap when text wrapping is enabled';
+    const tasks = [
+      createTask({ id: '1', title: longTitle }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        textWrap={true}
+        panelWidth={40}
+      />
+    );
+    const frame = lastFrame() || '';
+    // Full title should be present (wrapping, not truncating)
+    expect(frame).toContain(longTitle);
+  });
+
+  it('shows full title when panelWidth is not provided (default behavior)', () => {
+    const longTitle = 'This is a very long task title that should not be truncated without panelWidth';
+    const tasks = [
+      createTask({ id: '1', title: longTitle }),
+    ];
+    const { lastFrame } = render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+      />
+    );
+    const frame = lastFrame() || '';
+    // Without panelWidth, no truncation
+    expect(frame).toContain(longTitle);
+  });
+});

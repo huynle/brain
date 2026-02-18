@@ -162,6 +162,7 @@ export function App({
   onListProjects,
   onDeleteTasks,
   onOpenSession,
+  onOpenSessionTmux,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -224,8 +225,10 @@ export function App({
   const {
     visibleGroups,
     groupCollapsed,
+    textWrap,
     setVisibleGroups,
     setGroupCollapsed,
+    setTextWrap,
   } = useSettingsStorage();
   // Settings popup section
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('limits');
@@ -250,10 +253,11 @@ export function App({
   const [deletePopupOpen, setDeletePopupOpen] = useState(false);
   const [tasksToDelete, setTasksToDelete] = useState<Array<{id: string, title: string, path: string}>>([]);
   
-  // Session select popup state (for 'o' key to open sessions)
+  // Session select popup state (for 'o'/'O' key to open sessions)
   const [sessionPopupOpen, setSessionPopupOpen] = useState(false);
   const [sessionPopupIds, setSessionPopupIds] = useState<string[]>([]);
   const [sessionPopupSelectedIndex, setSessionPopupSelectedIndex] = useState(0);
+  const [sessionPopupTmuxMode, setSessionPopupTmuxMode] = useState(false);
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -335,6 +339,11 @@ export function App({
   // Calculate details viewport height for scrolling
   // Account for: header (1 line) + border (2 lines) + padding (2 lines) + scroll indicators (2 lines)
   const detailsViewportHeight = Math.max(3, topRowHeight - 7);
+  
+  // Calculate task panel width for text truncation
+  // When detail panel is visible, task tree gets ~50% of terminal width minus border (2 chars)
+  // When detail panel is hidden, task tree gets full width minus border (2 chars)
+  const taskPanelWidth = detailVisible ? Math.floor(terminalColumns / 2) - 2 : terminalColumns - 2;
   
   // Reset scroll offset when new logs arrive and we're at the bottom
   useEffect(() => {
@@ -928,6 +937,7 @@ export function App({
         setSessionPopupOpen(false);
         setSessionPopupIds([]);
         setSessionPopupSelectedIndex(0);
+        setSessionPopupTmuxMode(false);
         return;
       }
       
@@ -941,15 +951,17 @@ export function App({
         return;
       }
       
-      // Enter: open selected session
+      // Enter: open selected session (fullscreen or tmux depending on mode)
       if (key.return) {
         const sessionId = sessionPopupIds[sessionPopupSelectedIndex];
-        if (sessionId && onOpenSession) {
+        const openFn = sessionPopupTmuxMode ? onOpenSessionTmux : onOpenSession;
+        const modeLabel = sessionPopupTmuxMode ? 'tmux window' : 'fullscreen';
+        if (sessionId && openFn) {
           addLog({
             level: 'info',
-            message: `Opening session: ${sessionId}`,
+            message: `Opening session in ${modeLabel}: ${sessionId}`,
           });
-          onOpenSession(sessionId).catch((err: unknown) => {
+          openFn(sessionId).catch((err: unknown) => {
             addLog({
               level: 'error',
               message: `Failed to open session: ${err}`,
@@ -959,6 +971,7 @@ export function App({
         setSessionPopupOpen(false);
         setSessionPopupIds([]);
         setSessionPopupSelectedIndex(0);
+        setSessionPopupTmuxMode(false);
         return;
       }
       
@@ -1469,6 +1482,43 @@ export function App({
       return;
     }
 
+    // Open session in tmux window for selected task
+    if (input === 'O' && selectedTask && focusedPanel === 'tasks') {
+      const sessionIds = selectedTask.session_ids || [];
+      if (sessionIds.length === 0) {
+        addLog({
+          level: 'warn',
+          message: `No sessions available for: ${selectedTask.title}`,
+          taskId: selectedTask.id,
+        });
+        return;
+      }
+      if (sessionIds.length === 1) {
+        // Single session - open directly in tmux window
+        if (onOpenSessionTmux) {
+          addLog({
+            level: 'info',
+            message: `Opening session in tmux window: ${sessionIds[0]}`,
+            taskId: selectedTask.id,
+          });
+          onOpenSessionTmux(sessionIds[0]).catch((err: unknown) => {
+            addLog({
+              level: 'error',
+              message: `Failed to open session in tmux window: ${err}`,
+              taskId: selectedTask.id,
+            });
+          });
+        }
+      } else {
+        // Multiple sessions - show popup in tmux mode (latest first, so index 0 is selected by default)
+        setSessionPopupTmuxMode(true);
+        setSessionPopupIds(sessionIds);
+        setSessionPopupSelectedIndex(0);
+        setSessionPopupOpen(true);
+      }
+      return;
+    }
+
     // Yank (copy) selected task name to clipboard
     if (input === 'y' && selectedTask && focusedPanel === 'tasks') {
       const success = copyToClipboard(selectedTask.title);
@@ -1523,6 +1573,12 @@ export function App({
         }
         return newVisible;
       });
+      return;
+    }
+
+    // Toggle text wrap/truncate mode for task titles
+    if (input === 'w') {
+      setTextWrap(prev => !prev);
       return;
     }
 
@@ -2341,6 +2397,8 @@ export function App({
               activeFeatures={activeFeatures}
               selectedTaskIds={selectedTaskIds}
               visibleGroups={visibleGroups}
+              textWrap={textWrap}
+              panelWidth={taskPanelWidth}
             />
           </Box>
 
@@ -2383,6 +2441,7 @@ export function App({
         isFilterActive={filterMode === 'locked'}
         hasSelectedTasks={selectedTaskIds.size > 0}
         hasTaskSessions={selectedTask?.session_ids && selectedTask.session_ids.length > 0}
+        textWrap={textWrap}
       />
     </Box>
   );

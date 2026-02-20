@@ -263,3 +263,177 @@ export function assignLanes(sortedTasks: TaskDisplay[]): LaneAssignment[] {
 
   return results;
 }
+
+// ---------------------------------------------------------------------------
+// generatePrefix
+// ---------------------------------------------------------------------------
+
+// Box-drawing characters for git-graph rendering
+const CHAR = {
+  VERTICAL: '│',
+  BRANCH: '├─',
+  LAST_BRANCH: '└─',
+  MERGE_START: '╰─',
+  MERGE_JOIN: '┴─',
+  EMPTY: '  ',      // 2 spaces to match lane width
+  CONNECTOR: '─',
+} as const;
+
+/**
+ * Check whether a given lane continues below the current row.
+ * A lane "continues" if any subsequent assignment has it in activeLanes
+ * or is itself on that lane.
+ */
+function laneActiveBelow(
+  lane: number,
+  currentIndex: number,
+  allAssignments: LaneAssignment[],
+): boolean {
+  for (let i = currentIndex + 1; i < allAssignments.length; i++) {
+    const a = allAssignments[i];
+    if (a.activeLanes.includes(lane) || a.lane === lane) return true;
+  }
+  return false;
+}
+
+/**
+ * Generate the box-drawing prefix string for a single row in the git-graph.
+ *
+ * Converts a LaneAssignment into the visual prefix that precedes the task
+ * marker (○) and task name. Pure string function, no React dependency.
+ *
+ * Examples:
+ *   Normal child:     │ ├─
+ *   Last child:       │ └─
+ *   Merge (2 lanes):  ╰─┴─
+ *   Merge (3 lanes):  ╰─┴─┴─
+ *   Active lanes:     │ │ ├─  (lane 0 + lane 1 active, branch at lane 2)
+ */
+export function generatePrefix(
+  assignment: LaneAssignment,
+  index: number,
+  allAssignments: LaneAssignment[],
+): string {
+  const { lane, activeLanes, isMerge, mergeFromLanes } = assignment;
+
+  if (isMerge && mergeFromLanes.length > 0) {
+    return buildMergePrefix(assignment, index, allAssignments);
+  }
+
+  return buildBranchPrefix(assignment, index, allAssignments);
+}
+
+/**
+ * Build prefix for a non-merge row (root, single-dep, or fork child).
+ */
+function buildBranchPrefix(
+  assignment: LaneAssignment,
+  index: number,
+  allAssignments: LaneAssignment[],
+): string {
+  const { lane, activeLanes } = assignment;
+
+  // Determine the max lane we need to render up to (inclusive of this task's lane)
+  const maxLane = lane;
+
+  const parts: string[] = [];
+
+  for (let l = 0; l < maxLane; l++) {
+    if (activeLanes.includes(l)) {
+      parts.push(CHAR.VERTICAL + ' ');
+    } else {
+      parts.push(CHAR.EMPTY);
+    }
+  }
+
+  // At the task's own lane, determine branch vs last-branch
+  const continues = laneActiveBelow(lane, index, allAssignments);
+  if (continues) {
+    parts.push(CHAR.BRANCH);
+  } else {
+    parts.push(CHAR.LAST_BRANCH);
+  }
+
+  return parts.join('');
+}
+
+/**
+ * Build prefix for a merge row (task has 2+ in-tree dependencies converging).
+ *
+ * Merge rendering strategy:
+ * - All lanes from the leftmost merge lane to the rightmost are joined
+ * - The leftmost merge source starts with ╰─
+ * - Each additional merge lane adds ┴─
+ * - Non-merge lanes between them get ──
+ * - The task's own lane ends the sequence
+ */
+function buildMergePrefix(
+  assignment: LaneAssignment,
+  index: number,
+  allAssignments: LaneAssignment[],
+): string {
+  const { lane, activeLanes, mergeFromLanes } = assignment;
+
+  // All lanes involved in the merge (the task's own lane + merge-from lanes)
+  const allMergeLanes = [lane, ...mergeFromLanes].sort((a, b) => a - b);
+  const minMergeLane = allMergeLanes[0];
+  const maxMergeLane = allMergeLanes[allMergeLanes.length - 1];
+  const mergeLaneSet = new Set(allMergeLanes);
+
+  const parts: string[] = [];
+
+  // Lanes before the merge region
+  for (let l = 0; l < minMergeLane; l++) {
+    if (activeLanes.includes(l)) {
+      parts.push(CHAR.VERTICAL + ' ');
+    } else {
+      parts.push(CHAR.EMPTY);
+    }
+  }
+
+  // The merge region: from minMergeLane to maxMergeLane
+  //
+  // Strategy:
+  // - The task's own lane (which is always the lowest merge lane from
+  //   assignLanes) starts with ╰─ to indicate the merge origin
+  // - Each additional merge lane adds ┴─
+  // - Non-merge lanes between merge lanes get ──
+  // - After the last merge lane, we're done (the task node marker follows)
+  let started = false;
+  for (let l = minMergeLane; l <= maxMergeLane; l++) {
+    if (mergeLaneSet.has(l) || l === lane) {
+      if (!started) {
+        parts.push(CHAR.MERGE_START);
+        started = true;
+      } else {
+        parts.push(CHAR.MERGE_JOIN);
+      }
+    } else {
+      // Non-merge lane between merge lanes
+      if (started) {
+        parts.push(CHAR.CONNECTOR + CHAR.CONNECTOR);
+      } else if (activeLanes.includes(l)) {
+        parts.push(CHAR.VERTICAL + ' ');
+      } else {
+        parts.push(CHAR.EMPTY);
+      }
+    }
+  }
+
+  // If the task's lane is beyond maxMergeLane (shouldn't happen with our
+  // assignLanes logic since task gets the lowest lane, but handle defensively)
+  if (lane > maxMergeLane) {
+    for (let l = maxMergeLane + 1; l < lane; l++) {
+      if (started) {
+        parts.push(CHAR.CONNECTOR + CHAR.CONNECTOR);
+      } else if (activeLanes.includes(l)) {
+        parts.push(CHAR.VERTICAL + ' ');
+      } else {
+        parts.push(CHAR.EMPTY);
+      }
+    }
+    parts.push(CHAR.MERGE_START);
+  }
+
+  return parts.join('');
+}

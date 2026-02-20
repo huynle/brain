@@ -11,6 +11,7 @@ import {
   topoSort,
   assignLanes,
   detectMergePoints,
+  generatePrefix,
   type LaneAssignment,
 } from './lane-layout';
 
@@ -271,5 +272,160 @@ describe('assignLanes', () => {
     const result = assignLanes([a, b]);
     // Both should get assignments without crashing
     expect(result).toHaveLength(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// generatePrefix
+// ---------------------------------------------------------------------------
+
+describe('generatePrefix', () => {
+  it('generates simple linear prefix (single root, continues)', () => {
+    // a -> b (linear chain, a continues to b)
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+    ];
+    // 'a' at index 0: lane continues below (b is at lane 0)
+    const prefix = generatePrefix(assignments[0], 0, assignments);
+    expect(prefix).toBe('├─');
+  });
+
+  it('generates last-branch prefix for terminal task', () => {
+    // Single task or last task at a lane
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+    ];
+    // 'a' is the only task, lane doesn't continue
+    const prefix = generatePrefix(assignments[0], 0, assignments);
+    expect(prefix).toBe('└─');
+  });
+
+  it('generates fork prefix (child on parent lane + child on new lane)', () => {
+    //   a
+    //  / \
+    // b   c
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 0, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'c', lane: 1, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+    ];
+    // 'a': lane 0 continues (b is on lane 0)
+    expect(generatePrefix(assignments[0], 0, assignments)).toBe('├─');
+    // 'b': lane 0 with lane 1 also active (but b doesn't continue on lane 0 if nothing follows)
+    // b is last on lane 0 since c is on lane 1, but a is already past
+    // Actually, check: does lane 0 continue below index 1? c is at lane 1, not 0.
+    // But c has activeLanes [0, 1], so at index 2 lane 0 is active => depends on data
+    // Let's check: c.activeLanes includes 0 => lane 0 is active at row c
+    expect(generatePrefix(assignments[1], 1, assignments)).toBe('├─');
+    // 'c': lane 1, lane 0 is active (vertical line), then branch at lane 1
+    // c is the last task, so lane 1 doesn't continue
+    expect(generatePrefix(assignments[2], 2, assignments)).toBe('│ └─');
+  });
+
+  it('generates merge prefix with 2 lanes', () => {
+    //   a
+    //  / \
+    // b   c
+    //  \ /
+    //   d
+    const a = createTask({ id: 'a', dependencies: [], dependents: ['b', 'c'] });
+    const b = createTask({ id: 'b', dependencies: ['a'], dependents: ['d'] });
+    const c = createTask({ id: 'c', dependencies: ['a'], dependents: ['d'] });
+    const d = createTask({ id: 'd', dependencies: ['b', 'c'], dependents: [] });
+
+    const sorted = topoSort([a, b, c, d]);
+    const assignments = assignLanes(sorted);
+
+    const dAssign = assignments.find((a) => a.taskId === 'd')!;
+    const dIndex = assignments.indexOf(dAssign);
+    const prefix = generatePrefix(dAssign, dIndex, assignments);
+
+    // Should contain merge character ╰─ and join character ┴─
+    // The exact output depends on lane assignments, but must contain merge chars
+    expect(prefix).toContain('╰─');
+    expect(prefix).toContain('┴─');
+  });
+
+  it('generates merge prefix with 3+ lanes', () => {
+    // a, b, c all independent roots; d merges all three
+    const a = createTask({ id: 'a', dependencies: [], dependents: ['d'] });
+    const b = createTask({ id: 'b', dependencies: [], dependents: ['d'] });
+    const c = createTask({ id: 'c', dependencies: [], dependents: ['d'] });
+    const d = createTask({ id: 'd', dependencies: ['a', 'b', 'c'], dependents: [] });
+
+    const sorted = topoSort([a, b, c, d]);
+    const assignments = assignLanes(sorted);
+
+    const dAssign = assignments.find((a) => a.taskId === 'd')!;
+    const dIndex = assignments.indexOf(dAssign);
+    const prefix = generatePrefix(dAssign, dIndex, assignments);
+
+    // For a 3-lane merge: should have ╰─ start and at least two ┴─ joins
+    // (one of the merge lanes is the task's own lane so it gets branch/last-branch)
+    expect(prefix).toContain('╰─');
+    // With 3 merge sources converging, there should be at least one ┴─
+    expect(prefix).toContain('┴─');
+  });
+
+  it('generates prefix with active lanes before the task lane', () => {
+    // Simulate: lane 0 and lane 1 active, task at lane 2
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 1, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'c', lane: 2, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+    ];
+    const prefix = generatePrefix(assignments[2], 2, assignments);
+    // Lane 0 active: │ , Lane 1 active: │ , Lane 2 task (no continuation): └─
+    expect(prefix).toBe('│ │ └─');
+  });
+
+  it('generates prefix with empty (inactive) lanes before task', () => {
+    // Lane 0 inactive (gap), lane 1 is the task
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 1, activeLanes: [1], isMerge: false, mergeFromLanes: [] },
+    ];
+    const prefix = generatePrefix(assignments[0], 0, assignments);
+    // Lane 0 empty: 2 spaces, lane 1 task (terminal): └─
+    expect(prefix).toBe('  └─');
+  });
+
+  it('is a pure string function (no React dependency)', () => {
+    const assignment: LaneAssignment = {
+      taskId: 'test',
+      lane: 0,
+      activeLanes: [0],
+      isMerge: false,
+      mergeFromLanes: [],
+    };
+    const result = generatePrefix(assignment, 0, [assignment]);
+    expect(typeof result).toBe('string');
+  });
+
+  it('handles nested merge (merge feeds into another merge)', () => {
+    // a, b -> c (merge 1), c, d -> e (merge 2)
+    const a = createTask({ id: 'a', dependencies: [], dependents: ['c'] });
+    const b = createTask({ id: 'b', dependencies: [], dependents: ['c'] });
+    const c = createTask({ id: 'c', dependencies: ['a', 'b'], dependents: ['e'] });
+    const d = createTask({ id: 'd', dependencies: [], dependents: ['e'] });
+    const e = createTask({ id: 'e', dependencies: ['c', 'd'], dependents: [] });
+
+    const sorted = topoSort([a, b, c, d, e]);
+    const assignments = assignLanes(sorted);
+
+    // Both c and e should be merge points
+    const cAssign = assignments.find((a) => a.taskId === 'c')!;
+    const eAssign = assignments.find((a) => a.taskId === 'e')!;
+    expect(cAssign.isMerge).toBe(true);
+    expect(eAssign.isMerge).toBe(true);
+
+    // Both should produce valid prefix strings with merge characters
+    const cPrefix = generatePrefix(cAssign, assignments.indexOf(cAssign), assignments);
+    const ePrefix = generatePrefix(eAssign, assignments.indexOf(eAssign), assignments);
+
+    expect(typeof cPrefix).toBe('string');
+    expect(typeof ePrefix).toBe('string');
+    expect(cPrefix.length).toBeGreaterThan(0);
+    expect(ePrefix.length).toBeGreaterThan(0);
   });
 });

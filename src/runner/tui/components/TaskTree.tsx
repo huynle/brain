@@ -10,7 +10,7 @@ import { Box, Text } from 'ink';
 import type { TaskDisplay } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
 import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
-import { topoSort, assignLanes, generatePrefix } from '../lane-layout';
+import { topoSort, assignLanes, generatePrefix, MAX_LANES } from '../lane-layout';
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -1461,16 +1461,31 @@ function renderFeatureTasks(
 
   if (activeTasks.length === 0) return elements;
 
+  // Edge case: single-task feature — no lanes needed, render simply
+  if (activeTasks.length === 1) {
+    const task = activeTasks[0];
+    const isSelected = task.id === selectedId;
+    const isReady = readyIds.has(task.id);
+    const isChecked = selectedTaskIds.has(task.id);
+    elements.push(
+      <TaskRow
+        key={task.id}
+        task={task}
+        prefix="└─"
+        isSelected={isSelected}
+        inCycle={false}
+        isReady={isReady}
+        isChecked={isChecked}
+        showCheckboxes={showCheckboxes}
+        textWrap={textWrap}
+        panelWidth={panelWidth}
+      />
+    );
+    return elements;
+  }
+
   // Detect cycle membership using the same logic as buildTree (for inCycle flag)
   const taskIds = new Set(activeTasks.map(t => t.id));
-  const hasCycleEdge = new Set<string>();
-  for (const task of activeTasks) {
-    for (const depId of task.dependencies) {
-      if (taskIds.has(depId)) {
-        // Will be caught by topoSort — tasks not in topo output are in cycles
-      }
-    }
-  }
   const sorted = topoSort(activeTasks);
   const topoIds = new Set(sorted.map(t => t.id));
   const inCycleSet = new Set(activeTasks.filter(t => !topoIds.has(t.id)).map(t => t.id));

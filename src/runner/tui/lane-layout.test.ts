@@ -12,6 +12,7 @@ import {
   assignLanes,
   detectMergePoints,
   generatePrefix,
+  MAX_LANES,
   type LaneAssignment,
 } from './lane-layout';
 
@@ -427,5 +428,241 @@ describe('generatePrefix', () => {
     expect(typeof ePrefix).toBe('string');
     expect(cPrefix.length).toBeGreaterThan(0);
     expect(ePrefix.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge case tests (from task 93ieoe9n)
+// ---------------------------------------------------------------------------
+
+describe('edge cases', () => {
+  // Edge case 1: Single-task features — no lanes needed
+  describe('single-task features', () => {
+    it('assigns lane 0 and produces valid prefix for a single task', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: [] });
+      const sorted = topoSort([a]);
+      const assignments = assignLanes(sorted);
+
+      expect(assignments).toHaveLength(1);
+      expect(assignments[0].lane).toBe(0);
+      expect(assignments[0].isMerge).toBe(false);
+      expect(assignments[0].mergeFromLanes).toEqual([]);
+
+      const prefix = generatePrefix(assignments[0], 0, assignments);
+      expect(typeof prefix).toBe('string');
+      expect(prefix).toBe('└─');
+    });
+  });
+
+  // Edge case 2: Cross-feature dependencies — deps referencing tasks not in the input
+  describe('cross-feature dependencies', () => {
+    it('treats dependencies on tasks not in the input as satisfied (no crash)', () => {
+      // Task 'b' depends on 'external-task' which is in another feature
+      const a = createTask({ id: 'a', dependencies: [], dependents: ['b'] });
+      const b = createTask({
+        id: 'b',
+        dependencies: ['a', 'external-task'],
+        dependents: [],
+      });
+
+      const sorted = topoSort([a, b]);
+      const assignments = assignLanes(sorted);
+
+      // Should not crash, and b should not be a merge point (only 1 in-tree dep)
+      expect(assignments).toHaveLength(2);
+      const bAssign = assignments.find((x) => x.taskId === 'b')!;
+      expect(bAssign.isMerge).toBe(false);
+    });
+
+    it('handles task where all dependencies are cross-feature (treated as root)', () => {
+      const a = createTask({
+        id: 'a',
+        dependencies: ['ext-1', 'ext-2'],
+        dependents: [],
+      });
+
+      const sorted = topoSort([a]);
+      expect(sorted).toHaveLength(1);
+      expect(sorted[0].id).toBe('a');
+
+      const assignments = assignLanes(sorted);
+      expect(assignments[0].lane).toBe(0);
+      expect(assignments[0].isMerge).toBe(false);
+    });
+  });
+
+  // Edge case 3: Wide lane layouts (5+ parallel lanes) — cap at MAX_LANES
+  describe('wide lane layouts', () => {
+    it('caps lanes at MAX_LANES for many independent roots', () => {
+      // Create MAX_LANES + 4 independent roots
+      const count = MAX_LANES + 4;
+      const tasks = Array.from({ length: count }, (_, i) =>
+        createTask({
+          id: `task-${i}`,
+          dependencies: [],
+          dependents: [],
+        }),
+      );
+
+      const sorted = topoSort(tasks);
+      const assignments = assignLanes(sorted);
+
+      expect(assignments).toHaveLength(count);
+      // All lane numbers should be < MAX_LANES
+      const maxLane = Math.max(...assignments.map((a) => a.lane));
+      expect(maxLane).toBeLessThan(MAX_LANES);
+    });
+
+    it('generatePrefix handles tasks at the max lane without crash', () => {
+      const count = MAX_LANES + 2;
+      const tasks = Array.from({ length: count }, (_, i) =>
+        createTask({
+          id: `task-${i}`,
+          dependencies: [],
+          dependents: [],
+        }),
+      );
+
+      const sorted = topoSort(tasks);
+      const assignments = assignLanes(sorted);
+
+      // Generate prefix for every assignment — should not crash
+      for (let i = 0; i < assignments.length; i++) {
+        const prefix = generatePrefix(assignments[i], i, assignments);
+        expect(typeof prefix).toBe('string');
+      }
+    });
+  });
+
+  // Edge case 4: Cycles — lane renderer should handle gracefully
+  describe('cycles in lane renderer', () => {
+    it('topoSort appends cycled tasks at end and assignLanes handles them', () => {
+      // a -> b -> c -> a  (full cycle)
+      const a = createTask({ id: 'a', dependencies: ['c'], dependents: ['b'] });
+      const b = createTask({ id: 'b', dependencies: ['a'], dependents: ['c'] });
+      const c = createTask({ id: 'c', dependencies: ['b'], dependents: ['a'] });
+
+      const sorted = topoSort([a, b, c]);
+      // All tasks should appear (cycled tasks appended at end)
+      expect(sorted).toHaveLength(3);
+
+      // assignLanes should not crash even with cycled tasks
+      const assignments = assignLanes(sorted);
+      expect(assignments).toHaveLength(3);
+
+      // generatePrefix should not crash
+      for (let i = 0; i < assignments.length; i++) {
+        const prefix = generatePrefix(assignments[i], i, assignments);
+        expect(typeof prefix).toBe('string');
+      }
+    });
+
+    it('mixed cycle and non-cycle tasks render without crash', () => {
+      // d is independent; a->b->c->a is a cycle
+      const a = createTask({ id: 'a', dependencies: ['c'], dependents: ['b'] });
+      const b = createTask({ id: 'b', dependencies: ['a'], dependents: ['c'] });
+      const c = createTask({ id: 'c', dependencies: ['b'], dependents: ['a'] });
+      const d = createTask({ id: 'd', dependencies: [], dependents: [] });
+
+      const sorted = topoSort([d, a, b, c]);
+      const assignments = assignLanes(sorted);
+
+      expect(assignments).toHaveLength(4);
+      // d should be first (no deps, appears before cycle members)
+      expect(assignments[0].taskId).toBe('d');
+    });
+  });
+
+  // Edge case 5: Tasks with parent_id — lane renderer uses dependencies, not parent_id
+  describe('tasks with parent_id', () => {
+    it('lane renderer ignores parent_id and uses dependencies for ordering', () => {
+      // parent_id is for tree hierarchy; lane layout only uses dependencies/dependents
+      const parent = createTask({
+        id: 'parent',
+        dependencies: [],
+        dependents: ['child'],
+      });
+      const child = createTask({
+        id: 'child',
+        dependencies: ['parent'],
+        dependents: [],
+        parent_id: 'parent',
+      } as any);
+
+      const sorted = topoSort([parent, child]);
+      const assignments = assignLanes(sorted);
+
+      expect(assignments).toHaveLength(2);
+      // parent before child
+      expect(assignments[0].taskId).toBe('parent');
+      expect(assignments[1].taskId).toBe('child');
+      // Both should be on lane 0 (linear chain)
+      expect(assignments[0].lane).toBe(0);
+      expect(assignments[1].lane).toBe(0);
+    });
+  });
+
+  // Edge case 6: Malformed dependency data — no crashes
+  describe('malformed dependency data', () => {
+    it('handles task with undefined dependencies gracefully', () => {
+      const a = createTask({ id: 'a' });
+      // Force undefined dependencies to simulate malformed data
+      (a as any).dependencies = undefined;
+
+      // Should not crash
+      const sorted = topoSort([a]);
+      expect(sorted).toHaveLength(1);
+
+      const merges = detectMergePoints([a]);
+      expect(merges.size).toBe(0);
+
+      const assignments = assignLanes(sorted);
+      expect(assignments).toHaveLength(1);
+    });
+
+    it('handles task with null entries in dependencies array', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: ['b'] });
+      const b = createTask({ id: 'b', dependencies: ['a', null as any, '', undefined as any], dependents: [] });
+
+      const sorted = topoSort([a, b]);
+      expect(sorted).toHaveLength(2);
+
+      // Should treat only 'a' as a real in-tree dep
+      const merges = detectMergePoints([a, b]);
+      expect(merges.size).toBe(0); // only 1 valid in-tree dep
+
+      const assignments = assignLanes(sorted);
+      expect(assignments).toHaveLength(2);
+    });
+
+    it('handles task with undefined dependents gracefully', () => {
+      const a = createTask({ id: 'a' });
+      (a as any).dependents = undefined;
+
+      const sorted = topoSort([a]);
+      const assignments = assignLanes(sorted);
+      expect(assignments).toHaveLength(1);
+      expect(assignments[0].lane).toBe(0);
+    });
+  });
+
+  // Edge case 7: Empty dependencies (roots) mixed with dependent chains
+  describe('independent roots mixed with chains', () => {
+    it('assigns independent roots to separate lanes', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: [] });
+      const b = createTask({ id: 'b', dependencies: [], dependents: ['c'] });
+      const c = createTask({ id: 'c', dependencies: ['b'], dependents: [] });
+
+      const sorted = topoSort([a, b, c]);
+      const assignments = assignLanes(sorted);
+
+      // a gets its own lane, b+c share a lane
+      const aLane = assignments.find((x) => x.taskId === 'a')!.lane;
+      const bLane = assignments.find((x) => x.taskId === 'b')!.lane;
+      const cLane = assignments.find((x) => x.taskId === 'c')!.lane;
+
+      expect(bLane).toBe(cLane); // b and c should share a lane
+      expect(aLane).not.toBe(bLane); // a is independent
+    });
   });
 });

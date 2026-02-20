@@ -8,6 +8,13 @@
 import type { TaskDisplay } from './types';
 
 /**
+ * Maximum number of parallel lanes before we cap and compress.
+ * Prevents excessively wide layouts (e.g., 10 independent roots all forking).
+ * Lanes beyond this limit wrap back to the highest allowed lane.
+ */
+export const MAX_LANES = 8;
+
+/**
  * Lane assignment for a single task in the graph visualization
  */
 export interface LaneAssignment {
@@ -46,8 +53,10 @@ export function topoSort(tasks: TaskDisplay[]): TaskDisplay[] {
 
   // Build graph edges from dependencies field
   for (const task of tasks) {
+    // Guard: skip tasks with missing/malformed dependencies
+    if (!Array.isArray(task.dependencies)) continue;
     for (const depId of task.dependencies) {
-      if (!taskIds.has(depId)) continue; // skip out-of-tree refs
+      if (!depId || !taskIds.has(depId)) continue; // skip out-of-tree or falsy refs
       // depId -> task.id  (task depends on depId, so depId is a predecessor)
       inDegree.set(task.id, (inDegree.get(task.id) || 0) + 1);
       dependentsOf.get(depId)!.push(task.id);
@@ -101,7 +110,9 @@ export function detectMergePoints(tasks: TaskDisplay[]): Set<string> {
   const merges = new Set<string>();
 
   for (const task of tasks) {
-    const inTreeDeps = task.dependencies.filter((d) => taskIds.has(d));
+    // Guard: skip tasks with missing/malformed dependencies
+    if (!Array.isArray(task.dependencies)) continue;
+    const inTreeDeps = task.dependencies.filter((d) => d && taskIds.has(d));
     if (inTreeDeps.length >= 2) {
       merges.add(task.id);
     }
@@ -147,7 +158,9 @@ export function assignLanes(sortedTasks: TaskDisplay[]): LaneAssignment[] {
 
   // Pre-compute in-tree dependents count for each task
   for (const task of sortedTasks) {
-    const inTreeDependents = task.dependents.filter((d) => taskIds.has(d));
+    // Guard: handle missing/malformed dependents array
+    const deps = Array.isArray(task.dependents) ? task.dependents : [];
+    const inTreeDependents = deps.filter((d) => d && taskIds.has(d));
     remainingDependents.set(task.id, inTreeDependents.length);
   }
 
@@ -157,7 +170,12 @@ export function assignLanes(sortedTasks: TaskDisplay[]): LaneAssignment[] {
       freeLanes.sort((a, b) => a - b);
       return freeLanes.shift()!;
     }
-    return nextNewLane++;
+    // Cap at MAX_LANES - 1 to prevent excessively wide layouts
+    const lane = nextNewLane++;
+    if (lane >= MAX_LANES) {
+      return MAX_LANES - 1;
+    }
+    return lane;
   }
 
   function freeLane(lane: number): void {
@@ -182,7 +200,9 @@ export function assignLanes(sortedTasks: TaskDisplay[]): LaneAssignment[] {
   const results: LaneAssignment[] = [];
 
   for (const task of sortedTasks) {
-    const inTreeDeps = task.dependencies.filter((d) => taskIds.has(d));
+    // Guard: handle missing/malformed dependencies
+    const safeDeps = Array.isArray(task.dependencies) ? task.dependencies : [];
+    const inTreeDeps = safeDeps.filter((d) => d && taskIds.has(d));
     const isMerge = mergePoints.has(task.id);
     let lane: number;
     const mergeFromLanes: number[] = [];

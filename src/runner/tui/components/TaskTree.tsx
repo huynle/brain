@@ -10,6 +10,7 @@ import { Box, Text } from 'ink';
 import type { TaskDisplay } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
 import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
+import { topoSort, assignLanes, generatePrefix } from '../lane-layout';
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -658,19 +659,12 @@ export function flattenFeatureOrder(
     
     // Only add tasks if feature is not collapsed
     if (!isFeatureCollapsed) {
-      // Build tree for this feature's tasks
-      const tree = buildTree(activeFeatureTasks, featureTasks);
-      
-      function traverse(nodes: TreeNode[]): void {
-        for (const node of nodes) {
-          result.push(node.task.id);
-          if (node.children.length > 0) {
-            traverse(node.children);
-          }
-        }
+      // Use topoSort for task ordering so keyboard navigation (j/k) matches
+      // the visual topo-sorted order used by renderFeatureTasks()
+      const sorted = topoSort(activeFeatureTasks);
+      for (const task of sorted) {
+        result.push(task.id);
       }
-      
-      traverse(tree);
     }
     // Note: No spacer between features - FeatureHeader has marginTop={1}
   });
@@ -1444,7 +1438,11 @@ function renderProjectTasks(
 }
 
 /**
- * Render a single feature's tasks as a tree
+ * Render a single feature's tasks using git-graph style lane rendering.
+ *
+ * Uses topoSort() + assignLanes() + generatePrefix() from lane-layout.ts
+ * so merge points are visually clear. Non-feature views continue using
+ * the buildTree() + renderTree() pipeline (unaffected).
  */
 function renderFeatureTasks(
   featureTasks: TaskDisplay[],
@@ -1456,27 +1454,49 @@ function renderFeatureTasks(
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
-  
+
   // Separate active and group-status tasks
   // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
   const activeTasks = featureTasks.filter(t => !isGroupStatus(t));
-  
-  // Build tree structure from active tasks, passing all feature tasks for parent_id chain walking
-  const tree = buildTree(activeTasks, featureTasks);
-  
-  tree.forEach((rootNode) => {
-    const isSelected = rootNode.task.id === selectedId;
-    const isReady = readyIds.has(rootNode.task.id);
-    const isChecked = selectedTaskIds.has(rootNode.task.id);
 
-    // Root task with indent for feature grouping
+  if (activeTasks.length === 0) return elements;
+
+  // Detect cycle membership using the same logic as buildTree (for inCycle flag)
+  const taskIds = new Set(activeTasks.map(t => t.id));
+  const hasCycleEdge = new Set<string>();
+  for (const task of activeTasks) {
+    for (const depId of task.dependencies) {
+      if (taskIds.has(depId)) {
+        // Will be caught by topoSort — tasks not in topo output are in cycles
+      }
+    }
+  }
+  const sorted = topoSort(activeTasks);
+  const topoIds = new Set(sorted.map(t => t.id));
+  const inCycleSet = new Set(activeTasks.filter(t => !topoIds.has(t.id)).map(t => t.id));
+
+  // Assign lanes based on topo-sorted order
+  const assignments = assignLanes(sorted);
+  const assignmentByTaskId = new Map(assignments.map((a, i) => [a.taskId, { a, i }]));
+
+  for (const task of sorted) {
+    const entry = assignmentByTaskId.get(task.id);
+    if (!entry) continue;
+    const { a, i } = entry;
+
+    const prefix = generatePrefix(a, i, assignments);
+    const isSelected = task.id === selectedId;
+    const isReady = readyIds.has(task.id);
+    const isChecked = selectedTaskIds.has(task.id);
+    const inCycle = inCycleSet.has(task.id);
+
     elements.push(
       <TaskRow
-        key={rootNode.task.id}
-        task={rootNode.task}
-        prefix="├─"
+        key={task.id}
+        task={task}
+        prefix={prefix}
         isSelected={isSelected}
-        inCycle={rootNode.inCycle}
+        inCycle={inCycle}
         isReady={isReady}
         isChecked={isChecked}
         showCheckboxes={showCheckboxes}
@@ -1484,44 +1504,31 @@ function renderFeatureTasks(
         panelWidth={panelWidth}
       />
     );
+  }
 
-    // Children of root
-    if (rootNode.children.length > 0) {
+  // Append any cycle-member tasks that topoSort couldn't order
+  for (const task of activeTasks) {
+    if (inCycleSet.has(task.id)) {
+      const isSelected = task.id === selectedId;
+      const isReady = readyIds.has(task.id);
+      const isChecked = selectedTaskIds.has(task.id);
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '│ ', readyIds, selectedTaskIds, textWrap, panelWidth)
+        <TaskRow
+          key={task.id}
+          task={task}
+          prefix="↺ "
+          isSelected={isSelected}
+          inCycle={true}
+          isReady={isReady}
+          isChecked={isChecked}
+          showCheckboxes={showCheckboxes}
+          textWrap={textWrap}
+          panelWidth={panelWidth}
+        />
       );
     }
-  });
-  
-  // Update last task prefix to use └─ instead of ├─
-  if (elements.length > 0) {
-    const lastElement = elements[elements.length - 1];
-    if (lastElement && React.isValidElement(lastElement)) {
-      const props = lastElement.props as { prefix?: string };
-      if (props.prefix === '├─') {
-        const task = (lastElement.props as { task: TaskDisplay }).task;
-        const isSelected = (lastElement.props as { isSelected: boolean }).isSelected;
-        const inCycle = (lastElement.props as { inCycle: boolean }).inCycle;
-        const isReady = (lastElement.props as { isReady: boolean }).isReady;
-        const isChecked = (lastElement.props as { isChecked: boolean }).isChecked;
-        elements[elements.length - 1] = (
-          <TaskRow
-            key={task.id}
-            task={task}
-            prefix="└─"
-            isSelected={isSelected}
-            inCycle={inCycle}
-            isReady={isReady}
-            isChecked={isChecked}
-            showCheckboxes={showCheckboxes}
-            textWrap={textWrap}
-            panelWidth={panelWidth}
-          />
-        );
-      }
-    }
   }
-  
+
   return elements;
 }
 

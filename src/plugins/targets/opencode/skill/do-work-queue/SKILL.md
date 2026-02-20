@@ -24,10 +24,11 @@ This skill covers:
 - [ ] Step 4: Append triage decision with `brain_update(path: "...", append: "## Triage\n...")`
 - [ ] Step 5: (Route C only) Dispatch explore agent for planning context
 - [ ] Step 6: (Routes B, C) Dispatch explore agent, append results
-- [ ] Step 7: (Route A) Implement directly OR (Routes B, C) Dispatch `tdd-dev` agent
-- [ ] Step 8: Run tests, append results
-- [ ] Step 9: Complete task with `brain_update(path: "...", status: "completed", append: "## Summary\n...")`
-- [ ] Step 10: Create atomic git commit
+- [ ] Step 7: Determine if phased (Route C: always, Route B: when large)
+- [ ] Step 8: (Route A) Implement directly OR (Routes B, C) Dispatch `tdd-dev` agent per phase
+- [ ] Step 9: Run tests, append results
+- [ ] Step 10: Complete task with `brain_update(path: "...", status: "completed", append: "## Summary\n...")`
+- [ ] Step 11: Create atomic git commit
 
 ---
 
@@ -87,11 +88,11 @@ Read task → Names files + clear changes? → Yes → Route A
 
 ### Quick Reference
 
-| Route | Explore | Plan | TDD-Dev | When |
-|-------|---------|------|---------|------|
-| A | Skip | Skip | No | Simple, specific |
-| B | Yes | Skip | Yes | Clear goal, unknown where |
-| C | Yes | Yes | Yes | Complex, architectural |
+| Route | Explore | Plan | TDD-Dev | Phased | When |
+|-------|---------|------|---------|--------|------|
+| A | Skip | Skip | No | No | Simple, specific |
+| B | Yes | Skip | Yes | When large | Clear goal, unknown where |
+| C | Yes | Yes | Yes | Always | Complex, architectural |
 
 ---
 
@@ -165,18 +166,105 @@ brain_update(
 
 ### Step 6: Implementation
 
-**Route A (Simple):** Implement the changes directly. Skip to Step 7.
+**Route A (Simple):** Implement the changes directly. Skip to Step 8.
 
-**Routes B & C:** Dispatch to `tdd-dev` agent with accumulated context.
+**Routes B & C:** Determine phasing, then dispatch `tdd-dev` agent(s).
 
-#### Determining Phased Work (Route C only)
+#### Step 6a: Determine Phasing
 
-A task requires phased implementation if ANY of:
+**Route C — Always phased.** Use the plan from Step 4 to define phases.
+
+**Route B — Phased when large.** A task is "large" if ANY of:
 - Multiple components/modules are touched
-- Plan has 3+ distinct sections or steps
+- Exploration reveals 3+ distinct areas to change
 - Estimated to modify 4+ files
 
-#### TDD-Dev Dispatch Template
+If not large, dispatch a single `tdd-dev` call (same as one-phase flow below, skip the loop).
+
+#### Step 6b: Define Phases
+
+Split the work into ordered phases. Each phase should be:
+- **Self-contained** — passes tests independently after completion
+- **Incremental** — builds on prior phases without breaking them
+- **Small** — one concern per phase (new types, core logic, API layer, tests, etc.)
+
+Append the phase plan to the task:
+
+```
+brain_update(
+  path: "<task-path>",
+  append: "## Phases\n\n1. **Phase 1:** <description>\n2. **Phase 2:** <description>\n3. **Phase 3:** <description>\n\n*<N> phases planned*"
+)
+```
+
+#### Step 6c: Dispatch tdd-dev Per Phase
+
+Loop through each phase sequentially. For each phase:
+
+**1. Dispatch tdd-dev for the current phase:**
+
+```
+Task(
+  subagent_type: "tdd-dev",
+  description: "Phase <N>: <short-description>",
+  prompt: """
+## Task
+<full task content from brain_recall>
+
+## Triage
+**Route:** <B or C>
+
+## Exploration Results
+<exploration findings>
+
+## Plan (Route C only)
+<plan if Route C>
+
+## Phase Plan
+This task has <total> phases. You are implementing **Phase <N>/<total>**.
+
+### Phase <N>: <description>
+<detailed scope for this phase>
+
+### Prior Phases Completed
+<summaries from previous phases, or "None — this is Phase 1">
+
+### Remaining Phases (DO NOT implement these)
+<list remaining phases so tdd-dev understands scope boundaries>
+
+## Instructions
+Implement ONLY Phase <N> following TDD discipline (red-green-verify).
+Do NOT implement work from other phases.
+Return a summary of all changes made in this phase.
+"""
+)
+```
+
+**2. After tdd-dev returns, verify and record:**
+
+```
+brain_update(
+  path: "<task-path>",
+  append: "## Phase <N> Implementation\n\n<summary-from-tdd-dev>\n\n*Phase <N>/<total> completed by tdd-dev*"
+)
+```
+
+**3. Run tests** to confirm the phase didn't break anything:
+
+```bash
+bun test        # or relevant test command
+bun run typecheck
+```
+
+If tests fail, either:
+- Re-dispatch tdd-dev with the failure details to fix
+- Mark task as blocked if unfixable
+
+**4. Continue to next phase** — repeat from step 1 until all phases are done.
+
+#### Single-Phase Dispatch (Route B, not large)
+
+When Route B work is small enough for a single dispatch:
 
 ```
 Task(
@@ -187,30 +275,14 @@ Task(
 <full task content from brain_recall>
 
 ## Triage
-**Route:** <B or C>
-**Reasoning:** <triage reasoning>
+**Route:** B
 
 ## Exploration Results
-<exploration findings appended to task>
-
-## Plan (Route C only)
-<plan if Route C, omit section for Route B>
+<exploration findings>
 
 ## Instructions
 Implement this task following TDD discipline (red-green-verify cycle).
-
-<If phased work needed>
-This is a large task. Work in phases:
-1. Complete Phase 1, verify tests pass
-2. Complete Phase 2, verify tests pass
-3. Continue until all phases complete
-
-Return a summary of changes after each phase.
-</If phased>
-
-<If not phased>
 Return a summary of all changes made.
-</If not phased>
 """
 )
 ```
@@ -224,9 +296,15 @@ brain_update(
 )
 ```
 
-### Step 7: Testing
+### Step 7: Implementation Review
 
-Run relevant tests. Append results:
+After all phases (or the single dispatch) complete, review the aggregate changes:
+- Do the changes match the original task requirements?
+- Are there any loose ends from phased boundaries?
+
+### Step 8: Testing
+
+Run full test suite and type checking. Append results:
 
 ```
 brain_update(
@@ -235,19 +313,19 @@ brain_update(
 )
 ```
 
-### Step 8: Complete
+### Step 9: Complete
 
 ```
 brain_update(
   path: "<task-path>",
   status: "completed",
-  append: "## Summary\n\n- <change 1>\n- <change 2>\n\n*Completed*"
+  append: "## Summary\n\n- <change 1>\n- <change 2>\n\n*Completed (<N> phases)*"
 )
 ```
 
-### Step 9: Commit
+### Step 10: Commit
 
-Single atomic commit per task:
+Single atomic commit per task (all phases together):
 
 ```bash
 git add -A
@@ -284,7 +362,10 @@ git commit -m "[Task] <title> (Route <A/B/C>)
 **Never:**
 - Skip triage (always categorize)
 - Implement Routes B/C without dispatching to `tdd-dev`
-- Skip the audit trail (triage, exploration, summary)
+- Dispatch a single tdd-dev for Route C (always split into phases)
+- Tell tdd-dev to implement all phases at once (one phase per dispatch)
+- Skip the audit trail (triage, exploration, phases, summary)
+- Skip test verification between phases
 - Batch multiple tasks in one commit
 - Use `--no-verify` on commits
 

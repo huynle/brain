@@ -2335,6 +2335,7 @@ export function App({
     return (
       <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
         <MetadataPopup
+          width={Math.min(80, terminalColumns - 4)}
           mode={metadataPopupMode}
           taskTitle={metadataPopupMode === 'single' ? metadataTargetTasks[0]?.title : undefined}
           batchCount={metadataTargetTasks.length}

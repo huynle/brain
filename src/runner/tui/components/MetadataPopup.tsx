@@ -37,6 +37,8 @@ export type MetadataPopupMode = 'single' | 'batch' | 'feature';
 export type MetadataInteractionMode = 'navigate' | 'edit_text' | 'edit_status' | 'edit_project';
 
 export interface MetadataPopupProps {
+  /** Width constraint for the popup (in columns). Prevents text overflow. */
+  width?: number;
   /** Mode: single task, batch of tasks, or feature group */
   mode: MetadataPopupMode;
   /** Task title (for single mode header) */
@@ -90,6 +92,7 @@ const FIELD_LABELS: Record<MetadataField, string> = {
 };
 
 export function MetadataPopup({
+  width: popupWidth,
   mode,
   taskTitle,
   batchCount,
@@ -175,6 +178,7 @@ export function MetadataPopup({
       borderColor={borderColor}
       paddingX={2}
       paddingY={1}
+      width={popupWidth}
     >
       {/* Header */}
       <Box marginBottom={1} flexDirection="column">
@@ -322,8 +326,8 @@ export function MetadataPopup({
                 </Box>
               ) : isEditing ? (
                 // Text field in edit mode: show edit buffer with cursor
-                <Box>
-                  <Text color="cyan" bold>
+                <Box flexShrink={1}>
+                  <Text color="cyan" bold wrap="wrap">
                     {editBuffer}
                   </Text>
                   <Text color="cyan" bold inverse>
@@ -332,7 +336,7 @@ export function MetadataPopup({
                 </Box>
               ) : (
                 // Text field: show value
-                <Box>
+                <Box flexShrink={1}>
                   <Text
                     color={isFocused ? 'cyan' : undefined}
                     bold={isFocused}

@@ -3139,7 +3139,10 @@ export class TaskRunner {
 
   private saveState(): void {
     try {
-      const runningTasks = this.processManager.getAll().map((info) => info.task);
+      const runningTasks = [
+        ...this.processManager.getAll().map((info) => info.task),
+        ...Array.from(this.tuiTasks.values()),
+      ];
 
       this.stateManager.save(
         this.status,

@@ -212,6 +212,8 @@ export function App({
     model: string;
     direct_prompt: string;
   }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '', agent: '', model: '', direct_prompt: '' });
+  // Track whether any metadata changes were saved while popup is open
+  const [metadataDirty, setMetadataDirty] = useState(false);
   // All projects from API (for project picker in metadata popup)
   const [allProjects, setAllProjects] = useState<string[]>([]);
   // Computed: the effective project list used by the project picker (same as availableProjects prop)
@@ -676,6 +678,9 @@ export function App({
         
         const updates: { [key: string]: string | EntryStatus } = { [field]: value };
         
+        // Mark dirty synchronously so Escape handler sees it immediately
+        setMetadataDirty(true);
+        
         Promise.all(
           metadataTargetTasks.map(task => onUpdateMetadata(task.path, updates))
         ).then(() => {
@@ -699,6 +704,9 @@ export function App({
         }
         
         addLog({ level: 'info', message: `Moving ${metadataTargetTasks.length} task(s) to project: ${newProjectId}` });
+        
+        // Mark dirty synchronously so Escape handler sees it immediately
+        setMetadataDirty(true);
         
         Promise.all(
           metadataTargetTasks.map(task => onMoveTask(task.path, newProjectId))
@@ -732,10 +740,15 @@ export function App({
           setMetadataProjectValue(metadataOriginalValues.project);
           setMetadataInteractionMode('navigate');
         } else {
-          // In navigate mode: close popup entirely (no save)
+          // In navigate mode: close popup entirely
           setShowMetadataPopup(false);
           setMetadataInteractionMode('navigate');
           setMetadataEditBuffer('');
+          // Exit multi-select mode if changes were saved during this popup session
+          if (metadataDirty) {
+            setSelectedTaskIds(new Set());
+            setMetadataDirty(false);
+          }
         }
         return;
       }
@@ -1680,6 +1693,7 @@ export function App({
         });
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
+        setMetadataDirty(false);
         setShowMetadataPopup(true);
       };
 

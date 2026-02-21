@@ -66,8 +66,8 @@ import type {
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
-import { TaskService, normalizeDependencyRef } from "./task-service";
-import type { DependencyValidationResult } from "./task-service";
+import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
+import type { DependencyValidationResult, DependentInfo } from "./task-service";
 
 // =============================================================================
 // Dependency Validation Error
@@ -906,7 +906,14 @@ export class BrainService {
   async moveEntry(
     path: string,
     newProjectId: string
-  ): Promise<{ oldPath: string; newPath: string; project: string; id: string; title: string }> {
+  ): Promise<{
+    oldPath: string;
+    newPath: string;
+    project: string;
+    id: string;
+    title: string;
+    updatedDependents: RewriteResult[];
+  }> {
     const fullPath = join(this.config.brainDir, path);
     if (!existsSync(fullPath)) {
       throw new Error(`Entry not found: ${path}`);
@@ -982,12 +989,47 @@ export class BrainService {
       }
     }
     
+    // Rewrite depends_on references in dependent tasks (task entries only)
+    let updatedDependents: RewriteResult[] = [];
+    if (entryType === "task" && currentProjectId) {
+      try {
+        // Build task map across all projects
+        const taskService = new TaskService(this.config, currentProjectId);
+        const allProjects = taskService.listProjects();
+        const tasksByProject = new Map<string, import("./types").Task[]>();
+
+        for (const projId of allProjects) {
+          try {
+            const tasks = await taskService.getAllTasks(projId);
+            tasksByProject.set(projId, tasks);
+          } catch {
+            // Skip projects where task listing fails
+          }
+        }
+
+        // Find all tasks that reference the moved task
+        const dependents = findDependents(id, currentProjectId, tasksByProject);
+
+        // Rewrite their depends_on references on disk
+        updatedDependents = rewriteDependentFiles({
+          brainDir: this.config.brainDir,
+          dependents,
+          movedTaskId: id,
+          sourceProjectId: currentProjectId,
+          targetProjectId: newProjectId,
+        });
+      } catch {
+        // Dep rewriting is best-effort — don't fail the move
+      }
+    }
+    
     return {
       oldPath: path,
       newPath,
       project: newProjectId,
       id,
       title,
+      updatedDependents,
     };
   }
 
@@ -1919,3 +1961,102 @@ export function getBrainService(): BrainService {
 }
 
 export default BrainService;
+
+// =============================================================================
+// Dependency Rewriting for moveEntry()
+// =============================================================================
+
+export interface ComputeNewDepRefParams {
+  dependentProjectId: string;
+  movedTaskId: string;
+  sourceProjectId: string;
+  targetProjectId: string;
+}
+
+/**
+ * Compute the new dependency reference after a task moves between projects.
+ * Pure function — no I/O.
+ *
+ * Rules:
+ * - If dependent is in the target project → bare ID (now local)
+ * - Otherwise → "targetProjectId:movedTaskId" (cross-project)
+ */
+export function computeNewDepRef(params: ComputeNewDepRefParams): string {
+  const { dependentProjectId, movedTaskId, targetProjectId } = params;
+
+  if (dependentProjectId === targetProjectId) {
+    // The dependent is now in the same project as the moved task → bare ref
+    return movedTaskId;
+  }
+
+  // The dependent is in a different project → cross-project ref
+  return `${targetProjectId}:${movedTaskId}`;
+}
+
+export interface RewriteResult {
+  taskId: string;
+  project: string;
+  oldRef: string;
+  newRef: string;
+}
+
+export interface RewriteDependentFilesParams {
+  brainDir: string;
+  dependents: DependentInfo[];
+  movedTaskId: string;
+  sourceProjectId: string;
+  targetProjectId: string;
+}
+
+/**
+ * Rewrite depends_on references in dependent task files after a move.
+ * Reads each dependent file, replaces the old ref, writes back.
+ */
+export function rewriteDependentFiles(params: RewriteDependentFilesParams): RewriteResult[] {
+  const { brainDir, dependents, movedTaskId, sourceProjectId, targetProjectId } = params;
+  const results: RewriteResult[] = [];
+
+  for (const dep of dependents) {
+    const fullPath = join(brainDir, dep.taskPath);
+
+    // Gracefully skip if file doesn't exist (e.g., stale index)
+    if (!existsSync(fullPath)) {
+      continue;
+    }
+
+    const content = readFileSync(fullPath, "utf-8");
+    const { frontmatter, body } = parseFrontmatter(content);
+
+    const depsArray = (frontmatter.depends_on as string[]) || [];
+    const depIndex = depsArray.indexOf(dep.depRef);
+    if (depIndex === -1) {
+      // The ref from findDependents wasn't found in the actual file — skip
+      continue;
+    }
+
+    const newRef = computeNewDepRef({
+      dependentProjectId: dep.projectId,
+      movedTaskId,
+      sourceProjectId,
+      targetProjectId,
+    });
+
+    // Replace the old ref with the new one
+    depsArray[depIndex] = newRef;
+    frontmatter.depends_on = depsArray;
+
+    // Serialize and write back
+    const newFrontmatterStr = serializeFrontmatter(frontmatter);
+    const newContent = `---\n${newFrontmatterStr}---\n\n${body}\n`;
+    writeFileSync(fullPath, newContent, "utf-8");
+
+    results.push({
+      taskId: dep.taskId,
+      project: dep.projectId,
+      oldRef: dep.depRef,
+      newRef,
+    });
+  }
+
+  return results;
+}

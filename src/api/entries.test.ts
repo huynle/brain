@@ -9,11 +9,12 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Hono } from "hono";
 import { createEntriesRoutes } from "./entries";
 import { getConfig } from "../config";
+import { parseFrontmatter } from "../core/zk-client";
 
 // =============================================================================
 // Test Setup
@@ -23,6 +24,8 @@ import { getConfig } from "../config";
 const config = getConfig();
 const TEST_SUBDIR = `_test-${Date.now()}`;
 const TEST_PATH_PREFIX = `projects/${TEST_SUBDIR}`;
+const TEST_SUBDIR_B = `_test-b-${Date.now()}`;
+const TEST_PATH_PREFIX_B = `projects/${TEST_SUBDIR_B}`;
 
 // Create test app
 const app = new Hono();
@@ -40,10 +43,12 @@ beforeAll(() => {
 });
 
 afterAll(() => {
-  // Clean up test directory
-  const testDir = join(config.brain.brainDir, "projects", TEST_SUBDIR);
-  if (existsSync(testDir)) {
-    rmSync(testDir, { recursive: true, force: true });
+  // Clean up test directories
+  for (const subdir of [TEST_SUBDIR, TEST_SUBDIR_B]) {
+    const testDir = join(config.brain.brainDir, "projects", subdir);
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
   }
 });
 
@@ -431,6 +436,188 @@ Content to delete.
       );
 
       expect(res.status).toBe(404);
+    });
+  });
+
+  describe("POST /entries/:id/move - Move Entry", () => {
+    test("should move task and return updatedDependents with rewritten refs", async () => {
+      // Setup: Create task-to-move in project A
+      const movedTaskId = "mvtsk001";
+      createTestEntry(
+        `${TEST_PATH_PREFIX}/task/${movedTaskId}.md`,
+        `---
+title: Task To Move
+type: task
+status: pending
+projectId: ${TEST_SUBDIR}
+---
+
+This task will be moved.
+`
+      );
+
+      // Setup: Create dependent task in project A that depends on movedTaskId (bare ref)
+      const dependentId = "deptsk01";
+      createTestEntry(
+        `${TEST_PATH_PREFIX}/task/${dependentId}.md`,
+        `---
+title: Dependent Task
+type: task
+status: pending
+projectId: ${TEST_SUBDIR}
+depends_on:
+  - "${movedTaskId}"
+  - "other-dep"
+---
+
+This task depends on the moved task.
+`
+      );
+
+      // Create target project directory
+      const targetTaskDir = join(config.brain.brainDir, TEST_PATH_PREFIX_B, "task");
+      if (!existsSync(targetTaskDir)) {
+        mkdirSync(targetTaskDir, { recursive: true });
+      }
+
+      // Act: Move the task to project B via HTTP endpoint
+      const res = await app.request(
+        `/entries/${TEST_PATH_PREFIX}/task/${movedTaskId}.md/move`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: TEST_SUBDIR_B }),
+        }
+      );
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // Verify basic move fields
+      expect(json.oldPath).toBe(`${TEST_PATH_PREFIX}/task/${movedTaskId}.md`);
+      expect(json.newPath).toBe(`${TEST_PATH_PREFIX_B}/task/${movedTaskId}.md`);
+      expect(json.project).toBe(TEST_SUBDIR_B);
+      expect(json.id).toBe(movedTaskId);
+
+      // Verify updatedDependents is present and correct
+      expect(json.updatedDependents).toBeInstanceOf(Array);
+      expect(json.updatedDependents.length).toBeGreaterThanOrEqual(1);
+
+      const depUpdate = json.updatedDependents.find(
+        (d: { taskId: string }) => d.taskId === dependentId
+      );
+      expect(depUpdate).toBeDefined();
+      expect(depUpdate.project).toBe(TEST_SUBDIR);
+      expect(depUpdate.oldRef).toBe(movedTaskId);
+      expect(depUpdate.newRef).toBe(`${TEST_SUBDIR_B}:${movedTaskId}`);
+
+      // Verify the dependent file on disk was actually rewritten
+      const dependentFilePath = join(
+        config.brain.brainDir,
+        `${TEST_PATH_PREFIX}/task/${dependentId}.md`
+      );
+      const dependentContent = readFileSync(dependentFilePath, "utf-8");
+      const { frontmatter } = parseFrontmatter(dependentContent);
+      expect(frontmatter.depends_on).toContain(`${TEST_SUBDIR_B}:${movedTaskId}`);
+      expect(frontmatter.depends_on).toContain("other-dep");
+      expect(frontmatter.depends_on).not.toContain(movedTaskId);
+
+      // Verify the moved file exists at new location
+      const movedFilePath = join(
+        config.brain.brainDir,
+        `${TEST_PATH_PREFIX_B}/task/${movedTaskId}.md`
+      );
+      expect(existsSync(movedFilePath)).toBe(true);
+
+      // Verify the old file is gone
+      const oldFilePath = join(
+        config.brain.brainDir,
+        `${TEST_PATH_PREFIX}/task/${movedTaskId}.md`
+      );
+      expect(existsSync(oldFilePath)).toBe(false);
+    });
+
+    test("should return empty updatedDependents when no deps to rewrite", async () => {
+      // Setup: Create a standalone task with no dependents
+      const taskId = "alone001";
+      createTestEntry(
+        `${TEST_PATH_PREFIX_B}/task/${taskId}.md`,
+        `---
+title: Standalone Task
+type: task
+status: pending
+projectId: ${TEST_SUBDIR_B}
+---
+
+No other task depends on this one.
+`
+      );
+
+      // Create target project directory (reuse TEST_SUBDIR which still exists)
+      const targetTaskDir = join(config.brain.brainDir, TEST_PATH_PREFIX, "task");
+      if (!existsSync(targetTaskDir)) {
+        mkdirSync(targetTaskDir, { recursive: true });
+      }
+
+      // Act: Move to project A
+      const res = await app.request(
+        `/entries/${TEST_PATH_PREFIX_B}/task/${taskId}.md/move`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: TEST_SUBDIR }),
+        }
+      );
+
+      expect(res.status).toBe(200);
+      const json = await res.json();
+
+      // updatedDependents should be present but empty
+      expect(json.updatedDependents).toBeInstanceOf(Array);
+      expect(json.updatedDependents).toHaveLength(0);
+      expect(json.project).toBe(TEST_SUBDIR);
+    });
+
+    test("should return 404 for non-existent entry", async () => {
+      const res = await app.request(
+        "/entries/projects/nonexistent/task/fake0001.md/move",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: "some-project" }),
+        }
+      );
+
+      expect(res.status).toBe(404);
+    });
+
+    test("should return 400 when moving to same project", async () => {
+      const taskId = "samepj01";
+      createTestEntry(
+        `${TEST_PATH_PREFIX}/task/${taskId}.md`,
+        `---
+title: Same Project Task
+type: task
+status: pending
+projectId: ${TEST_SUBDIR}
+---
+
+Content.
+`
+      );
+
+      const res = await app.request(
+        `/entries/${TEST_PATH_PREFIX}/task/${taskId}.md/move`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: TEST_SUBDIR }),
+        }
+      );
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.error).toBe("Validation Error");
     });
   });
 

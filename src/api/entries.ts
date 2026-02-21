@@ -190,9 +190,10 @@ const deleteEntryRoute = createRoute({
 });
 
 // POST /entries/:id/move - Move entry to a different project
+// Note: Using Hono's regex syntax `:id{.+}` to capture paths with slashes
 const moveEntryRoute = createRoute({
   method: "post",
-  path: "/:id/move",
+  path: "/:id{.+}/move",
   tags: ["Entries"],
   summary: "Move entry to different project",
   description: "Moves an entry to a different project. Cannot move in_progress tasks.",

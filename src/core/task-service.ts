@@ -438,6 +438,66 @@ export function normalizeDependencyRef(ref: string): { normalized: string; proje
 }
 
 // =============================================================================
+// Dependent Discovery
+// =============================================================================
+
+export interface DependentInfo {
+  taskId: string;
+  taskPath: string;
+  projectId: string;
+  depRef: string;
+}
+
+/**
+ * Find all tasks that depend on a given task ID across all projects.
+ * Uses dependency injection (tasksByProject map) for testability.
+ * 
+ * @param taskId - The task ID to find dependents for
+ * @param sourceProjectId - The project the task currently belongs to
+ * @param tasksByProject - Map of projectId -> Task[] for all projects
+ * @returns Array of DependentInfo describing each dependent task
+ */
+export function findDependents(
+  taskId: string,
+  sourceProjectId: string,
+  tasksByProject: Map<string, Task[]>
+): DependentInfo[] {
+  const results: DependentInfo[] = [];
+
+  for (const [projectId, tasks] of tasksByProject) {
+    for (const task of tasks) {
+      if (!task.depends_on || task.depends_on.length === 0) continue;
+
+      for (const depRef of task.depends_on) {
+        const { normalized, projectId: refProjectId } = normalizeDependencyRef(depRef);
+
+        // Determine which project this dep reference points to
+        let targetProjectId: string;
+        if (refProjectId) {
+          // Explicit project reference (colon syntax or full path)
+          targetProjectId = refProjectId;
+        } else {
+          // Bare ID — refers to the same project as the task containing the dep
+          targetProjectId = projectId;
+        }
+
+        // Check if this dep points to our target task
+        if (normalized === taskId && targetProjectId === sourceProjectId) {
+          results.push({
+            taskId: task.id,
+            taskPath: task.path,
+            projectId,
+            depRef,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
+}
+
+// =============================================================================
 // Singleton Instance
 // =============================================================================
 

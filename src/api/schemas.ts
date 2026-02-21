@@ -631,4 +631,10 @@ export const MoveEntryResponseSchema = z.object({
   project: z.string().openapi({ example: "new-project" }),
   id: EntryIdSchema,
   title: z.string(),
+  updatedDependents: z.array(z.object({
+    taskId: z.string(),
+    project: z.string(),
+    oldRef: z.string(),
+    newRef: z.string(),
+  })).openapi({ description: "Tasks whose depends_on references were rewritten" }),
 }).openapi("MoveEntryResponse");

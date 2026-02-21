@@ -44,6 +44,8 @@ import skillUsingBrainPath from "./targets/opencode/skill/using-brain/SKILL.md" 
 import skillProjectPlanningPath from "./targets/opencode/skill/project-planning/SKILL.md" with { type: "file" };
 // @ts-ignore - Bun import attribute syntax
 import skillWritingPlansPath from "./targets/opencode/skill/writing-plans/SKILL.md" with { type: "file" };
+// @ts-ignore - Bun import attribute syntax
+import skillFeatureCheckoutPath from "./targets/opencode/skill/feature-checkout/SKILL.md" with { type: "file" };
 
 // OpenCode commands
 // @ts-ignore - Bun import attribute syntax
@@ -73,6 +75,7 @@ const EMBEDDED_ADDITIONAL_FILES: Partial<Record<InstallTarget, Record<string, st
     "skill/using-brain/SKILL.md": skillUsingBrainPath,
     "skill/project-planning/SKILL.md": skillProjectPlanningPath,
     "skill/writing-plans/SKILL.md": skillWritingPlansPath,
+    "skill/feature-checkout/SKILL.md": skillFeatureCheckoutPath,
     "command/do.md": commandDoPath,
     "command/work.md": commandWorkPath,
     "command/plan-to-tasks.md": commandPlanToTasksPath,
@@ -187,6 +190,13 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
         targetDir: (home) => join(home, ".config/opencode/skill/writing-plans"),
         targetFile: "SKILL.md",
         description: "writing-plans skill (implementation plans)",
+        componentType: "skill",
+      },
+      {
+        sourcePath: "skill/feature-checkout/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/feature-checkout"),
+        targetFile: "SKILL.md",
+        description: "feature-checkout skill (feature completion audit)",
         componentType: "skill",
       },
       // Commands

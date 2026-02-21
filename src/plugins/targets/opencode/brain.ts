@@ -2096,6 +2096,156 @@ Use this to get detailed information about a specific task including:
       }),
 
       // ========================================
+      // brain_task_metadata
+      // ========================================
+      brain_task_metadata: tool({
+        description: `Get execution metadata for a task — fields NOT included in brain_task_get.
+
+Returns structured JSON with:
+- **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote
+- **Feature grouping:** feature_id, feature_priority, feature_depends_on
+- **Raw dependencies:** depends_on (IDs), resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle
+- **Timestamps:** created, modified
+- **Tags and sessions:** tags[], session_ids[]
+
+Use this when you need to know HOW a task should be executed (which agent, model, workdir, prompt)
+or to inspect its dependency graph details. Complements brain_task_get which returns content and high-level status.`,
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric) or title"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          if (!args.taskId) {
+            return "Please provide a task ID or title";
+          }
+
+          try {
+            const proj = args.project || projectId;
+
+            interface FullTask {
+              id: string;
+              title: string;
+              path: string;
+              status: string;
+              priority: string;
+              classification: string;
+              depends_on: string[];
+              resolved_deps: string[];
+              unresolved_deps: string[];
+              blocked_by: string[];
+              blocked_by_reason?: string;
+              waiting_on: string[];
+              in_cycle: boolean;
+              tags: string[];
+              created: string;
+              modified?: string;
+              target_workdir: string | null;
+              workdir: string | null;
+              resolved_workdir: string | null;
+              git_branch: string | null;
+              git_remote: string | null;
+              agent: string | null;
+              model: string | null;
+              direct_prompt: string | null;
+              feature_id?: string;
+              feature_priority?: string;
+              feature_depends_on?: string[];
+              session_ids: string[];
+              user_original_request: string | null;
+            }
+
+            interface TaskListResponse {
+              tasks: FullTask[];
+              count: number;
+            }
+
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            const taskId = args.taskId.toLowerCase();
+            const task = response.tasks.find(
+              t => t.id.toLowerCase() === taskId ||
+                   t.title.toLowerCase() === taskId
+            );
+
+            if (!task) {
+              const partialMatches = response.tasks.filter(
+                t => t.title.toLowerCase().includes(taskId) ||
+                     t.id.toLowerCase().includes(taskId)
+              );
+
+              if (partialMatches.length > 0) {
+                const suggestions = partialMatches.slice(0, 5).map(
+                  t => `- ${t.title} (ID: ${t.id})`
+                ).join("\n");
+                return `Task not found: "${args.taskId}"\n\n**Did you mean:**\n${suggestions}`;
+              }
+
+              return `Task not found: "${args.taskId}"\n\nUse \`brain_tasks\` to list all tasks.`;
+            }
+
+            // Build metadata-only response (no content body)
+            const metadata: Record<string, unknown> = {
+              id: task.id,
+              title: task.title,
+              path: task.path,
+              status: task.status,
+              priority: task.priority,
+              classification: task.classification,
+
+              // Execution config
+              execution: {
+                agent: task.agent,
+                model: task.model,
+                direct_prompt: task.direct_prompt,
+                target_workdir: task.target_workdir,
+                workdir: task.workdir,
+                resolved_workdir: task.resolved_workdir,
+                git_branch: task.git_branch,
+                git_remote: task.git_remote,
+              },
+
+              // Feature grouping
+              feature: task.feature_id ? {
+                id: task.feature_id,
+                priority: task.feature_priority || null,
+                depends_on: task.feature_depends_on || [],
+              } : null,
+
+              // Dependencies (raw IDs)
+              dependencies: {
+                depends_on: task.depends_on || [],
+                resolved_deps: task.resolved_deps || [],
+                unresolved_deps: task.unresolved_deps || [],
+                blocked_by: task.blocked_by || [],
+                blocked_by_reason: task.blocked_by_reason || null,
+                waiting_on: task.waiting_on || [],
+                in_cycle: task.in_cycle || false,
+              },
+
+              // Metadata
+              tags: task.tags || [],
+              created: task.created,
+              modified: task.modified || null,
+              session_ids: task.session_ids || [],
+              user_original_request: task.user_original_request,
+            };
+
+            return JSON.stringify(metadata, null, 2);
+          } catch (error) {
+            return `Failed to get task metadata: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
       // brain_tasks_status
       // ========================================
       brain_tasks_status: tool({

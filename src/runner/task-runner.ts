@@ -2002,6 +2002,12 @@ export class TaskRunner {
     const projectFromPath = pathParts.length >= 2 ? pathParts[1] : this.projectId;
     const effectiveProjectId = projectFromPath || this.projectId;
 
+    // Step 3b: If task is already in_progress (orphaned from previous run),
+    // skip claim/status-update and spawn a fresh session with resume prompt
+    if (task.status === 'in_progress') {
+      return this.spawnFreshResumeSession(task, effectiveProjectId, taskPath);
+    }
+
     // Step 4: Claim task
     const claim = await this.apiClient.claimTask(
       effectiveProjectId,
@@ -2148,6 +2154,118 @@ export class TaskRunner {
         error: String(error),
       });
       await this.apiClient.releaseTask(effectiveProjectId, taskId);
+      return false;
+    }
+  }
+
+  /**
+   * Spawn a fresh OpenCode instance for an orphaned in_progress task.
+   * This is called when pressing "x" on a task that is already in_progress
+   * (e.g., from a previous runner session that was shut down).
+   *
+   * Unlike the "O" key (which reopens a previous session), this creates a
+   * brand new OpenCode session with isResume: true so the agent gets a resume
+   * prompt telling it to check for prior progress and continue.
+   *
+   * Skips claim and status-update steps since the task is already in_progress.
+   */
+  private async spawnFreshResumeSession(
+    task: ResolvedTask,
+    effectiveProjectId: string,
+    taskPath: string,
+  ): Promise<boolean> {
+    const taskId = task.id;
+
+    // Step 1: Check capacity
+    const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
+    if (runningCount >= this.config.maxParallel) {
+      this.tuiLog('error', `Cannot resume: at max parallel capacity (${runningCount}/${this.config.maxParallel})`, taskId);
+      return false;
+    }
+
+    // Step 2: Resolve workdir
+    let workdir: string;
+    try {
+      workdir = await this.executor.resolveWorkdir(task);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      this.tuiLog('error', `Worktree setup failed for resume: ${errorMessage}`, taskId, effectiveProjectId);
+      return false;
+    }
+
+    // Step 3: Spawn fresh OpenCode instance with isResume: true
+    // This creates a brand new session (no -s flag, no session reuse)
+    // but the resume prompt tells the agent to check for prior progress
+    const effectiveMode = this.tmuxManager ? "dashboard" : this.mode;
+    const useTui = this.mode === "tui";
+
+    try {
+      const result = await this.executor.spawn(task, effectiveProjectId, {
+        mode: effectiveMode,
+        paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
+        isResume: true,
+        useTui,
+        workdir,
+      });
+
+      // Step 4: Track the process (counts toward maxParallel)
+      const runningTask: RunningTask = {
+        id: taskId,
+        path: taskPath,
+        title: task.title,
+        priority: task.priority,
+        projectId: effectiveProjectId,
+        pid: result.pid,
+        paneId: result.paneId,
+        windowName: result.windowName,
+        startedAt: new Date().toISOString(),
+        isResume: true,
+        workdir,
+        opencodePort: result.opencodePort,
+        sessionId: result.sessionId,
+      };
+
+      if (result.proc) {
+        this.processManager.add(taskId, runningTask, result.proc);
+      } else if (result.windowName || result.paneId) {
+        this.tuiTasks.set(taskId, runningTask);
+      }
+
+      // Step 5: Remove from pendingResumeTasks (prevent double execution)
+      this.pendingResumeTasks.delete(taskId);
+
+      // Step 6: Persist new session ID to task frontmatter
+      if (runningTask.sessionId) {
+        try {
+          await this.apiClient.updateEntryMetadata(taskPath, {
+            session_ids: [runningTask.sessionId],
+          });
+        } catch (error) {
+          this.logger.warn("Failed to persist session ID to resumed task", {
+            taskId,
+            sessionId: runningTask.sessionId,
+            error: String(error),
+          });
+        }
+      }
+
+      this.logger.info("Resuming orphaned task with fresh session", {
+        taskId,
+        title: task.title,
+        pid: result.pid,
+        projectId: effectiveProjectId,
+      });
+      this.tuiLog('info', `Resuming orphaned task (fresh session): ${task.title}`, taskId, effectiveProjectId);
+
+      await this.handleDashboardTaskStart(runningTask);
+      this.emitEvent({ type: "task_started", task: runningTask });
+
+      return true;
+    } catch (error) {
+      this.logger.error("Failed to spawn fresh resume session", {
+        taskId,
+        error: String(error),
+      });
       return false;
     }
   }
@@ -2524,6 +2642,10 @@ export class TaskRunner {
         };
 
         this.tuiTasks.set(taskContext.taskId, runningTask);
+
+        // Remove from pending resume queue to prevent duplicate execution on unpause
+        this.pendingResumeTasks.delete(taskContext.taskId);
+
         this.logger.info("Reopened session registered for idle monitoring", {
           taskId: taskContext.taskId,
           pid,
@@ -3017,7 +3139,10 @@ export class TaskRunner {
 
   private saveState(): void {
     try {
-      const runningTasks = this.processManager.getAll().map((info) => info.task);
+      const runningTasks = [
+        ...this.processManager.getAll().map((info) => info.task),
+        ...Array.from(this.tuiTasks.values()),
+      ];
 
       this.stateManager.save(
         this.status,

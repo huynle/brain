@@ -1429,24 +1429,25 @@ export function App({
         }
       }
       
-      // Case 3: Task selected - execute immediately
+      // Case 3: Task selected - execute or resume
       if (selectedTask && onExecuteTask) {
+        const isResume = selectedTask.status === 'in_progress';
         addLog({
           level: 'info',
-          message: `Executing task: ${selectedTask.title}`,
+          message: `${isResume ? 'Resuming' : 'Executing'} task: ${selectedTask.title}`,
           taskId: selectedTask.id,
         });
         onExecuteTask(selectedTask.id, selectedTask.path).then((success) => {
           if (success) {
             addLog({
               level: 'info',
-              message: `Task execution started: ${selectedTask.title}`,
+              message: `Task ${isResume ? 'resume' : 'execution'} started: ${selectedTask.title}`,
               taskId: selectedTask.id,
             });
           } else {
             addLog({
               level: 'warn',
-              message: `Failed to execute task: ${selectedTask.title} (at capacity or not found)`,
+              message: `Failed to ${isResume ? 'resume' : 'execute'} task: ${selectedTask.title} (at capacity or not found)`,
               taskId: selectedTask.id,
             });
           }

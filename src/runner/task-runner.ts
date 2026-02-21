@@ -496,6 +496,21 @@ export class TaskRunner {
 
     // Resume each pending task (respects maxParallel via resumeTask)
     for (const task of tasksToProcess) {
+      // Skip tasks already tracked (e.g., opened via "O" key)
+      if (this.tuiTasks.has(task.id)) {
+        this.pendingResumeTasks.delete(task.id);
+        continue;
+      }
+
+      // Only auto-resume tasks that were running in THIS session (have a real PID).
+      // Orphaned tasks from previous sessions (pid: 0) require explicit user action
+      // via "x" (new resume session) or "O" (reopen previous session).
+      if (task.pid === 0) {
+        this.pendingResumeTasks.delete(task.id);
+        this.tuiLog('warn', `Orphaned task detected: ${task.title} (press x to resume, O to open previous session)`, task.id, task.projectId);
+        continue;
+      }
+
       // Check capacity before each resume
       const runningCount = this.processManager.runningCount() + this.tuiTasks.size;
       if (runningCount >= this.config.maxParallel) {
@@ -1837,18 +1852,17 @@ export class TaskRunner {
             workdir,
           };
 
-          // If project is paused, queue for later. Otherwise resume immediately.
+          // Orphaned tasks from previous sessions always require explicit user action.
+          // Do NOT auto-resume — user must press "x" (new resume session) or "O" (reopen previous session).
           if (this.pauseCache.has(projectId)) {
             this.pendingResumeTasks.set(task.id, runningTask);
-            this.logger.info("Queued orphaned task for resume on unpause", {
+            this.logger.info("Queued orphaned task (paused project, requires explicit action)", {
               taskId: task.id,
               title: task.title,
               projectId,
             });
-            this.tuiLog('warn', `Orphaned task queued: ${task.title} (will resume on unpause)`, task.id, projectId);
-          } else {
-            await this.resumeTask(runningTask);
           }
+          this.tuiLog('warn', `Orphaned task detected: ${task.title} (press x to resume, O to open previous session)`, task.id, projectId);
         }
       } catch (error) {
         this.logger.warn("Failed to check for orphaned tasks", {

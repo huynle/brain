@@ -1,13 +1,13 @@
 ---
 name: feature-checkout
-description: Use when tasks for a feature are completed and need review against original user requests - gathers completed tasks via dependency graph, audits implementation against user_original_request fields, identifies gaps, and creates follow-up tasks with matching feature_id, project, model, and workspace to cover missing work, then schedules another checkout to repeat until feature is fully complete
+description: Use when tasks for a feature are completed and need review against original user requests - gathers completed tasks via dependency graph, audits implementation against user_original_request fields, identifies gaps, and automatically creates follow-up tasks with matching feature_id, project, model, and workspace to cover missing work, then schedules another checkout to repeat until feature is fully complete. Runs fully autonomously with NO user interaction required.
 ---
 
 # Feature Checkout
 
-Audit completed feature work against original user intent. Find gaps. Create follow-up tasks. Repeat until done.
+Audit completed feature work against original user intent. Find gaps. Create follow-up tasks. Repeat until done. **Fully autonomous — no user interaction required.**
 
-**Announce at start:** "I'm using the feature-checkout skill to audit completed tasks against the original requests."
+**Announce at start:** "I'm using the feature-checkout skill to autonomously audit completed tasks against the original requests."
 
 ## Overview
 
@@ -16,8 +16,9 @@ This skill runs **as a task in the work queue** via `direct_prompt`. It:
 1. Discovers its sibling tasks from its own `depends_on`
 2. Gathers all `user_original_request` fields to reconstruct original intent
 3. Dispatches an explore agent to verify implementation against intent
-4. If gaps exist: creates new tasks + a new checkout task (recursive loop)
-5. If no gaps: marks the feature as validated
+4. **Automatically decides** based on coverage results (no user input)
+5. If gaps exist: creates new tasks + a new checkout task (recursive loop)
+6. If no gaps: marks the feature as validated
 
 The checkout task's `direct_prompt` should be:
 ```
@@ -31,10 +32,11 @@ Load the feature-checkout skill and process the checkout task at brain path: <ta
 - [ ] Step 3: Mark as in_progress with `brain_update(path: "...", status: "in_progress")`
 - [ ] Step 4: For each dependency ID, call `brain_task_get(taskId)` to get content + user_original_request
 - [ ] Step 5: Synthesize acceptance criteria from all user_original_request fields
-- [ ] Step 6: Dispatch explore agent to verify implementation against criteria
-- [ ] Step 7: Build coverage report (covered / gaps / partial)
-- [ ] Step 8: Present report to user, ask for approval
-- [ ] Step 9a: If approved — mark tasks validated, save summary, complete checkout task
+- [ ] Step 5b: Split criteria into phases if > 7 criteria (≤7 per phase)
+- [ ] Step 6: For each phase, dispatch explore agent to verify criteria
+- [ ] Step 7: Merge phase results into unified coverage report
+- [ ] Step 8: Auto-decide: all covered → Step 9a, any gaps → Step 9b
+- [ ] Step 9a: If all covered — mark tasks validated, save summary, complete checkout task
 - [ ] Step 9b: If gaps — create gap tasks + new checkout task, complete this checkout task
 
 ---
@@ -122,22 +124,48 @@ brain_update(
 )
 ```
 
-## Step 6: Verify Implementation
+## Step 5b: Split Into Phases
 
-Dispatch an explore agent to examine the codebase against the criteria:
+A single explore agent cannot effectively verify a large number of criteria at once. Split the criteria into phases small enough for one agent to handle thoroughly.
+
+### Sizing Rules
+
+- **≤ 7 criteria total** → single phase (no splitting needed, skip to Step 6)
+- **8–20 criteria** → split into phases of **5–7 criteria** each
+- **20+ criteria** → split into phases of **5 criteria** each (more headroom per criterion)
+
+### How to Split
+
+1. **Group by related area** — criteria touching the same module/feature area go in the same phase (the agent can verify them together efficiently since they share codebase context)
+2. **Keep related tasks together** — if multiple criteria came from the same `user_original_request`, prefer keeping them in the same phase
+3. **Number phases** — Phase 1, Phase 2, ... Phase N
+
+Example with 15 criteria:
+```
+Phase 1 (criteria 1-5):  Auth module — JWT, session, OAuth endpoints
+Phase 2 (criteria 6-10): Data layer — schema, migrations, queries
+Phase 3 (criteria 11-15): API routes — endpoints, validation, error handling
+```
+
+Store the phases as a list — you will iterate through them in Step 6.
+
+## Step 6: Verify Implementation (Per Phase)
+
+For **each phase**, dispatch a separate explore agent. If there is only one phase, dispatch once.
 
 ```
 Task(
   subagent_type: "explore",
-  description: "Verify feature implementation",
+  description: "Verify feature phase <P>/<N>",
   prompt: """
 I need you to verify a feature implementation against acceptance criteria.
+This is phase <P> of <N> — focus ONLY on the criteria listed below.
 
-## Acceptance Criteria (from original user requests)
-<numbered criteria list>
+## Acceptance Criteria (phase <P>/<N>)
+<numbered criteria for THIS phase only>
 
-## Completed Tasks
-<for each task: title, summary/content>
+## Completed Tasks (relevant to this phase)
+<for each task relevant to these criteria: title, summary/content>
 
 ## Instructions
 Examine the codebase to verify each criterion:
@@ -156,9 +184,13 @@ Be thorough but factual — only mark as GAP if you genuinely cannot find the im
 )
 ```
 
+**Process phases sequentially** (one agent at a time). Collect results from each phase before dispatching the next.
+
+After all phases complete, combine results into a single findings list covering all criteria.
+
 ## Step 7: Build Coverage Report
 
-From the explore agent's findings, build a structured report:
+From the explore agent's findings **across all phases**, build a unified report:
 
 ```
 ## Feature Checkout Report: <feature_id>
@@ -166,17 +198,23 @@ From the explore agent's findings, build a structured report:
 ### Original Intent
 <synthesized from user_original_request fields>
 
+### Phases
+- Phase 1: <area> — criteria 1-5
+- Phase 2: <area> — criteria 6-10
+- ...
+
 ### Coverage Matrix
-| # | Criterion | Status | Evidence |
-|---|-----------|--------|----------|
-| 1 | ... | COVERED | src/auth/jwt.ts |
-| 2 | ... | GAP | No implementation found |
-| 3 | ... | PARTIAL | Google OAuth done, GitHub missing |
+| # | Criterion | Phase | Status | Evidence |
+|---|-----------|-------|--------|----------|
+| 1 | ... | 1 | COVERED | src/auth/jwt.ts |
+| 2 | ... | 1 | GAP | No implementation found |
+| 3 | ... | 2 | PARTIAL | Google OAuth done, GitHub missing |
 
 ### Summary
 - <N> / <total> fully covered
 - <N> gaps
 - <N> partial
+- Verified in <P> phases
 ```
 
 Append to the task:
@@ -188,19 +226,19 @@ brain_update(
 )
 ```
 
-## Step 8: Present and Decide
+## Step 8: Auto-Decide
 
-Present the coverage report to the user.
+**This step is fully automatic. Do NOT ask the user for input.**
 
-**If all criteria are COVERED:**
-> "All acceptance criteria are covered. Approve feature as validated?"
+Evaluate the coverage report:
 
-**If gaps or partial items exist:**
-> "Found <N> gaps and <N> partial items. Create follow-up tasks to cover these gaps?"
+**If all criteria are COVERED** → proceed to **Step 9a** (validate feature)
 
-Wait for user response.
+**If ANY gaps or partial items exist** → proceed to **Step 9b** (create follow-up tasks)
 
-## Step 9a: Feature Approved (No Gaps, or User Accepts)
+The decision is mechanical: zero gaps = validated, any gaps = follow-up tasks. No judgment call needed.
+
+## Step 9a: Feature Validated (All Criteria Covered)
 
 1. **Mark dependency tasks as validated:**
 
@@ -387,18 +425,12 @@ If the explore agent cannot determine coverage for a criterion, mark it as `PART
 
 If `brain_task_metadata` fails for any task, fall back to `brain_recall` and extract what you can. The minimum required fields to propagate are `feature_id` and `project`.
 
-### User Declines Follow-Up Tasks
-
-If the user sees gaps but does not want follow-up tasks, respect the decision:
-- Complete the checkout task with the coverage report
-- Do NOT create gap tasks or a next checkout
-- Mark the checkout as completed (not the dependency tasks as validated)
-
 ---
 
 ## Anti-Patterns
 
 **Never:**
+- **Ask the user for input or approval** (this skill is fully autonomous — asking breaks the iteration loop)
 - Skip the explore agent verification (don't trust task summaries alone)
 - Create gap tasks without copying feature_id, project, and target_workdir
 - Forget the next checkout task (breaks the recursive loop)

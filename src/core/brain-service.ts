@@ -979,13 +979,40 @@ export class BrainService {
     // Update SQLite atomically
     moveEntryMeta(path, newPath, newProjectId);
     
-    // Run zk index to update zk's internal index
+    // Run zk index to update zk's internal index (with retry on failure)
+    // Uses incremental index (no --force) to avoid full reindex of entire brain.
+    // Retries handle transient SQLite locks from concurrent access.
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (zkAvailable) {
-      try {
-        await execZk(["index", "--quiet"]);
-      } catch {
-        // Index may fail but move was successful
+      const MAX_INDEX_RETRIES = 3;
+      const RETRY_BASE_DELAY_MS = 150;
+      let indexSuccess = false;
+      for (let i = 0; i < MAX_INDEX_RETRIES; i++) {
+        try {
+          const result = await execZk(["index", "--quiet"], 10000);
+          if (result.exitCode === 0) {
+            indexSuccess = true;
+            break;
+          }
+          // Non-zero exit code — retry after delay
+          if (i < MAX_INDEX_RETRIES - 1) {
+            await new Promise((r) =>
+              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
+            );
+          }
+        } catch {
+          // Spawn failure — retry after delay
+          if (i < MAX_INDEX_RETRIES - 1) {
+            await new Promise((r) =>
+              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
+            );
+          }
+        }
+      }
+      if (!indexSuccess) {
+        console.warn(
+          `[brain-service] zk index failed after ${MAX_INDEX_RETRIES} attempts after move: ${path} -> ${newPath}`
+        );
       }
     }
     

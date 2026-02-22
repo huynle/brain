@@ -114,18 +114,7 @@ export class TaskService {
         const pathMatch = note.path.match(/^projects\/([^/]+)\//);
         const derivedProjectId = pathMatch ? pathMatch[1] : undefined;
         const sessions =
-          (note.metadata?.sessions as Task["sessions"] | undefined) ||
-          (() => {
-            const sessionIds = (note.metadata?.session_ids as string[] | undefined) || [];
-            const sessionTimestamps =
-              (note.metadata?.session_timestamps as Record<string, string> | undefined) || {};
-            return Object.fromEntries(
-              sessionIds.map((sessionId) => [
-                sessionId,
-                { timestamp: sessionTimestamps[sessionId] || note.modified || note.created || new Date().toISOString() },
-              ])
-            );
-          })();
+          (note.metadata?.sessions as Task["sessions"] | undefined) || {};
 
         return {
           id: extractIdFromPath(note.path),

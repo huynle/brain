@@ -155,6 +155,9 @@ export interface CreateEntryRequest {
   direct_prompt?: string;
   agent?: string;
   model?: string;
+
+  // Session traceability
+  sessions?: Record<string, SessionInfo>;
 }
 
 export interface CreateEntryResponse {

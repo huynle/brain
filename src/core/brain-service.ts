@@ -499,6 +499,8 @@ export class BrainService {
         direct_prompt: request.direct_prompt,
         agent: request.agent,
         model: request.model,
+        // Session traceability
+        sessions: request.sessions,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;
@@ -696,22 +698,7 @@ export class BrainService {
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
-      sessions:
-        (frontmatter.sessions as Record<string, SessionInfo> | undefined) ||
-        (() => {
-          const sessionIds = (frontmatter.session_ids as string[] | undefined) || [];
-          const sessionTimestamps =
-            (frontmatter.session_timestamps as Record<string, string> | undefined) || {};
-          if (sessionIds.length === 0) {
-            return undefined;
-          }
-          return Object.fromEntries(
-            sessionIds.map((sessionId) => [
-              sessionId,
-              { timestamp: sessionTimestamps[sessionId] || new Date().toISOString() },
-            ])
-          );
-        })(),
+      sessions: frontmatter.sessions as Record<string, SessionInfo> | undefined,
     };
   }
 
@@ -837,22 +824,20 @@ export class BrainService {
     // Update sessions with APPEND semantics (merge by session ID)
     if (request.sessions !== undefined && Object.keys(request.sessions).length > 0) {
       const existingSessions =
-        (frontmatter.sessions as Record<string, SessionInfo> | undefined) ||
-        (() => {
-          const sessionIds = (frontmatter.session_ids as string[] | undefined) || [];
-          const sessionTimestamps =
-            (frontmatter.session_timestamps as Record<string, string> | undefined) || {};
-          return Object.fromEntries(
-            sessionIds.map((sessionId) => [
-              sessionId,
-              { timestamp: sessionTimestamps[sessionId] || new Date().toISOString() },
-            ])
-          );
-        })();
+        (frontmatter.sessions as Record<string, SessionInfo> | undefined) || {};
+      const requestSessions = Object.fromEntries(
+        Object.entries(request.sessions).map(([sessionId, session]) => [
+          sessionId,
+          {
+            ...session,
+            timestamp: session.timestamp || new Date().toISOString(),
+          },
+        ])
+      );
 
       updatedFrontmatter.sessions = {
         ...existingSessions,
-        ...request.sessions,
+        ...requestSessions,
       };
     }
 

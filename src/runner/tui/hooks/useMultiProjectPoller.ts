@@ -201,7 +201,7 @@ async function fetchProjectTasks(
       dependentTitles: resolveIdsToTitles(dependentIds, idToTitle),
       progress: task.progress,
       error: task.error,
-      projectId, // Tag with project ID
+      projectId: task.projectId || projectId, // Prefer API-derived projectId over URL param
       parent_id: task.parent_id,
       // Frontmatter fields
       created: task.created,
@@ -228,6 +228,7 @@ async function fetchProjectTasks(
       direct_prompt: task.direct_prompt,
       // Session tracking
       session_ids: task.session_ids,
+      session_timestamps: task.session_timestamps,
     };
   });
 

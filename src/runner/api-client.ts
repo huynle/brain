@@ -325,6 +325,10 @@ export class ApiClient {
       tags?: string[];
       depends_on?: string[];
       session_ids?: string[];
+      session_timestamps?: Record<string, string>;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ): Promise<void> {
     const encodedPath = encodeURIComponent(taskPath);
@@ -339,6 +343,10 @@ export class ApiClient {
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
     if (fields.session_ids !== undefined) payload.session_ids = fields.session_ids;
+    if (fields.session_timestamps !== undefined) payload.session_timestamps = fields.session_timestamps;
+    if (fields.agent !== undefined) payload.agent = fields.agent;
+    if (fields.model !== undefined) payload.model = fields.model;
+    if (fields.direct_prompt !== undefined) payload.direct_prompt = fields.direct_prompt;
 
     const response = await this.fetch(`/api/v1/entries/${encodedPath}`, {
       method: "PATCH",

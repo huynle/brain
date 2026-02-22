@@ -308,6 +308,7 @@ describe("TaskService", () => {
         agent: null,
         model: null,
         session_ids: [],
+        session_timestamps: {},
         ...overrides,
       };
     }

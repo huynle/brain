@@ -1267,11 +1267,12 @@ export class TaskRunner {
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session ID and timestamp to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
           await this.apiClient.updateEntryMetadata(task.path, {
             session_ids: [runningTask.sessionId],
+            session_timestamps: { [runningTask.sessionId]: new Date().toISOString() },
           });
           this.logger.debug("Session ID persisted to task", {
             taskId: task.id,
@@ -1935,11 +1936,12 @@ export class TaskRunner {
         this.tuiTasks.set(task.id, newRunningTask);
       }
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session ID and timestamp to task frontmatter for traceability
       if (newRunningTask.sessionId) {
         try {
           await this.apiClient.updateEntryMetadata(task.path, {
             session_ids: [newRunningTask.sessionId],
+            session_timestamps: { [newRunningTask.sessionId]: new Date().toISOString() },
           });
           this.logger.debug("Session ID persisted to resumed task", {
             taskId: task.id,
@@ -2124,11 +2126,12 @@ export class TaskRunner {
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session ID and timestamp to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
           await this.apiClient.updateEntryMetadata(taskPath, {
             session_ids: [runningTask.sessionId],
+            session_timestamps: { [runningTask.sessionId]: new Date().toISOString() },
           });
           this.logger.debug("Session ID persisted to manually executed task", {
             taskId,
@@ -2234,11 +2237,12 @@ export class TaskRunner {
       // Step 5: Remove from pendingResumeTasks (prevent double execution)
       this.pendingResumeTasks.delete(taskId);
 
-      // Step 6: Persist new session ID to task frontmatter
+      // Step 6: Persist new session ID and timestamp to task frontmatter
       if (runningTask.sessionId) {
         try {
           await this.apiClient.updateEntryMetadata(taskPath, {
             session_ids: [runningTask.sessionId],
+            session_timestamps: { [runningTask.sessionId]: new Date().toISOString() },
           });
         } catch (error) {
           this.logger.warn("Failed to persist session ID to resumed task", {
@@ -2424,6 +2428,9 @@ export class TaskRunner {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ): Promise<void> {
     this.logger.info("Updating entry metadata", { taskPath, fields });
@@ -2598,18 +2605,13 @@ export class TaskRunner {
             pid = panePid;
           }
 
-          // Try to find actual OpenCode PID (child of shell)
-          if (pid > 0) {
-            try {
-              const pgrepResult = await Bun.$`pgrep -P ${pid} -f opencode`.text();
-              const opencodePid = parseInt(pgrepResult.trim(), 10);
-              if (!isNaN(opencodePid) && opencodePid > 0) {
-                pid = opencodePid;
-              }
-            } catch {
-              // pgrep failed, use pane pid
-            }
-          }
+          // NOTE: Do NOT use pgrep to find child processes here.
+          // Unlike the normal executor (opencode-executor.ts) which wraps opencode
+          // in a bash script, openSessionInTmux runs opencode directly via tmux
+          // new-window. After bash exec's into opencode, pane_pid IS the opencode
+          // process. Running pgrep would find transient sub-agent children instead,
+          // and when those exit, isPidAlive() returns false causing the poll loop
+          // to kill the tmux window after ~30 seconds.
         } catch (err) {
           this.logger.warn("Failed to discover PID for reopened session", {
             sessionId,

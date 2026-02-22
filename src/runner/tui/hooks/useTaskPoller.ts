@@ -308,6 +308,9 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           direct_prompt: task.direct_prompt,
           // Session tracking
           session_ids: task.session_ids,
+          session_timestamps: task.session_timestamps,
+          // Derived project identity from API (self-correcting after moves)
+          projectId: task.projectId || projectId,
         };
       });
 

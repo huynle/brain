@@ -696,6 +696,7 @@ export class BrainService {
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
       session_ids: frontmatter.session_ids as string[] | undefined,
+      session_timestamps: frontmatter.session_timestamps as Record<string, string> | undefined,
     };
   }
 
@@ -725,10 +726,11 @@ export class BrainService {
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
-      request.session_ids === undefined
+      request.session_ids === undefined &&
+      request.session_timestamps === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, session_ids"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, session_ids, session_timestamps"
       );
     }
 
@@ -827,6 +829,20 @@ export class BrainService {
       updatedFrontmatter.session_ids = [
         ...new Set([...existingSessionIds, ...request.session_ids]),
       ];
+
+      // Merge session_timestamps: preserve existing, add new from request or auto-generate
+      const existingTimestamps = (frontmatter.session_timestamps as Record<string, string>) || {};
+      const requestTimestamps = request.session_timestamps || {};
+      const mergedTimestamps = { ...existingTimestamps };
+
+      for (const sessionId of request.session_ids) {
+        if (!mergedTimestamps[sessionId]) {
+          // Use timestamp from request if provided, otherwise auto-generate
+          mergedTimestamps[sessionId] = requestTimestamps[sessionId] || new Date().toISOString();
+        }
+      }
+
+      updatedFrontmatter.session_timestamps = mergedTimestamps;
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

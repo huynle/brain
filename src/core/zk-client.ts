@@ -436,10 +436,12 @@ export function parseFrontmatter(content: string): {
   const dependsOn: string[] = [];
   const featureDependsOn: string[] = [];
   const sessionIds: string[] = [];
+  const sessionTimestamps: Record<string, string> = {};
   let inTags = false;
   let inDependsOn = false;
   let inFeatureDependsOn = false;
   let inSessionIds = false;
+  let inSessionTimestamps = false;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -625,6 +627,17 @@ export function parseFrontmatter(content: string): {
     // Handle session_ids array
     if (line.match(/^session_ids:\s*$/)) {
       inSessionIds = true;
+      inSessionTimestamps = false;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      continue;
+    }
+
+    // Handle session_timestamps map
+    if (line.match(/^session_timestamps:\s*$/)) {
+      inSessionTimestamps = true;
+      inSessionIds = false;
       inTags = false;
       inDependsOn = false;
       inFeatureDependsOn = false;
@@ -670,6 +683,19 @@ export function parseFrontmatter(content: string): {
         inSessionIds = false;
       }
     }
+
+    if (inSessionTimestamps) {
+      // Parse YAML map entries like: ses_abc123: "2026-02-22T10:30:00.000Z"
+      const mapMatch = line.match(/^\s+([^:]+):\s*(.+?)\s*$/);
+      if (mapMatch) {
+        const key = parseYamlStringValue(mapMatch[1]);
+        const value = parseYamlStringValue(mapMatch[2]);
+        sessionTimestamps[key] = value;
+      } else if (!line.match(/^\s/)) {
+        // No longer indented, exit session_timestamps section
+        inSessionTimestamps = false;
+      }
+    }
   }
 
   if (tags.length > 0) {
@@ -686,6 +712,10 @@ export function parseFrontmatter(content: string): {
 
   if (sessionIds.length > 0) {
     frontmatter.session_ids = sessionIds;
+  }
+
+  if (Object.keys(sessionTimestamps).length > 0) {
+    frontmatter.session_timestamps = sessionTimestamps;
   }
 
   // Handle multi-line literal block scalars for user_original_request and direct_prompt
@@ -922,6 +952,18 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
     }
   }
 
+  // Session timestamps (map of session ID to ISO timestamp)
+  if (fm.session_timestamps && typeof fm.session_timestamps === "object" && !Array.isArray(fm.session_timestamps)) {
+    const timestamps = fm.session_timestamps as Record<string, string>;
+    const keys = Object.keys(timestamps);
+    if (keys.length > 0) {
+      lines.push("session_timestamps:");
+      for (const key of keys) {
+        lines.push(`  ${escapeYamlValue(key)}: ${escapeYamlValue(String(timestamps[key]))}`);
+      }
+    }
+  }
+
   return lines.join("\n") + "\n";
 }
 
@@ -952,6 +994,7 @@ export interface GenerateFrontmatterOptions {
   model?: string;
   // Session traceability
   session_ids?: string[];
+  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp
   // Timestamp for chronological ordering (matches zk template `created: {{format-date now}}`)
   created?: string;
 }
@@ -1055,6 +1098,17 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
     lines.push("session_ids:");
     for (const sessionId of options.session_ids) {
       lines.push(`  - ${escapeYamlValue(sessionId)}`);
+    }
+  }
+
+  // Session timestamps (map of session ID to ISO timestamp)
+  if (options.session_timestamps) {
+    const keys = Object.keys(options.session_timestamps);
+    if (keys.length > 0) {
+      lines.push("session_timestamps:");
+      for (const key of keys) {
+        lines.push(`  ${escapeYamlValue(key)}: ${escapeYamlValue(options.session_timestamps[key])}`);
+      }
     }
   }
 

@@ -54,6 +54,7 @@ function createMockTask(
     model: null,
     // Session traceability
     session_ids: [],
+    session_timestamps: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

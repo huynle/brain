@@ -113,6 +113,7 @@ export interface BrainEntry {
 
   // Session traceability
   session_ids?: string[]; // OpenCode session IDs that have worked on this entry (for audit/tracing)
+  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp when session was added
 }
 
 // =============================================================================
@@ -182,6 +183,7 @@ export interface UpdateEntryRequest {
 
   // Session traceability (append semantics - new IDs are added to existing)
   session_ids?: string[];
+  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp when session was added
 }
 
 export interface ListEntriesRequest {
@@ -344,6 +346,10 @@ export interface Task {
 
   // Session traceability
   session_ids: string[]; // OpenCode session IDs that have worked on this task (for audit/tracing)
+  session_timestamps: Record<string, string>; // Map of session ID to ISO timestamp when session was added
+
+  // Derived fields
+  projectId?: string; // Derived from file path (e.g., "pwa" from "projects/pwa/task/...")
 }
 
 // Task with resolved dependencies

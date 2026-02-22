@@ -517,76 +517,131 @@ export function createEntriesRoutes(): OpenAPIHono {
   });
 
   // POST /entries/:id/move - Move entry to different project
+  // OpenAPI route handles short 8-char IDs (e.g., POST /entries/abc12def/move)
   entries.openapi(moveEntryRoute, async (c) => {
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
+    return handleMoveEntry(c, id, body.project);
+  });
 
-    try {
-      const service = getBrainService();
-
-      // First, resolve the ID to a path
-      let entryPath = id;
-      if (/^[a-z0-9]{8}$/.test(id)) {
-        // It's an ID, need to find the path
-        try {
-          const entry = await service.recall(id);
-          entryPath = entry.path;
-        } catch {
-          return c.json(
-            {
-              error: "Not Found",
-              message: `Entry not found: ${id}`,
-            },
-            404
-          );
-        }
-      }
-
-      const result = await service.moveEntry(entryPath, body.project);
-
-      return c.json(result, 200);
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes("Entry not found")) {
-          return c.json(
-            {
-              error: "Not Found",
-              message: `Entry not found: ${id}`,
-            },
-            404
-          );
-        }
-        if (error.message.includes("already in project")) {
-          return c.json(
-            {
-              error: "Validation Error",
-              message: error.message,
-            },
-            400
-          );
-        }
-        if (error.message.includes("Cannot move in_progress")) {
-          return c.json(
-            {
-              error: "Validation Error",
-              message: error.message,
-            },
-            400
-          );
-        }
-        if (error.message.includes("already exists in project")) {
-          return c.json(
-            {
-              error: "Conflict",
-              message: error.message,
-            },
-            409
-          );
-        }
-      }
-      throw error;
+  // Multi-segment wildcard patterns for full-path IDs (e.g., POST /entries/projects/x/task/y.md/move)
+  // Hono's /:id{.+}/move doesn't work because .+ greedily captures "/move" as part of the ID.
+  // Same approach as graph.ts uses for /backlinks, /outlinks, /related.
+  const MOVE_PATTERNS = [
+    "/*/move",
+    "/*/*/move",
+    "/*/*/*/move",
+    "/*/*/*/*/move",
+    "/*/*/*/*/*/move",
+    "/*/*/*/*/*/*/move",
+  ];
+  entries.on("POST", MOVE_PATTERNS, async (c) => {
+    const id = extractIdFromPath(c.req.path, "/move");
+    // Parse JSON body manually since we're not using openapi validation here
+    const body = await c.req.json<{ project: string }>();
+    if (!body.project) {
+      return c.json(
+        { error: "Validation Error", message: "Missing required field: project" },
+        400
+      );
     }
+    return handleMoveEntry(c, id, body.project);
   });
 
   return entries;
+}
+
+// =============================================================================
+// Handler Functions
+// =============================================================================
+
+/**
+ * Extract ID from request path by removing the route prefix and suffix.
+ * Handles both production paths (/api/v1/entries/...) and test paths (/entries/...).
+ * e.g., "/api/v1/entries/projects/brain-api/task/abc12def.md/move" -> "projects/brain-api/task/abc12def.md"
+ * e.g., "/entries/projects/brain-api/task/abc12def.md/move" -> "projects/brain-api/task/abc12def.md"
+ */
+function extractIdFromPath(fullPath: string, suffix: string): string {
+  let path = fullPath;
+  // Remove the suffix first (e.g., "/move")
+  if (path.endsWith(suffix)) {
+    path = path.slice(0, -suffix.length);
+  }
+  // Remove any /entries/ prefix (handles /api/v1/entries/ and /entries/)
+  const entriesIdx = path.indexOf("/entries/");
+  if (entriesIdx !== -1) {
+    path = path.slice(entriesIdx + "/entries/".length);
+  }
+  return path;
+}
+
+/**
+ * Handle move entry request - shared between OpenAPI route and wildcard routes.
+ */
+async function handleMoveEntry(c: any, id: string, project: string) {
+  try {
+    const service = getBrainService();
+
+    // First, resolve the ID to a path
+    let entryPath = id;
+    if (/^[a-z0-9]{8}$/.test(id)) {
+      // It's an ID, need to find the path
+      try {
+        const entry = await service.recall(id);
+        entryPath = entry.path;
+      } catch {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Entry not found: ${id}`,
+          },
+          404
+        );
+      }
+    }
+
+    const result = await service.moveEntry(entryPath, project);
+
+    return c.json(result, 200);
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes("Entry not found")) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Entry not found: ${id}`,
+          },
+          404
+        );
+      }
+      if (error.message.includes("already in project")) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: error.message,
+          },
+          400
+        );
+      }
+      if (error.message.includes("Cannot move in_progress")) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: error.message,
+          },
+          400
+        );
+      }
+      if (error.message.includes("already exists in project")) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: error.message,
+          },
+          409
+        );
+      }
+    }
+    throw error;
+  }
 }

@@ -97,7 +97,7 @@ export function loadConfig(): RunnerConfig {
 
   const opencode: OpencodeConfig = {
     bin: getEnv("OPENCODE_BIN", fileConfig.opencode?.bin ?? "opencode"),
-    agent: getEnv("OPENCODE_AGENT", fileConfig.opencode?.agent ?? "general"),
+    agent: getEnv("OPENCODE_AGENT", fileConfig.opencode?.agent ?? ""),
     model: getEnv(
       "OPENCODE_MODEL",
       fileConfig.opencode?.model ?? "anthropic/claude-opus-4-6"

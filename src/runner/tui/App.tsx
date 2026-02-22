@@ -597,6 +597,9 @@ export function App({
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     } = {};
 
     if (metadataStatusValue !== metadataOriginalValues.status) {
@@ -610,6 +613,15 @@ export function App({
     }
     if (effectiveWorkdir !== metadataOriginalValues.target_workdir) {
       changedFields.target_workdir = effectiveWorkdir;
+    }
+    if (metadataAgentValue !== metadataOriginalValues.agent) {
+      changedFields.agent = metadataAgentValue;
+    }
+    if (metadataModelValue !== metadataOriginalValues.model) {
+      changedFields.model = metadataModelValue;
+    }
+    if (metadataDirectPromptValue !== metadataOriginalValues.direct_prompt) {
+      changedFields.direct_prompt = metadataDirectPromptValue;
     }
 
     // Skip if no changes

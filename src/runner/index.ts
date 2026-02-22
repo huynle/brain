@@ -380,6 +380,9 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   if (options.maxParallel > 0) configOverrides.maxParallel = options.maxParallel;
   if (options.pollInterval > 0) configOverrides.pollInterval = options.pollInterval;
   if (options.workdir) configOverrides.workDir = options.workdir;
+  if (options.agent) {
+    configOverrides.opencode = { ...config.opencode, agent: options.agent };
+  }
 
   // Create and start TaskRunner
   try {

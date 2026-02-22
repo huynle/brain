@@ -77,7 +77,7 @@ export interface DashboardOptions {
   onDisableFeature?: (featureId: string) => void;
   /** Get currently enabled features from TaskRunner */
   getEnabledFeatures?: () => string[];
-  /** Callback to update entry metadata fields (status, feature_id, git_branch, target_workdir) */
+  /** Callback to update entry metadata fields */
   onUpdateMetadata?: (
     taskPath: string,
     fields: {
@@ -85,6 +85,9 @@ export interface DashboardOptions {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ) => Promise<void>;
   /** Callback to move a task to a different project */

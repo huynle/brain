@@ -247,8 +247,7 @@ Start now.`;
       cmd: [
         this.config.opencode.bin,
         "run",
-        "--agent",
-        agent,
+        ...(agent ? ["--agent", agent] : []),
         "--model",
         model,
         promptContent,
@@ -303,9 +302,10 @@ Start now.`;
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
+    const agentFlag = agent ? `--agent "${agent}" ` : "";
     const script = `#!/bin/bash
 cd "${workdir}"
-"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
+"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
@@ -390,7 +390,8 @@ exit $exit_code
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
-    const opencodeCmd = `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
+    const agentFlag = agent ? `--agent "${agent}" ` : "";
+    const opencodeCmd = `"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}
@@ -773,7 +774,8 @@ If setup fails, output "SETUP_FAILED: <reason>" at the end.`;
     const TIMEOUT_MS = 120000; // 2 minutes
 
     try {
-      const shellPromise = Bun.$`${this.config.opencode.bin} run --agent ${this.config.opencode.agent} --model ${this.config.opencode.model} ${setupPrompt}`
+      const agentArgs = this.config.opencode.agent ? ["--agent", this.config.opencode.agent] : [];
+      const shellPromise = Bun.$`${this.config.opencode.bin} run ${agentArgs} --model ${this.config.opencode.model} ${setupPrompt}`
         .cwd(worktreePath)
         .text();
       

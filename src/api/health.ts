@@ -487,54 +487,25 @@ export function createHealthRoutes(): OpenAPIHono {
   });
 
   // POST /entries/:id/verify - Mark entry as verified
+  // OpenAPI route handles short 8-char IDs (e.g., POST /entries/abc12def/verify)
   health.openapi(verifyRoute, async (c) => {
     const { id } = c.req.valid("param");
+    return handleVerifyEntry(c, id);
+  });
 
-    try {
-      const service = getBrainService();
-
-      // First, resolve the ID to a path
-      let entryPath = id;
-      if (/^[a-z0-9]{8}$/.test(id)) {
-        // It's an ID, need to find the path
-        try {
-          const entry = await service.recall(id);
-          entryPath = entry.path;
-        } catch {
-          return c.json(
-            {
-              error: "Not Found",
-              message: `Entry not found: ${id}`,
-            },
-            404
-          );
-        }
-      }
-
-      await service.verify(entryPath);
-
-      return c.json(
-        {
-          message: "Entry verified",
-          path: entryPath,
-          verifiedAt: new Date().toISOString(),
-        },
-        200
-      );
-    } catch (error) {
-      if (error instanceof Error) {
-        if (error.message.includes("Entry not found")) {
-          return c.json(
-            {
-              error: "Not Found",
-              message: `Entry not found: ${id}`,
-            },
-            404
-          );
-        }
-      }
-      throw error;
-    }
+  // Multi-segment wildcard patterns for full-path IDs (e.g., POST /entries/projects/x/task/y.md/verify)
+  // Hono's /:id{.+}/verify doesn't work because .+ greedily captures "/verify" as part of the ID.
+  const VERIFY_PATTERNS = [
+    "/entries/*/verify",
+    "/entries/*/*/verify",
+    "/entries/*/*/*/verify",
+    "/entries/*/*/*/*/verify",
+    "/entries/*/*/*/*/*/verify",
+    "/entries/*/*/*/*/*/*/verify",
+  ];
+  health.on("POST", VERIFY_PATTERNS, async (c) => {
+    const id = extractVerifyIdFromPath(c.req.path, "/verify");
+    return handleVerifyEntry(c, id);
   });
 
   // POST /link - Generate markdown link
@@ -586,6 +557,80 @@ export function createHealthRoutes(): OpenAPIHono {
   });
 
   return health;
+}
+
+// =============================================================================
+// Handler Functions
+// =============================================================================
+
+/**
+ * Extract ID from request path by removing the route prefix and suffix.
+ * Handles both production paths (/api/v1/entries/...) and test paths (/entries/...).
+ * e.g., "/api/v1/entries/projects/brain-api/task/abc12def.md/verify" -> "projects/brain-api/task/abc12def.md"
+ * e.g., "/entries/projects/brain-api/task/abc12def.md/verify" -> "projects/brain-api/task/abc12def.md"
+ */
+function extractVerifyIdFromPath(fullPath: string, suffix: string): string {
+  let path = fullPath;
+  // Remove the suffix first (e.g., "/verify")
+  if (path.endsWith(suffix)) {
+    path = path.slice(0, -suffix.length);
+  }
+  // Remove any /entries/ prefix (handles /api/v1/entries/ and /entries/)
+  const entriesIdx = path.indexOf("/entries/");
+  if (entriesIdx !== -1) {
+    path = path.slice(entriesIdx + "/entries/".length);
+  }
+  return path;
+}
+
+/**
+ * Handle verify entry request - shared between OpenAPI route and wildcard routes.
+ */
+async function handleVerifyEntry(c: any, id: string) {
+  try {
+    const service = getBrainService();
+
+    // First, resolve the ID to a path
+    let entryPath = id;
+    if (/^[a-z0-9]{8}$/.test(id)) {
+      try {
+        const entry = await service.recall(id);
+        entryPath = entry.path;
+      } catch {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Entry not found: ${id}`,
+          },
+          404
+        );
+      }
+    }
+
+    await service.verify(entryPath);
+
+    return c.json(
+      {
+        message: "Entry verified",
+        path: entryPath,
+        verifiedAt: new Date().toISOString(),
+      },
+      200
+    );
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message.includes("Entry not found")) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Entry not found: ${id}`,
+          },
+          404
+        );
+      }
+    }
+    throw error;
+  }
 }
 
 // =============================================================================

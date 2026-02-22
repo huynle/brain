@@ -307,8 +307,7 @@ describe("TaskService", () => {
         direct_prompt: null,
         agent: null,
         model: null,
-        session_ids: [],
-        session_timestamps: {},
+        sessions: {},
         ...overrides,
       };
     }

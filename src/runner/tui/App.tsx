@@ -1512,7 +1512,7 @@ export function App({
 
     // Open session for selected task
     if (input === 'o' && selectedTask && focusedPanel === 'tasks') {
-      const sessionIds = selectedTask.session_ids || [];
+      const sessionIds = Object.keys(selectedTask.sessions || {});
       if (sessionIds.length === 0) {
         addLog({
           level: 'warn',
@@ -1548,7 +1548,7 @@ export function App({
 
     // Open session in tmux window for selected task
     if (input === 'O' && selectedTask && focusedPanel === 'tasks') {
-      const sessionIds = selectedTask.session_ids || [];
+      const sessionIds = Object.keys(selectedTask.sessions || {});
       if (sessionIds.length === 0) {
         addLog({
           level: 'warn',
@@ -2515,7 +2515,7 @@ export function App({
         isMultiProject={isMultiProject}
         isFilterActive={filterMode === 'locked'}
         hasSelectedTasks={selectedTaskIds.size > 0}
-        hasTaskSessions={selectedTask?.session_ids && selectedTask.session_ids.length > 0}
+        hasTaskSessions={!!selectedTask?.sessions && Object.keys(selectedTask.sessions).length > 0}
         textWrap={textWrap}
       />
     </Box>

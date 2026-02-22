@@ -39,8 +39,7 @@ function mockTask(overrides: Partial<ResolvedTask> = {}): ResolvedTask {
     agent: null,
     model: null,
     // Session traceability
-    session_ids: [],
-    session_timestamps: {},
+    sessions: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

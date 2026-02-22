@@ -51,6 +51,12 @@ export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 export const PRIORITIES = ["high", "medium", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+export type SessionInfo = {
+  timestamp: string;
+  cron_id?: string;
+  run_id?: string;
+};
+
 // =============================================================================
 // ZK Note (from zk CLI output)
 // =============================================================================
@@ -112,8 +118,7 @@ export interface BrainEntry {
   user_original_request?: string; // Verbatim user request for validation during task completion
 
   // Session traceability
-  session_ids?: string[]; // OpenCode session IDs that have worked on this entry (for audit/tracing)
-  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp when session was added
+  sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
 }
 
 // =============================================================================
@@ -181,9 +186,8 @@ export interface UpdateEntryRequest {
   agent?: string;
   model?: string;
 
-  // Session traceability (append semantics - new IDs are added to existing)
-  session_ids?: string[];
-  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp when session was added
+  // Session traceability (append semantics - new entries are merged by session ID)
+  sessions?: Record<string, SessionInfo>;
 }
 
 export interface ListEntriesRequest {
@@ -345,8 +349,7 @@ export interface Task {
   model: string | null; // Override model for this task (e.g., "anthropic/claude-sonnet-4-20250514")
 
   // Session traceability
-  session_ids: string[]; // OpenCode session IDs that have worked on this task (for audit/tracing)
-  session_timestamps: Record<string, string>; // Map of session ID to ISO timestamp when session was added
+  sessions: Record<string, SessionInfo>; // Map of session ID to session metadata
 
   // Derived fields
   projectId?: string; // Derived from file path (e.g., "pwa" from "projects/pwa/task/...")

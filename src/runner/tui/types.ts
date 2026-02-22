@@ -2,7 +2,7 @@
  * TUI-specific types for the Ink-based dashboard
  */
 
-import type { EntryStatus, Priority } from '../../core/types';
+import type { EntryStatus, Priority, SessionInfo } from '../../core/types';
 
 /**
  * Task classification for dependency resolution
@@ -59,8 +59,7 @@ export interface TaskDisplay {
   direct_prompt?: string | null;     // Direct prompt (bypasses do-work skill)
   
   // Session tracking
-  session_ids?: string[];            // OpenCode session IDs that worked on this task
-  session_timestamps?: Record<string, string>; // Map of session ID to ISO timestamp
+  sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
 }
 
 /**

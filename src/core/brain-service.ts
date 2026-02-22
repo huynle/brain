@@ -63,6 +63,7 @@ import type {
   StatsResponse,
   EntryType,
   EntryStatus,
+  SessionInfo,
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
@@ -695,8 +696,22 @@ export class BrainService {
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
-      session_ids: frontmatter.session_ids as string[] | undefined,
-      session_timestamps: frontmatter.session_timestamps as Record<string, string> | undefined,
+      sessions:
+        (frontmatter.sessions as Record<string, SessionInfo> | undefined) ||
+        (() => {
+          const sessionIds = (frontmatter.session_ids as string[] | undefined) || [];
+          const sessionTimestamps =
+            (frontmatter.session_timestamps as Record<string, string> | undefined) || {};
+          if (sessionIds.length === 0) {
+            return undefined;
+          }
+          return Object.fromEntries(
+            sessionIds.map((sessionId) => [
+              sessionId,
+              { timestamp: sessionTimestamps[sessionId] || new Date().toISOString() },
+            ])
+          );
+        })(),
     };
   }
 
@@ -726,11 +741,10 @@ export class BrainService {
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
-      request.session_ids === undefined &&
-      request.session_timestamps === undefined
+      request.sessions === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, session_ids, session_timestamps"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions"
       );
     }
 
@@ -820,29 +834,26 @@ export class BrainService {
       updatedFrontmatter.model = request.model;
     }
 
-    // Update session_ids with APPEND semantics (merge and dedupe)
-    if (request.session_ids !== undefined && request.session_ids.length > 0) {
-      const existingSessionIds = Array.isArray(frontmatter.session_ids)
-        ? (frontmatter.session_ids as string[])
-        : [];
-      // Merge existing + new, deduplicate
-      updatedFrontmatter.session_ids = [
-        ...new Set([...existingSessionIds, ...request.session_ids]),
-      ];
+    // Update sessions with APPEND semantics (merge by session ID)
+    if (request.sessions !== undefined && Object.keys(request.sessions).length > 0) {
+      const existingSessions =
+        (frontmatter.sessions as Record<string, SessionInfo> | undefined) ||
+        (() => {
+          const sessionIds = (frontmatter.session_ids as string[] | undefined) || [];
+          const sessionTimestamps =
+            (frontmatter.session_timestamps as Record<string, string> | undefined) || {};
+          return Object.fromEntries(
+            sessionIds.map((sessionId) => [
+              sessionId,
+              { timestamp: sessionTimestamps[sessionId] || new Date().toISOString() },
+            ])
+          );
+        })();
 
-      // Merge session_timestamps: preserve existing, add new from request or auto-generate
-      const existingTimestamps = (frontmatter.session_timestamps as Record<string, string>) || {};
-      const requestTimestamps = request.session_timestamps || {};
-      const mergedTimestamps = { ...existingTimestamps };
-
-      for (const sessionId of request.session_ids) {
-        if (!mergedTimestamps[sessionId]) {
-          // Use timestamp from request if provided, otherwise auto-generate
-          mergedTimestamps[sessionId] = requestTimestamps[sessionId] || new Date().toISOString();
-        }
-      }
-
-      updatedFrontmatter.session_timestamps = mergedTimestamps;
+      updatedFrontmatter.sessions = {
+        ...existingSessions,
+        ...request.sessions,
+      };
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

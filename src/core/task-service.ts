@@ -113,6 +113,19 @@ export class TaskService {
         // Extract projectId from file path (e.g., "projects/pwa/task/abc.md" -> "pwa")
         const pathMatch = note.path.match(/^projects\/([^/]+)\//);
         const derivedProjectId = pathMatch ? pathMatch[1] : undefined;
+        const sessions =
+          (note.metadata?.sessions as Task["sessions"] | undefined) ||
+          (() => {
+            const sessionIds = (note.metadata?.session_ids as string[] | undefined) || [];
+            const sessionTimestamps =
+              (note.metadata?.session_timestamps as Record<string, string> | undefined) || {};
+            return Object.fromEntries(
+              sessionIds.map((sessionId) => [
+                sessionId,
+                { timestamp: sessionTimestamps[sessionId] || note.modified || note.created || new Date().toISOString() },
+              ])
+            );
+          })();
 
         return {
           id: extractIdFromPath(note.path),
@@ -140,8 +153,7 @@ export class TaskService {
           agent: (note.metadata?.agent as string) || null,
           model: (note.metadata?.model as string) || null,
           // Session traceability
-          session_ids: (note.metadata?.session_ids as string[]) || [],
-          session_timestamps: (note.metadata?.session_timestamps as Record<string, string>) || {},
+          sessions,
           // Derived from file path for self-correcting project identity
           projectId: derivedProjectId,
         };

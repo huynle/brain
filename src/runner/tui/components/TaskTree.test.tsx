@@ -2141,6 +2141,248 @@ describe('TaskTree dimming for terminal statuses', () => {
 // Text truncation tests
 // =============================================================================
 
+// =============================================================================
+// Lane-layout rendering for status group sections
+// =============================================================================
+
+describe('TaskTree lane-layout in status group sections', () => {
+  describe('completed section uses lane-layout rendering', () => {
+    it('renders completed tasks with lane-layout prefixes in standard view', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+        createTask({ id: 'done1', title: 'Done Task 1', status: 'completed', feature_id: 'feat-a' }),
+        createTask({ id: 'done2', title: 'Done Task 2', status: 'completed', feature_id: 'feat-a', dependencies: ['done1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+        />
+      );
+      const frame = lastFrame() || '';
+      // Both completed tasks should be visible
+      expect(frame).toContain('Done Task 1');
+      expect(frame).toContain('Done Task 2');
+      // Lane-layout uses box-drawing characters like ├─ └─ │
+      // The old buildTree+renderTree also used these, but lane-layout
+      // produces them via generatePrefix(). Either way, tree chars should be present.
+      expect(frame).toContain('─');
+    });
+
+    it('renders completed tasks with lane-layout in groupByFeature view', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending', feature_id: 'feat-a' }),
+        createTask({ id: 'done1', title: 'Completed A', status: 'completed', feature_id: 'feat-a' }),
+        createTask({ id: 'done2', title: 'Completed B', status: 'completed', feature_id: 'feat-a', dependencies: ['done1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+          groupByFeature={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Completed A');
+      expect(frame).toContain('Completed B');
+      // Should have tree structure
+      expect(frame).toContain('─');
+    });
+
+    it('renders completed tasks with lane-layout in groupByProject view', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending', projectId: 'proj-1' }),
+        createTask({ id: 'done1', title: 'Done Proj 1', status: 'completed', feature_id: 'feat-a', projectId: 'proj-1' }),
+        createTask({ id: 'done2', title: 'Done Proj 2', status: 'completed', feature_id: 'feat-a', projectId: 'proj-1', dependencies: ['done1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+          groupByProject={true}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Done Proj 1');
+      expect(frame).toContain('Done Proj 2');
+    });
+  });
+
+  describe('draft section uses lane-layout rendering', () => {
+    it('renders draft tasks with lane-layout prefixes', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+        createTask({ id: 'draft1', title: 'Draft Task 1', status: 'draft', feature_id: 'feat-a' }),
+        createTask({ id: 'draft2', title: 'Draft Task 2', status: 'draft', feature_id: 'feat-a', dependencies: ['draft1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={true}
+          onToggleCompleted={() => {}}
+          draftCollapsed={false}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Draft Task 1');
+      expect(frame).toContain('Draft Task 2');
+      expect(frame).toContain('─');
+    });
+  });
+
+  describe('cancelled section uses lane-layout rendering', () => {
+    it('renders cancelled tasks with lane-layout prefixes', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+        createTask({ id: 'canc1', title: 'Cancelled 1', status: 'cancelled', feature_id: 'feat-a' }),
+        createTask({ id: 'canc2', title: 'Cancelled 2', status: 'cancelled', feature_id: 'feat-a', dependencies: ['canc1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={true}
+          onToggleCompleted={() => {}}
+          cancelledCollapsed={false}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Cancelled 1');
+      expect(frame).toContain('Cancelled 2');
+      expect(frame).toContain('─');
+    });
+  });
+
+  describe('superseded section uses lane-layout rendering', () => {
+    it('renders superseded tasks with lane-layout prefixes', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+        createTask({ id: 'sup1', title: 'Superseded 1', status: 'superseded', feature_id: 'feat-a' }),
+        createTask({ id: 'sup2', title: 'Superseded 2', status: 'superseded', feature_id: 'feat-a', dependencies: ['sup1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={true}
+          onToggleCompleted={() => {}}
+          supersededCollapsed={false}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Superseded 1');
+      expect(frame).toContain('Superseded 2');
+      expect(frame).toContain('─');
+    });
+  });
+
+  describe('archived section uses lane-layout rendering', () => {
+    it('renders archived tasks with lane-layout prefixes', () => {
+      const tasks = [
+        createTask({ id: 'active', title: 'Active Task', status: 'pending' }),
+        createTask({ id: 'arch1', title: 'Archived 1', status: 'archived', feature_id: 'feat-a' }),
+        createTask({ id: 'arch2', title: 'Archived 2', status: 'archived', feature_id: 'feat-a', dependencies: ['arch1'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={true}
+          onToggleCompleted={() => {}}
+          archivedCollapsed={false}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Archived 1');
+      expect(frame).toContain('Archived 2');
+      expect(frame).toContain('─');
+    });
+  });
+
+  describe('edge cases for lane-layout in status groups', () => {
+    it('handles single completed task (shortcut path in renderFeatureTasks)', () => {
+      const tasks = [
+        createTask({ id: 'done', title: 'Only Done', status: 'completed', feature_id: 'feat-a' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Only Done');
+      // Single task uses └─ prefix
+      expect(frame).toContain('└─');
+    });
+
+    it('handles completed tasks with all dependencies also completed (merge point)', () => {
+      // 4-task diamond: done1 forks to done2+done3, done4 merges them
+      // lane-layout renders merge points with ╰─ (MERGE_START) character
+      // The old buildTree+renderTree pipeline would NOT produce this character
+      // Note: a 3-task chain (done1→done2→done3 with done3 depending on both)
+      // stays on lane 0 because done2 frees its lane before done3 is processed,
+      // so no visual merge occurs. A proper fork+merge requires 4 tasks.
+      const tasks = [
+        createTask({ id: 'done1', title: 'Root Done', status: 'completed', feature_id: 'feat-a', dependents: ['done2', 'done3'] }),
+        createTask({ id: 'done2', title: 'Branch A Done', status: 'completed', feature_id: 'feat-a', dependencies: ['done1'], dependents: ['done4'] }),
+        createTask({ id: 'done3', title: 'Branch B Done', status: 'completed', feature_id: 'feat-a', dependencies: ['done1'], dependents: ['done4'] }),
+        createTask({ id: 'done4', title: 'Merge Done', status: 'completed', feature_id: 'feat-a', dependencies: ['done2', 'done3'] }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId={null}
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Root Done');
+      expect(frame).toContain('Branch A Done');
+      expect(frame).toContain('Branch B Done');
+      expect(frame).toContain('Merge Done');
+      // Lane-layout merge character — proves lane-layout is being used, not buildTree+renderTree
+      expect(frame).toContain('╰');
+    });
+
+    it('preserves task selection in status group lane-layout rendering', () => {
+      const tasks = [
+        createTask({ id: 'done1', title: 'Selected Done', status: 'completed', feature_id: 'feat-a' }),
+      ];
+      const { lastFrame } = render(
+        <TaskTree
+          tasks={tasks}
+          selectedId="done1"
+          onSelect={() => {}}
+          completedCollapsed={false}
+          onToggleCompleted={() => {}}
+        />
+      );
+      const frame = lastFrame() || '';
+      expect(frame).toContain('Selected Done');
+    });
+  });
+});
+
 describe('TaskTree text truncation', () => {
   it('truncates long task titles when textWrap=false and panelWidth is set', () => {
     const longTitle = 'This is a very long task title that should be truncated when the panel is narrow';

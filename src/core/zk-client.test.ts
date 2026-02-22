@@ -283,6 +283,156 @@ Content`;
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.title).toBe("Test: With Colon");
   });
+
+  test("parses new sessions map format", () => {
+    const content = `---
+title: Test Entry
+type: task
+status: pending
+sessions:
+  ses_new111aaa:
+    timestamp: "2026-02-22T10:30:00.000Z"
+    cron_id: "cron_123"
+    run_id: "run_456"
+  ses_new222bbb:
+    timestamp: "2026-02-22T10:31:00.000Z"
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.sessions).toEqual({
+      ses_new111aaa: {
+        timestamp: "2026-02-22T10:30:00.000Z",
+        cron_id: "cron_123",
+        run_id: "run_456",
+      },
+      ses_new222bbb: {
+        timestamp: "2026-02-22T10:31:00.000Z",
+      },
+    });
+  });
+
+  test("normalizes legacy session_ids and session_timestamps into sessions map", () => {
+    const content = `---
+title: Legacy Sessions
+type: task
+status: pending
+session_ids:
+  - ses_old111aaa
+  - ses_old222bbb
+session_timestamps:
+  ses_old111aaa: "2026-02-22T11:00:00.000Z"
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.sessions).toEqual({
+      ses_old111aaa: { timestamp: "2026-02-22T11:00:00.000Z" },
+      ses_old222bbb: { timestamp: "" },
+    });
+    expect(frontmatter.session_ids).toBeUndefined();
+    expect(frontmatter.session_timestamps).toBeUndefined();
+  });
+
+  test("prefers new sessions format when mixed with legacy fields", () => {
+    const content = `---
+title: Mixed Sessions
+type: task
+status: pending
+sessions:
+  ses_new999zzz:
+    timestamp: "2026-02-22T12:00:00.000Z"
+session_ids:
+  - ses_old999zzz
+session_timestamps:
+  ses_old999zzz: "1999-01-01T00:00:00.000Z"
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.sessions).toEqual({
+      ses_new999zzz: { timestamp: "2026-02-22T12:00:00.000Z" },
+    });
+    expect((frontmatter.sessions as Record<string, { timestamp: string }>).ses_old999zzz).toBeUndefined();
+  });
+
+  test("parses cron frontmatter fields", () => {
+    const content = `---
+title: Scheduled Task
+type: task
+status: pending
+schedule: "0 */2 * * *"
+next_run: "2026-03-01T10:00:00.000Z"
+cron_ids:
+  - "cron_a"
+  - "cron_b"
+runs:
+  - run_id: "run_001"
+    status: completed
+    started: "2026-03-01T08:00:00.000Z"
+    completed: "2026-03-01T08:02:00.000Z"
+    duration: "120s"
+    tasks: "3"
+    failed_task: ""
+    skip_reason: ""
+  - run_id: "run_002"
+    status: skipped
+    started: "2026-03-01T09:00:00.000Z"
+    completed: "2026-03-01T09:00:10.000Z"
+    duration: "10s"
+    tasks: "0"
+    failed_task: ""
+    skip_reason: "dependency pending"
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule).toBe("0 */2 * * *");
+    expect(frontmatter.next_run).toBe("2026-03-01T10:00:00.000Z");
+    expect(frontmatter.cron_ids).toEqual(["cron_a", "cron_b"]);
+    expect(frontmatter.runs).toEqual([
+      {
+        run_id: "run_001",
+        status: "completed",
+        started: "2026-03-01T08:00:00.000Z",
+        completed: "2026-03-01T08:02:00.000Z",
+        duration: "120s",
+        tasks: "3",
+        failed_task: "",
+        skip_reason: "",
+      },
+      {
+        run_id: "run_002",
+        status: "skipped",
+        started: "2026-03-01T09:00:00.000Z",
+        completed: "2026-03-01T09:00:10.000Z",
+        duration: "10s",
+        tasks: "0",
+        failed_task: "",
+        skip_reason: "dependency pending",
+      },
+    ]);
+  });
+
+  test("keeps backward compatibility when cron fields are missing", () => {
+    const content = `---
+title: Legacy Task
+type: task
+status: active
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule).toBeUndefined();
+    expect(frontmatter.next_run).toBeUndefined();
+    expect(frontmatter.cron_ids).toBeUndefined();
+    expect(frontmatter.runs).toBeUndefined();
+  });
 });
 
 // =============================================================================
@@ -796,6 +946,174 @@ describe("serializeFrontmatter()", () => {
     expect(result).not.toContain("git_branch:");
     expect(result).not.toContain("depends_on:");
     expect(result).not.toContain("user_original_request:");
+  });
+
+  test("serializes only unified sessions map format", () => {
+    const fm = {
+      title: "Task",
+      type: "task",
+      status: "active",
+      sessions: {
+        ses_new111aaa: {
+          timestamp: "2026-02-22T13:00:00.000Z",
+          cron_id: "cron_789",
+          run_id: "run_987",
+        },
+        ses_new222bbb: {
+          timestamp: "2026-02-22T13:01:00.000Z",
+        },
+      },
+      session_ids: ["ses_old111aaa"],
+      session_timestamps: { ses_old111aaa: "1999-01-01T00:00:00.000Z" },
+    };
+
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("sessions:");
+    expect(result).toContain("  ses_new111aaa:");
+    expect(result).toContain('    timestamp: "2026-02-22T13:00:00.000Z"');
+    expect(result).toContain('    cron_id: cron_789');
+    expect(result).toContain('    run_id: run_987');
+    expect(result).toContain("  ses_new222bbb:");
+    expect(result).toContain('    timestamp: "2026-02-22T13:01:00.000Z"');
+    expect(result).not.toContain("session_ids:");
+    expect(result).not.toContain("session_timestamps:");
+  });
+
+  test("serializes cron frontmatter fields", () => {
+    const fm = {
+      title: "Scheduled Task",
+      type: "task",
+      status: "pending",
+      schedule: "0 */2 * * *",
+      next_run: "2026-03-01T10:00:00.000Z",
+      cron_ids: ["cron_a", "cron_b"],
+      runs: [
+        {
+          run_id: "run_001",
+          status: "completed",
+          started: "2026-03-01T08:00:00.000Z",
+          completed: "2026-03-01T08:02:00.000Z",
+          duration: "120s",
+          tasks: "3",
+          failed_task: "",
+          skip_reason: "",
+        },
+      ],
+    };
+
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain('schedule: "0 */2 * * *"');
+    expect(result).toContain('next_run: "2026-03-01T10:00:00.000Z"');
+    expect(result).toContain("cron_ids:");
+    expect(result).toContain('  - cron_a');
+    expect(result).toContain('  - cron_b');
+    expect(result).toContain("runs:");
+    expect(result).toContain('  - run_id: run_001');
+    expect(result).toContain('    status: completed');
+    expect(result).toContain('    started: "2026-03-01T08:00:00.000Z"');
+    expect(result).toContain('    completed: "2026-03-01T08:02:00.000Z"');
+    expect(result).toContain('    duration: 120s');
+    expect(result).toContain('    tasks: 3');
+    expect(result).toContain('    failed_task: ""');
+    expect(result).toContain('    skip_reason: ""');
+  });
+});
+
+describe("generateFrontmatter() with sessions", () => {
+  test("generates unified sessions map and omits legacy fields", () => {
+    const fm = generateFrontmatter({
+      title: "Task",
+      type: "task",
+      sessions: {
+        ses_new111aaa: {
+          timestamp: "2026-02-22T14:00:00.000Z",
+          cron_id: "cron_abc",
+        },
+      },
+    });
+
+    expect(fm).toContain("sessions:");
+    expect(fm).toContain("  ses_new111aaa:");
+    expect(fm).toContain('    timestamp: "2026-02-22T14:00:00.000Z"');
+    expect(fm).toContain("    cron_id: cron_abc");
+    expect(fm).not.toContain("session_ids:");
+    expect(fm).not.toContain("session_timestamps:");
+  });
+});
+
+describe("cron frontmatter round-trip", () => {
+  test("generateFrontmatter and parseFrontmatter round-trip cron fields", () => {
+    const generated = generateFrontmatter({
+      title: "Cron Round Trip",
+      type: "task",
+      status: "pending",
+      schedule: "*/15 * * * *",
+      next_run: "2026-03-01T11:15:00.000Z",
+      cron_ids: ["cron_main", "cron_backup"],
+      runs: [
+        {
+          run_id: "run_100",
+          status: "completed",
+          started: "2026-03-01T11:00:00.000Z",
+          completed: "2026-03-01T11:01:30.000Z",
+          duration: "90s",
+          tasks: "2",
+          failed_task: "",
+          skip_reason: "",
+        },
+      ],
+    } as any);
+
+    const content = `---\n${generated}---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+
+    expect(frontmatter.schedule).toBe("*/15 * * * *");
+    expect(frontmatter.next_run).toBe("2026-03-01T11:15:00.000Z");
+    expect(frontmatter.cron_ids).toEqual(["cron_main", "cron_backup"]);
+    expect(frontmatter.runs).toEqual([
+      {
+        run_id: "run_100",
+        status: "completed",
+        started: "2026-03-01T11:00:00.000Z",
+        completed: "2026-03-01T11:01:30.000Z",
+        duration: "90s",
+        tasks: "2",
+        failed_task: "",
+        skip_reason: "",
+      },
+    ]);
+  });
+
+  test("serialize then parse preserves cron fields", () => {
+    const original = {
+      title: "Cron Serialize Round Trip",
+      type: "task",
+      status: "active",
+      schedule: "0 0 * * *",
+      next_run: "2026-03-02T00:00:00.000Z",
+      cron_ids: ["cron_nightly"],
+      runs: [
+        {
+          run_id: "run_nightly_1",
+          status: "failed",
+          started: "2026-03-01T00:00:00.000Z",
+          completed: "2026-03-01T00:00:30.000Z",
+          duration: "30s",
+          tasks: "4",
+          failed_task: "abc12def",
+          skip_reason: "",
+        },
+      ],
+    };
+
+    const serialized = serializeFrontmatter(original);
+    const content = `---\n${serialized}---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+
+    expect(frontmatter.schedule).toBe(original.schedule);
+    expect(frontmatter.next_run).toBe(original.next_run);
+    expect(frontmatter.cron_ids).toEqual(original.cron_ids);
+    expect(frontmatter.runs).toEqual(original.runs);
   });
 });
 

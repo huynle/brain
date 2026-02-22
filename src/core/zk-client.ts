@@ -952,6 +952,8 @@ export interface GenerateFrontmatterOptions {
   model?: string;
   // Session traceability
   session_ids?: string[];
+  // Timestamp for chronological ordering (matches zk template `created: {{format-date now}}`)
+  created?: string;
 }
 
 /**
@@ -980,6 +982,11 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
 
   lines.push(`status: ${status}`);
+
+  // Timestamp for chronological ordering (matches zk template field order)
+  if (options.created) {
+    lines.push(`created: ${options.created}`);
+  }
 
   if (options.priority) {
     lines.push(`priority: ${options.priority}`);

@@ -480,6 +480,7 @@ export class BrainService {
         status: entryStatus,
         projectId: isGlobal ? undefined : this.projectId,
         priority: request.priority,
+        created: new Date().toISOString(),
         // Task dependencies (already normalized above)
         depends_on: request.depends_on,
         // Execution context for tasks

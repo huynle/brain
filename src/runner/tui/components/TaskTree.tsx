@@ -723,10 +723,8 @@ export function flattenFeatureOrder(
       for (const featureId of draftFeatureIds) {
         const featureDrafts = draftByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${DRAFT_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${DRAFT_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`draft:${featureId}`)) {
@@ -777,10 +775,8 @@ export function flattenFeatureOrder(
       for (const featureId of cancelledFeatureIds) {
         const featureCancelled = cancelledByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${CANCELLED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${CANCELLED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`cancelled:${featureId}`)) {
@@ -831,10 +827,8 @@ export function flattenFeatureOrder(
       for (const featureId of supersededFeatureIds) {
         const featureSuperseded = supersededByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${SUPERSEDED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${SUPERSEDED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`superseded:${featureId}`)) {
@@ -885,10 +879,8 @@ export function flattenFeatureOrder(
       for (const featureId of archivedFeatureIds) {
         const featureArchived = archivedByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${ARCHIVED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${ARCHIVED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`archived:${featureId}`)) {
@@ -939,10 +931,8 @@ export function flattenFeatureOrder(
       for (const featureId of completedFeatureIds) {
         const featureCompleted = completedByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${COMPLETED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${COMPLETED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`completed:${featureId}`)) {
@@ -1255,6 +1245,8 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
   isCollapsed?: boolean;
 }): React.ReactElement {
   const collapseIcon = isCollapsed ? '▶' : '▾';
+  const isUngrouped = featureId === UNGROUPED_FEATURE_ID;
+  const label = isUngrouped ? 'Ungrouped' : `Feature: ${featureId}`;
   return (
     <Box flexDirection="row" marginLeft={1}>
       <Text
@@ -1265,7 +1257,7 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
       <Text
         color={isSelected ? 'white' : FEATURE_HEADER_COLOR}
       >
-        {' '}Feature: {featureId}
+        {' '}{label}
       </Text>
       <Text
         color={isSelected ? 'white' : 'gray'}
@@ -1870,24 +1862,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
           const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            draftElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureDrafts.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isDraftFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          draftElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureDrafts.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isDraftFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
             // Build tree for this feature's drafts and render with dimmed colors
             const tree = buildTree(featureDrafts, featureDrafts);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -1962,24 +1952,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
           const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            completedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCompleted.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCompletedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          completedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCompleted.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCompletedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
             // Build tree for this feature's completed tasks and render with dimmed colors
             const tree = buildTree(featureCompleted, featureCompleted);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2056,24 +2044,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
           const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            cancelledElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCancelled.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCancelledFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          cancelledElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCancelled.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCancelledFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
             // Build tree for this feature's cancelled tasks and render with dimmed colors
             const tree = buildTree(featureCancelled, featureCancelled);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2150,24 +2136,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
           const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            supersededElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureSuperseded.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isSupersededFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          supersededElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureSuperseded.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isSupersededFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
             // Build tree for this feature's superseded tasks and render with dimmed colors
             const tree = buildTree(featureSuperseded, featureSuperseded);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2244,24 +2228,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
           const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            archivedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureArchived.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isArchivedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          archivedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureArchived.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isArchivedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
             // Build tree for this feature's archived tasks and render with dimmed colors
             const tree = buildTree(featureArchived, featureArchived);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2471,24 +2453,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
           const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            draftElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureDrafts.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isDraftFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          draftElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureDrafts.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isDraftFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
             // Build tree for this feature's drafts and render with dimmed colors
             const tree = buildTree(featureDrafts, featureDrafts);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2565,24 +2545,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
           const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            cancelledElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCancelled.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCancelledFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          cancelledElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCancelled.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCancelledFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
             // Build tree for this feature's cancelled tasks and render with dimmed colors
             const tree = buildTree(featureCancelled, featureCancelled);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2659,24 +2637,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
           const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            supersededElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureSuperseded.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isSupersededFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          supersededElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureSuperseded.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isSupersededFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
             // Build tree for this feature's superseded tasks and render with dimmed colors
             const tree = buildTree(featureSuperseded, featureSuperseded);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2753,24 +2729,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
           const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            archivedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureArchived.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isArchivedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          archivedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureArchived.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isArchivedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
             // Build tree for this feature's archived tasks and render with dimmed colors
             const tree = buildTree(featureArchived, featureArchived);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -2845,24 +2819,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
           const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            completedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCompleted.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCompletedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          completedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCompleted.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCompletedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
             // Build tree for this feature's completed tasks and render with dimmed colors
             const tree = buildTree(featureCompleted, featureCompleted);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+            const indent = '  ';
             
             tree.forEach((rootNode, rootIndex) => {
               const isLast = rootIndex === tree.length - 1;
@@ -3025,8 +2997,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
         const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           draftElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3036,13 +3007,12 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isDraftFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isDraftFeatureCollapsed) {
-          // Build tree for this feature's drafts and render with dimmed colors
-          const draftTree = buildTree(featureDrafts, featureDrafts);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+          
+          // Only render tasks if feature is not collapsed
+          if (!isDraftFeatureCollapsed) {
+            // Build tree for this feature's drafts and render with dimmed colors
+            const draftTree = buildTree(featureDrafts, featureDrafts);
+            const indent = '  ';
           
           draftTree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === draftTree.length - 1;
@@ -3120,8 +3090,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
         const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           completedElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3131,13 +3100,12 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isCompletedFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isCompletedFeatureCollapsed) {
-        // Build tree for this feature's completed tasks and render with dimmed colors
-        const completedTree = buildTree(featureCompleted, featureCompleted);
-        const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+          
+          // Only render tasks if feature is not collapsed
+          if (!isCompletedFeatureCollapsed) {
+            // Build tree for this feature's completed tasks and render with dimmed colors
+            const completedTree = buildTree(featureCompleted, featureCompleted);
+            const indent = '  ';
         
         completedTree.forEach((rootNode, rootIndex) => {
           const isLast = rootIndex === completedTree.length - 1;
@@ -3217,8 +3185,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
         const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           cancelledElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3228,13 +3195,12 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isCancelledFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isCancelledFeatureCollapsed) {
-          // Build tree for this feature's cancelled tasks and render with dimmed colors
-          const cancelledTree = buildTree(featureCancelled, featureCancelled);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+          
+          // Only render tasks if feature is not collapsed
+          if (!isCancelledFeatureCollapsed) {
+            // Build tree for this feature's cancelled tasks and render with dimmed colors
+            const cancelledTree = buildTree(featureCancelled, featureCancelled);
+            const indent = '  ';
           
           cancelledTree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === cancelledTree.length - 1;
@@ -3314,8 +3280,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
         const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           supersededElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3325,13 +3290,12 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isSupersededFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isSupersededFeatureCollapsed) {
-          // Build tree for this feature's superseded tasks and render with dimmed colors
-          const supersededTree = buildTree(featureSuperseded, featureSuperseded);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+          
+          // Only render tasks if feature is not collapsed
+          if (!isSupersededFeatureCollapsed) {
+            // Build tree for this feature's superseded tasks and render with dimmed colors
+            const supersededTree = buildTree(featureSuperseded, featureSuperseded);
+            const indent = '  ';
           
           supersededTree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === supersededTree.length - 1;
@@ -3411,8 +3375,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
         const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           archivedElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3422,13 +3385,12 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isArchivedFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isArchivedFeatureCollapsed) {
-          // Build tree for this feature's archived tasks and render with dimmed colors
-          const archivedTree = buildTree(featureArchived, featureArchived);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
+          
+          // Only render tasks if feature is not collapsed
+          if (!isArchivedFeatureCollapsed) {
+            // Build tree for this feature's archived tasks and render with dimmed colors
+            const archivedTree = buildTree(featureArchived, featureArchived);
+            const indent = '  ';
           
           archivedTree.forEach((rootNode, rootIndex) => {
             const isLast = rootIndex === archivedTree.length - 1;

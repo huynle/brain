@@ -78,6 +78,23 @@ describe('TaskTree', () => {
       expect(lastFrame()).toContain('Task Three');
       expect(lastFrame()).toContain('Tasks (3)');
     });
+
+    it('renders cron indicator for cron-linked tasks', () => {
+      const tasks = [
+        createTask({
+          id: 'cron-1',
+          title: 'Nightly Sync',
+          cron_ids: ['crn12345'],
+          schedule: '0 2 * * *',
+        }),
+      ];
+
+      const { lastFrame } = render(
+        <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
+      );
+
+      expect(lastFrame()).toContain('[cron: 0 2 * * *]');
+    });
   });
 
   describe('nested dependencies', () => {

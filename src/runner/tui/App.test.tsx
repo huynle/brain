@@ -1090,7 +1090,7 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
   it('accepts onUpdateMetadata callback prop', () => {
     const mockUpdateMetadata = async (
       _taskPath: string, 
-      _fields: { status?: string; feature_id?: string; git_branch?: string; target_workdir?: string }
+      _fields: { status?: string; feature_id?: string; git_branch?: string; target_workdir?: string; schedule?: string }
     ): Promise<void> => {};
     
     expect(() => {

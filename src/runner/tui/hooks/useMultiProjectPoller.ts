@@ -32,13 +32,15 @@ function createStateHash(
   connectionByProject: Map<string, boolean>,
   errorsByProject: Map<string, Error>
 ): number {
-  const tasksData: Record<string, Array<{ id: string; status: string; priority: string; classification?: string }>> = {};
+  const tasksData: Record<string, Array<{ id: string; status: string; priority: string; classification?: string; schedule?: string | null; cronCount: number }>> = {};
   for (const [projectId, tasks] of tasksByProject) {
     tasksData[projectId] = tasks.map(t => ({
       id: t.id,
       status: t.status,
       priority: t.priority,
       classification: t.classification,
+      schedule: t.schedule,
+      cronCount: t.cron_ids?.length ?? 0,
     }));
   }
   
@@ -193,6 +195,8 @@ async function fetchProjectTasks(
       status: task.status,
       priority: task.priority || 'medium',
       tags: task.tags || [],
+      cron_ids: task.cron_ids,
+      schedule: task.schedule,
       // Keep IDs for tree building (TaskTree.tsx needs these)
       dependencies: depIds,
       dependents: dependentIds,
@@ -205,6 +209,7 @@ async function fetchProjectTasks(
       parent_id: task.parent_id,
       // Frontmatter fields
       created: task.created,
+      modified: task.modified,
       workdir: task.workdir,
       gitRemote: task.git_remote,
       gitBranch: task.git_branch,

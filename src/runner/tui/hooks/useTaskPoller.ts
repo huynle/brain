@@ -271,6 +271,8 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
           status: task.status,
           priority: task.priority || 'medium',
           tags: task.tags || [],
+          cron_ids: task.cron_ids,
+          schedule: task.schedule,
           // Keep IDs for tree building (TaskTree.tsx needs these)
           dependencies: depIds,
           dependents: dependentIds,
@@ -335,6 +337,8 @@ export function useTaskPoller(options: UseTaskPollerOptions): UseTaskPollerResul
         dependencies: t.dependencies,
         classification: t.classification,
         inCycle: t.inCycle,
+        cron_ids: t.cron_ids,
+        schedule: t.schedule,
       }));
       const newHash = simpleHash(JSON.stringify({ tasks: dataForHash, stats: calculatedStats }));
       

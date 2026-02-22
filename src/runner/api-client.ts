@@ -383,6 +383,7 @@ export class ApiClient {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
       priority?: Priority;
       cron_ids?: string[];
       tags?: string[];
@@ -401,6 +402,7 @@ export class ApiClient {
     if (fields.feature_id !== undefined) payload.feature_id = fields.feature_id;
     if (fields.git_branch !== undefined) payload.git_branch = fields.git_branch;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
+    if (fields.schedule !== undefined) payload.schedule = fields.schedule;
     if (fields.priority !== undefined) payload.priority = fields.priority;
     if (fields.cron_ids !== undefined) payload.cron_ids = fields.cron_ids;
     if (fields.tags !== undefined) payload.tags = fields.tags;

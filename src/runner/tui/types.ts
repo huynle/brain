@@ -21,6 +21,7 @@ export interface TaskDisplay {
   priority: Priority;
   tags: string[];               // Tags for filtering and categorization
   cron_ids?: string[];          // Cron entry IDs that can trigger this task
+  schedule?: string | null;     // Cron expression for periodic execution
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
   dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail
@@ -249,6 +250,7 @@ export interface AppProps {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
       agent?: string;
       model?: string;
       direct_prompt?: string;

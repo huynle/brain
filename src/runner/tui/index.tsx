@@ -85,6 +85,7 @@ export interface DashboardOptions {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
       agent?: string;
       model?: string;
       direct_prompt?: string;

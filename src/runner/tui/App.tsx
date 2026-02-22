@@ -191,6 +191,7 @@ export function App({
   const [metadataFeatureIdValue, setMetadataFeatureIdValue] = useState('');
   const [metadataBranchValue, setMetadataBranchValue] = useState('');
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
+  const [metadataScheduleValue, setMetadataScheduleValue] = useState('');
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
   const [metadataProjectValue, setMetadataProjectValue] = useState('');
   const [metadataProjectIndex, setMetadataProjectIndex] = useState(0);
@@ -207,11 +208,12 @@ export function App({
     feature_id: string;
     git_branch: string;
     target_workdir: string;
+    schedule: string;
     project: string;
     agent: string;
     model: string;
     direct_prompt: string;
-  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', project: '', agent: '', model: '', direct_prompt: '' });
+  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', schedule: '', project: '', agent: '', model: '', direct_prompt: '' });
   // Track whether any metadata changes were saved while popup is open
   const [metadataDirty, setMetadataDirty] = useState(false);
   // All projects from API (for project picker in metadata popup)
@@ -597,6 +599,7 @@ export function App({
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
       agent?: string;
       model?: string;
       direct_prompt?: string;
@@ -613,6 +616,9 @@ export function App({
     }
     if (effectiveWorkdir !== metadataOriginalValues.target_workdir) {
       changedFields.target_workdir = effectiveWorkdir;
+    }
+    if (metadataScheduleValue !== metadataOriginalValues.schedule) {
+      changedFields.schedule = metadataScheduleValue;
     }
     if (metadataAgentValue !== metadataOriginalValues.agent) {
       changedFields.agent = metadataAgentValue;
@@ -669,6 +675,7 @@ export function App({
     metadataFeatureIdValue,
     metadataBranchValue,
     metadataWorkdirValue,
+    metadataScheduleValue,
     metadataOriginalValues,
     addLog,
     refetch,
@@ -682,7 +689,7 @@ export function App({
     // EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
     // EDIT_PROJECT: j/k cycles project options, Enter moves task, Esc discards
     if (showMetadataPopup) {
-      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project', 'agent', 'model', 'direct_prompt'];
+      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
       
       // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
@@ -802,6 +809,9 @@ export function App({
               case 'target_workdir':
                 currentValue = metadataWorkdirValue;
                 break;
+              case 'schedule':
+                currentValue = metadataScheduleValue;
+                break;
               case 'agent':
                 currentValue = metadataAgentValue;
                 break;
@@ -835,12 +845,15 @@ export function App({
             case 'git_branch':
               setMetadataBranchValue(value);
               break;
-            case 'target_workdir':
-              setMetadataWorkdirValue(value);
-              break;
-            case 'agent':
-              setMetadataAgentValue(value);
-              break;
+              case 'target_workdir':
+                setMetadataWorkdirValue(value);
+                break;
+              case 'schedule':
+                setMetadataScheduleValue(value);
+                break;
+              case 'agent':
+                setMetadataAgentValue(value);
+                break;
             case 'model':
               setMetadataModelValue(value);
               break;
@@ -1664,6 +1677,7 @@ export function App({
         prefillFeatureId: string = '',
         prefillBranch: string = '',
         prefillWorkdir: string = '',
+        prefillSchedule: string = '',
         prefillProject: string = '',
         prefillAgent: string = '',
         prefillModel: string = '',
@@ -1689,6 +1703,7 @@ export function App({
         setMetadataFeatureIdValue(prefillFeatureId);
         setMetadataBranchValue(prefillBranch);
         setMetadataWorkdirValue(prefillWorkdir);
+        setMetadataScheduleValue(prefillSchedule);
         setMetadataProjectValue(prefillProject);
         setMetadataProjectIndex(fetchedProjects.indexOf(prefillProject) >= 0 ? fetchedProjects.indexOf(prefillProject) : 0);
         setMetadataAgentValue(prefillAgent);
@@ -1699,6 +1714,7 @@ export function App({
           feature_id: prefillFeatureId,
           git_branch: prefillBranch,
           target_workdir: prefillWorkdir,
+          schedule: prefillSchedule,
           project: prefillProject,
           agent: prefillAgent,
           model: prefillModel,
@@ -1724,6 +1740,7 @@ export function App({
             first.feature_id || '',
             first.gitBranch || '',
             first.resolvedWorkdir || first.workdir || '',
+            first.schedule || '',
             first.projectId || '',
             first.agent || '',
             first.model || '',
@@ -1739,7 +1756,7 @@ export function App({
         const ungroupedTasks = getVisibleTasksForUngrouped(tasks);
         if (ungroupedTasks.length > 0) {
           const firstUngrouped = ungroupedTasks[0];
-          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', firstUngrouped.projectId || '', '', '', '');
+          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', '', firstUngrouped.projectId || '', '', '');
         }
         return;
       }
@@ -1751,7 +1768,7 @@ export function App({
         const featureTasks = getVisibleTasksForFeature(tasks, featureId);
         if (featureTasks.length > 0) {
           const firstFeatureTask = featureTasks[0];
-          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', firstFeatureTask.projectId || '', '', '', '');
+          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', '', firstFeatureTask.projectId || '', '', '');
         }
         return;
       }
@@ -1769,8 +1786,8 @@ export function App({
               featureTasks,
               firstTask.status,
               featureId,
-              '', '', firstTask.projectId || '', '', '', ''
-            );
+               '', '', '', firstTask.projectId || '', '', ''
+             );
           }
           return;
         }
@@ -1785,6 +1802,7 @@ export function App({
           selectedTask.feature_id || '',
           selectedTask.gitBranch || '',
           selectedTask.resolvedWorkdir || selectedTask.workdir || '',
+          selectedTask.schedule || '',
           selectedTask.projectId || '',
           selectedTask.agent || '',
           selectedTask.model || '',
@@ -2357,6 +2375,7 @@ export function App({
           featureIdValue={metadataFeatureIdValue}
           branchValue={metadataBranchValue}
           workdirValue={metadataWorkdirValue}
+          scheduleValue={metadataScheduleValue}
           projectValue={metadataProjectValue}
           agentValue={metadataAgentValue}
           modelValue={metadataModelValue}

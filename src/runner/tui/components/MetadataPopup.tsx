@@ -28,7 +28,7 @@ import type { EntryStatus } from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 /** Fields that can be focused in the metadata popup */
-export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'project' | 'agent' | 'model' | 'direct_prompt';
+export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'schedule' | 'project' | 'agent' | 'model' | 'direct_prompt';
 
 /** Mode for the metadata popup */
 export type MetadataPopupMode = 'single' | 'batch' | 'feature';
@@ -57,6 +57,8 @@ export interface MetadataPopupProps {
   branchValue: string;
   /** Current target_workdir value */
   workdirValue: string;
+  /** Current schedule value */
+  scheduleValue: string;
   /** Current project value */
   projectValue: string;
   /** Current agent value (OpenCode agent override) */
@@ -79,12 +81,13 @@ export interface MetadataPopupProps {
   editBuffer?: string;
 }
 
-const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'project', 'agent', 'model', 'direct_prompt'];
+const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
 const FIELD_LABELS: Record<MetadataField, string> = {
   status: 'Status',
   feature_id: 'Feature ID',
   git_branch: 'Branch',
   target_workdir: 'Workdir',
+  schedule: 'Schedule',
   project: 'Project',
   agent: 'Agent',
   model: 'Model',
@@ -102,6 +105,7 @@ export function MetadataPopup({
   featureIdValue,
   branchValue,
   workdirValue,
+  scheduleValue,
   projectValue,
   agentValue,
   modelValue,
@@ -130,6 +134,8 @@ export function MetadataPopup({
         return branchValue || '(none)';
       case 'target_workdir':
         return workdirValue || '(none)';
+      case 'schedule':
+        return scheduleValue || '(none)';
       case 'project':
         return projectValue || '(none)';
       case 'agent':

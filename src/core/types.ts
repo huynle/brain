@@ -21,6 +21,7 @@ export const ENTRY_TYPES = [
   "exploration",
   "execution",
   "task",
+  "cron",
 ] as const;
 
 export type EntryType = (typeof ENTRY_TYPES)[number];
@@ -56,6 +57,17 @@ export type SessionInfo = {
   cron_id?: string;
   run_id?: string;
 };
+
+export interface CronRun {
+  run_id: string; // "YYYYMMDD-HHmm" from scheduled trigger time
+  status: "completed" | "failed" | "skipped" | "in_progress";
+  started: string; // ISO timestamp
+  completed?: string; // ISO timestamp
+  duration?: number; // ms
+  tasks?: number; // number of tasks in this run
+  failed_task?: string; // task ID if a task failed
+  skip_reason?: string; // reason if skipped (e.g., "task X in_progress")
+}
 
 // =============================================================================
 // ZK Note (from zk CLI output)
@@ -106,6 +118,10 @@ export interface BrainEntry {
   modified?: string; // ISO timestamp
   access_count?: number;
   last_verified?: string;
+  schedule?: string; // cron expression e.g. "0 2 * * *"
+  next_run?: string; // ISO timestamp of next scheduled run
+  cron_ids?: string[]; // for tasks: which cron entries trigger this task
+  runs?: CronRun[]; // for cron entries: execution history
 
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
@@ -136,6 +152,10 @@ export interface CreateEntryRequest {
   global?: boolean;
   project?: string;
   relatedEntries?: string[];
+  schedule?: string;
+  next_run?: string;
+  cron_ids?: string[];
+  runs?: CronRun[];
 
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
@@ -178,6 +198,10 @@ export interface UpdateEntryRequest {
   depends_on?: string[];
   tags?: string[];
   priority?: Priority;
+  schedule?: string;
+  next_run?: string;
+  cron_ids?: string[];
+  runs?: CronRun[];
   target_workdir?: string;
   git_branch?: string;
   // Feature grouping (for task organization)
@@ -332,6 +356,7 @@ export interface Task {
   status: EntryStatus;
   depends_on: string[];
   tags: string[]; // Tags for filtering and categorization
+  cron_ids: string[]; // IDs of cron entries that trigger this task
   created: string;
   modified?: string; // ISO timestamp when last modified
   target_workdir: string | null; // Explicit workdir override for task execution (absolute path)

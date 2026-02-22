@@ -20,6 +20,7 @@ export interface TaskDisplay {
   status: EntryStatus;
   priority: Priority;
   tags: string[];               // Tags for filtering and categorization
+  cron_ids?: string[];          // Cron entry IDs that can trigger this task
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
   dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail
@@ -137,6 +138,28 @@ export interface FeatureDisplay {
   taskStats: FeatureStats;                            // Aggregated task statistics
   blockedByFeatures: string[];                        // Feature IDs blocking this feature
   waitingOnFeatures: string[];                        // Feature IDs this feature is waiting on
+}
+
+/**
+ * Cron display information for TUI rendering
+ */
+export interface CronDisplay {
+  id: string;
+  path: string;
+  title: string;
+  schedule: string;
+  next_run?: string;
+  status: EntryStatus;
+  runs?: Array<{
+    run_id: string;
+    status: 'completed' | 'failed' | 'skipped' | 'in_progress';
+    started: string;
+    completed?: string;
+    duration?: number;
+    tasks?: number;
+    failed_task?: string;
+    skip_reason?: string;
+  }>;
 }
 
 /**

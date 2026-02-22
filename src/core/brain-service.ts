@@ -69,6 +69,7 @@ import type {
 import { ENTRY_STATUSES } from "./types";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
 import type { DependencyValidationResult, DependentInfo } from "./task-service";
+import { getNextRun } from "./cron-service";
 
 // =============================================================================
 // Dependency Validation Error
@@ -89,6 +90,61 @@ export class DependencyValidationError extends Error {
 // =============================================================================
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function normalizeCronRuns(rawRuns: unknown): import("./types").CronRun[] | undefined {
+  if (!Array.isArray(rawRuns)) {
+    return undefined;
+  }
+
+  const runs = rawRuns
+    .map((run) => {
+      if (!run || typeof run !== "object") {
+        return null;
+      }
+
+      const obj = run as Record<string, unknown>;
+      const runId = typeof obj.run_id === "string" ? obj.run_id : "";
+      const status = typeof obj.status === "string" ? obj.status : "";
+      const started = typeof obj.started === "string" ? obj.started : "";
+
+      if (!runId || !status || !started) {
+        return null;
+      }
+
+      const normalized: import("./types").CronRun = {
+        run_id: runId,
+        status: status as import("./types").CronRun["status"],
+        started,
+      };
+
+      if (typeof obj.completed === "string" && obj.completed) {
+        normalized.completed = obj.completed;
+      }
+      if (obj.duration !== undefined && obj.duration !== null && `${obj.duration}` !== "") {
+        const duration = Number(obj.duration);
+        if (!Number.isNaN(duration)) {
+          normalized.duration = duration;
+        }
+      }
+      if (obj.tasks !== undefined && obj.tasks !== null && `${obj.tasks}` !== "") {
+        const tasks = Number(obj.tasks);
+        if (!Number.isNaN(tasks)) {
+          normalized.tasks = tasks;
+        }
+      }
+      if (typeof obj.failed_task === "string" && obj.failed_task) {
+        normalized.failed_task = obj.failed_task;
+      }
+      if (typeof obj.skip_reason === "string" && obj.skip_reason) {
+        normalized.skip_reason = obj.skip_reason;
+      }
+
+      return normalized;
+    })
+    .filter((run): run is import("./types").CronRun => run !== null);
+
+  return runs.length > 0 ? runs : undefined;
+}
 
 // =============================================================================
 // Section Type
@@ -166,6 +222,10 @@ export class BrainService {
     // All other entry types default to 'active'
     const entryStatus = request.status || (entryType === "task" ? "draft" : "active");
     const isGlobal = request.global ?? false;
+
+    if (entryType === "cron" && request.schedule) {
+      request.next_run = getNextRun(request.schedule).toISOString();
+    }
 
     // Determine effective project ID
     const effectiveProjectId =
@@ -323,7 +383,8 @@ export class BrainService {
     }
 
     // Check if zk is available
-    let zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
+    let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
 
     // Check if user_original_request contains characters that break zk CLI's --extra parser
     // The zk CLI fails when values contain quotes, equals signs, newlines, or other special chars
@@ -444,6 +505,21 @@ export class BrainService {
         zkArgs.push("--extra", `feature_depends_on=${formattedFeatureDeps}`);
       }
 
+      if (request.schedule) {
+        zkArgs.push("--extra", `schedule=${request.schedule}`);
+      }
+
+      if (request.next_run) {
+        zkArgs.push("--extra", `next_run=${request.next_run}`);
+      }
+
+      if (request.cron_ids && request.cron_ids.length > 0) {
+        const formattedCronIds = request.cron_ids
+          .map((id) => `\n  - "${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+          .join("");
+        zkArgs.push("--extra", `cron_ids=${formattedCronIds}`);
+      }
+
       if (!isGlobal) {
         zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
       }
@@ -501,6 +577,11 @@ export class BrainService {
         model: request.model,
         // Session traceability
         sessions: request.sessions,
+        // Cron metadata
+        schedule: request.schedule,
+        next_run: request.next_run,
+        cron_ids: request.cron_ids,
+        runs: request.runs as unknown as import("./zk-client").CronRun[] | undefined,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;
@@ -699,6 +780,11 @@ export class BrainService {
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
       sessions: frontmatter.sessions as Record<string, SessionInfo> | undefined,
+      // Cron metadata
+      schedule: frontmatter.schedule as string | undefined,
+      next_run: frontmatter.next_run as string | undefined,
+      cron_ids: frontmatter.cron_ids as string[] | undefined,
+      runs: normalizeCronRuns(frontmatter.runs),
     };
   }
 
@@ -728,10 +814,14 @@ export class BrainService {
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
-      request.sessions === undefined
+      request.sessions === undefined &&
+      request.schedule === undefined &&
+      request.next_run === undefined &&
+      request.cron_ids === undefined &&
+      request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, schedule, next_run, cron_ids, runs"
       );
     }
 
@@ -819,6 +909,22 @@ export class BrainService {
     }
     if (request.model !== undefined) {
       updatedFrontmatter.model = request.model;
+    }
+
+    if (request.schedule !== undefined) {
+      updatedFrontmatter.schedule = request.schedule;
+      if (request.schedule) {
+        updatedFrontmatter.next_run = getNextRun(request.schedule).toISOString();
+      }
+    }
+    if (request.next_run !== undefined) {
+      updatedFrontmatter.next_run = request.next_run;
+    }
+    if (request.cron_ids !== undefined) {
+      updatedFrontmatter.cron_ids = request.cron_ids;
+    }
+    if (request.runs !== undefined) {
+      updatedFrontmatter.runs = request.runs;
     }
 
     // Update sessions with APPEND semantics (merge by session ID)

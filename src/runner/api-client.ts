@@ -7,6 +7,8 @@
 
 import type { RunnerConfig, ApiHealth, ClaimResult } from "./types";
 import type {
+  BrainEntry,
+  CronRun,
   ResolvedTask,
   TaskListResponse,
   TaskNextResponse,
@@ -51,6 +53,20 @@ export interface FeatureListResponse {
 export interface FeatureResponse {
   feature: ApiFeature;
 }
+
+export type CronEntry = Pick<
+  BrainEntry,
+  "id" | "path" | "title" | "status" | "schedule" | "next_run" | "runs" | "created" | "modified"
+>;
+
+interface CronListResponse {
+  crons: CronEntry[];
+}
+
+interface EntryWithRuns {
+  runs?: CronRun[];
+}
+
 import { getRunnerConfig, isDebugEnabled } from "./config";
 
 // =============================================================================
@@ -192,6 +208,52 @@ export class ApiClient {
     return data.tasks.filter(task => task.status === "in_progress");
   }
 
+  async getCronEntries(projectId: string): Promise<CronEntry[]> {
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as CronListResponse;
+    return data.crons;
+  }
+
+  async triggerCron(projectId: string, cronId: string, runId: string): Promise<void> {
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons/${cronId}/trigger`, {
+      method: "POST",
+      body: JSON.stringify({ runId }),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+  }
+
+  async updateCronRun(cronPath: string, run: CronRun): Promise<void> {
+    const encodedPath = encodeURIComponent(cronPath);
+
+    const getResponse = await this.fetch(`/api/v1/entries/${encodedPath}`);
+
+    if (!getResponse.ok) {
+      throw new ApiError(getResponse.status, await getResponse.text());
+    }
+
+    const entry = (await getResponse.json()) as EntryWithRuns;
+    const existingRuns = entry.runs ?? [];
+    const remainingRuns = existingRuns.filter((existing) => existing.run_id !== run.run_id);
+    const runs = [run, ...remainingRuns];
+
+    const patchResponse = await this.fetch(`/api/v1/entries/${encodedPath}`, {
+      method: "PATCH",
+      body: JSON.stringify({ runs }),
+    });
+
+    if (!patchResponse.ok) {
+      throw new ApiError(patchResponse.status, await patchResponse.text());
+    }
+  }
+
   /**
    * Get a task by its path.
    * Used for resuming orphaned in_progress tasks where getNextTask won't work.
@@ -322,10 +384,10 @@ export class ApiClient {
       git_branch?: string;
       target_workdir?: string;
       priority?: Priority;
+      cron_ids?: string[];
       tags?: string[];
       depends_on?: string[];
-      session_ids?: string[];
-      session_timestamps?: Record<string, string>;
+      sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
       agent?: string;
       model?: string;
       direct_prompt?: string;
@@ -340,10 +402,10 @@ export class ApiClient {
     if (fields.git_branch !== undefined) payload.git_branch = fields.git_branch;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
     if (fields.priority !== undefined) payload.priority = fields.priority;
+    if (fields.cron_ids !== undefined) payload.cron_ids = fields.cron_ids;
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
-    if (fields.session_ids !== undefined) payload.session_ids = fields.session_ids;
-    if (fields.session_timestamps !== undefined) payload.session_timestamps = fields.session_timestamps;
+    if (fields.sessions !== undefined) payload.sessions = fields.sessions;
     if (fields.agent !== undefined) payload.agent = fields.agent;
     if (fields.model !== undefined) payload.model = fields.model;
     if (fields.direct_prompt !== undefined) payload.direct_prompt = fields.direct_prompt;

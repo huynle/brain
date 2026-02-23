@@ -10,7 +10,13 @@ import { Box, Text } from 'ink';
 import type { TaskDisplay } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
 import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
-import { topoSort, assignLanes, generatePrefix, MAX_LANES } from '../lane-layout';
+import {
+  topoSort,
+  assignLanes,
+  generatePrefixSegments,
+  type LaneAssignment,
+  type LanePrefixSegment,
+} from '../lane-layout';
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -145,6 +151,11 @@ export interface TreeNode {
   task: TaskDisplay;
   children: TreeNode[];
   inCycle: boolean;
+}
+
+export interface SelectedTaskRelationGraph {
+  ancestors: Set<string>;
+  descendants: Set<string>;
 }
 
 // Box drawing characters
@@ -405,6 +416,98 @@ function findActiveAncestor(
   }
   
   return null;
+}
+
+/**
+ * Build transitive relation sets for the currently selected task.
+ *
+ * - ancestors: all transitive dependencies of selected task
+ * - descendants: all transitive dependents of selected task
+ *
+ * Only relationships within `visibleTasks` are considered.
+ */
+export function buildSelectedTaskRelationGraph(
+  visibleTasks: TaskDisplay[],
+  selectedId: string | null,
+): SelectedTaskRelationGraph {
+  const empty: SelectedTaskRelationGraph = {
+    ancestors: new Set(),
+    descendants: new Set(),
+  };
+
+  if (!selectedId) return empty;
+
+  const taskIds = new Set(visibleTasks.map((task) => task.id));
+  if (!taskIds.has(selectedId)) return empty;
+
+  const dependenciesByTask = new Map<string, string[]>();
+  const dependentsByTask = new Map<string, string[]>();
+
+  for (const task of visibleTasks) {
+    const inTreeDeps = task.dependencies.filter((depId) => taskIds.has(depId));
+    dependenciesByTask.set(task.id, inTreeDeps);
+
+    for (const depId of inTreeDeps) {
+      if (!dependentsByTask.has(depId)) {
+        dependentsByTask.set(depId, []);
+      }
+      dependentsByTask.get(depId)!.push(task.id);
+    }
+  }
+
+  const ancestors = new Set<string>();
+  const descendants = new Set<string>();
+
+  const ancestorStack = [...(dependenciesByTask.get(selectedId) || [])];
+  while (ancestorStack.length > 0) {
+    const current = ancestorStack.pop()!;
+    if (ancestors.has(current)) continue;
+    ancestors.add(current);
+    for (const next of dependenciesByTask.get(current) || []) {
+      if (!ancestors.has(next)) {
+        ancestorStack.push(next);
+      }
+    }
+  }
+
+  const descendantStack = [...(dependentsByTask.get(selectedId) || [])];
+  while (descendantStack.length > 0) {
+    const current = descendantStack.pop()!;
+    if (descendants.has(current)) continue;
+    descendants.add(current);
+    for (const next of dependentsByTask.get(current) || []) {
+      if (!descendants.has(next)) {
+        descendantStack.push(next);
+      }
+    }
+  }
+
+  // In cycles, traversal can walk back to the selected task.
+  ancestors.delete(selectedId);
+  descendants.delete(selectedId);
+
+  return { ancestors, descendants };
+}
+
+export function buildSelectedTaskRelationLanes(
+  assignments: LaneAssignment[],
+  relationGraph: SelectedTaskRelationGraph,
+): { upstreamLanes: Set<number>; downstreamLanes: Set<number> } {
+  const laneByTaskId = new Map(assignments.map((assignment) => [assignment.taskId, assignment.lane]));
+  const upstreamLanes = new Set<number>();
+  const downstreamLanes = new Set<number>();
+
+  for (const taskId of relationGraph.ancestors) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) upstreamLanes.add(lane);
+  }
+
+  for (const taskId of relationGraph.descendants) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) downstreamLanes.add(lane);
+  }
+
+  return { upstreamLanes, downstreamLanes };
 }
 
 // Helper to check if a task is completed
@@ -1059,6 +1162,7 @@ function truncateTitle(title: string, maxWidth: number): string {
 const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
+  prefixSegments,
   isSelected,
   inCycle,
   isReady,
@@ -1069,6 +1173,7 @@ const TaskRow = React.memo(function TaskRow({
 }: {
   task: TaskDisplay;
   prefix: string;
+  prefixSegments?: LanePrefixSegment[];
   isSelected: boolean;
   inCycle: boolean;
   isReady: boolean;
@@ -1102,13 +1207,14 @@ const TaskRow = React.memo(function TaskRow({
   
   // Checkbox indicator (only when multi-select is active)
   const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
+  const prefixText = prefixSegments?.map((segment) => segment.text).join('') ?? prefix;
 
   // Calculate display title (truncated or full)
   let displayTitle = task.title;
   if (!textWrap && panelWidth && panelWidth > 0) {
     // Calculate available width for title:
     // panelWidth - prefix - checkbox - icon(1) - space(1) - prioritySuffix - cycleSuffix - border/padding(4)
-    const prefixWidth = prefix.length;
+    const prefixWidth = prefixText.length;
     const checkboxWidth = showCheckboxes ? checkboxPrefix.length : 0;
     const iconWidth = 1; // status icon is 1 char (but some are multi-byte, use 2 to be safe)
     const spaceWidth = 1; // space before title
@@ -1120,7 +1226,22 @@ const TaskRow = React.memo(function TaskRow({
 
   return (
     <Box flexDirection="row">
-      <Text dimColor={isDim}>{prefix}</Text>
+      {prefixSegments ? (
+        <Box flexDirection="row">
+          {prefixSegments.map((segment, index) => (
+            <Text
+              key={`${task.id}-prefix-${index}`}
+              color={segment.kind === 'upstream' ? 'cyan' : segment.kind === 'downstream' ? 'magenta' : undefined}
+              dimColor={isDim}
+              backgroundColor={isSelected ? 'blue' : undefined}
+            >
+              {segment.text}
+            </Text>
+          ))}
+        </Box>
+      ) : (
+        <Text dimColor={isDim}>{prefix}</Text>
+      )}
       {showCheckboxes && (
         <Text
           color={isChecked ? 'green' : 'gray'}
@@ -1514,13 +1635,16 @@ function renderFeatureTasks(
   // Assign lanes based on topo-sorted order
   const assignments = assignLanes(sorted);
   const assignmentByTaskId = new Map(assignments.map((a, i) => [a.taskId, { a, i }]));
+  const relationGraph = buildSelectedTaskRelationGraph(activeTasks, selectedId);
+  const laneRelationContext = buildSelectedTaskRelationLanes(assignments, relationGraph);
 
   for (const task of sorted) {
     const entry = assignmentByTaskId.get(task.id);
     if (!entry) continue;
     const { a, i } = entry;
 
-    const prefix = generatePrefix(a, i, assignments);
+    const prefixSegments = generatePrefixSegments(a, i, assignments, laneRelationContext);
+    const prefix = prefixSegments.map((segment) => segment.text).join('');
     const isSelected = task.id === selectedId;
     const isReady = readyIds.has(task.id);
     const isChecked = selectedTaskIds.has(task.id);
@@ -1531,6 +1655,7 @@ function renderFeatureTasks(
         key={task.id}
         task={task}
         prefix={prefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={inCycle}
         isReady={isReady}

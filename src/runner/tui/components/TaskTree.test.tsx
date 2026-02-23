@@ -14,8 +14,9 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
 import type { TaskDisplay } from '../types';
+import type { LaneAssignment } from '../lane-layout';
 
 // Helper to create mock tasks
 function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
@@ -1158,6 +1159,137 @@ describe('buildTree with parent_id', () => {
       expect(frame).toContain('Root Task');
       expect(frame).toContain('Child Task');
     });
+  });
+});
+
+describe('buildSelectedTaskRelationGraph', () => {
+  it('returns empty sets when selected task is null', () => {
+    const tasks = [createTask({ id: 'a' })];
+    const graph = buildSelectedTaskRelationGraph(tasks, null);
+
+    expect(graph.ancestors.size).toBe(0);
+    expect(graph.descendants.size).toBe(0);
+  });
+
+  it('returns empty sets when selected task is not visible', () => {
+    const tasks = [createTask({ id: 'a' })];
+    const graph = buildSelectedTaskRelationGraph(tasks, 'missing');
+
+    expect(graph.ancestors.size).toBe(0);
+    expect(graph.descendants.size).toBe(0);
+  });
+
+  it('computes transitive ancestors and descendants for a linear chain', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: [] }),
+      createTask({ id: 'b', dependencies: ['a'] }),
+      createTask({ id: 'c', dependencies: ['b'] }),
+      createTask({ id: 'd', dependencies: ['c'] }),
+    ];
+
+    const graph = buildSelectedTaskRelationGraph(tasks, 'c');
+    expect(graph.ancestors).toEqual(new Set(['a', 'b']));
+    expect(graph.descendants).toEqual(new Set(['d']));
+  });
+
+  it('handles fork shape (one upstream, multiple downstream)', () => {
+    const tasks = [
+      createTask({ id: 'root', dependencies: [] }),
+      createTask({ id: 'left', dependencies: ['root'] }),
+      createTask({ id: 'right', dependencies: ['root'] }),
+      createTask({ id: 'left-child', dependencies: ['left'] }),
+    ];
+
+    const graph = buildSelectedTaskRelationGraph(tasks, 'root');
+    expect(graph.ancestors).toEqual(new Set());
+    expect(graph.descendants).toEqual(new Set(['left', 'right', 'left-child']));
+  });
+
+  it('handles merge shape (multiple upstream, one downstream)', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: [] }),
+      createTask({ id: 'b', dependencies: [] }),
+      createTask({ id: 'merge', dependencies: ['a', 'b'] }),
+      createTask({ id: 'after', dependencies: ['merge'] }),
+    ];
+
+    const graph = buildSelectedTaskRelationGraph(tasks, 'merge');
+    expect(graph.ancestors).toEqual(new Set(['a', 'b']));
+    expect(graph.descendants).toEqual(new Set(['after']));
+  });
+
+  it('handles diamond shape transitively', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: [] }),
+      createTask({ id: 'b', dependencies: ['a'] }),
+      createTask({ id: 'c', dependencies: ['a'] }),
+      createTask({ id: 'd', dependencies: ['b', 'c'] }),
+      createTask({ id: 'e', dependencies: ['d'] }),
+    ];
+
+    const graph = buildSelectedTaskRelationGraph(tasks, 'd');
+    expect(graph.ancestors).toEqual(new Set(['a', 'b', 'c']));
+    expect(graph.descendants).toEqual(new Set(['e']));
+  });
+
+  it('handles cycles without including selected task in either set', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: ['c'] }),
+      createTask({ id: 'b', dependencies: ['a'] }),
+      createTask({ id: 'c', dependencies: ['b'] }),
+      createTask({ id: 'd', dependencies: ['c'] }),
+    ];
+
+    const graph = buildSelectedTaskRelationGraph(tasks, 'b');
+    expect(graph.ancestors).toEqual(new Set(['a', 'c']));
+    expect(graph.descendants).toEqual(new Set(['a', 'c', 'd']));
+    expect(graph.ancestors.has('b')).toBe(false);
+    expect(graph.descendants.has('b')).toBe(false);
+  });
+
+  it('ignores dependencies that are not in the visible task set', () => {
+    const allTasks = [
+      createTask({ id: 'a', dependencies: [] }),
+      createTask({ id: 'b', dependencies: ['a'] }),
+      createTask({ id: 'c', dependencies: ['b'] }),
+    ];
+    const visibleTasks = allTasks.filter((task) => task.id !== 'a');
+
+    const graph = buildSelectedTaskRelationGraph(visibleTasks, 'c');
+    expect(graph.ancestors).toEqual(new Set(['b']));
+    expect(graph.descendants).toEqual(new Set());
+  });
+});
+
+describe('buildSelectedTaskRelationLanes', () => {
+  it('maps selected ancestors and descendants to lane sets', () => {
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 1, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'c', lane: 2, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+    ];
+
+    const lanes = buildSelectedTaskRelationLanes(assignments, {
+      ancestors: new Set(['a']),
+      descendants: new Set(['c']),
+    });
+
+    expect(lanes.upstreamLanes).toEqual(new Set([0]));
+    expect(lanes.downstreamLanes).toEqual(new Set([2]));
+  });
+
+  it('ignores related task IDs that are not lane-assigned', () => {
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+    ];
+
+    const lanes = buildSelectedTaskRelationLanes(assignments, {
+      ancestors: new Set(['missing']),
+      descendants: new Set(['a', 'also-missing']),
+    });
+
+    expect(lanes.upstreamLanes.size).toBe(0);
+    expect(lanes.downstreamLanes).toEqual(new Set([0]));
   });
 });
 

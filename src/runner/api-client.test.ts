@@ -919,4 +919,79 @@ describe("ApiClient", () => {
       expect(client1).not.toBe(client2);
     });
   });
+
+  describe("getCronNames", () => {
+    it("returns mapping of cron ID to title", async () => {
+      const mockCrons = [
+        {
+          id: "crn00001",
+          path: "projects/myproject/cron/crn00001.md",
+          title: "Daily Backup",
+          status: "active" as const,
+          schedule: "0 2 * * *",
+        },
+        {
+          id: "crn00002",
+          path: "projects/myproject/cron/crn00002.md",
+          title: "Weekly Report",
+          status: "active" as const,
+          schedule: "0 9 * * 1",
+        },
+      ];
+
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ crons: mockCrons, count: 2 }), {
+            status: 200,
+          })
+        )
+      );
+
+      const cronNames = await client.getCronNames("myproject");
+
+      expect(cronNames).toEqual({
+        crn00001: "Daily Backup",
+        crn00002: "Weekly Report",
+      });
+    });
+
+    it("returns empty object when no crons", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(
+          new Response(JSON.stringify({ crons: [], count: 0 }), {
+            status: 200,
+          })
+        )
+      );
+
+      const cronNames = await client.getCronNames("myproject");
+
+      expect(cronNames).toEqual({});
+    });
+
+    it("encodes project ID in request", async () => {
+      let capturedUrl: string | undefined;
+
+      globalThis.fetch = ((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve(
+          new Response(JSON.stringify({ crons: [], count: 0 }), {
+            status: 200,
+          })
+        );
+      }) as typeof fetch;
+
+      await client.getCronNames("my/project");
+
+      expect(capturedUrl).toContain("/api/v1/crons/my%2Fproject/crons");
+    });
+
+    it("throws ApiError on non-ok response", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response("Server error", { status: 500 }))
+      );
+
+      await expect(client.getCronNames("myproject")).rejects.toThrow(ApiError);
+    });
+  });
 });

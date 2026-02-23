@@ -79,6 +79,10 @@ export interface MetadataPopupProps {
   interactionMode: MetadataInteractionMode;
   /** Current edit buffer for text fields or status selection */
   editBuffer?: string;
+  /** Cron IDs linked to this task */
+  cronIds?: string[];
+  /** Cron names map (cron ID -> cron title) */
+  cronNames?: Record<string, string>;
 }
 
 const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
@@ -116,6 +120,8 @@ export function MetadataPopup({
   allowedStatuses,
   interactionMode,
   editBuffer = '',
+  cronIds,
+  cronNames,
 }: MetadataPopupProps): React.ReactElement {
   // Truncate title if too long
   const maxTitleLen = 30;
@@ -350,6 +356,9 @@ export function MetadataPopup({
                   >
                     {value}
                   </Text>
+                  {field === 'schedule' && (
+                    <Text dimColor> (creates NEW cron)</Text>
+                  )}
                   {isFocused && (
                     <Text dimColor> (Enter to edit)</Text>
                   )}
@@ -358,6 +367,31 @@ export function MetadataPopup({
             </Box>
           );
         })}
+
+        {/* Cron Links field (read-only, only shown if cronIds present) */}
+        {cronIds && cronIds.length > 0 && (
+          <Box>
+            {/* No selection indicator for read-only field */}
+            <Text>  </Text>
+
+            {/* Field label (fixed width for alignment) */}
+            <Box width={14}>
+              <Text>Cron Links:</Text>
+            </Box>
+
+            {/* Cron badges */}
+            <Box flexDirection="column" flexShrink={1}>
+              {cronIds.map((cronId) => {
+                const cronName = cronNames?.[cronId] || cronId;
+                return (
+                  <Box key={cronId}>
+                    <Text dimColor>📅 {cronName}</Text>
+                  </Box>
+                );
+              })}
+            </Box>
+          </Box>
+        )}
       </Box>
 
       {/* Footer with shortcuts */}

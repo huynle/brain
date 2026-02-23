@@ -658,6 +658,149 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
     },
   },
   {
+    name: "brain_cron_list",
+    description: "List cron entries for a project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+    },
+  },
+  {
+    name: "brain_cron_get",
+    description: "Get a cron entry with pipeline tasks.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId"],
+    },
+  },
+  {
+    name: "brain_cron_create",
+    description: "Create a cron entry in a project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Cron title" },
+        schedule: { type: "string", description: "Cron expression (e.g., '0 2 * * *')" },
+        content: { type: "string", description: "Cron content" },
+        status: { type: "string", enum: ENTRY_STATUSES, description: "Initial status" },
+        tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["title", "schedule"],
+    },
+  },
+  {
+    name: "brain_cron_update",
+    description: "Update a cron entry in a project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        title: { type: "string", description: "Updated title" },
+        schedule: { type: "string", description: "Updated cron expression" },
+        content: { type: "string", description: "Full content replacement" },
+        status: { type: "string", enum: ENTRY_STATUSES, description: "Updated status" },
+        tags: { type: "array", items: { type: "string" }, description: "Updated tags" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId"],
+    },
+  },
+  {
+    name: "brain_cron_delete",
+    description: "Delete a cron entry from a project.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        confirm: { type: "boolean", description: "Must be true to confirm deletion" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId", "confirm"],
+    },
+  },
+  {
+    name: "brain_cron_trigger",
+    description: "Manually trigger a cron run.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId"],
+    },
+  },
+  {
+    name: "brain_cron_runs",
+    description: "Get cron run history.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId"],
+    },
+  },
+  {
+    name: "brain_cron_linked_tasks",
+    description: "List tasks linked to a cron.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId"],
+    },
+  },
+  {
+    name: "brain_cron_linked_task_add",
+    description: "Link a task to a cron.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        taskId: { type: "string", description: "Task ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId", "taskId"],
+    },
+  },
+  {
+    name: "brain_cron_linked_task_remove",
+    description: "Unlink a task from a cron.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        taskId: { type: "string", description: "Task ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId", "taskId"],
+    },
+  },
+  {
+    name: "brain_cron_linked_tasks_set",
+    description: "Replace all linked tasks for a cron.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cronId: { type: "string", description: "Cron ID (8-char alphanumeric)" },
+        taskIds: { type: "array", items: { type: "string" }, description: "Task IDs to link to the cron" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["cronId", "taskIds"],
+    },
+  },
+  {
     name: "brain_backlinks",
     description: "Find entries that link TO a given entry (backlinks).",
     inputSchema: {
@@ -787,6 +930,30 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
 // ============================================================================
 
 const context = getExecutionContext(process.cwd());
+
+function formatCronResult(operation: string, project: string, data: unknown): string {
+  return JSON.stringify(
+    {
+      operation,
+      project,
+      data,
+    },
+    null,
+    2
+  );
+}
+
+function formatCronError(operation: string, project: string, error: unknown): string {
+  return JSON.stringify(
+    {
+      operation,
+      project,
+      error: error instanceof Error ? error.message : String(error),
+    },
+    null,
+    2
+  );
+}
 
 async function handleToolCall(name: string, args: Record<string, unknown>): Promise<string> {
   try {
@@ -1546,6 +1713,235 @@ Use brain_tasks to see the full task list and dependency status.`;
         };
 
         return JSON.stringify(metadata, null, 2);
+      }
+
+      case "brain_cron_list": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            crons: Array<{
+              id: string;
+              path: string;
+              title: string;
+              status: string;
+              schedule?: string;
+              next_run?: string;
+              runs?: unknown[];
+              created?: string;
+              modified?: string;
+            }>;
+            count: number;
+          }>("GET", `/crons/${encodeURIComponent(proj)}/crons`);
+          return formatCronResult("list", proj, response);
+        } catch (error) {
+          return formatCronError("list", proj, error);
+        }
+      }
+
+      case "brain_cron_get": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cron: unknown;
+            pipeline: unknown[];
+            pipelineCount: number;
+          }>(
+            "GET",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}`
+          );
+          return formatCronResult("get", proj, response);
+        } catch (error) {
+          return formatCronError("get", proj, error);
+        }
+      }
+
+      case "brain_cron_create": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cron: unknown;
+            message: string;
+          }>("POST", `/crons/${encodeURIComponent(proj)}/crons`, {
+            title: args.title,
+            schedule: args.schedule,
+            content: args.content,
+            status: args.status,
+            tags: args.tags,
+          });
+          return formatCronResult("create", proj, response);
+        } catch (error) {
+          return formatCronError("create", proj, error);
+        }
+      }
+
+      case "brain_cron_update": {
+        const proj = (args.project as string) || context.projectId;
+        const hasUpdate =
+          args.title !== undefined ||
+          args.schedule !== undefined ||
+          args.content !== undefined ||
+          args.status !== undefined ||
+          args.tags !== undefined;
+
+        if (!hasUpdate) {
+          return formatCronError(
+            "update",
+            proj,
+            "Provide at least one of title, schedule, content, status, or tags"
+          );
+        }
+
+        try {
+          const response = await apiRequest<{
+            cron: unknown;
+            message: string;
+          }>(
+            "PATCH",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}`,
+            {
+              title: args.title,
+              schedule: args.schedule,
+              content: args.content,
+              status: args.status,
+              tags: args.tags,
+            }
+          );
+          return formatCronResult("update", proj, response);
+        } catch (error) {
+          return formatCronError("update", proj, error);
+        }
+      }
+
+      case "brain_cron_delete": {
+        const proj = (args.project as string) || context.projectId;
+        if (!args.confirm) {
+          return formatCronError("delete", proj, "Please set confirm: true");
+        }
+
+        try {
+          const response = await apiRequest<{
+            message: string;
+            path: string;
+          }>(
+            "DELETE",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}`,
+            undefined,
+            { confirm: "true" }
+          );
+          return formatCronResult("delete", proj, response);
+        } catch (error) {
+          return formatCronError("delete", proj, error);
+        }
+      }
+
+      case "brain_cron_trigger": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            run: unknown;
+            pipeline: unknown[];
+            pipelineCount: number;
+            message: string;
+          }>(
+            "POST",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/trigger`
+          );
+          return formatCronResult("trigger", proj, response);
+        } catch (error) {
+          return formatCronError("trigger", proj, error);
+        }
+      }
+
+      case "brain_cron_runs": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            runs: unknown[];
+            count: number;
+          }>(
+            "GET",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/runs`
+          );
+          return formatCronResult("runs", proj, response);
+        } catch (error) {
+          return formatCronError("runs", proj, error);
+        }
+      }
+
+      case "brain_cron_linked_tasks": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            tasks: unknown[];
+            count: number;
+          }>(
+            "GET",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/linked-tasks`
+          );
+          return formatCronResult("linked_tasks", proj, response);
+        } catch (error) {
+          return formatCronError("linked_tasks", proj, error);
+        }
+      }
+
+      case "brain_cron_linked_task_add": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            tasks: unknown[];
+            count: number;
+            message: string;
+          }>(
+            "POST",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/linked-tasks/${encodeURIComponent(args.taskId as string)}`
+          );
+          return formatCronResult("linked_task_add", proj, response);
+        } catch (error) {
+          return formatCronError("linked_task_add", proj, error);
+        }
+      }
+
+      case "brain_cron_linked_task_remove": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            tasks: unknown[];
+            count: number;
+            message: string;
+          }>(
+            "DELETE",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/linked-tasks/${encodeURIComponent(args.taskId as string)}`
+          );
+          return formatCronResult("linked_task_remove", proj, response);
+        } catch (error) {
+          return formatCronError("linked_task_remove", proj, error);
+        }
+      }
+
+      case "brain_cron_linked_tasks_set": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            cronId: string;
+            tasks: unknown[];
+            count: number;
+            message: string;
+          }>(
+            "PATCH",
+            `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId as string)}/linked-tasks`,
+            {
+              taskIds: args.taskIds,
+            }
+          );
+          return formatCronResult("linked_tasks_set", proj, response);
+        } catch (error) {
+          return formatCronError("linked_tasks_set", proj, error);
+        }
       }
 
       case "brain_backlinks": {

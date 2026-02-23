@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -399,6 +399,44 @@ describe('resolveTaskTreeClickAction', () => {
   it('ignores non-handled targets/buttons', () => {
     expect(resolveTaskTreeClickAction({ kind: 'spacer', id: 's1' }, 'left')).toBe('noop');
     expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h5', featureId: 'f' }, 'right')).toBe('noop');
+  });
+
+  it('routes left click on ungrouped header to collapse toggle', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'ungrouped_header', id: 'h6' }, 'left')).toBe('toggle_collapsed');
+  });
+});
+
+describe('isTaskTreeCollapseToggleTarget', () => {
+  it('matches all collapsible task tree header targets', () => {
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'feature_header', id: 'h1', featureId: 'feature-a' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'project_header', id: 'h2', projectId: 'brain-api' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'status_header', id: 'h3', statusGroup: 'completed' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'status_feature_header', id: 'h4', statusGroup: 'draft', featureId: 'feature-a' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'ungrouped_header', id: 'h5' })).toBe(true);
+  });
+
+  it('returns false for task rows and spacer rows', () => {
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'task', id: 't1', taskId: 't1' })).toBe(false);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'spacer', id: 's1' })).toBe(false);
+  });
+
+  it('keeps Enter key routing consistent with left click routing', () => {
+    const toggles = [
+      { kind: 'feature_header', id: 'h1', featureId: 'feature-a' },
+      { kind: 'project_header', id: 'h2', projectId: 'brain-api' },
+      { kind: 'status_header', id: 'h3', statusGroup: 'completed' },
+      { kind: 'status_feature_header', id: 'h4', statusGroup: 'draft', featureId: 'feature-a' },
+      { kind: 'ungrouped_header', id: 'h5' },
+    ] as const;
+
+    for (const target of toggles) {
+      expect(isTaskTreeCollapseToggleTarget(target)).toBe(true);
+      expect(resolveTaskTreeClickAction(target, 'left')).toBe('toggle_collapsed');
+    }
+
+    const editorTarget = { kind: 'task', id: 'task-1', taskId: 'task-1' } as const;
+    expect(isTaskTreeCollapseToggleTarget(editorTarget)).toBe(false);
+    expect(resolveTaskTreeClickAction(editorTarget, 'left')).toBe('open_editor');
   });
 });
 

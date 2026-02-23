@@ -142,6 +142,19 @@ export const STATUS_GROUP_MAP: Record<string, EntryStatus[]> = {
 export type TaskTreeClickAction = 'open_editor' | 'open_metadata' | 'toggle_collapsed' | 'noop';
 
 /**
+ * Header targets that toggle collapse/expand when selected.
+ */
+export function isTaskTreeCollapseToggleTarget(target: TaskTreeRowTarget): boolean {
+  return (
+    target.kind === 'feature_header' ||
+    target.kind === 'project_header' ||
+    target.kind === 'status_header' ||
+    target.kind === 'status_feature_header' ||
+    target.kind === 'ungrouped_header'
+  );
+}
+
+/**
  * Route pointer clicks to high-level TaskTree actions.
  */
 export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TUIMouseButton): TaskTreeClickAction {
@@ -152,13 +165,7 @@ export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TU
   }
 
   if (button === 'left') {
-    if (
-      target.kind === 'feature_header' ||
-      target.kind === 'project_header' ||
-      target.kind === 'status_header' ||
-      target.kind === 'status_feature_header' ||
-      target.kind === 'ungrouped_header'
-    ) {
+    if (isTaskTreeCollapseToggleTarget(target)) {
       return 'toggle_collapsed';
     }
   }

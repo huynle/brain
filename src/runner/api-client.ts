@@ -59,6 +59,54 @@ export type CronEntry = Pick<
   "id" | "path" | "title" | "status" | "schedule" | "next_run" | "runs" | "created" | "modified"
 >;
 
+export interface CronDetailResponse {
+  cron: BrainEntry;
+  pipeline: ResolvedTask[];
+  pipelineCount: number;
+}
+
+export interface CronRunsResponse {
+  cronId: string;
+  runs: CronRun[];
+  count: number;
+}
+
+export interface CronLinkedTasksResponse {
+  cronId: string;
+  tasks: ResolvedTask[];
+  count: number;
+}
+
+export interface CronLinkedTasksMutationResponse extends CronLinkedTasksResponse {
+  message: string;
+}
+
+export interface CreateCronRequest {
+  title: string;
+  schedule: string;
+  content?: string;
+  status?: EntryStatus;
+  tags?: string[];
+}
+
+export interface UpdateCronRequest {
+  title?: string;
+  schedule?: string;
+  content?: string;
+  status?: EntryStatus;
+  tags?: string[];
+}
+
+export interface CronMutationResponse {
+  cron: BrainEntry;
+  message: string;
+}
+
+export interface DeleteCronResponse {
+  message: string;
+  path: string;
+}
+
 interface CronListResponse {
   crons: CronEntry[];
 }
@@ -217,6 +265,145 @@ export class ApiClient {
 
     const data = (await response.json()) as CronListResponse;
     return data.crons;
+  }
+
+  async getCronEntry(projectId: string, cronId: string): Promise<CronDetailResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons/${encodedCronId}`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronDetailResponse;
+  }
+
+  async createCronEntry(projectId: string, request: CreateCronRequest): Promise<CronMutationResponse> {
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronMutationResponse;
+  }
+
+  async updateCronEntry(
+    projectId: string,
+    cronId: string,
+    request: UpdateCronRequest
+  ): Promise<CronMutationResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons/${encodedCronId}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronMutationResponse;
+  }
+
+  async deleteCronEntry(projectId: string, cronId: string): Promise<DeleteCronResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${projectId}/crons/${encodedCronId}?confirm=true`,
+      { method: "DELETE" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as DeleteCronResponse;
+  }
+
+  async getCronRuns(projectId: string, cronId: string): Promise<CronRunsResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${projectId}/crons/${encodedCronId}/runs`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronRunsResponse;
+  }
+
+  async getCronLinkedTasks(projectId: string, cronId: string): Promise<CronLinkedTasksResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${projectId}/crons/${encodedCronId}/linked-tasks`
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksResponse;
+  }
+
+  async setCronLinkedTasks(
+    projectId: string,
+    cronId: string,
+    taskIds: string[]
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${projectId}/crons/${encodedCronId}/linked-tasks`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ taskIds }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
+  }
+
+  async addCronLinkedTask(
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const encodedTaskId = encodeURIComponent(taskId);
+    const response = await this.fetch(
+      `/api/v1/crons/${projectId}/crons/${encodedCronId}/linked-tasks/${encodedTaskId}`,
+      { method: "POST" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
+  }
+
+  async removeCronLinkedTask(
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedCronId = encodeURIComponent(cronId);
+    const encodedTaskId = encodeURIComponent(taskId);
+    const response = await this.fetch(
+      `/api/v1/crons/${projectId}/crons/${encodedCronId}/linked-tasks/${encodedTaskId}`,
+      { method: "DELETE" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
   }
 
   async triggerCron(projectId: string, cronId: string, runId: string): Promise<void> {

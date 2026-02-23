@@ -372,6 +372,223 @@ describe("ApiClient", () => {
       expect(crons).toEqual(mockCrons);
     });
 
+    it("getCronEntry returns cron detail payload", async () => {
+      const mockDetail = {
+        cron: {
+          id: "crn00001",
+          path: "projects/myproject/cron/crn00001.md",
+          title: "Nightly",
+          status: "pending",
+          type: "cron",
+          content: "",
+          tags: [],
+          created: "2026-02-20T00:00:00.000Z",
+          modified: "2026-02-20T00:00:00.000Z",
+          link: "[Nightly](crn00001)",
+          schedule: "0 2 * * *",
+        },
+        pipeline: [],
+        pipelineCount: 0,
+      };
+
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response(JSON.stringify(mockDetail), { status: 200 }))
+      );
+
+      const detail = await client.getCronEntry("myproject", "crn00001");
+
+      expect(detail.cron.id).toBe("crn00001");
+      expect(detail.pipelineCount).toBe(0);
+    });
+
+    it("createCronEntry posts payload and returns mutation response", async () => {
+      let capturedMethod: string | undefined;
+      let capturedBody: string | undefined;
+      const mockResponse = {
+        cron: {
+          id: "crn00001",
+          path: "projects/myproject/cron/crn00001.md",
+          title: "Nightly",
+          status: "pending",
+          type: "cron",
+          content: "",
+          tags: [],
+          created: "2026-02-20T00:00:00.000Z",
+          modified: "2026-02-20T00:00:00.000Z",
+          link: "[Nightly](crn00001)",
+          schedule: "0 2 * * *",
+        },
+        message: "Cron created",
+      };
+
+      globalThis.fetch = ((_: string, options?: RequestInit) => {
+        capturedMethod = options?.method;
+        capturedBody = options?.body as string;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 201 }));
+      }) as typeof fetch;
+
+      const result = await client.createCronEntry("myproject", {
+        title: "Nightly",
+        schedule: "0 2 * * *",
+        tags: ["ops"],
+      });
+
+      expect(capturedMethod).toBe("POST");
+      expect(capturedBody).toBe(
+        JSON.stringify({ title: "Nightly", schedule: "0 2 * * *", tags: ["ops"] })
+      );
+      expect(result.cron.id).toBe("crn00001");
+      expect(result.message).toBe("Cron created");
+    });
+
+    it("updateCronEntry patches payload and returns mutation response", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      let capturedBody: string | undefined;
+      const mockResponse = {
+        cron: {
+          id: "crn00001",
+          path: "projects/myproject/cron/crn00001.md",
+          title: "Nightly Updated",
+          status: "pending",
+          type: "cron",
+          content: "",
+          tags: [],
+          created: "2026-02-20T00:00:00.000Z",
+          modified: "2026-02-20T00:00:00.000Z",
+          link: "[Nightly Updated](crn00001)",
+          schedule: "0 2 * * *",
+        },
+        message: "Cron updated",
+      };
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        capturedUrl = url;
+        capturedMethod = options?.method;
+        capturedBody = options?.body as string;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.updateCronEntry("myproject", "crn00001", {
+        title: "Nightly Updated",
+      });
+
+      expect(capturedUrl).toContain("/api/v1/crons/myproject/crons/crn00001");
+      expect(capturedMethod).toBe("PATCH");
+      expect(capturedBody).toBe(JSON.stringify({ title: "Nightly Updated" }));
+      expect(result.cron.title).toBe("Nightly Updated");
+      expect(result.message).toBe("Cron updated");
+    });
+
+    it("deleteCronEntry uses confirm query and returns payload", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      const mockResponse = {
+        message: "Cron deleted successfully",
+        path: "projects/myproject/cron/crn00001.md",
+      };
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        capturedUrl = url;
+        capturedMethod = options?.method;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.deleteCronEntry("myproject", "crn00001");
+
+      expect(capturedUrl).toContain("/api/v1/crons/myproject/crons/crn00001?confirm=true");
+      expect(capturedMethod).toBe("DELETE");
+      expect(result.path).toBe("projects/myproject/cron/crn00001.md");
+      expect(result.message).toBe("Cron deleted successfully");
+    });
+
+    it("getCronRuns returns run history", async () => {
+      const mockRuns = {
+        cronId: "crn00001",
+        runs: [{ run_id: "run-1", status: "completed" as const, started: "2026-02-23T02:00:00.000Z" }],
+        count: 1,
+      };
+
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response(JSON.stringify(mockRuns), { status: 200 }))
+      );
+
+      const result = await client.getCronRuns("myproject", "crn00001");
+      expect(result.cronId).toBe("crn00001");
+      expect(result.count).toBe(1);
+      expect(result.runs[0]?.run_id).toBe("run-1");
+    });
+
+    it("getCronLinkedTasks returns linked tasks", async () => {
+      const mockLinked = {
+        cronId: "crn00001",
+        tasks: [{ id: "tsk00001", title: "Task A" }],
+        count: 1,
+      };
+
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response(JSON.stringify(mockLinked), { status: 200 }))
+      );
+
+      const result = await client.getCronLinkedTasks("myproject", "crn00001");
+      expect(result.cronId).toBe("crn00001");
+      expect(result.count).toBe(1);
+    });
+
+    it("setCronLinkedTasks PATCHes taskIds payload", async () => {
+      let capturedMethod: string | undefined;
+      let capturedBody: string | undefined;
+      const mockResponse = { cronId: "crn00001", tasks: [], count: 0, message: "updated" };
+
+      globalThis.fetch = ((_: string, options?: RequestInit) => {
+        capturedMethod = options?.method;
+        capturedBody = options?.body as string;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.setCronLinkedTasks("myproject", "crn00001", ["tsk00001", "tsk00002"]);
+
+      expect(capturedMethod).toBe("PATCH");
+      expect(capturedBody).toBe(JSON.stringify({ taskIds: ["tsk00001", "tsk00002"] }));
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("addCronLinkedTask POSTs link endpoint", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      const mockResponse = { cronId: "crn00001", tasks: [], count: 0, message: "linked" };
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        capturedUrl = url;
+        capturedMethod = options?.method;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.addCronLinkedTask("myproject", "crn00001", "tsk00001");
+
+      expect(capturedUrl).toContain("/api/v1/crons/myproject/crons/crn00001/linked-tasks/tsk00001");
+      expect(capturedMethod).toBe("POST");
+      expect(result).toEqual(mockResponse);
+    });
+
+    it("removeCronLinkedTask DELETEs link endpoint", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      const mockResponse = { cronId: "crn00001", tasks: [], count: 0, message: "unlinked" };
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        capturedUrl = url;
+        capturedMethod = options?.method;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.removeCronLinkedTask("myproject", "crn00001", "tsk00001");
+
+      expect(capturedUrl).toContain("/api/v1/crons/myproject/crons/crn00001/linked-tasks/tsk00001");
+      expect(capturedMethod).toBe("DELETE");
+      expect(result).toEqual(mockResponse);
+    });
+
     it("triggerCron posts trigger with runId payload", async () => {
       let capturedUrl: string | undefined;
       let capturedMethod: string | undefined;

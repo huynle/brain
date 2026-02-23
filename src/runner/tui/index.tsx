@@ -71,6 +71,10 @@ export interface DashboardOptions {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
+  /** Get in-memory runtime default model override */
+  getRuntimeDefaultModel?: () => string | undefined;
+  /** Set in-memory runtime default model override (undefined/empty clears override) */
+  setRuntimeDefaultModel?: (model: string | undefined) => void;
   /** Enable a feature to run while project is paused (whitelist) */
   onEnableFeature?: (featureId: string) => void;
   /** Disable a feature from whitelist */
@@ -183,6 +187,8 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       getResourceMetrics={options.getResourceMetrics}
       getProjectLimits={options.getProjectLimits}
       setProjectLimit={options.setProjectLimit}
+      getRuntimeDefaultModel={options.getRuntimeDefaultModel}
+      setRuntimeDefaultModel={options.setRuntimeDefaultModel}
       onEnableFeature={options.onEnableFeature}
       onDisableFeature={options.onDisableFeature}
       getEnabledFeatures={options.getEnabledFeatures}

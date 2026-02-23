@@ -112,6 +112,10 @@ export class TaskRunner {
   // Projects not in this map use no limit (only global maxParallel applies)
   private projectLimits: Map<string, number> = new Map();
 
+  // Runtime default model override (in-memory only)
+  // When set, model resolution is: task.model > runtime default > config default
+  private runtimeDefaultModel: string | undefined;
+
   // Pending resume queue: orphaned in_progress tasks detected on startup when paused
   // These are prioritized when resume/resumeAll is called
   // Map key is taskId, value is RunningTask placeholder
@@ -787,6 +791,26 @@ export class TaskRunner {
       this.logger.info("Set per-project limit", { projectId, limit });
     }
     this.tuiLog('info', `Project limit: ${projectId} = ${limit ?? 'no limit'}`, undefined, projectId);
+  }
+
+  /**
+   * Set runtime default model override used for new task execution.
+   * Pass undefined/empty to clear and fall back to config default.
+   */
+  setRuntimeDefaultModel(model: string | undefined): void {
+    const normalized = model?.trim();
+    this.runtimeDefaultModel = normalized ? normalized : undefined;
+    this.logger.info("Updated runtime default model", {
+      model: this.runtimeDefaultModel ?? "<config-default>",
+    });
+    this.tuiLog('info', `Runtime default model: ${this.runtimeDefaultModel ?? 'config default'}`);
+  }
+
+  /**
+   * Get current runtime default model override.
+   */
+  getRuntimeDefaultModel(): string | undefined {
+    return this.runtimeDefaultModel;
   }
 
   /**
@@ -1497,6 +1521,7 @@ export class TaskRunner {
         isResume: false,
         useTui,
         workdir, // Pass pre-resolved workdir to avoid redundant resolution
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 5: Track the process
@@ -2200,6 +2225,7 @@ export class TaskRunner {
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: true,
         useTui,
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       this.tuiLog('info', `Resuming orphaned task: ${task.title}`, task.id, effectiveProjectId);
@@ -2391,6 +2417,7 @@ export class TaskRunner {
         isResume: false,
         useTui,
         workdir, // Pass pre-resolved workdir
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 8: Track the process
@@ -2526,6 +2553,7 @@ export class TaskRunner {
         isResume: true,
         useTui,
         workdir,
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 4: Track the process (counts toward maxParallel)
@@ -3130,6 +3158,8 @@ export class TaskRunner {
           running: this.getRunningCountForProject(projectId),
         })),
         setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
+        getRuntimeDefaultModel: () => this.getRuntimeDefaultModel(),
+        setRuntimeDefaultModel: (model: string | undefined) => this.setRuntimeDefaultModel(model),
         // Feature enable/disable callbacks (whitelist for paused projects)
         onEnableFeature: (featureId) => this.enableFeature(featureId),
         onDisableFeature: (featureId) => this.disableFeature(featureId),

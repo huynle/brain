@@ -160,6 +160,8 @@ export function App({
   getResourceMetrics,
   getProjectLimits,
   setProjectLimit,
+  getRuntimeDefaultModel,
+  setRuntimeDefaultModel,
   onEnableFeature,
   onDisableFeature,
   getEnabledFeatures,
@@ -244,6 +246,9 @@ export function App({
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('limits');
   // Group visibility state for settings popup
   const [groupVisibilityState, setGroupVisibilityState] = useState<GroupVisibilityEntry[]>([]);
+  const [runtimeDefaultModelState, setRuntimeDefaultModelState] = useState<string>('');
+  const [runtimeModelEditMode, setRuntimeModelEditMode] = useState(false);
+  const [runtimeModelEditBuffer, setRuntimeModelEditBuffer] = useState('');
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [enabledFeatures, setEnabledFeatures] = useState<Set<string>>(new Set());
@@ -1059,14 +1064,25 @@ export function App({
     if (showSettingsPopup) {
       // Escape to close popup
       if (key.escape) {
+        if (settingsSection === 'runtime' && runtimeModelEditMode) {
+          setRuntimeModelEditMode(false);
+          setRuntimeModelEditBuffer(runtimeDefaultModelState);
+          return;
+        }
         setShowSettingsPopup(false);
+        setRuntimeModelEditMode(false);
         return;
       }
 
       // Tab to switch between sections
       if (key.tab) {
-        setSettingsSection(prev => prev === 'limits' ? 'groups' : 'limits');
+        setSettingsSection(prev => {
+          if (prev === 'limits') return 'groups';
+          if (prev === 'groups') return 'runtime';
+          return 'limits';
+        });
         setSettingsSelectedIndex(0);
+        setRuntimeModelEditMode(false);
         return;
       }
 
@@ -1150,7 +1166,7 @@ export function App({
           }
           return;
         }
-      } else {
+      } else if (settingsSection === 'groups') {
         // Groups section
         const currentGroups = groupVisibilityState;
 
@@ -1217,6 +1233,67 @@ export function App({
               message: `${entry.label} group: ${newCollapsed ? 'collapsed' : 'expanded'}`,
             });
           }
+          return;
+        }
+      } else {
+        // Runtime section (default model override)
+        if (runtimeModelEditMode) {
+          // Save edited model
+          if (key.return) {
+            const trimmed = runtimeModelEditBuffer.trim();
+            const nextModel = trimmed.length > 0 ? trimmed : undefined;
+            if (setRuntimeDefaultModel) {
+              setRuntimeDefaultModel(nextModel);
+            }
+            setRuntimeDefaultModelState(trimmed);
+            setRuntimeModelEditMode(false);
+            addLog({
+              level: 'info',
+              message: `Runtime default model: ${trimmed.length > 0 ? trimmed : 'config default'}`,
+            });
+            return;
+          }
+
+          // Cancel edit but keep popup open
+          if (key.escape) {
+            setRuntimeModelEditMode(false);
+            setRuntimeModelEditBuffer(runtimeDefaultModelState);
+            return;
+          }
+
+          // Backspace/delete
+          if (key.backspace || key.delete) {
+            setRuntimeModelEditBuffer(prev => prev.slice(0, -1));
+            return;
+          }
+
+          // Append printable characters
+          if (input && input.length === 1 && !key.ctrl && !key.meta) {
+            setRuntimeModelEditBuffer(prev => prev + input);
+            return;
+          }
+
+          // Ignore all other keys while editing
+          return;
+        }
+
+        // Enter edit mode
+        if (input === 'e' || key.return) {
+          setRuntimeModelEditMode(true);
+          setRuntimeModelEditBuffer(runtimeDefaultModelState);
+          return;
+        }
+
+        // Clear runtime override (fallback to config)
+        if (input === '0') {
+          if (setRuntimeDefaultModel) {
+            setRuntimeDefaultModel(undefined);
+          }
+          setRuntimeDefaultModelState('');
+          addLog({
+            level: 'info',
+            message: 'Runtime default model reset to config default',
+          });
           return;
         }
       }
@@ -1819,10 +1896,14 @@ export function App({
       
       setSettingsSelectedIndex(0);
       setSettingsSection('limits');
+      setRuntimeModelEditMode(false);
       // Sync React state with external limits when opening popup
       if (getProjectLimits) {
         setProjectLimitsState(getProjectLimits());
       }
+      const runtimeModel = getRuntimeDefaultModel?.() ?? '';
+      setRuntimeDefaultModelState(runtimeModel);
+      setRuntimeModelEditBuffer(runtimeModel);
       // Compute group visibility entries from current tasks
       const statusCounts: Record<string, number> = {};
       for (const task of tasks) {
@@ -2400,6 +2481,9 @@ export function App({
           selectedIndex={settingsSelectedIndex}
           section={settingsSection}
           groups={groupVisibilityState}
+          runtimeDefaultModel={runtimeDefaultModelState}
+          runtimeEditMode={runtimeModelEditMode}
+          runtimeEditBuffer={runtimeModelEditBuffer}
         />
       </Box>
     );

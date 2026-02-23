@@ -487,6 +487,38 @@ Step 3: Commit changes`;
       }
     });
 
+    test("uses runtime default model override when task model is unset", async () => {
+      const task = createMockTask("task1", {
+        model: null,
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+          runtimeDefaultModel: "anthropic/claude-sonnet-4-5",
+        });
+
+        const modelIndex = spawnArgs.cmd.indexOf("--model");
+        expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-sonnet-4-5");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
     test("uses direct_prompt in prompt file content", async () => {
       const task = createMockTask("task1", {
         direct_prompt: "/lint --fix src/",

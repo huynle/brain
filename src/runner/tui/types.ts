@@ -199,7 +199,7 @@ export interface GroupVisibilityEntry {
 /**
  * Settings popup section type
  */
-export type SettingsSection = 'limits' | 'groups';
+export type SettingsSection = 'limits' | 'groups' | 'runtime';
 
 /**
  * Props for the main App component
@@ -236,6 +236,10 @@ export interface AppProps {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
+  /** Get in-memory runtime default model override */
+  getRuntimeDefaultModel?: () => string | undefined;
+  /** Set in-memory runtime default model override (undefined/empty clears override) */
+  setRuntimeDefaultModel?: (model: string | undefined) => void;
   /** Enable a feature to run while project is paused (whitelist) */
   onEnableFeature?: (featureId: string) => void;
   /** Disable a feature from whitelist */

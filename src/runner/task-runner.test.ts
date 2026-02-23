@@ -2501,3 +2501,385 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
     expect(taskToCronRun).toBeInstanceOf(Map);
   });
 });
+
+// =============================================================================
+// TaskRunner - Cron Context Propagation (Phase 3)
+// =============================================================================
+
+describe("TaskRunner - cron context propagation (Phase 3)", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-p3-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {}
+  });
+
+  /** Mock executor that returns a successful spawn with a known sessionId. */
+  function createMockExecutor(sessionId = "ses_test123") {
+    return {
+      resolveWorkdir: async () => "/tmp/test-workdir",
+      spawn: async () => ({
+        pid: 99999,
+        paneId: undefined,
+        windowName: "task_test",
+        proc: null as unknown,
+        opencodePort: undefined,
+        sessionId,
+      }),
+      cleanup: async () => {},
+      buildCommand: () => [],
+      buildPrompt: () => "",
+    };
+  }
+
+  /** Create a mock fetch that tracks PATCH bodies and accepts claim/status/release calls. */
+  function createPatchTrackingFetch() {
+    const patchCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    const fetchFn = ((url: string, options?: RequestInit) => {
+      const method = options?.method ?? "GET";
+
+      // Claim succeeds
+      if (url.includes("/claim")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ success: true, taskId: "any", runnerId: "test" })
+          )
+        );
+      }
+
+      // GET entry (for getTaskByPath, updateCronRun read step)
+      if (url.includes("/entries/") && method === "GET") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "task-1",
+              path: "projects/test-project/task/task-1.md",
+              title: "Test Task",
+              priority: "medium",
+              status: "in_progress",
+              sessions: {},
+            })
+          )
+        );
+      }
+
+      // PATCH (status update, session metadata, etc.)
+      if (method === "PATCH" && options?.body) {
+        try {
+          const body = JSON.parse(options.body as string) as Record<string, unknown>;
+          patchCalls.push({ url, body });
+        } catch {}
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }
+
+      // Release, health, etc.
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    return { fetchFn, patchCalls };
+  }
+
+  // ── claimAndSpawn ──────────────────────────────────────────────────────
+
+  test("claimAndSpawn writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Set up cron tracking maps (Phase 2 infrastructure)
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const task = createMockTask("task-1", {
+      path: "projects/test-project/task/task-1.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    const result = await claimAndSpawn(task, "test-project");
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    // Extract the session data object
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  test("claimAndSpawn does NOT include cron fields when task is not cron-triggered", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Do NOT add task to taskToCronRun — this is a regular (non-cron) task
+
+    const task = createMockTask("task-2", {
+      path: "projects/test-project/task/task-2.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    const result = await claimAndSpawn(task, "test-project");
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    // Should have timestamp but NO cron_id or run_id
+    expect(sessionData.timestamp).toBeDefined();
+    expect(sessionData.cron_id).toBeUndefined();
+    expect(sessionData.run_id).toBeUndefined();
+  });
+
+  test("RunningTask has cronId/runId populated for cron-triggered tasks", async () => {
+    const { fetchFn } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const task = createMockTask("task-1", {
+      path: "projects/test-project/task/task-1.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    await claimAndSpawn(task, "test-project");
+
+    // Task should be in tuiTasks (mock executor returns proc: null, windowName: "task_test")
+    // @ts-expect-error - accessing private property for testing
+    const runningTask = runner.tuiTasks.get("task-1");
+    expect(runningTask).toBeDefined();
+    expect(runningTask!.cronId).toBe("cron-daily");
+    expect(runningTask!.runId).toBe("run-20250115");
+  });
+
+  test("RunningTask does NOT have cronId/runId for non-cron tasks", async () => {
+    const { fetchFn } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    const task = createMockTask("task-2", {
+      path: "projects/test-project/task/task-2.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    await claimAndSpawn(task, "test-project");
+
+    // @ts-expect-error - accessing private property for testing
+    const runningTask = runner.tuiTasks.get("task-2");
+    expect(runningTask).toBeDefined();
+    expect(runningTask!.cronId).toBeUndefined();
+    expect(runningTask!.runId).toBeUndefined();
+  });
+
+  // ── resumeTask ─────────────────────────────────────────────────────────
+
+  test("resumeTask writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_resume123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const runningTask: RunningTask = {
+      id: "task-1",
+      path: "projects/test-project/task/task-1.md",
+      title: "Cron Task",
+      priority: "medium",
+      projectId: "test-project",
+      pid: 0,
+      startedAt: new Date().toISOString(),
+      isResume: true,
+      workdir: "/tmp/test-workdir",
+    };
+
+    const resumeTask = (runner as unknown as {
+      resumeTask: (task: RunningTask) => Promise<void>;
+    }).resumeTask.bind(runner);
+
+    await resumeTask(runningTask);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  // ── executeTaskManually ────────────────────────────────────────────────
+
+  test("executeTaskManually writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_manual123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const result = await runner.executeTaskManually(
+      "task-1",
+      "projects/test-project/task/task-1.md"
+    );
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH (skip the status PATCHes)
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  // ── spawnFreshResumeSession ────────────────────────────────────────────
+
+  test("spawnFreshResumeSession writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_freshr123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    // spawnFreshResumeSession is called via executeTaskManually when task is in_progress
+    // The GET entry mock returns status: "in_progress", which triggers spawnFreshResumeSession
+    const result = await runner.executeTaskManually(
+      "task-1",
+      "projects/test-project/task/task-1.md"
+    );
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+});

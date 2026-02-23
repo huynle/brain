@@ -117,9 +117,17 @@ export class TaskRunner {
   // Map key is taskId, value is RunningTask placeholder
   private pendingResumeTasks: Map<string, RunningTask> = new Map();
 
-  // Cron tracking: active runs and task-to-run mapping (Phase 2)
-  // activeCronRuns: Map<run_id, { cronId, cronPath, projectId, taskIds }>
-  private activeCronRuns: Map<string, { cronId: string; cronPath: string; projectId: string; taskIds: string[] }> = new Map();
+  // Cron tracking: active runs and task-to-run mapping (Phase 2/4)
+  // activeCronRuns: Map<run_id, { cronId, cronPath, projectId, taskIds, startedAtIso, startedAtMs, pendingTaskIds }>
+  private activeCronRuns: Map<string, {
+    cronId: string;
+    cronPath: string;
+    projectId: string;
+    taskIds: string[];
+    startedAtIso: string;
+    startedAtMs: number;
+    pendingTaskIds: Set<string>;
+  }> = new Map();
   // taskToCronRun: Map<taskId, run_id> — reverse lookup for completion tracking
   private taskToCronRun: Map<string, string> = new Map();
 
@@ -1160,6 +1168,102 @@ export class TaskRunner {
     }
   }
 
+  /**
+   * Look up cron context for a task.
+   * Returns { cronId, runId } if the task was triggered by a cron run, undefined otherwise.
+   */
+  private resolveCronContext(taskId: string): { cronId: string; runId: string } | undefined {
+    const runId = this.taskToCronRun.get(taskId);
+    if (!runId) return undefined;
+    const run = this.activeCronRuns.get(runId);
+    if (!run) return undefined;
+    return { cronId: run.cronId, runId };
+  }
+
+  private cleanupCronRunTracking(
+    runId: string,
+    run: { taskIds: string[] }
+  ): void {
+    this.activeCronRuns.delete(runId);
+    for (const runTaskId of run.taskIds) {
+      if (this.taskToCronRun.get(runTaskId) === runId) {
+        this.taskToCronRun.delete(runTaskId);
+      }
+    }
+  }
+
+  private async finalizeCronRunForTask(
+    taskId: string,
+    status: CompletionStatus,
+    completedAt: Date = new Date()
+  ): Promise<void> {
+    const runId = this.taskToCronRun.get(taskId);
+    if (!runId) {
+      return;
+    }
+
+    // This task is now terminal regardless of outcome.
+    this.taskToCronRun.delete(taskId);
+
+    const run = this.activeCronRuns.get(runId);
+    if (!run) {
+      return;
+    }
+
+    run.pendingTaskIds.delete(taskId);
+
+    const completedIso = completedAt.toISOString();
+    const duration = Math.max(0, completedAt.getTime() - run.startedAtMs);
+    const isFailure = status !== CompletionStatus.Completed;
+
+    if (isFailure) {
+      try {
+        await this.apiClient.updateCronRun(run.cronPath, {
+          run_id: runId,
+          status: "failed",
+          started: run.startedAtIso,
+          completed: completedIso,
+          duration,
+          failed_task: taskId,
+          tasks: run.taskIds.length,
+        });
+      } catch (error) {
+        this.logger.warn("Failed to finalize cron run as failed", {
+          runId,
+          cronId: run.cronId,
+          taskId,
+          error: String(error),
+        });
+      } finally {
+        this.cleanupCronRunTracking(runId, run);
+      }
+      return;
+    }
+
+    if (run.pendingTaskIds.size > 0) {
+      return;
+    }
+
+    try {
+      await this.apiClient.updateCronRun(run.cronPath, {
+        run_id: runId,
+        status: "completed",
+        started: run.startedAtIso,
+        completed: completedIso,
+        duration,
+        tasks: run.taskIds.length,
+      });
+    } catch (error) {
+      this.logger.warn("Failed to finalize cron run as completed", {
+        runId,
+        cronId: run.cronId,
+        error: String(error),
+      });
+    } finally {
+      this.cleanupCronRunTracking(runId, run);
+    }
+  }
+
   private cronCheckDue(nowMs: number = Date.now()): boolean {
     if (this.lastCronCheckAtMs === null) {
       return true;
@@ -1258,10 +1362,11 @@ export class TaskRunner {
       }
 
       // Record run as in_progress
+      const startedAtIso = now.toISOString();
       await this.apiClient.updateCronRun(cronEntry.path, {
         run_id: runId,
         status: "in_progress",
-        started: now.toISOString(),
+        started: startedAtIso,
         tasks: pipelineTasks.length,
       });
 
@@ -1272,6 +1377,9 @@ export class TaskRunner {
         cronPath: cronEntry.path,
         projectId,
         taskIds,
+        startedAtIso,
+        startedAtMs: now.getTime(),
+        pendingTaskIds: new Set(taskIds),
       });
       for (const taskId of taskIds) {
         this.taskToCronRun.set(taskId, runId);
@@ -1408,6 +1516,13 @@ export class TaskRunner {
         sessionId: result.sessionId,
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(task.id);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
+
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
       if (result.proc) {
         this.processManager.add(task.id, runningTask, result.proc);
@@ -1430,9 +1545,16 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(task.path, {
             sessions: {
-              [runningTask.sessionId]: { timestamp: new Date().toISOString() },
+              [runningTask.sessionId]: sessionMeta,
             },
           });
           this.logger.debug("Session ID persisted to task", {
@@ -1809,6 +1931,8 @@ export class TaskRunner {
 
     this.stats.totalRuntime += result.duration;
 
+    await this.finalizeCronRunForTask(taskId, status);
+
     // Release claim
     try {
       await this.apiClient.releaseTask(this.projectId, taskId);
@@ -1899,6 +2023,8 @@ export class TaskRunner {
     }
 
     this.stats.totalRuntime += duration;
+
+    await this.finalizeCronRunForTask(taskId, status);
 
     // Release claim
     try {
@@ -2090,6 +2216,13 @@ export class TaskRunner {
         idleSince: undefined, // Clear any previous idle state
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(task.id);
+      if (cronCtx) {
+        newRunningTask.cronId = cronCtx.cronId;
+        newRunningTask.runId = cronCtx.runId;
+      }
+
       if (result.proc) {
         this.processManager.add(task.id, newRunningTask, result.proc);
       } else if (result.windowName || result.paneId) {
@@ -2100,9 +2233,16 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (newRunningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(task.path, {
             sessions: {
-              [newRunningTask.sessionId]: { timestamp: new Date().toISOString() },
+              [newRunningTask.sessionId]: sessionMeta,
             },
           });
           this.logger.debug("Session ID persisted to resumed task", {
@@ -2270,6 +2410,13 @@ export class TaskRunner {
         sessionId: result.sessionId,
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(taskId);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
+
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
       if (result.proc) {
         this.processManager.add(taskId, runningTask, result.proc);
@@ -2291,9 +2438,16 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(taskPath, {
             sessions: {
-              [runningTask.sessionId]: { timestamp: new Date().toISOString() },
+              [runningTask.sessionId]: sessionMeta,
             },
           });
           this.logger.debug("Session ID persisted to manually executed task", {
@@ -2391,6 +2545,13 @@ export class TaskRunner {
         sessionId: result.sessionId,
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(taskId);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
+
       if (result.proc) {
         this.processManager.add(taskId, runningTask, result.proc);
       } else if (result.windowName || result.paneId) {
@@ -2403,9 +2564,16 @@ export class TaskRunner {
       // Step 6: Persist new session metadata to task frontmatter
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(taskPath, {
             sessions: {
-              [runningTask.sessionId]: { timestamp: new Date().toISOString() },
+              [runningTask.sessionId]: sessionMeta,
             },
           });
         } catch (error) {

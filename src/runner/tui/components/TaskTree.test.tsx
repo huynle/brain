@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, parseTaskTreeRowTarget, buildVisibleTaskTreeRows, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, SPACER_PREFIX } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, parseTaskTreeRowTarget, buildVisibleTaskTreeRows, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, PROJECT_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, SPACER_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 import type { LaneAssignment } from '../lane-layout';
 
@@ -1304,6 +1304,12 @@ describe('TaskTree mouse contracts', () => {
       id: `${FEATURE_HEADER_PREFIX}auth-system`,
       featureId: 'auth-system',
     });
+
+    expect(parseTaskTreeRowTarget(`${PROJECT_HEADER_PREFIX}brain-api`)).toEqual({
+      kind: 'project_header',
+      id: `${PROJECT_HEADER_PREFIX}brain-api`,
+      projectId: 'brain-api',
+    });
   });
 
   it('parses ungrouped and spacer rows', () => {
@@ -1343,6 +1349,136 @@ describe('TaskTree mouse contracts', () => {
         },
       },
     ]);
+  });
+
+  it('emits visible row metadata for the current viewport', () => {
+    const tasks = [
+      createTask({ id: 'a-1', title: 'A1', feature_id: 'alpha', dependencies: [] }),
+      createTask({ id: 'a-2', title: 'A2', feature_id: 'alpha', dependencies: ['a-1'] }),
+      createTask({ id: 'd-1', title: 'D1', feature_id: 'alpha', status: 'draft' }),
+    ];
+
+    let emittedRows: ReturnType<typeof buildVisibleTaskTreeRows> = [];
+
+    render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        groupByFeature={true}
+        draftCollapsed={false}
+        scrollOffset={1}
+        viewportHeight={3}
+        onVisibleRows={(rows) => {
+          emittedRows = rows;
+        }}
+      />
+    );
+
+    const expectedOrder = flattenFeatureOrder(
+      tasks,
+      true,
+      false,
+      new Set(),
+      true,
+      true,
+      true,
+    );
+
+    expect(emittedRows).toEqual(buildVisibleTaskTreeRows(expectedOrder, 1, 3));
+  });
+
+  it('emits project header rows for grouped-by-project viewport hit-testing', () => {
+    const tasks = [
+      createTask({ id: 'a-1', title: 'A1', projectId: 'alpha', dependencies: [] }),
+      createTask({ id: 'a-2', title: 'A2', projectId: 'alpha', dependencies: ['a-1'] }),
+      createTask({ id: 'b-1', title: 'B1', projectId: 'beta', dependencies: [] }),
+    ];
+
+    let emittedRows: ReturnType<typeof buildVisibleTaskTreeRows> = [];
+
+    render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        groupByProject={true}
+        scrollOffset={0}
+        viewportHeight={3}
+        onVisibleRows={(rows) => {
+          emittedRows = rows;
+        }}
+      />
+    );
+
+    expect(emittedRows).toEqual([
+      {
+        row: 0,
+        target: {
+          kind: 'project_header',
+          id: `${PROJECT_HEADER_PREFIX}alpha`,
+          projectId: 'alpha',
+        },
+      },
+      {
+        row: 1,
+        target: {
+          kind: 'task',
+          id: 'a-1',
+          taskId: 'a-1',
+        },
+      },
+      {
+        row: 2,
+        target: {
+          kind: 'task',
+          id: 'a-2',
+          taskId: 'a-2',
+        },
+      },
+    ]);
+  });
+
+  it('keeps project headers visible while hiding tasks for collapsed projects', () => {
+    const tasks = [
+      createTask({ id: 'a-1', title: 'A1', projectId: 'alpha', dependencies: [] }),
+      createTask({ id: 'a-2', title: 'A2', projectId: 'alpha', dependencies: ['a-1'] }),
+      createTask({ id: 'b-1', title: 'B1', projectId: 'beta', dependencies: [] }),
+    ];
+
+    let emittedRows: ReturnType<typeof buildVisibleTaskTreeRows> = [];
+
+    render(
+      <TaskTree
+        tasks={tasks}
+        selectedId={null}
+        onSelect={() => {}}
+        {...defaultTreeProps}
+        groupByProject={true}
+        collapsedFeatures={new Set(['project:alpha'])}
+        scrollOffset={0}
+        viewportHeight={3}
+        onVisibleRows={(rows) => {
+          emittedRows = rows;
+        }}
+      />
+    );
+
+    expect(emittedRows[0]).toEqual({
+      row: 0,
+      target: {
+        kind: 'project_header',
+        id: `${PROJECT_HEADER_PREFIX}alpha`,
+        projectId: 'alpha',
+      },
+    });
+
+    const emittedTargetIds = emittedRows.map((row) => row.target.id);
+    expect(emittedTargetIds).not.toContain('a-1');
+    expect(emittedTargetIds).not.toContain('a-2');
+    expect(emittedTargetIds).toContain(`${PROJECT_HEADER_PREFIX}beta`);
   });
 });
 

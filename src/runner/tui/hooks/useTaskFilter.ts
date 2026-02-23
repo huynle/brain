@@ -10,7 +10,7 @@
 
 import { useState, useCallback, useMemo } from 'react';
 import type { TaskDisplay } from '../types';
-import { flattenFeatureOrder } from '../components/TaskTree';
+import { flattenFeatureOrder, flattenProjectOrder } from '../components/TaskTree';
 
 // =============================================================================
 // Types
@@ -29,12 +29,16 @@ export interface UseTaskFilterOptions {
   collapsedFeatures?: Set<string>;
   /** Set of status groups that should be visible (from Settings > Groups) */
   visibleGroups?: Set<string>;
+  /** Set of project IDs that are collapsed (for project-grouped navigation) */
+  collapsedProjects?: Set<string>;
   /** Whether cancelled section is collapsed (for navigation order) */
   cancelledCollapsed?: boolean;
   /** Whether superseded section is collapsed (for navigation order) */
   supersededCollapsed?: boolean;
   /** Whether archived section is collapsed (for navigation order) */
   archivedCollapsed?: boolean;
+  /** Whether tasks are grouped by project in the current view */
+  groupByProject?: boolean;
 }
 
 export interface UseTaskFilterResult {
@@ -149,10 +153,12 @@ export function useTaskFilter(options: UseTaskFilterOptions): UseTaskFilterResul
     completedCollapsed = true,
     draftCollapsed = true,
     collapsedFeatures = new Set<string>(),
+    collapsedProjects = new Set<string>(),
     visibleGroups,
     cancelledCollapsed = true,
     supersededCollapsed = true,
     archivedCollapsed = true,
+    groupByProject = false,
   } = options;
 
   const [filterText, setFilterText] = useState('');
@@ -210,6 +216,19 @@ export function useTaskFilter(options: UseTaskFilterOptions): UseTaskFilterResul
 
   // Calculate navigation order for filtered tasks
   const navigationOrder = useMemo(() => {
+    if (groupByProject) {
+      return flattenProjectOrder(
+        filteredTasks,
+        collapsedProjects,
+        collapsedFeatures,
+        completedCollapsed,
+        draftCollapsed,
+        cancelledCollapsed,
+        supersededCollapsed,
+        archivedCollapsed,
+      );
+    }
+
     return flattenFeatureOrder(
       filteredTasks,
       completedCollapsed,
@@ -219,7 +238,7 @@ export function useTaskFilter(options: UseTaskFilterOptions): UseTaskFilterResul
       supersededCollapsed,
       archivedCollapsed
     );
-  }, [filteredTasks, completedCollapsed, draftCollapsed, collapsedFeatures, cancelledCollapsed, supersededCollapsed, archivedCollapsed]);
+  }, [filteredTasks, completedCollapsed, draftCollapsed, collapsedFeatures, collapsedProjects, cancelledCollapsed, supersededCollapsed, archivedCollapsed, groupByProject]);
 
   // Calculate match and total counts
   const matchCount = filteredTasks.length;

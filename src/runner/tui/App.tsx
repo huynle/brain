@@ -63,11 +63,12 @@ import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
 import { useSettingsStorage } from './hooks/useSettingsStorage';
 import { useTaskFilter } from './hooks/useTaskFilter';
+import { useMouseInput } from './hooks/useMouseInput';
 import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
@@ -163,6 +164,72 @@ export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TU
   }
 
   return 'noop';
+}
+
+/**
+ * Resolve Set key used by collapsedFeatures for a row target.
+ */
+export function getTaskTreeCollapseKey(target: TaskTreeRowTarget): string | null {
+  if (target.kind === 'ungrouped_header') {
+    return UNGROUPED_FEATURE_ID;
+  }
+
+  if (target.kind === 'feature_header' && target.featureId) {
+    return target.featureId;
+  }
+
+  if (target.kind === 'status_feature_header' && target.featureId && target.statusGroup) {
+    return `${target.statusGroup}:${target.featureId}`;
+  }
+
+  if (target.kind === 'project_header' && target.projectId) {
+    return `project:${target.projectId}`;
+  }
+
+  return null;
+}
+
+const SINGLE_PROJECT_STATUS_BAR_HEIGHT = 3;
+const MULTI_PROJECT_STATUS_BAR_HEIGHT = 4;
+const TASK_PANEL_BORDER_TOP_ROWS = 1;
+const TASK_TREE_PADDING_TOP_ROWS = 1;
+const TASK_TREE_HEADER_ROWS = 1;
+const TASK_TREE_HEADER_MARGIN_ROWS = 1;
+
+/**
+ * Resolve first visible task-tree row as an absolute terminal row (1-based).
+ */
+export function getTaskTreeViewportStartRow(
+  isMultiProject: boolean,
+  filterMode: 'off' | 'typing' | 'locked',
+): number {
+  const statusBarHeight = isMultiProject ? MULTI_PROJECT_STATUS_BAR_HEIGHT : SINGLE_PROJECT_STATUS_BAR_HEIGHT;
+  const filterBarRows = filterMode === 'off' ? 0 : 1;
+
+  return statusBarHeight
+    + TASK_PANEL_BORDER_TOP_ROWS
+    + filterBarRows
+    + TASK_TREE_PADDING_TOP_ROWS
+    + TASK_TREE_HEADER_ROWS
+    + TASK_TREE_HEADER_MARGIN_ROWS
+    + 1;
+}
+
+/**
+ * Resolve semantic row target from an absolute mouse row.
+ */
+export function findTaskTreeTargetFromMouseRow(
+  visibleRows: TaskTreeVisibleRow[],
+  mouseRow: number,
+  viewportStartRow: number,
+): TaskTreeRowTarget | null {
+  const relativeRow = mouseRow - viewportStartRow;
+  if (relativeRow < 0) {
+    return null;
+  }
+
+  const hit = visibleRows.find((row) => row.row === relativeRow);
+  return hit?.target ?? null;
 }
 
 /**
@@ -274,6 +341,7 @@ export function App({
   const [supersededCollapsed, setSupersededCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   
   // Group visibility settings - persisted to ~/.brain/tui-settings.json
   // Default: show draft, pending, active, in_progress, blocked, completed
@@ -308,6 +376,7 @@ export function App({
   const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
   // Multi-select state: tasks selected via Space key for batch operations
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [taskTreeVisibleRows, setTaskTreeVisibleRows] = useState<TaskTreeVisibleRow[]>([]);
   // Delete confirmation popup state
   const [deletePopupOpen, setDeletePopupOpen] = useState(false);
   const [tasksToDelete, setTasksToDelete] = useState<Array<{id: string, title: string, path: string}>>([]);
@@ -642,10 +711,12 @@ export function App({
     completedCollapsed,
     draftCollapsed,
     collapsedFeatures,
+    collapsedProjects,
     visibleGroups,
     cancelledCollapsed,
     supersededCollapsed,
     archivedCollapsed,
+    groupByProject: isMultiProject && activeProject === 'all',
   });
 
   // Auto-scroll task list to keep selected task in view
@@ -873,6 +944,161 @@ export function App({
     addLog,
     refetch,
   ]);
+
+  const openSingleTaskMetadataPopup = useCallback(async (task: TaskDisplay) => {
+    let fetchedProjects = projects;
+    if (onListProjects) {
+      try {
+        fetchedProjects = await onListProjects();
+      } catch {
+        fetchedProjects = projects;
+      }
+    }
+
+    setAllProjects(fetchedProjects);
+    setMetadataTargetTasks([task]);
+    setMetadataPopupMode('single');
+    setMetadataFocusedField('status');
+    setMetadataStatusValue(task.status);
+    setMetadataStatusIndex(ENTRY_STATUSES.indexOf(task.status));
+    setMetadataFeatureIdValue(task.feature_id || '');
+    setMetadataBranchValue(task.gitBranch || '');
+    setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
+    setMetadataScheduleValue(task.schedule || '');
+    setMetadataProjectValue(task.projectId || '');
+    setMetadataProjectIndex(fetchedProjects.indexOf(task.projectId || '') >= 0 ? fetchedProjects.indexOf(task.projectId || '') : 0);
+    setMetadataAgentValue(task.agent || '');
+    setMetadataModelValue(task.model || '');
+    setMetadataDirectPromptValue(task.direct_prompt || '');
+    setMetadataOriginalValues({
+      status: task.status,
+      feature_id: task.feature_id || '',
+      git_branch: task.gitBranch || '',
+      target_workdir: task.resolvedWorkdir || task.workdir || '',
+      schedule: task.schedule || '',
+      project: task.projectId || '',
+      agent: task.agent || '',
+      model: task.model || '',
+      direct_prompt: task.direct_prompt || '',
+    });
+    setMetadataInteractionMode('navigate');
+    setMetadataEditBuffer('');
+    setMetadataDirty(false);
+    setShowMetadataPopup(true);
+  }, [onListProjects, projects]);
+
+  const toggleCollapsedForTarget = useCallback((target: TaskTreeRowTarget): boolean => {
+    if (target.kind === 'status_header') {
+      if (target.statusGroup === 'completed') {
+        setCompletedCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'draft') {
+        setDraftCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'cancelled') {
+        setCancelledCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'superseded') {
+        setSupersededCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'archived') {
+        setArchivedCollapsed(prev => !prev);
+        return true;
+      }
+      return false;
+    }
+
+    const collapseKey = getTaskTreeCollapseKey(target);
+    if (collapseKey) {
+      if (collapseKey.startsWith('project:')) {
+        const projectId = collapseKey.slice('project:'.length);
+        setCollapsedProjects(prev => {
+          const next = new Set(prev);
+          if (next.has(projectId)) {
+            next.delete(projectId);
+          } else {
+            next.add(projectId);
+          }
+          return next;
+        });
+      } else {
+        setCollapsedFeatures(prev => {
+          const next = new Set(prev);
+          if (next.has(collapseKey)) {
+            next.delete(collapseKey);
+          } else {
+            next.add(collapseKey);
+          }
+          return next;
+        });
+      }
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  const onMouseEvent = useCallback((event: TUIMouseEvent) => {
+    if (viewMode !== 'tasks') return;
+    if (showMetadataPopup || showSettingsPopup || deletePopupOpen || sessionPopupOpen || cronActionOpen || cronDeleteConfirmOpen || cronLinkEditorOpen || showHelp || isEditing) {
+      return;
+    }
+
+    const viewportStartRow = getTaskTreeViewportStartRow(isMultiProject, filterMode);
+    const rowTarget = findTaskTreeTargetFromMouseRow(taskTreeVisibleRows, event.row, viewportStartRow);
+    if (!rowTarget) return;
+
+    const action = resolveTaskTreeClickAction(rowTarget, event.button);
+    if (action === 'noop') return;
+
+    setFocusedPanel('tasks');
+    setSelectedTaskId(rowTarget.id);
+
+    if (action === 'toggle_collapsed') {
+      toggleCollapsedForTarget(rowTarget);
+      return;
+    }
+
+    if (rowTarget.kind !== 'task' || !rowTarget.taskId) {
+      return;
+    }
+
+    const clickedTask = tasks.find((task) => task.id === rowTarget.taskId);
+    if (!clickedTask) return;
+
+    if (action === 'open_editor') {
+      editTaskInEditor(clickedTask.id, clickedTask.path);
+      return;
+    }
+
+    if (action === 'open_metadata') {
+      openSingleTaskMetadataPopup(clickedTask);
+    }
+  }, [
+    viewMode,
+    showMetadataPopup,
+    showSettingsPopup,
+    deletePopupOpen,
+    sessionPopupOpen,
+    cronActionOpen,
+    cronDeleteConfirmOpen,
+    cronLinkEditorOpen,
+    showHelp,
+    isEditing,
+    isMultiProject,
+    filterMode,
+    taskTreeVisibleRows,
+    toggleCollapsedForTarget,
+    tasks,
+    editTaskInEditor,
+    openSingleTaskMetadataPopup,
+  ]);
+
+  useMouseInput(onMouseEvent);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -2698,71 +2924,7 @@ export function App({
       // Enter to toggle group section when header is selected
       if (key.return) {
         if (selectedRowTarget && resolveTaskTreeClickAction(selectedRowTarget, 'left') === 'toggle_collapsed') {
-          if (selectedRowTarget.kind === 'status_header') {
-            if (selectedRowTarget.statusGroup === 'completed') {
-              setCompletedCollapsed(prev => !prev);
-              return;
-            }
-            if (selectedRowTarget.statusGroup === 'draft') {
-              setDraftCollapsed(prev => !prev);
-              return;
-            }
-            if (selectedRowTarget.statusGroup === 'cancelled') {
-              setCancelledCollapsed(prev => !prev);
-              return;
-            }
-            if (selectedRowTarget.statusGroup === 'superseded') {
-              setSupersededCollapsed(prev => !prev);
-              return;
-            }
-            if (selectedRowTarget.statusGroup === 'archived') {
-              setArchivedCollapsed(prev => !prev);
-              return;
-            }
-          }
-
-          if (selectedRowTarget.kind === 'ungrouped_header') {
-            setCollapsedFeatures(prev => {
-              const next = new Set(prev);
-              if (next.has(UNGROUPED_FEATURE_ID)) {
-                next.delete(UNGROUPED_FEATURE_ID);
-              } else {
-                next.add(UNGROUPED_FEATURE_ID);
-              }
-              return next;
-            });
-            return;
-          }
-
-          if (selectedRowTarget.kind === 'feature_header' && selectedRowTarget.featureId) {
-            const featureId = selectedRowTarget.featureId;
-            setCollapsedFeatures(prev => {
-              const next = new Set(prev);
-              if (next.has(featureId)) {
-                next.delete(featureId);
-              } else {
-                next.add(featureId);
-              }
-              return next;
-            });
-            return;
-          }
-
-          if (
-            selectedRowTarget.kind === 'status_feature_header' &&
-            selectedRowTarget.featureId &&
-            selectedRowTarget.statusGroup
-          ) {
-            const groupKey = `${selectedRowTarget.statusGroup}:${selectedRowTarget.featureId}`;
-            setCollapsedFeatures(prev => {
-              const next = new Set(prev);
-              if (next.has(groupKey)) {
-                next.delete(groupKey);
-              } else {
-                next.add(groupKey);
-              }
-              return next;
-            });
+          if (toggleCollapsedForTarget(selectedRowTarget)) {
             return;
           }
         }
@@ -3212,11 +3374,13 @@ export function App({
                   scrollOffset={taskScrollOffset}
                   viewportHeight={taskViewportHeight}
                   collapsedFeatures={collapsedFeatures}
+                  collapsedProjects={collapsedProjects}
                   activeFeatures={activeFeatures}
                   selectedTaskIds={selectedTaskIds}
                   visibleGroups={visibleGroups}
                   textWrap={textWrap}
                   panelWidth={taskPanelWidth}
+                  onVisibleRows={setTaskTreeVisibleRows}
                 />
               </>
             ) : (

@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -399,6 +399,55 @@ describe('resolveTaskTreeClickAction', () => {
   it('ignores non-handled targets/buttons', () => {
     expect(resolveTaskTreeClickAction({ kind: 'spacer', id: 's1' }, 'left')).toBe('noop');
     expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h5', featureId: 'f' }, 'right')).toBe('noop');
+  });
+});
+
+describe('App click helper exports', () => {
+  it('exports a shared collapse-target resolver for keyboard and mouse paths', async () => {
+    const appModule = (await import('./App')) as Record<string, unknown>;
+    expect(typeof appModule.getTaskTreeCollapseKey).toBe('function');
+  });
+
+  it('returns project collapse key for project header targets', () => {
+    expect(getTaskTreeCollapseKey({ kind: 'project_header', id: 'h1', projectId: 'brain-api' })).toBe('project:brain-api');
+  });
+});
+
+describe('task tree mouse hit testing', () => {
+  it('computes viewport start row in single-project mode', () => {
+    expect(getTaskTreeViewportStartRow(false, 'off')).toBe(8);
+  });
+
+  it('computes viewport start row in multi-project mode', () => {
+    expect(getTaskTreeViewportStartRow(true, 'off')).toBe(9);
+  });
+
+  it('adds one row when filter bar is visible', () => {
+    expect(getTaskTreeViewportStartRow(false, 'typing')).toBe(9);
+    expect(getTaskTreeViewportStartRow(false, 'locked')).toBe(9);
+  });
+
+  it('maps absolute mouse row to visible task tree row target', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [
+        { row: 0, target: { kind: 'feature_header', id: '__feature_header__alpha', featureId: 'alpha' } },
+        { row: 1, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } },
+      ],
+      9,
+      8,
+    );
+
+    expect(target).toEqual({ kind: 'task', id: 'task-1', taskId: 'task-1' });
+  });
+
+  it('returns null when mouse row is outside visible task rows', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [{ row: 0, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } }],
+      7,
+      8,
+    );
+
+    expect(target).toBeNull();
   });
 });
 

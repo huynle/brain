@@ -5,7 +5,7 @@
  * and visual indicators for status, priority, and selection.
  */
 
-import React, { useMemo } from 'react';
+import React, { useEffect, useMemo } from 'react';
 import { Box, Text } from 'ink';
 import type { TaskDisplay, TaskTreeRowTarget, TaskTreeVisibleRow } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
@@ -47,6 +47,8 @@ interface TaskTreeProps {
   viewportHeight?: number;
   /** Set of feature IDs that are collapsed */
   collapsedFeatures?: Set<string>;
+  /** Set of project IDs that are collapsed (groupByProject mode) */
+  collapsedProjects?: Set<string>;
   /** Set of feature IDs that are active (queued for execution via x key) */
   activeFeatures?: Set<string>;
   /** Set of task IDs that are multi-selected (via Space key) */
@@ -57,6 +59,8 @@ interface TaskTreeProps {
   textWrap?: boolean;
   /** Panel width in columns (used for truncation calculation when textWrap=false) */
   panelWidth?: number;
+  /** Callback with visible-row metadata used for hit-testing. */
+  onVisibleRows?: (rows: TaskTreeVisibleRow[]) => void;
 }
 
 // Special ID for the completed section header (used for navigation)
@@ -1161,6 +1165,75 @@ export function flattenFeatureOrder(
 }
 
 /**
+ * Flatten project-grouped tree into an array of IDs in visual/navigation order.
+ * Includes project header IDs for navigation + mouse hit-testing.
+ */
+export function flattenProjectOrder(
+  tasks: TaskDisplay[],
+  collapsedProjects: Set<string> = new Set(),
+  collapsedFeatures: Set<string> = new Set(),
+  completedCollapsed: boolean = true,
+  draftCollapsed: boolean = true,
+  cancelledCollapsed: boolean = true,
+  supersededCollapsed: boolean = true,
+  archivedCollapsed: boolean = true,
+): string[] {
+  const result: string[] = [];
+
+  const tasksByProject = new Map<string, TaskDisplay[]>();
+  for (const task of tasks) {
+    const projectId = task.projectId || 'unknown';
+    if (!tasksByProject.has(projectId)) {
+      tasksByProject.set(projectId, []);
+    }
+    tasksByProject.get(projectId)!.push(task);
+  }
+
+  const projectIds = Array.from(tasksByProject.keys()).sort((a, b) => {
+    const tasksA = tasksByProject.get(a) || [];
+    const tasksB = tasksByProject.get(b) || [];
+    const hasInProgressA = tasksA.some((t) => t.status === 'in_progress');
+    const hasInProgressB = tasksB.some((t) => t.status === 'in_progress');
+
+    if (hasInProgressA && !hasInProgressB) return -1;
+    if (!hasInProgressA && hasInProgressB) return 1;
+    return a.localeCompare(b);
+  });
+
+  for (const projectId of projectIds) {
+    const projectTasks = tasksByProject.get(projectId) || [];
+    const projectActiveTasks = projectTasks.filter((t) => !isGroupStatus(t));
+    if (projectActiveTasks.length === 0) continue;
+
+    result.push(`${PROJECT_HEADER_PREFIX}${projectId}`);
+
+    const isProjectCollapsed =
+      collapsedProjects.has(projectId) || collapsedFeatures.has(`project:${projectId}`);
+    if (!isProjectCollapsed) {
+      result.push(...flattenTreeOrder(projectActiveTasks, true, true, true, true, true));
+    }
+
+  }
+
+  const groupStatusTasks = tasks.filter((t) => isGroupStatus(t));
+  if (groupStatusTasks.length > 0) {
+    result.push(
+      ...flattenFeatureOrder(
+        groupStatusTasks,
+        completedCollapsed,
+        draftCollapsed,
+        collapsedFeatures,
+        cancelledCollapsed,
+        supersededCollapsed,
+        archivedCollapsed,
+      ),
+    );
+  }
+
+  return result;
+}
+
+/**
  * Completed section header component (memoized)
  */
 const CompletedHeader = React.memo(function CompletedHeader({
@@ -1455,14 +1528,23 @@ function renderTree(
 const ProjectHeader = React.memo(function ProjectHeader({
   projectId,
   taskCount,
+  isSelected,
+  isCollapsed,
 }: {
   projectId: string;
   taskCount: number;
+  isSelected: boolean;
+  isCollapsed: boolean;
 }): React.ReactElement {
+  const icon = isCollapsed ? '▶' : '▾';
   return (
     <Box marginTop={1}>
-      <Text bold color="cyan">
-        {projectId} ({taskCount} {taskCount === 1 ? 'task' : 'tasks'})
+      <Text
+        bold
+        color={isSelected ? 'white' : 'cyan'}
+        backgroundColor={isSelected ? 'blue' : undefined}
+      >
+        {icon} {projectId} ({taskCount} {taskCount === 1 ? 'task' : 'tasks'})
       </Text>
     </Box>
   );
@@ -1818,11 +1900,13 @@ export const TaskTree = React.memo(function TaskTree({
   scrollOffset = 0,
   viewportHeight,
   collapsedFeatures = new Set(),
+  collapsedProjects = new Set(),
   activeFeatures = new Set(),
   selectedTaskIds = new Set(),
   visibleGroups,
   textWrap,
   panelWidth,
+  onVisibleRows,
 }: TaskTreeProps): React.ReactElement {
   // Compute whether to show checkboxes (when any tasks are multi-selected)
   const showCheckboxes = selectedTaskIds.size > 0;
@@ -2036,6 +2120,72 @@ export const TaskTree = React.memo(function TaskTree({
     return ready;
   }, [tasks]);
 
+  const visibleRows = useMemo(() => {
+    const visibleTasks = [
+      ...activeTasks,
+      ...completedTasks,
+      ...draftTasks,
+      ...cancelledTasks,
+      ...supersededTasks,
+      ...archivedTasks,
+    ];
+
+    const navigationOrder = groupByProject
+      ? flattenProjectOrder(
+        visibleTasks,
+        collapsedProjects,
+        collapsedFeatures,
+        completedCollapsed,
+        draftCollapsed,
+        cancelledCollapsed,
+        supersededCollapsed,
+        archivedCollapsed,
+      )
+      : groupByFeature
+      ? flattenFeatureOrder(
+        visibleTasks,
+        completedCollapsed,
+        draftCollapsed,
+        collapsedFeatures,
+        cancelledCollapsed,
+        supersededCollapsed,
+        archivedCollapsed,
+      )
+      : flattenTreeOrder(
+        visibleTasks,
+        completedCollapsed,
+        draftCollapsed,
+        cancelledCollapsed,
+        supersededCollapsed,
+        archivedCollapsed,
+      );
+
+    return buildVisibleTaskTreeRows(navigationOrder, scrollOffset, viewportHeight);
+  }, [
+    activeTasks,
+    completedTasks,
+    draftTasks,
+    cancelledTasks,
+    supersededTasks,
+    archivedTasks,
+    groupByFeature,
+    groupByProject,
+    completedCollapsed,
+    draftCollapsed,
+    collapsedFeatures,
+    collapsedProjects,
+    cancelledCollapsed,
+    supersededCollapsed,
+    archivedCollapsed,
+    scrollOffset,
+    viewportHeight,
+  ]);
+
+  useEffect(() => {
+    if (!onVisibleRows) return;
+    onVisibleRows(visibleRows);
+  }, [onVisibleRows, visibleRows]);
+
   if (tasks.length === 0) {
     return (
       <Box padding={1}>
@@ -2060,7 +2210,7 @@ export const TaskTree = React.memo(function TaskTree({
       return a.localeCompare(b);
     });
     
-    projectIds.forEach((projectId, projectIndex) => {
+    projectIds.forEach((projectId) => {
       const projectTasks = tasksByProject.get(projectId) || [];
       const projectActiveTasks = projectTasks.filter(t => !isGroupStatus(t));
       
@@ -2068,28 +2218,28 @@ export const TaskTree = React.memo(function TaskTree({
       if (projectActiveTasks.length === 0) return;
       
       // Project header
+      const projectHeaderId = `${PROJECT_HEADER_PREFIX}${projectId}`;
+      const isProjectCollapsed =
+        collapsedProjects.has(projectId) || collapsedFeatures.has(`project:${projectId}`);
       projectElements.push(
         <ProjectHeader
-          key={`project-header-${projectId}`}
+          key={projectHeaderId}
           projectId={projectId}
           taskCount={projectActiveTasks.length}
+          isSelected={selectedId === projectHeaderId}
+          isCollapsed={isProjectCollapsed}
         />
       );
       
       // Project's tasks
-      const projectRelationGraph = buildSelectedTaskRelationGraph(projectActiveTasks, selectedId);
-      projectElements.push(
-        ...renderProjectTasks(projectTasks, selectedId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
-      );
-      
-      // Add spacing between projects (except last)
-      if (projectIndex < projectIds.length - 1) {
+      if (!isProjectCollapsed) {
+        const projectRelationGraph = buildSelectedTaskRelationGraph(projectActiveTasks, selectedId);
         projectElements.push(
-          <Box key={`project-spacer-${projectId}`}>
-            <Text> </Text>
-          </Box>
+          ...renderProjectTasks(projectTasks, selectedId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
         );
       }
+      
+      // No spacer row between project sections to keep navigation/hit-test rows aligned.
     });
 
     // Add draft section if there are draft tasks - with feature grouping

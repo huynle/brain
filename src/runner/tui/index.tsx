@@ -18,6 +18,7 @@
 import React from 'react';
 import { render } from 'ink';
 import { App } from './App';
+import { setTerminalMouseMode } from './hooks/useMouseInput';
 import type { TUIConfig, ResourceMetrics, ProjectLimitEntry } from './types';
 import type { LogEntry } from './types';
 import type { EntryStatus } from '../../core/types';
@@ -217,6 +218,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
   process.stdout.write('\x1b[?1049h'); // Enter alternate screen buffer
   process.stdout.write('\x1b[H');      // Move cursor to top-left
   process.stdout.write('\x1b[2J');     // Clear entire screen
+  setTerminalMouseMode(true);
 
   // Render the Ink app
   const { unmount: inkUnmount, waitUntilExit } = render(
@@ -269,6 +271,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
   // Wrap unmount to restore normal screen buffer
   const unmount = () => {
     inkUnmount();
+    setTerminalMouseMode(false);
     // Exit alternate screen buffer (restores previous terminal content)
     process.stdout.write('\x1b[?1049l');
   };
@@ -276,6 +279,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
   // Set up exit callback
   if (options.onExit) {
     waitUntilExit().then(() => {
+      setTerminalMouseMode(false);
       // Restore normal screen buffer on exit
       process.stdout.write('\x1b[?1049l');
       options.onExit!();
@@ -344,11 +348,14 @@ function main() {
   console.log(`Poll Interval: ${config.pollInterval}ms`);
   console.log('');
 
+  setTerminalMouseMode(true);
+
   // Render the Ink app
   const { waitUntilExit } = render(<App config={config} />);
 
   // Wait for the app to exit
   waitUntilExit().then(() => {
+    setTerminalMouseMode(false);
     console.log('Goodbye!');
     process.exit(0);
   });

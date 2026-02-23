@@ -1259,6 +1259,28 @@ describe('buildSelectedTaskRelationGraph', () => {
     expect(graph.ancestors).toEqual(new Set(['b']));
     expect(graph.descendants).toEqual(new Set());
   });
+
+  it('updates upstream/downstream sets as selection moves through a diamond graph', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: [] }),
+      createTask({ id: 'b', dependencies: ['a'] }),
+      createTask({ id: 'c', dependencies: ['a'] }),
+      createTask({ id: 'd', dependencies: ['b', 'c'] }),
+      createTask({ id: 'e', dependencies: ['d'] }),
+    ];
+
+    const rootGraph = buildSelectedTaskRelationGraph(tasks, 'a');
+    expect(rootGraph.ancestors).toEqual(new Set());
+    expect(rootGraph.descendants).toEqual(new Set(['b', 'c', 'd', 'e']));
+
+    const mergeGraph = buildSelectedTaskRelationGraph(tasks, 'd');
+    expect(mergeGraph.ancestors).toEqual(new Set(['a', 'b', 'c']));
+    expect(mergeGraph.descendants).toEqual(new Set(['e']));
+
+    const leafGraph = buildSelectedTaskRelationGraph(tasks, 'e');
+    expect(leafGraph.ancestors).toEqual(new Set(['a', 'b', 'c', 'd']));
+    expect(leafGraph.descendants).toEqual(new Set());
+  });
 });
 
 describe('buildSelectedTaskRelationLanes', () => {
@@ -1289,6 +1311,24 @@ describe('buildSelectedTaskRelationLanes', () => {
     });
 
     expect(lanes.upstreamLanes.size).toBe(0);
+    expect(lanes.downstreamLanes).toEqual(new Set([0]));
+  });
+
+  it('keeps overlapping upstream/downstream lane context stable for merge selections', () => {
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 0, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'c', lane: 1, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'd', lane: 0, activeLanes: [0], isMerge: true, mergeFromLanes: [1] },
+      { taskId: 'e', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+    ];
+
+    const lanes = buildSelectedTaskRelationLanes(assignments, {
+      ancestors: new Set(['a', 'b', 'c']),
+      descendants: new Set(['e']),
+    });
+
+    expect(lanes.upstreamLanes).toEqual(new Set([0, 1]));
     expect(lanes.downstreamLanes).toEqual(new Set([0]));
   });
 });

@@ -1042,6 +1042,100 @@ describe('App - Multi-Select Batch Mode', () => {
   });
 });
 
+describe('App - Settings Popup Runtime Model (S Key)', () => {
+  it('S opens settings popup and Tab reaches Runtime section', async () => {
+    const { stdin, lastFrame, unmount } = render(
+      <App
+        config={defaultConfig}
+        getProjectLimits={() => [{ projectId: 'test-project', limit: 2, running: 0 }]}
+        getRuntimeDefaultModel={() => 'anthropic/claude-sonnet-4-20250514'}
+      />
+    );
+
+    stdin.write('S');
+    await new Promise(r => setTimeout(r, 10));
+    expect(lastFrame()).toContain('Settings');
+    expect(lastFrame()).toContain('[Limits]');
+
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    expect(lastFrame()).toContain('[Groups]');
+
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    const frame = lastFrame() || '';
+    expect(frame).toContain('[Runtime]');
+    expect(frame).toContain('Default model:');
+    expect(frame).toContain('anthropic/claude-sonnet-4-20250514');
+
+    unmount();
+  });
+
+  it('Runtime section edits and applies model override in memory', async () => {
+    const setRuntimeDefaultModel = mock((_model: string | undefined) => {});
+
+    const { stdin, unmount } = render(
+      <App
+        config={defaultConfig}
+        getProjectLimits={() => [{ projectId: 'test-project', limit: 2, running: 0 }]}
+        getRuntimeDefaultModel={() => ''}
+        setRuntimeDefaultModel={setRuntimeDefaultModel}
+      />
+    );
+
+    // Open settings and navigate to Runtime tab
+    stdin.write('S');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+
+    // Enter edit mode, type model, and save
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 10));
+    for (const ch of 'openai/gpt-5.3-codex') {
+      stdin.write(ch);
+    }
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(setRuntimeDefaultModel).toHaveBeenCalledWith('openai/gpt-5.3-codex');
+
+    unmount();
+  });
+
+  it('Runtime section resets to config default with 0', async () => {
+    const setRuntimeDefaultModel = mock((_model: string | undefined) => {});
+
+    const { stdin, unmount } = render(
+      <App
+        config={defaultConfig}
+        getProjectLimits={() => [{ projectId: 'test-project', limit: 2, running: 0 }]}
+        getRuntimeDefaultModel={() => 'anthropic/claude-sonnet-4-20250514'}
+        setRuntimeDefaultModel={setRuntimeDefaultModel}
+      />
+    );
+
+    // Open settings and navigate to Runtime tab
+    stdin.write('S');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('\t');
+    await new Promise(r => setTimeout(r, 10));
+
+    // Reset to config default
+    stdin.write('0');
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(setRuntimeDefaultModel).toHaveBeenCalledWith(undefined);
+
+    unmount();
+  });
+});
+
 describe('App - Project Tab Switch Clears Selection', () => {
   const multiProjectConfig: TUIConfig = {
     ...defaultConfig,

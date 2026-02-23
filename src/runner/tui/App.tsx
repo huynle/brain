@@ -70,7 +70,7 @@ import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow, TUITransportMode } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
@@ -85,16 +85,6 @@ export interface TransportHookEnablement {
   multiTaskSseEnabled: boolean;
   singleCronPollerEnabled: boolean;
   multiCronPollerEnabled: boolean;
-}
-
-/**
- * Resolve runtime transport mode for current implementation.
- */
-export function resolveRuntimeTransportMode(transportMode: TUITransportMode): RuntimeTransportMode {
-  if (transportMode === 'sse' || transportMode === 'auto') {
-    return 'sse';
-  }
-  return 'poll';
 }
 
 export function resolveTransportHookEnablement(
@@ -364,10 +354,8 @@ export function App({
     [config.projects, config.project]
   );
   const isMultiProject = projects.length > 1;
-  const runtimeTransportMode = useMemo(
-    () => resolveRuntimeTransportMode(config.transportMode),
-    [config.transportMode]
-  );
+  // SSE is now the only transport mode (Phase 2)
+  const runtimeTransportMode: RuntimeTransportMode = 'sse';
   const transportHookEnablement = useMemo(
     () => resolveTransportHookEnablement(isMultiProject, runtimeTransportMode),
     [isMultiProject, runtimeTransportMode],

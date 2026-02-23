@@ -19,7 +19,7 @@ import React from 'react';
 import { render } from 'ink';
 import { App } from './App';
 import { setTerminalMouseMode } from './hooks/useMouseInput';
-import type { TUIConfig, TUITransportMode, ResourceMetrics, ProjectLimitEntry } from './types';
+import type { TUIConfig, ResourceMetrics, ProjectLimitEntry } from './types';
 import type { LogEntry } from './types';
 import type { EntryStatus } from '../../core/types';
 import type {
@@ -48,8 +48,6 @@ export interface DashboardOptions {
   apiUrl?: string;
   /** Polling interval in ms (default: 5000) */
   pollInterval?: number;
-  /** Transport mode for dashboard updates (default: poll) */
-  transportMode?: TUITransportMode;
   /** Maximum log entries to keep (default: 100) */
   maxLogs?: number;
   /** Directory for log file persistence (e.g. ~/.local/log) */
@@ -209,7 +207,6 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
     project: projects[0], // Legacy single project (first project for backward compatibility)
     projects: projects,   // Full project list
     activeProject: isMultiProject ? 'all' : projects[0], // Default to 'all' in multi-project mode
-    transportMode: options.transportMode ?? 'poll',
     pollInterval: options.pollInterval ?? 5000,
     maxLogs: options.maxLogs ?? 100,
     logDir: options.logDir, // Directory for log file persistence
@@ -302,7 +299,6 @@ function parseArgs(): TUIConfig {
   const config: TUIConfig = {
     apiUrl: 'http://localhost:3000',
     project: 'default',
-    transportMode: 'poll',
     pollInterval: 5000,
     maxLogs: 100,
   };

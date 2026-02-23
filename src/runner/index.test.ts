@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { parseArgs, resolveTransportMode, type ParsedArgs, type CLIOptions } from "./index";
+import { parseArgs, type ParsedArgs, type CLIOptions } from "./index";
 import { resetConfig } from "./config";
 import { resetLogger } from "./logger";
 
@@ -96,19 +96,10 @@ describe("CLI", () => {
       expect(result.options.model).toBe("claude-sonnet");
     });
 
-    it("should parse transport option", () => {
+    it("should NOT parse transport option (removed in Phase 2)", () => {
       const result = parseArgs(argv("start", "--transport", "sse"));
-      expect(result.options.transportMode).toBe("sse");
-    });
-
-    it("should parse transport option as auto", () => {
-      const result = parseArgs(argv("start", "--transport", "auto"));
-      expect(result.options.transportMode).toBe("auto");
-    });
-
-    it("should default transport option to poll for invalid values", () => {
-      const result = parseArgs(argv("start", "--transport", "invalid"));
-      expect(result.options.transportMode).toBe("poll");
+      // --transport should be ignored/unknown, transportMode should not exist
+      expect((result.options as any).transportMode).toBeUndefined();
     });
 
     it("should parse dry-run flag", () => {
@@ -185,25 +176,6 @@ describe("CLI", () => {
         const result = parseArgs(argv(cmd));
         expect(result.command).toBe(cmd);
       }
-    });
-  });
-
-  describe("resolveTransportMode", () => {
-    it("uses CLI mode when no env override is provided", () => {
-      expect(resolveTransportMode("sse", undefined)).toBe("sse");
-    });
-
-    it("uses env override when valid", () => {
-      expect(resolveTransportMode("sse", "poll")).toBe("poll");
-      expect(resolveTransportMode("poll", "auto")).toBe("auto");
-    });
-
-    it("accepts env override with mixed case and surrounding whitespace", () => {
-      expect(resolveTransportMode("poll", "  SsE ")).toBe("sse");
-    });
-
-    it("ignores invalid env override values", () => {
-      expect(resolveTransportMode("auto", "invalid")).toBe("auto");
     });
   });
 });

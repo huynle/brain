@@ -89,11 +89,6 @@ export interface LogEntry {
 }
 
 /**
- * Transport mode for TUI task/log updates.
- */
-export type TUITransportMode = 'poll' | 'sse' | 'auto';
-
-/**
  * SSE event contract for future real-time transport support.
  */
 export type TUISSEEvent =
@@ -153,7 +148,6 @@ export interface TUIConfig {
   project: string;              // Legacy single project (kept for backward compatibility)
   projects?: string[];          // Multiple projects (Phase 2)
   activeProject?: string;       // Currently selected project (or 'all')
-  transportMode: TUITransportMode;
   pollInterval: number;
   maxLogs: number;
   logDir?: string;              // Directory for log file persistence

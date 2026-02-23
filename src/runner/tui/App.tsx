@@ -44,7 +44,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
@@ -67,7 +67,7 @@ import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
@@ -137,6 +137,33 @@ export const STATUS_GROUP_MAP: Record<string, EntryStatus[]> = {
   [SUPERSEDED_FEATURE_PREFIX]: ['superseded'],
   [ARCHIVED_FEATURE_PREFIX]: ['archived'],
 };
+
+export type TaskTreeClickAction = 'open_editor' | 'open_metadata' | 'toggle_collapsed' | 'noop';
+
+/**
+ * Route pointer clicks to high-level TaskTree actions.
+ */
+export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TUIMouseButton): TaskTreeClickAction {
+  if (target.kind === 'task') {
+    if (button === 'right') return 'open_metadata';
+    if (button === 'left') return 'open_editor';
+    return 'noop';
+  }
+
+  if (button === 'left') {
+    if (
+      target.kind === 'feature_header' ||
+      target.kind === 'project_header' ||
+      target.kind === 'status_header' ||
+      target.kind === 'status_feature_header' ||
+      target.kind === 'ungrouped_header'
+    ) {
+      return 'toggle_collapsed';
+    }
+  }
+
+  return 'noop';
+}
 
 /**
  * Get tasks for a feature within a specific status group section.
@@ -2602,6 +2629,7 @@ export function App({
       // Use navigationOrder (flattened tree) instead of raw tasks array
       // This ensures j/k navigation matches the visual tree order
       const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
+      const selectedRowTarget = selectedTaskId ? parseTaskTreeRowTarget(selectedTaskId) : null;
       
       // Helper to find next navigable item (skip spacers)
       const findNextNavigable = (startIndex: number, direction: 1 | -1): string | null => {
@@ -2669,133 +2697,76 @@ export function App({
 
       // Enter to toggle group section when header is selected
       if (key.return) {
-        // Toggle completed section if header is selected (legacy)
-        if (selectedTaskId === COMPLETED_HEADER_ID) {
-          setCompletedCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle draft section if header is selected (legacy)
-        if (selectedTaskId === DRAFT_HEADER_ID) {
-          setDraftCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle cancelled section if header is selected
-        if (selectedTaskId === CANCELLED_HEADER_ID) {
-          setCancelledCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle superseded section if header is selected
-        if (selectedTaskId === SUPERSEDED_HEADER_ID) {
-          setSupersededCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle archived section if header is selected
-        if (selectedTaskId === ARCHIVED_HEADER_ID) {
-          setArchivedCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle ungrouped section if ungrouped header is selected
-        if (selectedTaskId === UNGROUPED_HEADER_ID) {
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            if (next.has(UNGROUPED_FEATURE_ID)) {
-              next.delete(UNGROUPED_FEATURE_ID);
-            } else {
-              next.add(UNGROUPED_FEATURE_ID);
+        if (selectedRowTarget && resolveTaskTreeClickAction(selectedRowTarget, 'left') === 'toggle_collapsed') {
+          if (selectedRowTarget.kind === 'status_header') {
+            if (selectedRowTarget.statusGroup === 'completed') {
+              setCompletedCollapsed(prev => !prev);
+              return;
             }
-            return next;
-          });
-          return;
-        }
-        // Toggle feature section if feature header is selected
-        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
-          const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            if (next.has(featureId)) {
-              next.delete(featureId);
-            } else {
-              next.add(featureId);
+            if (selectedRowTarget.statusGroup === 'draft') {
+              setDraftCollapsed(prev => !prev);
+              return;
             }
-            return next;
-          });
-          return;
-        }
-        // Toggle completed feature section
-        if (selectedTaskId?.startsWith(COMPLETED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(COMPLETED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `completed:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
+            if (selectedRowTarget.statusGroup === 'cancelled') {
+              setCancelledCollapsed(prev => !prev);
+              return;
             }
-            return next;
-          });
-          return;
-        }
-        // Toggle draft feature section
-        if (selectedTaskId?.startsWith(DRAFT_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(DRAFT_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `draft:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
+            if (selectedRowTarget.statusGroup === 'superseded') {
+              setSupersededCollapsed(prev => !prev);
+              return;
             }
-            return next;
-          });
-          return;
-        }
-        // Toggle cancelled feature section
-        if (selectedTaskId?.startsWith(CANCELLED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(CANCELLED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `cancelled:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
+            if (selectedRowTarget.statusGroup === 'archived') {
+              setArchivedCollapsed(prev => !prev);
+              return;
             }
-            return next;
-          });
-          return;
+          }
+
+          if (selectedRowTarget.kind === 'ungrouped_header') {
+            setCollapsedFeatures(prev => {
+              const next = new Set(prev);
+              if (next.has(UNGROUPED_FEATURE_ID)) {
+                next.delete(UNGROUPED_FEATURE_ID);
+              } else {
+                next.add(UNGROUPED_FEATURE_ID);
+              }
+              return next;
+            });
+            return;
+          }
+
+          if (selectedRowTarget.kind === 'feature_header' && selectedRowTarget.featureId) {
+            const featureId = selectedRowTarget.featureId;
+            setCollapsedFeatures(prev => {
+              const next = new Set(prev);
+              if (next.has(featureId)) {
+                next.delete(featureId);
+              } else {
+                next.add(featureId);
+              }
+              return next;
+            });
+            return;
+          }
+
+          if (
+            selectedRowTarget.kind === 'status_feature_header' &&
+            selectedRowTarget.featureId &&
+            selectedRowTarget.statusGroup
+          ) {
+            const groupKey = `${selectedRowTarget.statusGroup}:${selectedRowTarget.featureId}`;
+            setCollapsedFeatures(prev => {
+              const next = new Set(prev);
+              if (next.has(groupKey)) {
+                next.delete(groupKey);
+              } else {
+                next.add(groupKey);
+              }
+              return next;
+            });
+            return;
+          }
         }
-        // Toggle superseded feature section
-        if (selectedTaskId?.startsWith(SUPERSEDED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(SUPERSEDED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `superseded:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle archived feature section
-        if (selectedTaskId?.startsWith(ARCHIVED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(ARCHIVED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `archived:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
+
         // Toggle dynamic group section if group header is selected
         if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
           const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');
@@ -2812,7 +2783,12 @@ export function App({
           return;
         }
         // Enter on a regular task: open in editor (same as 'e')
-        if (selectedTask && focusedPanel === 'tasks') {
+        if (
+          selectedTask &&
+          selectedRowTarget &&
+          resolveTaskTreeClickAction(selectedRowTarget, 'left') === 'open_editor' &&
+          focusedPanel === 'tasks'
+        ) {
           editTaskInEditor(selectedTask.id, selectedTask.path);
           return;
         }

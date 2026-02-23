@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -350,8 +350,6 @@ describe('App - Multi-Project Mode', () => {
 // Pause state optimization tests (Issue #3)
 // =============================================================================
 
-import { setsEqual } from './App';
-
 describe('setsEqual', () => {
   it('returns true for two empty sets', () => {
     expect(setsEqual(new Set(), new Set())).toBe(true);
@@ -379,6 +377,28 @@ describe('setsEqual', () => {
 
   it('returns false for empty vs non-empty', () => {
     expect(setsEqual(new Set(), new Set(['a']))).toBe(false);
+  });
+});
+
+describe('resolveTaskTreeClickAction', () => {
+  it('routes left click on task to open editor', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'left')).toBe('open_editor');
+  });
+
+  it('routes right click on task to metadata popup', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'right')).toBe('open_metadata');
+  });
+
+  it('routes left click on headers to collapse toggle', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h1', featureId: 'feature-a' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'status_header', id: 'h2', statusGroup: 'completed' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'status_feature_header', id: 'h3', featureId: 'feature-a', statusGroup: 'draft' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'project_header', id: 'h4', projectId: 'brain-api' }, 'left')).toBe('toggle_collapsed');
+  });
+
+  it('ignores non-handled targets/buttons', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'spacer', id: 's1' }, 'left')).toBe('noop');
+    expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h5', featureId: 'f' }, 'right')).toBe('noop');
   });
 });
 

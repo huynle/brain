@@ -7,7 +7,7 @@
 
 import React, { useMemo } from 'react';
 import { Box, Text } from 'ink';
-import type { TaskDisplay } from '../types';
+import type { TaskDisplay, TaskTreeRowTarget, TaskTreeVisibleRow } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
 import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
 import {
@@ -95,6 +95,9 @@ export const ARCHIVED_FEATURE_PREFIX = '__archived_feature__';
 // Alias for backwards compatibility
 export const GROUP_HEADER_PREFIX = FEATURE_HEADER_PREFIX;
 
+// Special ID prefix for project headers (reserved for mouse hit-test contracts)
+export const PROJECT_HEADER_PREFIX = '__project_header__';
+
 // Special ID prefix for spacer elements (non-navigable, for visual index alignment)
 export const SPACER_PREFIX = '__spacer__';
 
@@ -103,6 +106,125 @@ export const UNGROUPED_HEADER_ID = '__ungrouped_header__';
 
 // Feature ID used for ungrouped section in collapsedFeatures Set
 export const UNGROUPED_FEATURE_ID = '__ungrouped__';
+
+/**
+ * Resolve a navigation/render row ID into a semantic row target.
+ */
+export function parseTaskTreeRowTarget(rowId: string): TaskTreeRowTarget {
+  if (rowId.startsWith(SPACER_PREFIX)) {
+    return { kind: 'spacer', id: rowId };
+  }
+
+  if (rowId === UNGROUPED_HEADER_ID) {
+    return { kind: 'ungrouped_header', id: rowId };
+  }
+
+  if (rowId === COMPLETED_HEADER_ID) {
+    return { kind: 'status_header', id: rowId, statusGroup: 'completed' };
+  }
+
+  if (rowId === DRAFT_HEADER_ID) {
+    return { kind: 'status_header', id: rowId, statusGroup: 'draft' };
+  }
+
+  if (rowId === CANCELLED_HEADER_ID) {
+    return { kind: 'status_header', id: rowId, statusGroup: 'cancelled' };
+  }
+
+  if (rowId === SUPERSEDED_HEADER_ID) {
+    return { kind: 'status_header', id: rowId, statusGroup: 'superseded' };
+  }
+
+  if (rowId === ARCHIVED_HEADER_ID) {
+    return { kind: 'status_header', id: rowId, statusGroup: 'archived' };
+  }
+
+  if (rowId.startsWith(FEATURE_HEADER_PREFIX)) {
+    return {
+      kind: 'feature_header',
+      id: rowId,
+      featureId: rowId.slice(FEATURE_HEADER_PREFIX.length),
+    };
+  }
+
+  if (rowId.startsWith(PROJECT_HEADER_PREFIX)) {
+    return {
+      kind: 'project_header',
+      id: rowId,
+      projectId: rowId.slice(PROJECT_HEADER_PREFIX.length),
+    };
+  }
+
+  if (rowId.startsWith(COMPLETED_FEATURE_PREFIX)) {
+    return {
+      kind: 'status_feature_header',
+      id: rowId,
+      featureId: rowId.slice(COMPLETED_FEATURE_PREFIX.length),
+      statusGroup: 'completed',
+    };
+  }
+
+  if (rowId.startsWith(DRAFT_FEATURE_PREFIX)) {
+    return {
+      kind: 'status_feature_header',
+      id: rowId,
+      featureId: rowId.slice(DRAFT_FEATURE_PREFIX.length),
+      statusGroup: 'draft',
+    };
+  }
+
+  if (rowId.startsWith(CANCELLED_FEATURE_PREFIX)) {
+    return {
+      kind: 'status_feature_header',
+      id: rowId,
+      featureId: rowId.slice(CANCELLED_FEATURE_PREFIX.length),
+      statusGroup: 'cancelled',
+    };
+  }
+
+  if (rowId.startsWith(SUPERSEDED_FEATURE_PREFIX)) {
+    return {
+      kind: 'status_feature_header',
+      id: rowId,
+      featureId: rowId.slice(SUPERSEDED_FEATURE_PREFIX.length),
+      statusGroup: 'superseded',
+    };
+  }
+
+  if (rowId.startsWith(ARCHIVED_FEATURE_PREFIX)) {
+    return {
+      kind: 'status_feature_header',
+      id: rowId,
+      featureId: rowId.slice(ARCHIVED_FEATURE_PREFIX.length),
+      statusGroup: 'archived',
+    };
+  }
+
+  if (rowId.length > 0) {
+    return { kind: 'task', id: rowId, taskId: rowId };
+  }
+
+  return { kind: 'unknown', id: rowId };
+}
+
+/**
+ * Build visible row metadata for hit-testing mouse clicks.
+ */
+export function buildVisibleTaskTreeRows(
+  navigationOrder: string[],
+  scrollOffset: number,
+  viewportHeight?: number,
+): TaskTreeVisibleRow[] {
+  const startIndex = Math.max(0, scrollOffset);
+  const rowIds = viewportHeight && viewportHeight > 0
+    ? navigationOrder.slice(startIndex, startIndex + viewportHeight)
+    : navigationOrder.slice(startIndex);
+
+  return rowIds.map((rowId, index) => ({
+    row: index,
+    target: parseTaskTreeRowTarget(rowId),
+  }));
+}
 
 // Status icons and colors are now imported from shared status-display.ts
 

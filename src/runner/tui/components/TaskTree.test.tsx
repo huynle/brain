@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, parseTaskTreeRowTarget, buildVisibleTaskTreeRows, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, SPACER_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 import type { LaneAssignment } from '../lane-layout';
 
@@ -1280,6 +1280,69 @@ describe('buildSelectedTaskRelationGraph', () => {
     const leafGraph = buildSelectedTaskRelationGraph(tasks, 'e');
     expect(leafGraph.ancestors).toEqual(new Set(['a', 'b', 'c', 'd']));
     expect(leafGraph.descendants).toEqual(new Set());
+  });
+});
+
+describe('TaskTree mouse contracts', () => {
+  it('parses task rows as task targets', () => {
+    expect(parseTaskTreeRowTarget('task-123')).toEqual({
+      kind: 'task',
+      id: 'task-123',
+      taskId: 'task-123',
+    });
+  });
+
+  it('parses status and feature header targets', () => {
+    expect(parseTaskTreeRowTarget(COMPLETED_HEADER_ID)).toEqual({
+      kind: 'status_header',
+      id: COMPLETED_HEADER_ID,
+      statusGroup: 'completed',
+    });
+
+    expect(parseTaskTreeRowTarget(`${FEATURE_HEADER_PREFIX}auth-system`)).toEqual({
+      kind: 'feature_header',
+      id: `${FEATURE_HEADER_PREFIX}auth-system`,
+      featureId: 'auth-system',
+    });
+  });
+
+  it('parses ungrouped and spacer rows', () => {
+    expect(parseTaskTreeRowTarget(UNGROUPED_HEADER_ID)).toEqual({
+      kind: 'ungrouped_header',
+      id: UNGROUPED_HEADER_ID,
+    });
+
+    expect(parseTaskTreeRowTarget(`${SPACER_PREFIX}5`)).toEqual({
+      kind: 'spacer',
+      id: `${SPACER_PREFIX}5`,
+    });
+  });
+
+  it('builds visible row records from navigation order + viewport', () => {
+    const rows = buildVisibleTaskTreeRows(
+      ['task-a', `${FEATURE_HEADER_PREFIX}feature-a`, COMPLETED_HEADER_ID],
+      1,
+      2,
+    );
+
+    expect(rows).toEqual([
+      {
+        row: 0,
+        target: {
+          kind: 'feature_header',
+          id: `${FEATURE_HEADER_PREFIX}feature-a`,
+          featureId: 'feature-a',
+        },
+      },
+      {
+        row: 1,
+        target: {
+          kind: 'status_header',
+          id: COMPLETED_HEADER_ID,
+          statusGroup: 'completed',
+        },
+      },
+    ]);
   });
 });
 

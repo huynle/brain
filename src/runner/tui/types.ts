@@ -210,6 +210,53 @@ export interface GroupVisibilityEntry {
 }
 
 /**
+ * Supported mouse buttons for TUI interactions.
+ */
+export type TUIMouseButton = 'left' | 'right' | 'middle';
+
+/**
+ * Normalized mouse event contract used by App interaction routing.
+ */
+export interface TUIMouseEvent {
+  button: TUIMouseButton;
+  row: number;
+  column: number;
+}
+
+/**
+ * Logical row kinds rendered in the TaskTree.
+ */
+export type TaskTreeRowKind =
+  | 'task'
+  | 'feature_header'
+  | 'project_header'
+  | 'status_header'
+  | 'status_feature_header'
+  | 'ungrouped_header'
+  | 'spacer'
+  | 'unknown';
+
+/**
+ * Semantic target resolved from a visible TaskTree row.
+ */
+export interface TaskTreeRowTarget {
+  kind: TaskTreeRowKind;
+  id: string;
+  taskId?: string;
+  featureId?: string;
+  projectId?: string;
+  statusGroup?: 'completed' | 'draft' | 'cancelled' | 'superseded' | 'archived';
+}
+
+/**
+ * Visible-row hit-test record for click routing.
+ */
+export interface TaskTreeVisibleRow {
+  row: number;
+  target: TaskTreeRowTarget;
+}
+
+/**
  * Settings popup section type
  */
 export type SettingsSection = 'limits' | 'groups' | 'runtime';

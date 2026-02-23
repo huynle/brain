@@ -554,6 +554,30 @@ const isSuperseded = (t: TaskDisplay): boolean => t.status === 'superseded';
 const isArchived = (t: TaskDisplay): boolean => t.status === 'archived';
 
 /**
+ * Return task IDs in the same order used by renderFeatureTasks().
+ */
+function getFeatureRenderOrderIds(
+  featureTasks: TaskDisplay[],
+  options?: RenderFeatureTasksOptions,
+): string[] {
+  const activeTasks = options?.skipActiveFilter
+    ? featureTasks
+    : featureTasks.filter(t => !isGroupStatus(t));
+
+  if (activeTasks.length === 0) return [];
+  if (activeTasks.length === 1) return [activeTasks[0].id];
+
+  const sorted = topoSort(activeTasks);
+  const topoIds = new Set(sorted.map(t => t.id));
+  const inCycleTasks = activeTasks.filter(t => !topoIds.has(t.id));
+
+  return [
+    ...sorted.map(t => t.id),
+    ...inCycleTasks.map(t => t.id),
+  ];
+}
+
+/**
  * Flatten tree into an array of task IDs in visual/navigation order.
  * This matches the order tasks appear on screen for j/k navigation.
  * 
@@ -790,12 +814,7 @@ export function flattenFeatureOrder(
     
     // Only add tasks if feature is not collapsed
     if (!isFeatureCollapsed) {
-      // Use topoSort for task ordering so keyboard navigation (j/k) matches
-      // the visual topo-sorted order used by renderFeatureTasks()
-      const sorted = topoSort(activeFeatureTasks);
-      for (const task of sorted) {
-        result.push(task.id);
-      }
+      result.push(...getFeatureRenderOrderIds(activeFeatureTasks, { skipActiveFilter: true }));
     }
     // Note: No spacer between features - FeatureHeader has marginTop={1}
   });
@@ -812,18 +831,7 @@ export function flattenFeatureOrder(
     // Only add ungrouped tasks if section is not collapsed
     const isUngroupedCollapsed = collapsedFeatures.has(UNGROUPED_FEATURE_ID);
     if (!isUngroupedCollapsed) {
-      const tree = buildTree(ungroupedActive, ungrouped);
-      
-      function traverse(nodes: TreeNode[]): void {
-        for (const node of nodes) {
-          result.push(node.task.id);
-          if (node.children.length > 0) {
-            traverse(node.children);
-          }
-        }
-      }
-      
-      traverse(tree);
+      result.push(...getFeatureRenderOrderIds(ungrouped));
     }
   }
   
@@ -862,19 +870,7 @@ export function flattenFeatureOrder(
           continue;
         }
         
-        // Build tree for this feature's drafts
-        const tree = buildTree(featureDrafts, featureDrafts);
-        
-        function traverseDraft(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseDraft(node.children);
-            }
-          }
-        }
-        
-        traverseDraft(tree);
+        result.push(...getFeatureRenderOrderIds(featureDrafts, { skipActiveFilter: true }));
       }
     }
   }
@@ -914,19 +910,7 @@ export function flattenFeatureOrder(
           continue;
         }
         
-        // Build tree for this feature's cancelled tasks
-        const tree = buildTree(featureCancelled, featureCancelled);
-        
-        function traverseCancelled(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseCancelled(node.children);
-            }
-          }
-        }
-        
-        traverseCancelled(tree);
+        result.push(...getFeatureRenderOrderIds(featureCancelled, { skipActiveFilter: true }));
       }
     }
   }
@@ -966,19 +950,7 @@ export function flattenFeatureOrder(
           continue;
         }
         
-        // Build tree for this feature's superseded tasks
-        const tree = buildTree(featureSuperseded, featureSuperseded);
-        
-        function traverseSuperseded(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseSuperseded(node.children);
-            }
-          }
-        }
-        
-        traverseSuperseded(tree);
+        result.push(...getFeatureRenderOrderIds(featureSuperseded, { skipActiveFilter: true }));
       }
     }
   }
@@ -1018,19 +990,7 @@ export function flattenFeatureOrder(
           continue;
         }
         
-        // Build tree for this feature's archived tasks
-        const tree = buildTree(featureArchived, featureArchived);
-        
-        function traverseArchived(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseArchived(node.children);
-            }
-          }
-        }
-        
-        traverseArchived(tree);
+        result.push(...getFeatureRenderOrderIds(featureArchived, { skipActiveFilter: true }));
       }
     }
   }
@@ -1070,19 +1030,7 @@ export function flattenFeatureOrder(
           continue;
         }
         
-        // Build tree for this feature's completed tasks
-        const tree = buildTree(featureCompleted, featureCompleted);
-        
-        function traverseCompleted(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseCompleted(node.children);
-            }
-          }
-        }
-        
-        traverseCompleted(tree);
+        result.push(...getFeatureRenderOrderIds(featureCompleted, { skipActiveFilter: true }));
       }
     }
   }

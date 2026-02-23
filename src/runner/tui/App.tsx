@@ -68,12 +68,25 @@ import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow, TUITransportMode } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 type ViewMode = 'tasks' | 'crons';
 type CronActionMode = 'create' | 'edit' | 'add-link' | 'remove-link' | 'replace-links';
+type RuntimeTransportMode = 'poll' | 'sse';
+
+/**
+ * Resolve runtime transport mode for current implementation.
+ *
+ * Phase 3 behavior: all modes currently fall back to polling.
+ */
+export function resolveRuntimeTransportMode(transportMode: TUITransportMode): RuntimeTransportMode {
+  if (transportMode === 'sse' || transportMode === 'auto') {
+    return 'poll';
+  }
+  return 'poll';
+}
 
 /** Cycle to the next panel (for Tab navigation) */
 function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
@@ -326,6 +339,10 @@ export function App({
     [config.projects, config.project]
   );
   const isMultiProject = projects.length > 1;
+  const runtimeTransportMode = useMemo(
+    () => resolveRuntimeTransportMode(config.transportMode),
+    [config.transportMode]
+  );
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -446,7 +463,7 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: !isMultiProject,
+    enabled: !isMultiProject && runtimeTransportMode === 'poll',
   });
 
   // Multi-project poller (used when in multi-project mode)
@@ -454,7 +471,7 @@ export function App({
     projects: projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: isMultiProject,
+    enabled: isMultiProject && runtimeTransportMode === 'poll',
   });
 
   // Single-project cron poller (used when not in multi-project mode)
@@ -462,7 +479,7 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: !isMultiProject,
+    enabled: !isMultiProject && runtimeTransportMode === 'poll',
   });
 
   // Multi-project cron poller (used when in multi-project mode)
@@ -470,7 +487,7 @@ export function App({
     projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: isMultiProject,
+    enabled: isMultiProject && runtimeTransportMode === 'poll',
   });
 
   // Select appropriate data based on mode

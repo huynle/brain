@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
+import { App, setsEqual, resolveRuntimeTransportMode, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -45,6 +45,7 @@ const mockStats = {
 const defaultConfig: TUIConfig = {
   apiUrl: 'http://localhost:3000',
   project: 'test-project',
+  transportMode: 'poll',
   pollInterval: 2000,
   maxLogs: 50,
 };
@@ -267,6 +268,42 @@ describe('App - Configuration', () => {
     const { lastFrame, unmount } = render(<App config={emptyProjectConfig} />);
     expect(lastFrame()).toContain('brain-runner');
     unmount();
+  });
+
+  it('accepts sse transport mode config without crashing', () => {
+    const sseConfig: TUIConfig = {
+      ...defaultConfig,
+      transportMode: 'sse',
+    };
+
+    const { lastFrame, unmount } = render(<App config={sseConfig} />);
+    expect((lastFrame() || '').length).toBeGreaterThan(0);
+    unmount();
+  });
+
+  it('accepts auto transport mode config without crashing', () => {
+    const autoConfig: TUIConfig = {
+      ...defaultConfig,
+      transportMode: 'auto',
+    };
+
+    const { lastFrame, unmount } = render(<App config={autoConfig} />);
+    expect((lastFrame() || '').length).toBeGreaterThan(0);
+    unmount();
+  });
+});
+
+describe('resolveRuntimeTransportMode', () => {
+  it('keeps poll as poll', () => {
+    expect(resolveRuntimeTransportMode('poll')).toBe('poll');
+  });
+
+  it('falls back sse to poll for phase 3', () => {
+    expect(resolveRuntimeTransportMode('sse')).toBe('poll');
+  });
+
+  it('falls back auto to poll for phase 3', () => {
+    expect(resolveRuntimeTransportMode('auto')).toBe('poll');
   });
 });
 

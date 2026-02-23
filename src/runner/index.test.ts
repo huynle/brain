@@ -96,6 +96,21 @@ describe("CLI", () => {
       expect(result.options.model).toBe("claude-sonnet");
     });
 
+    it("should parse transport option", () => {
+      const result = parseArgs(argv("start", "--transport", "sse"));
+      expect(result.options.transportMode).toBe("sse");
+    });
+
+    it("should parse transport option as auto", () => {
+      const result = parseArgs(argv("start", "--transport", "auto"));
+      expect(result.options.transportMode).toBe("auto");
+    });
+
+    it("should default transport option to poll for invalid values", () => {
+      const result = parseArgs(argv("start", "--transport", "invalid"));
+      expect(result.options.transportMode).toBe("poll");
+    });
+
     it("should parse dry-run flag", () => {
       const result = parseArgs(argv("start", "--dry-run"));
       expect(result.options.dryRun).toBe(true);

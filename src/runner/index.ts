@@ -28,6 +28,7 @@ import { TaskRunner, getTaskRunner, resetTaskRunner } from "./task-runner";
 import { resolveProjects, type ProjectFilter } from "./project-filter";
 import type { ExecutionMode, RunnerConfig, RunnerState } from "./types";
 import type { ResolvedTask } from "../core/types";
+import type { TUITransportMode } from "./tui/types";
 
 // =============================================================================
 // Types
@@ -53,6 +54,7 @@ interface CLIOptions {
   workdir: string;
   agent: string;
   model: string;
+  transportMode: TUITransportMode;
 
   // Behavior
   dryRun: boolean;
@@ -101,6 +103,7 @@ Options:
   --run                 Start processing immediately (TUI starts paused by default)
   -p, --max-parallel N  Max concurrent tasks (default: 3)
   --poll-interval N     Seconds between polls (default: 30)
+  --transport MODE      TUI transport: poll|sse|auto (default: poll)
   -w, --workdir DIR     Working directory
   --agent NAME          OpenCode agent to use
   -m, --model NAME      Model to use
@@ -142,6 +145,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     workdir: "",
     agent: "",
     model: "",
+    transportMode: "poll",
     dryRun: false,
     include: [],
     exclude: [],
@@ -235,6 +239,15 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "-m" || arg === "--model") {
       options.model = args[++i] || "";
+      i++;
+      continue;
+    }
+
+    if (arg === "--transport") {
+      const value = (args[++i] || "").toLowerCase();
+      if (value === "poll" || value === "sse" || value === "auto") {
+        options.transportMode = value;
+      }
       i++;
       continue;
     }
@@ -368,6 +381,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
     maxParallel: options.maxParallel || config.maxParallel,
     pollInterval: options.pollInterval || config.pollInterval,
     dryRun: options.dryRun,
+    transportMode: options.transportMode,
   });
 
   if (options.dryRun) {
@@ -392,6 +406,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
       mode,
       config: { ...config, ...configOverrides },
       startPaused: mode === "tui" && !options.run,  // TUI starts paused unless --run
+      transportMode: options.transportMode,
     });
 
     // Set up graceful shutdown handler

@@ -17,6 +17,7 @@ import { createCronRoutes } from "./api/crons";
 import { createTaskRoutes } from "./api/tasks";
 import { createMcpRoutes } from "./mcp/transport";
 import { createOAuthRoutes } from "./mcp/auth";
+import { createProjectRealtimeHub } from "./core/realtime-hub";
 
 export function createApp(config: Config): OpenAPIHono {
   const app = new OpenAPIHono();
@@ -27,6 +28,7 @@ export function createApp(config: Config): OpenAPIHono {
 
   // API v1 routes
   const api = new OpenAPIHono();
+  const taskRealtimeHub = createProjectRealtimeHub();
 
   // Health check endpoint
   api.get("/health", async (c) => {
@@ -53,13 +55,13 @@ export function createApp(config: Config): OpenAPIHono {
   api.route("/entries", createGraphRoutes());
 
   // Task routes (specific paths first)
-  api.route("/tasks", createTaskRoutes());
+  api.route("/tasks", createTaskRoutes({ realtimeHub: taskRealtimeHub }));
 
   // Cron routes
-  api.route("/crons", createCronRoutes());
+  api.route("/crons", createCronRoutes({ realtimeHub: taskRealtimeHub }));
 
   // Entry CRUD routes
-  api.route("/entries", createEntriesRoutes());
+  api.route("/entries", createEntriesRoutes({ realtimeHub: taskRealtimeHub }));
 
   // Search routes (search and inject)
   api.route("/", createSearchRoutes());

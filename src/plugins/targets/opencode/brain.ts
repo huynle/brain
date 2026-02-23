@@ -363,6 +363,38 @@ async function apiRequest<T>(
   }
 }
 
+function formatCronResult(
+  operation: string,
+  project: string,
+  data: unknown
+): string {
+  return JSON.stringify(
+    {
+      operation,
+      project,
+      data,
+    },
+    null,
+    2
+  );
+}
+
+function formatCronError(
+  operation: string,
+  project: string,
+  error: unknown
+): string {
+  return JSON.stringify(
+    {
+      operation,
+      project,
+      error: error instanceof Error ? error.message : String(error),
+    },
+    null,
+    2
+  );
+}
+
 // ============================================================================
 // Plugin
 // ============================================================================
@@ -2354,6 +2386,403 @@ Example - wait for completion:
             return lines.join("\n");
           } catch (error) {
             return `Failed to get task status: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_list
+      // ========================================
+      brain_cron_list: tool({
+        description: "List cron entries for a project.",
+        args: {
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              crons: Array<{
+                id: string;
+                path: string;
+                title: string;
+                status: string;
+                schedule?: string;
+                next_run?: string;
+                runs?: unknown[];
+                created?: string;
+                modified?: string;
+              }>;
+              count: number;
+            }>("GET", `/crons/${encodeURIComponent(proj)}/crons`);
+            return formatCronResult("list", proj, response);
+          } catch (error) {
+            return formatCronError("list", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_get
+      // ========================================
+      brain_cron_get: tool({
+        description: "Get a cron entry with pipeline tasks.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cron: unknown;
+              pipeline: unknown[];
+              pipelineCount: number;
+            }>(
+              "GET",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}`
+            );
+            return formatCronResult("get", proj, response);
+          } catch (error) {
+            return formatCronError("get", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_create
+      // ========================================
+      brain_cron_create: tool({
+        description: "Create a cron entry in a project.",
+        args: {
+          title: tool.schema.string().describe("Cron title"),
+          schedule: tool.schema.string().describe("Cron expression (e.g., '0 2 * * *')"),
+          content: tool.schema.string().optional().describe("Cron content"),
+          status: tool.schema.enum(ENTRY_STATUSES).optional().describe("Initial status"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Optional tags"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cron: unknown;
+              message: string;
+            }>("POST", `/crons/${encodeURIComponent(proj)}/crons`, {
+              title: args.title,
+              schedule: args.schedule,
+              content: args.content,
+              status: args.status,
+              tags: args.tags,
+            });
+            return formatCronResult("create", proj, response);
+          } catch (error) {
+            return formatCronError("create", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_update
+      // ========================================
+      brain_cron_update: tool({
+        description: "Update a cron entry in a project.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          title: tool.schema.string().optional().describe("Updated title"),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Updated cron expression"),
+          content: tool.schema.string().optional().describe("Full content replacement"),
+          status: tool.schema.enum(ENTRY_STATUSES).optional().describe("Updated status"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Updated tags"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          const hasUpdate =
+            args.title !== undefined ||
+            args.schedule !== undefined ||
+            args.content !== undefined ||
+            args.status !== undefined ||
+            args.tags !== undefined;
+
+          if (!hasUpdate) {
+            return formatCronError(
+              "update",
+              proj,
+              "Provide at least one of title, schedule, content, status, or tags"
+            );
+          }
+
+          try {
+            const response = await apiRequest<{
+              cron: unknown;
+              message: string;
+            }>(
+              "PATCH",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}`,
+              {
+                title: args.title,
+                schedule: args.schedule,
+                content: args.content,
+                status: args.status,
+                tags: args.tags,
+              }
+            );
+            return formatCronResult("update", proj, response);
+          } catch (error) {
+            return formatCronError("update", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_delete
+      // ========================================
+      brain_cron_delete: tool({
+        description: "Delete a cron entry from a project.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          confirm: tool.schema
+            .boolean()
+            .describe("Must be true to confirm deletion"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          if (!args.confirm) {
+            return formatCronError("delete", proj, "Please set confirm: true");
+          }
+
+          try {
+            const response = await apiRequest<{
+              message: string;
+              path: string;
+            }>(
+              "DELETE",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}`,
+              undefined,
+              { confirm: "true" }
+            );
+            return formatCronResult("delete", proj, response);
+          } catch (error) {
+            return formatCronError("delete", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_trigger
+      // ========================================
+      brain_cron_trigger: tool({
+        description: "Manually trigger a cron run.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              run: unknown;
+              pipeline: unknown[];
+              pipelineCount: number;
+              message: string;
+            }>(
+              "POST",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/trigger`
+            );
+            return formatCronResult("trigger", proj, response);
+          } catch (error) {
+            return formatCronError("trigger", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_runs
+      // ========================================
+      brain_cron_runs: tool({
+        description: "Get cron run history.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              runs: unknown[];
+              count: number;
+            }>(
+              "GET",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/runs`
+            );
+            return formatCronResult("runs", proj, response);
+          } catch (error) {
+            return formatCronError("runs", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_linked_tasks
+      // ========================================
+      brain_cron_linked_tasks: tool({
+        description: "List tasks linked to a cron.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              tasks: unknown[];
+              count: number;
+            }>(
+              "GET",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/linked-tasks`
+            );
+            return formatCronResult("linked_tasks", proj, response);
+          } catch (error) {
+            return formatCronError("linked_tasks", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_linked_task_add
+      // ========================================
+      brain_cron_linked_task_add: tool({
+        description: "Link a task to a cron.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          taskId: tool.schema.string().describe("Task ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              tasks: unknown[];
+              count: number;
+              message: string;
+            }>(
+              "POST",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/linked-tasks/${encodeURIComponent(args.taskId)}`
+            );
+            return formatCronResult("linked_task_add", proj, response);
+          } catch (error) {
+            return formatCronError("linked_task_add", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_linked_task_remove
+      // ========================================
+      brain_cron_linked_task_remove: tool({
+        description: "Unlink a task from a cron.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          taskId: tool.schema.string().describe("Task ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              tasks: unknown[];
+              count: number;
+              message: string;
+            }>(
+              "DELETE",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/linked-tasks/${encodeURIComponent(args.taskId)}`
+            );
+            return formatCronResult("linked_task_remove", proj, response);
+          } catch (error) {
+            return formatCronError("linked_task_remove", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_cron_linked_tasks_set
+      // ========================================
+      brain_cron_linked_tasks_set: tool({
+        description: "Replace all linked tasks for a cron.",
+        args: {
+          cronId: tool.schema.string().describe("Cron ID (8-char alphanumeric)"),
+          taskIds: tool.schema
+            .array(tool.schema.string())
+            .describe("Task IDs to link to the cron"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              cronId: string;
+              tasks: unknown[];
+              count: number;
+              message: string;
+            }>(
+              "PATCH",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(args.cronId)}/linked-tasks`,
+              {
+                taskIds: args.taskIds,
+              }
+            );
+            return formatCronResult("linked_tasks_set", proj, response);
+          } catch (error) {
+            return formatCronError("linked_tasks_set", proj, error);
           }
         },
       }),

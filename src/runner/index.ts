@@ -28,6 +28,7 @@ import { TaskRunner, getTaskRunner, resetTaskRunner } from "./task-runner";
 import { resolveProjects, type ProjectFilter } from "./project-filter";
 import type { ExecutionMode, RunnerConfig, RunnerState } from "./types";
 import type { ResolvedTask } from "../core/types";
+import type { TUITransportMode } from "./tui/types";
 
 // =============================================================================
 // Types
@@ -53,6 +54,7 @@ interface CLIOptions {
   workdir: string;
   agent: string;
   model: string;
+  transportMode: TUITransportMode;
 
   // Behavior
   dryRun: boolean;
@@ -101,6 +103,8 @@ Options:
   --run                 Start processing immediately (TUI starts paused by default)
   -p, --max-parallel N  Max concurrent tasks (default: 3)
   --poll-interval N     Seconds between polls (default: 30)
+  --transport MODE      TUI transport: poll|sse|auto (default: poll)
+                        Override with RUNNER_TUI_TRANSPORT for rollout/rollback
   -w, --workdir DIR     Working directory
   --agent NAME          OpenCode agent to use
   -m, --model NAME      Model to use
@@ -125,6 +129,23 @@ Examples:
 
 const DEFAULT_PROJECT_ID = "all";
 
+function parseTransportMode(value: string | undefined): TUITransportMode | null {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "poll" || normalized === "sse" || normalized === "auto") {
+    return normalized;
+  }
+
+  return null;
+}
+
+export function resolveTransportMode(cliMode: TUITransportMode, envOverride?: string): TUITransportMode {
+  return parseTransportMode(envOverride) ?? cliMode;
+}
+
 // =============================================================================
 // Argument Parsing
 // =============================================================================
@@ -142,6 +163,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     workdir: "",
     agent: "",
     model: "",
+    transportMode: "poll",
     dryRun: false,
     include: [],
     exclude: [],
@@ -235,6 +257,16 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "-m" || arg === "--model") {
       options.model = args[++i] || "";
+      i++;
+      continue;
+    }
+
+    if (arg === "--transport") {
+      const value = args[++i] || "";
+      const parsed = parseTransportMode(value);
+      if (parsed) {
+        options.transportMode = parsed;
+      }
       i++;
       continue;
     }
@@ -360,6 +392,23 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
     logger.setSuppressConsole(true);
   }
 
+  const envTransportOverride = process.env.RUNNER_TUI_TRANSPORT;
+  const parsedEnvTransportOverride = parseTransportMode(envTransportOverride);
+  const effectiveTransportMode = resolveTransportMode(options.transportMode, envTransportOverride);
+
+  if (envTransportOverride && !parsedEnvTransportOverride) {
+    logger.warn("Ignoring invalid RUNNER_TUI_TRANSPORT override", {
+      envValue: envTransportOverride,
+      allowedValues: ["poll", "sse", "auto"],
+      using: options.transportMode,
+    });
+  } else if (parsedEnvTransportOverride && parsedEnvTransportOverride !== options.transportMode) {
+    logger.warn("Applying RUNNER_TUI_TRANSPORT override", {
+      requestedTransportMode: options.transportMode,
+      effectiveTransportMode,
+    });
+  }
+
   logger.info("Starting runner", {
     projects: projects.length > 1 ? projects : undefined,
     projectId,
@@ -368,6 +417,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
     maxParallel: options.maxParallel || config.maxParallel,
     pollInterval: options.pollInterval || config.pollInterval,
     dryRun: options.dryRun,
+    transportMode: effectiveTransportMode,
   });
 
   if (options.dryRun) {
@@ -392,6 +442,7 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
       mode,
       config: { ...config, ...configOverrides },
       startPaused: mode === "tui" && !options.run,  // TUI starts paused unless --run
+      transportMode: effectiveTransportMode,
     });
 
     // Set up graceful shutdown handler

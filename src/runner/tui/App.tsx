@@ -58,6 +58,8 @@ import { SessionSelectPopup } from './components/SessionSelectPopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
 import { useTaskPoller } from './hooks/useTaskPoller';
 import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
+import { useTaskSse } from './hooks/useTaskSse';
+import { useMultiProjectSse } from './hooks/useMultiProjectSse';
 import { useLogStream } from './hooks/useLogStream';
 import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
@@ -68,12 +70,48 @@ import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow, TUITransportMode } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 type ViewMode = 'tasks' | 'crons';
 type CronActionMode = 'create' | 'edit' | 'add-link' | 'remove-link' | 'replace-links';
+type RuntimeTransportMode = 'poll' | 'sse';
+
+export interface TransportHookEnablement {
+  singleTaskPollerEnabled: boolean;
+  multiTaskPollerEnabled: boolean;
+  singleTaskSseEnabled: boolean;
+  multiTaskSseEnabled: boolean;
+  singleCronPollerEnabled: boolean;
+  multiCronPollerEnabled: boolean;
+}
+
+/**
+ * Resolve runtime transport mode for current implementation.
+ */
+export function resolveRuntimeTransportMode(transportMode: TUITransportMode): RuntimeTransportMode {
+  if (transportMode === 'sse' || transportMode === 'auto') {
+    return 'sse';
+  }
+  return 'poll';
+}
+
+export function resolveTransportHookEnablement(
+  isMultiProject: boolean,
+  runtimeTransportMode: RuntimeTransportMode,
+): TransportHookEnablement {
+  const useSse = runtimeTransportMode === 'sse';
+
+  return {
+    singleTaskPollerEnabled: !isMultiProject && !useSse,
+    multiTaskPollerEnabled: isMultiProject && !useSse,
+    singleTaskSseEnabled: !isMultiProject && useSse,
+    multiTaskSseEnabled: isMultiProject && useSse,
+    singleCronPollerEnabled: !isMultiProject,
+    multiCronPollerEnabled: isMultiProject,
+  };
+}
 
 /** Cycle to the next panel (for Tab navigation) */
 function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
@@ -326,6 +364,14 @@ export function App({
     [config.projects, config.project]
   );
   const isMultiProject = projects.length > 1;
+  const runtimeTransportMode = useMemo(
+    () => resolveRuntimeTransportMode(config.transportMode),
+    [config.transportMode]
+  );
+  const transportHookEnablement = useMemo(
+    () => resolveTransportHookEnablement(isMultiProject, runtimeTransportMode),
+    [isMultiProject, runtimeTransportMode],
+  );
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -446,7 +492,15 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: !isMultiProject,
+    enabled: transportHookEnablement.singleTaskPollerEnabled,
+  });
+
+  // Single-project SSE task transport (with automatic polling fallback)
+  const singleProjectSse = useTaskSse({
+    projectId: config.project,
+    apiUrl: config.apiUrl,
+    pollInterval: config.pollInterval,
+    enabled: transportHookEnablement.singleTaskSseEnabled,
   });
 
   // Multi-project poller (used when in multi-project mode)
@@ -454,7 +508,15 @@ export function App({
     projects: projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: isMultiProject,
+    enabled: transportHookEnablement.multiTaskPollerEnabled,
+  });
+
+  // Multi-project SSE transport (with per-project polling fallback)
+  const multiProjectSse = useMultiProjectSse({
+    projects,
+    apiUrl: config.apiUrl,
+    pollInterval: config.pollInterval,
+    enabled: transportHookEnablement.multiTaskSseEnabled,
   });
 
   // Single-project cron poller (used when not in multi-project mode)
@@ -462,7 +524,7 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: !isMultiProject,
+    enabled: transportHookEnablement.singleCronPollerEnabled,
   });
 
   // Multi-project cron poller (used when in multi-project mode)
@@ -470,7 +532,7 @@ export function App({
     projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: isMultiProject,
+    enabled: transportHookEnablement.multiCronPollerEnabled,
   });
 
   // Select appropriate data based on mode
@@ -485,21 +547,23 @@ export function App({
   let refetchCrons: () => Promise<void>;
 
   if (isMultiProject) {
+    const taskTransport = runtimeTransportMode === 'sse' ? multiProjectSse : multiProjectPoller;
+
     // Multi-project mode: filter tasks by activeProject
     if (activeProject === 'all') {
-      tasks = multiProjectPoller.allTasks;
+      tasks = taskTransport.allTasks;
     } else {
-      tasks = multiProjectPoller.tasksByProject.get(activeProject) ?? [];
+      tasks = taskTransport.tasksByProject.get(activeProject) ?? [];
     }
     stats = activeProject === 'all' 
-      ? multiProjectPoller.aggregateStats 
-      : (multiProjectPoller.statsByProject.get(activeProject) ?? {
+      ? taskTransport.aggregateStats 
+      : (taskTransport.statsByProject.get(activeProject) ?? {
           total: 0, ready: 0, waiting: 0, blocked: 0, inProgress: 0, completed: 0,
         });
-    isLoading = multiProjectPoller.isLoading;
-    isConnected = multiProjectPoller.isConnected;
-    error = multiProjectPoller.error;
-    refetch = multiProjectPoller.refetch;
+    isLoading = taskTransport.isLoading;
+    isConnected = taskTransport.isConnected;
+    error = taskTransport.error;
+    refetch = taskTransport.refetch;
     if (activeProject === 'all') {
       crons = multiProjectCronPoller.allCrons;
     } else {
@@ -508,13 +572,15 @@ export function App({
     cronError = multiProjectCronPoller.error;
     refetchCrons = multiProjectCronPoller.refetch;
   } else {
+    const taskTransport = runtimeTransportMode === 'sse' ? singleProjectSse : singleProjectPoller;
+
     // Single-project mode
-    tasks = singleProjectPoller.tasks;
-    stats = singleProjectPoller.stats;
-    isLoading = singleProjectPoller.isLoading;
-    isConnected = singleProjectPoller.isConnected;
-    error = singleProjectPoller.error;
-    refetch = singleProjectPoller.refetch;
+    tasks = taskTransport.tasks;
+    stats = taskTransport.stats;
+    isLoading = taskTransport.isLoading;
+    isConnected = taskTransport.isConnected;
+    error = taskTransport.error;
+    refetch = taskTransport.refetch;
     crons = singleCronPoller.crons;
     cronError = singleCronPoller.error;
     refetchCrons = singleCronPoller.refetch;

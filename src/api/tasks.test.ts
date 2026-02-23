@@ -14,6 +14,7 @@ import { join } from "path";
 import { Hono } from "hono";
 import { createTaskRoutes } from "./tasks";
 import { getConfig } from "../config";
+import { createProjectRealtimeHub } from "../core/realtime-hub";
 
 // =============================================================================
 // Test Setup
@@ -88,6 +89,328 @@ function createTestTask(
 // =============================================================================
 
 describe("Task API", () => {
+  describe("GET /:projectId/stream - SSE Task Stream", () => {
+    test("should set SSE hardening headers", async () => {
+      const streamApp = new Hono();
+      streamApp.route("/tasks", (createTaskRoutes as any)({ heartbeatIntervalMs: 25 }));
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toBe("text/event-stream; charset=utf-8");
+      expect(res.headers.get("cache-control")).toBe("no-cache, no-transform");
+      expect(res.headers.get("connection")).toBe("keep-alive");
+      expect(res.headers.get("x-accel-buffering")).toBe("no");
+      expect(res.headers.get("pragma")).toBe("no-cache");
+
+      await res.body?.cancel();
+    });
+
+    test("should open SSE stream with connected and snapshot events", async () => {
+      const streamApp = new Hono();
+      streamApp.route("/tasks", (createTaskRoutes as any)({ heartbeatIntervalMs: 25 }));
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type") || "").toContain("text/event-stream");
+      expect(res.headers.get("cache-control") || "").toContain("no-cache");
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 2000;
+
+      while (Date.now() < deadline) {
+        const result = await reader!.read();
+        if (result.done) {
+          break;
+        }
+
+        text += decoder.decode(result.value, { stream: true });
+
+        if (text.includes("event: connected") && text.includes("event: tasks_snapshot")) {
+          break;
+        }
+      }
+
+      expect(text).toContain("event: connected");
+      expect(text).toContain("event: tasks_snapshot");
+      expect(text.indexOf("event: connected")).toBeLessThan(text.indexOf("event: tasks_snapshot"));
+
+      const firstSnapshotDataLine = text
+        .split("\n")
+        .find((line) => line.startsWith("data: {") && line.includes("\"type\":\"tasks_snapshot\""));
+
+      expect(firstSnapshotDataLine).toBeDefined();
+      expect(firstSnapshotDataLine).toContain(`\"projectId\":\"${TEST_PROJECT}\"`);
+      expect(firstSnapshotDataLine).toContain("\"transport\":\"sse\"");
+
+      await reader?.cancel();
+    });
+
+    test("should emit heartbeat events while stream is open", async () => {
+      const streamApp = new Hono();
+      streamApp.route("/tasks", (createTaskRoutes as any)({ heartbeatIntervalMs: 20 }));
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+      expect(res.status).toBe(200);
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 2500;
+
+      while (Date.now() < deadline) {
+        const result = await reader!.read();
+        if (result.done) {
+          break;
+        }
+
+        text += decoder.decode(result.value, { stream: true });
+
+        if (text.includes("event: heartbeat")) {
+          break;
+        }
+      }
+
+      expect(text).toContain("event: heartbeat");
+
+      await reader?.cancel();
+    });
+
+    test("should clean up hub subscription when client disconnects", async () => {
+      const hub = createProjectRealtimeHub();
+      const streamApp = new Hono();
+      streamApp.route(
+        "/tasks",
+        createTaskRoutes({ realtimeHub: hub, heartbeatIntervalMs: 20 })
+      );
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+      expect(res.status).toBe(200);
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      await reader!.read();
+
+      const subscribedDeadline = Date.now() + 1000;
+      while (Date.now() < subscribedDeadline && hub.getSubscriberCount(TEST_PROJECT) !== 1) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(hub.getSubscriberCount(TEST_PROJECT)).toBe(1);
+
+      await reader!.cancel();
+
+      const deadline = Date.now() + 1000;
+      while (Date.now() < deadline && hub.getSubscriberCount(TEST_PROJECT) !== 0) {
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+
+      expect(hub.getSubscriberCount(TEST_PROJECT)).toBe(0);
+    });
+
+    test("should emit error event when initial snapshot retrieval fails", async () => {
+      const failingTaskService = {
+        getTasksWithDependencies: async () => {
+          throw new Error("Initial snapshot failed in test");
+        },
+      };
+
+      const streamApp = new Hono();
+      streamApp.route(
+        "/tasks",
+        (createTaskRoutes as any)({
+          heartbeatIntervalMs: 25,
+          taskService: failingTaskService,
+        })
+      );
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+      expect(res.status).toBe(200);
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 2000;
+
+      while (Date.now() < deadline) {
+        const result = await reader!.read();
+        if (result.done) {
+          break;
+        }
+
+        text += decoder.decode(result.value, { stream: true });
+
+        if (text.includes("event: error")) {
+          break;
+        }
+      }
+
+      expect(text).toContain("event: connected");
+      expect(text).toContain("event: error");
+
+      const errorDataLine = text
+        .split("\n")
+        .find((line) => line.startsWith("data: {") && line.includes('"type":"error"'));
+
+      expect(errorDataLine).toBeDefined();
+      expect(errorDataLine).toContain(`"projectId":"${TEST_PROJECT}"`);
+      expect(errorDataLine).toContain('"transport":"sse"');
+      expect(errorDataLine).toContain('"message":"Initial snapshot failed in test"');
+
+      await reader?.cancel();
+    });
+
+    test("publishes project-scoped dirty + snapshot events when task claim mutates state", async () => {
+      const hub = createProjectRealtimeHub();
+      const claimApp = new Hono();
+      claimApp.route("/tasks", createTaskRoutes({ realtimeHub: hub }));
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+      hub.subscribe("_other-project", ({ event }) => otherProjectEvents.push(event));
+
+      const claimRes = await claimApp.request(`/tasks/${TEST_PROJECT}/task-123/claim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runnerId: "runner-a" }),
+      });
+
+      expect(claimRes.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
+      expect(projectEvents).toContain("tasks_snapshot");
+      expect(otherProjectEvents).toEqual([]);
+    });
+
+    test("publishes project-scoped dirty + snapshot events when task release mutates state", async () => {
+      const hub = createProjectRealtimeHub();
+      const releaseApp = new Hono();
+      releaseApp.route("/tasks", createTaskRoutes({ realtimeHub: hub }));
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+      hub.subscribe("_other-project", ({ event }) => otherProjectEvents.push(event));
+
+      const releaseRes = await releaseApp.request(`/tasks/${TEST_PROJECT}/task-123/release`, {
+        method: "POST",
+      });
+
+      expect(releaseRes.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
+      expect(projectEvents).toContain("tasks_snapshot");
+      expect(otherProjectEvents).toEqual([]);
+    });
+
+    test("fanout stays project-scoped for concurrent SSE subscribers", async () => {
+      const projectA = `${TEST_PROJECT}-a`;
+      const projectB = `${TEST_PROJECT}-b`;
+      const hub = createProjectRealtimeHub();
+      const streamApp = new Hono();
+      streamApp.route("/tasks", createTaskRoutes({ realtimeHub: hub, heartbeatIntervalMs: 5000 }));
+
+      const [resA, resB] = await Promise.all([
+        streamApp.request(`/tasks/${projectA}/stream`),
+        streamApp.request(`/tasks/${projectB}/stream`),
+      ]);
+
+      expect(resA.status).toBe(200);
+      expect(resB.status).toBe(200);
+
+      const readerA = resA.body?.getReader();
+      const readerB = resB.body?.getReader();
+      expect(readerA).toBeDefined();
+      expect(readerB).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let textA = "";
+      let textB = "";
+
+      const readUntilSnapshot = async (reader: ReadableStreamDefaultReader<Uint8Array>) => {
+        const deadline = Date.now() + 2000;
+        let text = "";
+        while (Date.now() < deadline) {
+          const result = await reader.read();
+          if (result.done) {
+            break;
+          }
+          text += decoder.decode(result.value, { stream: true });
+          if (text.includes("event: tasks_snapshot")) {
+            break;
+          }
+        }
+        return text;
+      };
+
+      [textA, textB] = await Promise.all([
+        readUntilSnapshot(readerA!),
+        readUntilSnapshot(readerB!),
+      ]);
+
+      const projectASnapshotsBefore = (textA.match(/event: tasks_snapshot/g) || []).length;
+      const projectBSnapshotsBefore = (textB.match(/event: tasks_snapshot/g) || []).length;
+
+      hub.publish(projectA, {
+        event: "tasks_snapshot",
+        payload: {
+          type: "tasks_snapshot",
+          transport: "sse",
+          timestamp: new Date().toISOString(),
+          projectId: projectA,
+          tasks: [],
+          count: 0,
+          stats: {
+            total: 0,
+            ready: 0,
+            waiting: 0,
+            blocked: 0,
+            in_progress: 0,
+            completed: 0,
+          },
+          cycles: [],
+        },
+      });
+
+      const fanoutDeadline = Date.now() + 1500;
+      while (Date.now() < fanoutDeadline) {
+        const readResult = await Promise.race([
+          readerA!.read(),
+          new Promise<{ done: true; value?: undefined }>((resolve) =>
+            setTimeout(() => resolve({ done: true, value: undefined }), 50)
+          ),
+        ]);
+
+        if (readResult.done || !readResult.value) {
+          break;
+        }
+
+        textA += decoder.decode(readResult.value, { stream: true });
+        if ((textA.match(/event: tasks_snapshot/g) || []).length > projectASnapshotsBefore) {
+          break;
+        }
+      }
+
+      const projectASnapshotsAfter = (textA.match(/event: tasks_snapshot/g) || []).length;
+      const projectBSnapshotsAfter = (textB.match(/event: tasks_snapshot/g) || []).length;
+
+      expect(projectASnapshotsAfter).toBe(projectASnapshotsBefore + 1);
+      expect(projectBSnapshotsAfter).toBe(projectBSnapshotsBefore);
+
+      await readerA?.cancel();
+      await readerB?.cancel();
+    });
+  });
+
   describe("POST /:projectId/status - Task Status Check", () => {
     // =========================================================================
     // Validation Tests (No external dependencies)

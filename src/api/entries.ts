@@ -8,7 +8,13 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { HTTPException } from "hono/http-exception";
 import { getBrainService, DependencyValidationError } from "../core/brain-service";
+import { getTaskService } from "../core/task-service";
 import type { BrainEntry } from "../core/types";
+import {
+  createProjectRealtimeHub,
+  publishProjectDirty,
+  type ProjectRealtimeHub,
+} from "../core/realtime-hub";
 import {
   CreateEntryRequestSchema,
   CreateEntryResponseSchema,
@@ -236,7 +242,55 @@ const moveEntryRoute = createRoute({
 // Entry Routes Factory
 // =============================================================================
 
-export function createEntriesRoutes(): OpenAPIHono {
+type EntryRouteOptions = {
+  realtimeHub?: ProjectRealtimeHub;
+};
+
+function projectIdFromPath(path: string): string | null {
+  const match = path.match(/^projects\/([^/]+)\//);
+  return match ? match[1] : null;
+}
+
+function isTaskPath(path: string): boolean {
+  return /^projects\/[^/]+\/task\//.test(path);
+}
+
+async function publishTaskSnapshot(realtimeHub: ProjectRealtimeHub, projectId: string): Promise<void> {
+  const taskService = getTaskService();
+
+  try {
+    const snapshot = await taskService.getTasksWithDependencies(projectId);
+    realtimeHub.publish(projectId, {
+      event: "tasks_snapshot",
+      payload: {
+        type: "tasks_snapshot",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        tasks: snapshot.tasks,
+        count: snapshot.tasks.length,
+        stats: snapshot.stats,
+        cycles: snapshot.cycles,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load task snapshot";
+    realtimeHub.publish(projectId, {
+      event: "error",
+      payload: {
+        type: "error",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        message,
+      },
+    });
+  }
+}
+
+export function createEntriesRoutes(options?: EntryRouteOptions): OpenAPIHono {
+  const realtimeHub = options?.realtimeHub ?? createProjectRealtimeHub();
+
   const entries = new OpenAPIHono({
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -297,6 +351,13 @@ export function createEntriesRoutes(): OpenAPIHono {
     
     try {
       const result = await service.save(body);
+      const projectId = projectIdFromPath(result.path);
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
+      if (body.type === "task" && body.project) {
+        await publishTaskSnapshot(realtimeHub, body.project);
+      }
       return c.json(result, 201);
     } catch (error) {
       if (error instanceof DependencyValidationError) {
@@ -428,6 +489,17 @@ export function createEntriesRoutes(): OpenAPIHono {
       }
 
       const result = await service.update(entryPath, body);
+      const projectId = projectIdFromPath(entryPath);
+
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
+
+      if (result.type === "task") {
+        if (projectId) {
+          await publishTaskSnapshot(realtimeHub, projectId);
+        }
+      }
 
       return c.json(result, 200);
     } catch (error) {
@@ -492,6 +564,17 @@ export function createEntriesRoutes(): OpenAPIHono {
       }
 
       await service.delete(entryPath);
+      const projectId = projectIdFromPath(entryPath);
+
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
+
+      if (isTaskPath(entryPath)) {
+        if (projectId) {
+          await publishTaskSnapshot(realtimeHub, projectId);
+        }
+      }
 
       return c.json(
         {
@@ -521,7 +604,7 @@ export function createEntriesRoutes(): OpenAPIHono {
   entries.openapi(moveEntryRoute, async (c) => {
     const { id } = c.req.valid("param");
     const body = c.req.valid("json");
-    return handleMoveEntry(c, id, body.project);
+    return handleMoveEntry(c, id, body.project, realtimeHub);
   });
 
   // Multi-segment wildcard patterns for full-path IDs (e.g., POST /entries/projects/x/task/y.md/move)
@@ -545,7 +628,7 @@ export function createEntriesRoutes(): OpenAPIHono {
         400
       );
     }
-    return handleMoveEntry(c, id, body.project);
+    return handleMoveEntry(c, id, body.project, realtimeHub);
   });
 
   return entries;
@@ -578,7 +661,12 @@ function extractIdFromPath(fullPath: string, suffix: string): string {
 /**
  * Handle move entry request - shared between OpenAPI route and wildcard routes.
  */
-async function handleMoveEntry(c: any, id: string, project: string) {
+async function handleMoveEntry(
+  c: any,
+  id: string,
+  project: string,
+  realtimeHub: ProjectRealtimeHub
+) {
   try {
     const service = getBrainService();
 
@@ -600,7 +688,32 @@ async function handleMoveEntry(c: any, id: string, project: string) {
       }
     }
 
+    const sourceProjectId = projectIdFromPath(entryPath);
     const result = await service.moveEntry(entryPath, project);
+
+    if (isTaskPath(result.oldPath)) {
+      const targetProjectId = projectIdFromPath(result.newPath);
+
+      if (sourceProjectId) {
+        publishProjectDirty(realtimeHub, sourceProjectId);
+        await publishTaskSnapshot(realtimeHub, sourceProjectId);
+      }
+
+      if (targetProjectId) {
+        publishProjectDirty(realtimeHub, targetProjectId);
+        await publishTaskSnapshot(realtimeHub, targetProjectId);
+      }
+    } else {
+      const targetProjectId = projectIdFromPath(result.newPath);
+
+      if (sourceProjectId) {
+        publishProjectDirty(realtimeHub, sourceProjectId);
+      }
+
+      if (targetProjectId) {
+        publishProjectDirty(realtimeHub, targetProjectId);
+      }
+    }
 
     return c.json(result, 200);
   } catch (error) {

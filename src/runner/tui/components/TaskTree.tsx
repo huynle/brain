@@ -16,7 +16,10 @@ import {
   generatePrefixSegments,
   type LaneAssignment,
   type LanePrefixSegment,
+  type LanePrefixSegmentKind,
 } from '../lane-layout';
+
+type ColoredPrefixSegment = Pick<LanePrefixSegment, 'text' | 'kind'>;
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -508,6 +511,31 @@ export function buildSelectedTaskRelationLanes(
   }
 
   return { upstreamLanes, downstreamLanes };
+}
+
+export function getTaskRelationKind(
+  taskId: string,
+  relationGraph: SelectedTaskRelationGraph,
+): LanePrefixSegmentKind {
+  if (relationGraph.ancestors.has(taskId)) return 'upstream';
+  if (relationGraph.descendants.has(taskId)) return 'downstream';
+  return 'neutral';
+}
+
+export function buildTreePrefixSegments(
+  prefix: string,
+  relationKind: LanePrefixSegmentKind,
+): ColoredPrefixSegment[] {
+  if (prefix.length === 0 || relationKind === 'neutral') {
+    return [{ text: prefix, kind: 'neutral' }];
+  }
+
+  const segments: ColoredPrefixSegment[] = [];
+  for (const char of prefix) {
+    const isConnector = char === '│' || char === '├' || char === '└' || char === '─';
+    segments.push({ text: char, kind: isConnector ? relationKind : 'neutral' });
+  }
+  return segments;
 }
 
 // Helper to check if a task is completed
@@ -1173,7 +1201,7 @@ const TaskRow = React.memo(function TaskRow({
 }: {
   task: TaskDisplay;
   prefix: string;
-  prefixSegments?: LanePrefixSegment[];
+  prefixSegments?: ColoredPrefixSegment[];
   isSelected: boolean;
   inCycle: boolean;
   isReady: boolean;
@@ -1303,6 +1331,7 @@ function renderTree(
   selectedId: string | null,
   prefix: string = '',
   readyIds: Set<string>,
+  relationGraph: SelectedTaskRelationGraph,
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
   panelWidth?: number,
@@ -1316,12 +1345,18 @@ function renderTree(
     const isSelected = node.task.id === selectedId;
     const isReady = readyIds.has(node.task.id);
     const isChecked = selectedTaskIds.has(node.task.id);
+    const rowPrefix = prefix + branchChar;
+    const relationKind = getTaskRelationKind(node.task.id, relationGraph);
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments(rowPrefix, relationKind);
 
     elements.push(
       <TaskRow
         key={node.task.id}
         task={node.task}
-        prefix={prefix + branchChar}
+        prefix={rowPrefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={node.inCycle}
         isReady={isReady}
@@ -1336,7 +1371,7 @@ function renderTree(
     if (node.children.length > 0) {
       const childPrefix = prefix + (isLast ? EMPTY : VERTICAL);
       elements.push(
-        ...renderTree(node.children, selectedId, childPrefix, readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(node.children, selectedId, childPrefix, readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1517,6 +1552,7 @@ function renderProjectTasks(
   projectTasks: TaskDisplay[],
   selectedId: string | null,
   readyIds: Set<string>,
+  relationGraph: SelectedTaskRelationGraph,
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
   panelWidth?: number,
@@ -1535,13 +1571,19 @@ function renderProjectTasks(
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
+    const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
+    const rootPrefix = '  ';
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments(rootPrefix, relationKind);
 
     // Root task with indent for project grouping
     elements.push(
       <TaskRow
         key={rootNode.task.id}
         task={rootNode.task}
-        prefix="  "
+        prefix={rootPrefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
@@ -1555,7 +1597,7 @@ function renderProjectTasks(
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '  ', readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, '  ', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1779,6 +1821,10 @@ export const TaskTree = React.memo(function TaskTree({
   
   // Build tree structure from active tasks, passing all tasks for parent_id chain walking
   const tree = useMemo(() => buildTree(activeTasks, tasks), [activeTasks, tasks]);
+  const relationGraph = useMemo(
+    () => buildSelectedTaskRelationGraph(activeTasks, selectedId),
+    [activeTasks, selectedId],
+  );
 
   // Group tasks by project (for grouped view)
   const tasksByProject = useMemo(() => {
@@ -1961,8 +2007,9 @@ export const TaskTree = React.memo(function TaskTree({
       );
       
       // Project's tasks
+      const projectRelationGraph = buildSelectedTaskRelationGraph(projectActiveTasks, selectedId);
       projectElements.push(
-        ...renderProjectTasks(projectTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderProjectTasks(projectTasks, selectedId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
       );
       
       // Add spacing between projects (except last)
@@ -2793,6 +2840,10 @@ export const TaskTree = React.memo(function TaskTree({
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
+    const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments('', relationKind);
 
     // Root task (no tree prefix)
     elements.push(
@@ -2800,6 +2851,7 @@ export const TaskTree = React.memo(function TaskTree({
         key={rootNode.task.id}
         task={rootNode.task}
         prefix=""
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
@@ -2813,7 +2865,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '', readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, '', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
 

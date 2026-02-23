@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
 import type { TaskDisplay } from '../types';
 import type { LaneAssignment } from '../lane-layout';
 
@@ -1290,6 +1290,35 @@ describe('buildSelectedTaskRelationLanes', () => {
 
     expect(lanes.upstreamLanes.size).toBe(0);
     expect(lanes.downstreamLanes).toEqual(new Set([0]));
+  });
+});
+
+describe('non-lane relation prefix helpers', () => {
+  const relationGraph = {
+    ancestors: new Set(['a']),
+    descendants: new Set(['d']),
+  };
+
+  it('classifies related task IDs into upstream/downstream/neutral', () => {
+    expect(getTaskRelationKind('a', relationGraph)).toBe('upstream');
+    expect(getTaskRelationKind('d', relationGraph)).toBe('downstream');
+    expect(getTaskRelationKind('x', relationGraph)).toBe('neutral');
+  });
+
+  it('colors only connector glyphs in tree prefixes', () => {
+    const segments = buildTreePrefixSegments('│ ├─', 'upstream');
+    expect(segments).toEqual([
+      { text: '│', kind: 'upstream' },
+      { text: ' ', kind: 'neutral' },
+      { text: '├', kind: 'upstream' },
+      { text: '─', kind: 'upstream' },
+    ]);
+  });
+
+  it('returns neutral segments when relation kind is neutral', () => {
+    expect(buildTreePrefixSegments('│ └─', 'neutral')).toEqual([
+      { text: '│ └─', kind: 'neutral' },
+    ]);
   });
 });
 

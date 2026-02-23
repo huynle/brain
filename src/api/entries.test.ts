@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { createEntriesRoutes } from "./entries";
 import { getConfig } from "../config";
 import { parseFrontmatter } from "../core/zk-client";
+import { createProjectRealtimeHub } from "../core/realtime-hub";
 
 // =============================================================================
 // Test Setup
@@ -391,6 +392,40 @@ Original content.
       });
 
       expect(res.status).toBe(404);
+    });
+
+    test("publishes project-scoped snapshot when task update mutates task visibility", async () => {
+      const hub = createProjectRealtimeHub();
+      const realtimeApp = new Hono();
+      realtimeApp.route("/entries", (createEntriesRoutes as any)({ realtimeHub: hub }));
+
+      const taskPath = `${TEST_PATH_PREFIX}/task/realtime-update.md`;
+      createTestEntry(
+        taskPath,
+        `---
+title: Realtime Update Task
+type: task
+status: pending
+---
+
+Task body.
+`
+      );
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_SUBDIR, ({ event }) => projectEvents.push(event));
+      hub.subscribe(TEST_SUBDIR_B, ({ event }) => otherProjectEvents.push(event));
+
+      const res = await realtimeApp.request(`/entries/${taskPath}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(projectEvents).toContain("tasks_snapshot");
+      expect(otherProjectEvents).toEqual([]);
     });
   });
 

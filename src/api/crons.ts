@@ -2,6 +2,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getBrainService } from "../core/brain-service";
 import { resolveCronPipeline, canTriggerPipeline, generateRunId } from "../core/cron-service";
 import { getTaskService } from "../core/task-service";
+import { createProjectRealtimeHub, type ProjectRealtimeHub } from "../core/realtime-hub";
 import type { BrainEntry, CronRun, ResolvedTask } from "../core/types";
 import {
   EntryIdSchema,
@@ -539,7 +540,46 @@ function linkedTasksPayload(cronId: string, tasks: ResolvedTask[]) {
   };
 }
 
-export function createCronRoutes(): OpenAPIHono {
+type CronRouteOptions = {
+  realtimeHub?: ProjectRealtimeHub;
+};
+
+async function publishTaskSnapshot(realtimeHub: ProjectRealtimeHub, projectId: string): Promise<void> {
+  const taskService = getTaskService();
+
+  try {
+    const snapshot = await taskService.getTasksWithDependencies(projectId);
+    realtimeHub.publish(projectId, {
+      event: "tasks_snapshot",
+      payload: {
+        type: "tasks_snapshot",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        tasks: snapshot.tasks,
+        count: snapshot.tasks.length,
+        stats: snapshot.stats,
+        cycles: snapshot.cycles,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load task snapshot";
+    realtimeHub.publish(projectId, {
+      event: "error",
+      payload: {
+        type: "error",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        message,
+      },
+    });
+  }
+}
+
+export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
+  const realtimeHub = options?.realtimeHub ?? createProjectRealtimeHub();
+
   const crons = new OpenAPIHono({
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -964,6 +1004,7 @@ export function createCronRoutes(): OpenAPIHono {
       }
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      await publishTaskSnapshot(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
@@ -1021,6 +1062,7 @@ export function createCronRoutes(): OpenAPIHono {
       }
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      await publishTaskSnapshot(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
@@ -1078,6 +1120,7 @@ export function createCronRoutes(): OpenAPIHono {
       }
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      await publishTaskSnapshot(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),

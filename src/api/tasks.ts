@@ -9,6 +9,7 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getTaskService } from "../core/task-service";
 import { computeAndResolveFeatures } from "../core/feature-service";
 import type { TaskClaim } from "../core/types";
+import { createProjectRealtimeHub, type ProjectRealtimeHub } from "../core/realtime-hub";
 import {
   ProjectIdSchema,
   ProjectListResponseSchema,
@@ -488,7 +489,53 @@ const getFeatureRoute = createRoute({
 // Route Factory
 // =============================================================================
 
-export function createTaskRoutes(): OpenAPIHono {
+type TaskRouteOptions = {
+  realtimeHub?: ProjectRealtimeHub;
+  heartbeatIntervalMs?: number;
+};
+
+const DEFAULT_HEARTBEAT_MS = 30000;
+
+async function publishTaskSnapshot(
+  realtimeHub: ProjectRealtimeHub,
+  projectId: string
+): Promise<void> {
+  const taskService = getTaskService();
+
+  try {
+    const snapshot = await taskService.getTasksWithDependencies(projectId);
+    realtimeHub.publish(projectId, {
+      event: "tasks_snapshot",
+      payload: {
+        type: "tasks_snapshot",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        tasks: snapshot.tasks,
+        count: snapshot.tasks.length,
+        stats: snapshot.stats,
+        cycles: snapshot.cycles,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Failed to load task snapshot";
+    realtimeHub.publish(projectId, {
+      event: "error",
+      payload: {
+        type: "error",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        message,
+      },
+    });
+  }
+}
+
+export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
+  const realtimeHub = options?.realtimeHub ?? createProjectRealtimeHub();
+  const heartbeatIntervalMs = options?.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_MS;
+
   const tasks = new OpenAPIHono({
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -549,6 +596,114 @@ export function createTaskRoutes(): OpenAPIHono {
       }
       throw error;
     }
+  });
+
+  // GET /:projectId/stream - SSE stream with task snapshots
+  tasks.get("/:projectId/stream", async (c) => {
+    const projectId = c.req.param("projectId");
+    const taskService = getTaskService();
+    const encoder = new TextEncoder();
+    let streamCleanup: (() => void) | undefined;
+
+    return new Response(
+      new ReadableStream({
+        async start(controller) {
+          let closed = false;
+          let heartbeatTimer: ReturnType<typeof setInterval> | undefined;
+          let unsubscribe: (() => void) | undefined;
+
+          const writeEvent = (event: string, payload: unknown) => {
+            if (closed) {
+              return;
+            }
+            controller.enqueue(
+              encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
+            );
+          };
+
+          const cleanup = () => {
+            if (closed) {
+              return;
+            }
+            closed = true;
+            if (heartbeatTimer) {
+              clearInterval(heartbeatTimer);
+              heartbeatTimer = undefined;
+            }
+            if (unsubscribe) {
+              unsubscribe();
+              unsubscribe = undefined;
+            }
+            try {
+              controller.close();
+            } catch {
+              // Stream may already be closed by client cancellation.
+            }
+          };
+
+          streamCleanup = cleanup;
+
+          c.req.raw.signal.addEventListener("abort", cleanup, { once: true });
+
+          writeEvent("connected", {
+            type: "connected",
+            transport: "sse",
+            timestamp: new Date().toISOString(),
+            projectId,
+          });
+
+          try {
+            const snapshot = await taskService.getTasksWithDependencies(projectId);
+            writeEvent("tasks_snapshot", {
+              type: "tasks_snapshot",
+              transport: "sse",
+              timestamp: new Date().toISOString(),
+              projectId,
+              tasks: snapshot.tasks,
+              count: snapshot.tasks.length,
+              stats: snapshot.stats,
+              cycles: snapshot.cycles,
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : "Failed to load task snapshot";
+            writeEvent("error", {
+              type: "error",
+              transport: "sse",
+              timestamp: new Date().toISOString(),
+              projectId,
+              message,
+            });
+          }
+
+          unsubscribe = realtimeHub.subscribe(projectId, ({ event, payload }) => {
+            writeEvent(event, payload);
+          });
+
+          heartbeatTimer = setInterval(() => {
+            writeEvent("heartbeat", {
+              type: "heartbeat",
+              transport: "sse",
+              timestamp: new Date().toISOString(),
+              projectId,
+            });
+          }, heartbeatIntervalMs);
+        },
+        cancel() {
+          if (streamCleanup) {
+            streamCleanup();
+          }
+        },
+      }),
+      {
+        headers: {
+          "Content-Type": "text/event-stream; charset=utf-8",
+          "Cache-Control": "no-cache, no-transform",
+          Pragma: "no-cache",
+          Connection: "keep-alive",
+          "X-Accel-Buffering": "no",
+        },
+      }
+    );
   });
 
   // GET /:projectId/ready - Ready tasks
@@ -710,6 +865,8 @@ export function createTaskRoutes(): OpenAPIHono {
     const now = Date.now();
     claims.set(claimKey, { runnerId: body.runnerId, claimedAt: now });
 
+    await publishTaskSnapshot(realtimeHub, projectId);
+
     return c.json({
       success: true as const,
       taskId,
@@ -724,6 +881,8 @@ export function createTaskRoutes(): OpenAPIHono {
 
     const claimKey = getClaimKey(projectId, taskId);
     const existed = claims.delete(claimKey);
+
+    await publishTaskSnapshot(realtimeHub, projectId);
 
     return c.json({
       success: true,
@@ -1045,6 +1204,7 @@ export function createTaskRoutes(): OpenAPIHono {
     
     const projectId = c.req.param("projectId");
     runner.pause(projectId);
+    await publishTaskSnapshot(realtimeHub, projectId);
     
     return c.json({
       success: true,
@@ -1068,6 +1228,7 @@ export function createTaskRoutes(): OpenAPIHono {
     
     const projectId = c.req.param("projectId");
     runner.resume(projectId);
+    await publishTaskSnapshot(realtimeHub, projectId);
     
     return c.json({
       success: true,
@@ -1089,7 +1250,11 @@ export function createTaskRoutes(): OpenAPIHono {
       }, 404);
     }
     
+    const pausedProjectsBefore = new Set(runner.getPausedProjects());
     runner.pauseAll();
+    const pausedProjectsAfter = runner.getPausedProjects();
+    const projectsToPublish = new Set([...pausedProjectsBefore, ...pausedProjectsAfter]);
+    await Promise.all([...projectsToPublish].map((projectId) => publishTaskSnapshot(realtimeHub, projectId)));
     
     return c.json({
       success: true,
@@ -1110,7 +1275,9 @@ export function createTaskRoutes(): OpenAPIHono {
       }, 404);
     }
     
+    const pausedProjectsBefore = runner.getPausedProjects();
     runner.resumeAll();
+    await Promise.all(pausedProjectsBefore.map((projectId) => publishTaskSnapshot(realtimeHub, projectId)));
     
     return c.json({
       success: true,

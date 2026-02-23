@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { createCronRoutes } from "./crons";
 import { createEntriesRoutes } from "./entries";
 import { getConfig } from "../config";
+import { createProjectRealtimeHub } from "../core/realtime-hub";
 
 const config = getConfig();
 const TEST_PROJECT = `_test-crons-${Date.now()}`;
@@ -495,6 +496,37 @@ describe("Cron API", () => {
     expect(taskAfterClearB.cron_ids).toContain(cronB);
     expect(taskAfterClearC.cron_ids).toContain(cronB);
   }, 20000);
+
+  test("publishes project-scoped snapshot when cron linked tasks mutate", async () => {
+    const hub = createProjectRealtimeHub();
+    const realtimeApp = new Hono();
+    realtimeApp.route("/crons", (createCronRoutes as any)({ realtimeHub: hub }));
+
+    writeCronFile(TEST_PROJECT, "crn02001", "Realtime Linked Cron");
+    reindexZk();
+
+    const cronId = await getCronIdByTitle(TEST_PROJECT, "Realtime Linked Cron");
+    if (!cronId) return;
+
+    writeTaskFile("tsk02001", []);
+    reindexZk();
+
+    const projectEvents: string[] = [];
+    const otherProjectEvents: string[] = [];
+    hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+    hub.subscribe(OTHER_PROJECT, ({ event }) => otherProjectEvents.push(event));
+
+    const res = await realtimeApp.request(
+      `/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks/tsk02001`,
+      { method: "POST" }
+    );
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(200);
+    expect(projectEvents).toContain("tasks_snapshot");
+    expect(otherProjectEvents).toEqual([]);
+  });
 
   test("validates linked-task IDs and returns not found for missing tasks", async () => {
     writeCronFile(TEST_PROJECT, "crn01010", "Linked Tasks Validation Cron");

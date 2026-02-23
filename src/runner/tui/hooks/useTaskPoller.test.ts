@@ -311,6 +311,54 @@ describe('useTaskPoller - pollerReducer', () => {
   });
 });
 
+describe('useTaskPoller - session normalization', () => {
+  let normalizeTaskSessions: typeof import('./useTaskPoller').normalizeTaskSessions;
+
+  beforeEach(async () => {
+    const mod = await import('./useTaskPoller');
+    normalizeTaskSessions = mod.normalizeTaskSessions;
+  });
+
+  it('falls back to legacy session_ids when sessions is missing', () => {
+    const result = normalizeTaskSessions({
+      session_ids: ['ses_newer', 'ses_older'],
+      session_timestamps: {
+        ses_newer: '2026-02-23T10:00:00.000Z',
+        ses_older: '2026-02-22T10:00:00.000Z',
+      },
+    });
+
+    expect(result).toEqual({
+      ses_newer: { timestamp: '2026-02-23T10:00:00.000Z' },
+      ses_older: { timestamp: '2026-02-22T10:00:00.000Z' },
+    });
+  });
+
+  it('uses legacy session_ids when sessions exists but is empty', () => {
+    const result = normalizeTaskSessions({
+      sessions: {},
+      session_ids: ['ses_legacy'],
+    });
+
+    expect(result).toEqual({
+      ses_legacy: { timestamp: '' },
+    });
+  });
+
+  it('prefers canonical sessions when present', () => {
+    const result = normalizeTaskSessions({
+      sessions: {
+        ses_current: { timestamp: '2026-02-23T12:00:00.000Z', run_id: 'run-1' },
+      },
+      session_ids: ['ses_legacy'],
+    });
+
+    expect(result).toEqual({
+      ses_current: { timestamp: '2026-02-23T12:00:00.000Z', run_id: 'run-1' },
+    });
+  });
+});
+
 // =============================================================================
 // Helper functions that mirror the hook's internal logic
 // These are extracted to enable unit testing

@@ -25,6 +25,29 @@ export interface LaneAssignment {
   mergeFromLanes: number[]; // lanes that converge at this merge point
 }
 
+export type LanePrefixSegmentRole =
+  | 'vertical'
+  | 'branch'
+  | 'last-branch'
+  | 'merge-start'
+  | 'merge-join'
+  | 'connector'
+  | 'empty';
+
+export type LanePrefixSegmentKind = 'neutral' | 'upstream' | 'downstream';
+
+export interface LanePrefixSegment {
+  text: string;
+  lane: number;
+  role: LanePrefixSegmentRole;
+  kind: LanePrefixSegmentKind;
+}
+
+export interface LanePrefixSegmentContext {
+  upstreamLanes?: number[] | Set<number>;
+  downstreamLanes?: number[] | Set<number>;
+}
+
 // ---------------------------------------------------------------------------
 // topoSort
 // ---------------------------------------------------------------------------
@@ -333,48 +356,87 @@ export function generatePrefix(
   assignment: LaneAssignment,
   index: number,
   allAssignments: LaneAssignment[],
+  context?: LanePrefixSegmentContext,
 ): string {
-  const { lane, activeLanes, isMerge, mergeFromLanes } = assignment;
+  return generatePrefixSegments(assignment, index, allAssignments, context)
+    .map((segment) => segment.text)
+    .join('');
+}
+
+export function generatePrefixSegments(
+  assignment: LaneAssignment,
+  index: number,
+  allAssignments: LaneAssignment[],
+  context: LanePrefixSegmentContext = {},
+): LanePrefixSegment[] {
+  const { isMerge, mergeFromLanes } = assignment;
 
   if (isMerge && mergeFromLanes.length > 0) {
-    return buildMergePrefix(assignment, index, allAssignments);
+    return buildMergePrefixSegments(assignment, index, allAssignments, context);
   }
 
-  return buildBranchPrefix(assignment, index, allAssignments);
+  return buildBranchPrefixSegments(assignment, index, allAssignments, context);
+}
+
+function hasLane(setOrArray: number[] | Set<number> | undefined, lane: number): boolean {
+  if (!setOrArray) return false;
+  if (setOrArray instanceof Set) return setOrArray.has(lane);
+  return setOrArray.includes(lane);
+}
+
+function laneKind(lane: number, context: LanePrefixSegmentContext): LanePrefixSegmentKind {
+  if (hasLane(context.upstreamLanes, lane)) return 'upstream';
+  if (hasLane(context.downstreamLanes, lane)) return 'downstream';
+  return 'neutral';
+}
+
+function createSegment(
+  lane: number,
+  role: LanePrefixSegmentRole,
+  text: string,
+  context: LanePrefixSegmentContext,
+): LanePrefixSegment {
+  return {
+    text,
+    lane,
+    role,
+    kind: laneKind(lane, context),
+  };
 }
 
 /**
  * Build prefix for a non-merge row (root, single-dep, or fork child).
  */
-function buildBranchPrefix(
+function buildBranchPrefixSegments(
   assignment: LaneAssignment,
   index: number,
   allAssignments: LaneAssignment[],
-): string {
+  context: LanePrefixSegmentContext,
+): LanePrefixSegment[] {
   const { lane, activeLanes } = assignment;
 
   // Determine the max lane we need to render up to (inclusive of this task's lane)
   const maxLane = lane;
 
-  const parts: string[] = [];
+  const parts: LanePrefixSegment[] = [];
 
   for (let l = 0; l < maxLane; l++) {
     if (activeLanes.includes(l)) {
-      parts.push(CHAR.VERTICAL + ' ');
+      parts.push(createSegment(l, 'vertical', CHAR.VERTICAL + ' ', context));
     } else {
-      parts.push(CHAR.EMPTY);
+      parts.push(createSegment(l, 'empty', CHAR.EMPTY, context));
     }
   }
 
   // At the task's own lane, determine branch vs last-branch
   const continues = laneActiveBelow(lane, index, allAssignments);
   if (continues) {
-    parts.push(CHAR.BRANCH);
+    parts.push(createSegment(lane, 'branch', CHAR.BRANCH, context));
   } else {
-    parts.push(CHAR.LAST_BRANCH);
+    parts.push(createSegment(lane, 'last-branch', CHAR.LAST_BRANCH, context));
   }
 
-  return parts.join('');
+  return parts;
 }
 
 /**
@@ -387,11 +449,12 @@ function buildBranchPrefix(
  * - Non-merge lanes between them get ──
  * - The task's own lane ends the sequence
  */
-function buildMergePrefix(
+function buildMergePrefixSegments(
   assignment: LaneAssignment,
   index: number,
   allAssignments: LaneAssignment[],
-): string {
+  context: LanePrefixSegmentContext,
+): LanePrefixSegment[] {
   const { lane, activeLanes, mergeFromLanes } = assignment;
 
   // All lanes involved in the merge (the task's own lane + merge-from lanes)
@@ -400,14 +463,14 @@ function buildMergePrefix(
   const maxMergeLane = allMergeLanes[allMergeLanes.length - 1];
   const mergeLaneSet = new Set(allMergeLanes);
 
-  const parts: string[] = [];
+  const parts: LanePrefixSegment[] = [];
 
   // Lanes before the merge region
   for (let l = 0; l < minMergeLane; l++) {
     if (activeLanes.includes(l)) {
-      parts.push(CHAR.VERTICAL + ' ');
+      parts.push(createSegment(l, 'vertical', CHAR.VERTICAL + ' ', context));
     } else {
-      parts.push(CHAR.EMPTY);
+      parts.push(createSegment(l, 'empty', CHAR.EMPTY, context));
     }
   }
 
@@ -423,19 +486,19 @@ function buildMergePrefix(
   for (let l = minMergeLane; l <= maxMergeLane; l++) {
     if (mergeLaneSet.has(l) || l === lane) {
       if (!started) {
-        parts.push(CHAR.MERGE_START);
+        parts.push(createSegment(l, 'merge-start', CHAR.MERGE_START, context));
         started = true;
       } else {
-        parts.push(CHAR.MERGE_JOIN);
+        parts.push(createSegment(l, 'merge-join', CHAR.MERGE_JOIN, context));
       }
     } else {
       // Non-merge lane between merge lanes
       if (started) {
-        parts.push(CHAR.CONNECTOR + CHAR.CONNECTOR);
+        parts.push(createSegment(l, 'connector', CHAR.CONNECTOR + CHAR.CONNECTOR, context));
       } else if (activeLanes.includes(l)) {
-        parts.push(CHAR.VERTICAL + ' ');
+        parts.push(createSegment(l, 'vertical', CHAR.VERTICAL + ' ', context));
       } else {
-        parts.push(CHAR.EMPTY);
+        parts.push(createSegment(l, 'empty', CHAR.EMPTY, context));
       }
     }
   }
@@ -445,15 +508,15 @@ function buildMergePrefix(
   if (lane > maxMergeLane) {
     for (let l = maxMergeLane + 1; l < lane; l++) {
       if (started) {
-        parts.push(CHAR.CONNECTOR + CHAR.CONNECTOR);
+        parts.push(createSegment(l, 'connector', CHAR.CONNECTOR + CHAR.CONNECTOR, context));
       } else if (activeLanes.includes(l)) {
-        parts.push(CHAR.VERTICAL + ' ');
+        parts.push(createSegment(l, 'vertical', CHAR.VERTICAL + ' ', context));
       } else {
-        parts.push(CHAR.EMPTY);
+        parts.push(createSegment(l, 'empty', CHAR.EMPTY, context));
       }
     }
-    parts.push(CHAR.MERGE_START);
+    parts.push(createSegment(lane, 'merge-start', CHAR.MERGE_START, context));
   }
 
-  return parts.join('');
+  return parts;
 }

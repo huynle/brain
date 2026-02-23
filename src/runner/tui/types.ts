@@ -3,6 +3,18 @@
  */
 
 import type { EntryStatus, Priority, SessionInfo } from '../../core/types';
+import type {
+  CronEntry,
+  CronDetailResponse,
+  CreateCronRequest,
+  UpdateCronRequest,
+  CronMutationResponse,
+  DeleteCronResponse,
+  CronRunsResponse,
+  CronLinkedTasksResponse,
+  CronLinkedTasksMutationResponse,
+  CronTriggerResponse,
+} from '../api-client';
 
 /**
  * Task classification for dependency resolution
@@ -148,6 +160,7 @@ export interface CronDisplay {
   id: string;
   path: string;
   title: string;
+  projectId?: string;
   schedule: string;
   next_run?: string;
   status: EntryStatus;
@@ -273,6 +286,44 @@ export interface AppProps {
   onOpenSession?: (sessionId: string) => Promise<void>;
   /** Callback to open an OpenCode session in a new tmux window. Used by 'O' key on tasks with session_ids. */
   onOpenSessionTmux?: (sessionId: string, taskContext?: OpenSessionTaskContext) => Promise<void>;
+  /** Callback to list cron entries for a project. */
+  onListCrons?: (projectId: string) => Promise<CronEntry[]>;
+  /** Callback to fetch one cron and its pipeline details. */
+  onGetCron?: (projectId: string, cronId: string) => Promise<CronDetailResponse>;
+  /** Callback to create a cron entry. */
+  onCreateCron?: (projectId: string, request: CreateCronRequest) => Promise<CronMutationResponse>;
+  /** Callback to update a cron entry. */
+  onUpdateCron?: (
+    projectId: string,
+    cronId: string,
+    request: UpdateCronRequest
+  ) => Promise<CronMutationResponse>;
+  /** Callback to delete a cron entry. */
+  onDeleteCron?: (projectId: string, cronId: string) => Promise<DeleteCronResponse>;
+  /** Callback to fetch cron run history. */
+  onGetCronRuns?: (projectId: string, cronId: string) => Promise<CronRunsResponse>;
+  /** Callback to fetch linked tasks for a cron. */
+  onGetCronLinkedTasks?: (projectId: string, cronId: string) => Promise<CronLinkedTasksResponse>;
+  /** Callback to replace linked tasks for a cron. */
+  onSetCronLinkedTasks?: (
+    projectId: string,
+    cronId: string,
+    taskIds: string[]
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to add a linked task to a cron. */
+  onAddCronLinkedTask?: (
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to remove a linked task from a cron. */
+  onRemoveCronLinkedTask?: (
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to trigger a cron run immediately. */
+  onTriggerCron?: (projectId: string, cronId: string) => Promise<CronTriggerResponse>;
 }
 
 /** Context needed to track a reopened session for idle monitoring */

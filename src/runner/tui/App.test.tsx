@@ -1074,7 +1074,7 @@ describe('App - Settings Popup Runtime Model (S Key)', () => {
   it('Runtime section edits and applies model override in memory', async () => {
     const setRuntimeDefaultModel = mock((_model: string | undefined) => {});
 
-    const { stdin, unmount } = render(
+    const { stdin, lastFrame, unmount } = render(
       <App
         config={defaultConfig}
         getProjectLimits={() => [{ projectId: 'test-project', limit: 2, running: 0 }]}
@@ -1102,6 +1102,7 @@ describe('App - Settings Popup Runtime Model (S Key)', () => {
     await new Promise(r => setTimeout(r, 10));
 
     expect(setRuntimeDefaultModel).toHaveBeenCalledWith('openai/gpt-5.3-codex');
+    expect(lastFrame()).toContain('openai/gpt-5.3-codex');
 
     unmount();
   });
@@ -1907,5 +1908,670 @@ describe('App - Text Wrap Toggle', () => {
     expect(frame).toContain('Trunc');
     
     unmount();
+  });
+});
+
+describe('App - Cron View Mode (C key)', () => {
+  it('toggles from task view to cron view', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 10));
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('No cron entries found');
+    expect(frame).toContain('Focus:');
+    expect(frame).toContain('crons');
+
+    unmount();
+  });
+
+  it('help bar shows view toggle shortcut', () => {
+    const { lastFrame, unmount } = render(<App config={defaultConfig} />);
+    const frame = lastFrame() || '';
+
+    expect(frame).toContain('C');
+    expect(frame).toContain('View');
+
+    unmount();
+  });
+
+  it('full help overlay documents cron shortcuts consistently', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('?');
+    await new Promise(r => setTimeout(r, 20));
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('Cron panel shortcuts (cron view):');
+    expect(frame).toContain('n/e');
+    expect(frame).toContain('New/Edit selected cron');
+    expect(frame).toContain('Trigger selected cron now');
+    expect(frame).toContain('Delete selected cron (confirm)');
+    expect(frame).toContain('Show cron details panel');
+
+    unmount();
+  });
+
+  it('supports j/k navigation in cron view without crashing', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 10));
+    stdin.write('j');
+    stdin.write('k');
+    await new Promise(r => setTimeout(r, 10));
+
+    expect(lastFrame()).toBeDefined();
+
+    unmount();
+  });
+});
+
+describe('App - Cron Mutation Flows', () => {
+  const originalFetch = globalThis.fetch;
+
+  const installCronFetchMock = () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/test-project/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crn00001',
+                path: 'projects/test-project/cron/crn00001.md',
+                title: 'Nightly Build',
+                status: 'active',
+                schedule: '0 2 * * *',
+                next_run: '2026-02-24T02:00:00.000Z',
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/test-project')) {
+        return new Response(
+          JSON.stringify({ tasks: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+  };
+
+  const installEmptyCronFetchMock = () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.includes('/api/v1/crons/test-project/crons')) {
+        return new Response(
+          JSON.stringify({ crons: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      if (url.includes('/api/v1/tasks/test-project')) {
+        return new Response(
+          JSON.stringify({ tasks: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+  };
+
+  it('creates a cron from cron view prompt', async () => {
+    installCronFetchMock();
+    const onCreateCron = mock(async () => ({
+      cron: {
+        id: 'crn99999',
+        path: 'projects/test-project/cron/crn99999.md',
+        title: 'Nightly Cleanup',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'created',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onCreateCron={onCreateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('n');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'Nightly Cleanup|15 1 * * *') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onCreateCron).toHaveBeenCalledWith(
+      'test-project',
+      expect.objectContaining({ title: 'Nightly Cleanup', schedule: '15 1 * * *' })
+    );
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('updates selected cron from cron view prompt', async () => {
+    installCronFetchMock();
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Nightly Build Updated',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'Nightly Build Updated|0 4 * * *') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).toHaveBeenCalledWith(
+      'test-project',
+      'crn00001',
+      expect.objectContaining({ title: 'Nightly Build Updated', schedule: '0 4 * * *' })
+    );
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('triggers selected cron with x key in cron view', async () => {
+    installCronFetchMock();
+    const onTriggerCron = mock(async () => ({
+      cronId: 'crn00001',
+      run: { run_id: '20260223-0100', status: 'in_progress' as const, started: '2026-02-23T01:00:00.000Z' },
+      pipeline: [],
+      pipelineCount: 0,
+      message: 'triggered',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onTriggerCron={onTriggerCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('x');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onTriggerCron).toHaveBeenCalledWith('test-project', 'crn00001');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('supports add/remove/replace linked-task operations', async () => {
+    installCronFetchMock();
+    const onAddCronLinkedTask = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'added' })) as any;
+    const onRemoveCronLinkedTask = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'removed' })) as any;
+    const onSetCronLinkedTasks = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'replaced' })) as any;
+
+    const { stdin, unmount } = render(
+      <App
+        config={defaultConfig}
+        onAddCronLinkedTask={onAddCronLinkedTask}
+        onRemoveCronLinkedTask={onRemoveCronLinkedTask}
+        onSetCronLinkedTasks={onSetCronLinkedTasks}
+      />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+
+    stdin.write('a');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'tsk00011') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    stdin.write('u');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'tsk00012') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    stdin.write('R');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'tsk00021,tsk00022') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onAddCronLinkedTask).toHaveBeenCalledWith('test-project', 'crn00001', 'tsk00011');
+    expect(onRemoveCronLinkedTask).toHaveBeenCalledWith('test-project', 'crn00001', 'tsk00012');
+    expect(onSetCronLinkedTasks).toHaveBeenCalledWith('test-project', 'crn00001', ['tsk00021', 'tsk00022']);
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('requires delete confirmation before deleting cron', async () => {
+    installCronFetchMock();
+    const onDeleteCron = mock(async () => ({ message: 'deleted', path: 'projects/test-project/cron/crn00001.md' })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onDeleteCron={onDeleteCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+
+    stdin.write('D');
+    await new Promise(r => setTimeout(r, 20));
+    expect(onDeleteCron).not.toHaveBeenCalled();
+
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+    expect(onDeleteCron).toHaveBeenCalledWith('test-project', 'crn00001');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('does not update cron when none is selected', async () => {
+    installEmptyCronFetchMock();
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Unused',
+        type: 'cron',
+        status: 'active',
+        content: 'Unused',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('rejects malformed create input without calling API', async () => {
+    installCronFetchMock();
+    const onCreateCron = mock(async () => ({
+      cron: {
+        id: 'crn99999',
+        path: 'projects/test-project/cron/crn99999.md',
+        title: 'Should Not Be Called',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'created',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onCreateCron={onCreateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('n');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'MissingDelimiterAndSchedule') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onCreateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('rejects create input with extra delimiters without calling API', async () => {
+    installCronFetchMock();
+    const onCreateCron = mock(async () => ({
+      cron: {
+        id: 'crn99999',
+        path: 'projects/test-project/cron/crn99999.md',
+        title: 'Should Not Be Called',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'created',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onCreateCron={onCreateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('n');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'Nightly Cleanup|15 1 * * *|extra') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onCreateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('rejects edit input with extra delimiters without calling API', async () => {
+    installCronFetchMock();
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Should Not Be Called',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'Nightly Build|0 2 * * *|extra') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('rejects malformed edit input without calling API', async () => {
+    installCronFetchMock();
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Should Not Be Called',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 20));
+    for (const ch of 'MissingDelimiterAndSchedule') stdin.write(ch);
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('does not open create popup when create callback is unavailable', async () => {
+    installCronFetchMock();
+
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('n');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(lastFrame() || '').not.toContain('Create Cron');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('does not open edit popup when update callback is unavailable', async () => {
+    installCronFetchMock();
+
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('e');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(lastFrame() || '').not.toContain('Edit Cron');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('does not open delete confirmation when delete callback is unavailable', async () => {
+    installCronFetchMock();
+
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('D');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(lastFrame() || '').not.toContain('Delete Cron');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('warns and remains stable when trigger callback is unavailable', async () => {
+    installCronFetchMock();
+
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('L');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('x');
+    await new Promise(r => setTimeout(r, 40));
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('Trigger cron action unavailable');
+    expect(frame).not.toContain('Triggered cron');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('blocks create in all-project cron view when project cannot be inferred', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/proj-a/crons') || url.includes('/api/v1/crons/proj-b/crons')) {
+        return new Response(
+          JSON.stringify({ crons: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/proj-a') || url.includes('/api/v1/tasks/proj-b')) {
+        return new Response(
+          JSON.stringify({ tasks: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const onCreateCron = mock(async () => ({
+      cron: {
+        id: 'crn99999',
+        path: 'projects/proj-a/cron/crn99999.md',
+        title: 'Should Not Be Called',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'created',
+    })) as any;
+
+    const multiProjectConfig = {
+      ...defaultConfig,
+      projects: ['proj-a', 'proj-b'],
+      activeProject: 'all',
+    };
+
+    const { stdin, lastFrame, unmount } = render(
+      <App config={multiProjectConfig} onCreateCron={onCreateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 30));
+    stdin.write('L');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('n');
+    await new Promise(r => setTimeout(r, 40));
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('Cannot create cron: no active project selected');
+    expect(frame).not.toContain('Create Cron');
+    expect(onCreateCron).not.toHaveBeenCalled();
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('uses selected cron project ID for trigger in all-project cron view', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/proj-a/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crnA0001',
+                path: 'projects/proj-a/cron/crnA0001.md',
+                title: 'Cron A',
+                status: 'active',
+                schedule: '0 2 * * *',
+                next_run: null,
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/crons/proj-b/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crnB0001',
+                path: 'projects/proj-b/cron/crnB0001.md',
+                title: 'Cron B',
+                status: 'active',
+                schedule: '0 3 * * *',
+                next_run: null,
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/proj-a') || url.includes('/api/v1/tasks/proj-b')) {
+        return new Response(
+          JSON.stringify({ tasks: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const onTriggerCron = mock(async () => ({
+      cronId: 'crnA0001',
+      run: { run_id: 'run-a-1', status: 'in_progress' as const, started: '2026-02-23T01:00:00.000Z' },
+      pipeline: [],
+      pipelineCount: 0,
+      message: 'triggered',
+    })) as any;
+
+    const multiProjectConfig = {
+      ...defaultConfig,
+      projects: ['proj-a', 'proj-b'],
+      activeProject: 'all',
+    };
+
+    const { stdin, unmount } = render(
+      <App config={multiProjectConfig} onTriggerCron={onTriggerCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 30));
+    stdin.write('x');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onTriggerCron).toHaveBeenCalledWith('proj-a', 'crnA0001');
+
+    unmount();
+    globalThis.fetch = originalFetch;
   });
 });

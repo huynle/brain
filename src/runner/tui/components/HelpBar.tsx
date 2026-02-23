@@ -7,6 +7,7 @@ import { Box, Text } from 'ink';
 
 interface HelpBarProps {
   focusedPanel?: 'tasks' | 'details' | 'logs';
+  viewMode?: 'tasks' | 'crons';
   /** Whether in multi-project mode (shows tab shortcuts) */
   isMultiProject?: boolean;
   /** Whether filter is currently active (locked in) */
@@ -19,11 +20,14 @@ interface HelpBarProps {
   textWrap?: boolean;
 }
 
-export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProject, isFilterActive, hasSelectedTasks, hasTaskSessions, textWrap }: HelpBarProps): React.ReactElement {
+export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 'tasks', isMultiProject, isFilterActive, hasSelectedTasks, hasTaskSessions, textWrap }: HelpBarProps): React.ReactElement {
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
   const isDetailsFocused = focusedPanel === 'details';
-  const isTasksFocused = focusedPanel === 'tasks';
+  const isCronView = viewMode === 'crons';
+  const focusLabel = isCronView
+    ? (focusedPanel === 'tasks' ? 'crons' : focusedPanel === 'details' ? 'cron details' : focusedPanel)
+    : focusedPanel;
   
   return (
     <Box paddingX={1} justifyContent="space-between">
@@ -39,53 +43,73 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
           {'  '}
           <Text bold>g/G</Text> Top/Bottom
           {'  '}
-          {isLogsFocused ? (
-            <>
-              <Text bold>f</Text> Filter
-              {'  '}
-            </>
-          ) : isDetailsFocused ? (
-            <>
-              <Text bold>d</Text> Dependencies
-              {'  '}
-            </>
-          ) : (
-            <>
-              <Text bold>/</Text>{' '}
-              {isFilterActive ? (
-                <Text color="cyan">Filter*</Text>
-              ) : (
-                'Filter'
-              )}
-              {'  '}
-              <Text bold>Space</Text> Select
-              {'  '}
-              <Text bold>s</Text> Metadata
-              {'  '}
-              <Text bold>e</Text> Edit
-              {'  '}
-              {hasTaskSessions && (
-                <>
-                  <Text bold>o</Text> Session
-                  {'  '}
-                  <Text bold>O</Text> Tmux
-                  {'  '}
-                </>
-              )}
-              <Text bold>y</Text> Yank
-              {'  '}
-              <Text bold>x</Text> Execute
-              {'  '}
-              <Text bold>X</Text> Cancel
-              {'  '}
-              {hasSelectedTasks && (
-                <>
-                  <Text bold color="red">⌫</Text> <Text color="red">Delete</Text>
-                  {'  '}
-                </>
-              )}
-            </>
-          )}
+           {isLogsFocused ? (
+             <>
+               <Text bold>f</Text> Filter
+               {'  '}
+             </>
+           ) : isDetailsFocused ? (
+             <>
+               <Text bold>{isCronView ? 'j/k' : 'd'}</Text> {isCronView ? 'Scroll' : 'Dependencies'}
+               {'  '}
+             </>
+           ) : (
+             <>
+               {!isCronView && (
+                 <>
+                   <Text bold>/</Text>{' '}
+                   {isFilterActive ? (
+                     <Text color="cyan">Filter*</Text>
+                   ) : (
+                     'Filter'
+                   )}
+                   {'  '}
+                   <Text bold>Space</Text> Select
+                   {'  '}
+                   <Text bold>s</Text> Metadata
+                   {'  '}
+                   <Text bold>e</Text> Edit
+                   {'  '}
+                   {hasTaskSessions && (
+                     <>
+                       <Text bold>o</Text> Session
+                       {'  '}
+                       <Text bold>O</Text> Tmux
+                       {'  '}
+                     </>
+                   )}
+                   <Text bold>y</Text> Yank
+                   {'  '}
+                   <Text bold>x</Text> Execute
+                   {'  '}
+                   <Text bold>X</Text> Cancel
+                   {'  '}
+                   {hasSelectedTasks && (
+                     <>
+                       <Text bold color="red">⌫</Text> <Text color="red">Delete</Text>
+                       {'  '}
+                     </>
+                   )}
+                 </>
+               )}
+                {isCronView && (
+                  <>
+                    <Text bold>Enter</Text> Details
+                    {'  '}
+                    <Text bold>n/e</Text> New/Edit
+                    {'  '}
+                    <Text bold>x</Text> Trigger now
+                    {'  '}
+                    <Text bold>a/u</Text> Link/Unlink
+                    {'  '}
+                    <Text bold>R</Text> Replace Links
+                    {'  '}
+                    <Text bold color="red">D</Text> <Text color="red">Delete</Text>
+                    {'  '}
+                  </>
+                )}
+             </>
+           )}
           {isMultiProject ? (
             <>
               <Text bold>p/P</Text> Pause
@@ -99,11 +123,13 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
           )}
           <Text bold>w</Text> {textWrap ? 'Wrap' : 'Trunc'}
           {'  '}
-          <Text bold>S</Text> Settings
-          {'  '}
-          <Text bold>Tab</Text> Panel
-          {'  '}
-          <Text bold>L</Text> Logs
+           <Text bold>S</Text> Settings
+           {'  '}
+           <Text bold>C</Text> View
+           {'  '}
+           <Text bold>Tab</Text> Panel
+           {'  '}
+           <Text bold>L</Text> Logs
           {'  '}
           <Text bold>T</Text> Detail
           {'  '}
@@ -115,7 +141,7 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, isMultiProjec
       {focusedPanel && (
         <Box>
           <Text dimColor>
-            Focus: <Text color="cyan">{focusedPanel}</Text>
+            Focus: <Text color="cyan">{focusLabel}</Text>
           </Text>
         </Box>
       )}

@@ -8,6 +8,59 @@
 import { useReducer, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { TaskDisplay } from '../types';
 import type { TaskStats } from './useTaskPoller';
+import type { SessionInfo } from '../../../core/types';
+
+type LegacyTaskSessionShape = {
+  sessions?: Record<string, SessionInfo>;
+  session_ids?: unknown;
+  session_timestamps?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeTaskSessions(task: LegacyTaskSessionShape): Record<string, SessionInfo> | undefined {
+  if (isRecord(task.sessions) && Object.keys(task.sessions).length > 0) {
+    return task.sessions;
+  }
+
+  const legacyIds = task.session_ids;
+  const legacyTimestamps = isRecord(task.session_timestamps) ? task.session_timestamps : {};
+
+  if (Array.isArray(legacyIds)) {
+    const normalized: Record<string, SessionInfo> = {};
+    for (const id of legacyIds) {
+      if (typeof id !== 'string' || id.length === 0) continue;
+      const timestamp = typeof legacyTimestamps[id] === 'string' ? (legacyTimestamps[id] as string) : '';
+      normalized[id] = { timestamp };
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  if (isRecord(legacyIds) && Object.keys(legacyIds).length > 0) {
+    const normalized: Record<string, SessionInfo> = {};
+    for (const [id, rawValue] of Object.entries(legacyIds)) {
+      if (!id) continue;
+      if (isRecord(rawValue) && typeof rawValue.timestamp === 'string') {
+        normalized[id] = {
+          timestamp: rawValue.timestamp,
+          ...(typeof rawValue.cron_id === 'string' ? { cron_id: rawValue.cron_id } : {}),
+          ...(typeof rawValue.run_id === 'string' ? { run_id: rawValue.run_id } : {}),
+        };
+        continue;
+      }
+      if (typeof rawValue === 'string') {
+        normalized[id] = { timestamp: rawValue };
+        continue;
+      }
+      normalized[id] = { timestamp: '' };
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  return undefined;
+}
 
 /**
  * Simple hash function for change detection.
@@ -232,7 +285,7 @@ async function fetchProjectTasks(
       model: task.model,
       direct_prompt: task.direct_prompt,
       // Session tracking
-      sessions: task.sessions,
+      sessions: normalizeTaskSessions(task),
     };
   });
 

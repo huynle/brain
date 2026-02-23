@@ -47,6 +47,7 @@ import { StatusBar } from './components/StatusBar';
 import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
+import { CronDetail } from './components/CronDetail';
 import { HelpBar } from './components/HelpBar';
 import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
@@ -62,10 +63,15 @@ import { useResourceMetrics } from './hooks/useResourceMetrics';
 import { useSettingsStorage } from './hooks/useSettingsStorage';
 import { useTaskFilter } from './hooks/useTaskFilter';
 import { FilterBar } from './components/FilterBar';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext } from './types';
+import { CronList } from './components/CronList';
+import { useCronPoller } from './hooks/useCronPoller';
+import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
+type ViewMode = 'tasks' | 'crons';
+type CronActionMode = 'create' | 'edit' | 'add-link' | 'remove-link' | 'replace-links';
 
 /** Cycle to the next panel (for Tab navigation) */
 function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
@@ -171,6 +177,13 @@ export function App({
   onDeleteTasks,
   onOpenSession,
   onOpenSessionTmux,
+  onCreateCron,
+  onUpdateCron,
+  onDeleteCron,
+  onSetCronLinkedTasks,
+  onAddCronLinkedTask,
+  onRemoveCronLinkedTask,
+  onTriggerCron,
 }: AppProps): React.ReactElement {
   const { exit } = useApp();
 
@@ -183,7 +196,9 @@ export function App({
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [selectedCronId, setSelectedCronId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
+  const [viewMode, setViewMode] = useState<ViewMode>('tasks');
   const [showHelp, setShowHelp] = useState(false);
   // MetadataPopup state
   const [showMetadataPopup, setShowMetadataPopup] = useState(false);
@@ -258,6 +273,7 @@ export function App({
   const [isEditing, setIsEditing] = useState(false);
 
   const [taskScrollOffset, setTaskScrollOffset] = useState(0);
+  const [cronScrollOffset, setCronScrollOffset] = useState(0);
   const [logsVisible, setLogsVisible] = useState(false);
   const [detailVisible, setDetailVisible] = useState(false);
   // Active features: features queued for execution (controlled by x key on feature headers)
@@ -273,6 +289,13 @@ export function App({
   const [sessionPopupIds, setSessionPopupIds] = useState<string[]>([]);
   const [sessionPopupSelectedIndex, setSessionPopupSelectedIndex] = useState(0);
   const [sessionPopupTmuxMode, setSessionPopupTmuxMode] = useState(false);
+  const [cronActionOpen, setCronActionOpen] = useState(false);
+  const [cronActionMode, setCronActionMode] = useState<CronActionMode>('create');
+  const [cronActionInput, setCronActionInput] = useState('');
+  const [cronDeleteConfirmOpen, setCronDeleteConfirmOpen] = useState(false);
+  const cronActionOpenRef = useRef(false);
+  const cronActionModeRef = useRef<CronActionMode>('create');
+  const cronActionInputRef = useRef('');
 
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
@@ -293,6 +316,22 @@ export function App({
     enabled: isMultiProject,
   });
 
+  // Single-project cron poller (used when not in multi-project mode)
+  const singleCronPoller = useCronPoller({
+    projectId: config.project,
+    apiUrl: config.apiUrl,
+    pollInterval: config.pollInterval,
+    enabled: !isMultiProject,
+  });
+
+  // Multi-project cron poller (used when in multi-project mode)
+  const multiProjectCronPoller = useMultiProjectCronPoller({
+    projects,
+    apiUrl: config.apiUrl,
+    pollInterval: config.pollInterval,
+    enabled: isMultiProject,
+  });
+
   // Select appropriate data based on mode
   let tasks: TaskDisplay[];
   let stats: TaskStats;
@@ -300,6 +339,9 @@ export function App({
   let isConnected: boolean;
   let error: Error | null;
   let refetch: () => Promise<void>;
+  let crons: CronDisplay[];
+  let cronError: Error | null;
+  let refetchCrons: () => Promise<void>;
 
   if (isMultiProject) {
     // Multi-project mode: filter tasks by activeProject
@@ -317,6 +359,13 @@ export function App({
     isConnected = multiProjectPoller.isConnected;
     error = multiProjectPoller.error;
     refetch = multiProjectPoller.refetch;
+    if (activeProject === 'all') {
+      crons = multiProjectCronPoller.allCrons;
+    } else {
+      crons = multiProjectCronPoller.cronsByProject.get(activeProject) ?? [];
+    }
+    cronError = multiProjectCronPoller.error;
+    refetchCrons = multiProjectCronPoller.refetch;
   } else {
     // Single-project mode
     tasks = singleProjectPoller.tasks;
@@ -325,6 +374,9 @@ export function App({
     isConnected = singleProjectPoller.isConnected;
     error = singleProjectPoller.error;
     refetch = singleProjectPoller.refetch;
+    crons = singleCronPoller.crons;
+    cronError = singleCronPoller.error;
+    refetchCrons = singleCronPoller.refetch;
   }
 
   // Compute log file path if logDir is configured
@@ -367,6 +419,7 @@ export function App({
   // Calculate task viewport height for scrolling
   // Account for: TaskTree header (2 lines: title + margin) + border (2 lines) + padding (2 lines)
   const taskViewportHeight = Math.max(3, topRowHeight - 6);
+  const cronViewportHeight = Math.max(3, topRowHeight - 4);
   
   // Calculate details viewport height for scrolling (now in bottom area)
   // Account for: header (1 line) + border (2 lines) + padding (2 lines) + scroll indicators (2 lines)
@@ -491,6 +544,31 @@ export function App({
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
+  const selectedCron = crons.find((c) => c.id === selectedCronId) || null;
+
+  const getSelectedCronProjectId = useCallback((cron: CronDisplay | null): string | null => {
+    if (cron?.projectId) return cron.projectId;
+    if (!isMultiProject) return config.project;
+    if (activeProject !== 'all') return activeProject;
+    return null;
+  }, [isMultiProject, config.project, activeProject]);
+
+  const parseCronTitleSchedule = useCallback((value: string): { title: string; schedule: string } | null => {
+    const parts = value.split('|');
+    if (parts.length !== 2) return null;
+    const [rawTitle, rawSchedule] = parts;
+    const title = rawTitle?.trim();
+    const schedule = rawSchedule?.trim();
+    if (!title || !schedule) return null;
+    return { title, schedule };
+  }, []);
+
+  const parseTaskIdList = useCallback((value: string): string[] => {
+    return value
+      .split(',')
+      .map((taskId) => taskId.trim())
+      .filter((taskId) => taskId.length > 0);
+  }, []);
 
   // Task filter hook - provides filtered tasks and navigation order
   // Replaces direct flattenFeatureOrder call with filter-aware version
@@ -535,6 +613,34 @@ export function App({
       setTaskScrollOffset(selectedIndex - taskViewportHeight + 1);
     }
   }, [selectedTaskId, navigationOrder, taskScrollOffset, taskViewportHeight]);
+
+  // Keep selected cron valid when switching projects/views or after data refresh
+  useEffect(() => {
+    if (crons.length === 0) {
+      if (selectedCronId !== null) {
+        setSelectedCronId(null);
+      }
+      setCronScrollOffset(0);
+      return;
+    }
+
+    if (!selectedCronId || !crons.some((cron) => cron.id === selectedCronId)) {
+      setSelectedCronId(crons[0]?.id ?? null);
+    }
+  }, [crons, selectedCronId]);
+
+  // Auto-scroll cron list to keep selected cron in view
+  useEffect(() => {
+    if (!selectedCronId || cronViewportHeight <= 0) return;
+    const selectedIndex = crons.findIndex((cron) => cron.id === selectedCronId);
+    if (selectedIndex === -1) return;
+
+    if (selectedIndex < cronScrollOffset) {
+      setCronScrollOffset(selectedIndex);
+    } else if (selectedIndex > cronScrollOffset + cronViewportHeight - 1) {
+      setCronScrollOffset(selectedIndex - cronViewportHeight + 1);
+    }
+  }, [selectedCronId, crons, cronScrollOffset, cronViewportHeight]);
 
   // Reset details scroll offset when selected task changes
   useEffect(() => {
@@ -1060,6 +1166,197 @@ export function App({
       return;
     }
 
+    // === Cron Action Popup Mode ===
+    if (cronActionOpen || cronActionOpenRef.current) {
+      const currentMode = cronActionModeRef.current;
+      if (key.escape) {
+        setCronActionOpen(false);
+        setCronActionInput('');
+        cronActionOpenRef.current = false;
+        cronActionInputRef.current = '';
+        return;
+      }
+
+      if (key.backspace || key.delete) {
+        cronActionInputRef.current = cronActionInputRef.current.slice(0, -1);
+        setCronActionInput(cronActionInputRef.current);
+        return;
+      }
+
+      if (key.return) {
+        const selectedProjectId = getSelectedCronProjectId(selectedCron);
+        const inputValue = cronActionInputRef.current;
+        const closePopup = () => {
+          setCronActionOpen(false);
+          setCronActionInput('');
+          cronActionOpenRef.current = false;
+          cronActionInputRef.current = '';
+        };
+
+        const failInput = (message: string) => {
+          addLog({ level: 'warn', message });
+          closePopup();
+        };
+
+        if (currentMode === 'create') {
+          if (!selectedProjectId) {
+            failInput('Cannot create cron: no active project selected');
+            return;
+          }
+          if (!onCreateCron) {
+            failInput('Create cron action unavailable');
+            return;
+          }
+          const parsed = parseCronTitleSchedule(inputValue);
+          if (!parsed) {
+            failInput('Invalid cron input. Use: title|schedule');
+            return;
+          }
+
+          onCreateCron(selectedProjectId, parsed)
+            .then(() => {
+              addLog({ level: 'info', message: `Created cron: ${parsed.title}` });
+              refetchCrons();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to create cron: ${err}` });
+            });
+          closePopup();
+          return;
+        }
+
+        if (!selectedCron || !selectedProjectId) {
+          failInput('No cron selected');
+          return;
+        }
+
+        if (currentMode === 'edit') {
+          if (!onUpdateCron) {
+            failInput('Update cron action unavailable');
+            return;
+          }
+          const parsed = parseCronTitleSchedule(inputValue);
+          if (!parsed) {
+            failInput('Invalid cron input. Use: title|schedule');
+            return;
+          }
+
+          onUpdateCron(selectedProjectId, selectedCron.id, parsed)
+            .then(() => {
+              addLog({ level: 'info', message: `Updated cron: ${selectedCron.id}` });
+              refetchCrons();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to update cron: ${err}` });
+            });
+          closePopup();
+          return;
+        }
+
+        if (currentMode === 'replace-links') {
+          if (!onSetCronLinkedTasks) {
+            failInput('Replace linked tasks action unavailable');
+            return;
+          }
+          const taskIds = parseTaskIdList(inputValue);
+          onSetCronLinkedTasks(selectedProjectId, selectedCron.id, taskIds)
+            .then((result: { count: number }) => {
+              addLog({
+                level: 'info',
+                message: `Replaced linked tasks for ${selectedCron.id}: ${result.count} linked`,
+              });
+              refetch();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to replace linked tasks: ${err}` });
+            });
+          closePopup();
+          return;
+        }
+
+        const taskId = inputValue.trim();
+        if (!taskId) {
+          failInput('Task ID is required');
+          return;
+        }
+
+        if (currentMode === 'add-link') {
+          if (!onAddCronLinkedTask) {
+            failInput('Add linked task action unavailable');
+            return;
+          }
+          onAddCronLinkedTask(selectedProjectId, selectedCron.id, taskId)
+            .then(() => {
+              addLog({ level: 'info', message: `Linked task ${taskId} to cron ${selectedCron.id}` });
+              refetch();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to link task to cron: ${err}` });
+            });
+          closePopup();
+          return;
+        }
+
+        if (!onRemoveCronLinkedTask) {
+          failInput('Remove linked task action unavailable');
+          return;
+        }
+        onRemoveCronLinkedTask(selectedProjectId, selectedCron.id, taskId)
+          .then(() => {
+            addLog({ level: 'info', message: `Unlinked task ${taskId} from cron ${selectedCron.id}` });
+            refetch();
+          })
+          .catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to unlink task from cron: ${err}` });
+          });
+        closePopup();
+        return;
+      }
+
+      if (input && !key.ctrl && !key.meta) {
+        cronActionInputRef.current += input;
+        setCronActionInput(cronActionInputRef.current);
+        return;
+      }
+
+      return;
+    }
+
+    // === Cron Delete Confirmation Popup ===
+    if (cronDeleteConfirmOpen) {
+      if (key.escape) {
+        setCronDeleteConfirmOpen(false);
+        return;
+      }
+
+      if (key.return) {
+        const selectedProjectId = getSelectedCronProjectId(selectedCron);
+        if (!selectedCron || !selectedProjectId) {
+          addLog({ level: 'warn', message: 'No cron selected' });
+          setCronDeleteConfirmOpen(false);
+          return;
+        }
+        if (!onDeleteCron) {
+          addLog({ level: 'warn', message: 'Delete cron action unavailable' });
+          setCronDeleteConfirmOpen(false);
+          return;
+        }
+
+        onDeleteCron(selectedProjectId, selectedCron.id)
+          .then(() => {
+            addLog({ level: 'info', message: `Deleted cron: ${selectedCron.id}` });
+            refetchCrons();
+          })
+          .catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to delete cron: ${err}` });
+          });
+        setCronDeleteConfirmOpen(false);
+        return;
+      }
+
+      return;
+    }
+
     // === Settings Popup Mode ===
     if (showSettingsPopup) {
       // Escape to close popup
@@ -1304,7 +1601,7 @@ export function App({
 
     // === Filter Mode Handling (intercepts before normal-mode shortcuts) ===
     // Must come BEFORE normal shortcuts to properly capture keys when typing in filter
-    if (focusedPanel === 'tasks') {
+    if (viewMode === 'tasks' && focusedPanel === 'tasks') {
       // Typing mode: route all input to filter, block normal navigation
       if (filterMode === 'typing') {
         // Escape: deactivate filter and clear
@@ -1358,14 +1655,133 @@ export function App({
     if (input === 'r') {
       addLog({ level: 'info', message: 'Manual refresh triggered' });
       refetch();
+      refetchCrons();
       return;
+    }
+
+    // Toggle between task and cron views
+    if (input === 'C') {
+      setViewMode((prev) => {
+        const next: ViewMode = prev === 'tasks' ? 'crons' : 'tasks';
+        if (next === 'crons') {
+          setDetailVisible(true);
+        }
+        setFocusedPanel('tasks');
+        setSelectedTaskIds(new Set());
+        deactivateFilter();
+        return next;
+      });
+      return;
+    }
+
+    if (viewMode === 'crons' && focusedPanel === 'tasks') {
+      const selectedProjectId = getSelectedCronProjectId(selectedCron);
+
+      if (input === 'n') {
+        if (!selectedProjectId) {
+          addLog({ level: 'warn', message: 'Cannot create cron: no active project selected' });
+          return;
+        }
+        if (!onCreateCron) {
+          addLog({ level: 'warn', message: 'Create cron action unavailable' });
+          return;
+        }
+        setCronActionMode('create');
+        setCronActionInput('');
+        setCronActionOpen(true);
+        cronActionModeRef.current = 'create';
+        cronActionInputRef.current = '';
+        cronActionOpenRef.current = true;
+        return;
+      }
+
+      if (!selectedCron) {
+        if (input === 'e' || input === 'x' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
+          addLog({ level: 'warn', message: 'No cron selected' });
+          return;
+        }
+      } else if (!selectedProjectId) {
+        if (input === 'e' || input === 'x' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
+          addLog({ level: 'warn', message: 'No project context for selected cron' });
+          return;
+        }
+      } else {
+        if (input === 'e') {
+          if (!onUpdateCron) {
+            addLog({ level: 'warn', message: 'Update cron action unavailable' });
+            return;
+          }
+          setCronActionMode('edit');
+          setCronActionInput('');
+          setCronActionOpen(true);
+          cronActionModeRef.current = 'edit';
+          cronActionInputRef.current = '';
+          cronActionOpenRef.current = true;
+          return;
+        }
+
+        if (input === 'x') {
+          if (!onTriggerCron) {
+            addLog({ level: 'warn', message: 'Trigger cron action unavailable' });
+            return;
+          }
+          onTriggerCron(selectedProjectId, selectedCron.id)
+            .then((result) => {
+              addLog({ level: 'info', message: `Triggered cron ${selectedCron.id}: ${result.run.run_id}` });
+              refetchCrons();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to trigger cron: ${err}` });
+            });
+          return;
+        }
+
+        if (input === 'a') {
+          setCronActionMode('add-link');
+          setCronActionInput('');
+          setCronActionOpen(true);
+          cronActionModeRef.current = 'add-link';
+          cronActionInputRef.current = '';
+          cronActionOpenRef.current = true;
+          return;
+        }
+
+        if (input === 'u') {
+          setCronActionMode('remove-link');
+          setCronActionInput('');
+          setCronActionOpen(true);
+          cronActionModeRef.current = 'remove-link';
+          cronActionInputRef.current = '';
+          cronActionOpenRef.current = true;
+          return;
+        }
+
+        if (input === 'R') {
+          setCronActionMode('replace-links');
+          setCronActionInput('');
+          setCronActionOpen(true);
+          cronActionModeRef.current = 'replace-links';
+          cronActionInputRef.current = '';
+          cronActionOpenRef.current = true;
+          return;
+        }
+
+        if (input === 'D') {
+          if (!onDeleteCron) {
+            addLog({ level: 'warn', message: 'Delete cron action unavailable' });
+            return;
+          }
+          setCronDeleteConfirmOpen(true);
+          return;
+        }
+      }
     }
 
     // x key: Execute feature immediately or execute single task
     // - On feature header: enable feature AND immediately execute ready tasks
     // - On ungrouped header: enable ungrouped AND immediately execute ready tasks
     // - On task row: execute the task immediately
-    if (input === 'x') {
+    if (input === 'x' && viewMode === 'tasks') {
       // Case 1: Feature header selected - toggle enable/disable
       if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
@@ -1567,7 +1983,7 @@ export function App({
     }
 
     // Cancel selected task (X uppercase) - only works on in_progress tasks
-    if (input === 'X' && selectedTask && onCancelTask) {
+    if (input === 'X' && viewMode === 'tasks' && selectedTask && onCancelTask) {
       // Guard: only cancel tasks that are currently running (in_progress)
       if (selectedTask.status !== 'in_progress') {
         addLog({
@@ -1595,13 +2011,13 @@ export function App({
     }
 
     // Edit selected task in external editor
-    if (input === 'e' && selectedTask && focusedPanel === 'tasks') {
+    if (input === 'e' && viewMode === 'tasks' && selectedTask && focusedPanel === 'tasks') {
       editTaskInEditor(selectedTask.id, selectedTask.path);
       return;
     }
 
     // Open session for selected task
-    if (input === 'o' && selectedTask && focusedPanel === 'tasks') {
+    if (input === 'o' && viewMode === 'tasks' && selectedTask && focusedPanel === 'tasks') {
       const sessionIds = Object.keys(selectedTask.sessions || {});
       if (sessionIds.length === 0) {
         addLog({
@@ -1637,7 +2053,7 @@ export function App({
     }
 
     // Open session in tmux window for selected task
-    if (input === 'O' && selectedTask && focusedPanel === 'tasks') {
+    if (input === 'O' && viewMode === 'tasks' && selectedTask && focusedPanel === 'tasks') {
       const sessionIds = Object.keys(selectedTask.sessions || {});
       if (sessionIds.length === 0) {
         addLog({
@@ -1682,7 +2098,7 @@ export function App({
     }
 
     // Yank (copy) selected task name to clipboard
-    if (input === 'y' && selectedTask && focusedPanel === 'tasks') {
+    if (input === 'y' && viewMode === 'tasks' && selectedTask && focusedPanel === 'tasks') {
       const success = copyToClipboard(selectedTask.title);
       if (success) {
         addLog({
@@ -1745,7 +2161,7 @@ export function App({
     }
 
     // Open metadata popup for selected task, feature header, or batch (s key) - only when focused on tasks panel
-    if (input === 's' && focusedPanel === 'tasks') {
+    if (input === 's' && viewMode === 'tasks' && focusedPanel === 'tasks') {
       // Helper to open popup with common setup
       const openMetadataPopup = async (
         mode: MetadataPopupMode,
@@ -2008,6 +2424,48 @@ export function App({
 
     // Navigation (only when focused on tasks panel)
     if (focusedPanel === 'tasks') {
+      if (viewMode === 'crons') {
+        const currentIndex = crons.findIndex((cron) => cron.id === selectedCronId);
+
+        if (key.upArrow || input === 'k') {
+          if (currentIndex > 0) {
+            setSelectedCronId(crons[currentIndex - 1]?.id ?? selectedCronId);
+          } else if (currentIndex === -1 && crons.length > 0) {
+            setSelectedCronId(crons[crons.length - 1]?.id ?? null);
+          }
+          return;
+        }
+
+        if (key.downArrow || input === 'j') {
+          if (currentIndex === -1 && crons.length > 0) {
+            setSelectedCronId(crons[0]?.id ?? null);
+          } else if (currentIndex < crons.length - 1) {
+            setSelectedCronId(crons[currentIndex + 1]?.id ?? selectedCronId);
+          }
+          return;
+        }
+
+        if ((input === 'g' || key.home) && crons.length > 0) {
+          setSelectedCronId(crons[0]?.id ?? null);
+          setCronScrollOffset(0);
+          return;
+        }
+
+        if ((input === 'G' || key.end) && crons.length > 0) {
+          const lastIndex = crons.length - 1;
+          setSelectedCronId(crons[lastIndex]?.id ?? null);
+          setCronScrollOffset(Math.max(0, crons.length - cronViewportHeight));
+          return;
+        }
+
+        if (key.return) {
+          setDetailVisible(true);
+          return;
+        }
+
+        return;
+      }
+
       // Use navigationOrder (flattened tree) instead of raw tasks array
       // This ensures j/k navigation matches the visual tree order
       const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
@@ -2385,6 +2843,12 @@ export function App({
     }
   }, [error, addLog]);
 
+  useEffect(() => {
+    if (cronError) {
+      addLog({ level: 'error', message: cronError.message });
+    }
+  }, [cronError, addLog]);
+
   // Handle SIGINT/SIGTERM for graceful exit
   useEffect(() => {
     const handleExit = () => {
@@ -2406,23 +2870,35 @@ export function App({
       <Box flexDirection="column" padding={1}>
         <Text bold>Keyboard Shortcuts</Text>
         <Text />
+        <Text bold dimColor>Global shortcuts:</Text>
         <Text>  <Text bold>Ctrl-C</Text>    - Quit</Text>
-        <Text>  <Text bold>r</Text>         - Refresh tasks</Text>
-        <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
-        <Text>  <Text bold>f</Text>         - Focus on feature (task panel)</Text>
-        <Text>  <Text bold>x</Text>         - Execute highlighted task immediately</Text>
-        <Text>  <Text bold>X</Text>         - Cancel running task (kill PID)</Text>
+        <Text>  <Text bold>r</Text>         - Refresh tasks and crons</Text>
         <Text>  <Text bold>p</Text>         - Toggle pause/resume</Text>
         {isMultiProject && (
           <Text>  <Text bold>P</Text>         - Pause/Resume ALL projects</Text>
         )}
         <Text>  <Text bold>?</Text>         - Toggle help</Text>
-        <Text>  <Text bold>Tab</Text>       - Switch focus (tasks/logs)</Text>
+        <Text>  <Text bold>Tab</Text>       - Switch focus (list/details/logs)</Text>
+        <Text>  <Text bold>C</Text>         - Toggle task/cron view</Text>
         <Text>  <Text bold>L</Text>         - Toggle logs panel visibility</Text>
         <Text>  <Text bold>Up/k</Text>      - Navigate up</Text>
         <Text>  <Text bold>Down/j</Text>    - Navigate down</Text>
-        <Text>  <Text bold>s</Text>         - Change task status</Text>
         <Text>  <Text bold>S</Text>         - Open settings</Text>
+        <Text />
+        <Text bold dimColor>Task panel shortcuts (task view):</Text>
+        <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
+        <Text>  <Text bold>f</Text>         - Focus on feature</Text>
+        <Text>  <Text bold>x</Text>         - Execute selected task/feature</Text>
+        <Text>  <Text bold>X</Text>         - Cancel running selected task</Text>
+        <Text>  <Text bold>s</Text>         - Edit selected task metadata</Text>
+        <Text />
+        <Text bold dimColor>Cron panel shortcuts (cron view):</Text>
+        <Text>  <Text bold>Enter</Text>     - Show cron details panel</Text>
+        <Text>  <Text bold>n/e</Text>       - New/Edit selected cron</Text>
+        <Text>  <Text bold>x</Text>         - Trigger selected cron now</Text>
+        <Text>  <Text bold>a/u</Text>       - Link/Unlink task</Text>
+        <Text>  <Text bold>R</Text>         - Replace linked tasks</Text>
+        <Text>  <Text bold>D</Text>         - Delete selected cron (confirm)</Text>
         <Text />
         <Text bold dimColor>Logs Panel (when focused):</Text>
         <Text>  <Text bold>f</Text>         - Filter logs by selected task</Text>
@@ -2489,6 +2965,47 @@ export function App({
     );
   }
 
+  if (cronActionOpen) {
+    const title = cronActionMode === 'create'
+      ? 'Create Cron'
+      : cronActionMode === 'edit'
+        ? 'Edit Cron'
+        : cronActionMode === 'add-link'
+          ? 'Add Linked Task'
+          : cronActionMode === 'remove-link'
+            ? 'Remove Linked Task'
+            : 'Replace Linked Tasks';
+
+    const hint = cronActionMode === 'create' || cronActionMode === 'edit'
+      ? 'Use format: title|schedule'
+      : cronActionMode === 'replace-links'
+        ? 'Use comma-separated task IDs'
+        : 'Enter task ID';
+
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <Box borderStyle="single" borderColor="cyan" padding={1} flexDirection="column" width={Math.min(90, terminalColumns - 4)}>
+          <Text bold>{title}</Text>
+          <Text dimColor>{hint}</Text>
+          <Text>{cronActionInput || '_'}</Text>
+          <Text dimColor>Enter to submit, Esc to cancel</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (cronDeleteConfirmOpen) {
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <Box borderStyle="single" borderColor="red" padding={1} flexDirection="column" width={Math.min(90, terminalColumns - 4)}>
+          <Text bold color="red">Delete Cron</Text>
+          <Text>Delete selected cron <Text bold>{selectedCron?.title ?? '(none)'}</Text>?</Text>
+          <Text dimColor>Enter to confirm, Esc to cancel</Text>
+        </Box>
+      </Box>
+    );
+  }
+
   // Delete confirmation popup overlay
   if (deletePopupOpen && tasksToDelete.length > 0) {
     // Determine featureId if all tasks share the same feature
@@ -2538,9 +3055,9 @@ export function App({
         activeFeatures={activeFeatures}
       />
 
-      {/* Main content area: Top row (Tasks) | Bottom area (Details + Logs) */}
+      {/* Main content area: Top row (List) | Bottom area (Details + Logs) */}
       <Box flexGrow={1} flexDirection="column">
-        {/* Top row: Task Tree (always full width) */}
+        {/* Top row: Task tree or cron list (always full width) */}
         <Box height={topRowHeight} flexDirection="row">
           <Box
             width="100%"
@@ -2548,49 +3065,69 @@ export function App({
             borderColor={focusedPanel === 'tasks' ? 'cyan' : 'gray'}
             flexDirection="column"
           >
-            <FilterBar
-              filterText={filterText}
-              filterMode={filterMode}
-              matchCount={matchCount}
-              totalCount={totalCount}
-            />
-            <TaskTree
-              tasks={filteredTasks}
-              selectedId={selectedTaskId}
-              onSelect={setSelectedTaskId}
-              completedCollapsed={completedCollapsed}
-              onToggleCompleted={handleToggleCompleted}
-              draftCollapsed={draftCollapsed}
-              onToggleDraft={handleToggleDraft}
-              cancelledCollapsed={cancelledCollapsed}
-              supersededCollapsed={supersededCollapsed}
-              archivedCollapsed={archivedCollapsed}
-              groupByProject={isMultiProject && activeProject === 'all'}
-              groupByFeature={true}
-              scrollOffset={taskScrollOffset}
-              viewportHeight={taskViewportHeight}
-              collapsedFeatures={collapsedFeatures}
-              activeFeatures={activeFeatures}
-              selectedTaskIds={selectedTaskIds}
-              visibleGroups={visibleGroups}
-              textWrap={textWrap}
-              panelWidth={taskPanelWidth}
-            />
+            {viewMode === 'tasks' ? (
+              <>
+                <FilterBar
+                  filterText={filterText}
+                  filterMode={filterMode}
+                  matchCount={matchCount}
+                  totalCount={totalCount}
+                />
+                <TaskTree
+                  tasks={filteredTasks}
+                  selectedId={selectedTaskId}
+                  onSelect={setSelectedTaskId}
+                  completedCollapsed={completedCollapsed}
+                  onToggleCompleted={handleToggleCompleted}
+                  draftCollapsed={draftCollapsed}
+                  onToggleDraft={handleToggleDraft}
+                  cancelledCollapsed={cancelledCollapsed}
+                  supersededCollapsed={supersededCollapsed}
+                  archivedCollapsed={archivedCollapsed}
+                  groupByProject={isMultiProject && activeProject === 'all'}
+                  groupByFeature={true}
+                  scrollOffset={taskScrollOffset}
+                  viewportHeight={taskViewportHeight}
+                  collapsedFeatures={collapsedFeatures}
+                  activeFeatures={activeFeatures}
+                  selectedTaskIds={selectedTaskIds}
+                  visibleGroups={visibleGroups}
+                  textWrap={textWrap}
+                  panelWidth={taskPanelWidth}
+                />
+              </>
+            ) : (
+              <CronList
+                crons={crons}
+                selectedId={selectedCronId}
+                isFocused={focusedPanel === 'tasks'}
+                scrollOffset={cronScrollOffset}
+                viewportHeight={cronViewportHeight}
+                showProjectPrefix={isMultiProject && activeProject === 'all'}
+              />
+            )}
           </Box>
         </Box>
 
-        {/* Bottom area: Task Detail + Logs (stacked vertically, hidden by default) */}
+        {/* Bottom area: Detail + Logs (stacked vertically, hidden by default) */}
         {anyBottomVisible && (
           <Box flexDirection="column" height={bottomAreaHeight}>
-            {/* Task Detail (toggle with T) */}
+            {/* Detail panel (toggle with T) */}
             {detailVisible && (
               <Box height={detailHeight} flexDirection="column">
-                <TaskDetail 
-                  task={selectedTask} 
-                  isFocused={focusedPanel === 'details'}
-                  scrollOffset={detailsScrollOffset}
-                  viewportHeight={detailsViewportHeight}
-                />
+                {viewMode === 'tasks' ? (
+                  <TaskDetail
+                    task={selectedTask}
+                    isFocused={focusedPanel === 'details'}
+                    scrollOffset={detailsScrollOffset}
+                    viewportHeight={detailsViewportHeight}
+                  />
+                ) : (
+                  <CronDetail
+                    cron={selectedCron}
+                    isFocused={focusedPanel === 'details'}
+                  />
+                )}
               </Box>
             )}
 
@@ -2603,7 +3140,7 @@ export function App({
                   showProjectPrefix={isMultiProject}
                   isFocused={focusedPanel === 'logs'}
                   scrollOffset={logScrollOffset}
-                  filterByTaskId={selectedTaskId}
+                  filterByTaskId={viewMode === 'tasks' ? selectedTaskId : null}
                   isFiltering={filterLogsByTask}
                 />
               </Box>
@@ -2615,10 +3152,11 @@ export function App({
       {/* Help bar at bottom */}
       <HelpBar 
         focusedPanel={focusedPanel} 
+        viewMode={viewMode}
         isMultiProject={isMultiProject}
-        isFilterActive={filterMode === 'locked'}
+        isFilterActive={viewMode === 'tasks' && filterMode === 'locked'}
         hasSelectedTasks={selectedTaskIds.size > 0}
-        hasTaskSessions={!!selectedTask?.sessions && Object.keys(selectedTask.sessions).length > 0}
+        hasTaskSessions={viewMode === 'tasks' && !!selectedTask?.sessions && Object.keys(selectedTask.sessions).length > 0}
         textWrap={textWrap}
       />
     </Box>

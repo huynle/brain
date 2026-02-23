@@ -411,6 +411,44 @@ describe('useMultiProjectPoller - Exported derived-state helpers', () => {
   });
 });
 
+describe('useMultiProjectPoller - session normalization', () => {
+  let normalizeTaskSessions: typeof import('./useMultiProjectPoller').normalizeTaskSessions;
+
+  beforeEach(async () => {
+    const mod = await import('./useMultiProjectPoller');
+    normalizeTaskSessions = mod.normalizeTaskSessions;
+  });
+
+  it('normalizes legacy session_ids array to canonical sessions map', () => {
+    const result = normalizeTaskSessions({
+      session_ids: ['ses_a', 'ses_b'],
+      session_timestamps: {
+        ses_a: '2026-02-23T09:00:00.000Z',
+        ses_b: '2026-02-23T08:00:00.000Z',
+      },
+    });
+
+    expect(result).toEqual({
+      ses_a: { timestamp: '2026-02-23T09:00:00.000Z' },
+      ses_b: { timestamp: '2026-02-23T08:00:00.000Z' },
+    });
+  });
+
+  it('normalizes legacy object-shaped session_ids maps', () => {
+    const result = normalizeTaskSessions({
+      session_ids: {
+        ses_a: { timestamp: '2026-02-23T09:00:00.000Z', cron_id: 'cron-1' },
+        ses_b: '2026-02-23T08:00:00.000Z',
+      },
+    });
+
+    expect(result).toEqual({
+      ses_a: { timestamp: '2026-02-23T09:00:00.000Z', cron_id: 'cron-1' },
+      ses_b: { timestamp: '2026-02-23T08:00:00.000Z' },
+    });
+  });
+});
+
 // =============================================================================
 // Helper functions that mirror the hook's internal logic
 // =============================================================================

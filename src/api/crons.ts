@@ -2,14 +2,23 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getBrainService } from "../core/brain-service";
 import { resolveCronPipeline, canTriggerPipeline, generateRunId } from "../core/cron-service";
 import { getTaskService } from "../core/task-service";
-import type { BrainEntry, CronRun } from "../core/types";
+import type { BrainEntry, CronRun, ResolvedTask } from "../core/types";
 import {
   EntryIdSchema,
+  TaskIdSchema,
   ProjectIdSchema,
+  CreateCronRequestSchema,
+  UpdateCronRequestSchema,
+  CronMutationResponseSchema,
+  DeleteCronQuerySchema,
+  DeleteCronResponseSchema,
   CronListResponseSchema,
   CronDetailResponseSchema,
   CronTriggerResponseSchema,
   CronRunsResponseSchema,
+  CronLinkedTasksRequestSchema,
+  CronLinkedTasksResponseSchema,
+  CronLinkedTasksMutationResponseSchema,
   ErrorResponseSchema,
   NotFoundResponseSchema,
   ServiceUnavailableResponseSchema,
@@ -29,6 +38,21 @@ const CronIdParamSchema = z.object({
   }),
   cronId: EntryIdSchema.openapi({
     param: { name: "cronId", in: "path" },
+    example: "abc12def",
+  }),
+});
+
+const CronTaskIdParamSchema = z.object({
+  projectId: ProjectIdSchema.openapi({
+    param: { name: "projectId", in: "path" },
+    example: "my-project",
+  }),
+  cronId: EntryIdSchema.openapi({
+    param: { name: "cronId", in: "path" },
+    example: "abc12def",
+  }),
+  taskId: TaskIdSchema.openapi({
+    param: { name: "taskId", in: "path" },
     example: "abc12def",
   }),
 });
@@ -177,6 +201,296 @@ const getCronRunsRoute = createRoute({
   },
 });
 
+const listCronLinkedTasksRoute = createRoute({
+  method: "get",
+  path: "/{projectId}/crons/{cronId}/linked-tasks",
+  tags: ["Crons"],
+  summary: "List tasks linked to a cron",
+  request: {
+    params: CronIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Linked tasks",
+      content: {
+        "application/json": {
+          schema: CronLinkedTasksResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const setCronLinkedTasksRoute = createRoute({
+  method: "patch",
+  path: "/{projectId}/crons/{cronId}/linked-tasks",
+  tags: ["Crons"],
+  summary: "Replace cron linked tasks",
+  request: {
+    params: CronIdParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: CronLinkedTasksRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Cron linked tasks updated",
+      content: {
+        "application/json": {
+          schema: CronLinkedTasksMutationResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry or task not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const addCronLinkedTaskRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/crons/{cronId}/linked-tasks/{taskId}",
+  tags: ["Crons"],
+  summary: "Add a task link to a cron",
+  request: {
+    params: CronTaskIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Task linked to cron",
+      content: {
+        "application/json": {
+          schema: CronLinkedTasksMutationResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry or task not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const removeCronLinkedTaskRoute = createRoute({
+  method: "delete",
+  path: "/{projectId}/crons/{cronId}/linked-tasks/{taskId}",
+  tags: ["Crons"],
+  summary: "Remove a task link from a cron",
+  request: {
+    params: CronTaskIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Task unlinked from cron",
+      content: {
+        "application/json": {
+          schema: CronLinkedTasksMutationResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry or task not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const createProjectCronRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/crons",
+  tags: ["Crons"],
+  summary: "Create a cron entry",
+  request: {
+    params: ProjectIdParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: CreateCronRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    201: {
+      description: "Cron entry created",
+      content: {
+        "application/json": {
+          schema: CronMutationResponseSchema,
+        },
+      },
+    },
+    400: {
+      description: "Validation error",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const updateProjectCronRoute = createRoute({
+  method: "patch",
+  path: "/{projectId}/crons/{cronId}",
+  tags: ["Crons"],
+  summary: "Update a cron entry",
+  request: {
+    params: CronIdParamSchema,
+    body: {
+      content: {
+        "application/json": {
+          schema: UpdateCronRequestSchema,
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Cron entry updated",
+      content: {
+        "application/json": {
+          schema: CronMutationResponseSchema,
+        },
+      },
+    },
+    400: {
+      description: "Validation error",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+const deleteProjectCronRoute = createRoute({
+  method: "delete",
+  path: "/{projectId}/crons/{cronId}",
+  tags: ["Crons"],
+  summary: "Delete a cron entry",
+  request: {
+    params: CronIdParamSchema,
+    query: DeleteCronQuerySchema,
+  },
+  responses: {
+    200: {
+      description: "Cron entry deleted",
+      content: {
+        "application/json": {
+          schema: DeleteCronResponseSchema,
+        },
+      },
+    },
+    400: {
+      description: "Validation error",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Cron entry not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
 function isZkUnavailableError(error: unknown): error is Error {
   return error instanceof Error && error.message.includes("zk CLI not available");
 }
@@ -187,8 +501,18 @@ function isProjectCron(projectId: string, entry: BrainEntry): boolean {
 
 async function findProjectCron(projectId: string, cronId: string): Promise<BrainEntry | null> {
   const brainService = getBrainService();
+
   try {
     const cron = await brainService.recall(cronId);
+    if (!isProjectCron(projectId, cron)) return null;
+    return cron;
+  } catch {
+    // Fallback to direct path lookup when zk index is stale.
+  }
+
+  try {
+    const cronPath = `projects/${projectId}/cron/${cronId}.md`;
+    const cron = await brainService.recall(cronPath);
     if (!isProjectCron(projectId, cron)) return null;
     return cron;
   } catch {
@@ -200,6 +524,19 @@ function sortRunsDesc(runs: CronRun[]): CronRun[] {
   return [...runs].sort((a, b) =>
     new Date(b.started).getTime() - new Date(a.started).getTime()
   );
+}
+
+function filterLinkedTasks(cronId: string, tasks: ResolvedTask[]) {
+  return tasks.filter((task) => task.cron_ids.includes(cronId));
+}
+
+function linkedTasksPayload(cronId: string, tasks: ResolvedTask[]) {
+  const linkedTasks = filterLinkedTasks(cronId, tasks);
+  return {
+    cronId,
+    tasks: linkedTasks,
+    count: linkedTasks.length,
+  };
 }
 
 export function createCronRoutes(): OpenAPIHono {
@@ -320,6 +657,126 @@ export function createCronRoutes(): OpenAPIHono {
     }
   });
 
+  crons.openapi(createProjectCronRoute, async (c) => {
+    const { projectId } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const brainService = getBrainService();
+
+    try {
+      const created = await brainService.save({
+        type: "cron",
+        title: body.title,
+        content: body.content || "Cron content.",
+        project: projectId,
+        schedule: body.schedule,
+        status: body.status,
+        tags: body.tags,
+      });
+
+      const cron = await brainService.recall(created.path);
+      return c.json(
+        {
+          cron,
+          message: "Cron created successfully",
+        },
+        201
+      );
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(updateProjectCronRoute, async (c) => {
+    const { projectId, cronId } = c.req.valid("param");
+    const body = c.req.valid("json");
+    const brainService = getBrainService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      const updated = await brainService.update(cron.path, {
+        title: body.title,
+        schedule: body.schedule,
+        status: body.status,
+        tags: body.tags,
+        content: body.content,
+      });
+
+      return c.json({
+        cron: updated,
+        message: "Cron updated successfully",
+      }, 200);
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(deleteProjectCronRoute, async (c) => {
+    const { projectId, cronId } = c.req.valid("param");
+    const brainService = getBrainService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      await brainService.delete(cron.path);
+
+      return c.json(
+        {
+          message: "Cron deleted successfully",
+          path: cron.path,
+        },
+        200
+      );
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
   crons.openapi(triggerCronRoute, async (c) => {
     const { projectId, cronId } = c.req.valid("param");
     const brainService = getBrainService();
@@ -407,6 +864,227 @@ export function createCronRoutes(): OpenAPIHono {
         runs,
         count: runs.length,
       }, 200);
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(listCronLinkedTasksRoute, async (c) => {
+    const { projectId, cronId } = c.req.valid("param");
+    const taskService = getTaskService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      return c.json(linkedTasksPayload(cron.id, taskResult.tasks), 200);
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(setCronLinkedTasksRoute, async (c) => {
+    const { projectId, cronId } = c.req.valid("param");
+    const { taskIds } = c.req.valid("json");
+    const brainService = getBrainService();
+    const taskService = getTaskService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      const dedupedTaskIds = [...new Set(taskIds)];
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      const tasksById = new Map(taskResult.tasks.map((task) => [task.id, task]));
+
+      for (const taskId of dedupedTaskIds) {
+        if (!tasksById.has(taskId)) {
+          return c.json(
+            {
+              error: "Not Found",
+              message: `Task '${taskId}' not found in project '${projectId}'`,
+            },
+            404
+          );
+        }
+      }
+
+      const targetTaskIdSet = new Set(dedupedTaskIds);
+      for (const task of taskResult.tasks) {
+        const hasCronLink = task.cron_ids.includes(cron.id);
+        const shouldHaveCronLink = targetTaskIdSet.has(task.id);
+
+        if (hasCronLink === shouldHaveCronLink) continue;
+
+        if (shouldHaveCronLink) {
+          await brainService.update(task.path, {
+            cron_ids: [...task.cron_ids, cron.id],
+          });
+          continue;
+        }
+
+        await brainService.update(task.path, {
+          cron_ids: task.cron_ids.filter((id) => id !== cron.id),
+        });
+      }
+
+      const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      return c.json(
+        {
+          ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
+          message: "Cron linked tasks replaced",
+        },
+        200
+      );
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(addCronLinkedTaskRoute, async (c) => {
+    const { projectId, cronId, taskId } = c.req.valid("param");
+    const brainService = getBrainService();
+    const taskService = getTaskService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      const task = taskResult.tasks.find((candidate) => candidate.id === taskId);
+      if (!task) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Task '${taskId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      if (!task.cron_ids.includes(cron.id)) {
+        await brainService.update(task.path, {
+          cron_ids: [...task.cron_ids, cron.id],
+        });
+      }
+
+      const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      return c.json(
+        {
+          ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
+          message: `Task '${taskId}' linked to cron '${cron.id}'`,
+        },
+        200
+      );
+    } catch (error) {
+      if (isZkUnavailableError(error)) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
+  });
+
+  crons.openapi(removeCronLinkedTaskRoute, async (c) => {
+    const { projectId, cronId, taskId } = c.req.valid("param");
+    const brainService = getBrainService();
+    const taskService = getTaskService();
+
+    try {
+      const cron = await findProjectCron(projectId, cronId);
+      if (!cron) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Cron '${cronId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      const task = taskResult.tasks.find((candidate) => candidate.id === taskId);
+      if (!task) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Task '${taskId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      if (task.cron_ids.includes(cron.id)) {
+        await brainService.update(task.path, {
+          cron_ids: task.cron_ids.filter((id) => id !== cron.id),
+        });
+      }
+
+      const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
+      return c.json(
+        {
+          ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
+          message: `Task '${taskId}' unlinked from cron '${cron.id}'`,
+        },
+        200
+      );
     } catch (error) {
       if (isZkUnavailableError(error)) {
         return c.json(

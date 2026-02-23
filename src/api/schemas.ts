@@ -7,6 +7,7 @@
 
 import { z } from "@hono/zod-openapi";
 import { ENTRY_TYPES, ENTRY_STATUSES, PRIORITIES, TASK_CLASSIFICATIONS } from "../core/types";
+import { parseCronExpression } from "../core/cron-service";
 
 // =============================================================================
 // Base Enums as Zod Schemas
@@ -49,6 +50,11 @@ export const EntryIdOrPathSchema = z.string().min(1).openapi({
 export const ProjectIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/).openapi({
   description: "Project identifier (alphanumeric, hyphens, underscores)",
   example: "my-project",
+});
+
+export const TaskIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/).openapi({
+  description: "Task identifier",
+  example: "abc12def",
 });
 
 export const CronRunSchema = z.object({
@@ -553,6 +559,74 @@ export const CronRunsResponseSchema = z.object({
   runs: z.array(CronRunSchema),
   count: z.number(),
 }).openapi("CronRunsResponse");
+
+export const CronLinkedTasksRequestSchema = z.object({
+  taskIds: z.array(TaskIdSchema),
+}).openapi("CronLinkedTasksRequest");
+
+export const CronLinkedTasksResponseSchema = z.object({
+  cronId: EntryIdSchema,
+  tasks: z.array(TaskSchema),
+  count: z.number(),
+}).openapi("CronLinkedTasksResponse");
+
+export const CronLinkedTasksMutationResponseSchema = CronLinkedTasksResponseSchema.extend({
+  message: z.string(),
+}).openapi("CronLinkedTasksMutationResponse");
+
+const CronScheduleSchema = z.string().min(1).refine(
+  (schedule) => {
+    try {
+      parseCronExpression(schedule);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: "Invalid cron schedule expression" }
+).openapi({ description: "Cron expression", example: "0 2 * * *" });
+
+export const CreateCronRequestSchema = z.object({
+  title: z.string().min(1).openapi({ example: "Nightly Pipeline" }),
+  schedule: CronScheduleSchema,
+  content: z.string().optional().openapi({ example: "Cron content." }),
+  status: EntryStatusSchema.optional(),
+  tags: z.array(z.string()).optional(),
+}).openapi("CreateCronRequest");
+
+export const UpdateCronRequestSchema = z.object({
+  title: z.string().optional(),
+  schedule: CronScheduleSchema.optional(),
+  content: z.string().optional().openapi({ description: "Full content replacement" }),
+  status: EntryStatusSchema.optional(),
+  tags: z.array(z.string()).optional(),
+}).refine(
+  (data) => (
+    data.title !== undefined ||
+    data.schedule !== undefined ||
+    data.content !== undefined ||
+    data.status !== undefined ||
+    data.tags !== undefined
+  ),
+  { message: "At least one of title, schedule, content, status, or tags must be provided" }
+).openapi("UpdateCronRequest");
+
+export const CronMutationResponseSchema = z.object({
+  cron: BrainEntrySchema,
+  message: z.string(),
+}).openapi("CronMutationResponse");
+
+export const DeleteCronQuerySchema = z.object({
+  confirm: z.literal("true").openapi({
+    description: "Must be 'true' to confirm deletion",
+    example: "true",
+  }),
+}).openapi("DeleteCronQuery");
+
+export const DeleteCronResponseSchema = z.object({
+  message: z.string().openapi({ example: "Cron deleted successfully" }),
+  path: z.string(),
+}).openapi("DeleteCronResponse");
 
 export const TaskStatsSchema = z.object({
   total: z.number(),

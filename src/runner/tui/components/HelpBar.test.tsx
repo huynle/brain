@@ -1,0 +1,25 @@
+import React from 'react';
+import { describe, it, expect } from 'bun:test';
+import { render } from 'ink-testing-library';
+import { HelpBar } from './HelpBar';
+
+describe('HelpBar', () => {
+  it('shows cron action shortcuts clearly in cron view', () => {
+    const { lastFrame, unmount } = render(
+      <HelpBar focusedPanel="tasks" viewMode="crons" />
+    );
+
+    const frame = lastFrame() || '';
+
+    expect(frame).toContain('Enter');
+    expect(frame).toContain('Details');
+    expect(frame).toContain('n/e');
+    expect(frame).toContain('New/Edit');
+    expect(frame).toContain('x');
+    expect(frame).toContain('Trigger now');
+    expect(frame).toContain('D');
+    expect(frame).toContain('Delete');
+
+    unmount();
+  });
+});

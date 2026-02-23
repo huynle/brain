@@ -64,8 +64,8 @@ function writeCronFile(
   writeFileSync(fullPath, frontmatter.join("\n"));
 }
 
-function writeTaskFile(taskId: string, cronId: string): void {
-  const fullPath = join(config.brain.brainDir, "projects", TEST_PROJECT, "task", `${taskId}.md`);
+function writeTaskFile(taskId: string, cronIds: string[] = [], projectId = TEST_PROJECT): void {
+  const fullPath = join(config.brain.brainDir, "projects", projectId, "task", `${taskId}.md`);
   const frontmatter = [
     "---",
     `title: Task ${taskId}`,
@@ -75,8 +75,12 @@ function writeTaskFile(taskId: string, cronId: string): void {
     "tags:",
     "  - task",
     "depends_on: []",
-    "cron_ids:",
-    `  - ${cronId}`,
+    ...(cronIds.length > 0
+      ? [
+          "cron_ids:",
+          ...cronIds.map((cronId) => `  - ${cronId}`),
+        ]
+      : []),
     "---",
     "",
     `# Task ${taskId}`,
@@ -86,6 +90,13 @@ function writeTaskFile(taskId: string, cronId: string): void {
   ];
 
   writeFileSync(fullPath, frontmatter.join("\n"));
+}
+
+async function getTaskEntry(taskId: string): Promise<{ cron_ids?: string[] } & Record<string, unknown>> {
+  const path = `projects/${TEST_PROJECT}/task/${taskId}.md`;
+  const res = await app.request(`/entries/${path}`);
+  expect(res.status).toBe(200);
+  return res.json();
 }
 
 function reindexZk(): void {
@@ -138,7 +149,7 @@ describe("Cron API", () => {
     const cronId = await getCronIdByTitle(TEST_PROJECT, "Triggerable Cron");
     if (!cronId) return;
 
-    writeTaskFile("tsk00001", cronId);
+    writeTaskFile("tsk00001", [cronId]);
     reindexZk();
 
     const res = await app.request(`/crons/${TEST_PROJECT}/crons/${cronId}/trigger`, {
@@ -199,6 +210,112 @@ describe("Cron API", () => {
     expect(json.runs[1].run_id).toBe("20260222-0200");
   });
 
+  test("creates cron via cron endpoint with auto-calculated next_run", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Created via Cron API",
+        schedule: "15 4 * * *",
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+
+    expect(json.cron.type).toBe("cron");
+    expect(json.cron.title).toBe("Created via Cron API");
+    expect(json.cron.path).toContain(`projects/${TEST_PROJECT}/cron/`);
+    expect(json.cron.schedule).toBe("15 4 * * *");
+    expect(typeof json.cron.next_run).toBe("string");
+    expect(Number.isNaN(new Date(json.cron.next_run).getTime())).toBe(false);
+  });
+
+  test("rejects invalid cron schedule on create", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Invalid Schedule Cron",
+        schedule: "bad schedule",
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe("Validation Error");
+    expect(json.message).toContain("schedule");
+  });
+
+  test("updates cron schedule and recalculates next_run", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Update Schedule Cron",
+        schedule: "0 1 * * *",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+    expect(createRes.status).toBe(201);
+
+    const created = await createRes.json();
+    const beforeNextRun = created.cron.next_run;
+
+    const patchRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        schedule: "30 6 * * *",
+      }),
+    });
+
+    if (patchRes.status === 503) return;
+
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json();
+    expect(patched.cron.schedule).toBe("30 6 * * *");
+    expect(typeof patched.cron.next_run).toBe("string");
+    expect(Number.isNaN(new Date(patched.cron.next_run).getTime())).toBe(false);
+    expect(patched.cron.next_run).not.toBe(beforeNextRun);
+  });
+
+  test("deletes cron entry via cron endpoint", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Delete Me Cron",
+        schedule: "0 3 * * *",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+    expect(createRes.status).toBe(201);
+
+    const created = await createRes.json();
+
+    const deleteRes = await app.request(
+      `/crons/${TEST_PROJECT}/crons/${created.cron.id}?confirm=true`,
+      { method: "DELETE" }
+    );
+
+    if (deleteRes.status === 503) return;
+
+    expect(deleteRes.status).toBe(200);
+    const deleted = await deleteRes.json();
+    expect(deleted.message).toBe("Cron deleted successfully");
+    expect(deleted.path).toBe(created.cron.path);
+
+    const getRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`);
+    expect(getRes.status).toBe(404);
+  });
+
   test("creates cron entry with auto-calculated next_run", async () => {
     const createRes = await app.request("/entries", {
       method: "POST",
@@ -225,5 +342,133 @@ describe("Cron API", () => {
     expect(entry.schedule).toBe("0 2 * * *");
     expect(typeof entry.next_run).toBe("string");
     expect(Number.isNaN(new Date(entry.next_run).getTime())).toBe(false);
+  });
+
+  test("manages cron-task links via list/set/add/remove endpoints", async () => {
+    writeCronFile(TEST_PROJECT, "crn01001", "Linked Tasks Cron A");
+    writeCronFile(TEST_PROJECT, "crn01002", "Linked Tasks Cron B");
+    reindexZk();
+
+    const cronA = await getCronIdByTitle(TEST_PROJECT, "Linked Tasks Cron A");
+    const cronB = await getCronIdByTitle(TEST_PROJECT, "Linked Tasks Cron B");
+    if (!cronA || !cronB) return;
+
+    writeTaskFile("tsk01001", [cronA]);
+    writeTaskFile("tsk01002", [cronA, cronB]);
+    writeTaskFile("tsk01003", [cronB]);
+    reindexZk();
+
+    const listRes = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks`);
+    if (listRes.status === 503) return;
+
+    expect(listRes.status).toBe(200);
+    const listed = await listRes.json();
+    expect(listed.count).toBe(2);
+    const listedIds = listed.tasks.map((task: { id: string }) => task.id);
+    expect(listedIds).toContain("tsk01001");
+    expect(listedIds).toContain("tsk01002");
+    expect(listedIds).not.toContain("tsk01003");
+
+    const setRes = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskIds: ["tsk01002", "tsk01003"] }),
+    });
+
+    if (setRes.status === 503) return;
+
+    expect(setRes.status).toBe(200);
+    const setJson = await setRes.json();
+    expect(setJson.message).toBe("Cron linked tasks replaced");
+    const setIds = setJson.tasks.map((task: { id: string }) => task.id);
+    expect(setIds).toContain("tsk01002");
+    expect(setIds).toContain("tsk01003");
+    expect(setIds).not.toContain("tsk01001");
+
+    const taskAfterSetA = await getTaskEntry("tsk01001");
+    const taskAfterSetB = await getTaskEntry("tsk01002");
+    const taskAfterSetC = await getTaskEntry("tsk01003");
+    expect(taskAfterSetA.cron_ids || []).not.toContain(cronA);
+    expect(taskAfterSetB.cron_ids).toEqual(expect.arrayContaining([cronA, cronB]));
+    expect(taskAfterSetC.cron_ids).toEqual(expect.arrayContaining([cronA, cronB]));
+
+    const addRes1 = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks/tsk01001`, {
+      method: "POST",
+    });
+    if (addRes1.status === 503) return;
+    expect(addRes1.status).toBe(200);
+
+    const addRes2 = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks/tsk01001`, {
+      method: "POST",
+    });
+    if (addRes2.status === 503) return;
+    expect(addRes2.status).toBe(200);
+
+    const taskAfterAdd = await getTaskEntry("tsk01001");
+    const linkedAfterAdd = (taskAfterAdd.cron_ids || []).filter((id: string) => id === cronA);
+    expect(linkedAfterAdd.length).toBe(1);
+
+    const removeRes1 = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks/tsk01002`, {
+      method: "DELETE",
+    });
+    if (removeRes1.status === 503) return;
+    expect(removeRes1.status).toBe(200);
+
+    const removeRes2 = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks/tsk01002`, {
+      method: "DELETE",
+    });
+    if (removeRes2.status === 503) return;
+    expect(removeRes2.status).toBe(200);
+
+    const taskAfterRemove = await getTaskEntry("tsk01002");
+    expect(taskAfterRemove.cron_ids || []).not.toContain(cronA);
+    expect(taskAfterRemove.cron_ids).toContain(cronB);
+
+    const clearRes = await app.request(`/crons/${TEST_PROJECT}/crons/${cronA}/linked-tasks`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskIds: [] }),
+    });
+    if (clearRes.status === 503) return;
+    expect(clearRes.status).toBe(200);
+    const cleared = await clearRes.json();
+    expect(cleared.count).toBe(0);
+
+    const taskAfterClearA = await getTaskEntry("tsk01001");
+    const taskAfterClearB = await getTaskEntry("tsk01002");
+    const taskAfterClearC = await getTaskEntry("tsk01003");
+    expect(taskAfterClearA.cron_ids || []).not.toContain(cronA);
+    expect(taskAfterClearB.cron_ids || []).not.toContain(cronA);
+    expect(taskAfterClearC.cron_ids || []).not.toContain(cronA);
+    expect(taskAfterClearB.cron_ids).toContain(cronB);
+    expect(taskAfterClearC.cron_ids).toContain(cronB);
+  }, 20000);
+
+  test("validates linked-task IDs and returns not found for missing tasks", async () => {
+    writeCronFile(TEST_PROJECT, "crn01010", "Linked Tasks Validation Cron");
+    reindexZk();
+
+    const cronId = await getCronIdByTitle(TEST_PROJECT, "Linked Tasks Validation Cron");
+    if (!cronId) return;
+
+    const invalidRes = await app.request(`/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks/invalid*id`, {
+      method: "POST",
+    });
+
+    if (invalidRes.status === 503) return;
+
+    expect(invalidRes.status).toBe(400);
+    const invalidJson = await invalidRes.json();
+    expect(invalidJson.error).toBe("Validation Error");
+    expect(invalidJson.message).toContain("taskId");
+
+    const missingRes = await app.request(`/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks/no_such_task`, {
+      method: "DELETE",
+    });
+
+    expect(missingRes.status).toBe(404);
+    const missingJson = await missingRes.json();
+    expect(missingJson.error).toBe("Not Found");
+    expect(missingJson.message).toContain("not found in project");
   });
 });

@@ -3176,6 +3176,23 @@ export class TaskRunner {
         onOpenSession: (sessionId) => this.openSession(sessionId),
         // Open OpenCode session in tmux window (O key) - with task context for idle monitoring
         onOpenSessionTmux: (sessionId, taskContext) => this.openSessionInTmux(sessionId, taskContext),
+        // Cron callbacks (Phase 1 groundwork for cron panel/actions)
+        onListCrons: (projectId) => this.apiClient.getCronEntries(projectId),
+        onGetCron: (projectId, cronId) => this.apiClient.getCronEntry(projectId, cronId),
+        onCreateCron: (projectId, request) => this.apiClient.createCronEntry(projectId, request),
+        onUpdateCron: (projectId, cronId, request) =>
+          this.apiClient.updateCronEntry(projectId, cronId, request),
+        onDeleteCron: (projectId, cronId) => this.apiClient.deleteCronEntry(projectId, cronId),
+        onGetCronRuns: (projectId, cronId) => this.apiClient.getCronRuns(projectId, cronId),
+        onGetCronLinkedTasks: (projectId, cronId) =>
+          this.apiClient.getCronLinkedTasks(projectId, cronId),
+        onSetCronLinkedTasks: (projectId, cronId, taskIds) =>
+          this.apiClient.setCronLinkedTasks(projectId, cronId, taskIds),
+        onAddCronLinkedTask: (projectId, cronId, taskId) =>
+          this.apiClient.addCronLinkedTask(projectId, cronId, taskId),
+        onRemoveCronLinkedTask: (projectId, cronId, taskId) =>
+          this.apiClient.removeCronLinkedTask(projectId, cronId, taskId),
+        onTriggerCron: (projectId, cronId) => this.apiClient.triggerCron(projectId, cronId),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

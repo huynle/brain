@@ -589,23 +589,77 @@ describe("ApiClient", () => {
       expect(result).toEqual(mockResponse);
     });
 
-    it("triggerCron posts trigger with runId payload", async () => {
+    it("triggerCron posts trigger and returns trigger payload", async () => {
       let capturedUrl: string | undefined;
       let capturedMethod: string | undefined;
       let capturedBody: string | undefined;
+      const triggerResponse = {
+        cronId: "crn00001",
+        run: {
+          run_id: "run-abc",
+          status: "in_progress" as const,
+          started: "2026-02-23T02:00:00.000Z",
+          tasks: 2,
+        },
+        pipeline: [],
+        pipelineCount: 0,
+        message: "Cron run triggered",
+      };
 
       globalThis.fetch = ((url: string, options?: RequestInit) => {
         capturedUrl = url;
         capturedMethod = options?.method;
         capturedBody = options?.body as string;
-        return Promise.resolve(new Response("{}", { status: 200 }));
+        return Promise.resolve(new Response(JSON.stringify(triggerResponse), { status: 200 }));
       }) as typeof fetch;
 
-      await client.triggerCron("myproject", "crn00001", "run-abc");
+      const result = await client.triggerCron("myproject", "crn00001");
 
       expect(capturedUrl).toContain("/api/v1/crons/myproject/crons/crn00001/trigger");
       expect(capturedMethod).toBe("POST");
-      expect(capturedBody).toBe(JSON.stringify({ runId: "run-abc" }));
+      expect(capturedBody).toBeUndefined();
+      expect(result).toEqual(triggerResponse);
+    });
+
+    it("encodes project and cron IDs for trigger endpoint", async () => {
+      let capturedUrl: string | undefined;
+      const triggerResponse = {
+        cronId: "crn 00001",
+        run: {
+          run_id: "run-abc",
+          status: "in_progress" as const,
+          started: "2026-02-23T02:00:00.000Z",
+          tasks: 0,
+        },
+        pipeline: [],
+        pipelineCount: 0,
+        message: "Cron run triggered",
+      };
+
+      globalThis.fetch = ((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve(new Response(JSON.stringify(triggerResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      await client.triggerCron("my/project", "crn 00001");
+
+      expect(capturedUrl).toContain("/api/v1/crons/my%2Fproject/crons/crn%2000001/trigger");
+    });
+
+    it("encodes project, cron, and task IDs for linked-task mutations", async () => {
+      let capturedUrl: string | undefined;
+      const mockResponse = { cronId: "crn 00001", tasks: [], count: 0, message: "linked" };
+
+      globalThis.fetch = ((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      await client.addCronLinkedTask("my/project", "crn 00001", "tsk 00001");
+
+      expect(capturedUrl).toContain(
+        "/api/v1/crons/my%2Fproject/crons/crn%2000001/linked-tasks/tsk%2000001"
+      );
     });
 
     it("updateCronRun merges run by run_id and PATCHes entry", async () => {

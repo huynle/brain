@@ -44,7 +44,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES, PROJECT_HEADER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
@@ -2873,11 +2873,20 @@ export function App({
       }
     }
 
-    // Pause/Resume handling - directly toggle pause for active project
-    if (input === 'p') {
-      const targetProject = activeProject === 'all' 
-        ? (isMultiProject ? projects[0] : projects[0]) 
-        : activeProject;
+    // Pause/Resume handling - toggle pause for selected project header or active project
+    // Skip in cron view where 'p' toggles cron status
+    if (input === 'p' && viewMode !== 'crons') {
+      // Check if a project header is selected
+      let targetProject: string;
+      if (selectedTaskId?.startsWith(PROJECT_HEADER_PREFIX)) {
+        // Extract project ID from the selected project header
+        targetProject = selectedTaskId.replace(PROJECT_HEADER_PREFIX, '');
+      } else {
+        // Default to active project (current tab)
+        targetProject = activeProject === 'all' 
+          ? (isMultiProject ? projects[0] : projects[0]) 
+          : activeProject;
+      }
 
       // Toggle project pause
       const isPaused = pausedProjects.has(targetProject);

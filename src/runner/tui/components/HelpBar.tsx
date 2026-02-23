@@ -112,12 +112,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
            )}
           {isMultiProject ? (
             <>
-              <Text bold>p/P</Text> Pause
+              <Text bold>p/P</Text> Pause (project/all)
               {'  '}
             </>
           ) : (
             <>
-              <Text bold>p</Text> Pause
+              <Text bold>p</Text> Pause (project)
               {'  '}
             </>
           )}

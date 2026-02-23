@@ -56,8 +56,6 @@ import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 import { SessionSelectPopup } from './components/SessionSelectPopup';
 
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
-import { useTaskPoller } from './hooks/useTaskPoller';
-import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useTaskSse } from './hooks/useTaskSse';
 import { useMultiProjectSse } from './hooks/useMultiProjectSse';
 import { useLogStream } from './hooks/useLogStream';
@@ -71,37 +69,15 @@ import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
 import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
-import type { TaskStats } from './hooks/useTaskPoller';
+import type { TaskStats } from './hooks/taskTypes';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 type ViewMode = 'tasks' | 'crons';
 type CronActionMode = 'create' | 'edit' | 'add-link' | 'remove-link' | 'replace-links';
-type RuntimeTransportMode = 'poll' | 'sse';
 
-export interface TransportHookEnablement {
-  singleTaskPollerEnabled: boolean;
-  multiTaskPollerEnabled: boolean;
-  singleTaskSseEnabled: boolean;
-  multiTaskSseEnabled: boolean;
-  singleCronPollerEnabled: boolean;
-  multiCronPollerEnabled: boolean;
-}
 
-export function resolveTransportHookEnablement(
-  isMultiProject: boolean,
-  runtimeTransportMode: RuntimeTransportMode,
-): TransportHookEnablement {
-  const useSse = runtimeTransportMode === 'sse';
 
-  return {
-    singleTaskPollerEnabled: !isMultiProject && !useSse,
-    multiTaskPollerEnabled: isMultiProject && !useSse,
-    singleTaskSseEnabled: !isMultiProject && useSse,
-    multiTaskSseEnabled: isMultiProject && useSse,
-    singleCronPollerEnabled: !isMultiProject,
-    multiCronPollerEnabled: isMultiProject,
-  };
-}
+
 
 /** Cycle to the next panel (for Tab navigation) */
 function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
@@ -355,11 +331,7 @@ export function App({
   );
   const isMultiProject = projects.length > 1;
   // SSE is now the only transport mode (Phase 2)
-  const runtimeTransportMode: RuntimeTransportMode = 'sse';
-  const transportHookEnablement = useMemo(
-    () => resolveTransportHookEnablement(isMultiProject, runtimeTransportMode),
-    [isMultiProject, runtimeTransportMode],
-  );
+
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -475,36 +447,22 @@ export function App({
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
 
-  // Single-project poller (used when not in multi-project mode)
-  const singleProjectPoller = useTaskPoller({
-    projectId: config.project,
-    apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleTaskPollerEnabled,
-  });
+
 
   // Single-project SSE task transport (with automatic polling fallback)
   const singleProjectSse = useTaskSse({
     projectId: config.project,
     apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleTaskSseEnabled,
+    enabled: !isMultiProject,
   });
 
-  // Multi-project poller (used when in multi-project mode)
-  const multiProjectPoller = useMultiProjectPoller({
-    projects: projects,
-    apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiTaskPollerEnabled,
-  });
+
 
   // Multi-project SSE transport (with per-project polling fallback)
   const multiProjectSse = useMultiProjectSse({
     projects,
     apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiTaskSseEnabled,
+    enabled: isMultiProject,
   });
 
   // Single-project cron poller (used when not in multi-project mode)
@@ -512,7 +470,7 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleCronPollerEnabled,
+    enabled: !isMultiProject,
   });
 
   // Multi-project cron poller (used when in multi-project mode)
@@ -520,7 +478,7 @@ export function App({
     projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiCronPollerEnabled,
+    enabled: isMultiProject,
   });
 
   // Select appropriate data based on mode
@@ -535,7 +493,7 @@ export function App({
   let refetchCrons: () => Promise<void>;
 
   if (isMultiProject) {
-    const taskTransport = runtimeTransportMode === 'sse' ? multiProjectSse : multiProjectPoller;
+    const taskTransport = multiProjectSse;
 
     // Multi-project mode: filter tasks by activeProject
     if (activeProject === 'all') {
@@ -560,7 +518,7 @@ export function App({
     cronError = multiProjectCronPoller.error;
     refetchCrons = multiProjectCronPoller.refetch;
   } else {
-    const taskTransport = runtimeTransportMode === 'sse' ? singleProjectSse : singleProjectPoller;
+    const taskTransport = singleProjectSse;
 
     // Single-project mode
     tasks = taskTransport.tasks;
@@ -642,7 +600,7 @@ export function App({
   useEffect(() => {
     // Derive from task list: find root tasks (title = projectId, no deps) that are blocked
     const derivedPaused = new Set<string>();
-    const allTasksForPause = isMultiProject ? multiProjectPoller.allTasks : tasks;
+    const allTasksForPause = isMultiProject ? multiProjectSse.allTasks : tasks;
     for (const task of allTasksForPause) {
       if (task.dependencies.length === 0 && task.status === 'blocked') {
         // This could be a project root task — use projectId or title
@@ -669,7 +627,7 @@ export function App({
       }
       return derivedPaused;
     });
-  }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
+  }, [tasks, isMultiProject, multiProjectSse.allTasks, projects, getPausedProjects]);
 
   // Sync enabledFeatures from TaskRunner
   useEffect(() => {
@@ -3442,7 +3400,7 @@ export function App({
         activeProject={isMultiProject ? (activeProject || 'all') : undefined}
         onSelectProject={isMultiProject ? setActiveProject : undefined}
         stats={stats}
-        statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
+        statsByProject={isMultiProject ? multiProjectSse.statsByProject : undefined}
         isConnected={isConnected}
         pausedProjects={pausedProjects}
         enabledFeatures={enabledFeatures}

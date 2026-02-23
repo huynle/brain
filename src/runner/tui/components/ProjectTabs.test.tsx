@@ -8,7 +8,7 @@ import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
 import { ProjectTabs } from './ProjectTabs';
-import type { TaskStats } from '../hooks/useTaskPoller';
+import type { TaskStats } from '../hooks/taskTypes';
 
 describe('ProjectTabs', () => {
   const mockProjects = ['brain-api', 'opencode', 'my-proj'];

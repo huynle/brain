@@ -7,7 +7,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { ProjectTabs } from './ProjectTabs';
-import type { TaskStats } from '../hooks/useTaskPoller';
+import type { TaskStats } from '../hooks/taskTypes';
 import type { FeatureStats, ResourceMetrics } from '../types';
 
 interface StatusBarProps {

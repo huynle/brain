@@ -58,6 +58,8 @@ App.tsx
 
 #### TUI Hooks
 - `useTaskPoller.ts` - Polls API for task updates, manages connection state
+- `useTaskSse.ts` - Single-project SSE task stream with automatic polling fallback
+- `useMultiProjectSse.ts` - Multi-project SSE streams with per-project polling fallback
 - `useLogStream.ts` - Manages log entry buffer with max entries limit
 
 #### TUI State Management
@@ -177,6 +179,26 @@ TUI (App.tsx)
 -e, --exclude PATTERN    Exclude projects matching glob (repeatable)
 -p, --max-parallel N     Max concurrent tasks across ALL projects
 ```
+
+### TUI Transport Rollout / Rollback
+
+Use `--transport` to choose task update transport:
+
+```bash
+--transport poll|sse|auto
+```
+
+- `poll`: stable baseline behavior
+- `sse`: SSE stream with automatic polling fallback in hooks
+- `auto`: currently resolves to SSE path so hook-level fallback can engage
+
+For emergency rollback during rollout, use env override:
+
+```bash
+RUNNER_TUI_TRANSPORT=poll bun run src/runner/index.ts start <project> --tui --transport sse
+```
+
+`RUNNER_TUI_TRANSPORT` values: `poll`, `sse`, `auto`. When set to a valid value, it overrides CLI `--transport`.
 
 ### Filter Examples
 

@@ -7,6 +7,7 @@
 
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getTaskService } from "../core/task-service";
+import type { TaskService } from "../core/task-service";
 import { computeAndResolveFeatures } from "../core/feature-service";
 import type { TaskClaim } from "../core/types";
 import {
@@ -496,6 +497,7 @@ const getFeatureRoute = createRoute({
 type TaskRouteOptions = {
   realtimeHub?: ProjectRealtimeHub;
   heartbeatIntervalMs?: number;
+  taskService?: TaskService;
 };
 
 const DEFAULT_HEARTBEAT_MS = 30000;
@@ -605,7 +607,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
   // GET /:projectId/stream - SSE stream with task snapshots
   tasks.get("/:projectId/stream", async (c) => {
     const projectId = c.req.param("projectId");
-    const taskService = getTaskService();
+    const taskService = options?.taskService ?? getTaskService();
     const encoder = new TextEncoder();
     let streamCleanup: (() => void) | undefined;
 

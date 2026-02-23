@@ -216,6 +216,60 @@ describe("Task API", () => {
       expect(hub.getSubscriberCount(TEST_PROJECT)).toBe(0);
     });
 
+    test("should emit error event when initial snapshot retrieval fails", async () => {
+      const failingTaskService = {
+        getTasksWithDependencies: async () => {
+          throw new Error("Initial snapshot failed in test");
+        },
+      };
+
+      const streamApp = new Hono();
+      streamApp.route(
+        "/tasks",
+        (createTaskRoutes as any)({
+          heartbeatIntervalMs: 25,
+          taskService: failingTaskService,
+        })
+      );
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+      expect(res.status).toBe(200);
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 2000;
+
+      while (Date.now() < deadline) {
+        const result = await reader!.read();
+        if (result.done) {
+          break;
+        }
+
+        text += decoder.decode(result.value, { stream: true });
+
+        if (text.includes("event: error")) {
+          break;
+        }
+      }
+
+      expect(text).toContain("event: connected");
+      expect(text).toContain("event: error");
+
+      const errorDataLine = text
+        .split("\n")
+        .find((line) => line.startsWith("data: {") && line.includes('"type":"error"'));
+
+      expect(errorDataLine).toBeDefined();
+      expect(errorDataLine).toContain(`"projectId":"${TEST_PROJECT}"`);
+      expect(errorDataLine).toContain('"transport":"sse"');
+      expect(errorDataLine).toContain('"message":"Initial snapshot failed in test"');
+
+      await reader?.cancel();
+    });
+
     test("publishes project-scoped dirty + snapshot events when task claim mutates state", async () => {
       const hub = createProjectRealtimeHub();
       const claimApp = new Hono();

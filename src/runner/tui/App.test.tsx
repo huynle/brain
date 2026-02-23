@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveRuntimeTransportMode, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
+import { App, setsEqual, resolveRuntimeTransportMode, resolveTransportHookEnablement, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -298,12 +298,47 @@ describe('resolveRuntimeTransportMode', () => {
     expect(resolveRuntimeTransportMode('poll')).toBe('poll');
   });
 
-  it('falls back sse to poll for phase 3', () => {
-    expect(resolveRuntimeTransportMode('sse')).toBe('poll');
+  it('keeps sse as sse in phase 4', () => {
+    expect(resolveRuntimeTransportMode('sse')).toBe('sse');
   });
 
-  it('falls back auto to poll for phase 3', () => {
-    expect(resolveRuntimeTransportMode('auto')).toBe('poll');
+  it('maps auto to sse so hook-level fallback can engage', () => {
+    expect(resolveRuntimeTransportMode('auto')).toBe('sse');
+  });
+});
+
+describe('resolveTransportHookEnablement', () => {
+  it('uses poll task hooks and keeps cron polling in single-project poll mode', () => {
+    expect(resolveTransportHookEnablement(false, 'poll')).toEqual({
+      singleTaskPollerEnabled: true,
+      multiTaskPollerEnabled: false,
+      singleTaskSseEnabled: false,
+      multiTaskSseEnabled: false,
+      singleCronPollerEnabled: true,
+      multiCronPollerEnabled: false,
+    });
+  });
+
+  it('uses sse task hooks and keeps cron polling in single-project sse mode', () => {
+    expect(resolveTransportHookEnablement(false, 'sse')).toEqual({
+      singleTaskPollerEnabled: false,
+      multiTaskPollerEnabled: false,
+      singleTaskSseEnabled: true,
+      multiTaskSseEnabled: false,
+      singleCronPollerEnabled: true,
+      multiCronPollerEnabled: false,
+    });
+  });
+
+  it('uses sse task hooks and keeps cron polling in multi-project sse mode', () => {
+    expect(resolveTransportHookEnablement(true, 'sse')).toEqual({
+      singleTaskPollerEnabled: false,
+      multiTaskPollerEnabled: false,
+      singleTaskSseEnabled: false,
+      multiTaskSseEnabled: true,
+      singleCronPollerEnabled: false,
+      multiCronPollerEnabled: true,
+    });
   });
 });
 

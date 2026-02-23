@@ -596,6 +596,74 @@ describe("Cron API", () => {
     expect(otherProjectEvents).toEqual([]);
   });
 
+  test("publishes tasks_snapshot for cron create/update/trigger/delete mutations", async () => {
+    const hub = createProjectRealtimeHub();
+    const realtimeApp = new Hono();
+    realtimeApp.route("/crons", (createCronRoutes as any)({ realtimeHub: hub }));
+
+    const projectEvents: string[] = [];
+    const otherProjectEvents: string[] = [];
+    hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+    hub.subscribe(OTHER_PROJECT, ({ event }) => otherProjectEvents.push(event));
+
+    const createRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Realtime Snapshot Cron",
+        schedule: "5 8 * * *",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+    const cronId = created.cron.id as string;
+
+    const snapshotCountAfterCreate = projectEvents.filter((event) => event === "tasks_snapshot").length;
+    expect(snapshotCountAfterCreate).toBe(1);
+    expect(otherProjectEvents).toEqual([]);
+
+    const updateRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "blocked",
+      }),
+    });
+
+    if (updateRes.status === 503) return;
+
+    expect(updateRes.status).toBe(200);
+    const snapshotCountAfterUpdate = projectEvents.filter((event) => event === "tasks_snapshot").length;
+    expect(snapshotCountAfterUpdate).toBe(2);
+
+    writeTaskFile("tsk03050", [cronId]);
+    reindexZk();
+
+    const triggerRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}/trigger`, {
+      method: "POST",
+    });
+
+    if (triggerRes.status === 503) return;
+
+    expect(triggerRes.status).toBe(200);
+    const snapshotCountAfterTrigger = projectEvents.filter((event) => event === "tasks_snapshot").length;
+    expect(snapshotCountAfterTrigger).toBe(3);
+
+    const deleteRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}?confirm=true`, {
+      method: "DELETE",
+    });
+
+    if (deleteRes.status === 503) return;
+
+    expect(deleteRes.status).toBe(200);
+    const snapshotCountAfterDelete = projectEvents.filter((event) => event === "tasks_snapshot").length;
+    expect(snapshotCountAfterDelete).toBe(4);
+    expect(otherProjectEvents).toEqual([]);
+  });
+
   test("publishes project_dirty for cron linked-task patch/add/remove mutations", async () => {
     const hub = createProjectRealtimeHub();
     const realtimeApp = new Hono();

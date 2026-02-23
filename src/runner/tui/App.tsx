@@ -44,7 +44,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
@@ -63,11 +63,12 @@ import { useTerminalSize } from './hooks/useTerminalSize';
 import { useResourceMetrics } from './hooks/useResourceMetrics';
 import { useSettingsStorage } from './hooks/useSettingsStorage';
 import { useTaskFilter } from './hooks/useTaskFilter';
+import { useMouseInput } from './hooks/useMouseInput';
 import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay } from './types';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
 import type { TaskStats } from './hooks/useTaskPoller';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
@@ -137,6 +138,106 @@ export const STATUS_GROUP_MAP: Record<string, EntryStatus[]> = {
   [SUPERSEDED_FEATURE_PREFIX]: ['superseded'],
   [ARCHIVED_FEATURE_PREFIX]: ['archived'],
 };
+
+export type TaskTreeClickAction = 'open_editor' | 'open_metadata' | 'toggle_collapsed' | 'noop';
+
+/**
+ * Header targets that toggle collapse/expand when selected.
+ */
+export function isTaskTreeCollapseToggleTarget(target: TaskTreeRowTarget): boolean {
+  return (
+    target.kind === 'feature_header' ||
+    target.kind === 'project_header' ||
+    target.kind === 'status_header' ||
+    target.kind === 'status_feature_header' ||
+    target.kind === 'ungrouped_header'
+  );
+}
+
+/**
+ * Route pointer clicks to high-level TaskTree actions.
+ */
+export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TUIMouseButton): TaskTreeClickAction {
+  if (target.kind === 'task') {
+    if (button === 'right') return 'open_metadata';
+    if (button === 'left') return 'open_editor';
+    return 'noop';
+  }
+
+  if (button === 'left') {
+    if (isTaskTreeCollapseToggleTarget(target)) {
+      return 'toggle_collapsed';
+    }
+  }
+
+  return 'noop';
+}
+
+/**
+ * Resolve Set key used by collapsedFeatures for a row target.
+ */
+export function getTaskTreeCollapseKey(target: TaskTreeRowTarget): string | null {
+  if (target.kind === 'ungrouped_header') {
+    return UNGROUPED_FEATURE_ID;
+  }
+
+  if (target.kind === 'feature_header' && target.featureId) {
+    return target.featureId;
+  }
+
+  if (target.kind === 'status_feature_header' && target.featureId && target.statusGroup) {
+    return `${target.statusGroup}:${target.featureId}`;
+  }
+
+  if (target.kind === 'project_header' && target.projectId) {
+    return `project:${target.projectId}`;
+  }
+
+  return null;
+}
+
+const SINGLE_PROJECT_STATUS_BAR_HEIGHT = 3;
+const MULTI_PROJECT_STATUS_BAR_HEIGHT = 4;
+const TASK_PANEL_BORDER_TOP_ROWS = 1;
+const TASK_TREE_PADDING_TOP_ROWS = 1;
+const TASK_TREE_HEADER_ROWS = 1;
+const TASK_TREE_HEADER_MARGIN_ROWS = 1;
+
+/**
+ * Resolve first visible task-tree row as an absolute terminal row (1-based).
+ */
+export function getTaskTreeViewportStartRow(
+  isMultiProject: boolean,
+  filterMode: 'off' | 'typing' | 'locked',
+): number {
+  const statusBarHeight = isMultiProject ? MULTI_PROJECT_STATUS_BAR_HEIGHT : SINGLE_PROJECT_STATUS_BAR_HEIGHT;
+  const filterBarRows = filterMode === 'off' ? 0 : 1;
+
+  return statusBarHeight
+    + TASK_PANEL_BORDER_TOP_ROWS
+    + filterBarRows
+    + TASK_TREE_PADDING_TOP_ROWS
+    + TASK_TREE_HEADER_ROWS
+    + TASK_TREE_HEADER_MARGIN_ROWS
+    + 1;
+}
+
+/**
+ * Resolve semantic row target from an absolute mouse row.
+ */
+export function findTaskTreeTargetFromMouseRow(
+  visibleRows: TaskTreeVisibleRow[],
+  mouseRow: number,
+  viewportStartRow: number,
+): TaskTreeRowTarget | null {
+  const relativeRow = mouseRow - viewportStartRow;
+  if (relativeRow < 0) {
+    return null;
+  }
+
+  const hit = visibleRows.find((row) => row.row === relativeRow);
+  return hit?.target ?? null;
+}
 
 /**
  * Get tasks for a feature within a specific status group section.
@@ -247,6 +348,7 @@ export function App({
   const [supersededCollapsed, setSupersededCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
+  const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   
   // Group visibility settings - persisted to ~/.brain/tui-settings.json
   // Default: show draft, pending, active, in_progress, blocked, completed
@@ -281,6 +383,7 @@ export function App({
   const [activeFeatures, setActiveFeatures] = useState<Set<string>>(new Set());
   // Multi-select state: tasks selected via Space key for batch operations
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
+  const [taskTreeVisibleRows, setTaskTreeVisibleRows] = useState<TaskTreeVisibleRow[]>([]);
   // Delete confirmation popup state
   const [deletePopupOpen, setDeletePopupOpen] = useState(false);
   const [tasksToDelete, setTasksToDelete] = useState<Array<{id: string, title: string, path: string}>>([]);
@@ -615,10 +718,12 @@ export function App({
     completedCollapsed,
     draftCollapsed,
     collapsedFeatures,
+    collapsedProjects,
     visibleGroups,
     cancelledCollapsed,
     supersededCollapsed,
     archivedCollapsed,
+    groupByProject: isMultiProject && activeProject === 'all',
   });
 
   // Auto-scroll task list to keep selected task in view
@@ -846,6 +951,161 @@ export function App({
     addLog,
     refetch,
   ]);
+
+  const openSingleTaskMetadataPopup = useCallback(async (task: TaskDisplay) => {
+    let fetchedProjects = projects;
+    if (onListProjects) {
+      try {
+        fetchedProjects = await onListProjects();
+      } catch {
+        fetchedProjects = projects;
+      }
+    }
+
+    setAllProjects(fetchedProjects);
+    setMetadataTargetTasks([task]);
+    setMetadataPopupMode('single');
+    setMetadataFocusedField('status');
+    setMetadataStatusValue(task.status);
+    setMetadataStatusIndex(ENTRY_STATUSES.indexOf(task.status));
+    setMetadataFeatureIdValue(task.feature_id || '');
+    setMetadataBranchValue(task.gitBranch || '');
+    setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
+    setMetadataScheduleValue(task.schedule || '');
+    setMetadataProjectValue(task.projectId || '');
+    setMetadataProjectIndex(fetchedProjects.indexOf(task.projectId || '') >= 0 ? fetchedProjects.indexOf(task.projectId || '') : 0);
+    setMetadataAgentValue(task.agent || '');
+    setMetadataModelValue(task.model || '');
+    setMetadataDirectPromptValue(task.direct_prompt || '');
+    setMetadataOriginalValues({
+      status: task.status,
+      feature_id: task.feature_id || '',
+      git_branch: task.gitBranch || '',
+      target_workdir: task.resolvedWorkdir || task.workdir || '',
+      schedule: task.schedule || '',
+      project: task.projectId || '',
+      agent: task.agent || '',
+      model: task.model || '',
+      direct_prompt: task.direct_prompt || '',
+    });
+    setMetadataInteractionMode('navigate');
+    setMetadataEditBuffer('');
+    setMetadataDirty(false);
+    setShowMetadataPopup(true);
+  }, [onListProjects, projects]);
+
+  const toggleCollapsedForTarget = useCallback((target: TaskTreeRowTarget): boolean => {
+    if (target.kind === 'status_header') {
+      if (target.statusGroup === 'completed') {
+        setCompletedCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'draft') {
+        setDraftCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'cancelled') {
+        setCancelledCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'superseded') {
+        setSupersededCollapsed(prev => !prev);
+        return true;
+      }
+      if (target.statusGroup === 'archived') {
+        setArchivedCollapsed(prev => !prev);
+        return true;
+      }
+      return false;
+    }
+
+    const collapseKey = getTaskTreeCollapseKey(target);
+    if (collapseKey) {
+      if (collapseKey.startsWith('project:')) {
+        const projectId = collapseKey.slice('project:'.length);
+        setCollapsedProjects(prev => {
+          const next = new Set(prev);
+          if (next.has(projectId)) {
+            next.delete(projectId);
+          } else {
+            next.add(projectId);
+          }
+          return next;
+        });
+      } else {
+        setCollapsedFeatures(prev => {
+          const next = new Set(prev);
+          if (next.has(collapseKey)) {
+            next.delete(collapseKey);
+          } else {
+            next.add(collapseKey);
+          }
+          return next;
+        });
+      }
+      return true;
+    }
+
+    return false;
+  }, []);
+
+  const onMouseEvent = useCallback((event: TUIMouseEvent) => {
+    if (viewMode !== 'tasks') return;
+    if (showMetadataPopup || showSettingsPopup || deletePopupOpen || sessionPopupOpen || cronActionOpen || cronDeleteConfirmOpen || cronLinkEditorOpen || showHelp || isEditing) {
+      return;
+    }
+
+    const viewportStartRow = getTaskTreeViewportStartRow(isMultiProject, filterMode);
+    const rowTarget = findTaskTreeTargetFromMouseRow(taskTreeVisibleRows, event.row, viewportStartRow);
+    if (!rowTarget) return;
+
+    const action = resolveTaskTreeClickAction(rowTarget, event.button);
+    if (action === 'noop') return;
+
+    setFocusedPanel('tasks');
+    setSelectedTaskId(rowTarget.id);
+
+    if (action === 'toggle_collapsed') {
+      toggleCollapsedForTarget(rowTarget);
+      return;
+    }
+
+    if (rowTarget.kind !== 'task' || !rowTarget.taskId) {
+      return;
+    }
+
+    const clickedTask = tasks.find((task) => task.id === rowTarget.taskId);
+    if (!clickedTask) return;
+
+    if (action === 'open_editor') {
+      editTaskInEditor(clickedTask.id, clickedTask.path);
+      return;
+    }
+
+    if (action === 'open_metadata') {
+      openSingleTaskMetadataPopup(clickedTask);
+    }
+  }, [
+    viewMode,
+    showMetadataPopup,
+    showSettingsPopup,
+    deletePopupOpen,
+    sessionPopupOpen,
+    cronActionOpen,
+    cronDeleteConfirmOpen,
+    cronLinkEditorOpen,
+    showHelp,
+    isEditing,
+    isMultiProject,
+    filterMode,
+    taskTreeVisibleRows,
+    toggleCollapsedForTarget,
+    tasks,
+    editTaskInEditor,
+    openSingleTaskMetadataPopup,
+  ]);
+
+  useMouseInput(onMouseEvent);
 
   // Handle keyboard input
   useInput((input, key) => {
@@ -2602,6 +2862,7 @@ export function App({
       // Use navigationOrder (flattened tree) instead of raw tasks array
       // This ensures j/k navigation matches the visual tree order
       const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
+      const selectedRowTarget = selectedTaskId ? parseTaskTreeRowTarget(selectedTaskId) : null;
       
       // Helper to find next navigable item (skip spacers)
       const findNextNavigable = (startIndex: number, direction: 1 | -1): string | null => {
@@ -2669,133 +2930,12 @@ export function App({
 
       // Enter to toggle group section when header is selected
       if (key.return) {
-        // Toggle completed section if header is selected (legacy)
-        if (selectedTaskId === COMPLETED_HEADER_ID) {
-          setCompletedCollapsed(prev => !prev);
-          return;
+        if (selectedRowTarget && resolveTaskTreeClickAction(selectedRowTarget, 'left') === 'toggle_collapsed') {
+          if (toggleCollapsedForTarget(selectedRowTarget)) {
+            return;
+          }
         }
-        // Toggle draft section if header is selected (legacy)
-        if (selectedTaskId === DRAFT_HEADER_ID) {
-          setDraftCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle cancelled section if header is selected
-        if (selectedTaskId === CANCELLED_HEADER_ID) {
-          setCancelledCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle superseded section if header is selected
-        if (selectedTaskId === SUPERSEDED_HEADER_ID) {
-          setSupersededCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle archived section if header is selected
-        if (selectedTaskId === ARCHIVED_HEADER_ID) {
-          setArchivedCollapsed(prev => !prev);
-          return;
-        }
-        // Toggle ungrouped section if ungrouped header is selected
-        if (selectedTaskId === UNGROUPED_HEADER_ID) {
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            if (next.has(UNGROUPED_FEATURE_ID)) {
-              next.delete(UNGROUPED_FEATURE_ID);
-            } else {
-              next.add(UNGROUPED_FEATURE_ID);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle feature section if feature header is selected
-        if (selectedTaskId?.startsWith(FEATURE_HEADER_PREFIX)) {
-          const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            if (next.has(featureId)) {
-              next.delete(featureId);
-            } else {
-              next.add(featureId);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle completed feature section
-        if (selectedTaskId?.startsWith(COMPLETED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(COMPLETED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `completed:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle draft feature section
-        if (selectedTaskId?.startsWith(DRAFT_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(DRAFT_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `draft:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle cancelled feature section
-        if (selectedTaskId?.startsWith(CANCELLED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(CANCELLED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `cancelled:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle superseded feature section
-        if (selectedTaskId?.startsWith(SUPERSEDED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(SUPERSEDED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `superseded:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
-        // Toggle archived feature section
-        if (selectedTaskId?.startsWith(ARCHIVED_FEATURE_PREFIX)) {
-          const featureId = selectedTaskId.replace(ARCHIVED_FEATURE_PREFIX, '');
-          setCollapsedFeatures(prev => {
-            const next = new Set(prev);
-            const key = `archived:${featureId}`;
-            if (next.has(key)) {
-              next.delete(key);
-            } else {
-              next.add(key);
-            }
-            return next;
-          });
-          return;
-        }
+
         // Toggle dynamic group section if group header is selected
         if (selectedTaskId?.startsWith(GROUP_HEADER_PREFIX)) {
           const status = selectedTaskId.replace(GROUP_HEADER_PREFIX, '');
@@ -2812,7 +2952,12 @@ export function App({
           return;
         }
         // Enter on a regular task: open in editor (same as 'e')
-        if (selectedTask && focusedPanel === 'tasks') {
+        if (
+          selectedTask &&
+          selectedRowTarget &&
+          resolveTaskTreeClickAction(selectedRowTarget, 'left') === 'open_editor' &&
+          focusedPanel === 'tasks'
+        ) {
           editTaskInEditor(selectedTask.id, selectedTask.path);
           return;
         }
@@ -3236,11 +3381,13 @@ export function App({
                   scrollOffset={taskScrollOffset}
                   viewportHeight={taskViewportHeight}
                   collapsedFeatures={collapsedFeatures}
+                  collapsedProjects={collapsedProjects}
                   activeFeatures={activeFeatures}
                   selectedTaskIds={selectedTaskIds}
                   visibleGroups={visibleGroups}
                   textWrap={textWrap}
                   panelWidth={taskPanelWidth}
+                  onVisibleRows={setTaskTreeVisibleRows}
                 />
               </>
             ) : (

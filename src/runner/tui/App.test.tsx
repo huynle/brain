@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -350,8 +350,6 @@ describe('App - Multi-Project Mode', () => {
 // Pause state optimization tests (Issue #3)
 // =============================================================================
 
-import { setsEqual } from './App';
-
 describe('setsEqual', () => {
   it('returns true for two empty sets', () => {
     expect(setsEqual(new Set(), new Set())).toBe(true);
@@ -379,6 +377,126 @@ describe('setsEqual', () => {
 
   it('returns false for empty vs non-empty', () => {
     expect(setsEqual(new Set(), new Set(['a']))).toBe(false);
+  });
+});
+
+describe('resolveTaskTreeClickAction', () => {
+  it('routes left click on task to open editor', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'left')).toBe('open_editor');
+  });
+
+  it('routes right click on task to metadata popup', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'right')).toBe('open_metadata');
+  });
+
+  it('routes left click on headers to collapse toggle', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h1', featureId: 'feature-a' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'status_header', id: 'h2', statusGroup: 'completed' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'status_feature_header', id: 'h3', featureId: 'feature-a', statusGroup: 'draft' }, 'left')).toBe('toggle_collapsed');
+    expect(resolveTaskTreeClickAction({ kind: 'project_header', id: 'h4', projectId: 'brain-api' }, 'left')).toBe('toggle_collapsed');
+  });
+
+  it('ignores non-handled targets/buttons', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'spacer', id: 's1' }, 'left')).toBe('noop');
+    expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h5', featureId: 'f' }, 'right')).toBe('noop');
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'middle')).toBe('noop');
+  });
+
+  it('routes left click on ungrouped header to collapse toggle', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'ungrouped_header', id: 'h6' }, 'left')).toBe('toggle_collapsed');
+  });
+});
+
+describe('isTaskTreeCollapseToggleTarget', () => {
+  it('matches all collapsible task tree header targets', () => {
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'feature_header', id: 'h1', featureId: 'feature-a' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'project_header', id: 'h2', projectId: 'brain-api' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'status_header', id: 'h3', statusGroup: 'completed' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'status_feature_header', id: 'h4', statusGroup: 'draft', featureId: 'feature-a' })).toBe(true);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'ungrouped_header', id: 'h5' })).toBe(true);
+  });
+
+  it('returns false for task rows and spacer rows', () => {
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'task', id: 't1', taskId: 't1' })).toBe(false);
+    expect(isTaskTreeCollapseToggleTarget({ kind: 'spacer', id: 's1' })).toBe(false);
+  });
+
+  it('keeps Enter key routing consistent with left click routing', () => {
+    const toggles = [
+      { kind: 'feature_header', id: 'h1', featureId: 'feature-a' },
+      { kind: 'project_header', id: 'h2', projectId: 'brain-api' },
+      { kind: 'status_header', id: 'h3', statusGroup: 'completed' },
+      { kind: 'status_feature_header', id: 'h4', statusGroup: 'draft', featureId: 'feature-a' },
+      { kind: 'ungrouped_header', id: 'h5' },
+    ] as const;
+
+    for (const target of toggles) {
+      expect(isTaskTreeCollapseToggleTarget(target)).toBe(true);
+      expect(resolveTaskTreeClickAction(target, 'left')).toBe('toggle_collapsed');
+    }
+
+    const editorTarget = { kind: 'task', id: 'task-1', taskId: 'task-1' } as const;
+    expect(isTaskTreeCollapseToggleTarget(editorTarget)).toBe(false);
+    expect(resolveTaskTreeClickAction(editorTarget, 'left')).toBe('open_editor');
+  });
+});
+
+describe('App click helper exports', () => {
+  it('exports a shared collapse-target resolver for keyboard and mouse paths', async () => {
+    const appModule = (await import('./App')) as Record<string, unknown>;
+    expect(typeof appModule.getTaskTreeCollapseKey).toBe('function');
+  });
+
+  it('returns project collapse key for project header targets', () => {
+    expect(getTaskTreeCollapseKey({ kind: 'project_header', id: 'h1', projectId: 'brain-api' })).toBe('project:brain-api');
+  });
+});
+
+describe('task tree mouse hit testing', () => {
+  it('computes viewport start row in single-project mode', () => {
+    expect(getTaskTreeViewportStartRow(false, 'off')).toBe(8);
+  });
+
+  it('computes viewport start row in multi-project mode', () => {
+    expect(getTaskTreeViewportStartRow(true, 'off')).toBe(9);
+  });
+
+  it('adds one row when filter bar is visible', () => {
+    expect(getTaskTreeViewportStartRow(false, 'typing')).toBe(9);
+    expect(getTaskTreeViewportStartRow(false, 'locked')).toBe(9);
+  });
+
+  it('maps absolute mouse row to visible task tree row target', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [
+        { row: 0, target: { kind: 'feature_header', id: '__feature_header__alpha', featureId: 'alpha' } },
+        { row: 1, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } },
+      ],
+      9,
+      8,
+    );
+
+    expect(target).toEqual({ kind: 'task', id: 'task-1', taskId: 'task-1' });
+  });
+
+  it('returns null when mouse row is outside visible task rows', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [{ row: 0, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } }],
+      7,
+      8,
+    );
+
+    expect(target).toBeNull();
+  });
+
+  it('maps viewport start row to first visible target', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [{ row: 0, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } }],
+      8,
+      8,
+    );
+
+    expect(target).toEqual({ kind: 'task', id: 'task-1', taskId: 'task-1' });
   });
 });
 

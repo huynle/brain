@@ -239,6 +239,37 @@ export function findTaskTreeTargetFromMouseRow(
   return hit?.target ?? null;
 }
 
+type TaskTreeMouseGuardState = {
+  viewMode: ViewMode;
+  showMetadataPopup: boolean;
+  showSettingsPopup: boolean;
+  deletePopupOpen: boolean;
+  sessionPopupOpen: boolean;
+  cronActionOpen: boolean;
+  cronDeleteConfirmOpen: boolean;
+  cronLinkEditorOpen: boolean;
+  showHelp: boolean;
+  isEditing: boolean;
+};
+
+export function shouldHandleTaskTreeMouseEvent(state: TaskTreeMouseGuardState): boolean {
+  if (state.viewMode !== 'tasks') {
+    return false;
+  }
+
+  return !(
+    state.showMetadataPopup ||
+    state.showSettingsPopup ||
+    state.deletePopupOpen ||
+    state.sessionPopupOpen ||
+    state.cronActionOpen ||
+    state.cronDeleteConfirmOpen ||
+    state.cronLinkEditorOpen ||
+    state.showHelp ||
+    state.isEditing
+  );
+}
+
 /**
  * Get tasks for a feature within a specific status group section.
  * Used when pressing 's' on a feature header inside completed/draft/etc sections.
@@ -1050,8 +1081,18 @@ export function App({
   }, []);
 
   const onMouseEvent = useCallback((event: TUIMouseEvent) => {
-    if (viewMode !== 'tasks') return;
-    if (showMetadataPopup || showSettingsPopup || deletePopupOpen || sessionPopupOpen || cronActionOpen || cronDeleteConfirmOpen || cronLinkEditorOpen || showHelp || isEditing) {
+    if (!shouldHandleTaskTreeMouseEvent({
+      viewMode,
+      showMetadataPopup,
+      showSettingsPopup,
+      deletePopupOpen,
+      sessionPopupOpen,
+      cronActionOpen,
+      cronDeleteConfirmOpen,
+      cronLinkEditorOpen,
+      showHelp,
+      isEditing,
+    })) {
       return;
     }
 

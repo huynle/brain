@@ -74,4 +74,19 @@ describe('setTerminalMouseMode', () => {
       });
     }).not.toThrow();
   });
+
+  it('continues writing remaining sequences after a write failure', () => {
+    let callCount = 0;
+
+    expect(() => {
+      setTerminalMouseMode(true, () => {
+        callCount += 1;
+        if (callCount === 1) {
+          throw new Error('first-write-failed');
+        }
+      });
+    }).not.toThrow();
+
+    expect(callCount).toBe(2);
+  });
 });

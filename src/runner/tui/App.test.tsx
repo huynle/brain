@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -497,6 +497,42 @@ describe('task tree mouse hit testing', () => {
     );
 
     expect(target).toEqual({ kind: 'task', id: 'task-1', taskId: 'task-1' });
+  });
+
+  it('returns null before visible row map is available (startup first-click guard)', () => {
+    const target = findTaskTreeTargetFromMouseRow([], 8, 8);
+    expect(target).toBeNull();
+  });
+});
+
+describe('shouldHandleTaskTreeMouseEvent', () => {
+  const baseState = {
+    viewMode: 'tasks' as const,
+    showMetadataPopup: false,
+    showSettingsPopup: false,
+    deletePopupOpen: false,
+    sessionPopupOpen: false,
+    cronActionOpen: false,
+    cronDeleteConfirmOpen: false,
+    cronLinkEditorOpen: false,
+    showHelp: false,
+    isEditing: false,
+  };
+
+  it('allows task-tree clicks in normal tasks view', () => {
+    expect(shouldHandleTaskTreeMouseEvent(baseState)).toBe(true);
+  });
+
+  it('blocks task-tree clicks while external editor is active', () => {
+    expect(shouldHandleTaskTreeMouseEvent({ ...baseState, isEditing: true })).toBe(false);
+  });
+
+  it('allows task-tree clicks again after editor exits', () => {
+    const whileEditing = shouldHandleTaskTreeMouseEvent({ ...baseState, isEditing: true });
+    const afterEditing = shouldHandleTaskTreeMouseEvent({ ...baseState, isEditing: false });
+
+    expect(whileEditing).toBe(false);
+    expect(afterEditing).toBe(true);
   });
 });
 

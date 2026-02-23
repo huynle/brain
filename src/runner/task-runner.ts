@@ -27,6 +27,7 @@ import { getLogger } from "./logger";
 import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
 import type { LogEntry, OpenSessionTaskContext } from "./tui/types";
+import { setTerminalMouseMode } from "./tui/hooks/useMouseInput";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
 import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-utils";
 import type { ResourceMetrics } from "./tui/types";
@@ -2901,7 +2902,8 @@ export class TaskRunner {
       // Step 1: Find opencode binary (same logic as Claude-executor)
       const opencodeBin = process.env.OPENCODE_BIN || "opencode";
 
-      // Step 2: Exit alternate screen buffer (restore normal terminal)
+      // Step 2: Exit TUI terminal modes before handing off to fullscreen process
+      setTerminalMouseMode(false);
       process.stdout.write("\x1b[?1049l");
 
       // Step 3: Spawn opencode synchronously with session ID
@@ -2911,10 +2913,11 @@ export class TaskRunner {
         env: process.env,
       });
 
-      // Step 4: Re-enter alternate screen buffer
+      // Step 4: Restore TUI terminal modes after process exits
       process.stdout.write("\x1b[?1049h");
       process.stdout.write("\x1b[H");
       process.stdout.write("\x1b[2J");
+      setTerminalMouseMode(true);
 
       // Step 5: Check if opencode exited successfully
       if (result.status !== 0) {
@@ -2927,8 +2930,9 @@ export class TaskRunner {
         sessionId,
         error: String(error),
       });
-      // Re-enter alternate screen in case of early error
+      // Re-enter TUI terminal modes in case of early error
       process.stdout.write("\x1b[?1049h");
+      setTerminalMouseMode(true);
       throw error;
     }
   }
@@ -3055,7 +3059,8 @@ export class TaskRunner {
       // Step 3: Get editor from environment
       const editor = process.env.EDITOR || process.env.VISUAL || "vim";
 
-      // Step 4: Exit alternate screen buffer (restore normal terminal)
+      // Step 4: Exit TUI terminal modes before handing off to editor
+      setTerminalMouseMode(false);
       process.stdout.write("\x1b[?1049l");
 
       // Step 5: Spawn editor synchronously
@@ -3065,10 +3070,11 @@ export class TaskRunner {
         env: process.env,
       });
 
-      // Step 6: Re-enter alternate screen buffer
+      // Step 6: Restore TUI terminal modes after editor exits
       process.stdout.write("\x1b[?1049h");
       process.stdout.write("\x1b[H");
       process.stdout.write("\x1b[2J");
+      setTerminalMouseMode(true);
 
       // Step 7: Check if editor exited successfully
       if (result.status !== 0) {
@@ -3101,8 +3107,9 @@ export class TaskRunner {
         taskId,
         error: String(error),
       });
-      // Re-enter alternate screen in case of early error
+      // Re-enter TUI terminal modes in case of early error
       process.stdout.write("\x1b[?1049h");
+      setTerminalMouseMode(true);
       throw error;
     }
   }

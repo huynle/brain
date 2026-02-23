@@ -247,6 +247,35 @@ export class BrainService {
       request.depends_on = validation.normalized;
     }
 
+    // Auto-create cron entry if task has schedule parameter
+    if (entryType === "task" && request.schedule && (!request.cron_ids || request.cron_ids.length === 0)) {
+      // Validate schedule before creating cron
+      try {
+        const { parseCronExpression } = await import("./cron-service");
+        parseCronExpression(request.schedule);
+      } catch (error) {
+        throw new Error(`Invalid cron expression: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      // Create cron entry with "(Cron)" suffix
+      const displayTitle = normalizeTitle(request.title);
+      const cronResult = await this.save({
+        type: "cron",
+        title: `${displayTitle} (Cron)`,
+        content: "",
+        schedule: request.schedule,
+        status: "active",
+        // Don't pass project - let it use same logic as task (this.projectId.slice(0, 8))
+      });
+
+      // Link cron to task
+      request.cron_ids = [cronResult.id];
+
+      // Remove schedule and next_run from task (they belong to cron)
+      delete request.schedule;
+      delete request.next_run;
+    }
+
     // Determine directory for zk
     const projectDir =
       request.project || (isGlobal ? "global" : this.projectId.slice(0, 8));

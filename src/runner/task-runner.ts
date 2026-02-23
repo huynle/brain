@@ -1308,6 +1308,10 @@ export class TaskRunner {
       try {
         const cronEntries = await this.apiClient.getCronEntries(projectId);
         const dueEntries = cronEntries.filter((entry) => {
+          if (entry.status !== "active") {
+            return false;
+          }
+
           if (typeof entry.schedule !== "string") {
             return false;
           }

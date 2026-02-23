@@ -202,39 +202,45 @@ This is test content for GET endpoint.
       expect(json.content).toContain("test content for GET");
     });
 
-    test("should return sessions from frontmatter", async () => {
-      // Create entry with legacy session_ids in frontmatter
+    test("should return unified sessions from frontmatter", async () => {
       createTestEntry(
-        `${TEST_PATH_PREFIX}/task/session-ids-test.md`,
+        `${TEST_PATH_PREFIX}/task/sessions-map-test.md`,
         `---
-title: Session IDs Test Entry
+title: Sessions Map Test Entry
 type: task
 tags:
   - task
 status: pending
-session_ids:
-  - ses_test111aaa
-  - ses_test222bbb
-  - ses_test333ccc
+sessions:
+  ses_test111aaa:
+    timestamp: 2026-02-22T10:30:00.000Z
+  ses_test222bbb:
+    timestamp: 2026-02-22T10:31:00.000Z
+    cron_id: cron_abc123
+  ses_test333ccc:
+    timestamp: 2026-02-22T10:32:00.000Z
+    run_id: run_abc123
 ---
 
-This entry has session_ids for traceability.
+This entry has sessions for traceability.
 `
       );
 
       const res = await app.request(
-        `/entries/${TEST_PATH_PREFIX}/task/session-ids-test.md`
+        `/entries/${TEST_PATH_PREFIX}/task/sessions-map-test.md`
       );
 
       expect(res.status).toBe(200);
       const json = await res.json();
-      expect(json.title).toBe("Session IDs Test Entry");
+      expect(json.title).toBe("Sessions Map Test Entry");
       expect(json.sessions).toBeDefined();
       expect(json.sessions).toBeObject();
       expect(Object.keys(json.sessions)).toHaveLength(3);
       expect(json.sessions.ses_test111aaa).toBeDefined();
       expect(json.sessions.ses_test222bbb).toBeDefined();
       expect(json.sessions.ses_test333ccc).toBeDefined();
+      expect(json.sessions.ses_test222bbb.cron_id).toBe("cron_abc123");
+      expect(json.sessions.ses_test333ccc.run_id).toBe("run_abc123");
     });
 
     test("should return 404 for non-existent entry", async () => {

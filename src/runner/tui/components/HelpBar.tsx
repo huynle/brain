@@ -98,11 +98,13 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                     {'  '}
                  <Text bold>n/e</Text> New/Edit
                  {'  '}
-                 <Text bold>x</Text> Trigger now
-                 {'  '}
-                 <Text bold>a/u/R</Text> Edit links
-                 {'  '}
-                 <Text bold color="red">D</Text> <Text color="red">Delete</Text>
+                  <Text bold>x</Text> Trigger now
+                  {'  '}
+                  <Text bold>p</Text> Pause/Enable
+                  {'  '}
+                  <Text bold>a/u/R</Text> Edit links
+                  {'  '}
+                  <Text bold color="red">D</Text> <Text color="red">Delete</Text>
                  {'  '}
                </>
              )}

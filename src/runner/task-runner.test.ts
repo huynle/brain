@@ -2491,6 +2491,30 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
     expect(newNextRun.getTime()).toBeGreaterThan(new Date("2025-01-15T09:00:00Z").getTime());
   });
 
+  test("checkCronSchedules ignores due cron entries when status is not active", async () => {
+    const cronEntry = makeCronEntry({ status: "pending" });
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBe(0);
+  });
+
   test("activeCronRuns and taskToCronRun tracking maps exist on runner", () => {
     const runner = new TaskRunner({ projectId: "test-project", config });
 

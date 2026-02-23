@@ -1947,6 +1947,7 @@ describe('App - Cron View Mode (C key)', () => {
     expect(frame).toContain('n/e');
     expect(frame).toContain('New/Edit selected cron');
     expect(frame).toContain('Trigger selected cron now');
+    expect(frame).toContain('Pause/enable selected cron');
     expect(frame).toContain('a/u/R');
     expect(frame).toContain('Edit linked tasks in editor');
     expect(frame).toContain('Delete selected cron (confirm)');
@@ -2126,6 +2127,109 @@ describe('App - Cron Mutation Flows', () => {
     await new Promise(r => setTimeout(r, 20));
 
     expect(onTriggerCron).toHaveBeenCalledWith('test-project', 'crn00001');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('toggles selected cron status to blocked with p key in cron view', async () => {
+    installCronFetchMock();
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Nightly Build',
+        type: 'cron',
+        status: 'blocked',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('p');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).toHaveBeenCalledWith(
+      'test-project',
+      'crn00001',
+      expect.objectContaining({ status: 'blocked' })
+    );
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('toggles selected blocked cron status back to active with p key', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/test-project/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crn00001',
+                path: 'projects/test-project/cron/crn00001.md',
+                title: 'Nightly Build',
+                status: 'blocked',
+                schedule: '0 2 * * *',
+                next_run: '2026-02-24T02:00:00.000Z',
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/test-project')) {
+        return new Response(
+          JSON.stringify({ tasks: [], count: 0 }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const onUpdateCron = mock(async () => ({
+      cron: {
+        id: 'crn00001',
+        path: 'projects/test-project/cron/crn00001.md',
+        title: 'Nightly Build',
+        type: 'cron',
+        status: 'active',
+        content: 'Cron content',
+        tags: ['cron'],
+      },
+      message: 'updated',
+    })) as any;
+
+    const { stdin, unmount } = render(
+      <App config={defaultConfig} onUpdateCron={onUpdateCron} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('p');
+    await new Promise(r => setTimeout(r, 20));
+
+    expect(onUpdateCron).toHaveBeenCalledWith(
+      'test-project',
+      'crn00001',
+      expect.objectContaining({ status: 'active' })
+    );
 
     unmount();
     globalThis.fetch = originalFetch;

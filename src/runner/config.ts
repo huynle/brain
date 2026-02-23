@@ -100,7 +100,7 @@ export function loadConfig(): RunnerConfig {
     agent: getEnv("OPENCODE_AGENT", fileConfig.opencode?.agent ?? ""),
     model: getEnv(
       "OPENCODE_MODEL",
-      fileConfig.opencode?.model ?? "anthropic/claude-opus-4-6"
+      fileConfig.opencode?.model ?? "openai/gpt-5.3-codex"
     ),
   };
 

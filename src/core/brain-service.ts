@@ -386,6 +386,12 @@ export class BrainService {
     const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
     let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
 
+    // Cron entries require schedule/next_run frontmatter fields that are not guaranteed
+    // by zk templates in user notebooks. Force manual creation for deterministic metadata.
+    if (entryType === "cron") {
+      zkAvailable = false;
+    }
+
     // Check if user_original_request contains characters that break zk CLI's --extra parser
     // The zk CLI fails when values contain quotes, equals signs, newlines, or other special chars
     // because it expects simple "key=value" format. When detected, force manual file creation.

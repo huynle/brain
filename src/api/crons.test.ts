@@ -233,6 +233,26 @@ describe("Cron API", () => {
     expect(Number.isNaN(new Date(json.cron.next_run).getTime())).toBe(false);
   });
 
+  test("creates cron via cron endpoint with explicit blocked status", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Created Blocked Cron",
+        schedule: "10 5 * * *",
+        status: "blocked",
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.cron.title).toBe("Created Blocked Cron");
+    expect(json.cron.status).toBe("blocked");
+    expect(json.cron.schedule).toBe("10 5 * * *");
+  });
+
   test("rejects invalid cron schedule on create", async () => {
     const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
       method: "POST",
@@ -283,6 +303,38 @@ describe("Cron API", () => {
     expect(typeof patched.cron.next_run).toBe("string");
     expect(Number.isNaN(new Date(patched.cron.next_run).getTime())).toBe(false);
     expect(patched.cron.next_run).not.toBe(beforeNextRun);
+  });
+
+  test("updates cron status via cron endpoint", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Status Toggle Cron",
+        schedule: "45 7 * * *",
+        status: "active",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+    expect(createRes.status).toBe(201);
+
+    const created = await createRes.json();
+
+    const patchRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "blocked",
+      }),
+    });
+
+    if (patchRes.status === 503) return;
+
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json();
+    expect(patched.cron.status).toBe("blocked");
+    expect(patched.cron.schedule).toBe("45 7 * * *");
   });
 
   test("deletes cron entry via cron endpoint", async () => {

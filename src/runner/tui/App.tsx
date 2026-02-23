@@ -1822,12 +1822,12 @@ export function App({
       }
 
       if (!selectedCron) {
-        if (input === 'e' || input === 'x' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
+        if (input === 'e' || input === 'x' || input === 'p' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
           addLog({ level: 'warn', message: 'No cron selected' });
           return;
         }
       } else if (!selectedProjectId) {
-        if (input === 'e' || input === 'x' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
+        if (input === 'e' || input === 'x' || input === 'p' || input === 'D' || input === 'a' || input === 'u' || input === 'R') {
           addLog({ level: 'warn', message: 'No project context for selected cron' });
           return;
         }
@@ -1858,6 +1858,27 @@ export function App({
             })
             .catch((err: unknown) => {
               addLog({ level: 'error', message: `Failed to trigger cron: ${err}` });
+            });
+          return;
+        }
+
+        if (input === 'p') {
+          if (!onUpdateCron) {
+            addLog({ level: 'warn', message: 'Update cron action unavailable' });
+            return;
+          }
+
+          const nextStatus = selectedCron.status === 'active' ? 'blocked' : 'active';
+          onUpdateCron(selectedProjectId, selectedCron.id, { status: nextStatus })
+            .then(() => {
+              addLog({
+                level: 'info',
+                message: `${nextStatus === 'active' ? 'Enabled' : 'Paused'} cron ${selectedCron.id}`,
+              });
+              refetchCrons();
+            })
+            .catch((err: unknown) => {
+              addLog({ level: 'error', message: `Failed to toggle cron status: ${err}` });
             });
           return;
         }
@@ -3008,6 +3029,7 @@ export function App({
         <Text>  <Text bold>Enter</Text>     - Show cron details panel</Text>
         <Text>  <Text bold>n/e</Text>       - New/Edit selected cron</Text>
         <Text>  <Text bold>x</Text>         - Trigger selected cron now</Text>
+        <Text>  <Text bold>p</Text>         - Pause/enable selected cron</Text>
         <Text>  <Text bold>a/u/R</Text>     - Edit linked tasks in editor</Text>
         <Text>  <Text bold>D</Text>         - Delete selected cron (confirm)</Text>
         <Text />

@@ -33,6 +33,7 @@ import { spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { copyToClipboard } from '../system-utils';
+import { getApiClient } from '../api-client';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -376,6 +377,8 @@ export function App({
   const [allProjects, setAllProjects] = useState<string[]>([]);
   // Computed: the effective project list used by the project picker (same as availableProjects prop)
   const effectiveProjects = allProjects.length > 0 ? allProjects : projects;
+  // Cron names for metadata popup (maps cron ID -> cron title)
+  const [cronNames, setCronNames] = useState<Record<string, string>>({});
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -449,7 +452,7 @@ export function App({
 
 
 
-  // Single-project SSE task transport (with automatic polling fallback)
+  // Single-project SSE task transport
   const singleProjectSse = useTaskSse({
     projectId: config.project,
     apiUrl: config.apiUrl,
@@ -458,7 +461,7 @@ export function App({
 
 
 
-  // Multi-project SSE transport (with per-project polling fallback)
+  // Multi-project SSE transport
   const multiProjectSse = useMultiProjectSse({
     projects,
     apiUrl: config.apiUrl,
@@ -1005,7 +1008,20 @@ export function App({
       }
     }
 
+    // Fetch cron names if task has cron_ids
+    let fetchedCronNames: Record<string, string> = {};
+    if (task.cron_ids && task.cron_ids.length > 0 && task.projectId) {
+      try {
+        const apiClient = getApiClient();
+        fetchedCronNames = await apiClient.getCronNames(task.projectId);
+      } catch {
+        // Graceful fallback - continue with empty cron names on error
+        fetchedCronNames = {};
+      }
+    }
+
     setAllProjects(fetchedProjects);
+    setCronNames(fetchedCronNames);
     setMetadataTargetTasks([task]);
     setMetadataPopupMode('single');
     setMetadataFocusedField('status');
@@ -1171,8 +1187,21 @@ export function App({
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
       
       // Helper: save a single field immediately to API
+      // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
         if (!onUpdateMetadata || metadataTargetTasks.length === 0) return;
+        
+        // Basic validation for schedule field
+        if (field === 'schedule' && typeof value === 'string' && value.trim().length > 0) {
+          const fields = value.trim().split(/\s+/);
+          if (fields.length !== 5) {
+            addLog({ 
+              level: 'error', 
+              message: `Invalid cron expression: expected 5 fields (minute hour day month weekday), got ${fields.length}` 
+            });
+            return; // Abort save
+          }
+        }
         
         const updates: { [key: string]: string | EntryStatus } = { [field]: value };
         
@@ -3283,6 +3312,8 @@ export function App({
           allowedStatuses={ENTRY_STATUSES}
           interactionMode={metadataInteractionMode}
           editBuffer={metadataEditBuffer}
+          cronIds={metadataTargetTasks[0]?.cron_ids}
+          cronNames={cronNames}
         />
       </Box>
     );

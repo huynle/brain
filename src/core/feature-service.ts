@@ -394,15 +394,28 @@ export function resolveFeatureDependencies(
 
 /**
  * Sort features by priority (high first, then medium, then low)
+ * Within same priority, prefer features with higher completion ratio (soft bias)
  */
 export function sortFeaturesByPriority(
   features: ComputedFeature[]
 ): ComputedFeature[] {
   const priorityOrder: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
   return [...features].sort((a, b) => {
+    // Primary sort: priority (high > medium > low)
     const aOrder = priorityOrder[a.priority] ?? 1;
     const bOrder = priorityOrder[b.priority] ?? 1;
-    return aOrder - bOrder;
+    if (aOrder !== bOrder) {
+      return aOrder - bOrder;
+    }
+
+    // Secondary sort: completion ratio descending (within same priority)
+    const aRatio = a.task_stats.total > 0 
+      ? a.task_stats.completed / a.task_stats.total 
+      : 0;
+    const bRatio = b.task_stats.total > 0 
+      ? b.task_stats.completed / b.task_stats.total 
+      : 0;
+    return bRatio - aRatio; // Descending (higher completion first)
   });
 }
 

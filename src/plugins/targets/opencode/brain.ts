@@ -518,6 +518,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Override the default model for this task (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"
             ),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps (create task + create cron + link) to 1 step."
+            ),
         },
         async execute(args) {
           try {
@@ -555,6 +561,8 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
               agent: args.type === "task" ? args.agent : undefined,
               model: args.type === "task" ? args.model : undefined,
+              // Cron scheduling for tasks
+              schedule: args.type === "task" ? args.schedule : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";

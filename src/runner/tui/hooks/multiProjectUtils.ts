@@ -1,6 +1,6 @@
 /**
- * Shared utilities for multi-project hooks (SSE and polling)
- * Extracted from deleted useMultiProjectPoller to avoid duplication.
+ * Shared utilities for multi-project hooks
+ * Used by useMultiProjectSse for state aggregation and transformation.
  */
 
 import type { TaskDisplay } from '../types';

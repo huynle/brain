@@ -1,6 +1,6 @@
 /**
- * Shared types for task hooks (SSE and polling)
- * Extracted to avoid circular dependencies after removing polling hooks.
+ * Shared types for task hooks
+ * Extracted to avoid circular dependencies.
  */
 
 import type { TaskDisplay } from '../types';

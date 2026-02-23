@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 import type { LaneAssignment } from '../lane-layout';
 
@@ -1769,6 +1769,109 @@ describe('flattenFeatureOrder', () => {
       const order = flattenFeatureOrder(tasks, true); // collapsed
       expect(order).not.toContain('done');
       expect(order).toContain(COMPLETED_HEADER_ID);
+    });
+
+    it('keeps j/k navigation order in parity with rendered lane order for grouped status sections', () => {
+      const sectionCases = [
+        {
+          status: 'draft' as const,
+          label: 'Draft',
+          headerId: DRAFT_HEADER_ID,
+          featurePrefix: DRAFT_FEATURE_PREFIX,
+        },
+        {
+          status: 'cancelled' as const,
+          label: 'Cancelled',
+          headerId: CANCELLED_HEADER_ID,
+          featurePrefix: CANCELLED_FEATURE_PREFIX,
+        },
+        {
+          status: 'superseded' as const,
+          label: 'Superseded',
+          headerId: SUPERSEDED_HEADER_ID,
+          featurePrefix: SUPERSEDED_FEATURE_PREFIX,
+        },
+        {
+          status: 'archived' as const,
+          label: 'Archived',
+          headerId: ARCHIVED_HEADER_ID,
+          featurePrefix: ARCHIVED_FEATURE_PREFIX,
+        },
+        {
+          status: 'completed' as const,
+          label: 'Completed',
+          headerId: COMPLETED_HEADER_ID,
+          featurePrefix: COMPLETED_FEATURE_PREFIX,
+        },
+      ];
+
+      for (const sectionCase of sectionCases) {
+        const rootId = `${sectionCase.status}-feat-a-root`;
+        const childId = `${sectionCase.status}-feat-a-child`;
+        const otherId = `${sectionCase.status}-feat-b-task`;
+
+        const tasks = [
+          createTask({ id: 'active', title: 'Active Task', status: 'pending', feature_id: 'active-feature' }),
+          createTask({ id: rootId, title: `${sectionCase.label} A Root`, status: sectionCase.status, feature_id: 'feat-a' }),
+          createTask({ id: childId, title: `${sectionCase.label} A Child`, status: sectionCase.status, feature_id: 'feat-a', dependencies: [rootId] }),
+          createTask({ id: otherId, title: `${sectionCase.label} B Task`, status: sectionCase.status, feature_id: 'feat-b' }),
+        ];
+
+        const navOrder = flattenFeatureOrder(
+          tasks,
+          sectionCase.status === 'completed' ? false : true,
+          sectionCase.status === 'draft' ? false : true,
+          new Set<string>(),
+          sectionCase.status === 'cancelled' ? false : true,
+          sectionCase.status === 'superseded' ? false : true,
+          sectionCase.status === 'archived' ? false : true,
+        );
+        const relevantIds = [
+          sectionCase.headerId,
+          `${sectionCase.featurePrefix}feat-a`,
+          rootId,
+          childId,
+          `${sectionCase.featurePrefix}feat-b`,
+          otherId,
+        ];
+        const navRelevant = navOrder.filter((id) => relevantIds.includes(id));
+
+        expect(navRelevant).toEqual(relevantIds);
+
+        const { lastFrame } = render(
+          <TaskTree
+            tasks={tasks}
+            selectedId={null}
+            onSelect={() => {}}
+            completedCollapsed={sectionCase.status === 'completed' ? false : true}
+            onToggleCompleted={() => {}}
+            draftCollapsed={sectionCase.status === 'draft' ? false : true}
+            cancelledCollapsed={sectionCase.status === 'cancelled' ? false : true}
+            supersededCollapsed={sectionCase.status === 'superseded' ? false : true}
+            archivedCollapsed={sectionCase.status === 'archived' ? false : true}
+            groupByFeature={true}
+          />
+        );
+        const frame = lastFrame() || '';
+
+        const labelById = new Map<string, string>([
+          [sectionCase.headerId, `${sectionCase.label} (3)`],
+          [`${sectionCase.featurePrefix}feat-a`, 'Feature: feat-a'],
+          [rootId, `${sectionCase.label} A Root`],
+          [childId, `${sectionCase.label} A Child`],
+          [`${sectionCase.featurePrefix}feat-b`, 'Feature: feat-b'],
+          [otherId, `${sectionCase.label} B Task`],
+        ]);
+
+        let lastIndex = -1;
+        for (const id of navRelevant) {
+          const token = labelById.get(id);
+          expect(token).toBeDefined();
+          const currentIndex = frame.indexOf(token!);
+          expect(currentIndex).toBeGreaterThan(lastIndex);
+          lastIndex = currentIndex;
+        }
+      }
     });
   });
 

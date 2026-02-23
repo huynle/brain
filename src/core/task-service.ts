@@ -109,34 +109,45 @@ export class TaskService {
     // Transform to Task interface
     return notes
       .filter((note) => note.path.includes(`projects/${projectId}/`))
-      .map((note) => ({
-        id: extractIdFromPath(note.path),
-        path: note.path,
-        title: note.title,
-        priority: (note.metadata?.priority as Task["priority"]) || "medium",
-        status: (note.metadata?.status as Task["status"]) || "pending",
-        depends_on: (note.metadata?.depends_on as string[]) || [],
-        tags: note.tags || [],
-        created: note.created || "",
-        modified: note.modified,
-        target_workdir: (note.metadata?.target_workdir as string) || null,
-        workdir: (note.metadata?.workdir as string) || null,
-        worktree: null, // Deprecated: now derived from git_branch via deriveWorktreePath()
-        git_remote: (note.metadata?.git_remote as string) || null,
-        git_branch: (note.metadata?.git_branch as string) || null,
-        user_original_request:
-          (note.metadata?.user_original_request as string) || null,
-        // Feature grouping fields
-        feature_id: (note.metadata?.feature_id as string) ?? undefined,
-        feature_priority: (note.metadata?.feature_priority as Task["feature_priority"]) ?? undefined,
-        feature_depends_on: (note.metadata?.feature_depends_on as string[]) ?? undefined,
-        // OpenCode execution options
-        direct_prompt: (note.metadata?.direct_prompt as string) || null,
-        agent: (note.metadata?.agent as string) || null,
-        model: (note.metadata?.model as string) || null,
-        // Session traceability
-        session_ids: (note.metadata?.session_ids as string[]) || [],
-      }));
+      .map((note) => {
+        // Extract projectId from file path (e.g., "projects/pwa/task/abc.md" -> "pwa")
+        const pathMatch = note.path.match(/^projects\/([^/]+)\//);
+        const derivedProjectId = pathMatch ? pathMatch[1] : undefined;
+        const sessions =
+          (note.metadata?.sessions as Task["sessions"] | undefined) || {};
+
+        return {
+          id: extractIdFromPath(note.path),
+          path: note.path,
+          title: note.title,
+          priority: (note.metadata?.priority as Task["priority"]) || "medium",
+          status: (note.metadata?.status as Task["status"]) || "pending",
+          depends_on: (note.metadata?.depends_on as string[]) || [],
+          cron_ids: (note.metadata?.cron_ids as string[]) || [],
+          tags: note.tags || [],
+          created: note.created || "",
+          modified: note.modified,
+          target_workdir: (note.metadata?.target_workdir as string) || null,
+          workdir: (note.metadata?.workdir as string) || null,
+          worktree: null, // Deprecated: now derived from git_branch via deriveWorktreePath()
+          git_remote: (note.metadata?.git_remote as string) || null,
+          git_branch: (note.metadata?.git_branch as string) || null,
+          user_original_request:
+            (note.metadata?.user_original_request as string) || null,
+          // Feature grouping fields
+          feature_id: (note.metadata?.feature_id as string) ?? undefined,
+          feature_priority: (note.metadata?.feature_priority as Task["feature_priority"]) ?? undefined,
+          feature_depends_on: (note.metadata?.feature_depends_on as string[]) ?? undefined,
+          // OpenCode execution options
+          direct_prompt: (note.metadata?.direct_prompt as string) || null,
+          agent: (note.metadata?.agent as string) || null,
+          model: (note.metadata?.model as string) || null,
+          // Session traceability
+          sessions,
+          // Derived from file path for self-correcting project identity
+          projectId: derivedProjectId,
+        };
+      });
   }
 
   /**
@@ -435,6 +446,66 @@ export function normalizeDependencyRef(ref: string): { normalized: string; proje
   }
   
   return { normalized };
+}
+
+// =============================================================================
+// Dependent Discovery
+// =============================================================================
+
+export interface DependentInfo {
+  taskId: string;
+  taskPath: string;
+  projectId: string;
+  depRef: string;
+}
+
+/**
+ * Find all tasks that depend on a given task ID across all projects.
+ * Uses dependency injection (tasksByProject map) for testability.
+ * 
+ * @param taskId - The task ID to find dependents for
+ * @param sourceProjectId - The project the task currently belongs to
+ * @param tasksByProject - Map of projectId -> Task[] for all projects
+ * @returns Array of DependentInfo describing each dependent task
+ */
+export function findDependents(
+  taskId: string,
+  sourceProjectId: string,
+  tasksByProject: Map<string, Task[]>
+): DependentInfo[] {
+  const results: DependentInfo[] = [];
+
+  for (const [projectId, tasks] of tasksByProject) {
+    for (const task of tasks) {
+      if (!task.depends_on || task.depends_on.length === 0) continue;
+
+      for (const depRef of task.depends_on) {
+        const { normalized, projectId: refProjectId } = normalizeDependencyRef(depRef);
+
+        // Determine which project this dep reference points to
+        let targetProjectId: string;
+        if (refProjectId) {
+          // Explicit project reference (colon syntax or full path)
+          targetProjectId = refProjectId;
+        } else {
+          // Bare ID — refers to the same project as the task containing the dep
+          targetProjectId = projectId;
+        }
+
+        // Check if this dep points to our target task
+        if (normalized === taskId && targetProjectId === sourceProjectId) {
+          results.push({
+            taskId: task.id,
+            taskPath: task.path,
+            projectId,
+            depRef,
+          });
+        }
+      }
+    }
+  }
+
+  return results;
 }
 
 // =============================================================================

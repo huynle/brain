@@ -565,6 +565,151 @@ Task content.
     });
   });
 
+  describe("cron fields parity", () => {
+    test("save() computes next_run for cron entries with schedule", async () => {
+      const result = await service.save({
+        type: "cron",
+        title: "Nightly Cron",
+        content: "Run nightly pipeline",
+        schedule: "0 2 * * *",
+      });
+
+      const recalled = await service.recall(result.path);
+      expect(recalled.type).toBe("cron");
+      expect(recalled.schedule).toBe("0 2 * * *");
+      expect(typeof recalled.next_run).toBe("string");
+
+      const parsed = new Date(recalled.next_run!);
+      expect(Number.isNaN(parsed.getTime())).toBe(false);
+      expect(parsed.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    test("recall() includes cron_ids and runs fields", async () => {
+      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
+      mkdirSync(cronDir, { recursive: true });
+
+      const cronFile = join(cronDir, "cron-with-runs.md");
+      const cronPath = "projects/test-project/cron/cron-with-runs.md";
+
+      writeFileSync(
+        cronFile,
+        `---
+title: Cron With Runs
+type: cron
+status: active
+schedule: */15 * * * *
+next_run: 2030-01-01T00:15:00.000Z
+cron_ids:
+  - cron_alpha
+  - cron_beta
+runs:
+  - run_id: 20300101-0000
+    status: completed
+    started: 2030-01-01T00:00:00.000Z
+    completed: 2030-01-01T00:00:08.000Z
+    duration: 8000
+    tasks: 3
+---
+
+Cron body.
+`
+      );
+
+      const recalled = await service.recall(cronPath);
+
+      expect(recalled.cron_ids).toEqual(["cron_alpha", "cron_beta"]);
+      expect(recalled.runs).toEqual([
+        {
+          run_id: "20300101-0000",
+          status: "completed",
+          started: "2030-01-01T00:00:00.000Z",
+          completed: "2030-01-01T00:00:08.000Z",
+          duration: 8000,
+          tasks: 3,
+        },
+      ]);
+    });
+
+    test("update() recalculates next_run when schedule changes", async () => {
+      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
+      mkdirSync(cronDir, { recursive: true });
+
+      const cronFile = join(cronDir, "cron-update-schedule.md");
+      const cronPath = "projects/test-project/cron/cron-update-schedule.md";
+
+      writeFileSync(
+        cronFile,
+        `---
+title: Cron Update Schedule
+type: cron
+status: active
+schedule: 0 2 * * *
+next_run: 2030-01-01T02:00:00.000Z
+---
+
+Cron body.
+`
+      );
+
+      const updated = await service.update(cronPath, {
+        schedule: "*/5 * * * *",
+      });
+
+      expect(updated.schedule).toBe("*/5 * * * *");
+      expect(updated.next_run).toBeDefined();
+      expect(updated.next_run).not.toBe("2030-01-01T02:00:00.000Z");
+
+      const content = readFileSync(cronFile, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      expect(frontmatter.schedule).toBe("*/5 * * * *");
+      expect(frontmatter.next_run).not.toBe("2030-01-01T02:00:00.000Z");
+    });
+
+    test("update() accepts runs, cron_ids, and next_run updates", async () => {
+      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
+      mkdirSync(cronDir, { recursive: true });
+
+      const cronFile = join(cronDir, "cron-update-fields.md");
+      const cronPath = "projects/test-project/cron/cron-update-fields.md";
+
+      writeFileSync(
+        cronFile,
+        `---
+title: Cron Update Fields
+type: cron
+status: active
+---
+
+Cron body.
+`
+      );
+
+      const updated = await service.update(cronPath, {
+        next_run: "2031-01-01T00:00:00.000Z",
+        cron_ids: ["cron_alpha"],
+        runs: [
+          {
+            run_id: "20300101-0000",
+            status: "failed",
+            started: "2030-01-01T00:00:00.000Z",
+            failed_task: "abc12def",
+          },
+        ],
+      });
+
+      expect(updated.next_run).toBe("2031-01-01T00:00:00.000Z");
+      expect(updated.cron_ids).toEqual(["cron_alpha"]);
+      expect(updated.runs).toEqual([
+        {
+          run_id: "20300101-0000",
+          status: "failed",
+          started: "2030-01-01T00:00:00.000Z",
+          failed_task: "abc12def",
+        },
+      ]);
+    });
+  });
+
   describe("save() - no project root auto-injection", () => {
     // These tests verify that tasks with empty depends_on do NOT get a project root dependency.
     // The project root task feature was removed - tasks now have truly empty depends_on.

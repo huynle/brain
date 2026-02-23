@@ -30,6 +30,13 @@ import type { LogEntry, OpenSessionTaskContext } from "./tui/types";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
 import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-utils";
 import type { ResourceMetrics } from "./tui/types";
+import {
+  shouldTrigger,
+  resolveCronPipeline,
+  canTriggerPipeline,
+  generateRunId,
+  getNextRun,
+} from "../core/cron-service";
 
 // =============================================================================
 // Types
@@ -58,6 +65,8 @@ export interface RunnerStatusInfo {
 // =============================================================================
 
 export class TaskRunner {
+  private static readonly MIN_CRON_CHECK_INTERVAL_MS = 60_000;
+
   // Core identity
   private readonly projects: string[];     // All projects to poll
   private readonly projectId: string;      // Legacy: first project (for backward compat)
@@ -84,6 +93,7 @@ export class TaskRunner {
   private stats: RunnerStats = { completed: 0, failed: 0, totalRuntime: 0 };
   private pollTimer: ReturnType<typeof setTimeout> | null = null;
   private isPolling = false;
+  private lastCronCheckAtMs: number | null = null;
 
   // TUI mode task tracking (tasks spawned in tmux windows without proc handles)
   private tuiTasks: Map<string, RunningTask> = new Map();
@@ -102,10 +112,28 @@ export class TaskRunner {
   // Projects not in this map use no limit (only global maxParallel applies)
   private projectLimits: Map<string, number> = new Map();
 
+  // Runtime default model override (in-memory only)
+  // When set, model resolution is: task.model > runtime default > config default
+  private runtimeDefaultModel: string | undefined;
+
   // Pending resume queue: orphaned in_progress tasks detected on startup when paused
   // These are prioritized when resume/resumeAll is called
   // Map key is taskId, value is RunningTask placeholder
   private pendingResumeTasks: Map<string, RunningTask> = new Map();
+
+  // Cron tracking: active runs and task-to-run mapping (Phase 2/4)
+  // activeCronRuns: Map<run_id, { cronId, cronPath, projectId, taskIds, startedAtIso, startedAtMs, pendingTaskIds }>
+  private activeCronRuns: Map<string, {
+    cronId: string;
+    cronPath: string;
+    projectId: string;
+    taskIds: string[];
+    startedAtIso: string;
+    startedAtMs: number;
+    pendingTaskIds: Set<string>;
+  }> = new Map();
+  // taskToCronRun: Map<taskId, run_id> — reverse lookup for completion tracking
+  private taskToCronRun: Map<string, string> = new Map();
 
   // Event handling
   private eventHandlers: EventHandler[] = [];
@@ -766,6 +794,26 @@ export class TaskRunner {
   }
 
   /**
+   * Set runtime default model override used for new task execution.
+   * Pass undefined/empty to clear and fall back to config default.
+   */
+  setRuntimeDefaultModel(model: string | undefined): void {
+    const normalized = model?.trim();
+    this.runtimeDefaultModel = normalized ? normalized : undefined;
+    this.logger.info("Updated runtime default model", {
+      model: this.runtimeDefaultModel ?? "<config-default>",
+    });
+    this.tuiLog('info', `Runtime default model: ${this.runtimeDefaultModel ?? 'config default'}`);
+  }
+
+  /**
+   * Get current runtime default model override.
+   */
+  getRuntimeDefaultModel(): string | undefined {
+    return this.runtimeDefaultModel;
+  }
+
+  /**
    * Get the concurrent task limit for a specific project.
    * Returns undefined if no limit is set (uses global maxParallel only).
    */
@@ -875,6 +923,9 @@ export class TaskRunner {
 
       // Step 1: Check completion of running tasks
       await this.checkRunningTasks();
+
+      // Step 1b: Cron schedule evaluation (guarded to avoid frequent API scans)
+      await this.checkCronSchedules();
 
       // Step 2: Check if at max parallel capacity (include TUI tasks)
       // Note: maxParallel is SHARED across ALL projects
@@ -1141,6 +1192,251 @@ export class TaskRunner {
     }
   }
 
+  /**
+   * Look up cron context for a task.
+   * Returns { cronId, runId } if the task was triggered by a cron run, undefined otherwise.
+   */
+  private resolveCronContext(taskId: string): { cronId: string; runId: string } | undefined {
+    const runId = this.taskToCronRun.get(taskId);
+    if (!runId) return undefined;
+    const run = this.activeCronRuns.get(runId);
+    if (!run) return undefined;
+    return { cronId: run.cronId, runId };
+  }
+
+  private cleanupCronRunTracking(
+    runId: string,
+    run: { taskIds: string[] }
+  ): void {
+    this.activeCronRuns.delete(runId);
+    for (const runTaskId of run.taskIds) {
+      if (this.taskToCronRun.get(runTaskId) === runId) {
+        this.taskToCronRun.delete(runTaskId);
+      }
+    }
+  }
+
+  private async finalizeCronRunForTask(
+    taskId: string,
+    status: CompletionStatus,
+    completedAt: Date = new Date()
+  ): Promise<void> {
+    const runId = this.taskToCronRun.get(taskId);
+    if (!runId) {
+      return;
+    }
+
+    // This task is now terminal regardless of outcome.
+    this.taskToCronRun.delete(taskId);
+
+    const run = this.activeCronRuns.get(runId);
+    if (!run) {
+      return;
+    }
+
+    run.pendingTaskIds.delete(taskId);
+
+    const completedIso = completedAt.toISOString();
+    const duration = Math.max(0, completedAt.getTime() - run.startedAtMs);
+    const isFailure = status !== CompletionStatus.Completed;
+
+    if (isFailure) {
+      try {
+        await this.apiClient.updateCronRun(run.cronPath, {
+          run_id: runId,
+          status: "failed",
+          started: run.startedAtIso,
+          completed: completedIso,
+          duration,
+          failed_task: taskId,
+          tasks: run.taskIds.length,
+        });
+      } catch (error) {
+        this.logger.warn("Failed to finalize cron run as failed", {
+          runId,
+          cronId: run.cronId,
+          taskId,
+          error: String(error),
+        });
+      } finally {
+        this.cleanupCronRunTracking(runId, run);
+      }
+      return;
+    }
+
+    if (run.pendingTaskIds.size > 0) {
+      return;
+    }
+
+    try {
+      await this.apiClient.updateCronRun(run.cronPath, {
+        run_id: runId,
+        status: "completed",
+        started: run.startedAtIso,
+        completed: completedIso,
+        duration,
+        tasks: run.taskIds.length,
+      });
+    } catch (error) {
+      this.logger.warn("Failed to finalize cron run as completed", {
+        runId,
+        cronId: run.cronId,
+        error: String(error),
+      });
+    } finally {
+      this.cleanupCronRunTracking(runId, run);
+    }
+  }
+
+  private cronCheckDue(nowMs: number = Date.now()): boolean {
+    if (this.lastCronCheckAtMs === null) {
+      return true;
+    }
+
+    return nowMs - this.lastCronCheckAtMs >= TaskRunner.MIN_CRON_CHECK_INTERVAL_MS;
+  }
+
+  private async checkCronSchedules(now: Date = new Date()): Promise<void> {
+    const nowMs = now.getTime();
+    if (!this.cronCheckDue(nowMs)) {
+      return;
+    }
+
+    this.lastCronCheckAtMs = nowMs;
+
+    for (const projectId of this.projects) {
+      try {
+        const cronEntries = await this.apiClient.getCronEntries(projectId);
+        const dueEntries = cronEntries.filter((entry) => {
+          if (entry.status !== "active") {
+            return false;
+          }
+
+          if (typeof entry.schedule !== "string") {
+            return false;
+          }
+
+          return shouldTrigger(
+            {
+              schedule: entry.schedule,
+              next_run: entry.next_run,
+            },
+            now
+          );
+        });
+
+        if (isDebugEnabled()) {
+          this.logger.debug("Cron schedule scan complete", {
+            projectId,
+            cronCount: cronEntries.length,
+            dueCount: dueEntries.length,
+          });
+        }
+
+        // Phase 2: Process due entries (schedule already validated by filter above)
+        for (const entry of dueEntries) {
+          try {
+            await this.processDueCronEntry(
+              { id: entry.id, path: entry.path, title: entry.title, schedule: entry.schedule!, next_run: entry.next_run },
+              projectId,
+              now
+            );
+          } catch (error) {
+            this.logger.warn("Failed to process cron entry", {
+              cronId: entry.id,
+              projectId,
+              error: String(error),
+            });
+          }
+        }
+      } catch (error) {
+        this.logger.warn("Cron schedule scan failed", {
+          projectId,
+          error: String(error),
+        });
+      }
+    }
+  }
+
+  private async processDueCronEntry(
+    cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+    projectId: string,
+    now: Date
+  ): Promise<void> {
+    // Resolve pipeline tasks
+    const allTasks = await this.apiClient.getAllTasks(projectId);
+    const pipelineTasks = resolveCronPipeline(cronEntry.id, allTasks);
+
+    if (pipelineTasks.length === 0) {
+      if (isDebugEnabled()) {
+        this.logger.debug("Cron entry has no pipeline tasks", {
+          cronId: cronEntry.id,
+          projectId,
+        });
+      }
+      return;
+    }
+
+    // Check overlap guard
+    const overlapCheck = canTriggerPipeline(pipelineTasks);
+    const runId = generateRunId(now);
+
+    if (overlapCheck.canTrigger) {
+      // Trigger: reset all pipeline tasks to pending
+      for (const task of pipelineTasks) {
+        await this.apiClient.updateEntryMetadata(task.path, {
+          status: "pending",
+        });
+      }
+
+      // Record run as in_progress
+      const startedAtIso = now.toISOString();
+      await this.apiClient.updateCronRun(cronEntry.path, {
+        run_id: runId,
+        status: "in_progress",
+        started: startedAtIso,
+        tasks: pipelineTasks.length,
+      });
+
+      // Track in memory for Phase 4 completion detection
+      const taskIds = pipelineTasks.map((t) => t.id);
+      this.activeCronRuns.set(runId, {
+        cronId: cronEntry.id,
+        cronPath: cronEntry.path,
+        projectId,
+        taskIds,
+        startedAtIso,
+        startedAtMs: now.getTime(),
+        pendingTaskIds: new Set(taskIds),
+      });
+      for (const taskId of taskIds) {
+        this.taskToCronRun.set(taskId, runId);
+      }
+
+      this.logger.info(
+        `Triggered cron '${cronEntry.title}' run ${runId} (${pipelineTasks.length} tasks)`
+      );
+    } else {
+      // Overlap: record skipped run
+      await this.apiClient.updateCronRun(cronEntry.path, {
+        run_id: runId,
+        status: "skipped",
+        started: now.toISOString(),
+        skip_reason: overlapCheck.reason ?? "overlap",
+      });
+
+      this.logger.warn(
+        `Skipped cron '${cronEntry.title}' run ${runId}: ${overlapCheck.reason ?? "overlap"}`
+      );
+    }
+
+    // Always advance next_run
+    const nextRun = getNextRun(cronEntry.schedule, now);
+    await this.apiClient.updateEntryMetadata(cronEntry.path, {
+      next_run: nextRun.toISOString(),
+    });
+  }
+
   // ========================================
   // Task Execution
   // ========================================
@@ -1229,6 +1525,7 @@ export class TaskRunner {
         isResume: false,
         useTui,
         workdir, // Pass pre-resolved workdir to avoid redundant resolution
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 5: Track the process
@@ -1247,6 +1544,13 @@ export class TaskRunner {
         opencodePort: result.opencodePort,
         sessionId: result.sessionId,
       };
+
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(task.id);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
 
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
       if (result.proc) {
@@ -1267,11 +1571,20 @@ export class TaskRunner {
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(task.path, {
-            session_ids: [runningTask.sessionId],
+            sessions: {
+              [runningTask.sessionId]: sessionMeta,
+            },
           });
           this.logger.debug("Session ID persisted to task", {
             taskId: task.id,
@@ -1647,6 +1960,8 @@ export class TaskRunner {
 
     this.stats.totalRuntime += result.duration;
 
+    await this.finalizeCronRunForTask(taskId, status);
+
     // Release claim
     try {
       await this.apiClient.releaseTask(this.projectId, taskId);
@@ -1737,6 +2052,8 @@ export class TaskRunner {
     }
 
     this.stats.totalRuntime += duration;
+
+    await this.finalizeCronRunForTask(taskId, status);
 
     // Release claim
     try {
@@ -1912,6 +2229,7 @@ export class TaskRunner {
         paneId: this.tmuxManager?.getLayout()?.taskAreaPaneId,
         isResume: true,
         useTui,
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       this.tuiLog('info', `Resuming orphaned task: ${task.title}`, task.id, effectiveProjectId);
@@ -1928,6 +2246,13 @@ export class TaskRunner {
         idleSince: undefined, // Clear any previous idle state
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(task.id);
+      if (cronCtx) {
+        newRunningTask.cronId = cronCtx.cronId;
+        newRunningTask.runId = cronCtx.runId;
+      }
+
       if (result.proc) {
         this.processManager.add(task.id, newRunningTask, result.proc);
       } else if (result.windowName || result.paneId) {
@@ -1935,11 +2260,20 @@ export class TaskRunner {
         this.tuiTasks.set(task.id, newRunningTask);
       }
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session metadata to task frontmatter for traceability
       if (newRunningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(task.path, {
-            session_ids: [newRunningTask.sessionId],
+            sessions: {
+              [newRunningTask.sessionId]: sessionMeta,
+            },
           });
           this.logger.debug("Session ID persisted to resumed task", {
             taskId: task.id,
@@ -2087,6 +2421,7 @@ export class TaskRunner {
         isResume: false,
         useTui,
         workdir, // Pass pre-resolved workdir
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 8: Track the process
@@ -2106,6 +2441,13 @@ export class TaskRunner {
         sessionId: result.sessionId,
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(taskId);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
+
       // Track the task: either in processManager (with proc) or tuiTasks (TUI mode)
       if (result.proc) {
         this.processManager.add(taskId, runningTask, result.proc);
@@ -2124,11 +2466,20 @@ export class TaskRunner {
       // Handle dashboard task pane
       await this.handleDashboardTaskStart(runningTask);
 
-      // Persist session ID to task frontmatter for traceability
+      // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(taskPath, {
-            session_ids: [runningTask.sessionId],
+            sessions: {
+              [runningTask.sessionId]: sessionMeta,
+            },
           });
           this.logger.debug("Session ID persisted to manually executed task", {
             taskId,
@@ -2206,6 +2557,7 @@ export class TaskRunner {
         isResume: true,
         useTui,
         workdir,
+        runtimeDefaultModel: this.runtimeDefaultModel,
       });
 
       // Step 4: Track the process (counts toward maxParallel)
@@ -2225,6 +2577,13 @@ export class TaskRunner {
         sessionId: result.sessionId,
       };
 
+      // Attach cron context if this task was triggered by a cron run
+      const cronCtx = this.resolveCronContext(taskId);
+      if (cronCtx) {
+        runningTask.cronId = cronCtx.cronId;
+        runningTask.runId = cronCtx.runId;
+      }
+
       if (result.proc) {
         this.processManager.add(taskId, runningTask, result.proc);
       } else if (result.windowName || result.paneId) {
@@ -2234,11 +2593,20 @@ export class TaskRunner {
       // Step 5: Remove from pendingResumeTasks (prevent double execution)
       this.pendingResumeTasks.delete(taskId);
 
-      // Step 6: Persist new session ID to task frontmatter
+      // Step 6: Persist new session metadata to task frontmatter
       if (runningTask.sessionId) {
         try {
+          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+            timestamp: new Date().toISOString(),
+          };
+          if (cronCtx) {
+            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.run_id = cronCtx.runId;
+          }
           await this.apiClient.updateEntryMetadata(taskPath, {
-            session_ids: [runningTask.sessionId],
+            sessions: {
+              [runningTask.sessionId]: sessionMeta,
+            },
           });
         } catch (error) {
           this.logger.warn("Failed to persist session ID to resumed task", {
@@ -2424,6 +2792,9 @@ export class TaskRunner {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ): Promise<void> {
     this.logger.info("Updating entry metadata", { taskPath, fields });
@@ -2598,18 +2969,13 @@ export class TaskRunner {
             pid = panePid;
           }
 
-          // Try to find actual OpenCode PID (child of shell)
-          if (pid > 0) {
-            try {
-              const pgrepResult = await Bun.$`pgrep -P ${pid} -f opencode`.text();
-              const opencodePid = parseInt(pgrepResult.trim(), 10);
-              if (!isNaN(opencodePid) && opencodePid > 0) {
-                pid = opencodePid;
-              }
-            } catch {
-              // pgrep failed, use pane pid
-            }
-          }
+          // NOTE: Do NOT use pgrep to find child processes here.
+          // Unlike the normal executor (opencode-executor.ts) which wraps opencode
+          // in a bash script, openSessionInTmux runs opencode directly via tmux
+          // new-window. After bash exec's into opencode, pane_pid IS the opencode
+          // process. Running pgrep would find transient sub-agent children instead,
+          // and when those exit, isPidAlive() returns false causing the poll loop
+          // to kill the tmux window after ~30 seconds.
         } catch (err) {
           this.logger.warn("Failed to discover PID for reopened session", {
             sessionId,
@@ -2796,6 +3162,8 @@ export class TaskRunner {
           running: this.getRunningCountForProject(projectId),
         })),
         setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
+        getRuntimeDefaultModel: () => this.getRuntimeDefaultModel(),
+        setRuntimeDefaultModel: (model: string | undefined) => this.setRuntimeDefaultModel(model),
         // Feature enable/disable callbacks (whitelist for paused projects)
         onEnableFeature: (featureId) => this.enableFeature(featureId),
         onDisableFeature: (featureId) => this.disableFeature(featureId),
@@ -2812,6 +3180,23 @@ export class TaskRunner {
         onOpenSession: (sessionId) => this.openSession(sessionId),
         // Open OpenCode session in tmux window (O key) - with task context for idle monitoring
         onOpenSessionTmux: (sessionId, taskContext) => this.openSessionInTmux(sessionId, taskContext),
+        // Cron callbacks (Phase 1 groundwork for cron panel/actions)
+        onListCrons: (projectId) => this.apiClient.getCronEntries(projectId),
+        onGetCron: (projectId, cronId) => this.apiClient.getCronEntry(projectId, cronId),
+        onCreateCron: (projectId, request) => this.apiClient.createCronEntry(projectId, request),
+        onUpdateCron: (projectId, cronId, request) =>
+          this.apiClient.updateCronEntry(projectId, cronId, request),
+        onDeleteCron: (projectId, cronId) => this.apiClient.deleteCronEntry(projectId, cronId),
+        onGetCronRuns: (projectId, cronId) => this.apiClient.getCronRuns(projectId, cronId),
+        onGetCronLinkedTasks: (projectId, cronId) =>
+          this.apiClient.getCronLinkedTasks(projectId, cronId),
+        onSetCronLinkedTasks: (projectId, cronId, taskIds) =>
+          this.apiClient.setCronLinkedTasks(projectId, cronId, taskIds),
+        onAddCronLinkedTask: (projectId, cronId, taskId) =>
+          this.apiClient.addCronLinkedTask(projectId, cronId, taskId),
+        onRemoveCronLinkedTask: (projectId, cronId, taskId) =>
+          this.apiClient.removeCronLinkedTask(projectId, cronId, taskId),
+        onTriggerCron: (projectId, cronId) => this.apiClient.triggerCron(projectId, cronId),
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 

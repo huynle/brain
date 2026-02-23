@@ -8,6 +8,59 @@
 import { useReducer, useEffect, useCallback, useRef, useMemo } from 'react';
 import type { TaskDisplay } from '../types';
 import type { TaskStats } from './useTaskPoller';
+import type { SessionInfo } from '../../../core/types';
+
+type LegacyTaskSessionShape = {
+  sessions?: Record<string, SessionInfo>;
+  session_ids?: unknown;
+  session_timestamps?: unknown;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+export function normalizeTaskSessions(task: LegacyTaskSessionShape): Record<string, SessionInfo> | undefined {
+  if (isRecord(task.sessions) && Object.keys(task.sessions).length > 0) {
+    return task.sessions;
+  }
+
+  const legacyIds = task.session_ids;
+  const legacyTimestamps = isRecord(task.session_timestamps) ? task.session_timestamps : {};
+
+  if (Array.isArray(legacyIds)) {
+    const normalized: Record<string, SessionInfo> = {};
+    for (const id of legacyIds) {
+      if (typeof id !== 'string' || id.length === 0) continue;
+      const timestamp = typeof legacyTimestamps[id] === 'string' ? (legacyTimestamps[id] as string) : '';
+      normalized[id] = { timestamp };
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  if (isRecord(legacyIds) && Object.keys(legacyIds).length > 0) {
+    const normalized: Record<string, SessionInfo> = {};
+    for (const [id, rawValue] of Object.entries(legacyIds)) {
+      if (!id) continue;
+      if (isRecord(rawValue) && typeof rawValue.timestamp === 'string') {
+        normalized[id] = {
+          timestamp: rawValue.timestamp,
+          ...(typeof rawValue.cron_id === 'string' ? { cron_id: rawValue.cron_id } : {}),
+          ...(typeof rawValue.run_id === 'string' ? { run_id: rawValue.run_id } : {}),
+        };
+        continue;
+      }
+      if (typeof rawValue === 'string') {
+        normalized[id] = { timestamp: rawValue };
+        continue;
+      }
+      normalized[id] = { timestamp: '' };
+    }
+    return Object.keys(normalized).length > 0 ? normalized : undefined;
+  }
+
+  return undefined;
+}
 
 /**
  * Simple hash function for change detection.
@@ -32,13 +85,15 @@ function createStateHash(
   connectionByProject: Map<string, boolean>,
   errorsByProject: Map<string, Error>
 ): number {
-  const tasksData: Record<string, Array<{ id: string; status: string; priority: string; classification?: string }>> = {};
+  const tasksData: Record<string, Array<{ id: string; status: string; priority: string; classification?: string; schedule?: string | null; cronCount: number }>> = {};
   for (const [projectId, tasks] of tasksByProject) {
     tasksData[projectId] = tasks.map(t => ({
       id: t.id,
       status: t.status,
       priority: t.priority,
       classification: t.classification,
+      schedule: t.schedule,
+      cronCount: t.cron_ids?.length ?? 0,
     }));
   }
   
@@ -193,6 +248,8 @@ async function fetchProjectTasks(
       status: task.status,
       priority: task.priority || 'medium',
       tags: task.tags || [],
+      cron_ids: task.cron_ids,
+      schedule: task.schedule,
       // Keep IDs for tree building (TaskTree.tsx needs these)
       dependencies: depIds,
       dependents: dependentIds,
@@ -201,10 +258,11 @@ async function fetchProjectTasks(
       dependentTitles: resolveIdsToTitles(dependentIds, idToTitle),
       progress: task.progress,
       error: task.error,
-      projectId, // Tag with project ID
+      projectId: task.projectId || projectId, // Prefer API-derived projectId over URL param
       parent_id: task.parent_id,
       // Frontmatter fields
       created: task.created,
+      modified: task.modified,
       workdir: task.workdir,
       gitRemote: task.git_remote,
       gitBranch: task.git_branch,
@@ -227,7 +285,7 @@ async function fetchProjectTasks(
       model: task.model,
       direct_prompt: task.direct_prompt,
       // Session tracking
-      session_ids: task.session_ids,
+      sessions: normalizeTaskSessions(task),
     };
   });
 

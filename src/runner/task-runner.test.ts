@@ -69,6 +69,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
+    cron_ids: [],
     tags: [],
 
     created: new Date().toISOString(),
@@ -83,7 +84,7 @@ function createMockTask(
     agent: null,
     model: null,
     // Session traceability
-    session_ids: [],
+    sessions: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",
@@ -2167,5 +2168,742 @@ describe("TaskRunner - openSessionInTmux tracking", () => {
         Bun.$ = originalBunShell;
       }
     });
+  });
+});
+
+// =============================================================================
+// TaskRunner - Cron Polling (Phase 1)
+// =============================================================================
+
+describe("TaskRunner - cron polling infrastructure", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  test("exposes cronCheckDue guard method", () => {
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+    const maybeCronCheckDue = (runner as unknown as { cronCheckDue?: unknown }).cronCheckDue;
+
+    expect(typeof maybeCronCheckDue).toBe("function");
+  });
+
+  test("cronCheckDue enforces a minimum 60 second check interval", () => {
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+    const typedRunner = runner as unknown as {
+      cronCheckDue: (nowMs?: number) => boolean;
+      lastCronCheckAtMs: number | null;
+    };
+
+    // First check is always due
+    expect(typedRunner.cronCheckDue(1_000)).toBe(true);
+
+    // Not due before 60 seconds
+    typedRunner.lastCronCheckAtMs = 1_000;
+    expect(typedRunner.cronCheckDue(60_999)).toBe(false);
+
+    // Due at 60 seconds and beyond
+    expect(typedRunner.cronCheckDue(61_000)).toBe(true);
+    expect(typedRunner.cronCheckDue(70_000)).toBe(true);
+  });
+
+  test("poll invokes checkCronSchedules during healthy poll", async () => {
+    globalThis.fetch = createMockFetch({
+      "/health": () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "healthy",
+              zkAvailable: true,
+              dbAvailable: true,
+            })
+          )
+        ),
+      "/next": () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ task: null, message: "No ready tasks" }), {
+            status: 404,
+          })
+        ),
+    });
+
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+
+    // Keep poll focused on cron integration behavior
+    (runner as unknown as { checkRunningTasks: () => Promise<void> }).checkRunningTasks = async () => {};
+    const checkCronSchedules = mock(async () => {});
+    (runner as unknown as { checkCronSchedules: () => Promise<void> }).checkCronSchedules = checkCronSchedules;
+
+    await (runner as unknown as { poll: () => Promise<void> }).poll();
+
+    expect(checkCronSchedules).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// TaskRunner - Cron Trigger and Overlap (Phase 2)
+// =============================================================================
+
+describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-p2-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {}
+  });
+
+  function makeCronEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "cron-daily",
+      path: "projects/test-project/cron/daily.md",
+      title: "Daily Build",
+      status: "active" as const,
+      schedule: "0 9 * * *",
+      next_run: "2025-01-15T09:00:00Z",
+      runs: [],
+      created: "2025-01-01T00:00:00Z",
+      modified: "2025-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function createTrackingFetch(
+    cronEntries: unknown[],
+    tasks: ResolvedTask[]
+  ): { fetchFn: typeof fetch; calls: Array<{ url: string; method: string; body?: unknown }> } {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+
+    const fetchFn = ((url: string, options?: RequestInit) => {
+      const method = options?.method ?? "GET";
+      let body: unknown;
+      if (options?.body && typeof options.body === "string") {
+        try { body = JSON.parse(options.body); } catch { body = options.body; }
+      }
+      calls.push({ url, method, body });
+
+      // GET cron entries
+      if (url.includes("/crons/") && url.endsWith("/crons") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ crons: cronEntries })));
+      }
+
+      // GET all tasks
+      if (url.includes("/tasks/test-project") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ tasks })));
+      }
+
+      // GET entry (for updateCronRun read-modify-write)
+      if (url.includes("/entries/") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ runs: [] })));
+      }
+
+      // PATCH entry (task reset, cron run, next_run)
+      if (url.includes("/entries/") && method === "PATCH") {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+      }
+
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    }) as typeof fetch;
+
+    return { fetchFn, calls };
+  }
+
+  test("checkCronSchedules triggers pipeline when due and no overlap", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA, taskB]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    // Verify tasks were reset to pending
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+    const taskResets = patchCalls.filter(c => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(2);
+
+    // Verify cron run was recorded as in_progress
+    const cronRunPatches = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.runs && Array.isArray(b.runs);
+    });
+    expect(cronRunPatches.length).toBeGreaterThanOrEqual(1);
+    const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
+    expect(recordedRun.status).toBe("in_progress");
+    expect(recordedRun.run_id).toBeDefined();
+    expect(recordedRun.tasks).toBe(2);
+  });
+
+  test("checkCronSchedules skips pipeline when overlap detected", async () => {
+    const cronEntry = makeCronEntry();
+
+    // One task is in_progress → overlap
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "in_progress",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA, taskB]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+
+    // No task resets should happen
+    const taskResets = patchCalls.filter(c => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(0);
+
+    // Cron run should be recorded as skipped with overlap reason
+    const cronRunPatches = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.runs && Array.isArray(b.runs);
+    });
+    expect(cronRunPatches.length).toBeGreaterThanOrEqual(1);
+    const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
+    expect(recordedRun.status).toBe("skipped");
+    expect(recordedRun.skip_reason).toBeDefined();
+  });
+
+  test("checkCronSchedules advances next_run after trigger", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    // Verify next_run was updated on the cron entry
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+    const nextRunUpdates = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.next_run && typeof b.next_run === "string";
+    });
+    expect(nextRunUpdates.length).toBeGreaterThanOrEqual(1);
+
+    // New next_run should be after the original (2025-01-15T09:00:00Z)
+    const newNextRun = new Date((nextRunUpdates[0].body as { next_run: string }).next_run);
+    expect(newNextRun.getTime()).toBeGreaterThan(new Date("2025-01-15T09:00:00Z").getTime());
+  });
+
+  test("checkCronSchedules ignores due cron entries when status is not active", async () => {
+    const cronEntry = makeCronEntry({ status: "pending" });
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBe(0);
+  });
+
+  test("activeCronRuns and taskToCronRun tracking maps exist on runner", () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    const activeCronRuns = (runner as unknown as { activeCronRuns?: unknown }).activeCronRuns;
+    const taskToCronRun = (runner as unknown as { taskToCronRun?: unknown }).taskToCronRun;
+
+    expect(activeCronRuns).toBeInstanceOf(Map);
+    expect(taskToCronRun).toBeInstanceOf(Map);
+  });
+});
+
+// =============================================================================
+// TaskRunner - Cron Context Propagation (Phase 3)
+// =============================================================================
+
+describe("TaskRunner - cron context propagation (Phase 3)", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-p3-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {}
+  });
+
+  /** Mock executor that returns a successful spawn with a known sessionId. */
+  function createMockExecutor(sessionId = "ses_test123") {
+    return {
+      resolveWorkdir: async () => "/tmp/test-workdir",
+      spawn: async () => ({
+        pid: 99999,
+        paneId: undefined,
+        windowName: "task_test",
+        proc: null as unknown,
+        opencodePort: undefined,
+        sessionId,
+      }),
+      cleanup: async () => {},
+      buildCommand: () => [],
+      buildPrompt: () => "",
+    };
+  }
+
+  /** Create a mock fetch that tracks PATCH bodies and accepts claim/status/release calls. */
+  function createPatchTrackingFetch() {
+    const patchCalls: Array<{ url: string; body: Record<string, unknown> }> = [];
+
+    const fetchFn = ((url: string, options?: RequestInit) => {
+      const method = options?.method ?? "GET";
+
+      // Claim succeeds
+      if (url.includes("/claim")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({ success: true, taskId: "any", runnerId: "test" })
+          )
+        );
+      }
+
+      // GET entry (for getTaskByPath, updateCronRun read step)
+      if (url.includes("/entries/") && method === "GET") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              id: "task-1",
+              path: "projects/test-project/task/task-1.md",
+              title: "Test Task",
+              priority: "medium",
+              status: "in_progress",
+              sessions: {},
+            })
+          )
+        );
+      }
+
+      // PATCH (status update, session metadata, etc.)
+      if (method === "PATCH" && options?.body) {
+        try {
+          const body = JSON.parse(options.body as string) as Record<string, unknown>;
+          patchCalls.push({ url, body });
+        } catch {}
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }
+
+      // Release, health, etc.
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    return { fetchFn, patchCalls };
+  }
+
+  // ── claimAndSpawn ──────────────────────────────────────────────────────
+
+  test("claimAndSpawn writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Set up cron tracking maps (Phase 2 infrastructure)
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const task = createMockTask("task-1", {
+      path: "projects/test-project/task/task-1.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    const result = await claimAndSpawn(task, "test-project");
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    // Extract the session data object
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  test("claimAndSpawn does NOT include cron fields when task is not cron-triggered", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Do NOT add task to taskToCronRun — this is a regular (non-cron) task
+
+    const task = createMockTask("task-2", {
+      path: "projects/test-project/task/task-2.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    const result = await claimAndSpawn(task, "test-project");
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    // Should have timestamp but NO cron_id or run_id
+    expect(sessionData.timestamp).toBeDefined();
+    expect(sessionData.cron_id).toBeUndefined();
+    expect(sessionData.run_id).toBeUndefined();
+  });
+
+  test("RunningTask has cronId/runId populated for cron-triggered tasks", async () => {
+    const { fetchFn } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const task = createMockTask("task-1", {
+      path: "projects/test-project/task/task-1.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    await claimAndSpawn(task, "test-project");
+
+    // Task should be in tuiTasks (mock executor returns proc: null, windowName: "task_test")
+    // @ts-expect-error - accessing private property for testing
+    const runningTask = runner.tuiTasks.get("task-1");
+    expect(runningTask).toBeDefined();
+    expect(runningTask!.cronId).toBe("cron-daily");
+    expect(runningTask!.runId).toBe("run-20250115");
+  });
+
+  test("RunningTask does NOT have cronId/runId for non-cron tasks", async () => {
+    const { fetchFn } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor();
+
+    const task = createMockTask("task-2", {
+      path: "projects/test-project/task/task-2.md",
+    });
+
+    const claimAndSpawn = (runner as unknown as {
+      claimAndSpawn: (task: ResolvedTask, projectId?: string) => Promise<boolean>;
+    }).claimAndSpawn.bind(runner);
+
+    await claimAndSpawn(task, "test-project");
+
+    // @ts-expect-error - accessing private property for testing
+    const runningTask = runner.tuiTasks.get("task-2");
+    expect(runningTask).toBeDefined();
+    expect(runningTask!.cronId).toBeUndefined();
+    expect(runningTask!.runId).toBeUndefined();
+  });
+
+  // ── resumeTask ─────────────────────────────────────────────────────────
+
+  test("resumeTask writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_resume123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const runningTask: RunningTask = {
+      id: "task-1",
+      path: "projects/test-project/task/task-1.md",
+      title: "Cron Task",
+      priority: "medium",
+      projectId: "test-project",
+      pid: 0,
+      startedAt: new Date().toISOString(),
+      isResume: true,
+      workdir: "/tmp/test-workdir",
+    };
+
+    const resumeTask = (runner as unknown as {
+      resumeTask: (task: RunningTask) => Promise<void>;
+    }).resumeTask.bind(runner);
+
+    await resumeTask(runningTask);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  // ── executeTaskManually ────────────────────────────────────────────────
+
+  test("executeTaskManually writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_manual123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    const result = await runner.executeTaskManually(
+      "task-1",
+      "projects/test-project/task/task-1.md"
+    );
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH (skip the status PATCHes)
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
+  });
+
+  // ── spawnFreshResumeSession ────────────────────────────────────────────
+
+  test("spawnFreshResumeSession writes cron_id/run_id in session metadata when task is in taskToCronRun", async () => {
+    const { fetchFn, patchCalls } = createPatchTrackingFetch();
+    globalThis.fetch = fetchFn;
+
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    // @ts-expect-error - replacing private executor for testing
+    runner.executor = createMockExecutor("ses_freshr123");
+
+    // Set up cron tracking
+    // @ts-expect-error - accessing private property for testing
+    runner.activeCronRuns.set("run-20250115", {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-1"],
+    });
+    // @ts-expect-error - accessing private property for testing
+    runner.taskToCronRun.set("task-1", "run-20250115");
+
+    // spawnFreshResumeSession is called via executeTaskManually when task is in_progress
+    // The GET entry mock returns status: "in_progress", which triggers spawnFreshResumeSession
+    const result = await runner.executeTaskManually(
+      "task-1",
+      "projects/test-project/task/task-1.md"
+    );
+    expect(result).toBe(true);
+
+    // Find session metadata PATCH
+    const sessionPatch = patchCalls.find((c) => c.body?.sessions);
+    expect(sessionPatch).toBeDefined();
+
+    const sessions = sessionPatch!.body.sessions as Record<string, Record<string, unknown>>;
+    const sessionData = Object.values(sessions)[0];
+
+    expect(sessionData.cron_id).toBe("cron-daily");
+    expect(sessionData.run_id).toBe("run-20250115");
   });
 });

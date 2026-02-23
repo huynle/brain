@@ -7,6 +7,8 @@
 
 import type { RunnerConfig, ApiHealth, ClaimResult } from "./types";
 import type {
+  BrainEntry,
+  CronRun,
   ResolvedTask,
   TaskListResponse,
   TaskNextResponse,
@@ -51,6 +53,76 @@ export interface FeatureListResponse {
 export interface FeatureResponse {
   feature: ApiFeature;
 }
+
+export type CronEntry = Pick<
+  BrainEntry,
+  "id" | "path" | "title" | "status" | "schedule" | "next_run" | "runs" | "created" | "modified"
+>;
+
+export interface CronDetailResponse {
+  cron: BrainEntry;
+  pipeline: ResolvedTask[];
+  pipelineCount: number;
+}
+
+export interface CronRunsResponse {
+  cronId: string;
+  runs: CronRun[];
+  count: number;
+}
+
+export interface CronLinkedTasksResponse {
+  cronId: string;
+  tasks: ResolvedTask[];
+  count: number;
+}
+
+export interface CronLinkedTasksMutationResponse extends CronLinkedTasksResponse {
+  message: string;
+}
+
+export interface CronTriggerResponse {
+  cronId: string;
+  run: CronRun;
+  pipeline: ResolvedTask[];
+  pipelineCount: number;
+  message: string;
+}
+
+export interface CreateCronRequest {
+  title: string;
+  schedule: string;
+  content?: string;
+  status?: EntryStatus;
+  tags?: string[];
+}
+
+export interface UpdateCronRequest {
+  title?: string;
+  schedule?: string;
+  content?: string;
+  status?: EntryStatus;
+  tags?: string[];
+}
+
+export interface CronMutationResponse {
+  cron: BrainEntry;
+  message: string;
+}
+
+export interface DeleteCronResponse {
+  message: string;
+  path: string;
+}
+
+interface CronListResponse {
+  crons: CronEntry[];
+}
+
+interface EntryWithRuns {
+  runs?: CronRun[];
+}
+
 import { getRunnerConfig, isDebugEnabled } from "./config";
 
 // =============================================================================
@@ -192,6 +264,204 @@ export class ApiClient {
     return data.tasks.filter(task => task.status === "in_progress");
   }
 
+  async getCronEntries(projectId: string): Promise<CronEntry[]> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    const data = (await response.json()) as CronListResponse;
+    return data.crons;
+  }
+
+  async getCronEntry(projectId: string, cronId: string): Promise<CronDetailResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronDetailResponse;
+  }
+
+  async createCronEntry(projectId: string, request: CreateCronRequest): Promise<CronMutationResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons`, {
+      method: "POST",
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronMutationResponse;
+  }
+
+  async updateCronEntry(
+    projectId: string,
+    cronId: string,
+    request: UpdateCronRequest
+  ): Promise<CronMutationResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}`, {
+      method: "PATCH",
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronMutationResponse;
+  }
+
+  async deleteCronEntry(projectId: string, cronId: string): Promise<DeleteCronResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}?confirm=true`,
+      { method: "DELETE" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as DeleteCronResponse;
+  }
+
+  async getCronRuns(projectId: string, cronId: string): Promise<CronRunsResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/runs`);
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronRunsResponse;
+  }
+
+  async getCronLinkedTasks(projectId: string, cronId: string): Promise<CronLinkedTasksResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/linked-tasks`
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksResponse;
+  }
+
+  async setCronLinkedTasks(
+    projectId: string,
+    cronId: string,
+    taskIds: string[]
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(
+      `/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/linked-tasks`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ taskIds }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
+  }
+
+  async addCronLinkedTask(
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const encodedTaskId = encodeURIComponent(taskId);
+    const response = await this.fetch(
+      `/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/linked-tasks/${encodedTaskId}`,
+      { method: "POST" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
+  }
+
+  async removeCronLinkedTask(
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ): Promise<CronLinkedTasksMutationResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const encodedTaskId = encodeURIComponent(taskId);
+    const response = await this.fetch(
+      `/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/linked-tasks/${encodedTaskId}`,
+      { method: "DELETE" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronLinkedTasksMutationResponse;
+  }
+
+  async triggerCron(projectId: string, cronId: string): Promise<CronTriggerResponse> {
+    const encodedProjectId = encodeURIComponent(projectId);
+    const encodedCronId = encodeURIComponent(cronId);
+    const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons/${encodedCronId}/trigger`, {
+      method: "POST",
+    });
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as CronTriggerResponse;
+  }
+
+  async updateCronRun(cronPath: string, run: CronRun): Promise<void> {
+    const encodedPath = encodeURIComponent(cronPath);
+
+    const getResponse = await this.fetch(`/api/v1/entries/${encodedPath}`);
+
+    if (!getResponse.ok) {
+      throw new ApiError(getResponse.status, await getResponse.text());
+    }
+
+    const entry = (await getResponse.json()) as EntryWithRuns;
+    const existingRuns = entry.runs ?? [];
+    const remainingRuns = existingRuns.filter((existing) => existing.run_id !== run.run_id);
+    const runs = [run, ...remainingRuns];
+
+    const patchResponse = await this.fetch(`/api/v1/entries/${encodedPath}`, {
+      method: "PATCH",
+      body: JSON.stringify({ runs }),
+    });
+
+    if (!patchResponse.ok) {
+      throw new ApiError(patchResponse.status, await patchResponse.text());
+    }
+  }
+
   /**
    * Get a task by its path.
    * Used for resuming orphaned in_progress tasks where getNextTask won't work.
@@ -321,10 +591,16 @@ export class ApiClient {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
       priority?: Priority;
+      cron_ids?: string[];
       tags?: string[];
       depends_on?: string[];
-      session_ids?: string[];
+      sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
+      next_run?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ): Promise<void> {
     const encodedPath = encodeURIComponent(taskPath);
@@ -335,10 +611,16 @@ export class ApiClient {
     if (fields.feature_id !== undefined) payload.feature_id = fields.feature_id;
     if (fields.git_branch !== undefined) payload.git_branch = fields.git_branch;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
+    if (fields.schedule !== undefined) payload.schedule = fields.schedule;
     if (fields.priority !== undefined) payload.priority = fields.priority;
+    if (fields.cron_ids !== undefined) payload.cron_ids = fields.cron_ids;
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
-    if (fields.session_ids !== undefined) payload.session_ids = fields.session_ids;
+    if (fields.sessions !== undefined) payload.sessions = fields.sessions;
+    if (fields.next_run !== undefined) payload.next_run = fields.next_run;
+    if (fields.agent !== undefined) payload.agent = fields.agent;
+    if (fields.model !== undefined) payload.model = fields.model;
+    if (fields.direct_prompt !== undefined) payload.direct_prompt = fields.direct_prompt;
 
     const response = await this.fetch(`/api/v1/entries/${encodedPath}`, {
       method: "PATCH",

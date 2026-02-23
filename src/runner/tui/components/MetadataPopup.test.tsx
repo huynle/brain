@@ -18,6 +18,7 @@ const defaultProps = {
   featureIdValue: 'my-feature',
   branchValue: 'feature/test',
   workdirValue: '/path/to/project',
+  scheduleValue: '0 * * * *',
   projectValue: 'my-project',
   agentValue: '',
   modelValue: '',
@@ -52,7 +53,7 @@ describe('MetadataPopup', () => {
       expect(frame).not.toContain(longTitle);
     });
 
-    it('should render all eight fields', () => {
+    it('should render all nine fields', () => {
       const { lastFrame } = render(
         <MetadataPopup {...defaultProps} />
       );
@@ -62,6 +63,7 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Feature ID:');
       expect(frame).toContain('Branch:');
       expect(frame).toContain('Workdir:');
+      expect(frame).toContain('Schedule:');
       expect(frame).toContain('Project:');
       expect(frame).toContain('Agent:');
       expect(frame).toContain('Model:');
@@ -223,13 +225,23 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('/home/user/project');
     });
 
+    it('should display schedule value', () => {
+      const { lastFrame } = render(
+        <MetadataPopup {...defaultProps} scheduleValue="*/15 * * * *" />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('*/15 * * * *');
+    });
+
     it('should show (none) for empty text fields', () => {
       const { lastFrame } = render(
         <MetadataPopup 
           {...defaultProps} 
           featureIdValue="" 
           branchValue="" 
-          workdirValue="" 
+          workdirValue=""
+          scheduleValue=""
         />
       );
 

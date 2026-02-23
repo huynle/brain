@@ -12,6 +12,7 @@ import {
   assignLanes,
   detectMergePoints,
   generatePrefix,
+  generatePrefixSegments,
   MAX_LANES,
   type LaneAssignment,
 } from './lane-layout';
@@ -34,6 +35,78 @@ function createTask(overrides: Partial<TaskDisplay> = {}): TaskDisplay {
     dependentTitles: [],
     ...overrides,
   };
+}
+
+function buildSelectedTaskRelationGraph(tasks: TaskDisplay[], selectedId: string): {
+  ancestors: Set<string>;
+  descendants: Set<string>;
+} {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  if (!byId.has(selectedId)) {
+    return { ancestors: new Set(), descendants: new Set() };
+  }
+
+  const depsByTask = new Map<string, string[]>();
+  const dependentsByTask = new Map<string, string[]>();
+
+  for (const task of tasks) {
+    const inTreeDeps = task.dependencies.filter((depId) => byId.has(depId));
+    depsByTask.set(task.id, inTreeDeps);
+    for (const depId of inTreeDeps) {
+      const existing = dependentsByTask.get(depId) || [];
+      existing.push(task.id);
+      dependentsByTask.set(depId, existing);
+    }
+  }
+
+  const ancestors = new Set<string>();
+  const descendants = new Set<string>();
+
+  const ancestorStack = [...(depsByTask.get(selectedId) || [])];
+  while (ancestorStack.length > 0) {
+    const current = ancestorStack.pop()!;
+    if (ancestors.has(current)) continue;
+    ancestors.add(current);
+    for (const depId of depsByTask.get(current) || []) {
+      if (!ancestors.has(depId)) ancestorStack.push(depId);
+    }
+  }
+
+  const descendantStack = [...(dependentsByTask.get(selectedId) || [])];
+  while (descendantStack.length > 0) {
+    const current = descendantStack.pop()!;
+    if (descendants.has(current)) continue;
+    descendants.add(current);
+    for (const dependentId of dependentsByTask.get(current) || []) {
+      if (!descendants.has(dependentId)) descendantStack.push(dependentId);
+    }
+  }
+
+  ancestors.delete(selectedId);
+  descendants.delete(selectedId);
+
+  return { ancestors, descendants };
+}
+
+function buildRelationLaneContext(
+  assignments: LaneAssignment[],
+  relationGraph: { ancestors: Set<string>; descendants: Set<string> },
+): { upstreamLanes: Set<number>; downstreamLanes: Set<number> } {
+  const laneByTaskId = new Map(assignments.map((assignment) => [assignment.taskId, assignment.lane]));
+  const upstreamLanes = new Set<number>();
+  const downstreamLanes = new Set<number>();
+
+  for (const taskId of relationGraph.ancestors) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) upstreamLanes.add(lane);
+  }
+
+  for (const taskId of relationGraph.descendants) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) downstreamLanes.add(lane);
+  }
+
+  return { upstreamLanes, downstreamLanes };
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +474,105 @@ describe('generatePrefix', () => {
     };
     const result = generatePrefix(assignment, 0, [assignment]);
     expect(typeof result).toBe('string');
+  });
+
+  it('generatePrefixSegments preserves exact glyph output', () => {
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 0, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'c', lane: 1, activeLanes: [0, 1], isMerge: false, mergeFromLanes: [] },
+    ];
+
+    for (let i = 0; i < assignments.length; i++) {
+      const fromStringApi = generatePrefix(assignments[i], i, assignments);
+      const fromSegmentsApi = generatePrefixSegments(assignments[i], i, assignments)
+        .map((segment) => segment.text)
+        .join('');
+      expect(fromSegmentsApi).toBe(fromStringApi);
+    }
+  });
+
+  it('classifies segments as upstream/downstream/neutral using lane metadata', () => {
+    const assignments: LaneAssignment[] = [
+      { taskId: 'a', lane: 0, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+      { taskId: 'b', lane: 2, activeLanes: [0, 1, 2], isMerge: false, mergeFromLanes: [] },
+    ];
+
+    const segments = generatePrefixSegments(assignments[1], 1, assignments, {
+      upstreamLanes: [0],
+      downstreamLanes: [2],
+    });
+
+    expect(segments.map((segment) => segment.kind)).toEqual([
+      'upstream',
+      'neutral',
+      'downstream',
+    ]);
+    expect(segments.map((segment) => segment.role)).toEqual([
+      'vertical',
+      'vertical',
+      'last-branch',
+    ]);
+  });
+
+  it('re-colors dependency paths as selection moves through fork and merge rows', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: [], dependents: ['b', 'c'] }),
+      createTask({ id: 'b', dependencies: ['a'], dependents: ['d'] }),
+      createTask({ id: 'c', dependencies: ['a'], dependents: ['d'] }),
+      createTask({ id: 'd', dependencies: ['b', 'c'], dependents: ['e'] }),
+      createTask({ id: 'e', dependencies: ['d'], dependents: [] }),
+    ];
+
+    const sorted = topoSort(tasks);
+    const assignments = assignLanes(sorted);
+    const mergeIndex = assignments.findIndex((assignment) => assignment.taskId === 'd');
+    const rootIndex = assignments.findIndex((assignment) => assignment.taskId === 'a');
+
+    const rootContext = buildRelationLaneContext(
+      assignments,
+      buildSelectedTaskRelationGraph(tasks, 'a'),
+    );
+    const mergeContext = buildRelationLaneContext(
+      assignments,
+      buildSelectedTaskRelationGraph(tasks, 'd'),
+    );
+    const leafContext = buildRelationLaneContext(
+      assignments,
+      buildSelectedTaskRelationGraph(tasks, 'e'),
+    );
+
+    const mergeRowForRoot = generatePrefixSegments(assignments[mergeIndex], mergeIndex, assignments, rootContext);
+    const mergeRowForMerge = generatePrefixSegments(assignments[mergeIndex], mergeIndex, assignments, mergeContext);
+    const rootRowForLeaf = generatePrefixSegments(assignments[rootIndex], rootIndex, assignments, leafContext);
+
+    expect(mergeRowForRoot.some((segment) => segment.kind === 'downstream')).toBe(true);
+    expect(mergeRowForMerge.some((segment) => segment.kind === 'upstream')).toBe(true);
+    expect(rootRowForLeaf.some((segment) => segment.kind === 'upstream')).toBe(true);
+  });
+
+  it('keeps upstream/downstream coloring stable for cycles', () => {
+    const tasks = [
+      createTask({ id: 'a', dependencies: ['c'], dependents: ['b'] }),
+      createTask({ id: 'b', dependencies: ['a'], dependents: ['c'] }),
+      createTask({ id: 'c', dependencies: ['b'], dependents: ['a', 'd'] }),
+      createTask({ id: 'd', dependencies: ['c'], dependents: [] }),
+    ];
+
+    const sorted = topoSort(tasks);
+    const assignments = assignLanes(sorted);
+    const dIndex = assignments.findIndex((assignment) => assignment.taskId === 'd');
+
+    const context = buildRelationLaneContext(
+      assignments,
+      buildSelectedTaskRelationGraph(tasks, 'b'),
+    );
+    const dSegments = generatePrefixSegments(assignments[dIndex], dIndex, assignments, context);
+
+    expect(context.upstreamLanes.size).toBeGreaterThan(0);
+    expect(context.downstreamLanes.size).toBeGreaterThan(0);
+    expect(dSegments.some((segment) => segment.kind === 'upstream')).toBe(true);
+    expect(dSegments.some((segment) => segment.kind === 'downstream')).toBe(false);
   });
 
   it('handles nested merge (merge feeds into another merge)', () => {

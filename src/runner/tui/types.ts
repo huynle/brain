@@ -2,7 +2,19 @@
  * TUI-specific types for the Ink-based dashboard
  */
 
-import type { EntryStatus, Priority } from '../../core/types';
+import type { EntryStatus, Priority, SessionInfo } from '../../core/types';
+import type {
+  CronEntry,
+  CronDetailResponse,
+  CreateCronRequest,
+  UpdateCronRequest,
+  CronMutationResponse,
+  DeleteCronResponse,
+  CronRunsResponse,
+  CronLinkedTasksResponse,
+  CronLinkedTasksMutationResponse,
+  CronTriggerResponse,
+} from '../api-client';
 
 /**
  * Task classification for dependency resolution
@@ -20,6 +32,8 @@ export interface TaskDisplay {
   status: EntryStatus;
   priority: Priority;
   tags: string[];               // Tags for filtering and categorization
+  cron_ids?: string[];          // Cron entry IDs that can trigger this task
+  schedule?: string | null;     // Cron expression for periodic execution
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
   dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail
@@ -59,7 +73,7 @@ export interface TaskDisplay {
   direct_prompt?: string | null;     // Direct prompt (bypasses do-work skill)
   
   // Session tracking
-  session_ids?: string[];            // OpenCode session IDs that worked on this task
+  sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
 }
 
 /**
@@ -140,6 +154,29 @@ export interface FeatureDisplay {
 }
 
 /**
+ * Cron display information for TUI rendering
+ */
+export interface CronDisplay {
+  id: string;
+  path: string;
+  title: string;
+  projectId?: string;
+  schedule: string;
+  next_run?: string;
+  status: EntryStatus;
+  runs?: Array<{
+    run_id: string;
+    status: 'completed' | 'failed' | 'skipped' | 'in_progress';
+    started: string;
+    completed?: string;
+    duration?: number;
+    tasks?: number;
+    failed_task?: string;
+    skip_reason?: string;
+  }>;
+}
+
+/**
  * Resource metrics for running OpenCode processes
  */
 export interface ResourceMetrics {
@@ -175,7 +212,7 @@ export interface GroupVisibilityEntry {
 /**
  * Settings popup section type
  */
-export type SettingsSection = 'limits' | 'groups';
+export type SettingsSection = 'limits' | 'groups' | 'runtime';
 
 /**
  * Props for the main App component
@@ -212,13 +249,17 @@ export interface AppProps {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
+  /** Get in-memory runtime default model override */
+  getRuntimeDefaultModel?: () => string | undefined;
+  /** Set in-memory runtime default model override (undefined/empty clears override) */
+  setRuntimeDefaultModel?: (model: string | undefined) => void;
   /** Enable a feature to run while project is paused (whitelist) */
   onEnableFeature?: (featureId: string) => void;
   /** Disable a feature from whitelist */
   onDisableFeature?: (featureId: string) => void;
   /** Get currently enabled features from TaskRunner */
   getEnabledFeatures?: () => string[];
-  /** Callback to update entry metadata fields (status, feature_id, git_branch, target_workdir) */
+  /** Callback to update entry metadata fields */
   onUpdateMetadata?: (
     taskPath: string,
     fields: {
@@ -226,6 +267,10 @@ export interface AppProps {
       feature_id?: string;
       git_branch?: string;
       target_workdir?: string;
+      schedule?: string;
+      agent?: string;
+      model?: string;
+      direct_prompt?: string;
     }
   ) => Promise<void>;
   /** Callback to move a task to a different project */
@@ -241,6 +286,44 @@ export interface AppProps {
   onOpenSession?: (sessionId: string) => Promise<void>;
   /** Callback to open an OpenCode session in a new tmux window. Used by 'O' key on tasks with session_ids. */
   onOpenSessionTmux?: (sessionId: string, taskContext?: OpenSessionTaskContext) => Promise<void>;
+  /** Callback to list cron entries for a project. */
+  onListCrons?: (projectId: string) => Promise<CronEntry[]>;
+  /** Callback to fetch one cron and its pipeline details. */
+  onGetCron?: (projectId: string, cronId: string) => Promise<CronDetailResponse>;
+  /** Callback to create a cron entry. */
+  onCreateCron?: (projectId: string, request: CreateCronRequest) => Promise<CronMutationResponse>;
+  /** Callback to update a cron entry. */
+  onUpdateCron?: (
+    projectId: string,
+    cronId: string,
+    request: UpdateCronRequest
+  ) => Promise<CronMutationResponse>;
+  /** Callback to delete a cron entry. */
+  onDeleteCron?: (projectId: string, cronId: string) => Promise<DeleteCronResponse>;
+  /** Callback to fetch cron run history. */
+  onGetCronRuns?: (projectId: string, cronId: string) => Promise<CronRunsResponse>;
+  /** Callback to fetch linked tasks for a cron. */
+  onGetCronLinkedTasks?: (projectId: string, cronId: string) => Promise<CronLinkedTasksResponse>;
+  /** Callback to replace linked tasks for a cron. */
+  onSetCronLinkedTasks?: (
+    projectId: string,
+    cronId: string,
+    taskIds: string[]
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to add a linked task to a cron. */
+  onAddCronLinkedTask?: (
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to remove a linked task from a cron. */
+  onRemoveCronLinkedTask?: (
+    projectId: string,
+    cronId: string,
+    taskId: string
+  ) => Promise<CronLinkedTasksMutationResponse>;
+  /** Callback to trigger a cron run immediately. */
+  onTriggerCron?: (projectId: string, cronId: string) => Promise<CronTriggerResponse>;
 }
 
 /** Context needed to track a reopened session for idle monitoring */

@@ -70,6 +70,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
+    cron_ids: [],
     tags: [],
 
     created: new Date().toISOString(),
@@ -84,7 +85,7 @@ function createMockTask(
     agent: null,
     model: null,
     // Session traceability
-    session_ids: [],
+    sessions: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

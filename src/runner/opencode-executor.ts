@@ -28,6 +28,7 @@ export interface SpawnOptions {
   isResume?: boolean;
   paneId?: string;
   windowName?: string;
+  runtimeDefaultModel?: string;
   /** When true, use interactive TUI command even in dashboard mode */
   useTui?: boolean;
 }
@@ -106,10 +107,11 @@ Start now.`;
   }
 
   /**
-   * Get the effective model for a task (task override or config default)
+   * Get the effective model for a task.
+   * Precedence: task override > runtime default override > config default
    */
-  private getEffectiveModel(task: ResolvedTask): string {
-    return task.model ?? this.config.opencode.model;
+  private getEffectiveModel(task: ResolvedTask, runtimeDefaultModel?: string): string {
+    return task.model ?? runtimeDefaultModel ?? this.config.opencode.model;
   }
 
   // ========================================
@@ -174,7 +176,7 @@ Start now.`;
     projectId: string,
     options: SpawnOptions
   ): Promise<SpawnResult> {
-    const { mode, isResume = false } = options;
+    const { mode, isResume = false, runtimeDefaultModel } = options;
 
     // Ensure state directory exists
     await this.ensureStateDir();
@@ -196,7 +198,7 @@ Start now.`;
 
     switch (mode) {
       case "background":
-        return this.spawnBackground(task, projectId, workdir, promptFile);
+        return this.spawnBackground(task, projectId, workdir, promptFile, runtimeDefaultModel);
 
       case "tui":
         return this.spawnTui(
@@ -204,7 +206,8 @@ Start now.`;
           projectId,
           workdir,
           promptFile,
-          options.windowName
+          options.windowName,
+          runtimeDefaultModel
         );
 
       case "dashboard":
@@ -214,6 +217,7 @@ Start now.`;
           workdir,
           promptFile,
           options.paneId,
+          runtimeDefaultModel,
         );
 
       default:
@@ -229,7 +233,8 @@ Start now.`;
     task: ResolvedTask,
     projectId: string,
     workdir: string,
-    promptFile: string
+    promptFile: string,
+    runtimeDefaultModel?: string,
   ): Promise<SpawnResult> {
     const outputFile = join(
       this.stateDir,
@@ -241,14 +246,13 @@ Start now.`;
 
     // Use task-level overrides if provided
     const agent = this.getEffectiveAgent(task);
-    const model = this.getEffectiveModel(task);
+    const model = this.getEffectiveModel(task, runtimeDefaultModel);
 
     const proc = Bun.spawn({
       cmd: [
         this.config.opencode.bin,
         "run",
-        "--agent",
-        agent,
+        ...(agent ? ["--agent", agent] : []),
         "--model",
         model,
         promptContent,
@@ -284,7 +288,8 @@ Start now.`;
     projectId: string,
     workdir: string,
     promptFile: string,
-    windowName?: string
+    windowName?: string,
+    runtimeDefaultModel?: string,
   ): Promise<SpawnResult> {
     // Use short ID for cleaner tmux window names
     // For proper 8-char IDs: use as-is
@@ -296,16 +301,17 @@ Start now.`;
 
     // Use task-level overrides if provided
     const agent = this.getEffectiveAgent(task);
-    const model = this.getEffectiveModel(task);
+    const model = this.getEffectiveModel(task, runtimeDefaultModel);
 
     // Build runner script that OpenCode TUI runs in
     const runnerScript = join(
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
+    const agentFlag = agent ? `--agent "${agent}" ` : "";
     const script = `#!/bin/bash
 cd "${workdir}"
-"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
+"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
@@ -376,10 +382,11 @@ exit $exit_code
     workdir: string,
     promptFile: string,
     targetPane?: string,
+    runtimeDefaultModel?: string,
   ): Promise<SpawnResult> {
     // Use task-level overrides if provided
     const agent = this.getEffectiveAgent(task);
-    const model = this.getEffectiveModel(task);
+    const model = this.getEffectiveModel(task, runtimeDefaultModel);
 
     // Build runner script
     // Always use TUI command (--port 0 --prompt) in dashboard panes because:
@@ -390,7 +397,8 @@ exit $exit_code
       this.stateDir,
       `runner_${projectId}_${task.id}.sh`
     );
-    const opencodeCmd = `"${this.config.opencode.bin}" --agent "${agent}" --model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
+    const agentFlag = agent ? `--agent "${agent}" ` : "";
+    const opencodeCmd = `"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}
@@ -773,7 +781,8 @@ If setup fails, output "SETUP_FAILED: <reason>" at the end.`;
     const TIMEOUT_MS = 120000; // 2 minutes
 
     try {
-      const shellPromise = Bun.$`${this.config.opencode.bin} run --agent ${this.config.opencode.agent} --model ${this.config.opencode.model} ${setupPrompt}`
+      const agentArgs = this.config.opencode.agent ? ["--agent", this.config.opencode.agent] : [];
+      const shellPromise = Bun.$`${this.config.opencode.bin} run ${agentArgs} --model ${this.config.opencode.model} ${setupPrompt}`
         .cwd(worktreePath)
         .text();
       

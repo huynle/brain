@@ -13,6 +13,7 @@ import { createGraphRoutes } from "./api/graph";
 import { createHealthRoutes, getHealthStatus } from "./api/health";
 import { createSearchRoutes } from "./api/search";
 import { createSectionRoutes } from "./api/sections";
+import { createCronRoutes } from "./api/crons";
 import { createTaskRoutes } from "./api/tasks";
 import { createMcpRoutes } from "./mcp/transport";
 import { createOAuthRoutes } from "./mcp/auth";
@@ -53,6 +54,9 @@ export function createApp(config: Config): OpenAPIHono {
 
   // Task routes (specific paths first)
   api.route("/tasks", createTaskRoutes());
+
+  // Cron routes
+  api.route("/crons", createCronRoutes());
 
   // Entry CRUD routes
   api.route("/entries", createEntriesRoutes());
@@ -129,6 +133,10 @@ When enabled, pass the API key in the \`Authorization\` header.`,
       {
         name: "Tasks",
         description: "Task management with dependency resolution",
+      },
+      {
+        name: "Crons",
+        description: "Cron scheduling and manual trigger operations",
       },
       {
         name: "Health",

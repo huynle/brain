@@ -39,6 +39,7 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
+    cron_ids: [],
     tags: [],
 
     created: new Date().toISOString(),
@@ -53,7 +54,7 @@ function createMockTask(
     agent: null,
     model: null,
     // Session traceability
-    session_ids: [],
+    sessions: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",
@@ -481,6 +482,70 @@ Step 3: Commit changes`;
         expect(spawnArgs.cmd).toContain("--model");
         const modelIndex = spawnArgs.cmd.indexOf("--model");
         expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-sonnet-4-20250514");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("uses runtime default model override when task model is unset", async () => {
+      const task = createMockTask("task1", {
+        model: null,
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+          runtimeDefaultModel: "anthropic/claude-sonnet-4-5",
+        });
+
+        const modelIndex = spawnArgs.cmd.indexOf("--model");
+        expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-sonnet-4-5");
+      } finally {
+        Bun.spawn = originalSpawn;
+      }
+    });
+
+    test("prefers task model over runtime default model override", async () => {
+      const task = createMockTask("task1", {
+        model: "anthropic/claude-opus-4-1",
+      });
+      let spawnArgs: any = null;
+
+      const originalSpawn = Bun.spawn;
+      const mockProc = {
+        pid: 12345,
+        kill: () => {},
+        exited: Promise.resolve(0),
+      };
+
+      // @ts-expect-error - mocking Bun.spawn
+      Bun.spawn = (args: any) => {
+        spawnArgs = args;
+        return mockProc;
+      };
+
+      try {
+        await executor.spawn(task, "test-project", {
+          mode: "background",
+          runtimeDefaultModel: "anthropic/claude-sonnet-4-5",
+        });
+
+        const modelIndex = spawnArgs.cmd.indexOf("--model");
+        expect(spawnArgs.cmd[modelIndex + 1]).toBe("anthropic/claude-opus-4-1");
       } finally {
         Bun.spawn = originalSpawn;
       }

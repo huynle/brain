@@ -61,6 +61,8 @@ export interface RunningTask {
   opencodePort?: number;   // OpenCode HTTP API port (discovered via lsof)
   sessionId?: string;      // OpenCode session ID (discovered via /session endpoint)
   idleSince?: string;      // ISO timestamp when idle was first detected
+  cronId?: string;
+  runId?: string;
 }
 
 export interface TaskResult {
@@ -70,6 +72,7 @@ export interface TaskResult {
   completedAt: string;
   duration: number; // ms
   exitCode?: number;
+  cronId?: string;
 }
 
 // =============================================================================

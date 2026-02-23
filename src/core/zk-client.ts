@@ -26,6 +26,17 @@ export interface ExecResult {
   exitCode: number;
 }
 
+export interface CronRun {
+  run_id: string;
+  status: string;
+  started: string;
+  completed: string;
+  duration: string;
+  tasks: string;
+  failed_task: string;
+  skip_reason: string;
+}
+
 // =============================================================================
 // ZK Command Execution
 // =============================================================================
@@ -435,11 +446,24 @@ export function parseFrontmatter(content: string): {
   const tags: string[] = [];
   const dependsOn: string[] = [];
   const featureDependsOn: string[] = [];
+  const cronIds: string[] = [];
+  const runs: CronRun[] = [];
+  const sessions: Record<
+    string,
+    { timestamp: string; cron_id?: string; run_id?: string }
+  > = {};
   const sessionIds: string[] = [];
+  const sessionTimestamps: Record<string, string> = {};
   let inTags = false;
   let inDependsOn = false;
   let inFeatureDependsOn = false;
+  let inSessions = false;
+  let currentSessionId: string | null = null;
   let inSessionIds = false;
+  let inSessionTimestamps = false;
+  let inCronIds = false;
+  let inRuns = false;
+  let currentRun: CronRun | null = null;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -461,6 +485,24 @@ export function parseFrontmatter(content: string): {
     if (statusMatch) {
       frontmatter.status = statusMatch[1];
       inTags = false;
+      continue;
+    }
+
+    const scheduleMatch = line.match(/^schedule:\s*(.+)$/);
+    if (scheduleMatch) {
+      frontmatter.schedule = parseYamlStringValue(scheduleMatch[1]);
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
+    const nextRunMatch = line.match(/^next_run:\s*(.+)$/);
+    if (nextRunMatch) {
+      frontmatter.next_run = parseYamlStringValue(nextRunMatch[1]);
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
       continue;
     }
 
@@ -600,7 +642,10 @@ export function parseFrontmatter(content: string): {
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
       inDependsOn = false;
+      inSessions = false;
       inSessionIds = false;
+      inCronIds = false;
+      inRuns = false;
       continue;
     }
 
@@ -609,7 +654,10 @@ export function parseFrontmatter(content: string): {
       inDependsOn = true;
       inTags = false;
       inFeatureDependsOn = false;
+      inSessions = false;
       inSessionIds = false;
+      inCronIds = false;
+      inRuns = false;
       continue;
     }
 
@@ -618,17 +666,101 @@ export function parseFrontmatter(content: string): {
       inFeatureDependsOn = true;
       inTags = false;
       inDependsOn = false;
+      inSessions = false;
       inSessionIds = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
+    // Handle cron_ids array
+    if (line.match(/^cron_ids:\s*$/)) {
+      inCronIds = true;
+      inRuns = false;
+      currentRun = null;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      inSessions = false;
+      inSessionIds = false;
+      inSessionTimestamps = false;
+      continue;
+    }
+
+    // Handle runs array of objects
+    if (line.match(/^runs:\s*$/)) {
+      inRuns = true;
+      currentRun = null;
+      inCronIds = false;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      inSessions = false;
+      inSessionIds = false;
+      inSessionTimestamps = false;
+      continue;
+    }
+
+    // Handle sessions map (new unified format)
+    if (line.match(/^sessions:\s*$/)) {
+      inSessions = true;
+      currentSessionId = null;
+      inSessionIds = false;
+      inSessionTimestamps = false;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      inCronIds = false;
+      inRuns = false;
       continue;
     }
 
     // Handle session_ids array
     if (line.match(/^session_ids:\s*$/)) {
       inSessionIds = true;
+      inSessionTimestamps = false;
+      inSessions = false;
+      currentSessionId = null;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
+    // Handle session_timestamps map
+    if (line.match(/^session_timestamps:\s*$/)) {
+      inSessionTimestamps = true;
+      inSessionIds = false;
+      inSessions = false;
+      currentSessionId = null;
       inTags = false;
       inDependsOn = false;
       inFeatureDependsOn = false;
       continue;
+    }
+
+    if (inSessions) {
+      const sessionHeaderMatch = line.match(/^\s+([^:]+):\s*$/);
+      if (sessionHeaderMatch) {
+        currentSessionId = parseYamlStringValue(sessionHeaderMatch[1]);
+        sessions[currentSessionId] = { timestamp: "" };
+        continue;
+      }
+
+      const sessionFieldMatch = line.match(/^\s{4}(timestamp|cron_id|run_id):\s*(.+?)\s*$/);
+      if (sessionFieldMatch && currentSessionId) {
+        const field = sessionFieldMatch[1] as "timestamp" | "cron_id" | "run_id";
+        const value = parseYamlStringValue(sessionFieldMatch[2]);
+        sessions[currentSessionId][field] = value;
+        continue;
+      }
+
+      if (!line.match(/^\s/)) {
+        inSessions = false;
+        currentSessionId = null;
+      }
     }
 
     if (inTags) {
@@ -670,6 +802,69 @@ export function parseFrontmatter(content: string): {
         inSessionIds = false;
       }
     }
+
+    if (inSessionTimestamps) {
+      // Parse YAML map entries like: ses_abc123: "2026-02-22T10:30:00.000Z"
+      const mapMatch = line.match(/^\s+([^:]+):\s*(.+?)\s*$/);
+      if (mapMatch) {
+        const key = parseYamlStringValue(mapMatch[1]);
+        const value = parseYamlStringValue(mapMatch[2]);
+        sessionTimestamps[key] = value;
+      } else if (!line.match(/^\s/)) {
+        // No longer indented, exit session_timestamps section
+        inSessionTimestamps = false;
+      }
+    }
+
+    if (inCronIds) {
+      const cronIdMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (cronIdMatch) {
+        cronIds.push(parseYamlStringValue(cronIdMatch[1]));
+      } else if (!line.match(/^\s/)) {
+        inCronIds = false;
+      }
+    }
+
+    if (inRuns) {
+      const runHeaderMatch = line.match(/^\s+-\s+run_id:\s*(.+?)\s*$/);
+      if (runHeaderMatch) {
+        if (currentRun) {
+          runs.push(currentRun);
+        }
+        currentRun = {
+          run_id: parseYamlStringValue(runHeaderMatch[1]),
+          status: "",
+          started: "",
+          completed: "",
+          duration: "",
+          tasks: "",
+          failed_task: "",
+          skip_reason: "",
+        };
+        continue;
+      }
+
+      const runFieldMatch = line.match(
+        /^\s{4}(status|started|completed|duration|tasks|failed_task|skip_reason):\s*(.*?)\s*$/
+      );
+      if (runFieldMatch && currentRun) {
+        const field = runFieldMatch[1] as keyof Omit<CronRun, "run_id">;
+        currentRun[field] = parseYamlStringValue(runFieldMatch[2]);
+        continue;
+      }
+
+      if (!line.match(/^\s/)) {
+        if (currentRun) {
+          runs.push(currentRun);
+          currentRun = null;
+        }
+        inRuns = false;
+      }
+    }
+  }
+
+  if (currentRun) {
+    runs.push(currentRun);
   }
 
   if (tags.length > 0) {
@@ -684,8 +879,37 @@ export function parseFrontmatter(content: string): {
     frontmatter.feature_depends_on = featureDependsOn;
   }
 
-  if (sessionIds.length > 0) {
-    frontmatter.session_ids = sessionIds;
+  if (cronIds.length > 0) {
+    frontmatter.cron_ids = cronIds;
+  }
+
+  if (runs.length > 0) {
+    frontmatter.runs = runs;
+  }
+
+  if (Object.keys(sessions).length > 0) {
+    frontmatter.sessions = sessions;
+  } else if (sessionIds.length > 0 || Object.keys(sessionTimestamps).length > 0) {
+    const normalizedSessions: Record<
+      string,
+      { timestamp: string; cron_id?: string; run_id?: string }
+    > = {};
+
+    for (const sessionId of sessionIds) {
+      normalizedSessions[sessionId] = {
+        timestamp: sessionTimestamps[sessionId] || "",
+      };
+    }
+
+    for (const [sessionId, timestamp] of Object.entries(sessionTimestamps)) {
+      if (!normalizedSessions[sessionId]) {
+        normalizedSessions[sessionId] = { timestamp };
+      }
+    }
+
+    if (Object.keys(normalizedSessions).length > 0) {
+      frontmatter.sessions = normalizedSessions;
+    }
   }
 
   // Handle multi-line literal block scalars for user_original_request and direct_prompt
@@ -852,6 +1076,10 @@ export function unescapeYamlValue(value: string): string {
  */
 export function serializeFrontmatter(fm: Record<string, unknown>): string {
   const lines: string[] = [];
+  const formatRunValue = (value: unknown): string => {
+    const str = String(value ?? "");
+    return str === "" ? '""' : escapeYamlValue(str);
+  };
 
   // Emit fields in canonical order, escaping each appropriately
   if (fm.title) lines.push(`title: ${escapeYamlValue(fm.title as string)}`);
@@ -869,6 +1097,32 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   }
 
   if (fm.status) lines.push(`status: ${fm.status}`);
+  if (fm.schedule) lines.push(`schedule: ${escapeYamlValue(fm.schedule as string)}`);
+  if (fm.next_run) lines.push(`next_run: ${escapeYamlValue(fm.next_run as string)}`);
+
+  if (Array.isArray(fm.cron_ids) && fm.cron_ids.length > 0) {
+    lines.push("cron_ids:");
+    for (const cronId of fm.cron_ids) {
+      lines.push(`  - ${escapeYamlValue(String(cronId))}`);
+    }
+  }
+
+  if (Array.isArray(fm.runs) && fm.runs.length > 0) {
+    lines.push("runs:");
+    for (const rawRun of fm.runs) {
+      if (!rawRun || typeof rawRun !== "object") continue;
+      const run = rawRun as Partial<CronRun>;
+      lines.push(`  - run_id: ${formatRunValue(run.run_id)}`);
+      lines.push(`    status: ${formatRunValue(run.status)}`);
+      lines.push(`    started: ${formatRunValue(run.started)}`);
+      lines.push(`    completed: ${formatRunValue(run.completed)}`);
+      lines.push(`    duration: ${formatRunValue(run.duration)}`);
+      lines.push(`    tasks: ${formatRunValue(run.tasks)}`);
+      lines.push(`    failed_task: ${formatRunValue(run.failed_task)}`);
+      lines.push(`    skip_reason: ${formatRunValue(run.skip_reason)}`);
+    }
+  }
+
   if (fm.created) lines.push(`created: ${fm.created}`);
   if (fm.priority) lines.push(`priority: ${fm.priority}`);
   if (fm.parent_id) lines.push(`parent_id: ${fm.parent_id}`);
@@ -914,11 +1168,26 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.agent) lines.push(`agent: ${escapeYamlValue(fm.agent as string)}`);
   if (fm.model) lines.push(`model: ${escapeYamlValue(fm.model as string)}`);
 
-  // Session traceability
-  if (Array.isArray(fm.session_ids) && fm.session_ids.length > 0) {
-    lines.push("session_ids:");
-    for (const sessionId of fm.session_ids) {
-      lines.push(`  - ${escapeYamlValue(String(sessionId))}`);
+  // Session traceability (unified sessions map)
+  if (fm.sessions && typeof fm.sessions === "object" && !Array.isArray(fm.sessions)) {
+    const sessionMap = fm.sessions as Record<
+      string,
+      { timestamp?: string; cron_id?: string; run_id?: string }
+    >;
+    const sessionIds = Object.keys(sessionMap);
+    if (sessionIds.length > 0) {
+      lines.push("sessions:");
+      for (const sessionId of sessionIds) {
+        const session = sessionMap[sessionId] || {};
+        lines.push(`  ${escapeYamlValue(sessionId)}:`);
+        lines.push(`    timestamp: ${escapeYamlValue(String(session.timestamp ?? ""))}`);
+        if (session.cron_id) {
+          lines.push(`    cron_id: ${escapeYamlValue(String(session.cron_id))}`);
+        }
+        if (session.run_id) {
+          lines.push(`    run_id: ${escapeYamlValue(String(session.run_id))}`);
+        }
+      }
     }
   }
 
@@ -951,7 +1220,14 @@ export interface GenerateFrontmatterOptions {
   agent?: string;
   model?: string;
   // Session traceability
-  session_ids?: string[];
+  sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
+  // Cron scheduling metadata
+  schedule?: string;
+  next_run?: string;
+  cron_ids?: string[];
+  runs?: CronRun[];
+  // Timestamp for chronological ordering (matches zk template `created: {{format-date now}}`)
+  created?: string;
 }
 
 /**
@@ -960,6 +1236,8 @@ export interface GenerateFrontmatterOptions {
 export function generateFrontmatter(options: GenerateFrontmatterOptions): string {
   const status = options.status || "active";
   const tags = new Set<string>(options.tags || []);
+  const formatRunValue = (value: string): string =>
+    value === "" ? '""' : escapeYamlValue(value);
   // Add type to tags (useful for zk --tag filtering by type)
   tags.add(options.type);
   // Note: status is NOT added to tags - it's only in status: field
@@ -980,6 +1258,40 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
 
   lines.push(`status: ${status}`);
+
+  if (options.schedule) {
+    lines.push(`schedule: ${escapeYamlValue(options.schedule)}`);
+  }
+
+  if (options.next_run) {
+    lines.push(`next_run: ${escapeYamlValue(options.next_run)}`);
+  }
+
+  if (options.cron_ids && options.cron_ids.length > 0) {
+    lines.push("cron_ids:");
+    for (const cronId of options.cron_ids) {
+      lines.push(`  - ${escapeYamlValue(cronId)}`);
+    }
+  }
+
+  if (options.runs && options.runs.length > 0) {
+    lines.push("runs:");
+    for (const run of options.runs) {
+      lines.push(`  - run_id: ${formatRunValue(run.run_id)}`);
+      lines.push(`    status: ${formatRunValue(run.status)}`);
+      lines.push(`    started: ${formatRunValue(run.started)}`);
+      lines.push(`    completed: ${formatRunValue(run.completed)}`);
+      lines.push(`    duration: ${formatRunValue(run.duration)}`);
+      lines.push(`    tasks: ${formatRunValue(run.tasks)}`);
+      lines.push(`    failed_task: ${formatRunValue(run.failed_task)}`);
+      lines.push(`    skip_reason: ${formatRunValue(run.skip_reason)}`);
+    }
+  }
+
+  // Timestamp for chronological ordering (matches zk template field order)
+  if (options.created) {
+    lines.push(`created: ${options.created}`);
+  }
 
   if (options.priority) {
     lines.push(`priority: ${options.priority}`);
@@ -1043,11 +1355,19 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
     lines.push(`model: ${escapeYamlValue(options.model)}`);
   }
 
-  // Session traceability
-  if (options.session_ids && options.session_ids.length > 0) {
-    lines.push("session_ids:");
-    for (const sessionId of options.session_ids) {
-      lines.push(`  - ${escapeYamlValue(sessionId)}`);
+  // Session traceability (unified sessions map)
+  if (options.sessions && Object.keys(options.sessions).length > 0) {
+    lines.push("sessions:");
+    for (const sessionId of Object.keys(options.sessions)) {
+      const session = options.sessions[sessionId];
+      lines.push(`  ${escapeYamlValue(sessionId)}:`);
+      lines.push(`    timestamp: ${escapeYamlValue(session.timestamp)}`);
+      if (session.cron_id) {
+        lines.push(`    cron_id: ${escapeYamlValue(session.cron_id)}`);
+      }
+      if (session.run_id) {
+        lines.push(`    run_id: ${escapeYamlValue(session.run_id)}`);
+      }
     }
   }
 

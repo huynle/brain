@@ -9,7 +9,8 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { TaskService, normalizeDependencyRef } from "./task-service";
+import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
+import type { Task } from "./types";
 
 // =============================================================================
 // Test Helpers
@@ -285,6 +286,195 @@ describe("TaskService", () => {
     test("trims whitespace", () => {
       const result = normalizeDependencyRef("  1770555889709-task-name  ");
       expect(result.normalized).toBe("1770555889709-task-name");
+    });
+  });
+
+  describe("findDependents()", () => {
+    // Helper to create a minimal Task object for testing
+    function makeTask(overrides: Partial<Task> & { id: string; path: string; depends_on: string[] }): Task {
+      return {
+        title: `Task ${overrides.id}`,
+        priority: "medium",
+        status: "pending",
+        tags: [],
+        cron_ids: [],
+        created: "2025-01-01",
+        target_workdir: null,
+        workdir: null,
+        worktree: null,
+        git_remote: null,
+        git_branch: null,
+        user_original_request: null,
+        direct_prompt: null,
+        agent: null,
+        model: null,
+        sessions: {},
+        ...overrides,
+      };
+    }
+
+    test("returns empty array when no tasks depend on the given ID", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: [] }),
+          makeTask({ id: "task-2", path: "projects/proj-a/task/task-2.md", depends_on: ["task-3"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-99", "proj-a", tasksByProject);
+      expect(result).toEqual([]);
+    });
+
+    test("finds dependents using bare ID in same project", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: ["task-2"] }),
+          makeTask({ id: "task-2", path: "projects/proj-a/task/task-2.md", depends_on: [] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-2", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        taskId: "task-1",
+        taskPath: "projects/proj-a/task/task-1.md",
+        projectId: "proj-a",
+        depRef: "task-2",
+      });
+    });
+
+    test("finds dependents using cross-project colon syntax", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: [] }),
+        ]],
+        ["proj-b", [
+          makeTask({ id: "task-10", path: "projects/proj-b/task/task-10.md", depends_on: ["proj-a:task-1"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        taskId: "task-10",
+        taskPath: "projects/proj-b/task/task-10.md",
+        projectId: "proj-b",
+        depRef: "proj-a:task-1",
+      });
+    });
+
+    test("finds dependents using full path syntax", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: [] }),
+        ]],
+        ["proj-b", [
+          makeTask({ id: "task-10", path: "projects/proj-b/task/task-10.md", depends_on: ["projects/proj-a/task/task-1.md"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toEqual({
+        taskId: "task-10",
+        taskPath: "projects/proj-b/task/task-10.md",
+        projectId: "proj-b",
+        depRef: "projects/proj-a/task/task-1.md",
+      });
+    });
+
+    test("finds multiple dependents across multiple projects", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: ["task-2"] }),
+          makeTask({ id: "task-2", path: "projects/proj-a/task/task-2.md", depends_on: [] }),
+          makeTask({ id: "task-3", path: "projects/proj-a/task/task-3.md", depends_on: ["task-2"] }),
+        ]],
+        ["proj-b", [
+          makeTask({ id: "task-10", path: "projects/proj-b/task/task-10.md", depends_on: ["proj-a:task-2"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-2", "proj-a", tasksByProject);
+      expect(result).toHaveLength(3);
+
+      const ids = result.map((r) => r.taskId).sort();
+      expect(ids).toEqual(["task-1", "task-10", "task-3"]);
+    });
+
+    test("does not match bare ID from a different project (bare ID is same-project only)", () => {
+      // task-1 exists in proj-a. proj-b has a task with bare "task-1" dep.
+      // Bare "task-1" in proj-b means proj-b:task-1, NOT proj-a:task-1.
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: [] }),
+        ]],
+        ["proj-b", [
+          makeTask({ id: "task-5", path: "projects/proj-b/task/task-5.md", depends_on: ["task-1"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      // proj-b's bare "task-1" refers to proj-b:task-1, not proj-a:task-1
+      expect(result).toHaveLength(0);
+    });
+
+    test("handles task with multiple deps where only some match", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: ["task-2", "task-3", "proj-b:task-99"] }),
+          makeTask({ id: "task-2", path: "projects/proj-a/task/task-2.md", depends_on: [] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-2", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0].depRef).toBe("task-2");
+    });
+
+    test("handles empty tasksByProject map", () => {
+      const tasksByProject = new Map<string, Task[]>();
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toEqual([]);
+    });
+
+    test("handles tasks with empty depends_on arrays", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: [] }),
+          makeTask({ id: "task-2", path: "projects/proj-a/task/task-2.md", depends_on: [] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toEqual([]);
+    });
+
+    test("does not include the target task itself as a dependent", () => {
+      // Edge case: a task depends on itself (circular)
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-a", [
+          makeTask({ id: "task-1", path: "projects/proj-a/task/task-1.md", depends_on: ["task-1"] }),
+        ]],
+      ]);
+
+      // task-1 depends on task-1 — it IS a dependent, but we should still report it
+      // (the caller decides what to do with self-references)
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0].taskId).toBe("task-1");
+    });
+
+    test("finds dependents using full path without .md extension", () => {
+      const tasksByProject = new Map<string, Task[]>([
+        ["proj-b", [
+          makeTask({ id: "task-10", path: "projects/proj-b/task/task-10.md", depends_on: ["projects/proj-a/task/task-1"] }),
+        ]],
+      ]);
+
+      const result = findDependents("task-1", "proj-a", tasksByProject);
+      expect(result).toHaveLength(1);
+      expect(result[0].depRef).toBe("projects/proj-a/task/task-1");
     });
   });
 });

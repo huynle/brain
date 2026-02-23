@@ -63,11 +63,13 @@ import type {
   StatsResponse,
   EntryType,
   EntryStatus,
+  SessionInfo,
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
-import { TaskService, normalizeDependencyRef } from "./task-service";
-import type { DependencyValidationResult } from "./task-service";
+import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
+import type { DependencyValidationResult, DependentInfo } from "./task-service";
+import { getNextRun } from "./cron-service";
 
 // =============================================================================
 // Dependency Validation Error
@@ -88,6 +90,61 @@ export class DependencyValidationError extends Error {
 // =============================================================================
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+function normalizeCronRuns(rawRuns: unknown): import("./types").CronRun[] | undefined {
+  if (!Array.isArray(rawRuns)) {
+    return undefined;
+  }
+
+  const runs = rawRuns
+    .map((run) => {
+      if (!run || typeof run !== "object") {
+        return null;
+      }
+
+      const obj = run as Record<string, unknown>;
+      const runId = typeof obj.run_id === "string" ? obj.run_id : "";
+      const status = typeof obj.status === "string" ? obj.status : "";
+      const started = typeof obj.started === "string" ? obj.started : "";
+
+      if (!runId || !status || !started) {
+        return null;
+      }
+
+      const normalized: import("./types").CronRun = {
+        run_id: runId,
+        status: status as import("./types").CronRun["status"],
+        started,
+      };
+
+      if (typeof obj.completed === "string" && obj.completed) {
+        normalized.completed = obj.completed;
+      }
+      if (obj.duration !== undefined && obj.duration !== null && `${obj.duration}` !== "") {
+        const duration = Number(obj.duration);
+        if (!Number.isNaN(duration)) {
+          normalized.duration = duration;
+        }
+      }
+      if (obj.tasks !== undefined && obj.tasks !== null && `${obj.tasks}` !== "") {
+        const tasks = Number(obj.tasks);
+        if (!Number.isNaN(tasks)) {
+          normalized.tasks = tasks;
+        }
+      }
+      if (typeof obj.failed_task === "string" && obj.failed_task) {
+        normalized.failed_task = obj.failed_task;
+      }
+      if (typeof obj.skip_reason === "string" && obj.skip_reason) {
+        normalized.skip_reason = obj.skip_reason;
+      }
+
+      return normalized;
+    })
+    .filter((run): run is import("./types").CronRun => run !== null);
+
+  return runs.length > 0 ? runs : undefined;
+}
 
 // =============================================================================
 // Section Type
@@ -165,6 +222,10 @@ export class BrainService {
     // All other entry types default to 'active'
     const entryStatus = request.status || (entryType === "task" ? "draft" : "active");
     const isGlobal = request.global ?? false;
+
+    if (entryType === "cron" && request.schedule) {
+      request.next_run = getNextRun(request.schedule).toISOString();
+    }
 
     // Determine effective project ID
     const effectiveProjectId =
@@ -322,7 +383,14 @@ export class BrainService {
     }
 
     // Check if zk is available
-    let zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
+    let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
+
+    // Cron entries require schedule/next_run frontmatter fields that are not guaranteed
+    // by zk templates in user notebooks. Force manual creation for deterministic metadata.
+    if (entryType === "cron") {
+      zkAvailable = false;
+    }
 
     // Check if user_original_request contains characters that break zk CLI's --extra parser
     // The zk CLI fails when values contain quotes, equals signs, newlines, or other special chars
@@ -443,6 +511,21 @@ export class BrainService {
         zkArgs.push("--extra", `feature_depends_on=${formattedFeatureDeps}`);
       }
 
+      if (request.schedule) {
+        zkArgs.push("--extra", `schedule=${request.schedule}`);
+      }
+
+      if (request.next_run) {
+        zkArgs.push("--extra", `next_run=${request.next_run}`);
+      }
+
+      if (request.cron_ids && request.cron_ids.length > 0) {
+        const formattedCronIds = request.cron_ids
+          .map((id) => `\n  - "${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
+          .join("");
+        zkArgs.push("--extra", `cron_ids=${formattedCronIds}`);
+      }
+
       if (!isGlobal) {
         zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
       }
@@ -480,6 +563,7 @@ export class BrainService {
         status: entryStatus,
         projectId: isGlobal ? undefined : this.projectId,
         priority: request.priority,
+        created: new Date().toISOString(),
         // Task dependencies (already normalized above)
         depends_on: request.depends_on,
         // Execution context for tasks
@@ -497,6 +581,13 @@ export class BrainService {
         direct_prompt: request.direct_prompt,
         agent: request.agent,
         model: request.model,
+        // Session traceability
+        sessions: request.sessions,
+        // Cron metadata
+        schedule: request.schedule,
+        next_run: request.next_run,
+        cron_ids: request.cron_ids,
+        runs: request.runs as unknown as import("./zk-client").CronRun[] | undefined,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;
@@ -694,7 +785,12 @@ export class BrainService {
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
-      session_ids: frontmatter.session_ids as string[] | undefined,
+      sessions: frontmatter.sessions as Record<string, SessionInfo> | undefined,
+      // Cron metadata
+      schedule: frontmatter.schedule as string | undefined,
+      next_run: frontmatter.next_run as string | undefined,
+      cron_ids: frontmatter.cron_ids as string[] | undefined,
+      runs: normalizeCronRuns(frontmatter.runs),
     };
   }
 
@@ -724,10 +820,14 @@ export class BrainService {
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
-      request.session_ids === undefined
+      request.sessions === undefined &&
+      request.schedule === undefined &&
+      request.next_run === undefined &&
+      request.cron_ids === undefined &&
+      request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, session_ids"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, schedule, next_run, cron_ids, runs"
       );
     }
 
@@ -817,15 +917,40 @@ export class BrainService {
       updatedFrontmatter.model = request.model;
     }
 
-    // Update session_ids with APPEND semantics (merge and dedupe)
-    if (request.session_ids !== undefined && request.session_ids.length > 0) {
-      const existingSessionIds = Array.isArray(frontmatter.session_ids)
-        ? (frontmatter.session_ids as string[])
-        : [];
-      // Merge existing + new, deduplicate
-      updatedFrontmatter.session_ids = [
-        ...new Set([...existingSessionIds, ...request.session_ids]),
-      ];
+    if (request.schedule !== undefined) {
+      updatedFrontmatter.schedule = request.schedule;
+      if (request.schedule) {
+        updatedFrontmatter.next_run = getNextRun(request.schedule).toISOString();
+      }
+    }
+    if (request.next_run !== undefined) {
+      updatedFrontmatter.next_run = request.next_run;
+    }
+    if (request.cron_ids !== undefined) {
+      updatedFrontmatter.cron_ids = request.cron_ids;
+    }
+    if (request.runs !== undefined) {
+      updatedFrontmatter.runs = request.runs;
+    }
+
+    // Update sessions with APPEND semantics (merge by session ID)
+    if (request.sessions !== undefined && Object.keys(request.sessions).length > 0) {
+      const existingSessions =
+        (frontmatter.sessions as Record<string, SessionInfo> | undefined) || {};
+      const requestSessions = Object.fromEntries(
+        Object.entries(request.sessions).map(([sessionId, session]) => [
+          sessionId,
+          {
+            ...session,
+            timestamp: session.timestamp || new Date().toISOString(),
+          },
+        ])
+      );
+
+      updatedFrontmatter.sessions = {
+        ...existingSessions,
+        ...requestSessions,
+      };
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)
@@ -906,7 +1031,14 @@ export class BrainService {
   async moveEntry(
     path: string,
     newProjectId: string
-  ): Promise<{ oldPath: string; newPath: string; project: string; id: string; title: string }> {
+  ): Promise<{
+    oldPath: string;
+    newPath: string;
+    project: string;
+    id: string;
+    title: string;
+    updatedDependents: RewriteResult[];
+  }> {
     const fullPath = join(this.config.brainDir, path);
     if (!existsSync(fullPath)) {
       throw new Error(`Entry not found: ${path}`);
@@ -972,13 +1104,74 @@ export class BrainService {
     // Update SQLite atomically
     moveEntryMeta(path, newPath, newProjectId);
     
-    // Run zk index to update zk's internal index
+    // Run zk index to update zk's internal index (with retry on failure)
+    // Uses incremental index (no --force) to avoid full reindex of entire brain.
+    // Retries handle transient SQLite locks from concurrent access.
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (zkAvailable) {
+      const MAX_INDEX_RETRIES = 3;
+      const RETRY_BASE_DELAY_MS = 150;
+      let indexSuccess = false;
+      for (let i = 0; i < MAX_INDEX_RETRIES; i++) {
+        try {
+          const result = await execZk(["index", "--quiet"], 10000);
+          if (result.exitCode === 0) {
+            indexSuccess = true;
+            break;
+          }
+          // Non-zero exit code — retry after delay
+          if (i < MAX_INDEX_RETRIES - 1) {
+            await new Promise((r) =>
+              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
+            );
+          }
+        } catch {
+          // Spawn failure — retry after delay
+          if (i < MAX_INDEX_RETRIES - 1) {
+            await new Promise((r) =>
+              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
+            );
+          }
+        }
+      }
+      if (!indexSuccess) {
+        console.warn(
+          `[brain-service] zk index failed after ${MAX_INDEX_RETRIES} attempts after move: ${path} -> ${newPath}`
+        );
+      }
+    }
+    
+    // Rewrite depends_on references in dependent tasks (task entries only)
+    let updatedDependents: RewriteResult[] = [];
+    if (entryType === "task" && currentProjectId) {
       try {
-        await execZk(["index", "--quiet"]);
+        // Build task map across all projects
+        const taskService = new TaskService(this.config, currentProjectId);
+        const allProjects = taskService.listProjects();
+        const tasksByProject = new Map<string, import("./types").Task[]>();
+
+        for (const projId of allProjects) {
+          try {
+            const tasks = await taskService.getAllTasks(projId);
+            tasksByProject.set(projId, tasks);
+          } catch {
+            // Skip projects where task listing fails
+          }
+        }
+
+        // Find all tasks that reference the moved task
+        const dependents = findDependents(id, currentProjectId, tasksByProject);
+
+        // Rewrite their depends_on references on disk
+        updatedDependents = rewriteDependentFiles({
+          brainDir: this.config.brainDir,
+          dependents,
+          movedTaskId: id,
+          sourceProjectId: currentProjectId,
+          targetProjectId: newProjectId,
+        });
       } catch {
-        // Index may fail but move was successful
+        // Dep rewriting is best-effort — don't fail the move
       }
     }
     
@@ -988,6 +1181,7 @@ export class BrainService {
       project: newProjectId,
       id,
       title,
+      updatedDependents,
     };
   }
 
@@ -1919,3 +2113,102 @@ export function getBrainService(): BrainService {
 }
 
 export default BrainService;
+
+// =============================================================================
+// Dependency Rewriting for moveEntry()
+// =============================================================================
+
+export interface ComputeNewDepRefParams {
+  dependentProjectId: string;
+  movedTaskId: string;
+  sourceProjectId: string;
+  targetProjectId: string;
+}
+
+/**
+ * Compute the new dependency reference after a task moves between projects.
+ * Pure function — no I/O.
+ *
+ * Rules:
+ * - If dependent is in the target project → bare ID (now local)
+ * - Otherwise → "targetProjectId:movedTaskId" (cross-project)
+ */
+export function computeNewDepRef(params: ComputeNewDepRefParams): string {
+  const { dependentProjectId, movedTaskId, targetProjectId } = params;
+
+  if (dependentProjectId === targetProjectId) {
+    // The dependent is now in the same project as the moved task → bare ref
+    return movedTaskId;
+  }
+
+  // The dependent is in a different project → cross-project ref
+  return `${targetProjectId}:${movedTaskId}`;
+}
+
+export interface RewriteResult {
+  taskId: string;
+  project: string;
+  oldRef: string;
+  newRef: string;
+}
+
+export interface RewriteDependentFilesParams {
+  brainDir: string;
+  dependents: DependentInfo[];
+  movedTaskId: string;
+  sourceProjectId: string;
+  targetProjectId: string;
+}
+
+/**
+ * Rewrite depends_on references in dependent task files after a move.
+ * Reads each dependent file, replaces the old ref, writes back.
+ */
+export function rewriteDependentFiles(params: RewriteDependentFilesParams): RewriteResult[] {
+  const { brainDir, dependents, movedTaskId, sourceProjectId, targetProjectId } = params;
+  const results: RewriteResult[] = [];
+
+  for (const dep of dependents) {
+    const fullPath = join(brainDir, dep.taskPath);
+
+    // Gracefully skip if file doesn't exist (e.g., stale index)
+    if (!existsSync(fullPath)) {
+      continue;
+    }
+
+    const content = readFileSync(fullPath, "utf-8");
+    const { frontmatter, body } = parseFrontmatter(content);
+
+    const depsArray = (frontmatter.depends_on as string[]) || [];
+    const depIndex = depsArray.indexOf(dep.depRef);
+    if (depIndex === -1) {
+      // The ref from findDependents wasn't found in the actual file — skip
+      continue;
+    }
+
+    const newRef = computeNewDepRef({
+      dependentProjectId: dep.projectId,
+      movedTaskId,
+      sourceProjectId,
+      targetProjectId,
+    });
+
+    // Replace the old ref with the new one
+    depsArray[depIndex] = newRef;
+    frontmatter.depends_on = depsArray;
+
+    // Serialize and write back
+    const newFrontmatterStr = serializeFrontmatter(frontmatter);
+    const newContent = `---\n${newFrontmatterStr}---\n\n${body}\n`;
+    writeFileSync(fullPath, newContent, "utf-8");
+
+    results.push({
+      taskId: dep.taskId,
+      project: dep.projectId,
+      oldRef: dep.depRef,
+      newRef,
+    });
+  }
+
+  return results;
+}

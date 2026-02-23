@@ -10,7 +10,16 @@ import { Box, Text } from 'ink';
 import type { TaskDisplay } from '../types';
 import type { EntryStatus, Priority } from '../../../core/types';
 import { getStatusIcon, getStatusColor, READY_ICON } from '../status-display';
-import { topoSort, assignLanes, generatePrefix, MAX_LANES } from '../lane-layout';
+import {
+  topoSort,
+  assignLanes,
+  generatePrefixSegments,
+  type LaneAssignment,
+  type LanePrefixSegment,
+  type LanePrefixSegmentKind,
+} from '../lane-layout';
+
+type ColoredPrefixSegment = Pick<LanePrefixSegment, 'text' | 'kind'>;
 
 interface TaskTreeProps {
   tasks: TaskDisplay[];
@@ -145,6 +154,11 @@ export interface TreeNode {
   task: TaskDisplay;
   children: TreeNode[];
   inCycle: boolean;
+}
+
+export interface SelectedTaskRelationGraph {
+  ancestors: Set<string>;
+  descendants: Set<string>;
 }
 
 // Box drawing characters
@@ -407,6 +421,123 @@ function findActiveAncestor(
   return null;
 }
 
+/**
+ * Build transitive relation sets for the currently selected task.
+ *
+ * - ancestors: all transitive dependencies of selected task
+ * - descendants: all transitive dependents of selected task
+ *
+ * Only relationships within `visibleTasks` are considered.
+ */
+export function buildSelectedTaskRelationGraph(
+  visibleTasks: TaskDisplay[],
+  selectedId: string | null,
+): SelectedTaskRelationGraph {
+  const empty: SelectedTaskRelationGraph = {
+    ancestors: new Set(),
+    descendants: new Set(),
+  };
+
+  if (!selectedId) return empty;
+
+  const taskIds = new Set(visibleTasks.map((task) => task.id));
+  if (!taskIds.has(selectedId)) return empty;
+
+  const dependenciesByTask = new Map<string, string[]>();
+  const dependentsByTask = new Map<string, string[]>();
+
+  for (const task of visibleTasks) {
+    const inTreeDeps = task.dependencies.filter((depId) => taskIds.has(depId));
+    dependenciesByTask.set(task.id, inTreeDeps);
+
+    for (const depId of inTreeDeps) {
+      if (!dependentsByTask.has(depId)) {
+        dependentsByTask.set(depId, []);
+      }
+      dependentsByTask.get(depId)!.push(task.id);
+    }
+  }
+
+  const ancestors = new Set<string>();
+  const descendants = new Set<string>();
+
+  const ancestorStack = [...(dependenciesByTask.get(selectedId) || [])];
+  while (ancestorStack.length > 0) {
+    const current = ancestorStack.pop()!;
+    if (ancestors.has(current)) continue;
+    ancestors.add(current);
+    for (const next of dependenciesByTask.get(current) || []) {
+      if (!ancestors.has(next)) {
+        ancestorStack.push(next);
+      }
+    }
+  }
+
+  const descendantStack = [...(dependentsByTask.get(selectedId) || [])];
+  while (descendantStack.length > 0) {
+    const current = descendantStack.pop()!;
+    if (descendants.has(current)) continue;
+    descendants.add(current);
+    for (const next of dependentsByTask.get(current) || []) {
+      if (!descendants.has(next)) {
+        descendantStack.push(next);
+      }
+    }
+  }
+
+  // In cycles, traversal can walk back to the selected task.
+  ancestors.delete(selectedId);
+  descendants.delete(selectedId);
+
+  return { ancestors, descendants };
+}
+
+export function buildSelectedTaskRelationLanes(
+  assignments: LaneAssignment[],
+  relationGraph: SelectedTaskRelationGraph,
+): { upstreamLanes: Set<number>; downstreamLanes: Set<number> } {
+  const laneByTaskId = new Map(assignments.map((assignment) => [assignment.taskId, assignment.lane]));
+  const upstreamLanes = new Set<number>();
+  const downstreamLanes = new Set<number>();
+
+  for (const taskId of relationGraph.ancestors) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) upstreamLanes.add(lane);
+  }
+
+  for (const taskId of relationGraph.descendants) {
+    const lane = laneByTaskId.get(taskId);
+    if (lane !== undefined) downstreamLanes.add(lane);
+  }
+
+  return { upstreamLanes, downstreamLanes };
+}
+
+export function getTaskRelationKind(
+  taskId: string,
+  relationGraph: SelectedTaskRelationGraph,
+): LanePrefixSegmentKind {
+  if (relationGraph.ancestors.has(taskId)) return 'upstream';
+  if (relationGraph.descendants.has(taskId)) return 'downstream';
+  return 'neutral';
+}
+
+export function buildTreePrefixSegments(
+  prefix: string,
+  relationKind: LanePrefixSegmentKind,
+): ColoredPrefixSegment[] {
+  if (prefix.length === 0 || relationKind === 'neutral') {
+    return [{ text: prefix, kind: 'neutral' }];
+  }
+
+  const segments: ColoredPrefixSegment[] = [];
+  for (const char of prefix) {
+    const isConnector = char === '│' || char === '├' || char === '└' || char === '─';
+    segments.push({ text: char, kind: isConnector ? relationKind : 'neutral' });
+  }
+  return segments;
+}
+
 // Helper to check if a task is completed
 const isCompleted = (t: TaskDisplay): boolean => t.status === 'completed' || t.status === 'validated';
 
@@ -421,6 +552,30 @@ const isSuperseded = (t: TaskDisplay): boolean => t.status === 'superseded';
 
 // Helper to check if a task is archived
 const isArchived = (t: TaskDisplay): boolean => t.status === 'archived';
+
+/**
+ * Return task IDs in the same order used by renderFeatureTasks().
+ */
+function getFeatureRenderOrderIds(
+  featureTasks: TaskDisplay[],
+  options?: RenderFeatureTasksOptions,
+): string[] {
+  const activeTasks = options?.skipActiveFilter
+    ? featureTasks
+    : featureTasks.filter(t => !isGroupStatus(t));
+
+  if (activeTasks.length === 0) return [];
+  if (activeTasks.length === 1) return [activeTasks[0].id];
+
+  const sorted = topoSort(activeTasks);
+  const topoIds = new Set(sorted.map(t => t.id));
+  const inCycleTasks = activeTasks.filter(t => !topoIds.has(t.id));
+
+  return [
+    ...sorted.map(t => t.id),
+    ...inCycleTasks.map(t => t.id),
+  ];
+}
 
 /**
  * Flatten tree into an array of task IDs in visual/navigation order.
@@ -659,12 +814,7 @@ export function flattenFeatureOrder(
     
     // Only add tasks if feature is not collapsed
     if (!isFeatureCollapsed) {
-      // Use topoSort for task ordering so keyboard navigation (j/k) matches
-      // the visual topo-sorted order used by renderFeatureTasks()
-      const sorted = topoSort(activeFeatureTasks);
-      for (const task of sorted) {
-        result.push(task.id);
-      }
+      result.push(...getFeatureRenderOrderIds(activeFeatureTasks, { skipActiveFilter: true }));
     }
     // Note: No spacer between features - FeatureHeader has marginTop={1}
   });
@@ -681,18 +831,7 @@ export function flattenFeatureOrder(
     // Only add ungrouped tasks if section is not collapsed
     const isUngroupedCollapsed = collapsedFeatures.has(UNGROUPED_FEATURE_ID);
     if (!isUngroupedCollapsed) {
-      const tree = buildTree(ungroupedActive, ungrouped);
-      
-      function traverse(nodes: TreeNode[]): void {
-        for (const node of nodes) {
-          result.push(node.task.id);
-          if (node.children.length > 0) {
-            traverse(node.children);
-          }
-        }
-      }
-      
-      traverse(tree);
+      result.push(...getFeatureRenderOrderIds(ungrouped));
     }
   }
   
@@ -723,29 +862,15 @@ export function flattenFeatureOrder(
       for (const featureId of draftFeatureIds) {
         const featureDrafts = draftByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${DRAFT_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${DRAFT_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`draft:${featureId}`)) {
           continue;
         }
         
-        // Build tree for this feature's drafts
-        const tree = buildTree(featureDrafts, featureDrafts);
-        
-        function traverseDraft(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseDraft(node.children);
-            }
-          }
-        }
-        
-        traverseDraft(tree);
+        result.push(...getFeatureRenderOrderIds(featureDrafts, { skipActiveFilter: true }));
       }
     }
   }
@@ -777,29 +902,15 @@ export function flattenFeatureOrder(
       for (const featureId of cancelledFeatureIds) {
         const featureCancelled = cancelledByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${CANCELLED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${CANCELLED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`cancelled:${featureId}`)) {
           continue;
         }
         
-        // Build tree for this feature's cancelled tasks
-        const tree = buildTree(featureCancelled, featureCancelled);
-        
-        function traverseCancelled(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseCancelled(node.children);
-            }
-          }
-        }
-        
-        traverseCancelled(tree);
+        result.push(...getFeatureRenderOrderIds(featureCancelled, { skipActiveFilter: true }));
       }
     }
   }
@@ -831,29 +942,15 @@ export function flattenFeatureOrder(
       for (const featureId of supersededFeatureIds) {
         const featureSuperseded = supersededByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${SUPERSEDED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${SUPERSEDED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`superseded:${featureId}`)) {
           continue;
         }
         
-        // Build tree for this feature's superseded tasks
-        const tree = buildTree(featureSuperseded, featureSuperseded);
-        
-        function traverseSuperseded(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseSuperseded(node.children);
-            }
-          }
-        }
-        
-        traverseSuperseded(tree);
+        result.push(...getFeatureRenderOrderIds(featureSuperseded, { skipActiveFilter: true }));
       }
     }
   }
@@ -885,29 +982,15 @@ export function flattenFeatureOrder(
       for (const featureId of archivedFeatureIds) {
         const featureArchived = archivedByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${ARCHIVED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${ARCHIVED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`archived:${featureId}`)) {
           continue;
         }
         
-        // Build tree for this feature's archived tasks
-        const tree = buildTree(featureArchived, featureArchived);
-        
-        function traverseArchived(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseArchived(node.children);
-            }
-          }
-        }
-        
-        traverseArchived(tree);
+        result.push(...getFeatureRenderOrderIds(featureArchived, { skipActiveFilter: true }));
       }
     }
   }
@@ -939,29 +1022,15 @@ export function flattenFeatureOrder(
       for (const featureId of completedFeatureIds) {
         const featureCompleted = completedByFeature.get(featureId) || [];
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add feature header for navigation
-          result.push(`${COMPLETED_FEATURE_PREFIX}${featureId}`);
-        }
+        // Add feature header for navigation (including ungrouped)
+        result.push(`${COMPLETED_FEATURE_PREFIX}${featureId}`);
         
         // Skip tasks if feature is collapsed
         if (collapsedFeatures.has(`completed:${featureId}`)) {
           continue;
         }
         
-        // Build tree for this feature's completed tasks
-        const tree = buildTree(featureCompleted, featureCompleted);
-        
-        function traverseCompleted(nodes: TreeNode[]): void {
-          for (const node of nodes) {
-            result.push(node.task.id);
-            if (node.children.length > 0) {
-              traverseCompleted(node.children);
-            }
-          }
-        }
-        
-        traverseCompleted(tree);
+        result.push(...getFeatureRenderOrderIds(featureCompleted, { skipActiveFilter: true }));
       }
     }
   }
@@ -1069,6 +1138,7 @@ function truncateTitle(title: string, maxWidth: number): string {
 const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
+  prefixSegments,
   isSelected,
   inCycle,
   isReady,
@@ -1079,6 +1149,7 @@ const TaskRow = React.memo(function TaskRow({
 }: {
   task: TaskDisplay;
   prefix: string;
+  prefixSegments?: ColoredPrefixSegment[];
   isSelected: boolean;
   inCycle: boolean;
   isReady: boolean;
@@ -1104,16 +1175,22 @@ const TaskRow = React.memo(function TaskRow({
   
   // Cycle indicator
   const cycleSuffix = inCycle ? ' ↺' : '';
+
+  // Cron indicator for scheduled tasks
+  const cronSuffix = task.cron_ids && task.cron_ids.length > 0
+    ? ` [cron${task.schedule ? `: ${task.schedule}` : ''}]`
+    : '';
   
   // Checkbox indicator (only when multi-select is active)
   const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
+  const prefixText = prefixSegments?.map((segment) => segment.text).join('') ?? prefix;
 
   // Calculate display title (truncated or full)
   let displayTitle = task.title;
   if (!textWrap && panelWidth && panelWidth > 0) {
     // Calculate available width for title:
     // panelWidth - prefix - checkbox - icon(1) - space(1) - prioritySuffix - cycleSuffix - border/padding(4)
-    const prefixWidth = prefix.length;
+    const prefixWidth = prefixText.length;
     const checkboxWidth = showCheckboxes ? checkboxPrefix.length : 0;
     const iconWidth = 1; // status icon is 1 char (but some are multi-byte, use 2 to be safe)
     const spaceWidth = 1; // space before title
@@ -1125,7 +1202,22 @@ const TaskRow = React.memo(function TaskRow({
 
   return (
     <Box flexDirection="row">
-      <Text dimColor={isDim}>{prefix}</Text>
+      {prefixSegments ? (
+        <Box flexDirection="row">
+          {prefixSegments.map((segment, index) => (
+            <Text
+              key={`${task.id}-prefix-${index}`}
+              color={segment.kind === 'upstream' ? 'cyan' : segment.kind === 'downstream' ? 'magenta' : undefined}
+              dimColor={isDim}
+              backgroundColor={isSelected ? 'blue' : undefined}
+            >
+              {segment.text}
+            </Text>
+          ))}
+        </Box>
+      ) : (
+        <Text dimColor={isDim}>{prefix}</Text>
+      )}
       {showCheckboxes && (
         <Text
           color={isChecked ? 'green' : 'gray'}
@@ -1167,6 +1259,14 @@ const TaskRow = React.memo(function TaskRow({
           {cycleSuffix}
         </Text>
       )}
+      {cronSuffix && (
+        <Text
+          color={isSelected ? 'white' : 'yellow'}
+          backgroundColor={isSelected ? 'blue' : undefined}
+        >
+          {cronSuffix}
+        </Text>
+      )}
     </Box>
   );
 });
@@ -1179,6 +1279,7 @@ function renderTree(
   selectedId: string | null,
   prefix: string = '',
   readyIds: Set<string>,
+  relationGraph: SelectedTaskRelationGraph,
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
   panelWidth?: number,
@@ -1192,12 +1293,18 @@ function renderTree(
     const isSelected = node.task.id === selectedId;
     const isReady = readyIds.has(node.task.id);
     const isChecked = selectedTaskIds.has(node.task.id);
+    const rowPrefix = prefix + branchChar;
+    const relationKind = getTaskRelationKind(node.task.id, relationGraph);
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments(rowPrefix, relationKind);
 
     elements.push(
       <TaskRow
         key={node.task.id}
         task={node.task}
-        prefix={prefix + branchChar}
+        prefix={rowPrefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={node.inCycle}
         isReady={isReady}
@@ -1212,7 +1319,7 @@ function renderTree(
     if (node.children.length > 0) {
       const childPrefix = prefix + (isLast ? EMPTY : VERTICAL);
       elements.push(
-        ...renderTree(node.children, selectedId, childPrefix, readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(node.children, selectedId, childPrefix, readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1255,6 +1362,8 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
   isCollapsed?: boolean;
 }): React.ReactElement {
   const collapseIcon = isCollapsed ? '▶' : '▾';
+  const isUngrouped = featureId === UNGROUPED_FEATURE_ID;
+  const label = isUngrouped ? 'Ungrouped' : `Feature: ${featureId}`;
   return (
     <Box flexDirection="row" marginLeft={1}>
       <Text
@@ -1265,7 +1374,7 @@ const DimmedFeatureHeader = React.memo(function DimmedFeatureHeader({
       <Text
         color={isSelected ? 'white' : FEATURE_HEADER_COLOR}
       >
-        {' '}Feature: {featureId}
+        {' '}{label}
       </Text>
       <Text
         color={isSelected ? 'white' : 'gray'}
@@ -1391,6 +1500,7 @@ function renderProjectTasks(
   projectTasks: TaskDisplay[],
   selectedId: string | null,
   readyIds: Set<string>,
+  relationGraph: SelectedTaskRelationGraph,
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
   panelWidth?: number,
@@ -1409,13 +1519,19 @@ function renderProjectTasks(
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
+    const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
+    const rootPrefix = '  ';
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments(rootPrefix, relationKind);
 
     // Root task with indent for project grouping
     elements.push(
       <TaskRow
         key={rootNode.task.id}
         task={rootNode.task}
-        prefix="  "
+        prefix={rootPrefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
@@ -1429,7 +1545,7 @@ function renderProjectTasks(
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '  ', readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, '  ', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1438,11 +1554,23 @@ function renderProjectTasks(
 }
 
 /**
+ * Options for renderFeatureTasks()
+ */
+interface RenderFeatureTasksOptions {
+  /** Bypass isGroupStatus filter — pass true when rendering status group sections
+   *  (completed, draft, cancelled, superseded, archived) so the tasks aren't filtered out. */
+  skipActiveFilter?: boolean;
+}
+
+/**
  * Render a single feature's tasks using git-graph style lane rendering.
  *
  * Uses topoSort() + assignLanes() + generatePrefix() from lane-layout.ts
  * so merge points are visually clear. Non-feature views continue using
  * the buildTree() + renderTree() pipeline (unaffected).
+ *
+ * When options.skipActiveFilter is true, the isGroupStatus filter is bypassed
+ * so that status group tasks (completed, draft, etc.) are rendered directly.
  */
 function renderFeatureTasks(
   featureTasks: TaskDisplay[],
@@ -1451,13 +1579,17 @@ function renderFeatureTasks(
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
   panelWidth?: number,
+  options?: RenderFeatureTasksOptions,
 ): React.ReactElement[] {
   const elements: React.ReactElement[] = [];
   const showCheckboxes = selectedTaskIds.size > 0;
 
   // Separate active and group-status tasks
   // Active tasks exclude ALL group statuses (draft, cancelled, completed, validated, superseded, archived)
-  const activeTasks = featureTasks.filter(t => !isGroupStatus(t));
+  // When skipActiveFilter is true (status group rendering), include all tasks as-is
+  const activeTasks = options?.skipActiveFilter
+    ? featureTasks
+    : featureTasks.filter(t => !isGroupStatus(t));
 
   if (activeTasks.length === 0) return elements;
 
@@ -1493,13 +1625,16 @@ function renderFeatureTasks(
   // Assign lanes based on topo-sorted order
   const assignments = assignLanes(sorted);
   const assignmentByTaskId = new Map(assignments.map((a, i) => [a.taskId, { a, i }]));
+  const relationGraph = buildSelectedTaskRelationGraph(activeTasks, selectedId);
+  const laneRelationContext = buildSelectedTaskRelationLanes(assignments, relationGraph);
 
   for (const task of sorted) {
     const entry = assignmentByTaskId.get(task.id);
     if (!entry) continue;
     const { a, i } = entry;
 
-    const prefix = generatePrefix(a, i, assignments);
+    const prefixSegments = generatePrefixSegments(a, i, assignments, laneRelationContext);
+    const prefix = prefixSegments.map((segment) => segment.text).join('');
     const isSelected = task.id === selectedId;
     const isReady = readyIds.has(task.id);
     const isChecked = selectedTaskIds.has(task.id);
@@ -1510,6 +1645,7 @@ function renderFeatureTasks(
         key={task.id}
         task={task}
         prefix={prefix}
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={inCycle}
         isReady={isReady}
@@ -1633,6 +1769,10 @@ export const TaskTree = React.memo(function TaskTree({
   
   // Build tree structure from active tasks, passing all tasks for parent_id chain walking
   const tree = useMemo(() => buildTree(activeTasks, tasks), [activeTasks, tasks]);
+  const relationGraph = useMemo(
+    () => buildSelectedTaskRelationGraph(activeTasks, selectedId),
+    [activeTasks, selectedId],
+  );
 
   // Group tasks by project (for grouped view)
   const tasksByProject = useMemo(() => {
@@ -1815,8 +1955,9 @@ export const TaskTree = React.memo(function TaskTree({
       );
       
       // Project's tasks
+      const projectRelationGraph = buildSelectedTaskRelationGraph(projectActiveTasks, selectedId);
       projectElements.push(
-        ...renderProjectTasks(projectTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderProjectTasks(projectTasks, selectedId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
       );
       
       // Add spacing between projects (except last)
@@ -1870,52 +2011,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
           const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            draftElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureDrafts.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isDraftFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          draftElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureDrafts.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isDraftFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
-            // Build tree for this feature's drafts and render with dimmed colors
-            const tree = buildTree(featureDrafts, featureDrafts);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              draftElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                draftElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            draftElements.push(
+              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -1962,52 +2073,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
           const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            completedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCompleted.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCompletedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          completedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCompleted.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCompletedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
-            // Build tree for this feature's completed tasks and render with dimmed colors
-            const tree = buildTree(featureCompleted, featureCompleted);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              completedElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                completedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            completedElements.push(
+              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2056,52 +2137,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
           const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            cancelledElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCancelled.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCancelledFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          cancelledElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCancelled.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCancelledFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
-            // Build tree for this feature's cancelled tasks and render with dimmed colors
-            const tree = buildTree(featureCancelled, featureCancelled);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              cancelledElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                cancelledElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            cancelledElements.push(
+              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2150,52 +2201,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
           const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            supersededElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureSuperseded.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isSupersededFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          supersededElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureSuperseded.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isSupersededFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
-            // Build tree for this feature's superseded tasks and render with dimmed colors
-            const tree = buildTree(featureSuperseded, featureSuperseded);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              supersededElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                supersededElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            supersededElements.push(
+              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2244,52 +2265,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
           const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            archivedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureArchived.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isArchivedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          archivedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureArchived.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isArchivedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
-            // Build tree for this feature's archived tasks and render with dimmed colors
-            const tree = buildTree(featureArchived, featureArchived);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              archivedElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                archivedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            archivedElements.push(
+              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2471,52 +2462,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
           const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            draftElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureDrafts.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isDraftFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          draftElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureDrafts.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isDraftFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
-            // Build tree for this feature's drafts and render with dimmed colors
-            const tree = buildTree(featureDrafts, featureDrafts);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              draftElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                draftElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            draftElements.push(
+              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2565,52 +2526,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
           const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            cancelledElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCancelled.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCancelledFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          cancelledElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCancelled.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCancelledFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
-            // Build tree for this feature's cancelled tasks and render with dimmed colors
-            const tree = buildTree(featureCancelled, featureCancelled);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              cancelledElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                cancelledElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            cancelledElements.push(
+              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2659,52 +2590,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
           const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            supersededElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureSuperseded.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isSupersededFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          supersededElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureSuperseded.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isSupersededFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
-            // Build tree for this feature's superseded tasks and render with dimmed colors
-            const tree = buildTree(featureSuperseded, featureSuperseded);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              supersededElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                supersededElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            supersededElements.push(
+              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2753,52 +2654,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
           const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            archivedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureArchived.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isArchivedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          archivedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureArchived.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isArchivedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
-            // Build tree for this feature's archived tasks and render with dimmed colors
-            const tree = buildTree(featureArchived, featureArchived);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              archivedElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                archivedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            archivedElements.push(
+              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2845,52 +2716,22 @@ export const TaskTree = React.memo(function TaskTree({
           const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
           const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
           
-          if (featureId !== UNGROUPED_FEATURE_ID) {
-            // Add dimmed feature header
-            completedElements.push(
-              <DimmedFeatureHeader
-                key={headerId}
-                featureId={featureId}
-                taskCount={featureCompleted.length}
-                isSelected={selectedId === headerId}
-                isCollapsed={isCompletedFeatureCollapsed}
-              />
-            );
-          }
+          // Add dimmed feature header (including ungrouped)
+          completedElements.push(
+            <DimmedFeatureHeader
+              key={headerId}
+              featureId={featureId}
+              taskCount={featureCompleted.length}
+              isSelected={selectedId === headerId}
+              isCollapsed={isCompletedFeatureCollapsed}
+            />
+          );
           
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
-            // Build tree for this feature's completed tasks and render with dimmed colors
-            const tree = buildTree(featureCompleted, featureCompleted);
-            const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-            
-            tree.forEach((rootNode, rootIndex) => {
-              const isLast = rootIndex === tree.length - 1;
-              const branchChar = tree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-              const isChecked = selectedTaskIds.has(rootNode.task.id);
-              
-              completedElements.push(
-                <TaskRow
-                  key={rootNode.task.id}
-                  task={rootNode.task}
-                  prefix={indent + branchChar}
-                  isSelected={rootNode.task.id === selectedId}
-                  inCycle={rootNode.inCycle}
-                  isReady={false}
-                  isChecked={isChecked}
-                  showCheckboxes={showCheckboxes}
-                textWrap={textWrap}
-                panelWidth={panelWidth}
-                />
-              );
-              
-              if (rootNode.children.length > 0) {
-                const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-                completedElements.push(
-                  ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-                );
-              }
-            });
+            completedElements.push(
+              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+            );
           }
         }
       }
@@ -2947,6 +2788,10 @@ export const TaskTree = React.memo(function TaskTree({
     const isSelected = rootNode.task.id === selectedId;
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
+    const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
+    const prefixSegments = relationKind === 'neutral'
+      ? undefined
+      : buildTreePrefixSegments('', relationKind);
 
     // Root task (no tree prefix)
     elements.push(
@@ -2954,6 +2799,7 @@ export const TaskTree = React.memo(function TaskTree({
         key={rootNode.task.id}
         task={rootNode.task}
         prefix=""
+        prefixSegments={prefixSegments}
         isSelected={isSelected}
         inCycle={rootNode.inCycle}
         isReady={isReady}
@@ -2967,7 +2813,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '', readyIds, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, '', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
 
@@ -3025,8 +2871,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${DRAFT_FEATURE_PREFIX}${featureId}`;
         const isDraftFeatureCollapsed = collapsedFeatures.has(`draft:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           draftElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3036,42 +2881,13 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isDraftFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isDraftFeatureCollapsed) {
-          // Build tree for this feature's drafts and render with dimmed colors
-          const draftTree = buildTree(featureDrafts, featureDrafts);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
           
-          draftTree.forEach((rootNode, rootIndex) => {
-            const isLast = rootIndex === draftTree.length - 1;
-            const branchChar = draftTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-            const isChecked = selectedTaskIds.has(rootNode.task.id);
-            
+          // Only render tasks if feature is not collapsed
+          if (!isDraftFeatureCollapsed) {
             draftElements.push(
-              <TaskRow
-                key={rootNode.task.id}
-                task={rootNode.task}
-                prefix={indent + branchChar}
-                isSelected={rootNode.task.id === selectedId}
-                inCycle={rootNode.inCycle}
-                isReady={false}
-                isChecked={isChecked}
-                showCheckboxes={showCheckboxes}
-              textWrap={textWrap}
-              panelWidth={panelWidth}
-              />
+              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
-            
-            if (rootNode.children.length > 0) {
-              const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-              draftElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-              );
-            }
-          });
-        }
+          }
       }
     }
   }
@@ -3120,8 +2936,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${COMPLETED_FEATURE_PREFIX}${featureId}`;
         const isCompletedFeatureCollapsed = collapsedFeatures.has(`completed:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           completedElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3131,42 +2946,13 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isCompletedFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isCompletedFeatureCollapsed) {
-        // Build tree for this feature's completed tasks and render with dimmed colors
-        const completedTree = buildTree(featureCompleted, featureCompleted);
-        const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
-        
-        completedTree.forEach((rootNode, rootIndex) => {
-          const isLast = rootIndex === completedTree.length - 1;
-          const branchChar = completedTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-          const isChecked = selectedTaskIds.has(rootNode.task.id);
           
-          completedElements.push(
-            <TaskRow
-              key={rootNode.task.id}
-              task={rootNode.task}
-              prefix={indent + branchChar}
-              isSelected={rootNode.task.id === selectedId}
-              inCycle={rootNode.inCycle}
-              isReady={false}
-              isChecked={isChecked}
-              showCheckboxes={showCheckboxes}
-            textWrap={textWrap}
-            panelWidth={panelWidth}
-            />
-          );
-          
-          if (rootNode.children.length > 0) {
-            const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
+          // Only render tasks if feature is not collapsed
+          if (!isCompletedFeatureCollapsed) {
             completedElements.push(
-              ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
+              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
-        });
-        }
       }
     }
   }
@@ -3217,8 +3003,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${CANCELLED_FEATURE_PREFIX}${featureId}`;
         const isCancelledFeatureCollapsed = collapsedFeatures.has(`cancelled:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           cancelledElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3228,42 +3013,13 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isCancelledFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isCancelledFeatureCollapsed) {
-          // Build tree for this feature's cancelled tasks and render with dimmed colors
-          const cancelledTree = buildTree(featureCancelled, featureCancelled);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
           
-          cancelledTree.forEach((rootNode, rootIndex) => {
-            const isLast = rootIndex === cancelledTree.length - 1;
-            const branchChar = cancelledTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-            const isChecked = selectedTaskIds.has(rootNode.task.id);
-            
+          // Only render tasks if feature is not collapsed
+          if (!isCancelledFeatureCollapsed) {
             cancelledElements.push(
-              <TaskRow
-                key={rootNode.task.id}
-                task={rootNode.task}
-                prefix={indent + branchChar}
-                isSelected={rootNode.task.id === selectedId}
-                inCycle={rootNode.inCycle}
-                isReady={false}
-                isChecked={isChecked}
-                showCheckboxes={showCheckboxes}
-              textWrap={textWrap}
-              panelWidth={panelWidth}
-              />
+              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
-            
-            if (rootNode.children.length > 0) {
-              const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-              cancelledElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-              );
-            }
-          });
-        }
+          }
       }
     }
   }
@@ -3314,8 +3070,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${SUPERSEDED_FEATURE_PREFIX}${featureId}`;
         const isSupersededFeatureCollapsed = collapsedFeatures.has(`superseded:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           supersededElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3325,42 +3080,13 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isSupersededFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isSupersededFeatureCollapsed) {
-          // Build tree for this feature's superseded tasks and render with dimmed colors
-          const supersededTree = buildTree(featureSuperseded, featureSuperseded);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
           
-          supersededTree.forEach((rootNode, rootIndex) => {
-            const isLast = rootIndex === supersededTree.length - 1;
-            const branchChar = supersededTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-            const isChecked = selectedTaskIds.has(rootNode.task.id);
-            
+          // Only render tasks if feature is not collapsed
+          if (!isSupersededFeatureCollapsed) {
             supersededElements.push(
-              <TaskRow
-                key={rootNode.task.id}
-                task={rootNode.task}
-                prefix={indent + branchChar}
-                isSelected={rootNode.task.id === selectedId}
-                inCycle={rootNode.inCycle}
-                isReady={false}
-                isChecked={isChecked}
-                showCheckboxes={showCheckboxes}
-              textWrap={textWrap}
-              panelWidth={panelWidth}
-              />
+              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
-            
-            if (rootNode.children.length > 0) {
-              const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-              supersededElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-              );
-            }
-          });
-        }
+          }
       }
     }
   }
@@ -3411,8 +3137,7 @@ export const TaskTree = React.memo(function TaskTree({
         const headerId = `${ARCHIVED_FEATURE_PREFIX}${featureId}`;
         const isArchivedFeatureCollapsed = collapsedFeatures.has(`archived:${featureId}`);
         
-        if (featureId !== UNGROUPED_FEATURE_ID) {
-          // Add dimmed feature header
+          // Add dimmed feature header (including ungrouped)
           archivedElements.push(
             <DimmedFeatureHeader
               key={headerId}
@@ -3422,42 +3147,13 @@ export const TaskTree = React.memo(function TaskTree({
               isCollapsed={isArchivedFeatureCollapsed}
             />
           );
-        }
-        
-        // Only render tasks if feature is not collapsed
-        if (!isArchivedFeatureCollapsed) {
-          // Build tree for this feature's archived tasks and render with dimmed colors
-          const archivedTree = buildTree(featureArchived, featureArchived);
-          const indent = featureId !== UNGROUPED_FEATURE_ID ? '  ' : '';
           
-          archivedTree.forEach((rootNode, rootIndex) => {
-            const isLast = rootIndex === archivedTree.length - 1;
-            const branchChar = archivedTree.length === 1 ? '└─' : (isLast ? '└─' : '├─');
-            const isChecked = selectedTaskIds.has(rootNode.task.id);
-            
+          // Only render tasks if feature is not collapsed
+          if (!isArchivedFeatureCollapsed) {
             archivedElements.push(
-              <TaskRow
-                key={rootNode.task.id}
-                task={rootNode.task}
-                prefix={indent + branchChar}
-                isSelected={rootNode.task.id === selectedId}
-                inCycle={rootNode.inCycle}
-                isReady={false}
-                isChecked={isChecked}
-                showCheckboxes={showCheckboxes}
-              textWrap={textWrap}
-              panelWidth={panelWidth}
-              />
+              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
-            
-            if (rootNode.children.length > 0) {
-              const childPrefix = indent + (isLast ? EMPTY : VERTICAL);
-              archivedElements.push(
-                ...renderTree(rootNode.children, selectedId, childPrefix, new Set(), selectedTaskIds, textWrap, panelWidth)
-              );
-            }
-          });
-        }
+          }
       }
     }
   }

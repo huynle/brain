@@ -21,6 +21,7 @@ export const ENTRY_TYPES = [
   "exploration",
   "execution",
   "task",
+  "cron",
 ] as const;
 
 export type EntryType = (typeof ENTRY_TYPES)[number];
@@ -50,6 +51,23 @@ export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 
 export const PRIORITIES = ["high", "medium", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
+
+export type SessionInfo = {
+  timestamp: string;
+  cron_id?: string;
+  run_id?: string;
+};
+
+export interface CronRun {
+  run_id: string; // "YYYYMMDD-HHmm" from scheduled trigger time
+  status: "completed" | "failed" | "skipped" | "in_progress";
+  started: string; // ISO timestamp
+  completed?: string; // ISO timestamp
+  duration?: number; // ms
+  tasks?: number; // number of tasks in this run
+  failed_task?: string; // task ID if a task failed
+  skip_reason?: string; // reason if skipped (e.g., "task X in_progress")
+}
 
 // =============================================================================
 // ZK Note (from zk CLI output)
@@ -100,6 +118,10 @@ export interface BrainEntry {
   modified?: string; // ISO timestamp
   access_count?: number;
   last_verified?: string;
+  schedule?: string; // cron expression e.g. "0 2 * * *"
+  next_run?: string; // ISO timestamp of next scheduled run
+  cron_ids?: string[]; // for tasks: which cron entries trigger this task
+  runs?: CronRun[]; // for cron entries: execution history
 
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
@@ -112,7 +134,7 @@ export interface BrainEntry {
   user_original_request?: string; // Verbatim user request for validation during task completion
 
   // Session traceability
-  session_ids?: string[]; // OpenCode session IDs that have worked on this entry (for audit/tracing)
+  sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
 }
 
 // =============================================================================
@@ -130,6 +152,10 @@ export interface CreateEntryRequest {
   global?: boolean;
   project?: string;
   relatedEntries?: string[];
+  schedule?: string;
+  next_run?: string;
+  cron_ids?: string[];
+  runs?: CronRun[];
 
   // Execution context for tasks
   target_workdir?: string; // Explicit workdir override for task execution (absolute path)
@@ -149,6 +175,9 @@ export interface CreateEntryRequest {
   direct_prompt?: string;
   agent?: string;
   model?: string;
+
+  // Session traceability
+  sessions?: Record<string, SessionInfo>;
 }
 
 export interface CreateEntryResponse {
@@ -169,6 +198,10 @@ export interface UpdateEntryRequest {
   depends_on?: string[];
   tags?: string[];
   priority?: Priority;
+  schedule?: string;
+  next_run?: string;
+  cron_ids?: string[];
+  runs?: CronRun[];
   target_workdir?: string;
   git_branch?: string;
   // Feature grouping (for task organization)
@@ -180,8 +213,8 @@ export interface UpdateEntryRequest {
   agent?: string;
   model?: string;
 
-  // Session traceability (append semantics - new IDs are added to existing)
-  session_ids?: string[];
+  // Session traceability (append semantics - new entries are merged by session ID)
+  sessions?: Record<string, SessionInfo>;
 }
 
 export interface ListEntriesRequest {
@@ -323,6 +356,7 @@ export interface Task {
   status: EntryStatus;
   depends_on: string[];
   tags: string[]; // Tags for filtering and categorization
+  cron_ids: string[]; // IDs of cron entries that trigger this task
   created: string;
   modified?: string; // ISO timestamp when last modified
   target_workdir: string | null; // Explicit workdir override for task execution (absolute path)
@@ -343,7 +377,10 @@ export interface Task {
   model: string | null; // Override model for this task (e.g., "anthropic/claude-sonnet-4-20250514")
 
   // Session traceability
-  session_ids: string[]; // OpenCode session IDs that have worked on this task (for audit/tracing)
+  sessions: Record<string, SessionInfo>; // Map of session ID to session metadata
+
+  // Derived fields
+  projectId?: string; // Derived from file path (e.g., "pwa" from "projects/pwa/task/...")
 }
 
 // Task with resolved dependencies

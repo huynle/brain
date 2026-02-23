@@ -57,8 +57,8 @@ describe("config", () => {
       expect(config.apiTimeout).toBe(5000);
       expect(config.taskTimeout).toBe(0);
       expect(config.opencode.bin).toBe("opencode");
-      expect(config.opencode.agent).toBe("general");
-      expect(config.opencode.model).toBe("anthropic/claude-opus-4-6");
+      expect(config.opencode.agent).toBe("");
+      expect(config.opencode.model).toBe("openai/gpt-5.3-codex");
       expect(config.excludeProjects).toEqual([]);
     });
 

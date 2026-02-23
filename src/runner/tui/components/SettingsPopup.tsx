@@ -33,6 +33,12 @@ export interface SettingsPopupProps {
   section?: SettingsSection;
   /** List of status groups with visibility settings */
   groups?: GroupVisibilityEntry[];
+  /** Current runtime default model override (empty means config default) */
+  runtimeDefaultModel?: string;
+  /** Whether runtime model field is currently in edit mode */
+  runtimeEditMode?: boolean;
+  /** Current edit buffer for runtime model */
+  runtimeEditBuffer?: string;
 }
 
 export function SettingsPopup({
@@ -40,9 +46,13 @@ export function SettingsPopup({
   selectedIndex,
   section = 'limits',
   groups = [],
+  runtimeDefaultModel = '',
+  runtimeEditMode = false,
+  runtimeEditBuffer = '',
 }: SettingsPopupProps): React.ReactElement {
   const isLimitsSection = section === 'limits';
   const isGroupsSection = section === 'groups';
+  const isRuntimeSection = section === 'runtime';
 
   return (
     <Box
@@ -70,6 +80,14 @@ export function SettingsPopup({
             bold={isGroupsSection}
           >
             {isGroupsSection ? '[Groups]' : ' Groups '}
+          </Text>
+          <Text> </Text>
+          {/* Runtime tab */}
+          <Text
+            color={isRuntimeSection ? 'cyan' : 'gray'}
+            bold={isRuntimeSection}
+          >
+            {isRuntimeSection ? '[Runtime]' : ' Runtime '}
           </Text>
         </Box>
       </Box>
@@ -191,12 +209,36 @@ export function SettingsPopup({
         </Box>
       )}
 
+      {/* Runtime section content */}
+      {isRuntimeSection && (
+        <Box flexDirection="column">
+          <Text dimColor>In-memory default model override</Text>
+          <Box marginTop={1} flexDirection="column">
+            <Box>
+              <Text>Default model: </Text>
+              <Text color="green" bold>
+                {runtimeEditMode
+                  ? (runtimeEditBuffer.length > 0 ? runtimeEditBuffer : '(config default)')
+                  : (runtimeDefaultModel.length > 0 ? runtimeDefaultModel : '(config default)')}
+              </Text>
+            </Box>
+            <Text dimColor>
+              {runtimeEditMode ? 'Editing... Enter to save, Esc to cancel' : 'Affects new tasks only'}
+            </Text>
+          </Box>
+        </Box>
+      )}
+
       {/* Footer with section-specific shortcuts */}
       <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
         <Text dimColor>
           {isLimitsSection 
             ? 'Tab: Section  j/k: Nav  +/-: Adjust  0: No limit  Esc: Close'
-            : 'Tab: Section  j/k: Nav  Space: Toggle  c: Collapse  Esc: Close'}
+            : isGroupsSection
+              ? 'Tab: Section  j/k: Nav  Space: Toggle  c: Collapse  Esc: Close'
+              : (runtimeEditMode
+                ? 'Tab: Section  Type: Edit model  Enter: Save  Esc: Cancel'
+                : 'Tab: Section  e/Enter: Edit model  0: Config default  Esc: Close')}
         </Text>
       </Box>
     </Box>

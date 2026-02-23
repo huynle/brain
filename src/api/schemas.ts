@@ -7,6 +7,7 @@
 
 import { z } from "@hono/zod-openapi";
 import { ENTRY_TYPES, ENTRY_STATUSES, PRIORITIES, TASK_CLASSIFICATIONS } from "../core/types";
+import { parseCronExpression } from "../core/cron-service";
 
 // =============================================================================
 // Base Enums as Zod Schemas
@@ -51,6 +52,22 @@ export const ProjectIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/).openapi({
   example: "my-project",
 });
 
+export const TaskIdSchema = z.string().regex(/^[a-zA-Z0-9_-]+$/).openapi({
+  description: "Task identifier",
+  example: "abc12def",
+});
+
+export const CronRunSchema = z.object({
+  run_id: z.string().openapi({ example: "20260222-0200" }),
+  status: z.enum(["completed", "failed", "skipped", "in_progress"]).openapi({ example: "completed" }),
+  started: z.string().openapi({ example: "2026-02-22T02:00:00.000Z" }),
+  completed: z.string().optional().openapi({ example: "2026-02-22T02:00:08.000Z" }),
+  duration: z.number().optional().openapi({ example: 8000 }),
+  tasks: z.number().optional().openapi({ example: 3 }),
+  failed_task: z.string().optional().openapi({ example: "abc12def" }),
+  skip_reason: z.string().optional().openapi({ example: "task abc12def in_progress" }),
+}).openapi("CronRun");
+
 // =============================================================================
 // Error Response Schema
 // =============================================================================
@@ -93,6 +110,10 @@ export const BrainEntrySchema = z.object({
   modified: z.string().optional().openapi({ example: "2024-01-15T12:00:00Z" }),
   access_count: z.number().optional(),
   last_verified: z.string().optional(),
+  schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
+  next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
+  runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   workdir: z.string().optional().openapi({ description: "$HOME-relative path to main repo" }),
   git_remote: z.string().optional().openapi({ description: "Git remote URL for verification" }),
   git_branch: z.string().optional().openapi({ description: "Branch context when entry was created" }),
@@ -100,9 +121,22 @@ export const BrainEntrySchema = z.object({
     description: "Verbatim user request for validation during task completion",
     example: "Add a dark mode toggle to the settings page" 
   }),
-  session_ids: z.array(z.string()).optional().openapi({ 
-    description: "OpenCode session IDs that have worked on this entry (for audit/tracing)",
-    example: ["ses_3f632f303ffeoDM6TxgC2KbByL", "ses_4a891b202ffe8xK9QpR3mNwZyT"] 
+  sessions: z.record(
+    z.string(),
+    z.object({
+      timestamp: z.string(),
+      cron_id: z.string().optional(),
+      run_id: z.string().optional(),
+    })
+  ).optional().openapi({
+    description: "Map of session ID to session metadata",
+    example: {
+      "ses_3f632f303ffeoDM6TxgC2KbByL": {
+        timestamp: "2026-02-22T10:30:00.000Z",
+        cron_id: "cron_abc123",
+        run_id: "run_abc123"
+      }
+    }
   }),
 }).openapi("BrainEntry");
 
@@ -136,6 +170,10 @@ export const CreateEntryRequestSchema = z.object({
   global: z.boolean().optional().openapi({ description: "Create as global entry" }),
   project: z.string().optional().openapi({ description: "Project name" }),
   relatedEntries: z.array(z.string()).optional().openapi({ description: "Related entry paths/IDs to link" }),
+  schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
+  next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
+  runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   workdir: z.string().optional(),
   git_remote: z.string().optional(),
   git_branch: z.string().optional(),
@@ -184,6 +222,10 @@ export const UpdateEntryRequestSchema = z.object({
   depends_on: z.array(z.string()).optional().openapi({ description: "Task dependencies - list of task IDs or titles" }),
   tags: z.array(z.string()).optional().openapi({ description: "Tags for the entry (replaces existing tags)" }),
   priority: PrioritySchema.optional().openapi({ description: "Priority level for the entry" }),
+  schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
+  next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
+  runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   target_workdir: z.string().optional().openapi({ description: "Target working directory for the task" }),
   git_branch: z.string().optional().openapi({ description: "Git branch for task execution context" }),
   // Feature grouping for task organization
@@ -203,14 +245,25 @@ export const UpdateEntryRequestSchema = z.object({
     description: "Override model (format: 'provider/model-id')",
     example: "anthropic/claude-sonnet-4-20250514" 
   }),
-  // Session traceability (append semantics - new IDs are added to existing)
-  session_ids: z.array(z.string()).optional().openapi({ 
-    description: "OpenCode session IDs to add (uses append semantics - merges with existing, dedupes)",
-    example: ["ses_3f632f303ffeoDM6TxgC2KbByL"] 
+  // Session traceability (append semantics - new sessions are merged by ID)
+  sessions: z.record(
+    z.string(),
+    z.object({
+      timestamp: z.string(),
+      cron_id: z.string().optional(),
+      run_id: z.string().optional(),
+    })
+  ).optional().openapi({
+    description: "Map of session ID to session metadata (merged with existing by session ID)",
+    example: {
+      "ses_3f632f303ffeoDM6TxgC2KbByL": {
+        timestamp: "2026-02-22T10:30:00.000Z"
+      }
+    }
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.session_ids !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, or session_ids must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, or sessions must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -470,6 +523,111 @@ export const ResolvedTaskSchema = TaskSchema.extend({
   resolved_workdir: z.string().nullable().openapi({ description: "Absolute path after resolution" }),
 }).openapi("ResolvedTask");
 
+export const CronEntrySummarySchema = z.object({
+  id: EntryIdSchema,
+  path: z.string().openapi({ example: "projects/my-project/cron/nightly.md" }),
+  title: z.string().openapi({ example: "Nightly Pipeline" }),
+  status: EntryStatusSchema,
+  schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
+  next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
+  created: z.string().optional().openapi({ example: "2026-02-22T01:00:00.000Z" }),
+  modified: z.string().optional().openapi({ example: "2026-02-22T01:30:00.000Z" }),
+}).openapi("CronEntrySummary");
+
+export const CronListResponseSchema = z.object({
+  crons: z.array(CronEntrySummarySchema),
+  count: z.number(),
+}).openapi("CronListResponse");
+
+export const CronDetailResponseSchema = z.object({
+  cron: BrainEntrySchema,
+  pipeline: z.array(TaskSchema),
+  pipelineCount: z.number(),
+}).openapi("CronDetailResponse");
+
+export const CronTriggerResponseSchema = z.object({
+  cronId: EntryIdSchema,
+  run: CronRunSchema,
+  pipeline: z.array(TaskSchema),
+  pipelineCount: z.number(),
+  message: z.string(),
+}).openapi("CronTriggerResponse");
+
+export const CronRunsResponseSchema = z.object({
+  cronId: EntryIdSchema,
+  runs: z.array(CronRunSchema),
+  count: z.number(),
+}).openapi("CronRunsResponse");
+
+export const CronLinkedTasksRequestSchema = z.object({
+  taskIds: z.array(TaskIdSchema),
+}).openapi("CronLinkedTasksRequest");
+
+export const CronLinkedTasksResponseSchema = z.object({
+  cronId: EntryIdSchema,
+  tasks: z.array(TaskSchema),
+  count: z.number(),
+}).openapi("CronLinkedTasksResponse");
+
+export const CronLinkedTasksMutationResponseSchema = CronLinkedTasksResponseSchema.extend({
+  message: z.string(),
+}).openapi("CronLinkedTasksMutationResponse");
+
+const CronScheduleSchema = z.string().min(1).refine(
+  (schedule) => {
+    try {
+      parseCronExpression(schedule);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  { message: "Invalid cron schedule expression" }
+).openapi({ description: "Cron expression", example: "0 2 * * *" });
+
+export const CreateCronRequestSchema = z.object({
+  title: z.string().min(1).openapi({ example: "Nightly Pipeline" }),
+  schedule: CronScheduleSchema,
+  content: z.string().optional().openapi({ example: "Cron content." }),
+  status: EntryStatusSchema.optional(),
+  tags: z.array(z.string()).optional(),
+}).openapi("CreateCronRequest");
+
+export const UpdateCronRequestSchema = z.object({
+  title: z.string().optional(),
+  schedule: CronScheduleSchema.optional(),
+  content: z.string().optional().openapi({ description: "Full content replacement" }),
+  status: EntryStatusSchema.optional(),
+  tags: z.array(z.string()).optional(),
+}).refine(
+  (data) => (
+    data.title !== undefined ||
+    data.schedule !== undefined ||
+    data.content !== undefined ||
+    data.status !== undefined ||
+    data.tags !== undefined
+  ),
+  { message: "At least one of title, schedule, content, status, or tags must be provided" }
+).openapi("UpdateCronRequest");
+
+export const CronMutationResponseSchema = z.object({
+  cron: BrainEntrySchema,
+  message: z.string(),
+}).openapi("CronMutationResponse");
+
+export const DeleteCronQuerySchema = z.object({
+  confirm: z.literal("true").openapi({
+    description: "Must be 'true' to confirm deletion",
+    example: "true",
+  }),
+}).openapi("DeleteCronQuery");
+
+export const DeleteCronResponseSchema = z.object({
+  message: z.string().openapi({ example: "Cron deleted successfully" }),
+  path: z.string(),
+}).openapi("DeleteCronResponse");
+
 export const TaskStatsSchema = z.object({
   total: z.number(),
   ready: z.number(),
@@ -631,4 +789,10 @@ export const MoveEntryResponseSchema = z.object({
   project: z.string().openapi({ example: "new-project" }),
   id: EntryIdSchema,
   title: z.string(),
+  updatedDependents: z.array(z.object({
+    taskId: z.string(),
+    project: z.string(),
+    oldRef: z.string(),
+    newRef: z.string(),
+  })).openapi({ description: "Tasks whose depends_on references were rewritten" }),
 }).openapi("MoveEntryResponse");

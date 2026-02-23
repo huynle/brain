@@ -26,6 +26,7 @@ function mockTask(overrides: Partial<ResolvedTask> = {}): ResolvedTask {
     priority: "medium",
     status: "pending",
     depends_on: [],
+    cron_ids: [],
     tags: [],
     created: "2024-01-01",
     target_workdir: null,
@@ -39,7 +40,7 @@ function mockTask(overrides: Partial<ResolvedTask> = {}): ResolvedTask {
     agent: null,
     model: null,
     // Session traceability
-    session_ids: [],
+    sessions: {},
     resolved_deps: [],
     unresolved_deps: [],
     classification: "ready",

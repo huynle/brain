@@ -473,8 +473,9 @@ src/runner/tui/
 │   ├── LogViewer.tsx    # Real-time log display
 │   └── HelpBar.tsx      # Keyboard shortcuts bar
 └── hooks/
-    ├── useTaskPoller.ts # API polling for tasks
-    └── useLogStream.ts  # Log entry management
+    ├── useTaskSse.ts       # SSE streams for single project
+    ├── useMultiProjectSse.ts # SSE streams for multi-project
+    └── useLogStream.ts     # Log entry management
 ```
 
 ## License

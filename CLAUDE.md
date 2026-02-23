@@ -57,9 +57,8 @@ App.tsx
 ```
 
 #### TUI Hooks
-- `useTaskPoller.ts` - Polls API for task updates, manages connection state
-- `useTaskSse.ts` - Single-project SSE task stream with automatic polling fallback
-- `useMultiProjectSse.ts` - Multi-project SSE streams with per-project polling fallback
+- `useTaskSse.ts` - Single-project SSE task stream for real-time updates
+- `useMultiProjectSse.ts` - Multi-project SSE streams with per-project update channels
 - `useLogStream.ts` - Manages log entry buffer with max entries limit
 
 #### TUI State Management
@@ -69,7 +68,7 @@ App.tsx
 
 #### Key Design Decisions
 1. **Ink over raw terminal** - React component model, testable with ink-testing-library
-2. **Polling over WebSocket** - Simpler, works with standard REST API
+2. **SSE over polling** - Real-time updates via Server-Sent Events, simpler than WebSocket
 3. **Dependency tree flattening** - Root tasks shown first, children indented
 4. **Cycle detection** - Circular deps marked with `↺` symbol
 
@@ -149,7 +148,7 @@ curl http://localhost:3333/api/v1/tasks | jq '.projects'
 ### Architecture
 
 - **Shared execution pool**: `--max-parallel` applies across ALL projects
-- **Parallel polling**: All projects fetched simultaneously via `useMultiProjectPoller`
+- **Real-time updates**: All projects stream task updates via SSE
 - **Composite task keys**: Tasks tracked as `projectId:taskId` internally
 - **Project tabs**: First tab shows "All" aggregate, then individual project tabs
 
@@ -164,41 +163,13 @@ TaskRunner
 └── Shared ProcessManager           # Single pool for all projects
 
 TUI (App.tsx)
-├── useMultiProjectPoller           # Fetches all projects in parallel
+├── useMultiProjectSse              # Real-time SSE streams for all projects
 │   ├── tasksByProject: Map         # Tasks keyed by project
 │   ├── statsByProject: Map         # Stats keyed by project
 │   └── aggregateStats              # Combined stats for "All" view
 ├── StatusBar                       # Shows project tabs with task counts
 └── activeProject state             # Current tab selection
 ```
-
-### CLI Options for Multi-Project
-
-```bash
--i, --include PATTERN    Include projects matching glob (repeatable)
--e, --exclude PATTERN    Exclude projects matching glob (repeatable)
--p, --max-parallel N     Max concurrent tasks across ALL projects
-```
-
-### TUI Transport Rollout / Rollback
-
-Use `--transport` to choose task update transport:
-
-```bash
---transport poll|sse|auto
-```
-
-- `poll`: stable baseline behavior
-- `sse`: SSE stream with automatic polling fallback in hooks
-- `auto`: currently resolves to SSE path so hook-level fallback can engage
-
-For emergency rollback during rollout, use env override:
-
-```bash
-RUNNER_TUI_TRANSPORT=poll bun run src/runner/index.ts start <project> --tui --transport sse
-```
-
-`RUNNER_TUI_TRANSPORT` values: `poll`, `sse`, `auto`. When set to a valid value, it overrides CLI `--transport`.
 
 ### Filter Examples
 

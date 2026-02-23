@@ -17,6 +17,9 @@ describe('HelpBar', () => {
     expect(frame).toContain('New/Edit');
     expect(frame).toContain('x');
     expect(frame).toContain('Trigger now');
+    expect(frame).toContain('a/u/R');
+    expect(frame).toContain('Edit');
+    expect(frame).toContain('links');
     expect(frame).toContain('D');
     expect(frame).toContain('Delete');
 

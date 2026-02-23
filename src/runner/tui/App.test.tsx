@@ -1947,6 +1947,8 @@ describe('App - Cron View Mode (C key)', () => {
     expect(frame).toContain('n/e');
     expect(frame).toContain('New/Edit selected cron');
     expect(frame).toContain('Trigger selected cron now');
+    expect(frame).toContain('a/u/R');
+    expect(frame).toContain('Edit linked tasks in editor');
     expect(frame).toContain('Delete selected cron (confirm)');
     expect(frame).toContain('Show cron details panel');
 
@@ -2129,19 +2131,99 @@ describe('App - Cron Mutation Flows', () => {
     globalThis.fetch = originalFetch;
   });
 
-  it('supports add/remove/replace linked-task operations', async () => {
+  it('applies selected cron links from editor in single-project mode', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/test-project/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crn00001',
+                path: 'projects/test-project/cron/crn00001.md',
+                title: 'Nightly Build',
+                status: 'active',
+                schedule: '0 2 * * *',
+                next_run: null,
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/test-project')) {
+        return new Response(
+          JSON.stringify({
+            tasks: [
+              {
+                id: 'task-1',
+                path: 'projects/test-project/task/task-1.md',
+                title: 'Task One',
+                status: 'pending',
+                priority: 'medium',
+                dependencies: [],
+                cron_ids: ['crn00001'],
+              },
+              {
+                id: 'task-2',
+                path: 'projects/test-project/task/task-2.md',
+                title: 'Task Two',
+                status: 'pending',
+                priority: 'medium',
+                dependencies: [],
+              },
+            ],
+            count: 2,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const onSetCronLinkedTasks = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 1, message: 'replaced' })) as any;
+
+    const { stdin, lastFrame, unmount } = render(
+      <App config={defaultConfig} onSetCronLinkedTasks={onSetCronLinkedTasks} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 30));
+
+    stdin.write('a');
+    await new Promise(r => setTimeout(r, 20));
+
+    const openFrame = lastFrame() || '';
+    expect(openFrame).toContain('Edit Cron Linked Tasks');
+
+    // Toggle current row (task-1) off, move to task-2, toggle it on, then apply
+    stdin.write(' ');
+    stdin.write('j');
+    stdin.write(' ');
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 40));
+
+    expect(onSetCronLinkedTasks).toHaveBeenCalledWith('test-project', 'crn00001', ['task-2']);
+    expect((lastFrame() || '')).not.toContain('Edit Cron Linked Tasks');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('closes cron link editor with Esc without applying changes', async () => {
     installCronFetchMock();
-    const onAddCronLinkedTask = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'added' })) as any;
-    const onRemoveCronLinkedTask = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'removed' })) as any;
     const onSetCronLinkedTasks = mock(async () => ({ cronId: 'crn00001', tasks: [], count: 0, message: 'replaced' })) as any;
 
-    const { stdin, unmount } = render(
-      <App
-        config={defaultConfig}
-        onAddCronLinkedTask={onAddCronLinkedTask}
-        onRemoveCronLinkedTask={onRemoveCronLinkedTask}
-        onSetCronLinkedTasks={onSetCronLinkedTasks}
-      />
+    const { stdin, lastFrame, unmount } = render(
+      <App config={defaultConfig} onSetCronLinkedTasks={onSetCronLinkedTasks} />
     );
 
     stdin.write('C');
@@ -2149,25 +2231,16 @@ describe('App - Cron Mutation Flows', () => {
 
     stdin.write('a');
     await new Promise(r => setTimeout(r, 20));
-    for (const ch of 'tsk00011') stdin.write(ch);
-    stdin.write('\r');
-    await new Promise(r => setTimeout(r, 20));
 
-    stdin.write('u');
-    await new Promise(r => setTimeout(r, 20));
-    for (const ch of 'tsk00012') stdin.write(ch);
-    stdin.write('\r');
-    await new Promise(r => setTimeout(r, 20));
+    expect(lastFrame() || '').toContain('Edit Cron Linked Tasks');
 
-    stdin.write('R');
-    await new Promise(r => setTimeout(r, 20));
-    for (const ch of 'tsk00021,tsk00022') stdin.write(ch);
-    stdin.write('\r');
-    await new Promise(r => setTimeout(r, 20));
+    stdin.write('j');
+    stdin.write(' ');
+    stdin.write('\x1b');
+    await new Promise(r => setTimeout(r, 30));
 
-    expect(onAddCronLinkedTask).toHaveBeenCalledWith('test-project', 'crn00001', 'tsk00011');
-    expect(onRemoveCronLinkedTask).toHaveBeenCalledWith('test-project', 'crn00001', 'tsk00012');
-    expect(onSetCronLinkedTasks).toHaveBeenCalledWith('test-project', 'crn00001', ['tsk00021', 'tsk00022']);
+    expect(onSetCronLinkedTasks).not.toHaveBeenCalled();
+    expect(lastFrame() || '').not.toContain('Edit Cron Linked Tasks');
 
     unmount();
     globalThis.fetch = originalFetch;
@@ -2570,6 +2643,120 @@ describe('App - Cron Mutation Flows', () => {
     await new Promise(r => setTimeout(r, 20));
 
     expect(onTriggerCron).toHaveBeenCalledWith('proj-a', 'crnA0001');
+
+    unmount();
+    globalThis.fetch = originalFetch;
+  });
+
+  it('uses selected cron project ID when applying links in all-project cron view', async () => {
+    globalThis.fetch = mock(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/api/v1/crons/proj-a/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crnA0001',
+                path: 'projects/proj-a/cron/crnA0001.md',
+                title: 'Cron A',
+                status: 'active',
+                schedule: '0 2 * * *',
+                next_run: null,
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/crons/proj-b/crons')) {
+        return new Response(
+          JSON.stringify({
+            crons: [
+              {
+                id: 'crnB0001',
+                path: 'projects/proj-b/cron/crnB0001.md',
+                title: 'Cron B',
+                status: 'active',
+                schedule: '0 3 * * *',
+                next_run: null,
+                runs: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/proj-a')) {
+        return new Response(
+          JSON.stringify({
+            tasks: [
+              {
+                id: 'task-a-1',
+                path: 'projects/proj-a/task/task-a-1.md',
+                title: 'Task A1',
+                status: 'pending',
+                priority: 'medium',
+                dependencies: [],
+                cron_ids: ['crnA0001'],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      if (url.includes('/api/v1/tasks/proj-b')) {
+        return new Response(
+          JSON.stringify({
+            tasks: [
+              {
+                id: 'task-b-1',
+                path: 'projects/proj-b/task/task-b-1.md',
+                title: 'Task B1',
+                status: 'pending',
+                priority: 'medium',
+                dependencies: [],
+              },
+            ],
+            count: 1,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ tasks: [], count: 0, crons: [] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+
+    const onSetCronLinkedTasks = mock(async () => ({ cronId: 'crnA0001', tasks: [], count: 1, message: 'replaced' })) as any;
+
+    const multiProjectConfig = {
+      ...defaultConfig,
+      projects: ['proj-a', 'proj-b'],
+      activeProject: 'all',
+    };
+
+    const { stdin, unmount } = render(
+      <App config={multiProjectConfig} onSetCronLinkedTasks={onSetCronLinkedTasks} />
+    );
+
+    stdin.write('C');
+    await new Promise(r => setTimeout(r, 30));
+    stdin.write('a');
+    await new Promise(r => setTimeout(r, 20));
+    stdin.write('\r');
+    await new Promise(r => setTimeout(r, 40));
+
+    expect(onSetCronLinkedTasks).toHaveBeenCalledWith('proj-a', 'crnA0001', ['task-a-1']);
 
     unmount();
     globalThis.fetch = originalFetch;

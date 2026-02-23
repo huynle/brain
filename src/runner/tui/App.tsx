@@ -48,6 +48,7 @@ import { TaskTree, flattenFeatureOrder, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CA
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
+import { CronLinkEditor } from './components/CronLinkEditor';
 import { HelpBar } from './components/HelpBar';
 import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
@@ -293,6 +294,12 @@ export function App({
   const [cronActionMode, setCronActionMode] = useState<CronActionMode>('create');
   const [cronActionInput, setCronActionInput] = useState('');
   const [cronDeleteConfirmOpen, setCronDeleteConfirmOpen] = useState(false);
+  const [cronLinkEditorOpen, setCronLinkEditorOpen] = useState(false);
+  const [cronLinkEditorProjectId, setCronLinkEditorProjectId] = useState<string | null>(null);
+  const [cronLinkEditorTaskIds, setCronLinkEditorTaskIds] = useState<Set<string>>(new Set());
+  const [cronLinkEditorCursor, setCronLinkEditorCursor] = useState(0);
+  const cronLinkEditorTaskIdsRef = useRef<Set<string>>(new Set());
+  const cronLinkEditorCursorRef = useRef(0);
   const cronActionOpenRef = useRef(false);
   const cronActionModeRef = useRef<CronActionMode>('create');
   const cronActionInputRef = useRef('');
@@ -546,6 +553,25 @@ export function App({
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
   const selectedCron = crons.find((c) => c.id === selectedCronId) || null;
 
+  const closeCronLinkEditor = useCallback(() => {
+    setCronLinkEditorOpen(false);
+    setCronLinkEditorProjectId(null);
+    setCronLinkEditorTaskIds(new Set());
+    setCronLinkEditorCursor(0);
+    cronLinkEditorTaskIdsRef.current = new Set();
+    cronLinkEditorCursorRef.current = 0;
+  }, []);
+
+  const taskBelongsToProject = useCallback((task: TaskDisplay, projectId: string): boolean => {
+    const resolvedProjectId = task.projectId ?? (!isMultiProject ? config.project : undefined);
+    return resolvedProjectId === projectId;
+  }, [isMultiProject, config.project]);
+
+  const cronLinkEditorTasks = useMemo(() => {
+    if (!cronLinkEditorProjectId) return [];
+    return tasks.filter((task) => taskBelongsToProject(task, cronLinkEditorProjectId));
+  }, [tasks, cronLinkEditorProjectId, taskBelongsToProject]);
+
   const getSelectedCronProjectId = useCallback((cron: CronDisplay | null): string | null => {
     if (cron?.projectId) return cron.projectId;
     if (!isMultiProject) return config.project;
@@ -628,6 +654,35 @@ export function App({
       setSelectedCronId(crons[0]?.id ?? null);
     }
   }, [crons, selectedCronId]);
+
+  useEffect(() => {
+    if (!cronLinkEditorOpen) return;
+    if (!selectedCron || !cronLinkEditorProjectId) {
+      closeCronLinkEditor();
+      return;
+    }
+    const cronStillVisible = crons.some((cron) => cron.id === selectedCron.id);
+    if (!cronStillVisible) {
+      closeCronLinkEditor();
+    }
+  }, [cronLinkEditorOpen, selectedCron, cronLinkEditorProjectId, crons, closeCronLinkEditor]);
+
+  useEffect(() => {
+    if (!cronLinkEditorOpen) return;
+    if (cronLinkEditorTasks.length === 0) {
+      if (cronLinkEditorCursorRef.current !== 0) {
+        cronLinkEditorCursorRef.current = 0;
+        setCronLinkEditorCursor(0);
+      }
+      return;
+    }
+
+    const bounded = Math.max(0, Math.min(cronLinkEditorCursorRef.current, cronLinkEditorTasks.length - 1));
+    if (bounded !== cronLinkEditorCursorRef.current) {
+      cronLinkEditorCursorRef.current = bounded;
+      setCronLinkEditorCursor(bounded);
+    }
+  }, [cronLinkEditorOpen, cronLinkEditorTasks]);
 
   // Auto-scroll cron list to keep selected cron in view
   useEffect(() => {
@@ -1357,6 +1412,77 @@ export function App({
       return;
     }
 
+    if (cronLinkEditorOpen) {
+      if (key.escape) {
+        closeCronLinkEditor();
+        return;
+      }
+
+      if (input === 'j' || key.downArrow) {
+        const maxIndex = Math.max(0, cronLinkEditorTasks.length - 1);
+        const nextIndex = Math.min(cronLinkEditorCursorRef.current + 1, maxIndex);
+        cronLinkEditorCursorRef.current = nextIndex;
+        setCronLinkEditorCursor(nextIndex);
+        return;
+      }
+
+      if (input === 'k' || key.upArrow) {
+        const prevIndex = Math.max(cronLinkEditorCursorRef.current - 1, 0);
+        cronLinkEditorCursorRef.current = prevIndex;
+        setCronLinkEditorCursor(prevIndex);
+        return;
+      }
+
+      if (input === ' ') {
+        const task = cronLinkEditorTasks[cronLinkEditorCursorRef.current];
+        if (!task) return;
+        const next = new Set(cronLinkEditorTaskIdsRef.current);
+        if (next.has(task.id)) {
+          next.delete(task.id);
+        } else {
+          next.add(task.id);
+        }
+        cronLinkEditorTaskIdsRef.current = next;
+        setCronLinkEditorTaskIds(next);
+        return;
+      }
+
+      if (key.return) {
+        if (!selectedCron || !cronLinkEditorProjectId) {
+          addLog({ level: 'warn', message: 'No cron selected' });
+          closeCronLinkEditor();
+          return;
+        }
+
+        if (!onSetCronLinkedTasks) {
+          addLog({ level: 'warn', message: 'Replace linked tasks action unavailable' });
+          closeCronLinkEditor();
+          return;
+        }
+
+        const taskIds = cronLinkEditorTasks
+          .filter((task) => cronLinkEditorTaskIdsRef.current.has(task.id))
+          .map((task) => task.id);
+
+        onSetCronLinkedTasks(cronLinkEditorProjectId, selectedCron.id, taskIds)
+          .then((result: { count: number }) => {
+            addLog({
+              level: 'info',
+              message: `Replaced linked tasks for ${selectedCron.id}: ${result.count} linked`,
+            });
+            refetch();
+          })
+          .catch((err: unknown) => {
+            addLog({ level: 'error', message: `Failed to replace linked tasks: ${err}` });
+          });
+
+        closeCronLinkEditor();
+        return;
+      }
+
+      return;
+    }
+
     // === Settings Popup Mode ===
     if (showSettingsPopup) {
       // Escape to close popup
@@ -1736,33 +1862,19 @@ export function App({
           return;
         }
 
-        if (input === 'a') {
-          setCronActionMode('add-link');
-          setCronActionInput('');
-          setCronActionOpen(true);
-          cronActionModeRef.current = 'add-link';
-          cronActionInputRef.current = '';
-          cronActionOpenRef.current = true;
-          return;
-        }
+        if (input === 'a' || input === 'u' || input === 'R') {
+          const linkedIds = tasks
+            .filter((task) => taskBelongsToProject(task, selectedProjectId))
+            .filter((task) => task.cron_ids?.includes(selectedCron.id))
+            .map((task) => task.id);
 
-        if (input === 'u') {
-          setCronActionMode('remove-link');
-          setCronActionInput('');
-          setCronActionOpen(true);
-          cronActionModeRef.current = 'remove-link';
-          cronActionInputRef.current = '';
-          cronActionOpenRef.current = true;
-          return;
-        }
-
-        if (input === 'R') {
-          setCronActionMode('replace-links');
-          setCronActionInput('');
-          setCronActionOpen(true);
-          cronActionModeRef.current = 'replace-links';
-          cronActionInputRef.current = '';
-          cronActionOpenRef.current = true;
+          const initialLinked = new Set(linkedIds);
+          setCronLinkEditorProjectId(selectedProjectId);
+          setCronLinkEditorTaskIds(initialLinked);
+          setCronLinkEditorCursor(0);
+          cronLinkEditorTaskIdsRef.current = initialLinked;
+          cronLinkEditorCursorRef.current = 0;
+          setCronLinkEditorOpen(true);
           return;
         }
 
@@ -2896,8 +3008,7 @@ export function App({
         <Text>  <Text bold>Enter</Text>     - Show cron details panel</Text>
         <Text>  <Text bold>n/e</Text>       - New/Edit selected cron</Text>
         <Text>  <Text bold>x</Text>         - Trigger selected cron now</Text>
-        <Text>  <Text bold>a/u</Text>       - Link/Unlink task</Text>
-        <Text>  <Text bold>R</Text>         - Replace linked tasks</Text>
+        <Text>  <Text bold>a/u/R</Text>     - Edit linked tasks in editor</Text>
         <Text>  <Text bold>D</Text>         - Delete selected cron (confirm)</Text>
         <Text />
         <Text bold dimColor>Logs Panel (when focused):</Text>
@@ -3002,6 +3113,20 @@ export function App({
           <Text>Delete selected cron <Text bold>{selectedCron?.title ?? '(none)'}</Text>?</Text>
           <Text dimColor>Enter to confirm, Esc to cancel</Text>
         </Box>
+      </Box>
+    );
+  }
+
+  if (cronLinkEditorOpen && selectedCron && cronLinkEditorProjectId) {
+    return (
+      <Box flexDirection="column" width="100%" height={terminalRows} alignItems="center" justifyContent="center">
+        <CronLinkEditor
+          cron={selectedCron}
+          projectId={cronLinkEditorProjectId}
+          tasks={cronLinkEditorTasks}
+          linkedTaskIds={cronLinkEditorTaskIds}
+          selectedIndex={cronLinkEditorCursor}
+        />
       </Box>
     );
   }

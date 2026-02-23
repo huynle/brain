@@ -96,18 +96,16 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                   <>
                     <Text bold>Enter</Text> Details
                     {'  '}
-                    <Text bold>n/e</Text> New/Edit
-                    {'  '}
-                    <Text bold>x</Text> Trigger now
-                    {'  '}
-                    <Text bold>a/u</Text> Link/Unlink
-                    {'  '}
-                    <Text bold>R</Text> Replace Links
-                    {'  '}
-                    <Text bold color="red">D</Text> <Text color="red">Delete</Text>
-                    {'  '}
-                  </>
-                )}
+                 <Text bold>n/e</Text> New/Edit
+                 {'  '}
+                 <Text bold>x</Text> Trigger now
+                 {'  '}
+                 <Text bold>a/u/R</Text> Edit links
+                 {'  '}
+                 <Text bold color="red">D</Text> <Text color="red">Delete</Text>
+                 {'  '}
+               </>
+             )}
              </>
            )}
           {isMultiProject ? (

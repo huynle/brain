@@ -1310,6 +1310,13 @@ describe('TaskTree mouse contracts', () => {
       id: `${PROJECT_HEADER_PREFIX}brain-api`,
       projectId: 'brain-api',
     });
+
+    expect(parseTaskTreeRowTarget(`${COMPLETED_FEATURE_PREFIX}auth-system`)).toEqual({
+      kind: 'status_feature_header',
+      id: `${COMPLETED_FEATURE_PREFIX}auth-system`,
+      featureId: 'auth-system',
+      statusGroup: 'completed',
+    });
   });
 
   it('parses ungrouped and spacer rows', () => {

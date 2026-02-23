@@ -399,6 +399,7 @@ describe('resolveTaskTreeClickAction', () => {
   it('ignores non-handled targets/buttons', () => {
     expect(resolveTaskTreeClickAction({ kind: 'spacer', id: 's1' }, 'left')).toBe('noop');
     expect(resolveTaskTreeClickAction({ kind: 'feature_header', id: 'h5', featureId: 'f' }, 'right')).toBe('noop');
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'middle')).toBe('noop');
   });
 
   it('routes left click on ungrouped header to collapse toggle', () => {
@@ -486,6 +487,16 @@ describe('task tree mouse hit testing', () => {
     );
 
     expect(target).toBeNull();
+  });
+
+  it('maps viewport start row to first visible target', () => {
+    const target = findTaskTreeTargetFromMouseRow(
+      [{ row: 0, target: { kind: 'task', id: 'task-1', taskId: 'task-1' } }],
+      8,
+      8,
+    );
+
+    expect(target).toEqual({ kind: 'task', id: 'task-1', taskId: 'task-1' });
   });
 });
 

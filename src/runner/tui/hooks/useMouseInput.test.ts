@@ -14,9 +14,20 @@ describe('parseMouseInput', () => {
     ]);
   });
 
+  it('parses middle click SGR mouse sequences', () => {
+    expect(parseMouseInput('\u001b[<1;21;6M')).toEqual([
+      { button: 'middle', column: 21, row: 6 },
+    ]);
+  });
+
   it('ignores release and unsupported buttons', () => {
     expect(parseMouseInput('\u001b[<0;12;7m')).toEqual([]);
     expect(parseMouseInput('\u001b[<64;12;7M')).toEqual([]);
+  });
+
+  it('ignores drag/motion mouse sequences for click-only handling', () => {
+    expect(parseMouseInput('\u001b[<32;12;7M')).toEqual([]);
+    expect(parseMouseInput('\u001b[<35;12;7M')).toEqual([]);
   });
 
   it('extracts multiple events from mixed terminal output', () => {

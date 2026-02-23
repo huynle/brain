@@ -383,8 +383,8 @@ describe('setsEqual', () => {
 });
 
 describe('resolveTaskTreeClickAction', () => {
-  it('routes left click on task to open editor', () => {
-    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'left')).toBe('open_editor');
+  it('routes left click on task to noop (just highlight)', () => {
+    expect(resolveTaskTreeClickAction({ kind: 'task', id: 't1', taskId: 't1' }, 'left')).toBe('noop');
   });
 
   it('routes right click on task to metadata popup', () => {
@@ -439,7 +439,7 @@ describe('isTaskTreeCollapseToggleTarget', () => {
 
     const editorTarget = { kind: 'task', id: 'task-1', taskId: 'task-1' } as const;
     expect(isTaskTreeCollapseToggleTarget(editorTarget)).toBe(false);
-    expect(resolveTaskTreeClickAction(editorTarget, 'left')).toBe('open_editor');
+    expect(resolveTaskTreeClickAction(editorTarget, 'left')).toBe('noop');
   });
 });
 

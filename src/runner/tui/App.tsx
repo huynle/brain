@@ -165,7 +165,7 @@ export function isTaskTreeCollapseToggleTarget(target: TaskTreeRowTarget): boole
 export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TUIMouseButton): TaskTreeClickAction {
   if (target.kind === 'task') {
     if (button === 'right') return 'open_metadata';
-    if (button === 'left') return 'open_editor';
+    if (button === 'left') return 'noop'; // Just highlight, don't open editor
     return 'noop';
   }
 
@@ -1129,10 +1129,14 @@ export function App({
     if (!rowTarget) return;
 
     const action = resolveTaskTreeClickAction(rowTarget, event.button);
+    
+    // Always set focus and selection for task clicks, even if action is 'noop'
+    if (rowTarget.kind === 'task') {
+      setFocusedPanel('tasks');
+      setSelectedTaskId(rowTarget.id);
+    }
+    
     if (action === 'noop') return;
-
-    setFocusedPanel('tasks');
-    setSelectedTaskId(rowTarget.id);
 
     if (action === 'toggle_collapsed') {
       toggleCollapsedForTarget(rowTarget);

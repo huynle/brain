@@ -169,6 +169,32 @@ describe("Entry CRUD API", () => {
       // Could be 201 (success) or 500 (zk not available) - either means validation passed
       expect([201, 500].includes(res.status)).toBe(true);
     });
+
+    test("publishes project_dirty for project-scoped create", async () => {
+      const hub = createProjectRealtimeHub();
+      const realtimeApp = new Hono();
+      realtimeApp.route("/entries", (createEntriesRoutes as any)({ realtimeHub: hub }));
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_SUBDIR, ({ event }) => projectEvents.push(event));
+      hub.subscribe(TEST_SUBDIR_B, ({ event }) => otherProjectEvents.push(event));
+
+      const res = await realtimeApp.request("/entries", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type: "scratch",
+          title: "Realtime Create",
+          content: "Create should dirty project.",
+          project: TEST_SUBDIR,
+        }),
+      });
+
+      expect([201, 500].includes(res.status)).toBe(true);
+      expect(projectEvents).toContain("project_dirty");
+      expect(otherProjectEvents).toEqual([]);
+    });
   });
 
   describe("GET /entries/:id - Get Entry", () => {
@@ -427,6 +453,40 @@ Task body.
       expect(projectEvents).toContain("tasks_snapshot");
       expect(otherProjectEvents).toEqual([]);
     });
+
+    test("publishes project_dirty for entry updates", async () => {
+      const hub = createProjectRealtimeHub();
+      const realtimeApp = new Hono();
+      realtimeApp.route("/entries", (createEntriesRoutes as any)({ realtimeHub: hub }));
+
+      const entryPath = `${TEST_PATH_PREFIX}/scratch/realtime-dirty-update.md`;
+      createTestEntry(
+        entryPath,
+        `---
+title: Realtime Dirty Update
+type: scratch
+status: active
+---
+
+Before update.
+`
+      );
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_SUBDIR, ({ event }) => projectEvents.push(event));
+      hub.subscribe(TEST_SUBDIR_B, ({ event }) => otherProjectEvents.push(event));
+
+      const res = await realtimeApp.request(`/entries/${entryPath}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "completed" }),
+      });
+
+      expect(res.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
+      expect(otherProjectEvents).toEqual([]);
+    });
   });
 
   describe("DELETE /entries/:id - Delete Entry", () => {
@@ -477,6 +537,38 @@ Content to delete.
       );
 
       expect(res.status).toBe(404);
+    });
+
+    test("publishes project_dirty for deletes", async () => {
+      const hub = createProjectRealtimeHub();
+      const realtimeApp = new Hono();
+      realtimeApp.route("/entries", (createEntriesRoutes as any)({ realtimeHub: hub }));
+
+      const deletePath = `${TEST_PATH_PREFIX}/scratch/realtime-dirty-delete.md`;
+      createTestEntry(
+        deletePath,
+        `---
+title: Realtime Dirty Delete
+type: scratch
+status: active
+---
+
+Delete me.
+`
+      );
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_SUBDIR, ({ event }) => projectEvents.push(event));
+      hub.subscribe(TEST_SUBDIR_B, ({ event }) => otherProjectEvents.push(event));
+
+      const res = await realtimeApp.request(`/entries/${deletePath}?confirm=true`, {
+        method: "DELETE",
+      });
+
+      expect(res.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
+      expect(otherProjectEvents).toEqual([]);
     });
   });
 
@@ -659,6 +751,48 @@ Content.
       expect(res.status).toBe(400);
       const json = await res.json();
       expect(json.error).toBe("Validation Error");
+    });
+
+    test("publishes project_dirty for both source and target projects on move", async () => {
+      const hub = createProjectRealtimeHub();
+      const realtimeApp = new Hono();
+      realtimeApp.route("/entries", (createEntriesRoutes as any)({ realtimeHub: hub }));
+
+      const moveId = "dirtymv1";
+      createTestEntry(
+        `${TEST_PATH_PREFIX}/scratch/${moveId}.md`,
+        `---
+title: Dirty Move Entry
+type: scratch
+status: active
+---
+
+Move me.
+`
+      );
+
+      const targetScratchDir = join(config.brain.brainDir, TEST_PATH_PREFIX_B, "scratch");
+      if (!existsSync(targetScratchDir)) {
+        mkdirSync(targetScratchDir, { recursive: true });
+      }
+
+      const sourceEvents: string[] = [];
+      const targetEvents: string[] = [];
+      hub.subscribe(TEST_SUBDIR, ({ event }) => sourceEvents.push(event));
+      hub.subscribe(TEST_SUBDIR_B, ({ event }) => targetEvents.push(event));
+
+      const res = await realtimeApp.request(
+        `/entries/${TEST_PATH_PREFIX}/scratch/${moveId}.md/move`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ project: TEST_SUBDIR_B }),
+        }
+      );
+
+      expect(res.status).toBe(200);
+      expect(sourceEvents).toContain("project_dirty");
+      expect(targetEvents).toContain("project_dirty");
     });
   });
 

@@ -216,7 +216,7 @@ describe("Task API", () => {
       expect(hub.getSubscriberCount(TEST_PROJECT)).toBe(0);
     });
 
-    test("publishes project-scoped snapshot when task claim mutates state", async () => {
+    test("publishes project-scoped dirty + snapshot events when task claim mutates state", async () => {
       const hub = createProjectRealtimeHub();
       const claimApp = new Hono();
       claimApp.route("/tasks", createTaskRoutes({ realtimeHub: hub }));
@@ -233,6 +233,27 @@ describe("Task API", () => {
       });
 
       expect(claimRes.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
+      expect(projectEvents).toContain("tasks_snapshot");
+      expect(otherProjectEvents).toEqual([]);
+    });
+
+    test("publishes project-scoped dirty + snapshot events when task release mutates state", async () => {
+      const hub = createProjectRealtimeHub();
+      const releaseApp = new Hono();
+      releaseApp.route("/tasks", createTaskRoutes({ realtimeHub: hub }));
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+      hub.subscribe("_other-project", ({ event }) => otherProjectEvents.push(event));
+
+      const releaseRes = await releaseApp.request(`/tasks/${TEST_PROJECT}/task-123/release`, {
+        method: "POST",
+      });
+
+      expect(releaseRes.status).toBe(200);
+      expect(projectEvents).toContain("project_dirty");
       expect(projectEvents).toContain("tasks_snapshot");
       expect(otherProjectEvents).toEqual([]);
     });

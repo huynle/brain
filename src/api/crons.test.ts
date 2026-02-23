@@ -528,6 +528,126 @@ describe("Cron API", () => {
     expect(otherProjectEvents).toEqual([]);
   });
 
+  test("publishes project_dirty for cron create/update/trigger/delete mutations", async () => {
+    const hub = createProjectRealtimeHub();
+    const realtimeApp = new Hono();
+    realtimeApp.route("/crons", (createCronRoutes as any)({ realtimeHub: hub }));
+
+    const projectEvents: string[] = [];
+    const otherProjectEvents: string[] = [];
+    hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+    hub.subscribe(OTHER_PROJECT, ({ event }) => otherProjectEvents.push(event));
+
+    const createRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Realtime Dirty Cron",
+        schedule: "5 8 * * *",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+    const cronId = created.cron.id as string;
+
+    const dirtyCountAfterCreate = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterCreate).toBe(1);
+    expect(otherProjectEvents).toEqual([]);
+
+    const updateRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        status: "blocked",
+      }),
+    });
+
+    if (updateRes.status === 503) return;
+
+    expect(updateRes.status).toBe(200);
+    const dirtyCountAfterUpdate = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterUpdate).toBe(2);
+
+    writeTaskFile("tsk02050", [cronId]);
+    reindexZk();
+
+    const triggerRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}/trigger`, {
+      method: "POST",
+    });
+
+    if (triggerRes.status === 503) return;
+
+    expect(triggerRes.status).toBe(200);
+    const dirtyCountAfterTrigger = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterTrigger).toBe(3);
+
+    const deleteRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}?confirm=true`, {
+      method: "DELETE",
+    });
+
+    if (deleteRes.status === 503) return;
+
+    expect(deleteRes.status).toBe(200);
+    const dirtyCountAfterDelete = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterDelete).toBe(4);
+    expect(otherProjectEvents).toEqual([]);
+  });
+
+  test("publishes project_dirty for cron linked-task patch/add/remove mutations", async () => {
+    const hub = createProjectRealtimeHub();
+    const realtimeApp = new Hono();
+    realtimeApp.route("/crons", (createCronRoutes as any)({ realtimeHub: hub }));
+
+    const projectEvents: string[] = [];
+    const otherProjectEvents: string[] = [];
+    hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+    hub.subscribe(OTHER_PROJECT, ({ event }) => otherProjectEvents.push(event));
+
+    writeCronFile(TEST_PROJECT, "crn02060", "Realtime Dirty Linked Cron");
+    writeTaskFile("tsk02060", []);
+    writeTaskFile("tsk02061", []);
+    reindexZk();
+
+    const cronId = await getCronIdByTitle(TEST_PROJECT, "Realtime Dirty Linked Cron");
+    if (!cronId) return;
+
+    const setRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ taskIds: ["tsk02060"] }),
+    });
+
+    if (setRes.status === 503) return;
+
+    expect(setRes.status).toBe(200);
+    const dirtyCountAfterSet = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterSet).toBe(1);
+
+    const addRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks/tsk02061`, {
+      method: "POST",
+    });
+
+    if (addRes.status === 503) return;
+
+    expect(addRes.status).toBe(200);
+    const dirtyCountAfterAdd = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterAdd).toBe(2);
+
+    const removeRes = await realtimeApp.request(`/crons/${TEST_PROJECT}/crons/${cronId}/linked-tasks/tsk02060`, {
+      method: "DELETE",
+    });
+
+    if (removeRes.status === 503) return;
+
+    expect(removeRes.status).toBe(200);
+    const dirtyCountAfterRemove = projectEvents.filter((event) => event === "project_dirty").length;
+    expect(dirtyCountAfterRemove).toBe(3);
+    expect(otherProjectEvents).toEqual([]);
+  });
+
   test("validates linked-task IDs and returns not found for missing tasks", async () => {
     writeCronFile(TEST_PROJECT, "crn01010", "Linked Tasks Validation Cron");
     reindexZk();

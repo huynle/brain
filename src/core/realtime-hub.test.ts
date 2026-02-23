@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { createProjectRealtimeHub } from "./realtime-hub";
+import { createProjectRealtimeHub, publishProjectDirty } from "./realtime-hub";
 
 describe("ProjectRealtimeHub", () => {
   test("publishes only to subscribers in the same project", () => {
@@ -27,5 +27,22 @@ describe("ProjectRealtimeHub", () => {
     unsubscribe();
 
     expect(hub.getSubscriberCount("alpha")).toBe(0);
+  });
+
+  test("publishProjectDirty emits project_dirty event with SSE payload", () => {
+    const hub = createProjectRealtimeHub();
+    const events: Array<{ event: string; payload: unknown }> = [];
+
+    hub.subscribe("alpha", (event) => events.push(event));
+
+    publishProjectDirty(hub, "alpha");
+
+    expect(events).toHaveLength(1);
+    expect(events[0]?.event).toBe("project_dirty");
+    expect(events[0]?.payload).toMatchObject({
+      type: "project_dirty",
+      transport: "sse",
+      projectId: "alpha",
+    });
   });
 });

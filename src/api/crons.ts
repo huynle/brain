@@ -2,7 +2,11 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getBrainService } from "../core/brain-service";
 import { resolveCronPipeline, canTriggerPipeline, generateRunId } from "../core/cron-service";
 import { getTaskService } from "../core/task-service";
-import { createProjectRealtimeHub, type ProjectRealtimeHub } from "../core/realtime-hub";
+import {
+  createProjectRealtimeHub,
+  publishProjectDirty,
+  type ProjectRealtimeHub,
+} from "../core/realtime-hub";
 import type { BrainEntry, CronRun, ResolvedTask } from "../core/types";
 import {
   EntryIdSchema,
@@ -714,6 +718,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       });
 
       const cron = await brainService.recall(created.path);
+      publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
           cron,
@@ -760,6 +765,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         content: body.content,
       });
 
+      publishProjectDirty(realtimeHub, projectId);
       return c.json({
         cron: updated,
         message: "Cron updated successfully",
@@ -795,6 +801,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       }
 
       await brainService.delete(cron.path);
+      publishProjectDirty(realtimeHub, projectId);
 
       return c.json(
         {
@@ -861,6 +868,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       const existingRuns = cron.runs || [];
       const runs = [run, ...existingRuns];
       await brainService.update(cron.path, { runs });
+      publishProjectDirty(realtimeHub, projectId);
 
       return c.json({
         cronId: cron.id,
@@ -1005,6 +1013,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
       await publishTaskSnapshot(realtimeHub, projectId);
+      publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
@@ -1063,6 +1072,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
       await publishTaskSnapshot(realtimeHub, projectId);
+      publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),
@@ -1121,6 +1131,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
 
       const updatedTaskResult = await taskService.getTasksWithDependencies(projectId);
       await publishTaskSnapshot(realtimeHub, projectId);
+      publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
           ...linkedTasksPayload(cron.id, updatedTaskResult.tasks),

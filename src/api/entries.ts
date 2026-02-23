@@ -10,7 +10,11 @@ import { HTTPException } from "hono/http-exception";
 import { getBrainService, DependencyValidationError } from "../core/brain-service";
 import { getTaskService } from "../core/task-service";
 import type { BrainEntry } from "../core/types";
-import { createProjectRealtimeHub, type ProjectRealtimeHub } from "../core/realtime-hub";
+import {
+  createProjectRealtimeHub,
+  publishProjectDirty,
+  type ProjectRealtimeHub,
+} from "../core/realtime-hub";
 import {
   CreateEntryRequestSchema,
   CreateEntryResponseSchema,
@@ -347,6 +351,10 @@ export function createEntriesRoutes(options?: EntryRouteOptions): OpenAPIHono {
     
     try {
       const result = await service.save(body);
+      const projectId = projectIdFromPath(result.path);
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
       if (body.type === "task" && body.project) {
         await publishTaskSnapshot(realtimeHub, body.project);
       }
@@ -481,9 +489,13 @@ export function createEntriesRoutes(options?: EntryRouteOptions): OpenAPIHono {
       }
 
       const result = await service.update(entryPath, body);
+      const projectId = projectIdFromPath(entryPath);
+
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
 
       if (result.type === "task") {
-        const projectId = projectIdFromPath(entryPath);
         if (projectId) {
           await publishTaskSnapshot(realtimeHub, projectId);
         }
@@ -552,9 +564,13 @@ export function createEntriesRoutes(options?: EntryRouteOptions): OpenAPIHono {
       }
 
       await service.delete(entryPath);
+      const projectId = projectIdFromPath(entryPath);
+
+      if (projectId) {
+        publishProjectDirty(realtimeHub, projectId);
+      }
 
       if (isTaskPath(entryPath)) {
-        const projectId = projectIdFromPath(entryPath);
         if (projectId) {
           await publishTaskSnapshot(realtimeHub, projectId);
         }
@@ -679,11 +695,23 @@ async function handleMoveEntry(
       const targetProjectId = projectIdFromPath(result.newPath);
 
       if (sourceProjectId) {
+        publishProjectDirty(realtimeHub, sourceProjectId);
         await publishTaskSnapshot(realtimeHub, sourceProjectId);
       }
 
       if (targetProjectId) {
+        publishProjectDirty(realtimeHub, targetProjectId);
         await publishTaskSnapshot(realtimeHub, targetProjectId);
+      }
+    } else {
+      const targetProjectId = projectIdFromPath(result.newPath);
+
+      if (sourceProjectId) {
+        publishProjectDirty(realtimeHub, sourceProjectId);
+      }
+
+      if (targetProjectId) {
+        publishProjectDirty(realtimeHub, targetProjectId);
       }
     }
 

@@ -45,3 +45,15 @@ export class ProjectRealtimeHub {
 export function createProjectRealtimeHub(): ProjectRealtimeHub {
   return new ProjectRealtimeHub();
 }
+
+export function publishProjectDirty(hub: ProjectRealtimeHub, projectId: string): void {
+  hub.publish(projectId, {
+    event: "project_dirty",
+    payload: {
+      type: "project_dirty",
+      transport: "sse",
+      timestamp: new Date().toISOString(),
+      projectId,
+    },
+  });
+}

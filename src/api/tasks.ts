@@ -9,7 +9,11 @@ import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getTaskService } from "../core/task-service";
 import { computeAndResolveFeatures } from "../core/feature-service";
 import type { TaskClaim } from "../core/types";
-import { createProjectRealtimeHub, type ProjectRealtimeHub } from "../core/realtime-hub";
+import {
+  createProjectRealtimeHub,
+  publishProjectDirty,
+  type ProjectRealtimeHub,
+} from "../core/realtime-hub";
 import {
   ProjectIdSchema,
   ProjectListResponseSchema,
@@ -834,6 +838,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
       if (existingClaim.runnerId === body.runnerId) {
         const now = Date.now();
         claims.set(claimKey, { runnerId: body.runnerId, claimedAt: now });
+        publishProjectDirty(realtimeHub, projectId);
         return c.json({
           success: true as const,
           taskId,
@@ -865,6 +870,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     const now = Date.now();
     claims.set(claimKey, { runnerId: body.runnerId, claimedAt: now });
 
+    publishProjectDirty(realtimeHub, projectId);
     await publishTaskSnapshot(realtimeHub, projectId);
 
     return c.json({
@@ -882,6 +888,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     const claimKey = getClaimKey(projectId, taskId);
     const existed = claims.delete(claimKey);
 
+    publishProjectDirty(realtimeHub, projectId);
     await publishTaskSnapshot(realtimeHub, projectId);
 
     return c.json({
@@ -1204,6 +1211,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     
     const projectId = c.req.param("projectId");
     runner.pause(projectId);
+    publishProjectDirty(realtimeHub, projectId);
     await publishTaskSnapshot(realtimeHub, projectId);
     
     return c.json({
@@ -1228,6 +1236,7 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     
     const projectId = c.req.param("projectId");
     runner.resume(projectId);
+    publishProjectDirty(realtimeHub, projectId);
     await publishTaskSnapshot(realtimeHub, projectId);
     
     return c.json({
@@ -1254,6 +1263,9 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     runner.pauseAll();
     const pausedProjectsAfter = runner.getPausedProjects();
     const projectsToPublish = new Set([...pausedProjectsBefore, ...pausedProjectsAfter]);
+    for (const projectId of projectsToPublish) {
+      publishProjectDirty(realtimeHub, projectId);
+    }
     await Promise.all([...projectsToPublish].map((projectId) => publishTaskSnapshot(realtimeHub, projectId)));
     
     return c.json({
@@ -1277,6 +1289,9 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     
     const pausedProjectsBefore = runner.getPausedProjects();
     runner.resumeAll();
+    for (const projectId of pausedProjectsBefore) {
+      publishProjectDirty(realtimeHub, projectId);
+    }
     await Promise.all(pausedProjectsBefore.map((projectId) => publishTaskSnapshot(realtimeHub, projectId)));
     
     return c.json({

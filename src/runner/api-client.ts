@@ -389,6 +389,7 @@ export class ApiClient {
       tags?: string[];
       depends_on?: string[];
       sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
+      next_run?: string;
       agent?: string;
       model?: string;
       direct_prompt?: string;
@@ -408,6 +409,7 @@ export class ApiClient {
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
     if (fields.sessions !== undefined) payload.sessions = fields.sessions;
+    if (fields.next_run !== undefined) payload.next_run = fields.next_run;
     if (fields.agent !== undefined) payload.agent = fields.agent;
     if (fields.model !== undefined) payload.model = fields.model;
     if (fields.direct_prompt !== undefined) payload.direct_prompt = fields.direct_prompt;

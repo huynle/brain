@@ -2170,3 +2170,334 @@ describe("TaskRunner - openSessionInTmux tracking", () => {
     });
   });
 });
+
+// =============================================================================
+// TaskRunner - Cron Polling (Phase 1)
+// =============================================================================
+
+describe("TaskRunner - cron polling infrastructure", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {
+      // Ignore
+    }
+  });
+
+  test("exposes cronCheckDue guard method", () => {
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+    const maybeCronCheckDue = (runner as unknown as { cronCheckDue?: unknown }).cronCheckDue;
+
+    expect(typeof maybeCronCheckDue).toBe("function");
+  });
+
+  test("cronCheckDue enforces a minimum 60 second check interval", () => {
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+    const typedRunner = runner as unknown as {
+      cronCheckDue: (nowMs?: number) => boolean;
+      lastCronCheckAtMs: number | null;
+    };
+
+    // First check is always due
+    expect(typedRunner.cronCheckDue(1_000)).toBe(true);
+
+    // Not due before 60 seconds
+    typedRunner.lastCronCheckAtMs = 1_000;
+    expect(typedRunner.cronCheckDue(60_999)).toBe(false);
+
+    // Due at 60 seconds and beyond
+    expect(typedRunner.cronCheckDue(61_000)).toBe(true);
+    expect(typedRunner.cronCheckDue(70_000)).toBe(true);
+  });
+
+  test("poll invokes checkCronSchedules during healthy poll", async () => {
+    globalThis.fetch = createMockFetch({
+      "/health": () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "healthy",
+              zkAvailable: true,
+              dbAvailable: true,
+            })
+          )
+        ),
+      "/next": () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ task: null, message: "No ready tasks" }), {
+            status: 404,
+          })
+        ),
+    });
+
+    const runner = new TaskRunner({ projectId: "cron-project", config });
+
+    // Keep poll focused on cron integration behavior
+    (runner as unknown as { checkRunningTasks: () => Promise<void> }).checkRunningTasks = async () => {};
+    const checkCronSchedules = mock(async () => {});
+    (runner as unknown as { checkCronSchedules: () => Promise<void> }).checkCronSchedules = checkCronSchedules;
+
+    await (runner as unknown as { poll: () => Promise<void> }).poll();
+
+    expect(checkCronSchedules).toHaveBeenCalledTimes(1);
+  });
+});
+
+// =============================================================================
+// TaskRunner - Cron Trigger and Overlap (Phase 2)
+// =============================================================================
+
+describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-cron-p2-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(async () => {
+    globalThis.fetch = originalFetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetSignalHandler();
+    resetConfig();
+    resetLogger();
+    try {
+      if (existsSync(testDir)) {
+        rmSync(testDir, { recursive: true, force: true });
+      }
+    } catch {}
+  });
+
+  function makeCronEntry(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "cron-daily",
+      path: "projects/test-project/cron/daily.md",
+      title: "Daily Build",
+      status: "active" as const,
+      schedule: "0 9 * * *",
+      next_run: "2025-01-15T09:00:00Z",
+      runs: [],
+      created: "2025-01-01T00:00:00Z",
+      modified: "2025-01-01T00:00:00Z",
+      ...overrides,
+    };
+  }
+
+  function createTrackingFetch(
+    cronEntries: unknown[],
+    tasks: ResolvedTask[]
+  ): { fetchFn: typeof fetch; calls: Array<{ url: string; method: string; body?: unknown }> } {
+    const calls: Array<{ url: string; method: string; body?: unknown }> = [];
+
+    const fetchFn = ((url: string, options?: RequestInit) => {
+      const method = options?.method ?? "GET";
+      let body: unknown;
+      if (options?.body && typeof options.body === "string") {
+        try { body = JSON.parse(options.body); } catch { body = options.body; }
+      }
+      calls.push({ url, method, body });
+
+      // GET cron entries
+      if (url.includes("/crons/") && url.endsWith("/crons") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ crons: cronEntries })));
+      }
+
+      // GET all tasks
+      if (url.includes("/tasks/test-project") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ tasks })));
+      }
+
+      // GET entry (for updateCronRun read-modify-write)
+      if (url.includes("/entries/") && method === "GET") {
+        return Promise.resolve(new Response(JSON.stringify({ runs: [] })));
+      }
+
+      // PATCH entry (task reset, cron run, next_run)
+      if (url.includes("/entries/") && method === "PATCH") {
+        return Promise.resolve(new Response(JSON.stringify({ ok: true })));
+      }
+
+      return Promise.resolve(new Response("Not found", { status: 404 }));
+    }) as typeof fetch;
+
+    return { fetchFn, calls };
+  }
+
+  test("checkCronSchedules triggers pipeline when due and no overlap", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA, taskB]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    // Verify tasks were reset to pending
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+    const taskResets = patchCalls.filter(c => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(2);
+
+    // Verify cron run was recorded as in_progress
+    const cronRunPatches = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.runs && Array.isArray(b.runs);
+    });
+    expect(cronRunPatches.length).toBeGreaterThanOrEqual(1);
+    const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
+    expect(recordedRun.status).toBe("in_progress");
+    expect(recordedRun.run_id).toBeDefined();
+    expect(recordedRun.tasks).toBe(2);
+  });
+
+  test("checkCronSchedules skips pipeline when overlap detected", async () => {
+    const cronEntry = makeCronEntry();
+
+    // One task is in_progress → overlap
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "in_progress",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA, taskB]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+
+    // No task resets should happen
+    const taskResets = patchCalls.filter(c => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(0);
+
+    // Cron run should be recorded as skipped with overlap reason
+    const cronRunPatches = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.runs && Array.isArray(b.runs);
+    });
+    expect(cronRunPatches.length).toBeGreaterThanOrEqual(1);
+    const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
+    expect(recordedRun.status).toBe("skipped");
+    expect(recordedRun.skip_reason).toBeDefined();
+  });
+
+  test("checkCronSchedules advances next_run after trigger", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    // Verify next_run was updated on the cron entry
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+    const nextRunUpdates = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.next_run && typeof b.next_run === "string";
+    });
+    expect(nextRunUpdates.length).toBeGreaterThanOrEqual(1);
+
+    // New next_run should be after the original (2025-01-15T09:00:00Z)
+    const newNextRun = new Date((nextRunUpdates[0].body as { next_run: string }).next_run);
+    expect(newNextRun.getTime()).toBeGreaterThan(new Date("2025-01-15T09:00:00Z").getTime());
+  });
+
+  test("activeCronRuns and taskToCronRun tracking maps exist on runner", () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+
+    const activeCronRuns = (runner as unknown as { activeCronRuns?: unknown }).activeCronRuns;
+    const taskToCronRun = (runner as unknown as { taskToCronRun?: unknown }).taskToCronRun;
+
+    expect(activeCronRuns).toBeInstanceOf(Map);
+    expect(taskToCronRun).toBeInstanceOf(Map);
+  });
+});

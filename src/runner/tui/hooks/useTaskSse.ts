@@ -1,12 +1,26 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { ProjectStats, TaskDisplay, TUISSEEvent } from '../types';
 import { normalizeTaskSSEEvent } from './taskSseEvents';
-import type { TaskStats, UseTaskPollerResult } from './useTaskPoller';
+import type { TaskStats, UseTaskResult } from './taskTypes';
+import { appendFileSync } from 'fs';
+import { EventSource as EventSourcePolyfill } from 'eventsource';
+
+// Use polyfill in Node.js/Bun runtime, native EventSource in browser
+const EventSourceImpl = (typeof EventSource !== 'undefined' ? EventSource : EventSourcePolyfill) as typeof EventSource;
+
+const DEBUG_LOG = '/tmp/tui-sse-debug.log';
+
+function debugLog(message: string) {
+  try {
+    appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // Ignore errors
+  }
+}
 
 export interface UseTaskSseOptions {
   projectId: string;
   apiUrl: string;
-  pollInterval?: number;
   inactivityTimeoutMs?: number;
   reconnectDelayMs?: number;
   enabled?: boolean;
@@ -18,16 +32,14 @@ export interface TaskSseState {
   isLoading: boolean;
   isConnected: boolean;
   error: Error | null;
-  isUsingPollingFallback: boolean;
 }
 
 export type TaskSseAction =
   | { type: 'FETCH_START' }
-  | { type: 'SNAPSHOT_SUCCESS'; tasks: TaskDisplay[]; stats: TaskStats; fromPollingFallback: boolean }
-  | { type: 'CONNECTION_ERROR'; error: Error; usePollingFallback: boolean }
+  | { type: 'SNAPSHOT_SUCCESS'; tasks: TaskDisplay[]; stats: TaskStats }
+  | { type: 'CONNECTION_ERROR'; error: Error }
   | { type: 'SSE_HEALTHY' };
 
-const DEFAULT_POLL_INTERVAL = 1000;
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 65_000;
 const DEFAULT_RECONNECT_DELAY_MS = 5_000;
 
@@ -46,7 +58,6 @@ const INITIAL_STATE: TaskSseState = {
   isLoading: true,
   isConnected: false,
   error: null,
-  isUsingPollingFallback: false,
 };
 
 export function taskSseReducer(state: TaskSseState, action: TaskSseAction): TaskSseState {
@@ -60,7 +71,6 @@ export function taskSseReducer(state: TaskSseState, action: TaskSseAction): Task
         isLoading: false,
         isConnected: true,
         error: null,
-        isUsingPollingFallback: action.fromPollingFallback,
       };
     case 'CONNECTION_ERROR':
       return {
@@ -68,7 +78,6 @@ export function taskSseReducer(state: TaskSseState, action: TaskSseAction): Task
         isLoading: false,
         isConnected: false,
         error: action.error,
-        isUsingPollingFallback: action.usePollingFallback,
       };
     case 'SSE_HEALTHY':
       return {
@@ -76,33 +85,14 @@ export function taskSseReducer(state: TaskSseState, action: TaskSseAction): Task
         isLoading: false,
         isConnected: true,
         error: null,
-        isUsingPollingFallback: false,
       };
   }
 }
 
 export function buildTaskStreamUrl(apiUrl: string, projectId: string): string {
-  return `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}/stream`;
-}
-
-export function isSseInactive(lastActivityAt: number, now: number, inactivityTimeoutMs: number): boolean {
-  return now - lastActivityAt > inactivityTimeoutMs;
-}
-
-export function shouldUsePollingFallback(params: {
-  hasEventSource: boolean;
-  hasConnectedEvent: boolean;
-  hasRecentActivity: boolean;
-}): boolean {
-  if (!params.hasEventSource) {
-    return true;
-  }
-
-  if (params.hasConnectedEvent && !params.hasRecentActivity) {
-    return true;
-  }
-
-  return false;
+  const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}/stream`;
+  debugLog(`[buildTaskStreamUrl] Built URL: ${url}`);
+  return url;
 }
 
 function toTaskStats(stats: ProjectStats['stats'], tasks: TaskDisplay[]): TaskStats {
@@ -117,64 +107,37 @@ function toTaskStats(stats: ProjectStats['stats'], tasks: TaskDisplay[]): TaskSt
 }
 
 function extractSnapshot(event: TUISSEEvent | null): { tasks: TaskDisplay[]; stats: TaskStats } | null {
+  debugLog(`[extractSnapshot] Called with event: ${event ? event.type : 'NULL'}`);
+  
   if (!event || event.type !== 'tasks_snapshot') {
+    debugLog('[extractSnapshot] Event is null or not tasks_snapshot, returning null');
     return null;
   }
 
+  debugLog(`[extractSnapshot] Extracting snapshot with ${event.tasks.length} tasks`);
+  
   return {
     tasks: event.tasks,
     stats: toTaskStats(event.stats, event.tasks),
   };
 }
 
-function normalizeSnapshotEventFromApiResponse(projectId: string, payload: unknown): { tasks: TaskDisplay[]; stats: TaskStats } {
-  const event = normalizeTaskSSEEvent({
-    event: 'tasks_snapshot',
-    data: JSON.stringify({
-      type: 'tasks_snapshot',
-      transport: 'sse',
-      timestamp: new Date().toISOString(),
-      projectId,
-      ...(typeof payload === 'object' && payload !== null ? payload : {}),
-    }),
-    fallbackProjectId: projectId,
-  });
-
-  const snapshot = extractSnapshot(event);
-  if (!snapshot) {
-    throw new Error('Invalid task snapshot response');
-  }
-  return snapshot;
-}
-
-export function useTaskSse(options: UseTaskSseOptions): UseTaskPollerResult {
+export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
   const {
     projectId,
     apiUrl,
-    pollInterval = DEFAULT_POLL_INTERVAL,
     inactivityTimeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
     enabled = true,
   } = options;
 
+  debugLog(`[useTaskSse] Hook called with projectId=${projectId}, apiUrl=${apiUrl}, enabled=${enabled}`);
+
   const [state, dispatch] = useReducer(taskSseReducer, INITIAL_STATE);
 
-  const isInitialFetchRef = useRef(true);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const pollingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inactivityTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const hasConnectedEventRef = useRef(false);
-  const lastSseActivityAtRef = useRef<number | null>(null);
-  const usingPollingFallbackRef = useRef(false);
   const isUnmountedRef = useRef(false);
-
-  const clearPollingTimer = useCallback(() => {
-    if (pollingTimerRef.current) {
-      clearInterval(pollingTimerRef.current);
-      pollingTimerRef.current = null;
-    }
-  }, []);
 
   const clearReconnectTimer = useCallback(() => {
     if (reconnectTimerRef.current) {
@@ -184,58 +147,23 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskPollerResult {
   }, []);
 
   const closeEventSource = useCallback(() => {
+    debugLog('[useTaskSse:closeEventSource] Closing EventSource');
     if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+      const readyState = eventSourceRef.current.readyState;
+      debugLog(`[useTaskSse:closeEventSource] Current readyState: ${readyState}`);
+      
+      // Only close if it's not already closed
+      if (readyState !== 2) { // 2 = CLOSED
+        eventSourceRef.current.close();
+        debugLog('[useTaskSse:closeEventSource] EventSource closed');
+      } else {
+        debugLog('[useTaskSse:closeEventSource] EventSource already closed, skipping');
+      }
       eventSourceRef.current = null;
+    } else {
+      debugLog('[useTaskSse:closeEventSource] No EventSource to close');
     }
   }, []);
-
-  const fetchSnapshotViaPolling = useCallback(
-    async (fromPollingFallback: boolean) => {
-      try {
-        const response = await fetch(`${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}`);
-        if (!response.ok) {
-          throw new Error(`API error: ${response.status} ${response.statusText}`);
-        }
-
-        const data = await response.json();
-        const snapshot = normalizeSnapshotEventFromApiResponse(projectId, data);
-
-        dispatch({
-          type: 'SNAPSHOT_SUCCESS',
-          tasks: snapshot.tasks,
-          stats: snapshot.stats,
-          fromPollingFallback,
-        });
-      } catch (err) {
-        const error = err instanceof Error ? err : new Error('Unknown polling error');
-        dispatch({ type: 'CONNECTION_ERROR', error, usePollingFallback: true });
-      } finally {
-        isInitialFetchRef.current = false;
-      }
-    },
-    [apiUrl, projectId]
-  );
-
-  const startPollingFallback = useCallback(
-    (reason: Error) => {
-      usingPollingFallbackRef.current = true;
-      dispatch({ type: 'CONNECTION_ERROR', error: reason, usePollingFallback: true });
-
-      if (!pollingTimerRef.current) {
-        void fetchSnapshotViaPolling(true);
-        pollingTimerRef.current = setInterval(() => {
-          void fetchSnapshotViaPolling(true);
-        }, pollInterval);
-      }
-    },
-    [fetchSnapshotViaPolling, pollInterval]
-  );
-
-  const stopPollingFallback = useCallback(() => {
-    usingPollingFallbackRef.current = false;
-    clearPollingTimer();
-  }, [clearPollingTimer]);
 
   const scheduleReconnect = useCallback(
     (connect: () => void) => {
@@ -251,49 +179,59 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskPollerResult {
   );
 
   useEffect(() => {
+    debugLog(`[useTaskSse:useEffect] Effect triggered with enabled=${enabled}`);
+    
     if (!enabled) {
+      debugLog('[useTaskSse:useEffect] Hook is disabled, returning early');
       return;
     }
 
+    let didCancel = false;  // Flag to track if effect was cancelled
     isUnmountedRef.current = false;
-    isInitialFetchRef.current = true;
-    hasConnectedEventRef.current = false;
-    lastSseActivityAtRef.current = null;
-    usingPollingFallbackRef.current = false;
     dispatch({ type: 'FETCH_START' });
 
     const connectSse = () => {
-      if (isUnmountedRef.current) {
+      debugLog('[useTaskSse:connectSse] Function called');
+      
+      if (isUnmountedRef.current || didCancel) {
+        debugLog('[useTaskSse:connectSse] Component unmounted or cancelled, returning');
         return;
       }
 
-      if (typeof EventSource === 'undefined') {
-        startPollingFallback(new Error('EventSource is unavailable in this runtime'));
+      if (typeof EventSourceImpl === 'undefined') {
+        debugLog('[useTaskSse:connectSse] EventSource unavailable');
+        dispatch({
+          type: 'CONNECTION_ERROR',
+          error: new Error('EventSource is unavailable in this runtime'),
+        });
         return;
       }
 
       closeEventSource();
 
-      const eventSource = new EventSource(buildTaskStreamUrl(apiUrl, projectId));
-      eventSourceRef.current = eventSource;
+      const streamUrl = buildTaskStreamUrl(apiUrl, projectId);
+      debugLog(`[useTaskSse:connectSse] Creating EventSource with URL: ${streamUrl}`);
+      const eventSource = new EventSourceImpl(streamUrl);
+      eventSourceRef.current = eventSource as EventSource;
 
       const onConnected = (messageEvent: MessageEvent<string>) => {
+        debugLog('[useTaskSse:onConnected] Called');
         const event = normalizeTaskSSEEvent({
           event: 'connected',
           data: messageEvent.data,
           fallbackProjectId: projectId,
         });
         if (!event || event.type !== 'connected') {
+          debugLog('[useTaskSse:onConnected] Event invalid');
           return;
         }
 
-        hasConnectedEventRef.current = true;
-        lastSseActivityAtRef.current = Date.now();
-        stopPollingFallback();
+        debugLog('[useTaskSse:onConnected] SSE connected successfully');
         dispatch({ type: 'SSE_HEALTHY' });
       };
 
       const onHeartbeat = (messageEvent: MessageEvent<string>) => {
+        debugLog('[useTaskSse:onHeartbeat] Handler called');
         const event = normalizeTaskSSEEvent({
           event: 'heartbeat',
           data: messageEvent.data,
@@ -303,34 +241,47 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskPollerResult {
           return;
         }
 
-        lastSseActivityAtRef.current = Date.now();
-        stopPollingFallback();
         dispatch({ type: 'SSE_HEALTHY' });
       };
 
       const onSnapshot = (messageEvent: MessageEvent<string>) => {
+        debugLog('[useTaskSse:onSnapshot] Called');
+        debugLog(`[useTaskSse:onSnapshot] Raw data (first 200 chars): ${messageEvent.data.substring(0, 200)}`);
+        
         const event = normalizeTaskSSEEvent({
           event: 'tasks_snapshot',
           data: messageEvent.data,
           fallbackProjectId: projectId,
         });
+        
+        if (event && event.type === 'tasks_snapshot') {
+          debugLog(`[useTaskSse:onSnapshot] Normalized event: type=${event.type}, projectId=${event.projectId}, taskCount=${event.tasks.length}`);
+        } else {
+          debugLog('[useTaskSse:onSnapshot] Normalized event: NULL or wrong type');
+        }
 
         const snapshot = extractSnapshot(event);
+        if (snapshot) {
+          debugLog(`[useTaskSse:onSnapshot] Extracted snapshot: taskCount=${snapshot.tasks.length}, stats=${JSON.stringify(snapshot.stats)}`);
+        } else {
+          debugLog('[useTaskSse:onSnapshot] Extracted snapshot: NULL');
+        }
+        
         if (!snapshot) {
+          debugLog('[useTaskSse:onSnapshot] Snapshot is null, returning without dispatch');
           return;
         }
 
-        lastSseActivityAtRef.current = Date.now();
-        stopPollingFallback();
+        debugLog(`[useTaskSse:onSnapshot] Dispatching SNAPSHOT_SUCCESS with ${snapshot.tasks.length} tasks`);
         dispatch({
           type: 'SNAPSHOT_SUCCESS',
           tasks: snapshot.tasks,
           stats: snapshot.stats,
-          fromPollingFallback: false,
         });
       };
 
       const onServerErrorEvent = (messageEvent: MessageEvent<string>) => {
+        debugLog('[useTaskSse:onServerErrorEvent] Handler called');
         const event = normalizeTaskSSEEvent({
           event: 'error',
           data: messageEvent.data,
@@ -341,80 +292,61 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskPollerResult {
           ? event.message
           : 'SSE stream reported an error';
 
-        startPollingFallback(new Error(message));
+        debugLog(`[useTaskSse:onServerErrorEvent] Error message: ${message}`);
+        dispatch({ type: 'CONNECTION_ERROR', error: new Error(message) });
         scheduleReconnect(connectSse);
       };
 
-      const onTransportError = () => {
-        startPollingFallback(new Error('SSE connection error'));
+      const onTransportError = (e: Event) => {
+        debugLog(`[useTaskSse:onTransportError] Transport error occurred, type=${e.type}`);
+        dispatch({ type: 'CONNECTION_ERROR', error: new Error('SSE connection error') });
         scheduleReconnect(connectSse);
       };
 
+      debugLog('[useTaskSse:connectSse] Attaching event listeners');
       eventSource.addEventListener('connected', onConnected as EventListener);
       eventSource.addEventListener('heartbeat', onHeartbeat as EventListener);
       eventSource.addEventListener('tasks_snapshot', onSnapshot as EventListener);
       eventSource.addEventListener('error', onServerErrorEvent as EventListener);
       eventSource.onerror = onTransportError;
+      debugLog(`[useTaskSse:connectSse] Event listeners attached, readyState=${eventSource.readyState}`);
+      
+      // Schedule a check after 2 seconds to see if connection opened
+      setTimeout(() => {
+        debugLog(`[useTaskSse:connectSse:timeout] Connection check - readyState=${eventSource.readyState}`);
+      }, 2000);
     };
 
+    debugLog('[useTaskSse:useEffect] Calling connectSse()');
     connectSse();
 
-    const inactivityCheckMs = Math.max(1000, Math.floor(inactivityTimeoutMs / 2));
-    inactivityTimerRef.current = setInterval(() => {
-      if (isUnmountedRef.current) {
-        return;
-      }
-
-      const hasEventSource = typeof EventSource !== 'undefined';
-      const lastActivityAt = lastSseActivityAtRef.current;
-      const hasRecentActivity =
-        typeof lastActivityAt === 'number'
-          ? !isSseInactive(lastActivityAt, Date.now(), inactivityTimeoutMs)
-          : false;
-
-      if (
-        shouldUsePollingFallback({
-          hasEventSource,
-          hasConnectedEvent: hasConnectedEventRef.current,
-          hasRecentActivity,
-        })
-      ) {
-        closeEventSource();
-        startPollingFallback(new Error('SSE stream inactive; using polling fallback'));
-        scheduleReconnect(connectSse);
-      }
-    }, inactivityCheckMs);
-
     return () => {
+      debugLog('[useTaskSse:useEffect:cleanup] Cleanup called');
+      didCancel = true;  // Mark as cancelled
       isUnmountedRef.current = true;
-
-      closeEventSource();
-      clearPollingTimer();
-      clearReconnectTimer();
-
-      if (inactivityTimerRef.current) {
-        clearInterval(inactivityTimerRef.current);
-        inactivityTimerRef.current = null;
+      
+      // Only close if EventSource exists and is not in CONNECTING state
+      // This prevents React Strict Mode from closing connections prematurely
+      if (eventSourceRef.current && eventSourceRef.current.readyState !== 0) {
+        debugLog('[useTaskSse:useEffect:cleanup] Closing EventSource (not in CONNECTING state)');
+        closeEventSource();
+      } else {
+        debugLog('[useTaskSse:useEffect:cleanup] Skipping close (CONNECTING or no connection)');
       }
+      
+      clearReconnectTimer();
     };
   }, [
     apiUrl,
-    clearPollingTimer,
-    clearReconnectTimer,
-    closeEventSource,
     enabled,
-    inactivityTimeoutMs,
-    pollInterval,
     projectId,
-    reconnectDelayMs,
-    scheduleReconnect,
-    startPollingFallback,
-    stopPollingFallback,
+    reconnectDelayMs,  // Only include reconnectDelayMs, not the callback itself
   ]);
 
+  // refetch is a no-op in pure SSE mode (no manual polling)
   const refetch = useCallback(async () => {
-    await fetchSnapshotViaPolling(usingPollingFallbackRef.current);
-  }, [fetchSnapshotViaPolling]);
+    // Pure SSE mode - no manual refetch needed
+  }, []);
 
   return {
     tasks: state.tasks,

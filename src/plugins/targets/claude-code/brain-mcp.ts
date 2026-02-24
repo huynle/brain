@@ -387,6 +387,7 @@ const tools: Tool[] = [
         direct_prompt: { type: "string", description: "Direct prompt to execute, bypassing do-work skill workflow. The prompt is sent verbatim when the task runs." },
         agent: { type: "string", description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')" },
         model: { type: "string", description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')" },
+        schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step." },
       },
       required: ["type", "title", "content"],
     },
@@ -487,14 +488,22 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
   },
   {
     name: "brain_move",
-    description: `Move a brain entry (typically a task) to a different project.
+    description: `Move a brain entry to a different project.
+
+IMPORTANT LIMITATIONS:
+- ✅ Works for: tasks, summaries, reports, plans, and other note types
+- ❌ Does NOT work for: cron entries (crons are project-scoped and cannot be moved)
+- ❌ Cannot move entries currently in 'in_progress' status
+
+If you need a cron in a different project:
+- Use brain_cron_create to create a new cron in the target project
+- Use brain_cron_linked_tasks_set to link the appropriate tasks
+- Optionally brain_cron_delete the old cron if no longer needed
 
 Use cases:
 - Bulk reassign tasks to a different project
-- Move a task filed in the wrong project to the correct one
-- Reorganize tasks across projects
-
-Cannot move entries that are currently in_progress.
+- Move a task filed in the wrong project
+- Reorganize project structure
 
 Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
     inputSchema: {
@@ -681,7 +690,18 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
   },
   {
     name: "brain_cron_create",
-    description: "Create a cron entry in a project.",
+    description: `Create a cron entry in a project.
+
+IMPORTANT: Cron entries are PROJECT-SPECIFIC. Each project has its own set of cron schedules. If you need the same schedule in multiple projects, you must create separate cron entries in each project (they cannot be shared or moved between projects).
+
+After creating a cron, you must link tasks to it using brain_cron_linked_task_add or brain_cron_linked_tasks_set for the cron to execute anything.
+
+Parameters:
+- title: Descriptive name for the cron (e.g., "Daily backup at 2am")
+- schedule: Cron expression (e.g., "0 2 * * *" for 2am daily, "*/5 * * * *" for every 5 minutes)
+- content: Optional markdown description of what this cron does
+- status: Initial status (default: "active")
+- project: Target project (auto-detected if not provided)`,
     inputSchema: {
       type: "object",
       properties: {
@@ -714,7 +734,14 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
   },
   {
     name: "brain_cron_delete",
-    description: "Delete a cron entry from a project.",
+    description: `Delete a cron entry from a project.
+
+IMPORTANT: Deleting a cron does NOT delete the tasks linked to it. The tasks remain in the project but will no longer be triggered on a schedule. If you want to use those tasks in a different project's cron schedule:
+1. Use brain_move to move the tasks to the target project
+2. Create a new cron in the target project with brain_cron_create
+3. Link the moved tasks to the new cron with brain_cron_linked_task_add
+
+Requires confirmation to prevent accidental deletion.`,
     inputSchema: {
       type: "object",
       properties: {
@@ -984,6 +1011,8 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
           agent: args.type === "task" ? args.agent : undefined,
           model: args.type === "task" ? args.model : undefined,
+          // Cron scheduling for tasks
+          schedule: args.type === "task" ? args.schedule : undefined,
         });
         return `Saved to brain\n\nPath: ${response.path}\nID: ${response.id}\nTitle: ${response.title}\nType: ${response.type}\nStatus: ${response.status}`;
       }

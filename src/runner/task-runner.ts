@@ -26,7 +26,7 @@ import { SignalHandler, setupSignalHandler } from "./signals";
 import { getLogger } from "./logger";
 import { TmuxManager, getTmuxManager, type StatusInfo } from "./tmux-manager";
 import { startDashboard, type DashboardHandle } from "./tui";
-import type { LogEntry, OpenSessionTaskContext, TUITransportMode } from "./tui/types";
+import type { LogEntry, OpenSessionTaskContext } from "./tui/types";
 import { setTerminalMouseMode } from "./tui/hooks/useMouseInput";
 import { checkOpencodeStatus, isPidAlive, discoverOpencodePort } from "./opencode-port";
 import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-utils";
@@ -49,7 +49,6 @@ export interface TaskRunnerOptions {
   config?: RunnerConfig;
   mode?: ExecutionMode;
   startPaused?: boolean;        // Start with all projects paused (TUI mode default)
-  transportMode?: TUITransportMode;
 }
 
 export interface RunnerStatusInfo {
@@ -74,7 +73,6 @@ export class TaskRunner {
   private readonly projectId: string;      // Legacy: first project (for backward compat)
   private readonly runnerId: string;
   private readonly mode: ExecutionMode;
-  private readonly transportMode: TUITransportMode;
   private readonly isMultiProject: boolean;
 
   // Configuration
@@ -160,7 +158,6 @@ export class TaskRunner {
     
     this.runnerId = this.generateRunnerId();
     this.mode = options.mode ?? "background";
-    this.transportMode = options.transportMode ?? "poll";
     this.config = options.config ?? getRunnerConfig();
     this.startPaused = options.startPaused ?? false;
 
@@ -3141,7 +3138,6 @@ export class TaskRunner {
         projectId: this.projectId,     // Legacy single project (backward compat)
         apiUrl: this.config.brainApiUrl,
         pollInterval: this.config.pollInterval * 1000, // Convert to ms
-        transportMode: this.transportMode,
         maxLogs: 100,
         logDir: this.config.logDir,    // Enable log persistence across TUI restarts
         onExit: () => {

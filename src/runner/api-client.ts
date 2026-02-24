@@ -288,6 +288,17 @@ export class ApiClient {
     return (await response.json()) as CronDetailResponse;
   }
 
+  async getCronNames(projectId: string): Promise<Record<string, string>> {
+    const crons = await this.getCronEntries(projectId);
+    const cronNames: Record<string, string> = {};
+    
+    for (const cron of crons) {
+      cronNames[cron.id] = cron.title;
+    }
+    
+    return cronNames;
+  }
+
   async createCronEntry(projectId: string, request: CreateCronRequest): Promise<CronMutationResponse> {
     const encodedProjectId = encodeURIComponent(projectId);
     const response = await this.fetch(`/api/v1/crons/${encodedProjectId}/crons`, {

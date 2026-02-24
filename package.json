@@ -56,6 +56,8 @@
     "@hono/zod-openapi": "^1.2.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/react": "^19.2.10",
+    "eventsource": "^4.1.0",
+    "eventsource-parser": "^3.0.6",
     "hono": "^4.6.0",
     "ink": "^6.6.0",
     "ink-select-input": "^6.2.0",

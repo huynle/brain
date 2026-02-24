@@ -14,7 +14,7 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { TaskStats } from '../hooks/useTaskPoller';
+import type { TaskStats } from '../hooks/taskTypes';
 
 export interface ProjectTabsProps {
   /** All project IDs */

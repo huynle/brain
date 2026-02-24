@@ -247,6 +247,35 @@ export class BrainService {
       request.depends_on = validation.normalized;
     }
 
+    // Auto-create cron entry if task has schedule parameter
+    if (entryType === "task" && request.schedule && (!request.cron_ids || request.cron_ids.length === 0)) {
+      // Validate schedule before creating cron
+      try {
+        const { parseCronExpression } = await import("./cron-service");
+        parseCronExpression(request.schedule);
+      } catch (error) {
+        throw new Error(`Invalid cron expression: ${error instanceof Error ? error.message : String(error)}`);
+      }
+
+      // Create cron entry with "(Cron)" suffix
+      const displayTitle = normalizeTitle(request.title);
+      const cronResult = await this.save({
+        type: "cron",
+        title: `${displayTitle} (Cron)`,
+        content: "",
+        schedule: request.schedule,
+        status: "active",
+        // Don't pass project - let it use same logic as task (this.projectId.slice(0, 8))
+      });
+
+      // Link cron to task
+      request.cron_ids = [cronResult.id];
+
+      // Remove schedule and next_run from task (they belong to cron)
+      delete request.schedule;
+      delete request.next_run;
+    }
+
     // Determine directory for zk
     const projectDir =
       request.project || (isGlobal ? "global" : this.projectId.slice(0, 8));
@@ -994,6 +1023,15 @@ export class BrainService {
 
     // Record access
     recordAccess(path);
+
+    // Auto-reset logic for cron-linked tasks
+    await handleCronTaskAutoReset(
+      this,
+      path,
+      oldStatus,
+      newStatus,
+      updatedFrontmatter
+    );
 
     return this.recall(path);
   }
@@ -2211,4 +2249,147 @@ export function rewriteDependentFiles(params: RewriteDependentFilesParams): Rewr
   }
 
   return results;
+}
+
+/**
+ * Get cron entries for a specific project by scanning the filesystem
+ * 
+ * This function reads cron entries directly from disk rather than using the
+ * list() API to avoid zk CLI dependency in test environments.
+ * 
+ * @param brainDir - Root directory of the brain storage
+ * @param projectId - Project identifier
+ * @returns Array of cron entries with ID, path, and status
+ * @private
+ */
+async function getCronEntriesForProject(
+  brainDir: string,
+  projectId: string
+): Promise<Array<{ id: string; path: string; status: string }>> {
+  // Use filesystem scan for reliability (doesn't require zk CLI)
+  const cronDir = join(brainDir, "projects", projectId, "cron");
+  if (!existsSync(cronDir)) {
+    return [];
+  }
+
+  const { readdirSync } = await import("fs");
+  const files = readdirSync(cronDir);
+  const cronEntries: Array<{ id: string; path: string; status: string }> = [];
+
+  for (const file of files) {
+    if (!file.endsWith(".md")) continue;
+
+    const cronPath = `projects/${projectId}/cron/${file}`;
+    const fullPath = join(brainDir, cronPath);
+
+    try {
+      const content = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(content);
+      
+      // Extract ID from filename - typically the last segment before .md
+      // e.g., "test-cron-abc123.md" -> "abc123"
+      // Convention: <title>-<id>.md where ID is the last dash-separated segment
+      const filenameWithoutExt = file.replace(/\.md$/, "");
+      const parts = filenameWithoutExt.split("-");
+      const cronId = parts[parts.length - 1]; // Last segment is the ID
+      
+      const status = (frontmatter.status as string) || "active";
+
+      cronEntries.push({
+        id: cronId,
+        path: cronPath,
+        status,
+      });
+    } catch (error) {
+      // Skip malformed files
+      continue;
+    }
+  }
+
+  return cronEntries;
+}
+
+/**
+ * Auto-reset logic for cron-linked tasks
+ * 
+ * When a task with `cron_ids` frontmatter field is marked as completed or validated,
+ * this function checks if any of the linked cron entries are still active. If so,
+ * the task is automatically reset to "pending" status to prepare for the next
+ * scheduled run.
+ * 
+ * Guards:
+ * - Only triggers for status transitions TO completed/validated
+ * - Prevents infinite recursion by checking oldStatus !== newStatus
+ * - Only applies to entries with cron_ids array
+ * - Only applies to task-type entries
+ * - Only applies to entries within a project (with valid project ID)
+ * - Non-critical: logs errors but doesn't throw
+ * 
+ * @param service - BrainService instance for update operations
+ * @param entryPath - Path to the entry being updated
+ * @param oldStatus - Previous status before update
+ * @param newStatus - New status after update
+ * @param frontmatter - Parsed frontmatter containing cron_ids and other metadata
+ * @private
+ */
+async function handleCronTaskAutoReset(
+  service: BrainService,
+  entryPath: string,
+  oldStatus: string,
+  newStatus: string,
+  frontmatter: Record<string, unknown>
+): Promise<void> {
+  // Only reset if transitioning TO completed/validated
+  if (!["completed", "validated"].includes(newStatus)) {
+    return;
+  }
+
+  // Avoid infinite recursion - if already processing a reset, skip
+  if (oldStatus === newStatus) {
+    return;
+  }
+
+  // Only for tasks with cron_ids
+  const cronIds = frontmatter.cron_ids as string[] | undefined;
+  if (!cronIds || cronIds.length === 0) {
+    return;
+  }
+
+  // Check if entry is a task
+  const entryType = frontmatter.type as string;
+  const isTask = entryType === "task" || entryPath.includes("/task/");
+  if (!isTask) {
+    return;
+  }
+
+  // Get project ID
+  const projectMatch = entryPath.match(/^projects\/([^/]+)\//);
+  if (!projectMatch) {
+    return;
+  }
+  const projectId = projectMatch[1];
+
+  // Check if any cron is active
+  try {
+    const cronEntries = await getCronEntriesForProject(
+      (service as any).config.brainDir,
+      projectId
+    );
+    const hasActiveCron = cronIds.some((cronId) =>
+      cronEntries.some(
+        (entry) => entry.id === cronId && entry.status === "active"
+      )
+    );
+
+    if (hasActiveCron) {
+      // Reset to pending (schedule for next cron run)
+      await service.update(entryPath, {
+        status: "pending",
+        note: "Auto-reset for next cron run",
+      });
+    }
+  } catch (error) {
+    // Log but don't throw - auto-reset is non-critical
+    console.warn(`Failed to auto-reset cron task ${entryPath}:`, error);
+  }
 }

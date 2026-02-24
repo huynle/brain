@@ -718,6 +718,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       });
 
       const cron = await brainService.recall(created.path);
+      await publishTaskSnapshot(realtimeHub, projectId);
       publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
@@ -765,6 +766,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         content: body.content,
       });
 
+      await publishTaskSnapshot(realtimeHub, projectId);
       publishProjectDirty(realtimeHub, projectId);
       return c.json({
         cron: updated,
@@ -801,6 +803,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       }
 
       await brainService.delete(cron.path);
+      await publishTaskSnapshot(realtimeHub, projectId);
       publishProjectDirty(realtimeHub, projectId);
 
       return c.json(
@@ -868,6 +871,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       const existingRuns = cron.runs || [];
       const runs = [run, ...existingRuns];
       await brainService.update(cron.path, { runs });
+      await publishTaskSnapshot(realtimeHub, projectId);
       publishProjectDirty(realtimeHub, projectId);
 
       return c.json({

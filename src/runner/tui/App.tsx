@@ -33,6 +33,7 @@ import { spawnSync } from 'child_process';
 import { writeFileSync, readFileSync, unlinkSync, mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 import { copyToClipboard } from '../system-utils';
+import { getApiClient } from '../api-client';
 
 /** Compare two Sets for value equality (same size and same elements) */
 export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
@@ -44,7 +45,7 @@ export function setsEqual<T>(a: Set<T>, b: Set<T>): boolean {
 }
 import { Box, Text, useInput, useApp, useStdin } from 'ink';
 import { StatusBar } from './components/StatusBar';
-import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES } from './components/TaskTree';
+import { TaskTree, flattenFeatureOrder, parseTaskTreeRowTarget, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, GROUP_HEADER_PREFIX, SPACER_PREFIX, FEATURE_HEADER_PREFIX, COMPLETED_FEATURE_PREFIX, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, UNGROUPED_FEATURE_ID, GROUP_STATUSES, PROJECT_HEADER_PREFIX } from './components/TaskTree';
 import { LogViewer } from './components/LogViewer';
 import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
@@ -56,8 +57,6 @@ import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 import { SessionSelectPopup } from './components/SessionSelectPopup';
 
 import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
-import { useTaskPoller } from './hooks/useTaskPoller';
-import { useMultiProjectPoller } from './hooks/useMultiProjectPoller';
 import { useTaskSse } from './hooks/useTaskSse';
 import { useMultiProjectSse } from './hooks/useMultiProjectSse';
 import { useLogStream } from './hooks/useLogStream';
@@ -70,48 +69,16 @@ import { FilterBar } from './components/FilterBar';
 import { CronList } from './components/CronList';
 import { useCronPoller } from './hooks/useCronPoller';
 import { useMultiProjectCronPoller } from './hooks/useMultiProjectCronPoller';
-import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow, TUITransportMode } from './types';
-import type { TaskStats } from './hooks/useTaskPoller';
+import type { AppProps, TaskDisplay, ProjectLimitEntry, GroupVisibilityEntry, SettingsSection, OpenSessionTaskContext, CronDisplay, TaskTreeRowTarget, TUIMouseButton, TUIMouseEvent, TaskTreeVisibleRow } from './types';
+import type { TaskStats } from './hooks/taskTypes';
 
 type FocusedPanel = 'tasks' | 'details' | 'logs';
 type ViewMode = 'tasks' | 'crons';
 type CronActionMode = 'create' | 'edit' | 'add-link' | 'remove-link' | 'replace-links';
-type RuntimeTransportMode = 'poll' | 'sse';
 
-export interface TransportHookEnablement {
-  singleTaskPollerEnabled: boolean;
-  multiTaskPollerEnabled: boolean;
-  singleTaskSseEnabled: boolean;
-  multiTaskSseEnabled: boolean;
-  singleCronPollerEnabled: boolean;
-  multiCronPollerEnabled: boolean;
-}
 
-/**
- * Resolve runtime transport mode for current implementation.
- */
-export function resolveRuntimeTransportMode(transportMode: TUITransportMode): RuntimeTransportMode {
-  if (transportMode === 'sse' || transportMode === 'auto') {
-    return 'sse';
-  }
-  return 'poll';
-}
 
-export function resolveTransportHookEnablement(
-  isMultiProject: boolean,
-  runtimeTransportMode: RuntimeTransportMode,
-): TransportHookEnablement {
-  const useSse = runtimeTransportMode === 'sse';
 
-  return {
-    singleTaskPollerEnabled: !isMultiProject && !useSse,
-    multiTaskPollerEnabled: isMultiProject && !useSse,
-    singleTaskSseEnabled: !isMultiProject && useSse,
-    multiTaskSseEnabled: isMultiProject && useSse,
-    singleCronPollerEnabled: !isMultiProject,
-    multiCronPollerEnabled: isMultiProject,
-  };
-}
 
 /** Cycle to the next panel (for Tab navigation) */
 function nextPanel(current: FocusedPanel, logsVisible: boolean, detailVisible: boolean): FocusedPanel {
@@ -198,7 +165,7 @@ export function isTaskTreeCollapseToggleTarget(target: TaskTreeRowTarget): boole
 export function resolveTaskTreeClickAction(target: TaskTreeRowTarget, button: TUIMouseButton): TaskTreeClickAction {
   if (target.kind === 'task') {
     if (button === 'right') return 'open_metadata';
-    if (button === 'left') return 'open_editor';
+    if (button === 'left') return 'noop'; // Just highlight, don't open editor
     return 'noop';
   }
 
@@ -364,14 +331,8 @@ export function App({
     [config.projects, config.project]
   );
   const isMultiProject = projects.length > 1;
-  const runtimeTransportMode = useMemo(
-    () => resolveRuntimeTransportMode(config.transportMode),
-    [config.transportMode]
-  );
-  const transportHookEnablement = useMemo(
-    () => resolveTransportHookEnablement(isMultiProject, runtimeTransportMode),
-    [isMultiProject, runtimeTransportMode],
-  );
+  // SSE is now the only transport mode (Phase 2)
+
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
@@ -416,6 +377,8 @@ export function App({
   const [allProjects, setAllProjects] = useState<string[]>([]);
   // Computed: the effective project list used by the project picker (same as availableProjects prop)
   const effectiveProjects = allProjects.length > 0 ? allProjects : projects;
+  // Cron names for metadata popup (maps cron ID -> cron title)
+  const [cronNames, setCronNames] = useState<Record<string, string>>({});
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
@@ -487,36 +450,22 @@ export function App({
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
 
-  // Single-project poller (used when not in multi-project mode)
-  const singleProjectPoller = useTaskPoller({
-    projectId: config.project,
-    apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleTaskPollerEnabled,
-  });
 
-  // Single-project SSE task transport (with automatic polling fallback)
+
+  // Single-project SSE task transport
   const singleProjectSse = useTaskSse({
     projectId: config.project,
     apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleTaskSseEnabled,
+    enabled: !isMultiProject,
   });
 
-  // Multi-project poller (used when in multi-project mode)
-  const multiProjectPoller = useMultiProjectPoller({
-    projects: projects,
-    apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiTaskPollerEnabled,
-  });
 
-  // Multi-project SSE transport (with per-project polling fallback)
+
+  // Multi-project SSE transport
   const multiProjectSse = useMultiProjectSse({
     projects,
     apiUrl: config.apiUrl,
-    pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiTaskSseEnabled,
+    enabled: isMultiProject,
   });
 
   // Single-project cron poller (used when not in multi-project mode)
@@ -524,7 +473,7 @@ export function App({
     projectId: config.project,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.singleCronPollerEnabled,
+    enabled: !isMultiProject,
   });
 
   // Multi-project cron poller (used when in multi-project mode)
@@ -532,7 +481,7 @@ export function App({
     projects,
     apiUrl: config.apiUrl,
     pollInterval: config.pollInterval,
-    enabled: transportHookEnablement.multiCronPollerEnabled,
+    enabled: isMultiProject,
   });
 
   // Select appropriate data based on mode
@@ -547,7 +496,7 @@ export function App({
   let refetchCrons: () => Promise<void>;
 
   if (isMultiProject) {
-    const taskTransport = runtimeTransportMode === 'sse' ? multiProjectSse : multiProjectPoller;
+    const taskTransport = multiProjectSse;
 
     // Multi-project mode: filter tasks by activeProject
     if (activeProject === 'all') {
@@ -572,7 +521,7 @@ export function App({
     cronError = multiProjectCronPoller.error;
     refetchCrons = multiProjectCronPoller.refetch;
   } else {
-    const taskTransport = runtimeTransportMode === 'sse' ? singleProjectSse : singleProjectPoller;
+    const taskTransport = singleProjectSse;
 
     // Single-project mode
     tasks = taskTransport.tasks;
@@ -654,7 +603,7 @@ export function App({
   useEffect(() => {
     // Derive from task list: find root tasks (title = projectId, no deps) that are blocked
     const derivedPaused = new Set<string>();
-    const allTasksForPause = isMultiProject ? multiProjectPoller.allTasks : tasks;
+    const allTasksForPause = isMultiProject ? multiProjectSse.allTasks : tasks;
     for (const task of allTasksForPause) {
       if (task.dependencies.length === 0 && task.status === 'blocked') {
         // This could be a project root task — use projectId or title
@@ -681,7 +630,7 @@ export function App({
       }
       return derivedPaused;
     });
-  }, [tasks, isMultiProject, multiProjectPoller.allTasks, projects, getPausedProjects]);
+  }, [tasks, isMultiProject, multiProjectSse.allTasks, projects, getPausedProjects]);
 
   // Sync enabledFeatures from TaskRunner
   useEffect(() => {
@@ -1059,7 +1008,20 @@ export function App({
       }
     }
 
+    // Fetch cron names if task has cron_ids
+    let fetchedCronNames: Record<string, string> = {};
+    if (task.cron_ids && task.cron_ids.length > 0 && task.projectId) {
+      try {
+        const apiClient = getApiClient();
+        fetchedCronNames = await apiClient.getCronNames(task.projectId);
+      } catch {
+        // Graceful fallback - continue with empty cron names on error
+        fetchedCronNames = {};
+      }
+    }
+
     setAllProjects(fetchedProjects);
+    setCronNames(fetchedCronNames);
     setMetadataTargetTasks([task]);
     setMetadataPopupMode('single');
     setMetadataFocusedField('status');
@@ -1167,10 +1129,14 @@ export function App({
     if (!rowTarget) return;
 
     const action = resolveTaskTreeClickAction(rowTarget, event.button);
+    
+    // Always set focus and selection for task clicks, even if action is 'noop'
+    if (rowTarget.kind === 'task') {
+      setFocusedPanel('tasks');
+      setSelectedTaskId(rowTarget.id);
+    }
+    
     if (action === 'noop') return;
-
-    setFocusedPanel('tasks');
-    setSelectedTaskId(rowTarget.id);
 
     if (action === 'toggle_collapsed') {
       toggleCollapsedForTarget(rowTarget);
@@ -1225,8 +1191,21 @@ export function App({
       const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
       
       // Helper: save a single field immediately to API
+      // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
         if (!onUpdateMetadata || metadataTargetTasks.length === 0) return;
+        
+        // Basic validation for schedule field
+        if (field === 'schedule' && typeof value === 'string' && value.trim().length > 0) {
+          const fields = value.trim().split(/\s+/);
+          if (fields.length !== 5) {
+            addLog({ 
+              level: 'error', 
+              message: `Invalid cron expression: expected 5 fields (minute hour day month weekday), got ${fields.length}` 
+            });
+            return; // Abort save
+          }
+        }
         
         const updates: { [key: string]: string | EntryStatus } = { [field]: value };
         
@@ -2873,11 +2852,20 @@ export function App({
       }
     }
 
-    // Pause/Resume handling - directly toggle pause for active project
-    if (input === 'p') {
-      const targetProject = activeProject === 'all' 
-        ? (isMultiProject ? projects[0] : projects[0]) 
-        : activeProject;
+    // Pause/Resume handling - toggle pause for selected project header or active project
+    // Skip in cron view where 'p' toggles cron status
+    if (input === 'p' && viewMode !== 'crons') {
+      // Check if a project header is selected
+      let targetProject: string;
+      if (selectedTaskId?.startsWith(PROJECT_HEADER_PREFIX)) {
+        // Extract project ID from the selected project header
+        targetProject = selectedTaskId.replace(PROJECT_HEADER_PREFIX, '');
+      } else {
+        // Default to active project (current tab)
+        targetProject = activeProject === 'all' 
+          ? (isMultiProject ? projects[0] : projects[0]) 
+          : activeProject;
+      }
 
       // Toggle project pause
       const isPaused = pausedProjects.has(targetProject);
@@ -3328,6 +3316,8 @@ export function App({
           allowedStatuses={ENTRY_STATUSES}
           interactionMode={metadataInteractionMode}
           editBuffer={metadataEditBuffer}
+          cronIds={metadataTargetTasks[0]?.cron_ids}
+          cronNames={cronNames}
         />
       </Box>
     );
@@ -3445,7 +3435,7 @@ export function App({
         activeProject={isMultiProject ? (activeProject || 'all') : undefined}
         onSelectProject={isMultiProject ? setActiveProject : undefined}
         stats={stats}
-        statsByProject={isMultiProject ? multiProjectPoller.statsByProject : undefined}
+        statsByProject={isMultiProject ? multiProjectSse.statsByProject : undefined}
         isConnected={isConnected}
         pausedProjects={pausedProjects}
         enabledFeatures={enabledFeatures}

@@ -30,13 +30,19 @@ function createTask(overrides: Partial<Task> = {}): Task {
     priority: "medium",
     status: "pending",
     depends_on: [],
-
+    tags: [],
+    cron_ids: [],
     created: "2024-01-01",
+    target_workdir: null,
     workdir: null,
     worktree: null,
     git_remote: null,
     git_branch: null,
     user_original_request: null,
+    direct_prompt: null,
+    agent: null,
+    model: null,
+    sessions: {},
     ...overrides,
   };
 }
@@ -643,6 +649,175 @@ describe("getNextTask", () => {
 
     // Task from high-priority feature should be selected
     expect(next?.id).toBe("high-feature-task");
+  });
+
+  test("prefers features with higher completion ratio within same priority", () => {
+    const tasks = [
+      // Feature A: 8/10 completed (80%)
+      createTask({
+        id: "feature-a-task-9",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "feature-a",
+      }),
+      createTask({
+        id: "feature-a-task-10",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "feature-a",
+      }),
+      ...Array.from({ length: 8 }, (_, i) =>
+        createTask({
+          id: `feature-a-task-${i + 1}`,
+          status: "completed",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-a",
+        })
+      ),
+      // Feature B: 3/5 completed (60%)
+      createTask({
+        id: "feature-b-task-4",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "feature-b",
+      }),
+      createTask({
+        id: "feature-b-task-5",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "feature-b",
+      }),
+      ...Array.from({ length: 3 }, (_, i) =>
+        createTask({
+          id: `feature-b-task-${i + 1}`,
+          status: "completed",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-b",
+        })
+      ),
+      // Feature C: 0/20 completed (0%)
+      ...Array.from({ length: 20 }, (_, i) =>
+        createTask({
+          id: `feature-c-task-${i + 1}`,
+          status: "pending",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-c",
+        })
+      ),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Should select from Feature A (highest completion ratio: 80%)
+    expect(next?.feature_id).toBe("feature-a");
+  });
+
+  test("high priority features always rank above lower priority regardless of completion", () => {
+    const tasks = [
+      // Low priority feature with 90% completion
+      createTask({
+        id: "low-remaining",
+        status: "pending",
+        priority: "low",
+        depends_on: [],
+        feature_id: "low-feature",
+      }),
+      ...Array.from({ length: 9 }, (_, i) =>
+        createTask({
+          id: `low-completed-${i + 1}`,
+          status: "completed",
+          priority: "low",
+          depends_on: [],
+          feature_id: "low-feature",
+        })
+      ),
+      // High priority feature with 0% completion
+      createTask({
+        id: "high-new-task",
+        status: "pending",
+        priority: "high",
+        depends_on: [],
+        feature_id: "high-feature",
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // High priority always wins regardless of completion ratio
+    expect(next?.id).toBe("high-new-task");
+    expect(next?.feature_id).toBe("high-feature");
+  });
+
+  test("handles features with zero total tasks without crashing", () => {
+    const tasks = [
+      createTask({
+        id: "normal-task",
+        status: "pending",
+        priority: "medium",
+        depends_on: [],
+        feature_id: "normal-feature",
+      }),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Should not crash and should select the task
+    expect(next?.id).toBe("normal-task");
+  });
+
+  test("stable sort when completion ratios are equal", () => {
+    const tasks = [
+      // Feature A: 5/10 completed (50%)
+      ...Array.from({ length: 5 }, (_, i) =>
+        createTask({
+          id: `feature-a-pending-${i + 1}`,
+          status: "pending",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-a",
+        })
+      ),
+      ...Array.from({ length: 5 }, (_, i) =>
+        createTask({
+          id: `feature-a-completed-${i + 1}`,
+          status: "completed",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-a",
+        })
+      ),
+      // Feature B: 5/10 completed (50%) - same ratio
+      ...Array.from({ length: 5 }, (_, i) =>
+        createTask({
+          id: `feature-b-pending-${i + 1}`,
+          status: "pending",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-b",
+        })
+      ),
+      ...Array.from({ length: 5 }, (_, i) =>
+        createTask({
+          id: `feature-b-completed-${i + 1}`,
+          status: "completed",
+          priority: "medium",
+          depends_on: [],
+          feature_id: "feature-b",
+        })
+      ),
+    ];
+    const result = resolveDependencies(tasks);
+    const next = getNextTask(result);
+
+    // Should return one of the two features consistently (stable sort)
+    expect(next?.feature_id).toMatch(/^feature-[ab]$/);
   });
 
   test("skips tasks in waiting features", () => {

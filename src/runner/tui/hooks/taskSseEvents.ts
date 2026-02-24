@@ -1,5 +1,16 @@
 import type { SessionInfo } from '../../../core/types';
 import type { ProjectStats, TaskDisplay, TUISSEEvent } from '../types';
+import { appendFileSync } from 'fs';
+
+const DEBUG_LOG = '/tmp/tui-sse-debug.log';
+
+function debugLog(message: string) {
+  try {
+    appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${message}\n`);
+  } catch {
+    // Ignore errors
+  }
+}
 
 type NormalizeTaskSSEEventParams = {
   event: string;
@@ -212,20 +223,27 @@ function normalizeSnapshotStats(rawStats: unknown, tasks: TaskDisplay[]): Projec
 export function normalizeTaskSSEEvent(params: NormalizeTaskSSEEventParams): TUISSEEvent | null {
   const { event, data, fallbackProjectId } = params;
 
+  debugLog(`[normalizeTaskSSEEvent] Called with event: ${event}, fallbackProjectId: ${fallbackProjectId}`);
+
   let parsed: unknown;
   try {
     parsed = JSON.parse(data);
-  } catch {
+    debugLog('[normalizeTaskSSEEvent] Parsed JSON successfully');
+  } catch (err) {
+    debugLog(`[normalizeTaskSSEEvent] JSON parse failed: ${err}`);
     return null;
   }
 
   if (!isRecord(parsed)) {
+    debugLog('[normalizeTaskSSEEvent] Parsed data is not a record');
     return null;
   }
 
   const type = asString(parsed.type) ?? event;
   const timestamp = asString(parsed.timestamp) ?? new Date().toISOString();
   const projectId = asString(parsed.projectId) ?? fallbackProjectId;
+
+  debugLog(`[normalizeTaskSSEEvent] Extracted type: ${type}, projectId: ${projectId}`);
 
   if (type === 'connected') {
     return {
@@ -258,10 +276,14 @@ export function normalizeTaskSSEEvent(params: NormalizeTaskSSEEventParams): TUIS
 
   if (type === 'tasks_snapshot') {
     if (!projectId) {
+      debugLog('[normalizeTaskSSEEvent] tasks_snapshot missing projectId!');
       return null;
     }
 
     const rawTasks = Array.isArray(parsed.tasks) ? parsed.tasks.filter(isRecord) : [];
+    debugLog(`[normalizeTaskSSEEvent] Raw tasks array length: ${Array.isArray(parsed.tasks) ? parsed.tasks.length : 'NOT_ARRAY'}`);
+    debugLog(`[normalizeTaskSSEEvent] Filtered tasks (isRecord) count: ${rawTasks.length}`);
+    
     const idToTitle = new Map<string, string>();
     for (const rawTask of rawTasks) {
       const id = asString(rawTask.id);
@@ -278,6 +300,8 @@ export function normalizeTaskSSEEvent(params: NormalizeTaskSSEEventParams): TUIS
       normalizeTask(rawTask, idToTitle, dependentsMap, dependencyMap, projectId)
     );
 
+    debugLog(`[normalizeTaskSSEEvent] Normalized tasks count: ${tasks.length}`);
+
     return {
       type: 'tasks_snapshot',
       transport: 'sse',
@@ -288,5 +312,6 @@ export function normalizeTaskSSEEvent(params: NormalizeTaskSSEEventParams): TUIS
     };
   }
 
+  debugLog(`[normalizeTaskSSEEvent] Unknown event type: ${type}`);
   return null;
 }

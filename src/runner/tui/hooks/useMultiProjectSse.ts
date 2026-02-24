@@ -10,6 +10,10 @@ import {
   type MultiProjectResult,
   type UseMultiProjectOptions,
 } from './multiProjectUtils';
+import { EventSource as EventSourcePolyfill } from 'eventsource';
+
+// Use polyfill in Node.js/Bun runtime, native EventSource in browser
+const EventSourceImpl = (typeof EventSource !== 'undefined' ? EventSource : EventSourcePolyfill) as typeof EventSource;
 
 interface UseMultiProjectSseOptions extends UseMultiProjectOptions {
   inactivityTimeoutMs?: number;
@@ -268,7 +272,7 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
           return;
         }
 
-        if (typeof EventSource === 'undefined') {
+        if (typeof EventSourceImpl === 'undefined') {
           dispatch({
             type: 'PROJECT_CONNECTION_ERROR',
             projectId,
@@ -278,8 +282,8 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
         }
 
         closeProjectEventSource(projectId);
-        const eventSource = new EventSource(buildProjectTaskStreamUrl(apiUrl, projectId));
-        runtime.eventSource = eventSource;
+        const eventSource = new EventSourceImpl(buildProjectTaskStreamUrl(apiUrl, projectId));
+        runtime.eventSource = eventSource as EventSource;
 
         const onConnected = (messageEvent: MessageEvent<string>) => {
           const event = normalizeTaskSSEEvent({

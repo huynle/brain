@@ -39,6 +39,10 @@ function createTask(overrides: Partial<Task> = {}): Task {
     git_remote: null,
     git_branch: null,
     user_original_request: null,
+    direct_prompt: null,
+    agent: null,
+    model: null,
+    sessions: {},
     ...overrides,
   };
 }

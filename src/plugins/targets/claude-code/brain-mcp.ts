@@ -694,13 +694,15 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
 
 IMPORTANT: Cron entries are PROJECT-SPECIFIC. Each project has its own set of cron schedules. If you need the same schedule in multiple projects, you must create separate cron entries in each project (they cannot be shared or moved between projects).
 
-After creating a cron, you must link tasks to it using brain_cron_linked_task_add or brain_cron_linked_tasks_set for the cron to execute anything.
+You can link tasks during creation by providing taskId or taskIds. This enables one-call cron setup.
 
 Parameters:
 - title: Descriptive name for the cron (e.g., "Daily backup at 2am")
 - schedule: Cron expression (e.g., "0 2 * * *" for 2am daily, "*/5 * * * *" for every 5 minutes)
 - content: Optional markdown description of what this cron does
 - status: Initial status (default: "active")
+- taskId: Optional single task ID to link immediately
+- taskIds: Optional task IDs to link immediately
 - project: Target project (auto-detected if not provided)`,
     inputSchema: {
       type: "object",
@@ -710,6 +712,8 @@ Parameters:
         content: { type: "string", description: "Cron content" },
         status: { type: "string", enum: ENTRY_STATUSES, description: "Initial status" },
         tags: { type: "array", items: { type: "string" }, description: "Optional tags" },
+        taskId: { type: "string", description: "Optional single task ID to link to this cron after creation" },
+        taskIds: { type: "array", items: { type: "string" }, description: "Optional task IDs to link to this cron after creation" },
         project: { type: "string", description: "Override auto-detected project" },
       },
       required: ["title", "schedule"],
@@ -1788,7 +1792,7 @@ Use brain_tasks to see the full task list and dependency status.`;
         const proj = (args.project as string) || context.projectId;
         try {
           const response = await apiRequest<{
-            cron: unknown;
+            cron: { id?: string };
             message: string;
           }>("POST", `/crons/${encodeURIComponent(proj)}/crons`, {
             title: args.title,
@@ -1797,6 +1801,44 @@ Use brain_tasks to see the full task list and dependency status.`;
             status: args.status,
             tags: args.tags,
           });
+
+          const linkedTaskIds = Array.from(
+            new Set([
+              ...(args.taskId ? [args.taskId as string] : []),
+              ...((args.taskIds as string[] | undefined) ?? []),
+            ].filter((id): id is string => typeof id === "string" && id.trim().length > 0))
+          );
+
+          if (linkedTaskIds.length > 0) {
+            const cronId = response.cron?.id;
+            if (!cronId) {
+              return formatCronError(
+                "create",
+                proj,
+                "Cron created but response missing cron ID for task linking"
+              );
+            }
+
+            const linked = await apiRequest<{
+              cronId: string;
+              tasks: unknown[];
+              count: number;
+              message: string;
+            }>(
+              "PATCH",
+              `/crons/${encodeURIComponent(proj)}/crons/${encodeURIComponent(cronId)}/linked-tasks`,
+              {
+                taskIds: linkedTaskIds,
+              }
+            );
+
+            return formatCronResult("create", proj, {
+              cron: response.cron,
+              message: response.message,
+              linked,
+            });
+          }
+
           return formatCronResult("create", proj, response);
         } catch (error) {
           return formatCronError("create", proj, error);

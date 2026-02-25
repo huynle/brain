@@ -147,6 +147,38 @@ describe('taskSseEvents', () => {
     expect(taskC?.dependentTitles).toEqual(['Task B']);
   });
 
+  it('passes through task frontmatter in tasks_snapshot events', () => {
+    const event = normalizeTaskSSEEvent({
+      event: 'tasks_snapshot',
+      data: JSON.stringify({
+        type: 'tasks_snapshot',
+        timestamp: '2026-02-23T10:00:00.000Z',
+        projectId: 'brain-api',
+        tasks: [
+          {
+            id: 'task-a',
+            path: 'projects/brain-api/task/task-a.md',
+            title: 'Task A',
+            status: 'pending',
+            frontmatter: {
+              custom_string: 'keep-me',
+              custom_nested: { enabled: true },
+            },
+          },
+        ],
+      }),
+    });
+
+    if (!event || event.type !== 'tasks_snapshot') {
+      throw new Error('Expected tasks_snapshot event');
+    }
+
+    expect(event.tasks[0].frontmatter).toEqual({
+      custom_string: 'keep-me',
+      custom_nested: { enabled: true },
+    });
+  });
+
   it('returns null for unknown events or invalid payloads', () => {
     expect(
       normalizeTaskSSEEvent({

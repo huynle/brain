@@ -55,6 +55,7 @@ function createTestTask(
     status: string;
     priority?: string;
     depends_on?: string[];
+    frontmatterLines?: string[];
   }
 ): string {
   const relativePath = `${TEST_TASK_DIR}/${taskId}.md`;
@@ -75,6 +76,10 @@ function createTestTask(
     for (const dep of content.depends_on) {
       frontmatter.push(`  - ${dep}`);
     }
+  }
+
+  if (content.frontmatterLines && content.frontmatterLines.length > 0) {
+    frontmatter.push(...content.frontmatterLines);
   }
 
   frontmatter.push("---", "", `# ${content.title}`, "", "Task content here.");
@@ -147,6 +152,63 @@ describe("Task API", () => {
       expect(firstSnapshotDataLine).toBeDefined();
       expect(firstSnapshotDataLine).toContain(`\"projectId\":\"${TEST_PROJECT}\"`);
       expect(firstSnapshotDataLine).toContain("\"transport\":\"sse\"");
+
+      await reader?.cancel();
+    });
+
+    test("includes raw task frontmatter in initial snapshot payload", async () => {
+      const taskId = `frontmatter-${Date.now()}`;
+      createTestTask(taskId, {
+        title: "Frontmatter passthrough test",
+        status: "pending",
+        frontmatterLines: [
+          "target_workdir: projects/brain-api",
+          "custom_string: keep-me",
+          "custom_nested:",
+          "  level: 2",
+        ],
+      });
+
+      const streamApp = new Hono();
+      streamApp.route("/tasks", (createTaskRoutes as any)({ heartbeatIntervalMs: 25 }));
+
+      const res = await streamApp.request(`/tasks/${TEST_PROJECT}/stream`);
+      expect(res.status).toBe(200);
+
+      const reader = res.body?.getReader();
+      expect(reader).toBeDefined();
+
+      const decoder = new TextDecoder();
+      let text = "";
+      const deadline = Date.now() + 3000;
+
+      while (Date.now() < deadline) {
+        const result = await reader!.read();
+        if (result.done) {
+          break;
+        }
+
+        text += decoder.decode(result.value, { stream: true });
+
+        if (text.includes("event: tasks_snapshot")) {
+          break;
+        }
+      }
+
+      const snapshotDataLine = text
+        .split("\n")
+        .find((line) => line.startsWith("data: {") && line.includes('"type":"tasks_snapshot"'));
+
+      expect(snapshotDataLine).toBeDefined();
+
+      const payload = JSON.parse((snapshotDataLine as string).slice("data: ".length));
+      const task = payload.tasks.find((t: { id: string }) => t.id === taskId);
+
+      expect(task).toBeDefined();
+      expect(task.frontmatter).toBeDefined();
+      expect(task.frontmatter.custom_string).toBe("keep-me");
+      expect(task.frontmatter.custom_nested).toEqual({ level: 2 });
+      expect(task.frontmatter.target_workdir).toBe("projects/brain-api");
 
       await reader?.cancel();
     });

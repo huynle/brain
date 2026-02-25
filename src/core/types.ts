@@ -379,6 +379,9 @@ export interface Task {
   // Session traceability
   sessions: Record<string, SessionInfo>; // Map of session ID to session metadata
 
+  // Raw task frontmatter for UI rendering/debugging
+  frontmatter?: Record<string, unknown>;
+
   // Derived fields
   projectId?: string; // Derived from file path (e.g., "pwa" from "projects/pwa/task/...")
 }

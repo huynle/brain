@@ -52,6 +52,7 @@ export interface TaskDisplay {
   // Frontmatter fields
   created?: string;                  // ISO timestamp when created
   modified?: string;                 // ISO timestamp when last modified
+  frontmatter?: Record<string, unknown>; // Raw task frontmatter passthrough
   workdir?: string | null;           // $HOME-relative working directory
   gitRemote?: string | null;         // Git remote URL
   gitBranch?: string | null;         // Branch context (worktree derived from this)

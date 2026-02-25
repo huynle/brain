@@ -144,6 +144,8 @@ export class TaskService {
           model: (note.metadata?.model as string) || null,
           // Session traceability
           sessions,
+          // Preserve raw frontmatter for downstream UI rendering
+          frontmatter: note.metadata,
           // Derived from file path for self-correcting project identity
           projectId: derivedProjectId,
         };

@@ -146,4 +146,35 @@ describe('TaskDetail', () => {
       expect(lastFrame()).not.toContain('Progress:');
     });
   });
+
+  describe('frontmatter display', () => {
+    it('renders a dynamic section with unknown frontmatter keys', () => {
+      const task = createTask({
+        frontmatter: {
+          custom_flag: true,
+          retry_count: 3,
+        },
+      });
+
+      const { lastFrame } = render(<TaskDetail task={task} />);
+      expect(lastFrame()).toContain('Frontmatter:');
+      expect(lastFrame()).toContain('custom_flag: true');
+      expect(lastFrame()).toContain('retry_count: 3');
+    });
+
+    it('formats nested frontmatter values safely for terminal output', () => {
+      const task = createTask({
+        frontmatter: {
+          metadata: { owner: 'alice', labels: ['runner', 'tui'] },
+          extra: [1, { nested: 'value' }],
+          nullable: null,
+        },
+      });
+
+      const { lastFrame } = render(<TaskDetail task={task} />);
+      expect(lastFrame()).toContain('metadata: {"owner":"alice","labels":["runner","tui"]}');
+      expect(lastFrame()).toContain('extra: [1,{"nested":"value"}]');
+      expect(lastFrame()).toContain('nullable: null');
+    });
+  });
 });

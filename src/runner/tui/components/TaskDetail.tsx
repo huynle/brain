@@ -53,6 +53,40 @@ function truncate(str: string | null | undefined, maxLen: number): string {
   return str.slice(0, maxLen - 3) + '...';
 }
 
+/**
+ * Format unknown frontmatter values for stable terminal output
+ */
+function formatFrontmatterValue(value: unknown): string {
+  if (value === null) return 'null';
+
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value);
+  }
+  if (typeof value === 'undefined') return 'undefined';
+  if (typeof value === 'function') return '[Function]';
+  if (typeof value === 'symbol') return value.toString();
+
+  const seen = new WeakSet<object>();
+  const replacer = (_key: string, current: unknown): unknown => {
+    if (typeof current === 'bigint') return current.toString();
+    if (typeof current === 'function') return '[Function]';
+    if (typeof current === 'symbol') return current.toString();
+    if (current && typeof current === 'object') {
+      if (seen.has(current)) return '[Circular]';
+      seen.add(current);
+    }
+    return current;
+  };
+
+  try {
+    const serialized = JSON.stringify(value, replacer);
+    return serialized ?? String(value);
+  } catch {
+    return '[Unserializable]';
+  }
+}
+
 export const TaskDetail = React.memo(function TaskDetail({ 
   task, 
   isFocused = false,
@@ -193,6 +227,24 @@ export const TaskDetail = React.memo(function TaskDetail({
         </Box>
       );
     }
+  }
+
+  // All frontmatter metadata (dynamic passthrough)
+  const frontmatterEntries = Object.entries(task.frontmatter ?? {});
+  if (frontmatterEntries.length > 0) {
+    contentLines.push(
+      <Box key="frontmatter-header" flexDirection="column" marginTop={1}>
+        <Text underline>Frontmatter:</Text>
+      </Box>
+    );
+    frontmatterEntries.forEach(([key, value]) => {
+      contentLines.push(
+        <Box key={`frontmatter-${key}`}>
+          <Text dimColor>{`  ${key}: `}</Text>
+          <Text>{truncate(formatFrontmatterValue(value), 180)}</Text>
+        </Box>
+      );
+    });
   }
 
   // Dependencies section

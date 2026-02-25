@@ -183,6 +183,7 @@ function normalizeTask(
     parent_id: asString(rawTask.parent_id),
     created: asString(rawTask.created),
     modified: asString(rawTask.modified),
+    frontmatter: isRecord(rawTask.frontmatter) ? rawTask.frontmatter : undefined,
     workdir: asString(rawTask.workdir) ?? null,
     gitRemote: asString(rawTask.git_remote) ?? null,
     gitBranch: asString(rawTask.git_branch) ?? null,

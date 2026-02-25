@@ -465,7 +465,7 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('📅 Monthly Cleanup');
     });
 
-    it('should fallback to cron ID when name not found in cronNames', () => {
+    it('should only show cron links that exist in cronNames', () => {
       const { lastFrame } = render(
         <MetadataPopup 
           {...defaultProps} 
@@ -476,7 +476,7 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).toContain('📅 Daily Backup');
-      expect(frame).toContain('📅 cron2'); // Falls back to ID
+      expect(frame).not.toContain('cron2');
     });
 
     it('should not show "Cron Links:" field when cronIds is empty', () => {
@@ -503,6 +503,20 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).not.toContain('Cron Links:');
+    });
+
+    it('should not show "Cron Links:" field when no cron IDs resolve to names', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          cronIds={['orphan-cron-id']}
+          cronNames={{}}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('Cron Links:');
+      expect(frame).not.toContain('orphan-cron-id');
     });
   });
 
@@ -550,7 +564,7 @@ describe('MetadataPopup', () => {
       expect(frame).not.toContain('Cron Links:');
     });
 
-    it('should handle missing cronNames for a cronId (fallback to ID)', () => {
+    it('should hide unknown cron IDs when cronNames is missing entries', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...defaultProps}
@@ -563,7 +577,7 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).toContain('Daily Backup');
-      expect(frame).toContain('unknown456'); // Fallback to ID
+      expect(frame).not.toContain('unknown456');
     });
   });
 

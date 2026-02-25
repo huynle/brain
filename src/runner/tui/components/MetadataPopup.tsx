@@ -183,6 +183,8 @@ export function MetadataPopup({
     }
   };
 
+  const validCronIds = (cronIds ?? []).filter((cronId) => Boolean(cronNames?.[cronId]));
+
   return (
     <Box
       flexDirection="column"
@@ -369,7 +371,7 @@ export function MetadataPopup({
         })}
 
         {/* Cron Links field (read-only, only shown if cronIds present) */}
-        {cronIds && cronIds.length > 0 && (
+        {validCronIds.length > 0 && (
           <Box>
             {/* No selection indicator for read-only field */}
             <Text>  </Text>
@@ -381,8 +383,8 @@ export function MetadataPopup({
 
             {/* Cron badges */}
             <Box flexDirection="column" flexShrink={1}>
-              {cronIds.map((cronId) => {
-                const cronName = cronNames?.[cronId] || cronId;
+              {validCronIds.map((cronId) => {
+                const cronName = cronNames?.[cronId] as string;
                 return (
                   <Box key={cronId}>
                     <Text dimColor>📅 {cronName}</Text>

@@ -157,8 +157,6 @@ Plugin Commands:
   install <target>     Install brain plugin to an AI coding assistant
   uninstall <target>   Remove brain plugin from an AI coding assistant
   plugin-status        Show plugin installation status for all targets
-  backups <target>     List backup files for a target
-  restore <target>     Restore the latest backup for each file
 
 Install Targets:
   opencode      OpenCode AI coding assistant
@@ -167,14 +165,9 @@ Install Targets:
   antigravity   Antigravity AI assistant (coming soon)
 
 Install Options:
-  brain install opencode              Install to OpenCode
+  brain install opencode              Install/replace OpenCode (destructive, no backups)
   brain install opencode --dry-run    Show what would be installed
   brain install --api-url <url>       Use custom API URL
-
-Backup Options:
-  brain backups opencode              List all backups
-  brain restore opencode              Restore latest backup for each file
-  brain restore opencode --dry-run    Show what would be restored
 
 Init Options:
   brain init                Initialize brain directory (skip existing files)
@@ -598,57 +591,6 @@ async function cmdPluginStatus(): Promise<void> {
   }
 }
 
-async function cmdBackups(args: string[]): Promise<void> {
-  const { listBackups, findBackups } = await import("../plugins/installer");
-
-  const target = args[0];
-
-  if (!target || target.startsWith("-")) {
-    console.log(`Usage: brain backups <target>`);
-    console.log(`\nAvailable targets: opencode, claude-code, cursor, antigravity`);
-    return;
-  }
-
-  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
-  if (!validTargets.includes(target)) {
-    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
-    process.exit(1);
-  }
-
-  console.log(`${COLORS.bold}Backups for ${target}${COLORS.reset}\n`);
-  console.log(listBackups(target as any));
-}
-
-async function cmdRestore(args: string[]): Promise<void> {
-  const { restoreBackups } = await import("../plugins/installer");
-
-  const target = args[0];
-  const dryRun = args.includes("--dry-run");
-
-  if (!target || target.startsWith("-")) {
-    console.log(`Usage: brain restore <target> [--dry-run]`);
-    console.log(`\nRestores the latest backup for each installed file.`);
-    console.log(`Available targets: opencode, claude-code, cursor, antigravity`);
-    return;
-  }
-
-  const validTargets = ["opencode", "claude-code", "cursor", "antigravity"];
-  if (!validTargets.includes(target)) {
-    console.error(`${COLORS.red}Unknown target: ${target}${COLORS.reset}`);
-    process.exit(1);
-  }
-
-  console.log(`${COLORS.bold}Restoring backups for ${target}...${COLORS.reset}\n`);
-
-  const result = await restoreBackups(target as any, { dryRun });
-
-  if (result.success) {
-    console.log(`${COLORS.green}${result.message}${COLORS.reset}`);
-  } else {
-    console.log(`${COLORS.yellow}${result.message}${COLORS.reset}`);
-  }
-}
-
 // =============================================================================
 // Init Command
 // =============================================================================
@@ -884,12 +826,6 @@ async function main() {
     case "plugin-status":
     case "plugins":
       await cmdPluginStatus();
-      break;
-    case "backups":
-      await cmdBackups(args.slice(1));
-      break;
-    case "restore":
-      await cmdRestore(args.slice(1));
       break;
     case "help":
     case "--help":

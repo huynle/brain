@@ -12,14 +12,32 @@ function runBrainCli(args: string[]) {
 }
 
 describe("brain CLI command surface", () => {
-  test("help excludes clean-backups and force reinstall guidance", () => {
+  test("help excludes backup lifecycle commands and force reinstall guidance", () => {
     const result = runBrainCli(["--help"]);
 
     expect(result.status).toBe(0);
+    expect(result.stdout).not.toContain("backups <target>");
+    expect(result.stdout).not.toContain("restore <target>");
     expect(result.stdout).not.toContain("clean-backups");
     expect(result.stdout).toContain("brain install opencode");
     expect(result.stdout).not.toContain("brain install opencode --force");
     expect(result.stdout).not.toContain("Usage: brain install <target> [--force]");
+  });
+
+  test("backups is not a recognized command", () => {
+    const result = runBrainCli(["backups", "opencode"]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("Unknown command: backups");
+  });
+
+  test("restore is not a recognized command", () => {
+    const result = runBrainCli(["restore", "opencode"]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("Unknown command: restore");
   });
 
   test("clean-backups is not a recognized command", () => {

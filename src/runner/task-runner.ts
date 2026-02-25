@@ -1695,6 +1695,27 @@ export class TaskRunner {
   private async checkTuiTasks(): Promise<void> {
     for (const [taskId, task] of this.tuiTasks) {
       try {
+        // Check task status from brain API
+        const encodedPath = encodeURIComponent(task.path);
+        const response = await fetch(
+          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
+        );
+
+        if (response.ok) {
+          const entry = await response.json();
+          const completionStatus = this.resolveEntryCompletionStatus(entry, task.runId);
+
+          if (
+            completionStatus === CompletionStatus.Completed ||
+            completionStatus === CompletionStatus.Cancelled
+          ) {
+            await this.handleTuiTaskCompletion(taskId, task, completionStatus);
+            continue;
+          }
+          // Note: "blocked" status is NOT treated as completion
+          // Blocked tasks stay in tuiTasks to allow resume detection
+        }
+
         // Check if TUI task process is still alive
         if (!isPidAlive(task.pid)) {
           this.logger.warn("Detected dead TUI task process, cleaning up", {
@@ -1702,35 +1723,14 @@ export class TaskRunner {
             pid: task.pid,
             startedAt: task.startedAt,
           });
-          
+
           this.tuiLog('warn', `Task ${task.title} process died unexpectedly, cleaning up`, taskId, task.projectId);
-          
+
           // Mark as crashed/failed
           await this.handleTuiTaskCompletion(taskId, task, CompletionStatus.Crashed);
-          
+
           continue; // Move to next task in loop
         }
-
-        // Check task status from brain API
-        const encodedPath = encodeURIComponent(task.path);
-        const response = await fetch(
-          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
-        );
-        
-        if (!response.ok) continue;
-
-        const entry = await response.json();
-        const completionStatus = this.resolveEntryCompletionStatus(entry, task.runId);
-
-        if (
-          completionStatus === CompletionStatus.Completed ||
-          completionStatus === CompletionStatus.Cancelled
-        ) {
-          await this.handleTuiTaskCompletion(taskId, task, completionStatus);
-          continue;
-        }
-        // Note: "blocked" status is NOT treated as completion
-        // Blocked tasks stay in tuiTasks to allow resume detection
 
         // Check for timeout (0 = no timeout)
         const elapsed = Date.now() - new Date(task.startedAt).getTime();

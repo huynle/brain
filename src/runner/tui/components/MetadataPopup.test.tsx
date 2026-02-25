@@ -479,6 +479,21 @@ describe('MetadataPopup', () => {
       expect(frame).not.toContain('cron2');
     });
 
+    it('should keep valid cron badge and suppress stale cron ID text', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          cronIds={['crn00001', 'stale-cron-id']}
+          cronNames={{ crn00001: 'Nightly Cleanup' }}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Cron Links:');
+      expect(frame).toContain('📅 Nightly Cleanup');
+      expect(frame).not.toContain('stale-cron-id');
+    });
+
     it('should not show "Cron Links:" field when cronIds is empty', () => {
       const { lastFrame } = render(
         <MetadataPopup 

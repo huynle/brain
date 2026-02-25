@@ -380,8 +380,10 @@ describe("Cron API", () => {
     const taskOnlyDeletedCron = await getTaskEntry("tsk00010");
     const taskMixedCronIds = await getTaskEntry("tsk00011");
     expect(taskOnlyDeletedCron.cron_ids || []).not.toContain(created.cron.id);
+    expect(taskOnlyDeletedCron.cron_ids || []).toEqual([]);
     expect(taskMixedCronIds.cron_ids || []).not.toContain(created.cron.id);
     expect(taskMixedCronIds.cron_ids || []).toContain(keepCronId);
+    expect(taskMixedCronIds.cron_ids || []).toEqual([keepCronId]);
   });
 
   test("creates cron entry with auto-calculated next_run", async () => {

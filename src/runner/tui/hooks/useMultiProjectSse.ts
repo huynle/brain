@@ -15,6 +15,10 @@ import { EventSource as EventSourcePolyfill } from 'eventsource';
 // Use polyfill in Node.js/Bun runtime, native EventSource in browser
 const EventSourceImpl = (typeof EventSource !== 'undefined' ? EventSource : EventSourcePolyfill) as typeof EventSource;
 
+function isTransientTransportError(error: Error): boolean {
+  return error.message === 'SSE connection error';
+}
+
 interface UseMultiProjectSseOptions extends UseMultiProjectOptions {
   inactivityTimeoutMs?: number;
   reconnectDelayMs?: number;
@@ -139,6 +143,26 @@ export function multiProjectSseReducer(state: MultiProjectSseState, action: Mult
       };
     }
     case 'PROJECT_CONNECTION_ERROR': {
+      if (isTransientTransportError(action.error)) {
+        const wasConnected = state.connectionByProject.get(action.projectId) === true;
+        if (!wasConnected) {
+          return state;
+        }
+
+        const connectionByProject = new Map(state.connectionByProject);
+        const errorsByProject = new Map(state.errorsByProject);
+
+        connectionByProject.set(action.projectId, false);
+        errorsByProject.delete(action.projectId);
+
+        return {
+          ...state,
+          connectionByProject,
+          errorsByProject,
+          isLoading: false,
+        };
+      }
+
       const connectionByProject = new Map(state.connectionByProject);
       const errorsByProject = new Map(state.errorsByProject);
 

@@ -33,6 +33,7 @@ import {
   TaskStatusRequestSchema,
   TaskStatusResponseSchema,
 } from "./schemas";
+import { TASK_SSE_HEARTBEAT_MS } from "./sse-config";
 
 // =============================================================================
 // Claim Tracking (In-Memory)
@@ -500,7 +501,7 @@ type TaskRouteOptions = {
   taskService?: TaskService;
 };
 
-const DEFAULT_HEARTBEAT_MS = 30000;
+const DEFAULT_HEARTBEAT_MS = TASK_SSE_HEARTBEAT_MS;
 
 async function publishTaskSnapshot(
   realtimeHub: ProjectRealtimeHub,

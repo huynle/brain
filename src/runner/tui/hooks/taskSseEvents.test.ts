@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { normalizeTaskSSEEvent } from './taskSseEvents';
+import { isSseDebugLoggingEnabled, normalizeTaskSSEEvent } from './taskSseEvents';
 
 describe('taskSseEvents', () => {
   it('normalizes connected events', () => {
@@ -193,5 +193,23 @@ describe('taskSseEvents', () => {
         data: '{not-json}',
       })
     ).toBeNull();
+  });
+
+  it('keeps sync SSE debug logging disabled by default', () => {
+    const originalValue = process.env.BRAIN_TUI_SSE_DEBUG;
+    delete process.env.BRAIN_TUI_SSE_DEBUG;
+
+    try {
+      expect(isSseDebugLoggingEnabled()).toBe(false);
+
+      process.env.BRAIN_TUI_SSE_DEBUG = '1';
+      expect(isSseDebugLoggingEnabled()).toBe(true);
+    } finally {
+      if (originalValue === undefined) {
+        delete process.env.BRAIN_TUI_SSE_DEBUG;
+      } else {
+        process.env.BRAIN_TUI_SSE_DEBUG = originalValue;
+      }
+    }
   });
 });

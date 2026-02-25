@@ -7,6 +7,7 @@
 
 import { serve, type TLSOptions } from "bun";
 import { getConfig } from "./config";
+import { TASK_SSE_SAFE_IDLE_TIMEOUT_SECONDS } from "./api/sse-config";
 import { createApp } from "./server";
 
 function buildTlsOptions(config: ReturnType<typeof getConfig>): TLSOptions | undefined {
@@ -53,6 +54,7 @@ const server = serve({
   port: config.server.port,
   hostname: config.server.host,
   tls: tlsOptions,
+  idleTimeout: TASK_SSE_SAFE_IDLE_TIMEOUT_SECONDS,
 });
 
 const protocol = config.server.tls.enabled ? "https" : "http";

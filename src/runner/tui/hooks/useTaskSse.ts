@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { ProjectStats, TaskDisplay, TUISSEEvent } from '../types';
-import { normalizeTaskSSEEvent } from './taskSseEvents';
+import { isSseDebugLoggingEnabled, normalizeTaskSSEEvent } from './taskSseEvents';
 import type { TaskStats, UseTaskResult } from './taskTypes';
 import { appendFileSync } from 'fs';
 import { EventSource as EventSourcePolyfill } from 'eventsource';
@@ -9,8 +9,17 @@ import { EventSource as EventSourcePolyfill } from 'eventsource';
 const EventSourceImpl = (typeof EventSource !== 'undefined' ? EventSource : EventSourcePolyfill) as typeof EventSource;
 
 const DEBUG_LOG = '/tmp/tui-sse-debug.log';
+const SSE_DEBUG_ENABLED = isSseDebugLoggingEnabled();
+
+function isTransientTransportError(error: Error): boolean {
+  return error.message === 'SSE connection error';
+}
 
 function debugLog(message: string) {
+  if (!SSE_DEBUG_ENABLED) {
+    return;
+  }
+
   try {
     appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${message}\n`);
   } catch {
@@ -73,6 +82,19 @@ export function taskSseReducer(state: TaskSseState, action: TaskSseAction): Task
         error: null,
       };
     case 'CONNECTION_ERROR':
+      if (isTransientTransportError(action.error)) {
+        if (!state.isConnected && state.tasks.length === 0) {
+          return state;
+        }
+
+        return {
+          ...state,
+          isLoading: false,
+          isConnected: false,
+          error: null,
+        };
+      }
+
       return {
         ...state,
         isLoading: false,

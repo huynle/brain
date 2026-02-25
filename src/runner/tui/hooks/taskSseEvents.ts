@@ -4,7 +4,17 @@ import { appendFileSync } from 'fs';
 
 const DEBUG_LOG = '/tmp/tui-sse-debug.log';
 
+export function isSseDebugLoggingEnabled(): boolean {
+  return process.env.BRAIN_TUI_SSE_DEBUG === '1';
+}
+
+const SSE_DEBUG_ENABLED = isSseDebugLoggingEnabled();
+
 function debugLog(message: string) {
+  if (!SSE_DEBUG_ENABLED) {
+    return;
+  }
+
   try {
     appendFileSync(DEBUG_LOG, `[${new Date().toISOString()}] ${message}\n`);
   } catch {

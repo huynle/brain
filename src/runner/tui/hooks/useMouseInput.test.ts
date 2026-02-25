@@ -4,19 +4,25 @@ import { parseMouseInput, setTerminalMouseMode } from './useMouseInput';
 describe('parseMouseInput', () => {
   it('parses left click SGR mouse sequences', () => {
     expect(parseMouseInput('\u001b[<0;12;7M')).toEqual([
-      { button: 'left', column: 12, row: 7 },
+      { kind: 'press', button: 'left', column: 12, row: 7 },
     ]);
   });
 
   it('parses right click SGR mouse sequences', () => {
     expect(parseMouseInput('\u001b[<2;40;9M')).toEqual([
-      { button: 'right', column: 40, row: 9 },
+      { kind: 'press', button: 'right', column: 40, row: 9 },
     ]);
   });
 
   it('parses middle click SGR mouse sequences', () => {
     expect(parseMouseInput('\u001b[<1;21;6M')).toEqual([
-      { button: 'middle', column: 21, row: 6 },
+      { kind: 'press', button: 'middle', column: 21, row: 6 },
+    ]);
+  });
+
+  it('parses mouse motion SGR sequences', () => {
+    expect(parseMouseInput('\u001b[<35;12;7M')).toEqual([
+      { kind: 'move', button: 'none', column: 12, row: 7 },
     ]);
   });
 
@@ -25,15 +31,19 @@ describe('parseMouseInput', () => {
     expect(parseMouseInput('\u001b[<64;12;7M')).toEqual([]);
   });
 
-  it('ignores drag/motion mouse sequences for click-only handling', () => {
-    expect(parseMouseInput('\u001b[<32;12;7M')).toEqual([]);
-    expect(parseMouseInput('\u001b[<35;12;7M')).toEqual([]);
+  it('parses drag as move events', () => {
+    expect(parseMouseInput('\u001b[<32;12;7M')).toEqual([
+      { kind: 'move', button: 'left', column: 12, row: 7 },
+    ]);
+    expect(parseMouseInput('\u001b[<34;12;7M')).toEqual([
+      { kind: 'move', button: 'right', column: 12, row: 7 },
+    ]);
   });
 
   it('extracts multiple events from mixed terminal output', () => {
     expect(parseMouseInput('abc\u001b[<0;1;2Mdef\u001b[<2;3;4M')).toEqual([
-      { button: 'left', column: 1, row: 2 },
-      { button: 'right', column: 3, row: 4 },
+      { kind: 'press', button: 'left', column: 1, row: 2 },
+      { kind: 'press', button: 'right', column: 3, row: 4 },
     ]);
   });
 
@@ -55,7 +65,7 @@ describe('setTerminalMouseMode', () => {
       writes.push(chunk);
     });
 
-    expect(writes).toEqual(['\u001b[?1000h', '\u001b[?1006h']);
+    expect(writes).toEqual(['\u001b[?1000h', '\u001b[?1003h', '\u001b[?1006h']);
   });
 
   it('writes disable sequences for mouse reporting', () => {
@@ -64,7 +74,7 @@ describe('setTerminalMouseMode', () => {
       writes.push(chunk);
     });
 
-    expect(writes).toEqual(['\u001b[?1000l', '\u001b[?1006l']);
+    expect(writes).toEqual(['\u001b[?1000l', '\u001b[?1003l', '\u001b[?1006l']);
   });
 
   it('silently swallows write errors', () => {
@@ -87,6 +97,6 @@ describe('setTerminalMouseMode', () => {
       });
     }).not.toThrow();
 
-    expect(callCount).toBe(2);
+    expect(callCount).toBe(3);
   });
 });

@@ -4,16 +4,20 @@ import type { TUIMouseEvent } from '../types';
 
 const SGR_MOUSE_PATTERN = /\x1b\[<(\d+);(\d+);(\d+)([mM])/g;
 
-function decodeMouseButton(code: number): TUIMouseEvent['button'] | null {
-  // Ignore wheel, drag, and motion bits for click foundation support.
-  if ((code & 0b1100000) !== 0) {
-    return null;
-  }
-
+function decodeMouseButton(code: number): Extract<TUIMouseEvent, { kind: 'press' }>['button'] | null {
   const baseCode = code & 0b11;
   if (baseCode === 0) return 'left';
   if (baseCode === 1) return 'middle';
   if (baseCode === 2) return 'right';
+  return null;
+}
+
+function decodeMotionButton(code: number): Extract<TUIMouseEvent, { kind: 'move' }>['button'] | null {
+  const baseCode = code & 0b11;
+  if (baseCode === 0) return 'left';
+  if (baseCode === 1) return 'middle';
+  if (baseCode === 2) return 'right';
+  if (baseCode === 3) return 'none';
   return null;
 }
 
@@ -37,12 +41,29 @@ export function parseMouseInput(input: string): TUIMouseEvent[] {
       continue;
     }
 
+    // Ignore wheel events.
+    if ((code & 0b1000000) !== 0) {
+      continue;
+    }
+
+    const isMotion = (code & 0b100000) !== 0;
+
+    if (isMotion) {
+      const button = decodeMotionButton(code);
+      if (!button) {
+        continue;
+      }
+
+      events.push({ kind: 'move', button, column, row });
+      continue;
+    }
+
     const button = decodeMouseButton(code);
     if (!button) {
       continue;
     }
 
-    events.push({ button, column, row });
+    events.push({ kind: 'press', button, column, row });
   }
 
   return events;
@@ -50,8 +71,8 @@ export function parseMouseInput(input: string): TUIMouseEvent[] {
 
 type WriteFn = (chunk: string) => unknown;
 
-const ENABLE_MOUSE_SEQUENCES = ['\x1b[?1000h', '\x1b[?1006h'];
-const DISABLE_MOUSE_SEQUENCES = ['\x1b[?1000l', '\x1b[?1006l'];
+const ENABLE_MOUSE_SEQUENCES = ['\x1b[?1000h', '\x1b[?1003h', '\x1b[?1006h'];
+const DISABLE_MOUSE_SEQUENCES = ['\x1b[?1000l', '\x1b[?1003l', '\x1b[?1006l'];
 
 /**
  * Enable/disable terminal mouse mode (X10 + SGR), silently ignoring unsupported terminals.

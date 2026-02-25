@@ -276,6 +276,32 @@ export function shouldHandleTaskTreeMouseEvent(state: TaskTreeMouseGuardState): 
 }
 
 /**
+ * Resolve which task ID should drive preview rendering.
+ * Hovered task takes precedence over persistent selection.
+ */
+export function resolvePreviewTaskId(selectedTaskId: string | null, hoveredTaskId: string | null): string | null {
+  return hoveredTaskId ?? selectedTaskId;
+}
+
+/**
+ * Resolve hovered task ID from a mouse event and row hit-target.
+ * - move on task row => hovered task id
+ * - move outside/non-task row => clear hover
+ * - press events keep existing hover unchanged
+ */
+export function resolveHoveredTaskId(
+  event: Pick<TUIMouseEvent, 'kind'>,
+  rowTarget: TaskTreeRowTarget | null,
+  currentHoveredTaskId: string | null,
+): string | null {
+  if (event.kind !== 'move') {
+    return currentHoveredTaskId;
+  }
+
+  return rowTarget?.kind === 'task' ? rowTarget.id : null;
+}
+
+/**
  * Get tasks for a feature within a specific status group section.
  * Used when pressing 's' on a feature header inside completed/draft/etc sections.
  */
@@ -336,6 +362,7 @@ export function App({
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
   const [selectedCronId, setSelectedCronId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [viewMode, setViewMode] = useState<ViewMode>('tasks');
@@ -700,6 +727,8 @@ export function App({
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
+  const previewTaskId = resolvePreviewTaskId(selectedTaskId, hoveredTaskId);
+  const previewTask = tasks.find((t) => t.id === previewTaskId) || null;
   const selectedCron = crons.find((c) => c.id === selectedCronId) || null;
 
   const closeCronLinkEditor = useCallback(() => {
@@ -848,10 +877,10 @@ export function App({
     }
   }, [selectedCronId, crons, cronScrollOffset, cronViewportHeight]);
 
-  // Reset details scroll offset when selected task changes
+  // Reset details scroll offset when previewed task changes
   useEffect(() => {
     setDetailsScrollOffset(0);
-  }, [selectedTaskId]);
+  }, [previewTaskId]);
 
   // All project tabs including 'all' at the front
   const allProjectTabs = ['all', ...projects];
@@ -1121,11 +1150,20 @@ export function App({
       showHelp,
       isEditing,
     })) {
+      if (event.kind === 'move') {
+        setHoveredTaskId(null);
+      }
       return;
     }
 
     const viewportStartRow = getTaskTreeViewportStartRow(isMultiProject, filterMode);
     const rowTarget = findTaskTreeTargetFromMouseRow(taskTreeVisibleRows, event.row, viewportStartRow);
+
+    if (event.kind === 'move') {
+      setHoveredTaskId((currentHoveredTaskId) => resolveHoveredTaskId(event, rowTarget, currentHoveredTaskId));
+      return;
+    }
+
     if (!rowTarget) return;
 
     const action = resolveTaskTreeClickAction(rowTarget, event.button);
@@ -3464,7 +3502,7 @@ export function App({
                 />
                 <TaskTree
                   tasks={filteredTasks}
-                  selectedId={selectedTaskId}
+                  selectedId={previewTaskId}
                   onSelect={setSelectedTaskId}
                   completedCollapsed={completedCollapsed}
                   onToggleCompleted={handleToggleCompleted}
@@ -3508,7 +3546,7 @@ export function App({
               <Box height={detailHeight} flexDirection="column">
                 {viewMode === 'tasks' ? (
                   <TaskDetail
-                    task={selectedTask}
+                    task={previewTask}
                     isFocused={focusedPanel === 'details'}
                     scrollOffset={detailsScrollOffset}
                     viewportHeight={detailsViewportHeight}

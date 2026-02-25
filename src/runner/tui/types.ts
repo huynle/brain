@@ -253,16 +253,29 @@ export interface GroupVisibilityEntry {
 /**
  * Supported mouse buttons for TUI interactions.
  */
-export type TUIMouseButton = 'left' | 'right' | 'middle';
+export type TUIMouseButton = 'left' | 'right' | 'middle' | 'none';
+
+/**
+ * Supported mouse buttons for press interactions.
+ */
+export type TUIPressMouseButton = Exclude<TUIMouseButton, 'none'>;
 
 /**
  * Normalized mouse event contract used by App interaction routing.
  */
-export interface TUIMouseEvent {
-  button: TUIMouseButton;
-  row: number;
-  column: number;
-}
+export type TUIMouseEvent =
+  | {
+      kind: 'press';
+      button: TUIPressMouseButton;
+      row: number;
+      column: number;
+    }
+  | {
+      kind: 'move';
+      button: TUIMouseButton;
+      row: number;
+      column: number;
+    };
 
 /**
  * Logical row kinds rendered in the TaskTree.

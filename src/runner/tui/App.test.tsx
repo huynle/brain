@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId } from './App';
 import type { TUIConfig } from './types';
 
 // Mock the hooks to isolate App component testing
@@ -451,6 +451,19 @@ describe('App click helper exports', () => {
 
   it('returns project collapse key for project header targets', () => {
     expect(getTaskTreeCollapseKey({ kind: 'project_header', id: 'h1', projectId: 'brain-api' })).toBe('project:brain-api');
+  });
+
+  it('exports preview-id resolver with hover precedence', async () => {
+    expect(resolvePreviewTaskId('selected-1', 'hovered-1')).toBe('hovered-1');
+    expect(resolvePreviewTaskId('selected-1', null)).toBe('selected-1');
+    expect(resolvePreviewTaskId(null, null)).toBeNull();
+  });
+
+  it('exports hover resolver that clears on non-task/outside rows', () => {
+    expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'task', id: 'task-1' }, null)).toBe('task-1');
+    expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'feature_header', id: '__feature_header__f' }, 'task-1')).toBeNull();
+    expect(resolveHoveredTaskId({ kind: 'move' }, null, 'task-1')).toBeNull();
+    expect(resolveHoveredTaskId({ kind: 'press' }, { kind: 'task', id: 'task-2' }, 'task-1')).toBe('task-1');
   });
 });
 

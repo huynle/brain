@@ -64,6 +64,8 @@ describe('CronList', () => {
             remaining_runs: 0,
             completed_reason: 'max_runs_reached',
             starts_at: '2026-02-23T00:00:00.000Z',
+            window_starts_at_utc: '2026-02-23T00:00:00.000Z',
+            window_expires_at_utc: '2026-02-24T00:00:00.000Z',
           }),
         ]}
         selectedId="cron-1"

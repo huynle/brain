@@ -2610,6 +2610,67 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
     expect(patchCalls.length).toBe(0);
   });
 
+  test("checkCronSchedules skips due cron when max_runs attempts are already exhausted", async () => {
+    const cronEntry = makeCronEntry({
+      max_runs: 2,
+      runs: [
+        { run_id: "20250114-0900-aaaaaa", status: "completed", started: "2025-01-14T09:00:00Z" },
+        { run_id: "20250115-0900-bbbbbb", status: "skipped", started: "2025-01-15T09:00:00Z" },
+      ],
+    });
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const taskReads = calls.filter((c) => c.method === "GET" && c.url.includes("/tasks/test-project"));
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(taskReads.length).toBe(0);
+    expect(patchCalls.length).toBe(0);
+  });
+
+  test("checkCronSchedules skips due cron when trigger time is outside configured window", async () => {
+    const cronEntry = makeCronEntry({
+      starts_at: "2025-01-15T10:00:00Z",
+      expires_at: "2025-01-16T00:00:00Z",
+    });
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const taskReads = calls.filter((c) => c.method === "GET" && c.url.includes("/tasks/test-project"));
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(taskReads.length).toBe(0);
+    expect(patchCalls.length).toBe(0);
+  });
+
   test("activeCronRuns and taskToCronRun tracking maps exist on runner", () => {
     const runner = new TaskRunner({ projectId: "test-project", config });
 

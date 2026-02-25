@@ -74,6 +74,7 @@ describe('CronDetail', () => {
     expect(frame).toContain('[one-shot]');
     expect(frame).toContain('[windowed]');
     expect(frame).toContain('Configured start (local):');
+    expect(frame).toContain('Window starts (local):');
     expect(frame).toContain('Window expires (local):');
     expect(frame).toContain('Completed reason: max_runs_reached');
   });

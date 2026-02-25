@@ -380,6 +380,40 @@ describe("Cron API", () => {
     expect(Number.isNaN(new Date(created.cron.expires_at).getTime())).toBe(false);
   });
 
+  test("normalizes loose starts_at and expires_at inputs to UTC on update", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Bounded Window Update Cron",
+        schedule: "0 9 * * 1",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    const patchRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        starts_at: "next monday 8am",
+        expires_at: "in 30 days",
+      }),
+    });
+
+    if (patchRes.status === 503) return;
+
+    expect(patchRes.status).toBe(200);
+    const patched = await patchRes.json();
+    expect(typeof patched.cron.starts_at).toBe("string");
+    expect(typeof patched.cron.expires_at).toBe("string");
+    expect(Number.isNaN(new Date(patched.cron.starts_at).getTime())).toBe(false);
+    expect(Number.isNaN(new Date(patched.cron.expires_at).getTime())).toBe(false);
+  });
+
   test("updates cron schedule and recalculates next_run", async () => {
     const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
       method: "POST",

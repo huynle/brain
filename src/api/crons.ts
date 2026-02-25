@@ -550,6 +550,72 @@ function linkedTasksPayload(cronId: string, tasks: ResolvedTask[]) {
   };
 }
 
+type CronVisibilitySource = {
+  status?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
+  runs?: CronRun[];
+};
+
+function normalizeUtcIso(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return undefined;
+  return parsed.toISOString();
+}
+
+function countAttemptedRuns(runs: CronRun[] | undefined): number {
+  return (runs || []).filter(
+    (run) =>
+      run.status === "completed" ||
+      run.status === "failed" ||
+      run.status === "skipped" ||
+      run.status === "in_progress" ||
+      String(run.status) === "active"
+  ).length;
+}
+
+function deriveCompletedReason(cron: CronVisibilitySource, now: Date): string | undefined {
+  if (
+    cron.status === "completed" ||
+    cron.status === "cancelled" ||
+    cron.status === "superseded" ||
+    cron.status === "archived"
+  ) {
+    return `status is ${cron.status}`;
+  }
+
+  const boundsCheck = canRunWithinBounds(cron, now, { countAttemptsForMaxRuns: true });
+  if (!boundsCheck.canRun && boundsCheck.reason && !boundsCheck.reason.startsWith("before starts_at")) {
+    return boundsCheck.reason;
+  }
+
+  return undefined;
+}
+
+function withCronVisibilityFields<T extends CronVisibilitySource>(cron: T, now = new Date()): T & {
+  attempts_used: number;
+  remaining_runs: number | null;
+  completed_reason?: string;
+  window_starts_at_utc?: string;
+  window_expires_at_utc?: string;
+} {
+  const attemptsUsed = countAttemptedRuns(cron.runs);
+  const remainingRuns =
+    typeof cron.max_runs === "number" ? Math.max(cron.max_runs - attemptsUsed, 0) : null;
+  const completedReason = deriveCompletedReason(cron, now);
+
+  return {
+    ...cron,
+    attempts_used: attemptsUsed,
+    remaining_runs: remainingRuns,
+    completed_reason: completedReason,
+    window_starts_at_utc: normalizeUtcIso(cron.starts_at),
+    window_expires_at_utc: normalizeUtcIso(cron.expires_at),
+  };
+}
+
 function parseLooseDatetimeToUtc(value: string | undefined, fieldName: string): string | undefined {
   if (value === undefined) return undefined;
   const parsed = parseDate(value);
@@ -673,6 +739,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         })
       );
 
+      const now = new Date();
       const projectCrons = cronEntries
         .filter((entry): entry is BrainEntry => entry !== null)
         .map((entry) => ({
@@ -688,7 +755,8 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
           runs: entry.runs,
           created: entry.created,
           modified: entry.modified,
-        }));
+        }))
+        .map((entry) => withCronVisibilityFields(entry, now));
 
       return c.json({
         crons: projectCrons,
@@ -728,7 +796,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       const pipeline = resolveCronPipeline(cron.id, taskResult.tasks);
 
       return c.json({
-        cron,
+        cron: withCronVisibilityFields(cron),
         pipeline,
         pipelineCount: pipeline.length,
       }, 200);
@@ -777,7 +845,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       publishProjectDirty(realtimeHub, projectId);
       return c.json(
         {
-          cron,
+          cron: withCronVisibilityFields(cron),
           message: "Cron created successfully",
         },
         201
@@ -847,7 +915,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       await publishTaskSnapshot(realtimeHub, projectId);
       publishProjectDirty(realtimeHub, projectId);
       return c.json({
-        cron: updated,
+        cron: withCronVisibilityFields(updated),
         message: "Cron updated successfully",
       }, 200);
     } catch (error) {

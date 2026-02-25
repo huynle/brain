@@ -127,6 +127,11 @@ export interface BrainEntry {
   schedule?: string; // cron expression e.g. "0 2 * * *"
   next_run?: string; // ISO timestamp of next scheduled run
   max_runs?: number; // optional execution cap for this cron
+  attempts_used?: number; // derived attempted run count for cron visibility
+  remaining_runs?: number | null; // derived remaining attempts before max_runs is exhausted
+  completed_reason?: string; // derived terminal reason when cron can no longer execute
+  window_starts_at_utc?: string; // normalized UTC starts_at value for display contracts
+  window_expires_at_utc?: string; // normalized UTC expires_at value for display contracts
   starts_at?: string; // optional ISO timestamp gate (inclusive lower bound)
   expires_at?: string; // optional ISO timestamp gate (inclusive upper bound)
   cron_ids?: string[]; // for tasks: which cron entries trigger this task

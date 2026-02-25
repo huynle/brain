@@ -143,6 +143,37 @@ describe("Cron API", () => {
     expect(ids).not.toContain("crn00003");
   });
 
+  test("exposes derived cron visibility fields in list responses", async () => {
+    writeCronFile(TEST_PROJECT, "crn00009", "Visibility Cron", [
+      "max_runs: 2",
+      "starts_at: 2026-02-20T00:00:00.000Z",
+      "expires_at: 2026-03-20T00:00:00.000Z",
+      "runs:",
+      "  - run_id: 20260220-0200-aaaaaa",
+      "    status: completed",
+      "    started: 2026-02-20T02:00:00.000Z",
+      "    completed: 2026-02-20T02:00:08.000Z",
+      "  - run_id: 20260221-0200-bbbbbb",
+      "    status: skipped",
+      "    started: 2026-02-21T02:00:00.000Z",
+      "    skip_reason: manually paused",
+    ]);
+    reindexZk();
+
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`);
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const cron = json.crons.find((item: { id: string }) => item.id === "crn00009");
+    expect(cron).toBeDefined();
+    expect(cron.attempts_used).toBe(2);
+    expect(cron.remaining_runs).toBe(0);
+    expect(cron.completed_reason).toContain("max_runs");
+    expect(cron.window_starts_at_utc).toBe("2026-02-20T00:00:00.000Z");
+    expect(cron.window_expires_at_utc).toBe("2026-03-20T00:00:00.000Z");
+  });
+
   test("manually triggers a cron run", async () => {
     writeCronFile(TEST_PROJECT, "crn00004", "Triggerable Cron");
     reindexZk();

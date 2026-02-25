@@ -43,6 +43,17 @@ export const CronDetail = React.memo(function CronDetail({
       <Text>ID: <Text dimColor>{cron.id}</Text></Text>
       <Text>Schedule: <Text dimColor>{cron.schedule || '(none)'}</Text></Text>
       <Text>Next run: <Text dimColor>{formatDate(cron.next_run)}</Text></Text>
+      <Text>Attempts used: <Text dimColor>{cron.attempts_used ?? 0}</Text></Text>
+      <Text>Remaining runs: <Text dimColor>{cron.remaining_runs === null ? 'unlimited' : (cron.remaining_runs ?? '-')}</Text></Text>
+      {cron.window_starts_at_utc && (
+        <Text>Window starts (UTC): <Text dimColor>{formatDate(cron.window_starts_at_utc)}</Text></Text>
+      )}
+      {cron.window_expires_at_utc && (
+        <Text>Window expires (UTC): <Text dimColor>{formatDate(cron.window_expires_at_utc)}</Text></Text>
+      )}
+      {cron.completed_reason && (
+        <Text color="yellow">Completed reason: {cron.completed_reason}</Text>
+      )}
       {cron.projectId && (
         <Text>Project: <Text dimColor>{cron.projectId}</Text></Text>
       )}

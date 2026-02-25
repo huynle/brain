@@ -8,6 +8,7 @@ import {
   canTriggerPipeline,
   generateRunId,
 } from "./cron-service";
+import type { CronRun } from "./types";
 
 function mockTask(overrides: Partial<Task> = {}): Task {
   return {
@@ -177,11 +178,55 @@ describe("canTriggerPipeline", () => {
 
     expect(canTriggerPipeline(pipeline)).toEqual({ canTrigger: true });
   });
+
+  it("prevents overlap when an existing cron run is still in progress", () => {
+    const pipeline = [mockTask({ id: "a", status: "pending" })];
+    const runs: CronRun[] = [
+      {
+        run_id: "20260301-0407-aaaaaa",
+        status: "in_progress",
+        started: "2026-03-01T04:07:00.000Z",
+        tasks: 1,
+      },
+    ];
+
+    expect(canTriggerPipeline(pipeline, runs)).toEqual({
+      canTrigger: false,
+      reason: "cron run 20260301-0407-aaaaaa already in_progress",
+    });
+  });
+
+  it("prevents overlap when an existing cron run is marked active", () => {
+    const pipeline = [mockTask({ id: "a", status: "pending" })];
+    const runs = [
+      {
+        run_id: "20260301-0407-bbbbbb",
+        status: "active",
+        started: "2026-03-01T04:07:00.000Z",
+        tasks: 1,
+      },
+    ] as unknown as CronRun[];
+
+    expect(canTriggerPipeline(pipeline, runs)).toEqual({
+      canTrigger: false,
+      reason: "cron run 20260301-0407-bbbbbb already in_progress",
+    });
+  });
 });
 
 describe("generateRunId", () => {
-  it("formats run ID as YYYYMMDD-HHmm in UTC", () => {
+  it("formats run ID with UTC minute prefix and uniqueness suffix", () => {
     const runId = generateRunId(new Date("2026-03-01T04:07:59.000Z"));
-    expect(runId).toBe("20260301-0407");
+
+    expect(runId).toMatch(/^20260301-0407-[a-z0-9]{6}$/);
+  });
+
+  it("is collision-safe for repeated calls in the same minute", () => {
+    const triggerTime = new Date("2026-03-01T04:07:12.000Z");
+
+    const first = generateRunId(triggerTime);
+    const second = generateRunId(triggerTime);
+
+    expect(first).not.toBe(second);
   });
 });

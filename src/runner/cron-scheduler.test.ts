@@ -108,6 +108,7 @@ describe("cron scheduler completion tracking", () => {
     // @ts-expect-error private field override for test
     runner.apiClient = {
       getAllTasks: async () => [createTask("a"), createTask("b")],
+      getCronRuns: async () => ({ cronId: "cron-daily", runs: [], count: 0 }),
       updateEntryMetadata: async () => {},
       updateCronRun,
     };
@@ -146,6 +147,101 @@ describe("cron scheduler completion tracking", () => {
     expect(Array.from(activeRun.pendingTaskIds)).toEqual(["a", "b"]);
     expect(activeRun.startedAtIso).toBe(now.toISOString());
     expect(activeRun.startedAtMs).toBe(now.getTime());
+  });
+
+  test("processDueCronEntry uses run-aware overlap guard", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const updateCronRun = mock(async () => {});
+    const updateEntryMetadata = mock(async () => {});
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      getAllTasks: async () => [createTask("a"), createTask("b", { depends_on: ["a"] })],
+      getCronRuns: async () => ({
+        cronId: "cron-daily",
+        runs: [
+          {
+            run_id: "20260223-0155-aaaaaa",
+            status: "in_progress" as const,
+            started: "2026-02-23T01:55:00.000Z",
+          },
+        ],
+        count: 1,
+      }),
+      updateEntryMetadata,
+      updateCronRun,
+    };
+
+    const now = new Date("2026-02-23T02:00:00.000Z");
+    const processDueCronEntry = (runner as unknown as {
+      processDueCronEntry: (
+        cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+        projectId: string,
+        now: Date
+      ) => Promise<void>;
+    }).processDueCronEntry.bind(runner);
+
+    await processDueCronEntry(
+      {
+        id: "cron-daily",
+        path: "projects/test-project/cron/daily.md",
+        title: "Daily",
+        schedule: "0 2 * * *",
+      },
+      "test-project",
+      now
+    );
+
+    expect(updateEntryMetadata).toHaveBeenCalledTimes(1);
+    const metadataCalls = updateEntryMetadata.mock.calls as unknown as Array<[string, Record<string, unknown>]>;
+    expect(metadataCalls[0][1]).toMatchObject({ next_run: expect.any(String) });
+
+    expect(updateCronRun).toHaveBeenCalledTimes(1);
+    const runPatch = (updateCronRun.mock.calls as unknown as Array<[unknown, Record<string, unknown>]>)[0][1];
+    expect(runPatch.status).toBe("skipped");
+    expect(String(runPatch.skip_reason)).toContain("already in_progress");
+  });
+
+  test("processDueCronEntry records in_progress run before task reset", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const callOrder: string[] = [];
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      getAllTasks: async () => [createTask("a"), createTask("b", { depends_on: ["a"] })],
+      getCronRuns: async () => ({ cronId: "cron-daily", runs: [], count: 0 }),
+      updateCronRun: async () => {
+        callOrder.push("run");
+      },
+      updateEntryMetadata: async (_path: string, fields: Record<string, unknown>) => {
+        if (fields.status === "pending") {
+          callOrder.push("reset");
+        }
+      },
+    };
+
+    const now = new Date("2026-02-23T02:00:00.000Z");
+    const processDueCronEntry = (runner as unknown as {
+      processDueCronEntry: (
+        cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+        projectId: string,
+        now: Date
+      ) => Promise<void>;
+    }).processDueCronEntry.bind(runner);
+
+    await processDueCronEntry(
+      {
+        id: "cron-daily",
+        path: "projects/test-project/cron/daily.md",
+        title: "Daily",
+        schedule: "0 2 * * *",
+      },
+      "test-project",
+      now
+    );
+
+    expect(callOrder[0]).toBe("run");
+    expect(callOrder.filter((entry) => entry === "reset").length).toBe(2);
   });
 
   test("finalizeCronRunForTask marks run completed when last task completes", async () => {

@@ -1,4 +1,4 @@
-import type { Task } from "./types";
+import type { CronRun, Task } from "./types";
 import { buildLookupMaps, resolveDep } from "./task-deps";
 
 export interface CronField {
@@ -303,10 +303,21 @@ export function resolveCronPipeline(cronId: string, tasks: Task[]): Task[] {
 }
 
 export function canTriggerPipeline(
-  pipelineTasks: Task[]
+  pipelineTasks: Task[],
+  cronRuns: CronRun[] = []
 ): { canTrigger: boolean; reason?: string } {
   if (pipelineTasks.length === 0) {
     return { canTrigger: false, reason: "no tasks in pipeline" };
+  }
+
+  const activeRun = cronRuns.find(
+    (run) => run.status === "in_progress" || String(run.status) === "active"
+  );
+  if (activeRun) {
+    return {
+      canTrigger: false,
+      reason: `cron run ${activeRun.run_id} already in_progress`,
+    };
   }
 
   const inProgress = pipelineTasks.find((task) => task.status === "in_progress");
@@ -326,5 +337,6 @@ export function generateRunId(triggerTime: Date): string {
   const day = String(triggerTime.getUTCDate()).padStart(2, "0");
   const hour = String(triggerTime.getUTCHours()).padStart(2, "0");
   const minute = String(triggerTime.getUTCMinutes()).padStart(2, "0");
-  return `${year}${month}${day}-${hour}${minute}`;
+  const uniqueSuffix = crypto.randomUUID().replace(/-/g, "").slice(0, 6);
+  return `${year}${month}${day}-${hour}${minute}-${uniqueSuffix}`;
 }

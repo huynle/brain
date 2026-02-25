@@ -16,7 +16,7 @@ import type {
   RunnerEvent,
   EventHandler,
 } from "./types";
-import type { ResolvedTask, EntryStatus } from "../core/types";
+import type { ResolvedTask, EntryStatus, CronRun } from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
 import { ApiClient, getApiClient } from "./api-client";
 import { ProcessManager, getProcessManager, CompletionStatus } from "./process-manager";
@@ -66,7 +66,7 @@ export interface RunnerStatusInfo {
 // =============================================================================
 
 export class TaskRunner {
-  private static readonly MIN_CRON_CHECK_INTERVAL_MS = 60_000;
+  private static readonly MIN_CRON_CHECK_INTERVAL_MS = 1_000;
 
   // Core identity
   private readonly projects: string[];     // All projects to poll
@@ -1294,7 +1294,12 @@ export class TaskRunner {
       return true;
     }
 
-    return nowMs - this.lastCronCheckAtMs >= TaskRunner.MIN_CRON_CHECK_INTERVAL_MS;
+    return nowMs - this.lastCronCheckAtMs >= this.getCronCheckIntervalMs();
+  }
+
+  private getCronCheckIntervalMs(): number {
+    const configuredMs = this.config.pollInterval * 1000;
+    return Math.max(TaskRunner.MIN_CRON_CHECK_INTERVAL_MS, configuredMs);
   }
 
   private async checkCronSchedules(now: Date = new Date()): Promise<void> {
@@ -1378,19 +1383,24 @@ export class TaskRunner {
       return;
     }
 
-    // Check overlap guard
-    const overlapCheck = canTriggerPipeline(pipelineTasks);
+    // Check overlap guard (run-aware)
+    let recentRuns: CronRun[] = [];
+    try {
+      const runsResponse = await this.apiClient.getCronRuns(projectId, cronEntry.id);
+      recentRuns = runsResponse.runs;
+    } catch (error) {
+      this.logger.warn("Failed to fetch cron runs for overlap guard", {
+        cronId: cronEntry.id,
+        projectId,
+        error: String(error),
+      });
+    }
+
+    const overlapCheck = canTriggerPipeline(pipelineTasks, recentRuns);
     const runId = generateRunId(now);
 
     if (overlapCheck.canTrigger) {
-      // Trigger: reset all pipeline tasks to pending
-      for (const task of pipelineTasks) {
-        await this.apiClient.updateEntryMetadata(task.path, {
-          status: "pending",
-        });
-      }
-
-      // Record run as in_progress
+      // Record run as in_progress before resetting tasks to reduce race windows.
       const startedAtIso = now.toISOString();
       await this.apiClient.updateCronRun(cronEntry.path, {
         run_id: runId,
@@ -1398,6 +1408,13 @@ export class TaskRunner {
         started: startedAtIso,
         tasks: pipelineTasks.length,
       });
+
+      // Trigger: reset all pipeline tasks to pending
+      for (const task of pipelineTasks) {
+        await this.apiClient.updateEntryMetadata(task.path, {
+          status: "pending",
+        });
+      }
 
       // Track in memory for Phase 4 completion detection
       const taskIds = pipelineTasks.map((t) => t.id);

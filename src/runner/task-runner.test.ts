@@ -2224,7 +2224,7 @@ describe("TaskRunner - cron polling infrastructure", () => {
     expect(typeof maybeCronCheckDue).toBe("function");
   });
 
-  test("cronCheckDue enforces a minimum 60 second check interval", () => {
+  test("cronCheckDue follows poll interval cadence", () => {
     const runner = new TaskRunner({ projectId: "cron-project", config });
     const typedRunner = runner as unknown as {
       cronCheckDue: (nowMs?: number) => boolean;
@@ -2234,13 +2234,13 @@ describe("TaskRunner - cron polling infrastructure", () => {
     // First check is always due
     expect(typedRunner.cronCheckDue(1_000)).toBe(true);
 
-    // Not due before 60 seconds
+    // Not due before poll interval (1 second)
     typedRunner.lastCronCheckAtMs = 1_000;
-    expect(typedRunner.cronCheckDue(60_999)).toBe(false);
+    expect(typedRunner.cronCheckDue(1_999)).toBe(false);
 
-    // Due at 60 seconds and beyond
-    expect(typedRunner.cronCheckDue(61_000)).toBe(true);
-    expect(typedRunner.cronCheckDue(70_000)).toBe(true);
+    // Due at poll interval and beyond
+    expect(typedRunner.cronCheckDue(2_000)).toBe(true);
+    expect(typedRunner.cronCheckDue(2_100)).toBe(true);
   });
 
   test("poll invokes checkCronSchedules during healthy poll", async () => {
@@ -2333,7 +2333,8 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
 
   function createTrackingFetch(
     cronEntries: unknown[],
-    tasks: ResolvedTask[]
+    tasks: ResolvedTask[],
+    cronRuns: Array<Record<string, unknown>> = []
   ): { fetchFn: typeof fetch; calls: Array<{ url: string; method: string; body?: unknown }> } {
     const calls: Array<{ url: string; method: string; body?: unknown }> = [];
 
@@ -2348,6 +2349,19 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
       // GET cron entries
       if (url.includes("/crons/") && url.endsWith("/crons") && method === "GET") {
         return Promise.resolve(new Response(JSON.stringify({ crons: cronEntries })));
+      }
+
+      // GET cron runs
+      if (url.includes("/crons/") && url.endsWith("/runs") && method === "GET") {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              cronId: "cron-daily",
+              runs: cronRuns,
+              count: cronRuns.length,
+            })
+          )
+        );
       }
 
       // GET all tasks
@@ -2456,6 +2470,87 @@ describe("TaskRunner - cron trigger and overlap (Phase 2)", () => {
     const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
     expect(recordedRun.status).toBe("skipped");
     expect(recordedRun.skip_reason).toBeDefined();
+  });
+
+  test("checkCronSchedules skips pipeline when existing run is already in_progress", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch(
+      [cronEntry],
+      [taskA, taskB],
+      [{ run_id: "20250115-0855-aaaaaa", status: "in_progress", started: "2025-01-15T08:55:00Z" }]
+    );
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+
+    // Existing active run should block reset
+    const taskResets = patchCalls.filter(c => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(0);
+
+    // Skipped run should include reason from run-aware overlap guard
+    const cronRunPatches = patchCalls.filter(c => {
+      const b = c.body as Record<string, unknown>;
+      return b?.runs && Array.isArray(b.runs);
+    });
+    expect(cronRunPatches.length).toBeGreaterThanOrEqual(1);
+    const recordedRun = (cronRunPatches[0].body as { runs: Array<Record<string, unknown>> }).runs[0];
+    expect(recordedRun.status).toBe("skipped");
+    expect(String(recordedRun.skip_reason)).toContain("already in_progress");
+  });
+
+  test("checkCronSchedules records in_progress run before resetting tasks", async () => {
+    const cronEntry = makeCronEntry();
+
+    const taskA = createMockTask("task-a", {
+      path: "projects/test-project/task/task-a.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+    });
+    const taskB = createMockTask("task-b", {
+      path: "projects/test-project/task/task-b.md",
+      cron_ids: ["cron-daily"],
+      status: "completed",
+      depends_on: ["task-a"],
+    });
+
+    const { fetchFn, calls } = createTrackingFetch([cronEntry], [taskA, taskB]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkCronSchedules = (runner as unknown as {
+      checkCronSchedules: (now?: Date) => Promise<void>;
+    }).checkCronSchedules.bind(runner);
+
+    await checkCronSchedules(now);
+
+    const patchCalls = calls.filter(c => c.method === "PATCH" && c.url.includes("/entries/"));
+    const firstPatchBody = patchCalls[0]?.body as Record<string, unknown> | undefined;
+
+    expect(firstPatchBody).toBeDefined();
+    expect(Array.isArray(firstPatchBody?.runs)).toBe(true);
+    expect(firstPatchBody?.status).toBeUndefined();
   });
 
   test("checkCronSchedules advances next_run after trigger", async () => {

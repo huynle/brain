@@ -171,7 +171,7 @@ describe("Cron API", () => {
 
     expect(json.cronId).toBe(cronId);
     expect(json.run.status).toBe("in_progress");
-    expect(json.run.run_id).toMatch(/^\d{8}-\d{4}$/);
+    expect(json.run.run_id).toMatch(/^\d{8}-\d{4}-[a-z0-9]{6}$/);
     expect(json.pipelineCount).toBeGreaterThan(0);
   });
 

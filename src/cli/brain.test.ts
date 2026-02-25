@@ -22,6 +22,7 @@ describe("brain CLI command surface", () => {
     expect(result.stdout).toContain("brain install opencode");
     expect(result.stdout).not.toContain("brain install opencode --force");
     expect(result.stdout).not.toContain("Usage: brain install <target> [--force]");
+    expect(result.stdout).not.toContain("brain clean-up");
   });
 
   test("backups is not a recognized command", () => {
@@ -46,5 +47,13 @@ describe("brain CLI command surface", () => {
 
     expect(result.status).toBe(1);
     expect(output).toContain("Unknown command: clean-backups");
+  });
+
+  test("clean-up is not a recognized command", () => {
+    const result = runBrainCli(["clean-up", "opencode"]);
+    const output = `${result.stdout}${result.stderr}`;
+
+    expect(result.status).toBe(1);
+    expect(output).toContain("Unknown command: clean-up");
   });
 });

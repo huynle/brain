@@ -458,7 +458,7 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
       success: false,
       target,
       installedPath: pluginPath,
-      message: `${mainResult.error}. Use --force to overwrite.`,
+      message: mainResult.error || "Install failed.",
     };
   }
 

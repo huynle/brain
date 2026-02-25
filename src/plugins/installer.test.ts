@@ -51,8 +51,13 @@ describe("installPlugin", () => {
     const skillContent = await Bun.file(skillPath).text();
     expect(pluginContent).not.toBe("old plugin file");
     expect(skillContent).not.toBe("old skill file");
+    expect(pluginContent).toContain("This file was installed by: brain install opencode");
     expect(pluginContent).toContain("To update: brain install opencode");
+    expect(pluginContent).toContain("To check status: brain doctor");
+    expect(pluginContent).toContain("Source: https://github.com/huynle/brain-api");
     expect(pluginContent).not.toContain("To update: brain install opencode --force");
+    expect(pluginContent).not.toContain("brain clean-up");
+    expect(skillContent).not.toContain("brain clean-up");
 
     expect(readdirSync(pluginDir).some((name) => name.startsWith("brain.ts.backup-"))).toBe(false);
     expect(readdirSync(skillDir).some((name) => name.startsWith("SKILL.md.backup-"))).toBe(false);

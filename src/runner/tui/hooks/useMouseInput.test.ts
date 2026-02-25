@@ -47,6 +47,13 @@ describe('parseMouseInput', () => {
     ]);
   });
 
+  it('keeps hover-motion events before click events in mixed streams', () => {
+    expect(parseMouseInput('\u001b[<35;9;7M\u001b[<0;9;7M')).toEqual([
+      { kind: 'move', button: 'none', column: 9, row: 7 },
+      { kind: 'press', button: 'left', column: 9, row: 7 },
+    ]);
+  });
+
   it('silently ignores malformed and incomplete input', () => {
     expect(() => parseMouseInput('')).not.toThrow();
     expect(() => parseMouseInput('plain-text')).not.toThrow();

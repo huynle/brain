@@ -237,6 +237,13 @@ describe('TaskTree', () => {
         isHovered: false,
       });
     });
+
+    it('marks hovered row when there is no persistent selection', () => {
+      expect(resolveTaskRowVisualState('task-b', null, 'task-b')).toEqual({
+        isSelected: false,
+        isHovered: true,
+      });
+    });
   });
 
   describe('priority indicators', () => {

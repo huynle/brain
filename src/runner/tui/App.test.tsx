@@ -475,6 +475,41 @@ describe('App click helper exports', () => {
     expect(resolveHoveredTaskId({ kind: 'move' }, null, 'task-1')).toBeNull();
     expect(resolveHoveredTaskId({ kind: 'press' }, { kind: 'task', id: 'task-2' }, 'task-1')).toBe('task-1');
   });
+
+  it('keeps persistent selection unchanged while hover drives preview details', () => {
+    const selectedTaskId = 'task-selected';
+    const hoveredTaskId = resolveHoveredTaskId(
+      { kind: 'move' },
+      { kind: 'task', id: 'task-hovered', taskId: 'task-hovered' },
+      null,
+    );
+
+    const previewTaskId = resolvePreviewTaskId(
+      selectedTaskId,
+      hoveredTaskId,
+      new Set(['task-selected', 'task-hovered']),
+    );
+
+    expect(previewTaskId).toBe('task-hovered');
+    expect(selectedTaskId).toBe('task-selected');
+  });
+
+  it('returns preview to selected task after hover leaves task rows', () => {
+    const selectedTaskId = 'task-selected';
+    const hoverOnTask = resolveHoveredTaskId(
+      { kind: 'move' },
+      { kind: 'task', id: 'task-hovered', taskId: 'task-hovered' },
+      null,
+    );
+    const hoverCleared = resolveHoveredTaskId(
+      { kind: 'move' },
+      { kind: 'feature_header', id: '__feature_header__f' },
+      hoverOnTask,
+    );
+
+    expect(hoverCleared).toBeNull();
+    expect(resolvePreviewTaskId(selectedTaskId, hoverCleared, new Set(['task-selected']))).toBe('task-selected');
+  });
 });
 
 describe('task tree mouse hit testing', () => {

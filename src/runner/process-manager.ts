@@ -45,6 +45,11 @@ export interface ProcessState {
   exitedAt?: string;
 }
 
+interface TaskEntrySnapshot {
+  status?: EntryStatus;
+  run_finalizations?: unknown;
+}
+
 // =============================================================================
 // Process Manager
 // =============================================================================
@@ -203,7 +208,8 @@ export class ProcessManager {
     // If process is still running, check task file for early completion
     if (checkTaskFile) {
       try {
-        const status = await this.getTaskStatus(info.task.path);
+        const entry = await this.getTaskEntry(info.task.path);
+        const status = entry?.status;
         if (status) {
           if (status === "completed") return CompletionStatus.Completed;
           if (status === "blocked") return CompletionStatus.Blocked;
@@ -212,6 +218,16 @@ export class ProcessManager {
           if (status !== "in_progress" && status !== "pending") {
             return CompletionStatus.Failed;
           }
+        }
+
+        if (entry && info.task.runId) {
+          const finalizedStatus = this.getRunFinalizedStatus(
+            entry.run_finalizations,
+            info.task.runId
+          );
+          if (finalizedStatus === "completed") return CompletionStatus.Completed;
+          if (finalizedStatus === "blocked") return CompletionStatus.Blocked;
+          if (finalizedStatus === "cancelled") return CompletionStatus.Cancelled;
         }
       } catch {
         // API error - continue with process state check
@@ -233,20 +249,39 @@ export class ProcessManager {
   }
 
   /**
-   * Get task status from API.
+   * Get task status and run finalization metadata from API.
    */
-  private async getTaskStatus(taskPath: string): Promise<EntryStatus | null> {
+  private async getTaskEntry(taskPath: string): Promise<TaskEntrySnapshot | null> {
     try {
       const encodedPath = encodeURIComponent(taskPath);
       const response = await fetch(
         `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
       );
       if (!response.ok) return null;
-      const entry = await response.json();
-      return entry.status as EntryStatus;
+      const entry = await response.json() as { status?: unknown; run_finalizations?: unknown };
+      return {
+        status: typeof entry.status === "string" ? (entry.status as EntryStatus) : undefined,
+        run_finalizations: entry.run_finalizations,
+      };
     } catch {
       return null;
     }
+  }
+
+  private getRunFinalizedStatus(
+    runFinalizations: unknown,
+    runId: string
+  ): EntryStatus | undefined {
+    if (!runFinalizations || typeof runFinalizations !== "object" || Array.isArray(runFinalizations)) {
+      return undefined;
+    }
+
+    const runFinalization = (runFinalizations as Record<string, { status?: unknown }>)[runId];
+    if (!runFinalization || typeof runFinalization.status !== "string") {
+      return undefined;
+    }
+
+    return runFinalization.status as EntryStatus;
   }
 
   // ========================================

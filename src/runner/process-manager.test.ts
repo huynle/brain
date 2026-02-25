@@ -53,11 +53,13 @@ function createShortProcess(exitCode: number = 0): Subprocess {
 describe("ProcessManager", () => {
   let manager: ProcessManager;
   let spawnedProcesses: Subprocess[] = [];
+  let originalFetch: typeof fetch;
 
   beforeEach(() => {
     resetProcessManager();
     manager = new ProcessManager();
     spawnedProcesses = [];
+    originalFetch = globalThis.fetch;
   });
 
   afterEach(async () => {
@@ -70,6 +72,8 @@ describe("ProcessManager", () => {
       }
     }
     spawnedProcesses = [];
+
+    globalThis.fetch = originalFetch;
 
     // Kill all tracked processes
     await manager.killAll();
@@ -283,6 +287,60 @@ describe("ProcessManager", () => {
       expect(status).toBe(CompletionStatus.Timeout);
 
       await customManager.killAll();
+    });
+
+    test("returns Completed when status flips to pending but run finalization marks current run completed", async () => {
+      const runId = "run_20260225_001";
+      const task = createMockTask("task1", { runId });
+      const proc = createShortProcess(0);
+      spawnedProcesses.push(proc);
+
+      manager.add("task1", task, proc);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      globalThis.fetch = mock(async () =>
+        new Response(
+          JSON.stringify({
+            status: "pending",
+            run_finalizations: {
+              [runId]: {
+                status: "completed",
+                finalized_at: "2026-02-25T10:05:00.000Z",
+              },
+            },
+          })
+        )
+      ) as unknown as typeof fetch;
+
+      const status = await manager.checkCompletion("task1", true);
+      expect(status).toBe(CompletionStatus.Completed);
+    });
+
+    test("preserves crash behavior when pending status has no matching run finalization", async () => {
+      const task = createMockTask("task1", { runId: "run_20260225_001" });
+      const proc = createShortProcess(0);
+      spawnedProcesses.push(proc);
+
+      manager.add("task1", task, proc);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      globalThis.fetch = mock(async () =>
+        new Response(
+          JSON.stringify({
+            status: "pending",
+            run_finalizations: {
+              run_20260225_999: {
+                status: "completed",
+              },
+            },
+          })
+        )
+      ) as unknown as typeof fetch;
+
+      const status = await manager.checkCompletion("task1", true);
+      expect(status).toBe(CompletionStatus.Crashed);
     });
   });
 

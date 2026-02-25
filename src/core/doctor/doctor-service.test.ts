@@ -367,6 +367,38 @@ id-length = 8
     });
   });
 
+  describe("checkOpenCodeIntegration()", () => {
+    test("uses reinstall guidance without --force", async () => {
+      const tempHome = createTempDir();
+      const originalHome = process.env.HOME;
+
+      try {
+        process.env.HOME = tempHome;
+
+        const pluginDir = join(tempHome, ".config", "opencode", "plugin");
+        mkdirSync(pluginDir, { recursive: true });
+        writeFileSync(join(pluginDir, "brain.ts"), "installed");
+
+        const doctor = new DoctorService(tempDir);
+        const checks = await doctor.checkOpenCodeIntegration();
+
+        const remediationDetails = checks
+          .map((check) => check.details)
+          .filter((detail): detail is string => typeof detail === "string");
+
+        expect(remediationDetails.some((detail) => detail.includes("Run: brain install opencode"))).toBe(true);
+        expect(remediationDetails.some((detail) => detail.includes("--force"))).toBe(false);
+      } finally {
+        if (originalHome === undefined) {
+          delete process.env.HOME;
+        } else {
+          process.env.HOME = originalHome;
+        }
+        cleanupTempDir(tempHome);
+      }
+    });
+  });
+
   describe("createDoctorService()", () => {
     test("creates DoctorService instance", () => {
       const doctor = createDoctorService(tempDir);

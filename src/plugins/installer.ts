@@ -95,7 +95,7 @@ function generateHeader(fileType: "ts" | "md"): string {
     "AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY",
     "",
     "This file was installed by: brain install opencode",
-    "To update: brain install opencode --force",
+    "To update: brain install opencode",
     "To check status: brain doctor",
     "Source: https://github.com/huynle/brain-api",
     `Generated: ${date}`,
@@ -302,7 +302,7 @@ export function resolveTargetPaths(target: InstallTarget): {
   pluginPath: string;
   configPath?: string;
 } {
-  const home = homedir();
+  const home = process.env.HOME || homedir();
   const config = getTargetConfig(target);
 
   const configDir = typeof config.configDir === "function" ? config.configDir(home) : config.configDir;
@@ -325,9 +325,9 @@ export function checkTargetExists(target: InstallTarget): boolean {
 async function installSingleFile(
   embeddedPath: string,
   targetPath: string,
-  options: { force: boolean; dryRun: boolean; apiUrl?: string }
+  options: { force: boolean; dryRun: boolean; apiUrl?: string; destructiveReplace?: boolean }
 ): Promise<{ success: boolean; backupPath?: string; error?: string }> {
-  const { force, dryRun, apiUrl } = options;
+  const { force, dryRun, apiUrl, destructiveReplace = false } = options;
   const targetDir = dirname(targetPath);
 
   // Ensure target directory exists
@@ -343,10 +343,16 @@ async function installSingleFile(
     if (!force) {
       return { success: false, error: `File exists: ${targetPath}` };
     }
-    // Create backup
-    backupPath = `${targetPath}.backup-${Date.now()}`;
-    if (!dryRun) {
-      renameSync(targetPath, backupPath);
+    if (destructiveReplace) {
+      if (!dryRun) {
+        unlinkSync(targetPath);
+      }
+    } else {
+      // Create backup
+      backupPath = `${targetPath}.backup-${Date.now()}`;
+      if (!dryRun) {
+        renameSync(targetPath, backupPath);
+      }
     }
   }
 
@@ -413,8 +419,10 @@ async function installSingleFile(
 
 export async function installPlugin(options: InstallOptions): Promise<InstallResult> {
   const { target, force = false, dryRun = false, apiUrl } = options;
+  const destructiveReplace = target === "opencode";
+  const effectiveForce = force || destructiveReplace;
   const config = getTargetConfig(target);
-  const home = homedir();
+  const home = process.env.HOME || homedir();
   const { pluginDir, pluginPath, configPath } = resolveTargetPaths(target);
 
   // Get embedded plugin source (works in both bun run and compiled binary)
@@ -439,7 +447,12 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     dryRunMessages.push(`[DRY RUN] Would install main plugin to: ${pluginPath}`);
   }
 
-  const mainResult = await installSingleFile(embeddedPath, pluginPath, { force, dryRun, apiUrl });
+  const mainResult = await installSingleFile(embeddedPath, pluginPath, {
+    force: effectiveForce,
+    dryRun,
+    apiUrl,
+    destructiveReplace,
+  });
   if (!mainResult.success) {
     return {
       success: false,
@@ -478,7 +491,12 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
       dryRunMessages.push(`[DRY RUN] Would install ${file.description} to: ${targetFilePath}`);
     }
 
-    const result = await installSingleFile(embeddedFilePath, targetFilePath, { force, dryRun, apiUrl });
+    const result = await installSingleFile(embeddedFilePath, targetFilePath, {
+      force: effectiveForce,
+      dryRun,
+      apiUrl,
+      destructiveReplace,
+    });
     if (!result.success) {
       // For additional files, we warn but continue
       console.warn(`Warning: Could not install ${file.description}: ${result.error}`);

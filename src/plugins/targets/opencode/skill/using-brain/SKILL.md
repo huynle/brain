@@ -25,7 +25,7 @@ The Brain is a persistent knowledge store powered by zk (Zettelkasten CLI) that 
 
 ### Maintenance
 - [ ] Step 1: Check `brain_orphans` periodically for unconnected notes
-- [ ] Step 2: Run `brain_cleanup(dryRun: true)` monthly
+- [ ] Step 2: Review stale/low-value entries monthly (cleanup is automatic)
 - [ ] Step 3: Tag important entries with "important" to prevent cleanup
 
 ## Key Features
@@ -174,15 +174,6 @@ brain_orphans(
 ```
 brain_stats(
   global?: boolean  // Show only global stats
-)
-```
-
-### `brain_cleanup` - Maintenance
-```
-brain_cleanup(
-  dryRun?: boolean,              // Default: true (preview only)
-  keepAccessedWithinDays?: number,  // Default: 30
-  removeOlderThanDays?: number      // Default: 90
 )
 ```
 
@@ -337,7 +328,7 @@ The brain self-cleans based on usage:
 - `idea` entries older than 30 days without recent access
 - Other entries older than 90 days with low access
 
-Run `brain_cleanup(dryRun: true)` to preview what would be removed.
+Cleanup runs automatically based on these rules.
 
 ## Architecture
 
@@ -359,4 +350,4 @@ The brain is accessed via the **Brain API** (default: `http://localhost:3333`). 
 7. **Search before creating** - Avoid duplicates
 8. **Check orphans periodically** - Keep the graph connected
 9. **Explore links before working** - Understand existing knowledge
-10. **Clean up periodically** - Run `brain_cleanup` monthly
+10. **Clean up periodically** - Cleanup runs automatically; focus on tagging key entries

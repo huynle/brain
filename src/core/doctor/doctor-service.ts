@@ -534,7 +534,7 @@ export class DoctorService {
         status: "warn",
         message: "brain-planning.ts plugin not installed",
         fixable: true,
-        details: "Run: brain install opencode --force",
+        details: "Run: brain install opencode",
       });
     }
 
@@ -560,7 +560,7 @@ export class DoctorService {
           status: "warn",
           message: `${skill.name} skill not installed`,
           fixable: true,
-          details: `Run: brain install opencode --force (${skill.description})`,
+          details: `Run: brain install opencode (${skill.description})`,
         });
       }
     }
@@ -586,7 +586,7 @@ export class DoctorService {
           status: "warn",
           message: `/${cmd.name} command not installed`,
           fixable: true,
-          details: `Run: brain install opencode --force (${cmd.description})`,
+          details: `Run: brain install opencode (${cmd.description})`,
         });
       }
     }

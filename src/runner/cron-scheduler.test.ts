@@ -244,6 +244,172 @@ describe("cron scheduler completion tracking", () => {
     expect(callOrder.filter((entry) => entry === "reset").length).toBe(2);
   });
 
+  test("processDueCronEntry does not reset pipeline when attempt-based max_runs is exhausted", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const updateCronRun = mock(async () => {});
+    const updateEntryMetadata = mock(async () => {});
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      getAllTasks: async () => [createTask("a"), createTask("b", { depends_on: ["a"] })],
+      getCronRuns: async () => ({
+        cronId: "cron-daily",
+        runs: [
+          {
+            run_id: "20260223-0150-aaaaaa",
+            status: "skipped" as const,
+            started: "2026-02-23T01:50:00.000Z",
+            skip_reason: "manual skip",
+          },
+          {
+            run_id: "20260223-0155-bbbbbb",
+            status: "in_progress" as const,
+            started: "2026-02-23T01:55:00.000Z",
+          },
+        ],
+        count: 2,
+      }),
+      updateEntryMetadata,
+      updateCronRun,
+    };
+
+    const processDueCronEntry = (runner as unknown as {
+      processDueCronEntry: (
+        cronEntry: {
+          id: string;
+          path: string;
+          title: string;
+          schedule?: string;
+          next_run?: string;
+          max_runs?: number;
+          starts_at?: string;
+          expires_at?: string;
+        },
+        projectId: string,
+        now: Date
+      ) => Promise<void>;
+    }).processDueCronEntry.bind(runner);
+
+    await processDueCronEntry(
+      {
+        id: "cron-daily",
+        path: "projects/test-project/cron/daily.md",
+        title: "Daily",
+        schedule: "0 2 * * *",
+        max_runs: 2,
+      },
+      "test-project",
+      new Date("2026-02-23T02:00:00.000Z")
+    );
+
+    const resetCalls = (updateEntryMetadata.mock.calls as unknown as Array<[string, Record<string, unknown>]>).filter(
+      ([, fields]) => fields.status === "pending"
+    );
+
+    expect(resetCalls.length).toBe(0);
+    expect(updateCronRun).toHaveBeenCalledTimes(0);
+  });
+
+  test("processDueCronEntry does not trigger when starts_at is in the future", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const updateCronRun = mock(async () => {});
+    const updateEntryMetadata = mock(async () => {});
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      getAllTasks: async () => [createTask("a"), createTask("b", { depends_on: ["a"] })],
+      getCronRuns: async () => ({ cronId: "cron-daily", runs: [], count: 0 }),
+      updateEntryMetadata,
+      updateCronRun,
+    };
+
+    const processDueCronEntry = (runner as unknown as {
+      processDueCronEntry: (
+        cronEntry: {
+          id: string;
+          path: string;
+          title: string;
+          schedule?: string;
+          next_run?: string;
+          max_runs?: number;
+          starts_at?: string;
+          expires_at?: string;
+        },
+        projectId: string,
+        now: Date
+      ) => Promise<void>;
+    }).processDueCronEntry.bind(runner);
+
+    await processDueCronEntry(
+      {
+        id: "cron-daily",
+        path: "projects/test-project/cron/daily.md",
+        title: "Daily",
+        schedule: "0 2 * * *",
+        starts_at: "2999-01-01T00:00:00.000Z",
+      },
+      "test-project",
+      new Date("2026-02-23T02:00:00.000Z")
+    );
+
+    const resetCalls = (updateEntryMetadata.mock.calls as unknown as Array<[string, Record<string, unknown>]>).filter(
+      ([, fields]) => fields.status === "pending"
+    );
+
+    expect(resetCalls.length).toBe(0);
+    expect(updateCronRun).toHaveBeenCalledTimes(0);
+  });
+
+  test("processDueCronEntry does not trigger when expires_at is in the past", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const updateCronRun = mock(async () => {});
+    const updateEntryMetadata = mock(async () => {});
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      getAllTasks: async () => [createTask("a"), createTask("b", { depends_on: ["a"] })],
+      getCronRuns: async () => ({ cronId: "cron-daily", runs: [], count: 0 }),
+      updateEntryMetadata,
+      updateCronRun,
+    };
+
+    const processDueCronEntry = (runner as unknown as {
+      processDueCronEntry: (
+        cronEntry: {
+          id: string;
+          path: string;
+          title: string;
+          schedule?: string;
+          next_run?: string;
+          max_runs?: number;
+          starts_at?: string;
+          expires_at?: string;
+        },
+        projectId: string,
+        now: Date
+      ) => Promise<void>;
+    }).processDueCronEntry.bind(runner);
+
+    await processDueCronEntry(
+      {
+        id: "cron-daily",
+        path: "projects/test-project/cron/daily.md",
+        title: "Daily",
+        schedule: "0 2 * * *",
+        expires_at: "2000-01-01T00:00:00.000Z",
+      },
+      "test-project",
+      new Date("2026-02-23T02:00:00.000Z")
+    );
+
+    const resetCalls = (updateEntryMetadata.mock.calls as unknown as Array<[string, Record<string, unknown>]>).filter(
+      ([, fields]) => fields.status === "pending"
+    );
+
+    expect(resetCalls.length).toBe(0);
+    expect(updateCronRun).toHaveBeenCalledTimes(0);
+  });
+
   test("finalizeCronRunForTask marks run completed when last task completes", async () => {
     const runner = new TaskRunner({ projectId: "test-project", config });
     const updateCronRun = mock(async () => {});

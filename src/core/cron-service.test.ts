@@ -145,6 +145,58 @@ describe("canRunWithinBounds", () => {
     expect(result.reason).toContain("max_runs");
   });
 
+  it("default mode ignores skipped and in-progress attempts for max_runs", () => {
+    const result = canRunWithinBounds(
+      {
+        max_runs: 1,
+        runs: [
+          { run_id: "r1", status: "skipped", started: "2026-03-01T00:00:00.000Z" },
+          { run_id: "r2", status: "in_progress", started: "2026-03-02T00:00:00.000Z" },
+        ],
+      },
+      new Date("2026-03-03T00:00:00.000Z")
+    );
+
+    expect(result).toEqual({ canRun: true });
+  });
+
+  it("attempt mode counts skipped and in-progress attempts toward max_runs", () => {
+    const result = canRunWithinBounds(
+      {
+        max_runs: 2,
+        runs: [
+          { run_id: "r1", status: "completed", started: "2026-03-01T00:00:00.000Z" },
+          { run_id: "r2", status: "skipped", started: "2026-03-02T00:00:00.000Z" },
+        ],
+      },
+      new Date("2026-03-03T00:00:00.000Z"),
+      { countAttemptsForMaxRuns: true }
+    );
+
+    expect(result.canRun).toBe(false);
+    expect(result.reason).toContain("max_runs");
+  });
+
+  it("attempt mode counts legacy active run status toward max_runs", () => {
+    const result = canRunWithinBounds(
+      {
+        max_runs: 1,
+        runs: [
+          {
+            run_id: "r1",
+            status: "active",
+            started: "2026-03-01T00:00:00.000Z",
+          },
+        ] as unknown as CronRun[],
+      },
+      new Date("2026-03-03T00:00:00.000Z"),
+      { countAttemptsForMaxRuns: true }
+    );
+
+    expect(result.canRun).toBe(false);
+    expect(result.reason).toContain("max_runs");
+  });
+
   it("blocks before starts_at and after expires_at", () => {
     const tooEarly = canRunWithinBounds(
       { starts_at: "2026-03-05T10:00:00.000Z" },

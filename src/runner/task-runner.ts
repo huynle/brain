@@ -1319,7 +1319,9 @@ export class TaskRunner {
             return false;
           }
 
-          const boundsCheck = canRunWithinBounds(entry, now);
+          const boundsCheck = canRunWithinBounds(entry, now, {
+            countAttemptsForMaxRuns: true,
+          });
           if (!boundsCheck.canRun) {
             return false;
           }
@@ -1416,6 +1418,28 @@ export class TaskRunner {
         projectId,
         error: String(error),
       });
+    }
+
+    const boundsCheck = canRunWithinBounds(
+      {
+        max_runs: cronEntry.max_runs,
+        starts_at: cronEntry.starts_at,
+        expires_at: cronEntry.expires_at,
+        runs: recentRuns,
+      },
+      new Date(),
+      { countAttemptsForMaxRuns: true }
+    );
+
+    if (!boundsCheck.canRun) {
+      if (isDebugEnabled()) {
+        this.logger.debug("Skipping cron entry at trigger point due to bounds", {
+          cronId: cronEntry.id,
+          projectId,
+          reason: boundsCheck.reason,
+        });
+      }
+      return;
     }
 
     const overlapCheck = canTriggerPipeline(pipelineTasks, recentRuns);

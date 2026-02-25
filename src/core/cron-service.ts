@@ -202,13 +202,24 @@ export function shouldTrigger(
 
 export function canRunWithinBounds(
   cronEntry: { max_runs?: number; starts_at?: string; expires_at?: string; runs?: CronRun[] },
-  now: Date
+  now: Date,
+  options: { countAttemptsForMaxRuns?: boolean } = {}
 ): { canRun: boolean; reason?: string } {
   if (typeof cronEntry.max_runs === "number") {
-    const completedOrFailed = (cronEntry.runs || []).filter(
-      (run) => run.status === "completed" || run.status === "failed"
-    ).length;
-    if (completedOrFailed >= cronEntry.max_runs) {
+    const countedRuns = options.countAttemptsForMaxRuns
+      ? (cronEntry.runs || []).filter(
+          (run) =>
+            run.status === "completed" ||
+            run.status === "failed" ||
+            run.status === "skipped" ||
+            run.status === "in_progress" ||
+            String(run.status) === "active"
+        ).length
+      : (cronEntry.runs || []).filter(
+          (run) => run.status === "completed" || run.status === "failed"
+        ).length;
+
+    if (countedRuns >= cronEntry.max_runs) {
       return {
         canRun: false,
         reason: `max_runs limit reached (${cronEntry.max_runs})`,

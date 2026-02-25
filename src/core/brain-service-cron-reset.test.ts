@@ -1,7 +1,7 @@
 /**
- * Brain Service - Cron Task Auto-Reset Tests
+ * Brain Service - Cron Task Completion State Tests
  *
- * Tests for the auto-reset feature for cron-linked tasks.
+ * Tests that completion state is preserved for cron-linked tasks.
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
@@ -55,9 +55,9 @@ afterAll(() => {
 // Tests
 // =============================================================================
 
-describe("BrainService - Cron Task Auto-Reset", () => {
-  describe("auto-reset on completion", () => {
-    test("should reset task to pending when completed with active cron_ids", async () => {
+describe("BrainService - Cron Task Completion State", () => {
+  describe("completion behavior", () => {
+    test("should keep task completed when completed with active cron_ids", async () => {
       // Setup: Create an active cron
       const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
       const cronFile = join(cronDir, "test-cron-abc123.md");
@@ -100,10 +100,10 @@ Test task content.
         status: "completed",
       });
 
-      // Assert: Task should be auto-reset to pending
+      // Assert: Task should remain completed
       const updatedTask = await service.recall(taskPath);
-      expect(updatedTask.status).toBe("pending");
-      expect(updatedTask.content).toContain("Auto-reset for next cron run");
+      expect(updatedTask.status).toBe("completed");
+      expect(updatedTask.content).not.toContain("Auto-reset for next cron run");
     });
 
     test("should NOT reset task when cron is not active", async () => {
@@ -155,7 +155,7 @@ Task linked to inactive cron.
       expect(updatedTask.content).not.toContain("Auto-reset for next cron run");
     });
 
-    test("should reset if ANY cron is active (multiple cron_ids)", async () => {
+    test("should keep task completed if ANY cron is active (multiple cron_ids)", async () => {
       // Setup: Create two crons - one active, one inactive
       const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
       
@@ -212,10 +212,10 @@ Task linked to multiple crons.
         status: "completed",
       });
 
-      // Assert: Task should be auto-reset (because ghi789 is active)
+      // Assert: Task should remain completed
       const updatedTask = await service.recall(taskPath);
-      expect(updatedTask.status).toBe("pending");
-      expect(updatedTask.content).toContain("Auto-reset for next cron run");
+      expect(updatedTask.status).toBe("completed");
+      expect(updatedTask.content).not.toContain("Auto-reset for next cron run");
     });
 
     test("should NOT reset task without cron_ids", async () => {
@@ -247,7 +247,7 @@ Regular task without cron.
       expect(updatedTask.content).not.toContain("Auto-reset for next cron run");
     });
 
-    test("should handle validated status same as completed", async () => {
+    test("should keep validated status for cron-linked tasks", async () => {
       // Setup: Create an active cron
       const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
       const cronFile = join(cronDir, "validated-cron-stu901.md");
@@ -289,10 +289,10 @@ Task to be validated.
         status: "validated",
       });
 
-      // Assert: Task should be auto-reset to pending
+      // Assert: Task should remain validated
       const updatedTask = await service.recall(taskPath);
-      expect(updatedTask.status).toBe("pending");
-      expect(updatedTask.content).toContain("Auto-reset for next cron run");
+      expect(updatedTask.status).toBe("validated");
+      expect(updatedTask.content).not.toContain("Auto-reset for next cron run");
     });
 
     test("should NOT reset non-task entries", async () => {
@@ -345,67 +345,4 @@ Report content.
     });
   });
 
-  describe("edge cases", () => {
-    test("should handle missing project ID gracefully", async () => {
-      // This is a synthetic test - in practice, entries always have project IDs
-      // But we test the guard logic nonetheless
-      
-      // Setup: Create a task with cron_ids in an unusual location
-      const taskFile = join(TEST_DIR, "orphan-task-efg123.md");
-      const taskPath = "orphan-task-efg123.md"; // No projects/ prefix
-
-      writeFileSync(
-        taskFile,
-        `---
-title: Orphan Task
-type: task
-status: in_progress
-cron_ids:
-  - some-cron
----
-
-Orphan task.
-`
-      );
-
-      // Act: Mark task as completed (should not throw)
-      await service.update(taskPath, {
-        status: "completed",
-      });
-
-      // Assert: Task should stay completed (no project ID to look up crons)
-      const updatedTask = await service.recall(taskPath);
-      expect(updatedTask.status).toBe("completed");
-    });
-
-    test("should handle cron lookup failure gracefully", async () => {
-      // Setup: Create a task with cron_ids referencing non-existent cron
-      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
-      const taskFile = join(taskDir, "missing-cron-task-hij456.md");
-      const taskPath = "projects/test-project/task/missing-cron-task-hij456.md";
-
-      writeFileSync(
-        taskFile,
-        `---
-title: Missing Cron Task
-type: task
-status: in_progress
-cron_ids:
-  - nonexistent-cron-999
----
-
-Task with missing cron.
-`
-      );
-
-      // Act: Mark task as completed (should not throw)
-      await service.update(taskPath, {
-        status: "completed",
-      });
-
-      // Assert: Task should stay completed (cron not found = not active)
-      const updatedTask = await service.recall(taskPath);
-      expect(updatedTask.status).toBe("completed");
-    });
-  });
 });

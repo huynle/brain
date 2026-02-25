@@ -789,6 +789,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
   crons.openapi(deleteProjectCronRoute, async (c) => {
     const { projectId, cronId } = c.req.valid("param");
     const brainService = getBrainService();
+    const taskService = getTaskService();
 
     try {
       const cron = await findProjectCron(projectId, cronId);
@@ -800,6 +801,15 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
           },
           404
         );
+      }
+
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      const linkedTasks = taskResult.tasks.filter((task) => task.cron_ids.includes(cron.id));
+
+      for (const task of linkedTasks) {
+        await brainService.update(task.path, {
+          cron_ids: task.cron_ids.filter((id) => id !== cron.id),
+        });
       }
 
       await brainService.delete(cron.path);

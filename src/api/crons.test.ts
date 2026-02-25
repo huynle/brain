@@ -339,6 +339,12 @@ describe("Cron API", () => {
   });
 
   test("deletes cron entry via cron endpoint", async () => {
+    writeCronFile(TEST_PROJECT, "crn00006", "Keep Linked Cron");
+    reindexZk();
+
+    const keepCronId = await getCronIdByTitle(TEST_PROJECT, "Keep Linked Cron");
+    if (!keepCronId) return;
+
     const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -352,6 +358,9 @@ describe("Cron API", () => {
     expect(createRes.status).toBe(201);
 
     const created = await createRes.json();
+    writeTaskFile("tsk00010", [created.cron.id]);
+    writeTaskFile("tsk00011", [created.cron.id, keepCronId]);
+    reindexZk();
 
     const deleteRes = await app.request(
       `/crons/${TEST_PROJECT}/crons/${created.cron.id}?confirm=true`,
@@ -367,6 +376,12 @@ describe("Cron API", () => {
 
     const getRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`);
     expect(getRes.status).toBe(404);
+
+    const taskOnlyDeletedCron = await getTaskEntry("tsk00010");
+    const taskMixedCronIds = await getTaskEntry("tsk00011");
+    expect(taskOnlyDeletedCron.cron_ids || []).not.toContain(created.cron.id);
+    expect(taskMixedCronIds.cron_ids || []).not.toContain(created.cron.id);
+    expect(taskMixedCronIds.cron_ids || []).toContain(keepCronId);
   });
 
   test("creates cron entry with auto-calculated next_run", async () => {

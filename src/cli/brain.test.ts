@@ -23,6 +23,21 @@ describe("brain CLI command surface", () => {
 		expect(result.stdout).toContain(
 			"brain install opencode --force      Explicit destructive replacement",
 		);
+		expect(result.stdout).not.toContain("brain clean-up");
+		expect(result.stdout).not.toContain("brain cleanup");
+		expect(result.stdout).not.toContain("backup command");
+	});
+
+	test("removed backup lifecycle commands are rejected", () => {
+		const cleanUpResult = runBrainCli(["clean-up"]);
+		const cleanUpOutput = `${cleanUpResult.stdout}${cleanUpResult.stderr}`;
+		expect(cleanUpResult.status).toBe(1);
+		expect(cleanUpOutput).toContain("Unknown command: clean-up");
+
+		const cleanupResult = runBrainCli(["cleanup"]);
+		const cleanupOutput = `${cleanupResult.stdout}${cleanupResult.stderr}`;
+		expect(cleanupResult.status).toBe(1);
+		expect(cleanupOutput).toContain("Unknown command: cleanup");
 	});
 
 	test("unknown command is rejected", () => {

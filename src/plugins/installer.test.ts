@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
-import { installPlugin } from "./installer";
+import { installPlugin, uninstallPlugin } from "./installer";
 
 const createdHomes: string[] = [];
 const originalHome = process.env.HOME;
@@ -35,6 +35,9 @@ describe("installPlugin", () => {
 		const pluginPath = join(pluginDir, "brain.ts");
 		const skillDir = join(home, ".config/opencode/skill/do-work-queue");
 		const skillPath = join(skillDir, "SKILL.md");
+		const pluginBackupPath = join(pluginDir, "brain.ts.backup");
+		const pluginBakPath = join(pluginDir, "brain.ts.bak");
+		const backupDir = join(home, ".config/opencode/backup");
 
 		mkdirSync(pluginDir, { recursive: true });
 		mkdirSync(skillDir, { recursive: true });
@@ -60,5 +63,28 @@ describe("installPlugin", () => {
 		expect(pluginContent).toContain(
 			"Source: https://github.com/huynle/brain-api",
 		);
+		expect(existsSync(pluginBackupPath)).toBe(false);
+		expect(existsSync(pluginBakPath)).toBe(false);
+		expect(existsSync(backupDir)).toBe(false);
+	});
+
+	test("opencode uninstall removes plugin without creating backups", async () => {
+		const home = createTestHome();
+		const pluginDir = join(home, ".config/opencode/plugin");
+		const pluginPath = join(pluginDir, "brain.ts");
+		const pluginBackupPath = join(pluginDir, "brain.ts.backup");
+		const pluginBakPath = join(pluginDir, "brain.ts.bak");
+		const backupDir = join(home, ".config/opencode/backup");
+
+		mkdirSync(pluginDir, { recursive: true });
+		writeFileSync(pluginPath, "installed plugin file");
+
+		const result = await uninstallPlugin("opencode");
+
+		expect(result.success).toBe(true);
+		expect(existsSync(pluginPath)).toBe(false);
+		expect(existsSync(pluginBackupPath)).toBe(false);
+		expect(existsSync(pluginBakPath)).toBe(false);
+		expect(existsSync(backupDir)).toBe(false);
 	});
 });

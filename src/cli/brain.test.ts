@@ -29,15 +29,14 @@ describe("brain CLI command surface", () => {
 	});
 
 	test("removed backup lifecycle commands are rejected", () => {
-		const cleanUpResult = runBrainCli(["clean-up"]);
-		const cleanUpOutput = `${cleanUpResult.stdout}${cleanUpResult.stderr}`;
-		expect(cleanUpResult.status).toBe(1);
-		expect(cleanUpOutput).toContain("Unknown command: clean-up");
+		const removedCommands = ["clean-up", "cleanup", "backups", "restore", "clean-backups"];
 
-		const cleanupResult = runBrainCli(["cleanup"]);
-		const cleanupOutput = `${cleanupResult.stdout}${cleanupResult.stderr}`;
-		expect(cleanupResult.status).toBe(1);
-		expect(cleanupOutput).toContain("Unknown command: cleanup");
+		for (const removedCommand of removedCommands) {
+			const result = runBrainCli([removedCommand]);
+			const output = `${result.stdout}${result.stderr}`;
+			expect(result.status).toBe(1);
+			expect(output).toContain(`Unknown command: ${removedCommand}`);
+		}
 	});
 
 	test("unknown command is rejected", () => {

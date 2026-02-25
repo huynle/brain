@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { installPlugin, uninstallPlugin } from "./installer";
@@ -66,6 +66,11 @@ describe("installPlugin", () => {
 		expect(existsSync(pluginBackupPath)).toBe(false);
 		expect(existsSync(pluginBakPath)).toBe(false);
 		expect(existsSync(backupDir)).toBe(false);
+
+		const pluginDirEntries = readdirSync(pluginDir);
+		expect(
+			pluginDirEntries.some((entry) => entry.startsWith("brain.ts.uninstalled-")),
+		).toBe(false);
 	});
 
 	test("opencode uninstall removes plugin without creating backups", async () => {
@@ -86,5 +91,10 @@ describe("installPlugin", () => {
 		expect(existsSync(pluginBackupPath)).toBe(false);
 		expect(existsSync(pluginBakPath)).toBe(false);
 		expect(existsSync(backupDir)).toBe(false);
+
+		const pluginDirEntries = readdirSync(pluginDir);
+		expect(
+			pluginDirEntries.some((entry) => entry.startsWith("brain.ts.uninstalled-")),
+		).toBe(false);
 	});
 });

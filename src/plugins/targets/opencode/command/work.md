@@ -85,8 +85,8 @@ PENDING TASKS
    - Claim task: `brain_update(path: "...", status: "in_progress")`
    - Triage complexity (Route A/B/C)
    - Execute appropriate workflow
-   - Complete: `brain_update(path: "...", status: "completed")`
-   - Commit changes
+   - Commit changes and capture hash: `git rev-parse HEAD`
+   - Complete: `brain_update(path: "...", status: "completed")` with commit hash in summary
 
 ### Process Specific Task
 

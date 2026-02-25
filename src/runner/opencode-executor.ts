@@ -80,8 +80,9 @@ Use brain_recall to read the task details, then:
 3. If work was partially done, continue from where it left off
 4. If unclear what was done, restart the task from the beginning
 5. Follow the do-work-queue skill workflow to completion
-6. Mark as completed with summary (note that this was a resumed task)
-7. Create atomic git commit
+6. Create atomic git commit
+7. Capture commit hash (\`git rev-parse HEAD\`)
+8. Mark as completed with summary and include commit hash (note that this was a resumed task)
 
 Start now.`;
     }
@@ -93,8 +94,9 @@ Use brain_recall to read the task details, then follow the do-work-queue skill w
 2. Triage complexity (Route A/B/C)
 3. Execute the appropriate route
 4. Run tests if applicable
-5. Mark as completed with summary
-6. Create atomic git commit
+5. Create atomic git commit
+6. Capture commit hash (\`git rev-parse HEAD\`)
+7. Mark as completed with summary and include commit hash
 
 Start now.`;
   }

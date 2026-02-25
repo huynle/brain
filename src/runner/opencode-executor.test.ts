@@ -126,8 +126,12 @@ describe("OpencodeExecutor", () => {
       expect(prompt).toContain("Load the do-work-queue skill");
       expect(prompt).toContain(task.path);
       expect(prompt).toContain("Mark the task as in_progress");
+      expect(prompt).toContain("Capture commit hash");
       expect(prompt).toContain("Triage complexity (Route A/B/C)");
       expect(prompt).toContain("Create atomic git commit");
+      expect(prompt.indexOf("Create atomic git commit")).toBeLessThan(
+        prompt.indexOf("Mark as completed with summary")
+      );
       expect(prompt).not.toContain("RESUME");
       expect(prompt).not.toContain("interrupted");
     });
@@ -142,7 +146,11 @@ describe("OpencodeExecutor", () => {
       expect(prompt).toContain("interrupted");
       expect(prompt).toContain("Check the task file for any progress notes");
       expect(prompt).toContain("continue from where it left off");
+      expect(prompt).toContain("Capture commit hash");
       expect(prompt).toContain("Create atomic git commit");
+      expect(prompt.indexOf("Create atomic git commit")).toBeLessThan(
+        prompt.indexOf("Mark as completed with summary")
+      );
     });
 
     test("includes task path in both prompts", () => {

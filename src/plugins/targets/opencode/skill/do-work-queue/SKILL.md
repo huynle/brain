@@ -27,8 +27,8 @@ This skill covers:
 - [ ] Step 7: Determine if phased (Route C: always, Route B: when large)
 - [ ] Step 8: (Route A) Implement directly OR (Routes B, C) Dispatch `tdd-dev` agent per phase
 - [ ] Step 9: Run tests, append results
-- [ ] Step 10: Complete task with `brain_update(path: "...", status: "completed", append: "## Summary\n...")`
-- [ ] Step 11: Create atomic git commit
+- [ ] Step 10: Create atomic git commit and capture hash with `git rev-parse HEAD`
+- [ ] Step 11: Complete task with `brain_update(path: "...", status: "completed", append: "## Summary\n...\n\n**Commit:** <hash>")`
 
 ---
 
@@ -313,25 +313,26 @@ brain_update(
 )
 ```
 
-### Step 9: Complete
+### Step 9: Commit
 
-```
-brain_update(
-  path: "<task-path>",
-  status: "completed",
-  append: "## Summary\n\n- <change 1>\n- <change 2>\n\n*Completed (<N> phases)*"
-)
-```
-
-### Step 10: Commit
-
-Single atomic commit per task (all phases together):
+Create a single atomic commit per task and capture the hash:
 
 ```bash
 git add -A
 git commit -m "[Task] <title> (Route <A/B/C>)
 
 <implementation summary>"
+git rev-parse HEAD
+```
+
+### Step 10: Complete
+
+```
+brain_update(
+  path: "<task-path>",
+  status: "completed",
+  append: "## Summary\n\n- <change 1>\n- <change 2>\n\n**Commit:** <hash>\n\n*Completed (<N> phases)*"
+)
 ```
 
 ---

@@ -562,7 +562,8 @@ function parseLooseDatetimeToUtc(value: string | undefined, fieldName: string): 
 function validateBoundedFields(
   startsAtIso: string | undefined,
   expiresAtIso: string | undefined,
-  runOnceAtIso: string | undefined
+  runOnceAtIso: string | undefined,
+  nowMs = Date.now()
 ): void {
   if (startsAtIso && expiresAtIso) {
     const startsAt = new Date(startsAtIso).getTime();
@@ -578,6 +579,10 @@ function validateBoundedFields(
 
   if (runOnceAtIso && expiresAtIso && new Date(runOnceAtIso).getTime() > new Date(expiresAtIso).getTime()) {
     throw new Error("Invalid run_once_at: must be at or before expires_at");
+  }
+
+  if (runOnceAtIso && new Date(runOnceAtIso).getTime() <= nowMs) {
+    throw new Error("Invalid run_once_at: must be in the future");
   }
 }
 
@@ -751,6 +756,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       const expiresAtIso = parseLooseDatetimeToUtc(body.expires_at, "expires_at");
       const runOnceAtIso = parseLooseDatetimeToUtc(body.run_once_at, "run_once_at");
       validateBoundedFields(startsAtIso, expiresAtIso, runOnceAtIso);
+      const maxRuns = runOnceAtIso ? 1 : body.max_runs;
 
       const created = await brainService.save({
         type: "cron",
@@ -759,7 +765,7 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         project: projectId,
         schedule: body.schedule,
         next_run: runOnceAtIso,
-        max_runs: body.max_runs ?? (runOnceAtIso ? 1 : undefined),
+        max_runs: maxRuns,
         starts_at: startsAtIso,
         expires_at: expiresAtIso,
         status: body.status,
@@ -824,12 +830,13 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         expiresAtIso !== undefined ? expiresAtIso : cron.expires_at,
         runOnceAtIso
       );
+      const maxRuns = runOnceAtIso ? 1 : body.max_runs;
 
       const updated = await brainService.update(cron.path, {
         title: body.title,
         schedule: body.schedule,
         next_run: runOnceAtIso,
-        max_runs: body.max_runs,
+        max_runs: maxRuns,
         starts_at: startsAtIso,
         expires_at: expiresAtIso,
         status: body.status,

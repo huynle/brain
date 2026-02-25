@@ -291,6 +291,42 @@ describe("Cron API", () => {
     expect(json.cron.max_runs).toBe(1);
   });
 
+  test("normalizes one-shot cron max_runs to 1 even when provided", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "One Shot Max Runs Normalized",
+        run_once_at: "in 3 hours",
+        max_runs: 5,
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(json.cron.max_runs).toBe(1);
+  });
+
+  test("rejects run_once_at values in the past on create", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Past One Shot Cron",
+        run_once_at: "2000-01-01T00:00:00.000Z",
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json.error).toBe("Validation Error");
+    expect(json.message).toBe("Invalid run_once_at: must be in the future");
+  });
+
   test("normalizes starts_at and expires_at loose datetime inputs to UTC", async () => {
     const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
       method: "POST",
@@ -377,6 +413,36 @@ describe("Cron API", () => {
     const patched = await patchRes.json();
     expect(patched.cron.status).toBe("blocked");
     expect(patched.cron.schedule).toBe("45 7 * * *");
+  });
+
+  test("rejects run_once_at values in the past on update", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Past One Shot Update Cron",
+        schedule: "0 10 * * *",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+
+    const patchRes = await app.request(`/crons/${TEST_PROJECT}/crons/${created.cron.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_once_at: "2000-01-01T00:00:00.000Z",
+      }),
+    });
+
+    if (patchRes.status === 503) return;
+
+    expect(patchRes.status).toBe(400);
+    const patched = await patchRes.json();
+    expect(patched.error).toBe("Validation Error");
+    expect(patched.message).toBe("Invalid run_once_at: must be in the future");
   });
 
   test("blocks manual trigger when max_runs has been reached", async () => {

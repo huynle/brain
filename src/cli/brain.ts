@@ -165,7 +165,8 @@ Install Targets:
   antigravity   Antigravity AI assistant (coming soon)
 
 Install Options:
-  brain install opencode              Install/replace OpenCode (destructive, no backups)
+  brain install opencode              Install/replace OpenCode (destructive by default)
+  brain install opencode --force      Explicit destructive replacement
   brain install opencode --dry-run    Show what would be installed
   brain install --api-url <url>       Use custom API URL
 

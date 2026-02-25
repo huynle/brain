@@ -8,8 +8,8 @@
  * from both `bun run` and compiled standalone executables.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, statSync } from "fs";
-import { join, dirname, basename } from "path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import type {
   InstallTarget,
@@ -325,9 +325,9 @@ export function checkTargetExists(target: InstallTarget): boolean {
 async function installSingleFile(
   embeddedPath: string,
   targetPath: string,
-  options: { force: boolean; dryRun: boolean; apiUrl?: string; destructiveReplace?: boolean }
-): Promise<{ success: boolean; backupPath?: string; error?: string }> {
-  const { force, dryRun, apiUrl, destructiveReplace = false } = options;
+  options: { force: boolean; dryRun: boolean; apiUrl?: string }
+): Promise<{ success: boolean; error?: string }> {
+  const { force, dryRun, apiUrl } = options;
   const targetDir = dirname(targetPath);
 
   // Ensure target directory exists
@@ -338,21 +338,12 @@ async function installSingleFile(
   }
 
   // Check if file already exists
-  let backupPath: string | undefined;
   if (existsSync(targetPath)) {
     if (!force) {
       return { success: false, error: `File exists: ${targetPath}` };
     }
-    if (destructiveReplace) {
-      if (!dryRun) {
-        unlinkSync(targetPath);
-      }
-    } else {
-      // Create backup
-      backupPath = `${targetPath}.backup-${Date.now()}`;
-      if (!dryRun) {
-        renameSync(targetPath, backupPath);
-      }
+    if (!dryRun) {
+      unlinkSync(targetPath);
     }
   }
 
@@ -414,7 +405,7 @@ async function installSingleFile(
     writeFileSync(targetPath, content);
   }
 
-  return { success: true, backupPath };
+  return { success: true };
 }
 
 export async function installPlugin(options: InstallOptions): Promise<InstallResult> {
@@ -451,7 +442,6 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     force: effectiveForce,
     dryRun,
     apiUrl,
-    destructiveReplace,
   });
   if (!mainResult.success) {
     return {
@@ -467,7 +457,6 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     targetPath: pluginPath,
     componentType: "plugin",
     description: `${config.name} main plugin`,
-    backupPath: mainResult.backupPath,
   });
 
   // -------------------------------------------------------------------------
@@ -495,7 +484,6 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
       force: effectiveForce,
       dryRun,
       apiUrl,
-      destructiveReplace,
     });
     if (!result.success) {
       // For additional files, we warn but continue
@@ -508,7 +496,6 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
       targetPath: targetFilePath,
       componentType: file.componentType,
       description: file.description,
-      backupPath: result.backupPath,
     });
   }
 
@@ -572,12 +559,6 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
     messages.push("");
   }
 
-  // Show any backups
-  const backups = installedFiles.filter((f) => f.backupPath);
-  if (backups.length > 0) {
-    messages.push(`Backups created: ${backups.length}`);
-  }
-
   if (postInstallMessages.length > 0) {
     messages.push("");
     messages.push(...postInstallMessages);
@@ -614,16 +595,13 @@ export async function uninstallPlugin(target: InstallTarget, dryRun = false): Pr
     };
   }
 
-  // Create backup before removing
-  const backupPath = `${pluginPath}.uninstalled-${Date.now()}`;
-  renameSync(pluginPath, backupPath);
+  unlinkSync(pluginPath);
 
   return {
     success: true,
     target,
     installedPath: pluginPath,
-    message: `Uninstalled ${config.name} plugin.\nBackup saved to: ${backupPath}`,
-    backupPath,
+    message: `Uninstalled ${config.name} plugin.`,
   };
 }
 
@@ -638,306 +616,4 @@ export function getPluginStatus(target: InstallTarget): {
     path: pluginPath,
     targetExists: existsSync(configDir),
   };
-}
-
-// ============================================================================
-// Backup Management
-// ============================================================================
-
-export interface BackupInfo {
-  path: string;
-  originalFile: string;
-  timestamp: number;
-  type: "backup" | "uninstalled";
-  componentType: "plugin" | "skill" | "command" | "agent";
-}
-
-/**
- * Infer component type from a file path relative to the config directory.
- * Maps directory prefixes like "skill/", "command/", "agent/", "plugin/" to their types.
- */
-function inferComponentType(relativePath: string): BackupInfo["componentType"] | null {
-  const componentDirs: Record<string, BackupInfo["componentType"]> = {
-    "plugin/": "plugin",
-    "skill/": "skill",
-    "command/": "command",
-    "agent/": "agent",
-  };
-  for (const [prefix, type] of Object.entries(componentDirs)) {
-    if (relativePath.startsWith(prefix)) {
-      return type;
-    }
-  }
-  return null;
-}
-
-/**
- * Recursively scan a directory for backup/uninstalled files.
- * Returns all matching files with their full paths.
- */
-function scanDirForBackups(
-  dir: string,
-  backupPattern: RegExp,
-  configDir: string,
-  backupsMap: Map<string, BackupInfo>,
-): void {
-  if (!existsSync(dir)) return;
-
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return; // Permission denied or other read error
-  }
-
-  for (const entry of entries) {
-    const fullPath = join(dir, entry);
-    let stat;
-    try {
-      stat = statSync(fullPath);
-    } catch {
-      continue; // Skip inaccessible entries
-    }
-
-    if (stat.isDirectory()) {
-      // Recurse into subdirectories
-      scanDirForBackups(fullPath, backupPattern, configDir, backupsMap);
-    } else if (stat.isFile()) {
-      const match = entry.match(backupPattern);
-      if (match) {
-        // Infer component type from path relative to configDir
-        const relativePath = fullPath.slice(configDir.length + 1); // +1 for trailing /
-        const componentType = inferComponentType(relativePath);
-        if (componentType) {
-          backupsMap.set(fullPath, {
-            path: fullPath,
-            originalFile: match[1],
-            timestamp: parseInt(match[3], 10),
-            type: match[2] as "backup" | "uninstalled",
-            componentType,
-          });
-        }
-      }
-    }
-  }
-}
-
-/**
- * Find all backup files for a target.
- *
- * Recursively scans all component directories (plugin/, skill/, command/, agent/)
- * under the target's configDir to find .backup-{timestamp} and .uninstalled-{timestamp} files.
- */
-export function findBackups(target: InstallTarget): BackupInfo[] {
-  const backupsMap = new Map<string, BackupInfo>(); // Use path as key to deduplicate
-
-  // Patterns to match: .backup-{timestamp} and .uninstalled-{timestamp}
-  const backupPattern = /^(.+)\.(backup|uninstalled)-(\d+)$/;
-
-  const { configDir } = resolveTargetPaths(target);
-
-  // Recursively scan all component directories under configDir
-  const componentDirs = ["plugin", "skill", "command", "agent"];
-  for (const componentDir of componentDirs) {
-    const dir = join(configDir, componentDir);
-    scanDirForBackups(dir, backupPattern, configDir, backupsMap);
-  }
-
-  // Convert to array and sort by timestamp descending (newest first)
-  const backups = Array.from(backupsMap.values());
-  backups.sort((a, b) => b.timestamp - a.timestamp);
-
-  return backups;
-}
-
-/**
- * Restore the latest backup for a target.
- */
-export async function restoreBackups(
-  target: InstallTarget,
-  options: { dryRun?: boolean } = {}
-): Promise<{ success: boolean; message: string; restored: string[] }> {
-  const { dryRun = false } = options;
-  const backups = findBackups(target);
-
-  if (backups.length === 0) {
-    return {
-      success: false,
-      message: "No backups found to restore.",
-      restored: [],
-    };
-  }
-
-  // Group backups by target file path, keeping only the latest for each
-  const latestByFile = new Map<string, BackupInfo>();
-  for (const backup of backups) {
-    // Use the full target path (directory + original filename) as key
-    const targetPath = join(dirname(backup.path), backup.originalFile);
-    if (!latestByFile.has(targetPath)) {
-      latestByFile.set(targetPath, backup);
-    }
-  }
-
-  const restored: string[] = [];
-  const messages: string[] = [];
-
-  for (const [targetPath, backup] of latestByFile) {
-    const date = new Date(backup.timestamp).toISOString();
-
-    if (dryRun) {
-      messages.push(`[DRY RUN] Would restore: ${backup.originalFile} (from ${date})`);
-      restored.push(targetPath);
-      continue;
-    }
-
-    try {
-      // If current file exists, remove it first
-      if (existsSync(targetPath)) {
-        unlinkSync(targetPath);
-      }
-
-      // Rename backup to original name
-      renameSync(backup.path, targetPath);
-      messages.push(`Restored: ${backup.originalFile} (from ${date})`);
-      restored.push(targetPath);
-    } catch (err) {
-      messages.push(`Failed to restore ${backup.originalFile}: ${err instanceof Error ? err.message : String(err)}`);
-    }
-  }
-
-  return {
-    success: restored.length > 0,
-    message: messages.join("\n"),
-    restored,
-  };
-}
-
-/**
- * Clean up backup files for a target.
- */
-export async function cleanBackups(
-  target: InstallTarget,
-  options: { dryRun?: boolean; keepLatest?: boolean } = {}
-): Promise<{ success: boolean; message: string; deleted: string[]; kept: string[] }> {
-  const { dryRun = false, keepLatest = false } = options;
-  const backups = findBackups(target);
-
-  if (backups.length === 0) {
-    return {
-      success: true,
-      message: "No backups found to clean.",
-      deleted: [],
-      kept: [],
-    };
-  }
-
-  const deleted: string[] = [];
-  const kept: string[] = [];
-  const messages: string[] = [];
-
-  if (keepLatest) {
-    // Group by target file path, keep only the latest
-    const latestByFile = new Map<string, BackupInfo>();
-    for (const backup of backups) {
-      const targetPath = join(dirname(backup.path), backup.originalFile);
-      if (!latestByFile.has(targetPath)) {
-        latestByFile.set(targetPath, backup);
-      }
-    }
-
-    for (const backup of backups) {
-      const targetPath = join(dirname(backup.path), backup.originalFile);
-      const latest = latestByFile.get(targetPath);
-
-      if (latest && backup.path === latest.path) {
-        kept.push(backup.path);
-        continue;
-      }
-
-      if (dryRun) {
-        messages.push(`[DRY RUN] Would delete: ${basename(backup.path)}`);
-        deleted.push(backup.path);
-      } else {
-        try {
-          unlinkSync(backup.path);
-          deleted.push(backup.path);
-        } catch (err) {
-          messages.push(`Failed to delete ${basename(backup.path)}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
-    if (!dryRun) {
-      messages.push(`Deleted ${deleted.length} backup(s), kept ${kept.length} latest backup(s).`);
-    }
-  } else {
-    // Delete all backups
-    for (const backup of backups) {
-      if (dryRun) {
-        messages.push(`[DRY RUN] Would delete: ${basename(backup.path)}`);
-        deleted.push(backup.path);
-      } else {
-        try {
-          unlinkSync(backup.path);
-          deleted.push(backup.path);
-        } catch (err) {
-          messages.push(`Failed to delete ${basename(backup.path)}: ${err instanceof Error ? err.message : String(err)}`);
-        }
-      }
-    }
-
-    if (!dryRun) {
-      messages.push(`Deleted ${deleted.length} backup(s).`);
-    }
-  }
-
-  return {
-    success: true,
-    message: messages.join("\n"),
-    deleted,
-    kept,
-  };
-}
-
-/**
- * List all backups for a target with human-readable info.
- */
-export function listBackups(target: InstallTarget): string {
-  const backups = findBackups(target);
-
-  if (backups.length === 0) {
-    return "No backups found.";
-  }
-
-  const lines: string[] = [`Found ${backups.length} backup(s):\n`];
-
-  for (const backup of backups) {
-    const date = new Date(backup.timestamp);
-    const relativeTime = getRelativeTime(date);
-    const typeLabel = backup.type === "uninstalled" ? " (uninstalled)" : "";
-    lines.push(`  [${backup.componentType}] ${backup.originalFile}${typeLabel}`);
-    lines.push(`    ${date.toLocaleString()} (${relativeTime})`);
-    lines.push(`    ${backup.path}`);
-    lines.push("");
-  }
-
-  return lines.join("\n");
-}
-
-/**
- * Get relative time string (e.g., "2 hours ago")
- */
-function getRelativeTime(date: Date): string {
-  const now = Date.now();
-  const diff = now - date.getTime();
-
-  const seconds = Math.floor(diff / 1000);
-  const minutes = Math.floor(seconds / 60);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
-
-  if (days > 0) return `${days} day${days > 1 ? "s" : ""} ago`;
-  if (hours > 0) return `${hours} hour${hours > 1 ? "s" : ""} ago`;
-  if (minutes > 0) return `${minutes} minute${minutes > 1 ? "s" : ""} ago`;
-  return "just now";
 }

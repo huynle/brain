@@ -228,7 +228,6 @@ export interface InstallResult {
   target: InstallTarget;
   installedPath: string;
   message: string;
-  backupPath?: string;
   installedFiles?: InstalledFile[];
 }
 
@@ -261,5 +260,4 @@ export interface InstalledFile {
   targetPath: string;
   componentType: "plugin" | "skill" | "command" | "agent";
   description: string;
-  backupPath?: string;
 }

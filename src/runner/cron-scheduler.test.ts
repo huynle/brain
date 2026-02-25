@@ -431,4 +431,80 @@ describe("cron scheduler completion tracking", () => {
     expect(handlerCalls[1]?.[1]?.status).toBe("failed");
     expect(handlerCalls[1]?.[1]?.failed_task).toBe("task-tui");
   });
+
+  test("dashboard pane close finalizes cron run as completed when task status reverted to pending but run_finalizations marks completion", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config, mode: "dashboard" });
+    const updateCronRun = mock(async () => {});
+
+    // @ts-expect-error private field override for test
+    runner.apiClient = {
+      updateCronRun,
+      releaseTask: async () => {},
+    };
+    // @ts-expect-error private field override for test
+    runner.executor = { cleanup: async () => {} };
+    // @ts-expect-error private method override for test
+    runner.saveState = () => {};
+
+    const runId = "run-dashboard-finalized";
+    const startedAtIso = "2026-02-23T06:00:00.000Z";
+    (runner as unknown as { activeCronRuns: Map<string, unknown> }).activeCronRuns.set(runId, {
+      cronId: "cron-daily",
+      cronPath: "projects/test-project/cron/daily.md",
+      projectId: "test-project",
+      taskIds: ["task-dashboard-finalized"],
+      startedAtIso,
+      startedAtMs: new Date(startedAtIso).getTime(),
+      pendingTaskIds: new Set(["task-dashboard-finalized"]),
+    });
+    (runner as unknown as { taskToCronRun: Map<string, string> }).taskToCronRun.set(
+      "task-dashboard-finalized",
+      runId
+    );
+    (runner as unknown as { tuiTasks: Map<string, RunningTask> }).tuiTasks.set("task-dashboard-finalized", {
+      id: "task-dashboard-finalized",
+      path: "projects/test-project/task/task-dashboard-finalized.md",
+      title: "Dashboard Finalized Task",
+      priority: "medium",
+      projectId: "test-project",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      isResume: false,
+      workdir: "/tmp/test",
+      runId,
+    });
+
+    globalThis.fetch = ((url: string) => {
+      if (url.includes("/entries/")) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "pending",
+              run_finalizations: {
+                [runId]: {
+                  status: "completed",
+                  finalized_at: "2026-02-23T06:05:00.000Z",
+                  session_id: "ses_dashboard_001",
+                },
+              },
+            })
+          )
+        );
+      }
+      return Promise.resolve(new Response("{}", { status: 200 }));
+    }) as typeof fetch;
+
+    const handleDashboardPaneClosed = (runner as unknown as {
+      handleDashboardPaneClosed: (taskId: string) => Promise<void>;
+    }).handleDashboardPaneClosed.bind(runner);
+
+    await handleDashboardPaneClosed("task-dashboard-finalized");
+
+    expect(updateCronRun).toHaveBeenCalledTimes(1);
+    const patch = (updateCronRun.mock.calls as unknown as Array<[unknown, Record<string, unknown>]>)[0][1];
+    expect(patch.status).toBe("completed");
+    expect(patch.run_id).toBe(runId);
+    expect((runner as unknown as { activeCronRuns: Map<string, unknown> }).activeCronRuns.has(runId)).toBe(false);
+    expect((runner as unknown as { taskToCronRun: Map<string, string> }).taskToCronRun.size).toBe(0);
+  });
 });

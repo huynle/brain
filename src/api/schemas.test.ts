@@ -75,4 +75,29 @@ describe("API schemas - cron fields", () => {
     expect(parsed.runs?.[0]?.status).toBe("skipped");
     expect(parsed.runs?.[0]?.skip_reason).toBe("task xyz in_progress");
   });
+
+  test("BrainEntrySchema includes run_finalizations shape", () => {
+    const parsed = BrainEntrySchema.parse({
+      id: "abc12def",
+      path: "projects/my-project/task/abc12def.md",
+      title: "Task Entry",
+      type: "task",
+      status: "completed",
+      content: "body",
+      tags: ["task"],
+      run_finalizations: {
+        run_20260225_001: {
+          status: "completed",
+          finalized_at: "2026-02-25T10:05:00.000Z",
+          session_id: "ses_abc123",
+        },
+      },
+    });
+
+    expect(parsed.run_finalizations?.run_20260225_001?.status).toBe("completed");
+    expect(parsed.run_finalizations?.run_20260225_001?.finalized_at).toBe(
+      "2026-02-25T10:05:00.000Z"
+    );
+    expect(parsed.run_finalizations?.run_20260225_001?.session_id).toBe("ses_abc123");
+  });
 });

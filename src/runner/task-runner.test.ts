@@ -23,7 +23,7 @@ import {
   type TaskRunnerOptions,
 } from "./task-runner";
 import { resetApiClient } from "./api-client";
-import { resetProcessManager } from "./process-manager";
+import { CompletionStatus, resetProcessManager } from "./process-manager";
 import { resetOpencodeExecutor } from "./opencode-executor";
 import { resetConfig } from "./config";
 import { resetSignalHandler } from "./signals";
@@ -3000,5 +3000,158 @@ describe("TaskRunner - cron context propagation (Phase 3)", () => {
 
     expect(sessionData.cron_id).toBe("cron-daily");
     expect(sessionData.run_id).toBe("run-20250115");
+  });
+});
+
+describe("TaskRunner - run finalization metadata fallback", () => {
+  let testDir: string;
+  let config: RunnerConfig;
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    testDir = join(tmpdir(), `task-runner-finalization-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(testDir, { recursive: true });
+    mkdirSync(join(testDir, "log"), { recursive: true });
+    config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
+
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    resetTaskRunner();
+    resetApiClient();
+    resetProcessManager();
+    resetOpencodeExecutor();
+    resetConfig();
+    resetSignalHandler();
+    resetLogger();
+
+    if (existsSync(testDir)) {
+      rmSync(testDir, { recursive: true, force: true });
+    }
+  });
+
+  test("checkTuiTasks treats pending task as completed when run_finalizations marks current run completed", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config, mode: "tui" });
+
+    const task: RunningTask = {
+      id: "task-finalized",
+      path: "projects/test-project/task/task-finalized.md",
+      title: "Finalized Task",
+      priority: "medium",
+      projectId: "test-project",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      isResume: false,
+      workdir: "/tmp/test",
+      runId: "run_20260225_001",
+    };
+
+    // @ts-expect-error - private field override for test
+    runner.tuiTasks.set(task.id, task);
+
+    const handleTuiTaskCompletion = mock(async () => null);
+    // @ts-expect-error - private method override for test
+    runner.handleTuiTaskCompletion = handleTuiTaskCompletion;
+
+    globalThis.fetch = createMockFetch({
+      "/entries/": () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "pending",
+              run_finalizations: {
+                run_20260225_001: {
+                  status: "completed",
+                  finalized_at: "2026-02-25T10:05:00.000Z",
+                  session_id: "ses_abc123",
+                },
+              },
+            })
+          )
+        ),
+    });
+
+    const checkTuiTasks = (runner as unknown as {
+      checkTuiTasks: () => Promise<void>;
+    }).checkTuiTasks.bind(runner);
+
+    await checkTuiTasks();
+
+    expect(handleTuiTaskCompletion).toHaveBeenCalledTimes(1);
+    const calls = handleTuiTaskCompletion.mock.calls as unknown as Array<[string, RunningTask, CompletionStatus]>;
+    expect(calls[0]?.[0]).toBe(task.id);
+    expect(calls[0]?.[2]).toBe(CompletionStatus.Completed);
+  });
+
+  test("handleDashboardPaneClosed emits task_completed when status flips to pending but run_finalizations marks completion", async () => {
+    const runner = new TaskRunner({ projectId: "test-project", config, mode: "dashboard" });
+    const events: RunnerEvent[] = [];
+    runner.on((event) => events.push(event));
+
+    // @ts-expect-error - private field override for test
+    runner.apiClient = {
+      releaseTask: async () => {},
+      updateCronRun: async () => {},
+    };
+    // @ts-expect-error - private field override for test
+    runner.executor = { cleanup: async () => {} };
+    // @ts-expect-error - private method override for test
+    runner.saveState = () => {};
+
+    const task: RunningTask = {
+      id: "task-dashboard-finalized",
+      path: "projects/test-project/task/task-dashboard-finalized.md",
+      title: "Dashboard Finalized Task",
+      priority: "medium",
+      projectId: "test-project",
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+      isResume: false,
+      workdir: "/tmp/test",
+      runId: "run_20260225_002",
+    };
+
+    // @ts-expect-error - private field override for test
+    runner.tuiTasks.set(task.id, task);
+
+    globalThis.fetch = createMockFetch({
+      "/entries/": () =>
+        Promise.resolve(
+          new Response(
+            JSON.stringify({
+              status: "pending",
+              run_finalizations: {
+                run_20260225_002: {
+                  status: "completed",
+                  finalized_at: "2026-02-25T10:15:00.000Z",
+                  session_id: "ses_def456",
+                },
+              },
+            })
+          )
+        ),
+    });
+
+    const handleDashboardPaneClosed = (runner as unknown as {
+      handleDashboardPaneClosed: (taskId: string) => Promise<void>;
+    }).handleDashboardPaneClosed.bind(runner);
+
+    await handleDashboardPaneClosed(task.id);
+
+    const completedEvents = events.filter((event) => event.type === "task_completed");
+    const failedEvents = events.filter((event) => event.type === "task_failed");
+
+    expect(completedEvents.length).toBe(1);
+    expect(failedEvents.length).toBe(0);
+    expect(runner.getStatus().stats.completed).toBe(1);
   });
 });

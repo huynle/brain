@@ -1718,15 +1718,14 @@ export class TaskRunner {
         );
         
         if (!response.ok) continue;
-        
-        const entry = await response.json();
-        const status = entry.status as EntryStatus;
 
-        if (status === "completed" || status === "cancelled") {
-          const completionStatus = status === "completed" 
-            ? CompletionStatus.Completed 
-            : CompletionStatus.Cancelled;
-          
+        const entry = await response.json();
+        const completionStatus = this.resolveEntryCompletionStatus(entry, task.runId);
+
+        if (
+          completionStatus === CompletionStatus.Completed ||
+          completionStatus === CompletionStatus.Cancelled
+        ) {
           await this.handleTuiTaskCompletion(taskId, task, completionStatus);
           continue;
         }
@@ -1753,6 +1752,53 @@ export class TaskRunner {
         });
       }
     }
+  }
+
+  private resolveEntryCompletionStatus(
+    entry: { status?: unknown; run_finalizations?: unknown },
+    runId?: string
+  ): CompletionStatus {
+    const status = typeof entry.status === "string" ? (entry.status as EntryStatus) : undefined;
+
+    if (status === "completed") {
+      return CompletionStatus.Completed;
+    }
+    if (status === "cancelled") {
+      return CompletionStatus.Cancelled;
+    }
+    if (status === "blocked") {
+      return CompletionStatus.Blocked;
+    }
+    if (status === "in_progress") {
+      return CompletionStatus.Crashed;
+    }
+
+    // Fallback for fast status flips: if current run has a durable
+    // run_finalizations marker, treat the task as terminal for this run.
+    if (
+      runId &&
+      entry.run_finalizations &&
+      typeof entry.run_finalizations === "object" &&
+      !Array.isArray(entry.run_finalizations)
+    ) {
+      const runFinalization = (entry.run_finalizations as Record<string, { status?: unknown }>)[runId];
+      const finalizedStatus =
+        runFinalization && typeof runFinalization.status === "string"
+          ? (runFinalization.status as EntryStatus)
+          : undefined;
+
+      if (finalizedStatus === "completed") {
+        return CompletionStatus.Completed;
+      }
+      if (finalizedStatus === "cancelled") {
+        return CompletionStatus.Cancelled;
+      }
+      if (finalizedStatus === "blocked") {
+        return CompletionStatus.Blocked;
+      }
+    }
+
+    return CompletionStatus.Running;
   }
 
   // ========================================
@@ -3351,9 +3397,11 @@ export class TaskRunner {
     // Get task status from the brain API to determine completion status
     let completionStatus: CompletionStatus = CompletionStatus.Completed;
     
-    // Find the task path from our tracked panes or running tasks
+    // Find the task path from tracked tasks if available.
     const runningInfo = this.processManager.get(taskId);
-    const taskPath = runningInfo?.task.path;
+    const trackedTask = runningInfo?.task ?? this.tuiTasks.get(taskId);
+    const taskPath = trackedTask?.path;
+    const runId = trackedTask?.runId ?? this.taskToCronRun.get(taskId);
     
     if (taskPath) {
       try {
@@ -3363,17 +3411,9 @@ export class TaskRunner {
         );
         if (response.ok) {
           const entry = await response.json();
-          const status = entry.status as EntryStatus;
-          
-          if (status === "completed") {
-            completionStatus = CompletionStatus.Completed;
-          } else if (status === "blocked") {
-            completionStatus = CompletionStatus.Blocked;
-          } else if (status === "cancelled") {
-            completionStatus = CompletionStatus.Cancelled;
-          } else if (status === "in_progress") {
-            // Process exited while still in_progress - likely crashed
-            completionStatus = CompletionStatus.Crashed;
+          const resolved = this.resolveEntryCompletionStatus(entry, runId);
+          if (resolved !== CompletionStatus.Running) {
+            completionStatus = resolved;
           }
         }
       } catch (error) {
@@ -3426,6 +3466,8 @@ export class TaskRunner {
         });
       }
 
+      await this.finalizeCronRunForTask(taskId, completionStatus);
+
       // Release the claim
       try {
         await this.apiClient.releaseTask(this.projectId, taskId);
@@ -3438,6 +3480,9 @@ export class TaskRunner {
 
       // Cleanup executor files
       await this.executor.cleanup(taskId, this.projectId);
+
+      // Remove from TUI task tracking when pane has already closed.
+      this.tuiTasks.delete(taskId);
     }
 
     // Save state

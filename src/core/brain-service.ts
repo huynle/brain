@@ -64,6 +64,7 @@ import type {
   EntryType,
   EntryStatus,
   SessionInfo,
+  RunFinalization,
   ZkNote,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
@@ -144,6 +145,30 @@ function normalizeCronRuns(rawRuns: unknown): import("./types").CronRun[] | unde
     .filter((run): run is import("./types").CronRun => run !== null);
 
   return runs.length > 0 ? runs : undefined;
+}
+
+function resolveLatestRunContext(
+  sessions: Record<string, SessionInfo>
+): { runId: string; sessionId?: string } | undefined {
+  const runSessions = Object.entries(sessions)
+    .filter(([, session]) => typeof session.run_id === "string" && session.run_id.length > 0)
+    .map(([sessionId, session]) => ({
+      sessionId,
+      runId: session.run_id as string,
+      timestampMs: Date.parse(session.timestamp || ""),
+    }));
+
+  if (runSessions.length === 0) {
+    return undefined;
+  }
+
+  runSessions.sort((a, b) => {
+    const aTs = Number.isNaN(a.timestampMs) ? 0 : a.timestampMs;
+    const bTs = Number.isNaN(b.timestampMs) ? 0 : b.timestampMs;
+    return bTs - aTs;
+  });
+
+  return { runId: runSessions[0].runId, sessionId: runSessions[0].sessionId };
 }
 
 // =============================================================================
@@ -450,6 +475,12 @@ export class BrainService {
       }
     }
 
+    // run_finalizations is a nested map and cannot be represented safely via zk --extra.
+    // Force manual file creation so metadata is preserved.
+    if (zkAvailable && request.run_finalizations) {
+      zkAvailable = false;
+    }
+
     let relativePath: string;
     let noteId: string;
 
@@ -612,6 +643,7 @@ export class BrainService {
         model: request.model,
         // Session traceability
         sessions: request.sessions,
+        run_finalizations: request.run_finalizations,
         // Cron metadata
         schedule: request.schedule,
         next_run: request.next_run,
@@ -815,6 +847,8 @@ export class BrainService {
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
       sessions: frontmatter.sessions as Record<string, SessionInfo> | undefined,
+      run_finalizations:
+        frontmatter.run_finalizations as Record<string, RunFinalization> | undefined,
       // Cron metadata
       schedule: frontmatter.schedule as string | undefined,
       next_run: frontmatter.next_run as string | undefined,
@@ -850,13 +884,14 @@ export class BrainService {
       request.agent === undefined &&
       request.model === undefined &&
       request.sessions === undefined &&
+      request.run_finalizations === undefined &&
       request.schedule === undefined &&
       request.next_run === undefined &&
       request.cron_ids === undefined &&
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, schedule, next_run, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, schedule, next_run, cron_ids, runs"
       );
     }
 
@@ -961,6 +996,9 @@ export class BrainService {
     if (request.runs !== undefined) {
       updatedFrontmatter.runs = request.runs;
     }
+    if (request.run_finalizations !== undefined) {
+      updatedFrontmatter.run_finalizations = request.run_finalizations;
+    }
 
     // Update sessions with APPEND semantics (merge by session ID)
     if (request.sessions !== undefined && Object.keys(request.sessions).length > 0) {
@@ -980,6 +1018,27 @@ export class BrainService {
         ...existingSessions,
         ...requestSessions,
       };
+    }
+
+    if (isTask && (newStatus === "completed" || newStatus === "validated")) {
+      const allSessions =
+        (updatedFrontmatter.sessions as Record<string, SessionInfo> | undefined) || {};
+      const runCtx = resolveLatestRunContext(allSessions);
+      if (runCtx?.runId) {
+        const existingFinalizations =
+          (updatedFrontmatter.run_finalizations as
+            | Record<string, RunFinalization>
+            | undefined) || {};
+
+        updatedFrontmatter.run_finalizations = {
+          ...existingFinalizations,
+          [runCtx.runId]: {
+            status: newStatus,
+            finalized_at: new Date().toISOString(),
+            ...(runCtx.sessionId ? { session_id: runCtx.sessionId } : {}),
+          },
+        };
+      }
     }
 
     // Filter out status-tags from tags array (status is in status: field, not tags)

@@ -58,6 +58,12 @@ export type SessionInfo = {
   run_id?: string;
 };
 
+export interface RunFinalization {
+  status: EntryStatus;
+  finalized_at: string; // ISO timestamp
+  session_id?: string;
+}
+
 export interface CronRun {
   run_id: string; // "YYYYMMDD-HHmm" from scheduled trigger time
   status: "completed" | "failed" | "skipped" | "in_progress";
@@ -135,6 +141,8 @@ export interface BrainEntry {
 
   // Session traceability
   sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
+  // Durable run completion markers keyed by run_id
+  run_finalizations?: Record<string, RunFinalization>;
 }
 
 // =============================================================================
@@ -178,6 +186,7 @@ export interface CreateEntryRequest {
 
   // Session traceability
   sessions?: Record<string, SessionInfo>;
+  run_finalizations?: Record<string, RunFinalization>;
 }
 
 export interface CreateEntryResponse {
@@ -215,6 +224,7 @@ export interface UpdateEntryRequest {
 
   // Session traceability (append semantics - new entries are merged by session ID)
   sessions?: Record<string, SessionInfo>;
+  run_finalizations?: Record<string, RunFinalization>;
 }
 
 export interface ListEntriesRequest {

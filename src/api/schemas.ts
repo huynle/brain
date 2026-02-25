@@ -68,6 +68,12 @@ export const CronRunSchema = z.object({
   skip_reason: z.string().optional().openapi({ example: "task abc12def in_progress" }),
 }).openapi("CronRun");
 
+export const RunFinalizationSchema = z.object({
+  status: EntryStatusSchema.openapi({ example: "completed" }),
+  finalized_at: z.string().openapi({ example: "2026-02-25T10:05:00.000Z" }),
+  session_id: z.string().optional().openapi({ example: "ses_abc123" }),
+}).openapi("RunFinalization");
+
 // =============================================================================
 // Error Response Schema
 // =============================================================================
@@ -138,6 +144,16 @@ export const BrainEntrySchema = z.object({
       }
     }
   }),
+  run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
+    description: "Durable run completion markers keyed by run_id",
+    example: {
+      "run_20260225_001": {
+        status: "completed",
+        finalized_at: "2026-02-25T10:05:00.000Z",
+        session_id: "ses_abc123"
+      }
+    }
+  }),
 }).openapi("BrainEntry");
 
 export const BrainEntrySummarySchema = z.object({
@@ -174,6 +190,9 @@ export const CreateEntryRequestSchema = z.object({
   next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
   cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
+  run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
+    description: "Durable run completion markers keyed by run_id"
+  }),
   workdir: z.string().optional(),
   git_remote: z.string().optional(),
   git_branch: z.string().optional(),
@@ -261,9 +280,12 @@ export const UpdateEntryRequestSchema = z.object({
       }
     }
   }),
+  run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
+    description: "Durable run completion markers keyed by run_id"
+  }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, or sessions must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, or run_finalizations must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================

@@ -1013,5 +1013,66 @@ Task content here.
       const { frontmatter } = parseFrontmatter(content);
       expect(frontmatter.parent_id).toBe("abc12def");
     });
+
+    test("records run_finalizations marker when task is completed with session run_id", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "task-run-finalization.md");
+      const testPath = "projects/test-project/task/task-run-finalization.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task Run Finalization
+type: task
+status: in_progress
+sessions:
+  ses_run_001:
+    timestamp: "2026-02-25T10:00:00.000Z"
+    cron_id: cron_daily
+    run_id: run_20260225_001
+---
+
+Task content.
+`
+      );
+
+      await service.update(testPath, { status: "completed" });
+
+      const updated = await service.recall(testPath);
+      expect(updated.run_finalizations).toBeDefined();
+      expect(updated.run_finalizations?.run_20260225_001?.status).toBe("completed");
+      expect(updated.run_finalizations?.run_20260225_001?.session_id).toBe("ses_run_001");
+      expect(updated.run_finalizations?.run_20260225_001?.finalized_at).toEqual(expect.any(String));
+    });
+
+    test("does not add run_finalizations when completed task has no run_id in sessions", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "task-no-run-finalization.md");
+      const testPath = "projects/test-project/task/task-no-run-finalization.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Task Without Run Context
+type: task
+status: in_progress
+sessions:
+  ses_no_run:
+    timestamp: "2026-02-25T10:10:00.000Z"
+---
+
+Task content.
+`
+      );
+
+      await service.update(testPath, { status: "completed" });
+
+      const updated = await service.recall(testPath);
+      expect(updated.run_finalizations).toBeUndefined();
+    });
   });
 });

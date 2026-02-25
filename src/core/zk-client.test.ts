@@ -418,6 +418,30 @@ Body`;
     ]);
   });
 
+  test("parses run_finalizations metadata map", () => {
+    const content = `---
+title: Finalized Task
+type: task
+status: completed
+run_finalizations:
+  run_20260225_001:
+    status: completed
+    finalized_at: "2026-02-25T10:05:00.000Z"
+    session_id: ses_abc123
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.run_finalizations).toEqual({
+      run_20260225_001: {
+        status: "completed",
+        finalized_at: "2026-02-25T10:05:00.000Z",
+        session_id: "ses_abc123",
+      },
+    });
+  });
+
   test("keeps backward compatibility when cron fields are missing", () => {
     const content = `---
 title: Legacy Task
@@ -1016,6 +1040,28 @@ describe("serializeFrontmatter()", () => {
     expect(result).toContain('    tasks: 3');
     expect(result).toContain('    failed_task: ""');
     expect(result).toContain('    skip_reason: ""');
+  });
+
+  test("serializes run_finalizations metadata map", () => {
+    const fm = {
+      title: "Finalized Task",
+      type: "task",
+      status: "completed",
+      run_finalizations: {
+        run_20260225_001: {
+          status: "completed",
+          finalized_at: "2026-02-25T10:05:00.000Z",
+          session_id: "ses_abc123",
+        },
+      },
+    };
+
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("run_finalizations:");
+    expect(result).toContain("  run_20260225_001:");
+    expect(result).toContain("    status: completed");
+    expect(result).toContain('    finalized_at: "2026-02-25T10:05:00.000Z"');
+    expect(result).toContain("    session_id: ses_abc123");
   });
 });
 

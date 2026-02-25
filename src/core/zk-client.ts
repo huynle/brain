@@ -13,6 +13,7 @@ import type {
   EntryType,
   EntryStatus,
   Priority,
+  RunFinalization,
 } from "./types";
 import { ENTRY_TYPES, ENTRY_STATUSES } from "./types";
 
@@ -452,6 +453,7 @@ export function parseFrontmatter(content: string): {
     string,
     { timestamp: string; cron_id?: string; run_id?: string }
   > = {};
+  const runFinalizations: Record<string, RunFinalization> = {};
   const sessionIds: string[] = [];
   const sessionTimestamps: Record<string, string> = {};
   let inTags = false;
@@ -464,6 +466,8 @@ export function parseFrontmatter(content: string): {
   let inCronIds = false;
   let inRuns = false;
   let currentRun: CronRun | null = null;
+  let inRunFinalizations = false;
+  let currentRunFinalizationId: string | null = null;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -738,6 +742,22 @@ export function parseFrontmatter(content: string): {
       inTags = false;
       inDependsOn = false;
       inFeatureDependsOn = false;
+      inRunFinalizations = false;
+      currentRunFinalizationId = null;
+      continue;
+    }
+
+    if (line.match(/^run_finalizations:\s*$/)) {
+      inRunFinalizations = true;
+      currentRunFinalizationId = null;
+      inSessionTimestamps = false;
+      inSessionIds = false;
+      inSessions = false;
+      inTags = false;
+      inDependsOn = false;
+      inFeatureDependsOn = false;
+      inCronIds = false;
+      inRuns = false;
       continue;
     }
 
@@ -813,6 +833,39 @@ export function parseFrontmatter(content: string): {
       } else if (!line.match(/^\s/)) {
         // No longer indented, exit session_timestamps section
         inSessionTimestamps = false;
+      }
+    }
+
+    if (inRunFinalizations) {
+      const runFinalizationHeaderMatch = line.match(/^\s+([^:]+):\s*$/);
+      if (runFinalizationHeaderMatch) {
+        currentRunFinalizationId = parseYamlStringValue(runFinalizationHeaderMatch[1]);
+        runFinalizations[currentRunFinalizationId] = {
+          status: "completed",
+          finalized_at: "",
+        };
+        continue;
+      }
+
+      const runFinalizationFieldMatch = line.match(
+        /^\s{4}(status|finalized_at|session_id):\s*(.+?)\s*$/
+      );
+      if (runFinalizationFieldMatch && currentRunFinalizationId) {
+        const field = runFinalizationFieldMatch[1] as "status" | "finalized_at" | "session_id";
+        const value = parseYamlStringValue(runFinalizationFieldMatch[2]);
+        if (field === "status") {
+          runFinalizations[currentRunFinalizationId].status = value as EntryStatus;
+        } else if (field === "finalized_at") {
+          runFinalizations[currentRunFinalizationId].finalized_at = value;
+        } else {
+          runFinalizations[currentRunFinalizationId].session_id = value;
+        }
+        continue;
+      }
+
+      if (!line.match(/^\s/)) {
+        inRunFinalizations = false;
+        currentRunFinalizationId = null;
       }
     }
 
@@ -910,6 +963,10 @@ export function parseFrontmatter(content: string): {
     if (Object.keys(normalizedSessions).length > 0) {
       frontmatter.sessions = normalizedSessions;
     }
+  }
+
+  if (Object.keys(runFinalizations).length > 0) {
+    frontmatter.run_finalizations = runFinalizations;
   }
 
   // Handle multi-line literal block scalars for user_original_request and direct_prompt
@@ -1191,6 +1248,30 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
     }
   }
 
+  if (
+    fm.run_finalizations &&
+    typeof fm.run_finalizations === "object" &&
+    !Array.isArray(fm.run_finalizations)
+  ) {
+    const runMap = fm.run_finalizations as Record<string, RunFinalization>;
+    const runIds = Object.keys(runMap);
+    if (runIds.length > 0) {
+      lines.push("run_finalizations:");
+      for (const runId of runIds) {
+        const finalization = runMap[runId];
+        if (!finalization || typeof finalization !== "object") continue;
+        lines.push(`  ${escapeYamlValue(runId)}:`);
+        lines.push(`    status: ${escapeYamlValue(String(finalization.status ?? "completed"))}`);
+        lines.push(
+          `    finalized_at: ${escapeYamlValue(String(finalization.finalized_at ?? ""))}`
+        );
+        if (finalization.session_id) {
+          lines.push(`    session_id: ${escapeYamlValue(String(finalization.session_id))}`);
+        }
+      }
+    }
+  }
+
   return lines.join("\n") + "\n";
 }
 
@@ -1221,6 +1302,7 @@ export interface GenerateFrontmatterOptions {
   model?: string;
   // Session traceability
   sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
+  run_finalizations?: Record<string, RunFinalization>;
   // Cron scheduling metadata
   schedule?: string;
   next_run?: string;
@@ -1367,6 +1449,19 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
       }
       if (session.run_id) {
         lines.push(`    run_id: ${escapeYamlValue(session.run_id)}`);
+      }
+    }
+  }
+
+  if (options.run_finalizations && Object.keys(options.run_finalizations).length > 0) {
+    lines.push("run_finalizations:");
+    for (const runId of Object.keys(options.run_finalizations)) {
+      const finalization = options.run_finalizations[runId];
+      lines.push(`  ${escapeYamlValue(runId)}:`);
+      lines.push(`    status: ${escapeYamlValue(finalization.status)}`);
+      lines.push(`    finalized_at: ${escapeYamlValue(finalization.finalized_at)}`);
+      if (finalization.session_id) {
+        lines.push(`    session_id: ${escapeYamlValue(finalization.session_id)}`);
       }
     }
   }

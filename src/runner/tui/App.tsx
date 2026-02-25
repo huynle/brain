@@ -3525,7 +3525,8 @@ export function App({
                 />
                 <TaskTree
                   tasks={filteredTasks}
-                  selectedId={previewTaskId}
+                  selectedId={selectedTaskId}
+                  hoveredId={hoveredTaskId}
                   onSelect={setSelectedTaskId}
                   completedCollapsed={completedCollapsed}
                   onToggleCompleted={handleToggleCompleted}

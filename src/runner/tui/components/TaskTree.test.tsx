@@ -14,7 +14,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, parseTaskTreeRowTarget, buildVisibleTaskTreeRows, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, PROJECT_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, SPACER_PREFIX } from './TaskTree';
+import { TaskTree, flattenTreeOrder, buildTree, buildSelectedTaskRelationGraph, buildSelectedTaskRelationLanes, getTaskRelationKind, buildTreePrefixSegments, flattenFeatureOrder, parseTaskTreeRowTarget, buildVisibleTaskTreeRows, resolveTaskRowVisualState, COMPLETED_HEADER_ID, DRAFT_HEADER_ID, FEATURE_HEADER_PREFIX, PROJECT_HEADER_PREFIX, CANCELLED_HEADER_ID, SUPERSEDED_HEADER_ID, ARCHIVED_HEADER_ID, DRAFT_FEATURE_PREFIX, CANCELLED_FEATURE_PREFIX, SUPERSEDED_FEATURE_PREFIX, ARCHIVED_FEATURE_PREFIX, COMPLETED_FEATURE_PREFIX, UNGROUPED_HEADER_ID, SPACER_PREFIX } from './TaskTree';
 import type { TaskDisplay } from '../types';
 import type { LaneAssignment } from '../lane-layout';
 
@@ -215,6 +215,27 @@ describe('TaskTree', () => {
         />
       );
       expect(lastFrame()).toContain('Task');
+    });
+  });
+
+  describe('hover preview highlighting', () => {
+    it('keeps selected and hovered rows independent', () => {
+      expect(resolveTaskRowVisualState('task-a', 'task-a', 'task-b')).toEqual({
+        isSelected: true,
+        isHovered: false,
+      });
+
+      expect(resolveTaskRowVisualState('task-b', 'task-a', 'task-b')).toEqual({
+        isSelected: false,
+        isHovered: true,
+      });
+    });
+
+    it('does not mark hover when hovering the selected row', () => {
+      expect(resolveTaskRowVisualState('task-a', 'task-a', 'task-a')).toEqual({
+        isSelected: true,
+        isHovered: false,
+      });
     });
   });
 

@@ -24,6 +24,7 @@ type ColoredPrefixSegment = Pick<LanePrefixSegment, 'text' | 'kind'>;
 interface TaskTreeProps {
   tasks: TaskDisplay[];
   selectedId: string | null;
+  hoveredId?: string | null;
   onSelect: (id: string) => void;
   completedCollapsed: boolean;
   onToggleCompleted: () => void;
@@ -1330,11 +1331,28 @@ function truncateTitle(title: string, maxWidth: number): string {
   return title.slice(0, maxWidth - 1) + '…';
 }
 
+export function resolveTaskRowVisualState(
+  taskId: string,
+  selectedId: string | null,
+  hoveredId: string | null,
+): { isSelected: boolean; isHovered: boolean } {
+  const isSelected = taskId === selectedId;
+  const isHovered = !isSelected && taskId === hoveredId;
+  return { isSelected, isHovered };
+}
+
+function getTaskRowBackgroundColor(isSelected: boolean, isHovered: boolean): string | undefined {
+  if (isSelected) return 'blue';
+  if (isHovered) return 'gray';
+  return undefined;
+}
+
 const TaskRow = React.memo(function TaskRow({
   task,
   prefix,
   prefixSegments,
   isSelected,
+  isHovered,
   inCycle,
   isReady,
   isChecked,
@@ -1346,6 +1364,7 @@ const TaskRow = React.memo(function TaskRow({
   prefix: string;
   prefixSegments?: ColoredPrefixSegment[];
   isSelected: boolean;
+  isHovered: boolean;
   inCycle: boolean;
   isReady: boolean;
   /** Whether this task is checked (multi-selected) */
@@ -1379,6 +1398,7 @@ const TaskRow = React.memo(function TaskRow({
   // Checkbox indicator (only when multi-select is active)
   const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
   const prefixText = prefixSegments?.map((segment) => segment.text).join('') ?? prefix;
+  const rowBackgroundColor = getTaskRowBackgroundColor(isSelected, isHovered);
 
   // Calculate display title (truncated or full)
   let displayTitle = task.title;
@@ -1404,7 +1424,7 @@ const TaskRow = React.memo(function TaskRow({
               key={`${task.id}-prefix-${index}`}
               color={segment.kind === 'upstream' ? 'cyan' : segment.kind === 'downstream' ? 'magenta' : undefined}
               dimColor={isDim}
-              backgroundColor={isSelected ? 'blue' : undefined}
+              backgroundColor={rowBackgroundColor}
             >
               {segment.text}
             </Text>
@@ -1416,7 +1436,7 @@ const TaskRow = React.memo(function TaskRow({
       {showCheckboxes && (
         <Text
           color={isChecked ? 'green' : 'gray'}
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={rowBackgroundColor}
           bold={isChecked}
         >
           {checkboxPrefix}
@@ -1425,13 +1445,13 @@ const TaskRow = React.memo(function TaskRow({
       <Text
         color={color}
         dimColor={isDim}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={rowBackgroundColor}
       >
         {icon}
       </Text>
       <Text
         color={isSelected ? 'white' : undefined}
-        backgroundColor={isSelected ? 'blue' : undefined}
+        backgroundColor={rowBackgroundColor}
         bold={isSelected}
         dimColor={isDim}
       >
@@ -1441,7 +1461,7 @@ const TaskRow = React.memo(function TaskRow({
         <Text
           color="red"
           bold
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={rowBackgroundColor}
         >
           {prioritySuffix}
         </Text>
@@ -1449,7 +1469,7 @@ const TaskRow = React.memo(function TaskRow({
       {cycleSuffix && (
         <Text
           color="magenta"
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={rowBackgroundColor}
         >
           {cycleSuffix}
         </Text>
@@ -1457,7 +1477,7 @@ const TaskRow = React.memo(function TaskRow({
       {cronSuffix && (
         <Text
           color={isSelected ? 'white' : 'yellow'}
-          backgroundColor={isSelected ? 'blue' : undefined}
+          backgroundColor={rowBackgroundColor}
         >
           {cronSuffix}
         </Text>
@@ -1472,6 +1492,7 @@ const TaskRow = React.memo(function TaskRow({
 function renderTree(
   nodes: TreeNode[],
   selectedId: string | null,
+  hoveredId: string | null,
   prefix: string = '',
   readyIds: Set<string>,
   relationGraph: SelectedTaskRelationGraph,
@@ -1485,7 +1506,7 @@ function renderTree(
   nodes.forEach((node, index) => {
     const isLast = index === nodes.length - 1;
     const branchChar = isLast ? LAST_BRANCH : BRANCH;
-    const isSelected = node.task.id === selectedId;
+    const { isSelected, isHovered } = resolveTaskRowVisualState(node.task.id, selectedId, hoveredId);
     const isReady = readyIds.has(node.task.id);
     const isChecked = selectedTaskIds.has(node.task.id);
     const rowPrefix = prefix + branchChar;
@@ -1501,6 +1522,7 @@ function renderTree(
         prefix={rowPrefix}
         prefixSegments={prefixSegments}
         isSelected={isSelected}
+        isHovered={isHovered}
         inCycle={node.inCycle}
         isReady={isReady}
         isChecked={isChecked}
@@ -1514,7 +1536,7 @@ function renderTree(
     if (node.children.length > 0) {
       const childPrefix = prefix + (isLast ? EMPTY : VERTICAL);
       elements.push(
-        ...renderTree(node.children, selectedId, childPrefix, readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(node.children, selectedId, hoveredId, childPrefix, readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1703,6 +1725,7 @@ const FeatureHeader = React.memo(function FeatureHeader({
 function renderProjectTasks(
   projectTasks: TaskDisplay[],
   selectedId: string | null,
+  hoveredId: string | null,
   readyIds: Set<string>,
   relationGraph: SelectedTaskRelationGraph,
   selectedTaskIds: Set<string> = new Set(),
@@ -1720,7 +1743,7 @@ function renderProjectTasks(
   const tree = buildTree(activeTasks, projectTasks);
   
   tree.forEach((rootNode, rootIndex) => {
-    const isSelected = rootNode.task.id === selectedId;
+    const { isSelected, isHovered } = resolveTaskRowVisualState(rootNode.task.id, selectedId, hoveredId);
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
     const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
@@ -1737,6 +1760,7 @@ function renderProjectTasks(
         prefix={rootPrefix}
         prefixSegments={prefixSegments}
         isSelected={isSelected}
+        isHovered={isHovered}
         inCycle={rootNode.inCycle}
         isReady={isReady}
         isChecked={isChecked}
@@ -1749,7 +1773,7 @@ function renderProjectTasks(
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '  ', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, hoveredId, '  ', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
   });
@@ -1779,6 +1803,7 @@ interface RenderFeatureTasksOptions {
 function renderFeatureTasks(
   featureTasks: TaskDisplay[],
   selectedId: string | null,
+  hoveredId: string | null = null,
   readyIds: Set<string>,
   selectedTaskIds: Set<string> = new Set(),
   textWrap?: boolean,
@@ -1800,7 +1825,7 @@ function renderFeatureTasks(
   // Edge case: single-task feature — no lanes needed, render simply
   if (activeTasks.length === 1) {
     const task = activeTasks[0];
-    const isSelected = task.id === selectedId;
+    const { isSelected, isHovered } = resolveTaskRowVisualState(task.id, selectedId, hoveredId);
     const isReady = readyIds.has(task.id);
     const isChecked = selectedTaskIds.has(task.id);
     elements.push(
@@ -1809,6 +1834,7 @@ function renderFeatureTasks(
         task={task}
         prefix="└─"
         isSelected={isSelected}
+        isHovered={isHovered}
         inCycle={false}
         isReady={isReady}
         isChecked={isChecked}
@@ -1839,7 +1865,7 @@ function renderFeatureTasks(
 
     const prefixSegments = generatePrefixSegments(a, i, assignments, laneRelationContext);
     const prefix = prefixSegments.map((segment) => segment.text).join('');
-    const isSelected = task.id === selectedId;
+    const { isSelected, isHovered } = resolveTaskRowVisualState(task.id, selectedId, hoveredId);
     const isReady = readyIds.has(task.id);
     const isChecked = selectedTaskIds.has(task.id);
     const inCycle = inCycleSet.has(task.id);
@@ -1851,6 +1877,7 @@ function renderFeatureTasks(
         prefix={prefix}
         prefixSegments={prefixSegments}
         isSelected={isSelected}
+        isHovered={isHovered}
         inCycle={inCycle}
         isReady={isReady}
         isChecked={isChecked}
@@ -1864,7 +1891,7 @@ function renderFeatureTasks(
   // Append any cycle-member tasks that topoSort couldn't order
   for (const task of activeTasks) {
     if (inCycleSet.has(task.id)) {
-      const isSelected = task.id === selectedId;
+      const { isSelected, isHovered } = resolveTaskRowVisualState(task.id, selectedId, hoveredId);
       const isReady = readyIds.has(task.id);
       const isChecked = selectedTaskIds.has(task.id);
       elements.push(
@@ -1873,6 +1900,7 @@ function renderFeatureTasks(
           task={task}
           prefix="↺ "
           isSelected={isSelected}
+          isHovered={isHovered}
           inCycle={true}
           isReady={isReady}
           isChecked={isChecked}
@@ -1890,6 +1918,7 @@ function renderFeatureTasks(
 export const TaskTree = React.memo(function TaskTree({
   tasks,
   selectedId,
+  hoveredId = null,
   completedCollapsed,
   draftCollapsed = true,
   cancelledCollapsed = true,
@@ -2235,7 +2264,7 @@ export const TaskTree = React.memo(function TaskTree({
       if (!isProjectCollapsed) {
         const projectRelationGraph = buildSelectedTaskRelationGraph(projectActiveTasks, selectedId);
         projectElements.push(
-          ...renderProjectTasks(projectTasks, selectedId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
+          ...renderProjectTasks(projectTasks, selectedId, hoveredId, readyIds, projectRelationGraph, selectedTaskIds, textWrap, panelWidth)
         );
       }
       
@@ -2297,7 +2326,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
             draftElements.push(
-              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureDrafts, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2359,7 +2388,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
             completedElements.push(
-              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCompleted, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2423,7 +2452,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
             cancelledElements.push(
-              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCancelled, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2487,7 +2516,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
             supersededElements.push(
-              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureSuperseded, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2551,7 +2580,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
             archivedElements.push(
-              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureArchived, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2637,7 +2666,7 @@ export const TaskTree = React.memo(function TaskTree({
       // Feature's tasks (only render if not collapsed)
       if (!isFeatureCollapsed) {
         featureElements.push(
-          ...renderFeatureTasks(featureTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
+          ...renderFeatureTasks(featureTasks, selectedId, hoveredId, readyIds, selectedTaskIds, textWrap, panelWidth)
         );
       }
       // Note: No spacer between features - FeatureHeader has marginTop={1}
@@ -2687,7 +2716,7 @@ export const TaskTree = React.memo(function TaskTree({
         // Ungrouped tasks (only render if not collapsed)
         if (!isUngroupedCollapsed) {
           featureElements.push(
-            ...renderFeatureTasks(ungroupedTasks, selectedId, readyIds, selectedTaskIds, textWrap, panelWidth)
+            ...renderFeatureTasks(ungroupedTasks, selectedId, hoveredId, readyIds, selectedTaskIds, textWrap, panelWidth)
           );
         }
       }
@@ -2748,7 +2777,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
             draftElements.push(
-              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureDrafts, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2812,7 +2841,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
             cancelledElements.push(
-              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCancelled, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2876,7 +2905,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
             supersededElements.push(
-              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureSuperseded, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -2940,7 +2969,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
             archivedElements.push(
-              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureArchived, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -3002,7 +3031,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
             completedElements.push(
-              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCompleted, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
         }
@@ -3057,7 +3086,7 @@ export const TaskTree = React.memo(function TaskTree({
   const elements: React.ReactElement[] = [];
   
   tree.forEach((rootNode, rootIndex) => {
-    const isSelected = rootNode.task.id === selectedId;
+    const { isSelected, isHovered } = resolveTaskRowVisualState(rootNode.task.id, selectedId, hoveredId);
     const isReady = readyIds.has(rootNode.task.id);
     const isChecked = selectedTaskIds.has(rootNode.task.id);
     const relationKind = getTaskRelationKind(rootNode.task.id, relationGraph);
@@ -3073,6 +3102,7 @@ export const TaskTree = React.memo(function TaskTree({
         prefix=""
         prefixSegments={prefixSegments}
         isSelected={isSelected}
+        isHovered={isHovered}
         inCycle={rootNode.inCycle}
         isReady={isReady}
         isChecked={isChecked}
@@ -3085,7 +3115,7 @@ export const TaskTree = React.memo(function TaskTree({
     // Children of root
     if (rootNode.children.length > 0) {
       elements.push(
-        ...renderTree(rootNode.children, selectedId, '', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
+        ...renderTree(rootNode.children, selectedId, hoveredId, '', readyIds, relationGraph, selectedTaskIds, textWrap, panelWidth)
       );
     }
 
@@ -3157,7 +3187,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isDraftFeatureCollapsed) {
             draftElements.push(
-              ...renderFeatureTasks(featureDrafts, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureDrafts, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
       }
@@ -3222,7 +3252,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCompletedFeatureCollapsed) {
             completedElements.push(
-              ...renderFeatureTasks(featureCompleted, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCompleted, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
       }
@@ -3289,7 +3319,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isCancelledFeatureCollapsed) {
             cancelledElements.push(
-              ...renderFeatureTasks(featureCancelled, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureCancelled, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
       }
@@ -3356,7 +3386,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isSupersededFeatureCollapsed) {
             supersededElements.push(
-              ...renderFeatureTasks(featureSuperseded, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureSuperseded, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
       }
@@ -3423,7 +3453,7 @@ export const TaskTree = React.memo(function TaskTree({
           // Only render tasks if feature is not collapsed
           if (!isArchivedFeatureCollapsed) {
             archivedElements.push(
-              ...renderFeatureTasks(featureArchived, selectedId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
+              ...renderFeatureTasks(featureArchived, selectedId, hoveredId, new Set(), selectedTaskIds, textWrap, panelWidth, { skipActiveFilter: true })
             );
           }
       }

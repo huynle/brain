@@ -279,8 +279,26 @@ export function shouldHandleTaskTreeMouseEvent(state: TaskTreeMouseGuardState): 
  * Resolve which task ID should drive preview rendering.
  * Hovered task takes precedence over persistent selection.
  */
-export function resolvePreviewTaskId(selectedTaskId: string | null, hoveredTaskId: string | null): string | null {
-  return hoveredTaskId ?? selectedTaskId;
+export function resolvePreviewTaskId(
+  selectedTaskId: string | null,
+  hoveredTaskId: string | null,
+  availableTaskIds?: ReadonlySet<string>,
+): string | null {
+  const isAvailable = (taskId: string | null): taskId is string => {
+    if (!taskId) return false;
+    if (!availableTaskIds) return true;
+    return availableTaskIds.has(taskId);
+  };
+
+  if (isAvailable(hoveredTaskId)) {
+    return hoveredTaskId;
+  }
+
+  if (isAvailable(selectedTaskId)) {
+    return selectedTaskId;
+  }
+
+  return null;
 }
 
 /**
@@ -725,9 +743,14 @@ export function App({
     setDraftCollapsed(prev => !prev);
   }, []);
 
+  const availableTaskIds = useMemo(
+    () => new Set(tasks.map((task) => task.id)),
+    [tasks],
+  );
+
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
-  const previewTaskId = resolvePreviewTaskId(selectedTaskId, hoveredTaskId);
+  const previewTaskId = resolvePreviewTaskId(selectedTaskId, hoveredTaskId, availableTaskIds);
   const previewTask = tasks.find((t) => t.id === previewTaskId) || null;
   const selectedCron = crons.find((c) => c.id === selectedCronId) || null;
 

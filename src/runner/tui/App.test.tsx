@@ -459,6 +459,16 @@ describe('App click helper exports', () => {
     expect(resolvePreviewTaskId(null, null)).toBeNull();
   });
 
+  it('falls back to selected task when hovered task is unavailable', () => {
+    const availableTaskIds = new Set(['selected-1']);
+    expect(resolvePreviewTaskId('selected-1', 'hovered-1', availableTaskIds)).toBe('selected-1');
+  });
+
+  it('returns null when neither selected nor hovered task is available', () => {
+    const availableTaskIds = new Set(['other-task']);
+    expect(resolvePreviewTaskId('selected-1', 'hovered-1', availableTaskIds)).toBeNull();
+  });
+
   it('exports hover resolver that clears on non-task/outside rows', () => {
     expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'task', id: 'task-1' }, null)).toBe('task-1');
     expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'feature_header', id: '__feature_header__f' }, 'task-1')).toBeNull();

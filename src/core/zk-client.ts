@@ -510,6 +510,36 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const maxRunsMatch = line.match(/^max_runs:\s*(.+)$/);
+    if (maxRunsMatch) {
+      const parsed = Number.parseInt(parseYamlStringValue(maxRunsMatch[1]), 10);
+      if (!Number.isNaN(parsed)) {
+        frontmatter.max_runs = parsed;
+      }
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
+    const startsAtMatch = line.match(/^starts_at:\s*(.+)$/);
+    if (startsAtMatch) {
+      frontmatter.starts_at = parseYamlStringValue(startsAtMatch[1]);
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
+    const expiresAtMatch = line.match(/^expires_at:\s*(.+)$/);
+    if (expiresAtMatch) {
+      frontmatter.expires_at = parseYamlStringValue(expiresAtMatch[1]);
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
     // ProjectId: may be quoted
     const projectMatch = line.match(/^projectId:\s*(.+)$/);
     if (projectMatch) {
@@ -1156,6 +1186,9 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.status) lines.push(`status: ${fm.status}`);
   if (fm.schedule) lines.push(`schedule: ${escapeYamlValue(fm.schedule as string)}`);
   if (fm.next_run) lines.push(`next_run: ${escapeYamlValue(fm.next_run as string)}`);
+  if (fm.max_runs !== undefined) lines.push(`max_runs: ${fm.max_runs}`);
+  if (fm.starts_at) lines.push(`starts_at: ${escapeYamlValue(fm.starts_at as string)}`);
+  if (fm.expires_at) lines.push(`expires_at: ${escapeYamlValue(fm.expires_at as string)}`);
 
   if (Array.isArray(fm.cron_ids) && fm.cron_ids.length > 0) {
     lines.push("cron_ids:");
@@ -1306,6 +1339,9 @@ export interface GenerateFrontmatterOptions {
   // Cron scheduling metadata
   schedule?: string;
   next_run?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
   cron_ids?: string[];
   runs?: CronRun[];
   // Timestamp for chronological ordering (matches zk template `created: {{format-date now}}`)
@@ -1347,6 +1383,18 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.next_run) {
     lines.push(`next_run: ${escapeYamlValue(options.next_run)}`);
+  }
+
+  if (options.max_runs !== undefined) {
+    lines.push(`max_runs: ${options.max_runs}`);
+  }
+
+  if (options.starts_at) {
+    lines.push(`starts_at: ${escapeYamlValue(options.starts_at)}`);
+  }
+
+  if (options.expires_at) {
+    lines.push(`expires_at: ${escapeYamlValue(options.expires_at)}`);
   }
 
   if (options.cron_ids && options.cron_ids.length > 0) {

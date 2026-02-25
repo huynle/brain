@@ -176,7 +176,7 @@ export function getNextRun(schedule: string, after: Date = new Date()): Date {
 }
 
 export function shouldTrigger(
-  cronEntry: { schedule: string; next_run?: string },
+  cronEntry: { schedule?: string; next_run?: string },
   now: Date
 ): boolean {
   try {
@@ -187,6 +187,10 @@ export function shouldTrigger(
       }
     }
 
+    if (!cronEntry.schedule) {
+      return false;
+    }
+
     const parsed = parseCronExpression(cronEntry.schedule);
     const roundedNow = new Date(now.getTime());
     roundedNow.setUTCSeconds(0, 0);
@@ -194,6 +198,39 @@ export function shouldTrigger(
   } catch {
     return false;
   }
+}
+
+export function canRunWithinBounds(
+  cronEntry: { max_runs?: number; starts_at?: string; expires_at?: string; runs?: CronRun[] },
+  now: Date
+): { canRun: boolean; reason?: string } {
+  if (typeof cronEntry.max_runs === "number") {
+    const completedOrFailed = (cronEntry.runs || []).filter(
+      (run) => run.status === "completed" || run.status === "failed"
+    ).length;
+    if (completedOrFailed >= cronEntry.max_runs) {
+      return {
+        canRun: false,
+        reason: `max_runs limit reached (${cronEntry.max_runs})`,
+      };
+    }
+  }
+
+  if (cronEntry.starts_at) {
+    const startsAt = new Date(cronEntry.starts_at);
+    if (!Number.isNaN(startsAt.getTime()) && now.getTime() < startsAt.getTime()) {
+      return { canRun: false, reason: `before starts_at (${cronEntry.starts_at})` };
+    }
+  }
+
+  if (cronEntry.expires_at) {
+    const expiresAt = new Date(cronEntry.expires_at);
+    if (!Number.isNaN(expiresAt.getTime()) && now.getTime() > expiresAt.getTime()) {
+      return { canRun: false, reason: `after expires_at (${cronEntry.expires_at})` };
+    }
+  }
+
+  return { canRun: true };
 }
 
 export function resolveCronPipeline(cronId: string, tasks: Task[]): Task[] {

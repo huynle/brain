@@ -35,6 +35,7 @@ import {
   shouldTrigger,
   resolveCronPipeline,
   canTriggerPipeline,
+  canRunWithinBounds,
   generateRunId,
   getNextRun,
 } from "../core/cron-service";
@@ -1318,7 +1319,8 @@ export class TaskRunner {
             return false;
           }
 
-          if (typeof entry.schedule !== "string") {
+          const boundsCheck = canRunWithinBounds(entry, now);
+          if (!boundsCheck.canRun) {
             return false;
           }
 
@@ -1343,7 +1345,17 @@ export class TaskRunner {
         for (const entry of dueEntries) {
           try {
             await this.processDueCronEntry(
-              { id: entry.id, path: entry.path, title: entry.title, schedule: entry.schedule!, next_run: entry.next_run },
+              {
+                id: entry.id,
+                path: entry.path,
+                title: entry.title,
+                schedule: entry.schedule,
+                next_run: entry.next_run,
+                max_runs: entry.max_runs,
+                starts_at: entry.starts_at,
+                expires_at: entry.expires_at,
+                runs: entry.runs,
+              },
               projectId,
               now
             );
@@ -1365,7 +1377,17 @@ export class TaskRunner {
   }
 
   private async processDueCronEntry(
-    cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+    cronEntry: {
+      id: string;
+      path: string;
+      title: string;
+      schedule?: string;
+      next_run?: string;
+      max_runs?: number;
+      starts_at?: string;
+      expires_at?: string;
+      runs?: CronRun[];
+    },
     projectId: string,
     now: Date
   ): Promise<void> {
@@ -1434,6 +1456,12 @@ export class TaskRunner {
       this.logger.info(
         `Triggered cron '${cronEntry.title}' run ${runId} (${pipelineTasks.length} tasks)`
       );
+
+      if (!cronEntry.schedule) {
+        await this.apiClient.updateEntryMetadata(cronEntry.path, {
+          next_run: "",
+        });
+      }
     } else {
       // Overlap: record skipped run
       await this.apiClient.updateCronRun(cronEntry.path, {
@@ -1448,11 +1476,13 @@ export class TaskRunner {
       );
     }
 
-    // Always advance next_run
-    const nextRun = getNextRun(cronEntry.schedule, now);
-    await this.apiClient.updateEntryMetadata(cronEntry.path, {
-      next_run: nextRun.toISOString(),
-    });
+    // Advance next_run only for recurring schedules.
+    if (cronEntry.schedule) {
+      const nextRun = getNextRun(cronEntry.schedule, now);
+      await this.apiClient.updateEntryMetadata(cronEntry.path, {
+        next_run: nextRun.toISOString(),
+      });
+    }
   }
 
   // ========================================

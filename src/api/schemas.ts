@@ -118,6 +118,9 @@ export const BrainEntrySchema = z.object({
   last_verified: z.string().optional(),
   schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
   next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  max_runs: z.number().int().positive().optional().openapi({ description: "Maximum completed/failed runs allowed for this cron", example: 1 }),
+  starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
+  expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
   cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   workdir: z.string().optional().openapi({ description: "$HOME-relative path to main repo" }),
@@ -188,6 +191,10 @@ export const CreateEntryRequestSchema = z.object({
   relatedEntries: z.array(z.string()).optional().openapi({ description: "Related entry paths/IDs to link" }),
   schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
   next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  max_runs: z.number().int().positive().optional().openapi({ description: "Maximum completed/failed runs allowed for this cron", example: 1 }),
+  starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
+  expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
+  run_once_at: z.string().optional().openapi({ description: "Loose local datetime input for one-time scheduling (normalized to UTC)", example: "next friday at 5pm" }),
   cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
@@ -243,6 +250,10 @@ export const UpdateEntryRequestSchema = z.object({
   priority: PrioritySchema.optional().openapi({ description: "Priority level for the entry" }),
   schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
   next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  max_runs: z.number().int().positive().optional().openapi({ description: "Maximum completed/failed runs allowed for this cron", example: 1 }),
+  starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
+  expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
+  run_once_at: z.string().optional().openapi({ description: "Loose local datetime input for one-time scheduling (normalized to UTC)", example: "in 2 hours" }),
   cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   target_workdir: z.string().optional().openapi({ description: "Target working directory for the task" }),
@@ -284,8 +295,8 @@ export const UpdateEntryRequestSchema = z.object({
     description: "Durable run completion markers keyed by run_id"
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, or run_finalizations must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, or run_finalizations must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -552,6 +563,9 @@ export const CronEntrySummarySchema = z.object({
   status: EntryStatusSchema,
   schedule: z.string().optional().openapi({ description: "Cron expression", example: "0 2 * * *" }),
   next_run: z.string().optional().openapi({ description: "Next scheduled run (ISO timestamp)", example: "2026-02-23T02:00:00.000Z" }),
+  max_runs: z.number().int().positive().optional().openapi({ description: "Maximum completed/failed runs allowed for this cron", example: 1 }),
+  starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
+  expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   created: z.string().optional().openapi({ example: "2026-02-22T01:00:00.000Z" }),
   modified: z.string().optional().openapi({ example: "2026-02-22T01:30:00.000Z" }),
@@ -610,15 +624,38 @@ const CronScheduleSchema = z.string().min(1).refine(
 
 export const CreateCronRequestSchema = z.object({
   title: z.string().min(1).openapi({ example: "Nightly Pipeline" }),
-  schedule: CronScheduleSchema,
+  schedule: CronScheduleSchema.optional(),
+  run_once_at: z.string().optional().openapi({
+    description: "Loose local datetime input for one-time scheduling (normalized to UTC)",
+    example: "tomorrow 9am",
+  }),
+  max_runs: z.number().int().positive().optional().openapi({
+    description: "Maximum completed/failed runs allowed for this cron",
+    example: 1,
+  }),
+  starts_at: z.string().optional().openapi({
+    description: "Loose local datetime input for cron start window (normalized to UTC)",
+    example: "next monday 8:00",
+  }),
+  expires_at: z.string().optional().openapi({
+    description: "Loose local datetime input for cron end window (normalized to UTC)",
+    example: "in 30 days",
+  }),
   content: z.string().optional().openapi({ example: "Cron content." }),
   status: EntryStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
-}).openapi("CreateCronRequest");
+}).refine(
+  (data) => data.schedule !== undefined || data.run_once_at !== undefined,
+  { message: "Either schedule or run_once_at must be provided" }
+).openapi("CreateCronRequest");
 
 export const UpdateCronRequestSchema = z.object({
   title: z.string().optional(),
   schedule: CronScheduleSchema.optional(),
+  run_once_at: z.string().optional().openapi({ description: "Loose local datetime input for one-time scheduling (normalized to UTC)", example: "friday 5pm" }),
+  max_runs: z.number().int().positive().optional().openapi({ description: "Maximum completed/failed runs allowed for this cron", example: 1 }),
+  starts_at: z.string().optional().openapi({ description: "Loose local datetime input for cron start window (normalized to UTC)", example: "tomorrow 08:00" }),
+  expires_at: z.string().optional().openapi({ description: "Loose local datetime input for cron end window (normalized to UTC)", example: "in 2 weeks" }),
   content: z.string().optional().openapi({ description: "Full content replacement" }),
   status: EntryStatusSchema.optional(),
   tags: z.array(z.string()).optional(),
@@ -626,11 +663,15 @@ export const UpdateCronRequestSchema = z.object({
   (data) => (
     data.title !== undefined ||
     data.schedule !== undefined ||
+    data.run_once_at !== undefined ||
+    data.max_runs !== undefined ||
+    data.starts_at !== undefined ||
+    data.expires_at !== undefined ||
     data.content !== undefined ||
     data.status !== undefined ||
     data.tags !== undefined
   ),
-  { message: "At least one of title, schedule, content, status, or tags must be provided" }
+  { message: "At least one of title, schedule, run_once_at, max_runs, starts_at, expires_at, content, status, or tags must be provided" }
 ).openapi("UpdateCronRequest");
 
 export const CronMutationResponseSchema = z.object({

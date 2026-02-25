@@ -272,6 +272,47 @@ describe("Cron API", () => {
     expect(json.message).toContain("schedule");
   });
 
+  test("creates one-shot cron from loose run_once_at input", async () => {
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "One Shot Cron",
+        run_once_at: "tomorrow 9am",
+      }),
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(201);
+    const json = await res.json();
+    expect(typeof json.cron.next_run).toBe("string");
+    expect(Number.isNaN(new Date(json.cron.next_run).getTime())).toBe(false);
+    expect(json.cron.max_runs).toBe(1);
+  });
+
+  test("normalizes starts_at and expires_at loose datetime inputs to UTC", async () => {
+    const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: "Bounded Window Cron",
+        schedule: "0 9 * * 1",
+        starts_at: "next monday 8am",
+        expires_at: "in 30 days",
+      }),
+    });
+
+    if (createRes.status === 503) return;
+
+    expect(createRes.status).toBe(201);
+    const created = await createRes.json();
+    expect(typeof created.cron.starts_at).toBe("string");
+    expect(typeof created.cron.expires_at).toBe("string");
+    expect(Number.isNaN(new Date(created.cron.starts_at).getTime())).toBe(false);
+    expect(Number.isNaN(new Date(created.cron.expires_at).getTime())).toBe(false);
+  });
+
   test("updates cron schedule and recalculates next_run", async () => {
     const createRes = await app.request(`/crons/${TEST_PROJECT}/crons`, {
       method: "POST",
@@ -336,6 +377,35 @@ describe("Cron API", () => {
     const patched = await patchRes.json();
     expect(patched.cron.status).toBe("blocked");
     expect(patched.cron.schedule).toBe("45 7 * * *");
+  });
+
+  test("blocks manual trigger when max_runs has been reached", async () => {
+    writeCronFile(TEST_PROJECT, "crn00007", "Limited Trigger Cron", [
+      "max_runs: 1",
+      "runs:",
+      "  - run_id: 20260223-0200-aaaaaa",
+      "    status: completed",
+      "    started: 2026-02-23T02:00:00.000Z",
+      "    completed: 2026-02-23T02:00:08.000Z",
+    ]);
+    reindexZk();
+
+    const cronId = await getCronIdByTitle(TEST_PROJECT, "Limited Trigger Cron");
+    if (!cronId) return;
+
+    writeTaskFile("tsk00012", [cronId]);
+    reindexZk();
+
+    const res = await app.request(`/crons/${TEST_PROJECT}/crons/${cronId}/trigger`, {
+      method: "POST",
+    });
+
+    if (res.status === 503) return;
+
+    expect(res.status).toBe(409);
+    const json = await res.json();
+    expect(json.error).toBe("Conflict");
+    expect(json.message).toContain("max_runs");
   });
 
   test("deletes cron entry via cron endpoint", async () => {

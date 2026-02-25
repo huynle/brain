@@ -56,7 +56,18 @@ export interface FeatureResponse {
 
 export type CronEntry = Pick<
   BrainEntry,
-  "id" | "path" | "title" | "status" | "schedule" | "next_run" | "runs" | "created" | "modified"
+  | "id"
+  | "path"
+  | "title"
+  | "status"
+  | "schedule"
+  | "next_run"
+  | "max_runs"
+  | "starts_at"
+  | "expires_at"
+  | "runs"
+  | "created"
+  | "modified"
 >;
 
 export interface CronDetailResponse {
@@ -91,7 +102,11 @@ export interface CronTriggerResponse {
 
 export interface CreateCronRequest {
   title: string;
-  schedule: string;
+  schedule?: string;
+  run_once_at?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
   content?: string;
   status?: EntryStatus;
   tags?: string[];
@@ -100,6 +115,10 @@ export interface CreateCronRequest {
 export interface UpdateCronRequest {
   title?: string;
   schedule?: string;
+  run_once_at?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
   content?: string;
   status?: EntryStatus;
   tags?: string[];

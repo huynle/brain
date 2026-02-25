@@ -56,6 +56,7 @@
     "@hono/zod-openapi": "^1.2.1",
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/react": "^19.2.10",
+    "chrono-node": "^2.9.0",
     "eventsource": "^4.1.0",
     "eventsource-parser": "^3.0.6",
     "hono": "^4.6.0",

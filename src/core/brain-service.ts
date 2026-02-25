@@ -248,7 +248,14 @@ export class BrainService {
     const entryStatus = request.status || (entryType === "task" ? "draft" : "active");
     const isGlobal = request.global ?? false;
 
-    if (entryType === "cron" && request.schedule) {
+    if (entryType === "cron" && request.run_once_at && !request.next_run) {
+      request.next_run = request.run_once_at;
+      if (request.max_runs === undefined) {
+        request.max_runs = 1;
+      }
+    }
+
+    if (entryType === "cron" && request.schedule && !request.next_run) {
       request.next_run = getNextRun(request.schedule).toISOString();
     }
 
@@ -579,6 +586,18 @@ export class BrainService {
         zkArgs.push("--extra", `next_run=${request.next_run}`);
       }
 
+      if (request.max_runs !== undefined) {
+        zkArgs.push("--extra", `max_runs=${request.max_runs}`);
+      }
+
+      if (request.starts_at) {
+        zkArgs.push("--extra", `starts_at=${request.starts_at}`);
+      }
+
+      if (request.expires_at) {
+        zkArgs.push("--extra", `expires_at=${request.expires_at}`);
+      }
+
       if (request.cron_ids && request.cron_ids.length > 0) {
         const formattedCronIds = request.cron_ids
           .map((id) => `\n  - "${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
@@ -647,6 +666,9 @@ export class BrainService {
         // Cron metadata
         schedule: request.schedule,
         next_run: request.next_run,
+        max_runs: request.max_runs,
+        starts_at: request.starts_at,
+        expires_at: request.expires_at,
         cron_ids: request.cron_ids,
         runs: request.runs as unknown as import("./zk-client").CronRun[] | undefined,
       });
@@ -852,6 +874,9 @@ export class BrainService {
       // Cron metadata
       schedule: frontmatter.schedule as string | undefined,
       next_run: frontmatter.next_run as string | undefined,
+      max_runs: frontmatter.max_runs as number | undefined,
+      starts_at: frontmatter.starts_at as string | undefined,
+      expires_at: frontmatter.expires_at as string | undefined,
       cron_ids: frontmatter.cron_ids as string[] | undefined,
       runs: normalizeCronRuns(frontmatter.runs),
     };
@@ -887,11 +912,15 @@ export class BrainService {
       request.run_finalizations === undefined &&
       request.schedule === undefined &&
       request.next_run === undefined &&
+      request.max_runs === undefined &&
+      request.starts_at === undefined &&
+      request.expires_at === undefined &&
+      request.run_once_at === undefined &&
       request.cron_ids === undefined &&
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, schedule, next_run, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
       );
     }
 
@@ -983,12 +1012,24 @@ export class BrainService {
 
     if (request.schedule !== undefined) {
       updatedFrontmatter.schedule = request.schedule;
-      if (request.schedule) {
+      if (request.schedule && request.next_run === undefined) {
         updatedFrontmatter.next_run = getNextRun(request.schedule).toISOString();
       }
     }
+    if (request.run_once_at !== undefined) {
+      updatedFrontmatter.next_run = request.run_once_at;
+    }
     if (request.next_run !== undefined) {
       updatedFrontmatter.next_run = request.next_run;
+    }
+    if (request.max_runs !== undefined) {
+      updatedFrontmatter.max_runs = request.max_runs;
+    }
+    if (request.starts_at !== undefined) {
+      updatedFrontmatter.starts_at = request.starts_at;
+    }
+    if (request.expires_at !== undefined) {
+      updatedFrontmatter.expires_at = request.expires_at;
     }
     if (request.cron_ids !== undefined) {
       updatedFrontmatter.cron_ids = request.cron_ids;

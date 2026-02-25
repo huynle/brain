@@ -1,6 +1,12 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
+import { parseDate } from "chrono-node";
 import { getBrainService } from "../core/brain-service";
-import { resolveCronPipeline, canTriggerPipeline, generateRunId } from "../core/cron-service";
+import {
+  resolveCronPipeline,
+  canTriggerPipeline,
+  canRunWithinBounds,
+  generateRunId,
+} from "../core/cron-service";
 import { getTaskService } from "../core/task-service";
 import {
   createProjectRealtimeHub,
@@ -544,6 +550,37 @@ function linkedTasksPayload(cronId: string, tasks: ResolvedTask[]) {
   };
 }
 
+function parseLooseDatetimeToUtc(value: string | undefined, fieldName: string): string | undefined {
+  if (value === undefined) return undefined;
+  const parsed = parseDate(value);
+  if (!parsed || Number.isNaN(parsed.getTime())) {
+    throw new Error(`Invalid ${fieldName}: could not parse datetime '${value}'`);
+  }
+  return parsed.toISOString();
+}
+
+function validateBoundedFields(
+  startsAtIso: string | undefined,
+  expiresAtIso: string | undefined,
+  runOnceAtIso: string | undefined
+): void {
+  if (startsAtIso && expiresAtIso) {
+    const startsAt = new Date(startsAtIso).getTime();
+    const expiresAt = new Date(expiresAtIso).getTime();
+    if (startsAt > expiresAt) {
+      throw new Error("Invalid bounds: starts_at must be before or equal to expires_at");
+    }
+  }
+
+  if (runOnceAtIso && startsAtIso && new Date(runOnceAtIso).getTime() < new Date(startsAtIso).getTime()) {
+    throw new Error("Invalid run_once_at: must be at or after starts_at");
+  }
+
+  if (runOnceAtIso && expiresAtIso && new Date(runOnceAtIso).getTime() > new Date(expiresAtIso).getTime()) {
+    throw new Error("Invalid run_once_at: must be at or before expires_at");
+  }
+}
+
 type CronRouteOptions = {
   realtimeHub?: ProjectRealtimeHub;
 };
@@ -640,6 +677,9 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
           status: entry.status,
           schedule: entry.schedule,
           next_run: entry.next_run,
+          max_runs: entry.max_runs,
+          starts_at: entry.starts_at,
+          expires_at: entry.expires_at,
           runs: entry.runs,
           created: entry.created,
           modified: entry.modified,
@@ -707,12 +747,21 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
     const brainService = getBrainService();
 
     try {
+      const startsAtIso = parseLooseDatetimeToUtc(body.starts_at, "starts_at");
+      const expiresAtIso = parseLooseDatetimeToUtc(body.expires_at, "expires_at");
+      const runOnceAtIso = parseLooseDatetimeToUtc(body.run_once_at, "run_once_at");
+      validateBoundedFields(startsAtIso, expiresAtIso, runOnceAtIso);
+
       const created = await brainService.save({
         type: "cron",
         title: body.title,
         content: body.content || "Cron content.",
         project: projectId,
         schedule: body.schedule,
+        next_run: runOnceAtIso,
+        max_runs: body.max_runs ?? (runOnceAtIso ? 1 : undefined),
+        starts_at: startsAtIso,
+        expires_at: expiresAtIso,
         status: body.status,
         tags: body.tags,
       });
@@ -737,6 +786,15 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
           503
         );
       }
+      if (error instanceof Error && error.message.startsWith("Invalid ")) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: error.message,
+          },
+          400
+        );
+      }
       throw error;
     }
   });
@@ -758,9 +816,22 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
         );
       }
 
+      const startsAtIso = parseLooseDatetimeToUtc(body.starts_at, "starts_at");
+      const expiresAtIso = parseLooseDatetimeToUtc(body.expires_at, "expires_at");
+      const runOnceAtIso = parseLooseDatetimeToUtc(body.run_once_at, "run_once_at");
+      validateBoundedFields(
+        startsAtIso !== undefined ? startsAtIso : cron.starts_at,
+        expiresAtIso !== undefined ? expiresAtIso : cron.expires_at,
+        runOnceAtIso
+      );
+
       const updated = await brainService.update(cron.path, {
         title: body.title,
         schedule: body.schedule,
+        next_run: runOnceAtIso,
+        max_runs: body.max_runs,
+        starts_at: startsAtIso,
+        expires_at: expiresAtIso,
         status: body.status,
         tags: body.tags,
         content: body.content,
@@ -780,6 +851,15 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
             message: error.message,
           },
           503
+        );
+      }
+      if (error instanceof Error && error.message.startsWith("Invalid ")) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: error.message,
+          },
+          400
         );
       }
       throw error;
@@ -858,6 +938,17 @@ export function createCronRoutes(options?: CronRouteOptions): OpenAPIHono {
       const pipeline = resolveCronPipeline(cron.id, taskResult.tasks);
 
       const now = new Date();
+      const boundsCheck = canRunWithinBounds(cron, now);
+      if (!boundsCheck.canRun) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: `Cron cannot be triggered: ${boundsCheck.reason || "outside run bounds"}`,
+          },
+          409
+        );
+      }
+
       const runId = generateRunId(now);
       const triggerCheck = canTriggerPipeline(pipeline);
 

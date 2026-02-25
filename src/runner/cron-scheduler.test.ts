@@ -116,7 +116,7 @@ describe("cron scheduler completion tracking", () => {
     const now = new Date("2026-02-23T02:00:00.000Z");
     const processDueCronEntry = (runner as unknown as {
       processDueCronEntry: (
-        cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+        cronEntry: { id: string; path: string; title: string; schedule?: string; next_run?: string },
         projectId: string,
         now: Date
       ) => Promise<void>;
@@ -175,7 +175,7 @@ describe("cron scheduler completion tracking", () => {
     const now = new Date("2026-02-23T02:00:00.000Z");
     const processDueCronEntry = (runner as unknown as {
       processDueCronEntry: (
-        cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+        cronEntry: { id: string; path: string; title: string; schedule?: string; next_run?: string },
         projectId: string,
         now: Date
       ) => Promise<void>;
@@ -223,7 +223,7 @@ describe("cron scheduler completion tracking", () => {
     const now = new Date("2026-02-23T02:00:00.000Z");
     const processDueCronEntry = (runner as unknown as {
       processDueCronEntry: (
-        cronEntry: { id: string; path: string; title: string; schedule: string; next_run?: string },
+        cronEntry: { id: string; path: string; title: string; schedule?: string; next_run?: string },
         projectId: string,
         now: Date
       ) => Promise<void>;

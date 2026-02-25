@@ -126,6 +126,9 @@ export interface BrainEntry {
   last_verified?: string;
   schedule?: string; // cron expression e.g. "0 2 * * *"
   next_run?: string; // ISO timestamp of next scheduled run
+  max_runs?: number; // optional execution cap for this cron
+  starts_at?: string; // optional ISO timestamp gate (inclusive lower bound)
+  expires_at?: string; // optional ISO timestamp gate (inclusive upper bound)
   cron_ids?: string[]; // for tasks: which cron entries trigger this task
   runs?: CronRun[]; // for cron entries: execution history
 
@@ -162,6 +165,10 @@ export interface CreateEntryRequest {
   relatedEntries?: string[];
   schedule?: string;
   next_run?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
+  run_once_at?: string; // loose datetime input; normalized to UTC by API layer
   cron_ids?: string[];
   runs?: CronRun[];
 
@@ -209,6 +216,10 @@ export interface UpdateEntryRequest {
   priority?: Priority;
   schedule?: string;
   next_run?: string;
+  max_runs?: number;
+  starts_at?: string;
+  expires_at?: string;
+  run_once_at?: string; // loose datetime input; normalized to UTC by API layer
   cron_ids?: string[];
   runs?: CronRun[];
   target_workdir?: string;

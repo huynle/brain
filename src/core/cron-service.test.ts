@@ -6,6 +6,7 @@ import {
   shouldTrigger,
   resolveCronPipeline,
   canTriggerPipeline,
+  canRunWithinBounds,
   generateRunId,
 } from "./cron-service";
 import type { CronRun } from "./types";
@@ -114,6 +115,64 @@ describe("shouldTrigger", () => {
 
     expect(shouldTrigger({ schedule: "*/15 * * * *" }, now)).toBe(true);
     expect(shouldTrigger({ schedule: "*/15 * * * *" }, new Date("2026-03-01T10:16:00.000Z"))).toBe(false);
+  });
+
+  it("returns true for one-shot entries with due next_run and no schedule", () => {
+    const now = new Date("2026-03-01T10:15:30.000Z");
+    expect(shouldTrigger({ next_run: "2026-03-01T10:15:00.000Z" }, now)).toBe(true);
+  });
+
+  it("returns false when both schedule and next_run are missing", () => {
+    expect(shouldTrigger({}, new Date("2026-03-01T10:15:30.000Z"))).toBe(false);
+  });
+});
+
+describe("canRunWithinBounds", () => {
+  it("blocks when max_runs completed/failed limit is reached", () => {
+    const result = canRunWithinBounds(
+      {
+        max_runs: 2,
+        runs: [
+          { run_id: "r1", status: "completed", started: "2026-03-01T00:00:00.000Z" },
+          { run_id: "r2", status: "failed", started: "2026-03-02T00:00:00.000Z" },
+          { run_id: "r3", status: "skipped", started: "2026-03-03T00:00:00.000Z" },
+        ],
+      },
+      new Date("2026-03-04T00:00:00.000Z")
+    );
+
+    expect(result.canRun).toBe(false);
+    expect(result.reason).toContain("max_runs");
+  });
+
+  it("blocks before starts_at and after expires_at", () => {
+    const tooEarly = canRunWithinBounds(
+      { starts_at: "2026-03-05T10:00:00.000Z" },
+      new Date("2026-03-05T09:59:00.000Z")
+    );
+    expect(tooEarly.canRun).toBe(false);
+    expect(tooEarly.reason).toContain("starts_at");
+
+    const tooLate = canRunWithinBounds(
+      { expires_at: "2026-03-05T10:00:00.000Z" },
+      new Date("2026-03-05T10:01:00.000Z")
+    );
+    expect(tooLate.canRun).toBe(false);
+    expect(tooLate.reason).toContain("expires_at");
+  });
+
+  it("allows runs when within bounds and below max_runs", () => {
+    const result = canRunWithinBounds(
+      {
+        max_runs: 2,
+        starts_at: "2026-03-01T00:00:00.000Z",
+        expires_at: "2026-03-31T23:59:59.000Z",
+        runs: [{ run_id: "r1", status: "completed", started: "2026-03-02T00:00:00.000Z" }],
+      },
+      new Date("2026-03-10T12:00:00.000Z")
+    );
+
+    expect(result).toEqual({ canRun: true });
   });
 });
 

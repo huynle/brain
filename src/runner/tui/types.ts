@@ -204,9 +204,12 @@ export interface CronDisplay {
   projectId?: string;
   schedule: string;
   next_run?: string;
+  max_runs?: number;
   attempts_used?: number;
   remaining_runs?: number | null;
   completed_reason?: string;
+  starts_at?: string;
+  expires_at?: string;
   window_starts_at_utc?: string;
   window_expires_at_utc?: string;
   status: EntryStatus;

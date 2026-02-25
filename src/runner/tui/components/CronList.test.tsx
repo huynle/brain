@@ -53,4 +53,28 @@ describe('CronList', () => {
 
     expect(lastFrame()).toContain('[brain-api]');
   });
+
+  it('shows bounded scheduling badges and run bounds info', () => {
+    const { lastFrame } = render(
+      <CronList
+        crons={[
+          createCron({
+            max_runs: 1,
+            attempts_used: 1,
+            remaining_runs: 0,
+            completed_reason: 'max_runs_reached',
+            starts_at: '2026-02-23T00:00:00.000Z',
+          }),
+        ]}
+        selectedId="cron-1"
+      />
+    );
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('one-shot');
+    expect(frame).toContain('window');
+    expect(frame).toContain('done:max_runs_reached');
+    expect(frame).toContain('used/max: 1/1');
+    expect(frame).toContain('left: 0');
+  });
 });

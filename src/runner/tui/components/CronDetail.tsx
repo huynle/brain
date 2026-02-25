@@ -13,7 +13,16 @@ function formatDate(value?: string): string {
   if (Number.isNaN(date.getTime())) {
     return value;
   }
-  return date.toLocaleString();
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false,
+    timeZoneName: 'short',
+  });
 }
 
 function formatDuration(value?: number): string {
@@ -35,6 +44,13 @@ export const CronDetail = React.memo(function CronDetail({
   }
 
   const runs = cron.runs ?? [];
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  const maxRunsText = cron.max_runs === undefined ? 'unlimited' : String(cron.max_runs);
+  const remainingRunsText = cron.remaining_runs === null ? 'unlimited' : (cron.remaining_runs ?? '-');
+  const isOneShot = cron.max_runs === 1;
+  const hasWindow = Boolean(
+    cron.starts_at || cron.expires_at || cron.window_starts_at_utc || cron.window_expires_at_utc
+  );
 
   return (
     <Box borderStyle="single" borderColor={isFocused ? 'cyan' : 'gray'} padding={1} flexDirection="column" flexGrow={1}>
@@ -42,14 +58,30 @@ export const CronDetail = React.memo(function CronDetail({
       <Text bold>{cron.title}</Text>
       <Text>ID: <Text dimColor>{cron.id}</Text></Text>
       <Text>Schedule: <Text dimColor>{cron.schedule || '(none)'}</Text></Text>
-      <Text>Next run: <Text dimColor>{formatDate(cron.next_run)}</Text></Text>
+      <Text>Timezone: <Text dimColor>{timezone}</Text></Text>
+      <Text>Next run (local): <Text dimColor>{formatDate(cron.next_run)}</Text></Text>
+      <Text>Max runs: <Text dimColor>{maxRunsText}</Text></Text>
       <Text>Attempts used: <Text dimColor>{cron.attempts_used ?? 0}</Text></Text>
-      <Text>Remaining runs: <Text dimColor>{cron.remaining_runs === null ? 'unlimited' : (cron.remaining_runs ?? '-')}</Text></Text>
+      <Text>Remaining runs: <Text dimColor>{remainingRunsText}</Text></Text>
+      {(isOneShot || hasWindow) && (
+        <Text>
+          Bounds:{' '}
+          {isOneShot && <Text color="magenta">[one-shot]</Text>}
+          {isOneShot && hasWindow && <Text> </Text>}
+          {hasWindow && <Text color="blue">[windowed]</Text>}
+        </Text>
+      )}
+      {cron.starts_at && (
+        <Text>Configured start (local): <Text dimColor>{formatDate(cron.starts_at)}</Text></Text>
+      )}
+      {cron.expires_at && (
+        <Text>Configured end (local): <Text dimColor>{formatDate(cron.expires_at)}</Text></Text>
+      )}
       {cron.window_starts_at_utc && (
-        <Text>Window starts (UTC): <Text dimColor>{formatDate(cron.window_starts_at_utc)}</Text></Text>
+        <Text>Window starts (local): <Text dimColor>{formatDate(cron.window_starts_at_utc)}</Text></Text>
       )}
       {cron.window_expires_at_utc && (
-        <Text>Window expires (UTC): <Text dimColor>{formatDate(cron.window_expires_at_utc)}</Text></Text>
+        <Text>Window expires (local): <Text dimColor>{formatDate(cron.window_expires_at_utc)}</Text></Text>
       )}
       {cron.completed_reason && (
         <Text color="yellow">Completed reason: {cron.completed_reason}</Text>

@@ -383,6 +383,7 @@ export function MetadataPopup({
 
             {/* Cron badges */}
             <Box flexDirection="column" flexShrink={1}>
+              <Text dimColor>{validCronIds.length} linked cron{validCronIds.length === 1 ? '' : 's'}</Text>
               {validCronIds.map((cronId) => {
                 const cronName = cronNames?.[cronId] as string;
                 return (
@@ -391,6 +392,7 @@ export function MetadataPopup({
                   </Box>
                 );
               })}
+              <Text dimColor>Hint: open the Crons view to inspect local next-run and run bounds.</Text>
             </Box>
           </Box>
         )}

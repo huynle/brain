@@ -50,4 +50,31 @@ describe('CronDetail', () => {
     );
     expect(lastFrame()).toContain('No runs recorded');
   });
+
+  it('shows local-time config and run bounds details', () => {
+    const { lastFrame } = render(
+      <CronDetail
+        cron={createCron({
+          max_runs: 1,
+          attempts_used: 1,
+          remaining_runs: 0,
+          starts_at: '2026-02-22T00:00:00.000Z',
+          expires_at: '2026-02-24T00:00:00.000Z',
+          window_starts_at_utc: '2026-02-22T00:00:00.000Z',
+          window_expires_at_utc: '2026-02-24T00:00:00.000Z',
+          completed_reason: 'max_runs_reached',
+        })}
+      />
+    );
+
+    const frame = lastFrame() || '';
+    expect(frame).toContain('Timezone:');
+    expect(frame).toContain('Next run (local):');
+    expect(frame).toContain('Bounds:');
+    expect(frame).toContain('[one-shot]');
+    expect(frame).toContain('[windowed]');
+    expect(frame).toContain('Configured start (local):');
+    expect(frame).toContain('Window expires (local):');
+    expect(frame).toContain('Completed reason: max_runs_reached');
+  });
 });

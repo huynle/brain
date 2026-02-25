@@ -13,9 +13,12 @@ interface CronListResponse {
     status: CronDisplay['status'];
     schedule?: string;
     next_run?: string;
+    max_runs?: number;
     attempts_used?: number;
     remaining_runs?: number | null;
     completed_reason?: string;
+    starts_at?: string;
+    expires_at?: string;
     window_starts_at_utc?: string;
     window_expires_at_utc?: string;
     runs?: CronDisplay['runs'];
@@ -74,9 +77,12 @@ function toCronDisplay(raw: NonNullable<CronListResponse['crons']>[number]): Cro
     title: raw.title,
     schedule: raw.schedule ?? '',
     next_run: raw.next_run,
+    max_runs: raw.max_runs,
     attempts_used: raw.attempts_used,
     remaining_runs: raw.remaining_runs,
     completed_reason: raw.completed_reason,
+    starts_at: raw.starts_at,
+    expires_at: raw.expires_at,
     window_starts_at_utc: raw.window_starts_at_utc,
     window_expires_at_utc: raw.window_expires_at_utc,
     status: raw.status,
@@ -147,9 +153,12 @@ export function useCronPoller(options: UseCronPollerOptions): UseCronPollerResul
         status: cron.status,
         schedule: cron.schedule,
         next_run: cron.next_run,
+        max_runs: cron.max_runs,
         attempts_used: cron.attempts_used,
         remaining_runs: cron.remaining_runs,
         completed_reason: cron.completed_reason,
+        starts_at: cron.starts_at,
+        expires_at: cron.expires_at,
         window_starts_at_utc: cron.window_starts_at_utc,
         window_expires_at_utc: cron.window_expires_at_utc,
         runCount: cron.runs?.length ?? 0,

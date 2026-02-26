@@ -1088,5 +1088,85 @@ describe("Task API", () => {
         BrainService.prototype.markFeatureForCheckout = originalCheckout;
       }
     });
+
+    test("returns 400 when execution_branch equals merge_target_branch", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      BrainService.prototype.markFeatureForCheckout = (async () => {
+        throw new Error("should not be called");
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            execution_branch: "main",
+            merge_target_branch: "main",
+          }),
+        });
+
+        expect(res.status).toBe(400);
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
+
+    test("forwards validated checkout options to brain service", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      let capturedOptions: Record<string, unknown> | undefined;
+
+      BrainService.prototype.markFeatureForCheckout = (async (
+        projectId: string,
+        featureId: string,
+        options?: Record<string, unknown>
+      ) => {
+        capturedOptions = options;
+        return {
+          created: true,
+          generatedKey: `feature-checkout:${featureId}:round-1`,
+          task: {
+            id: "chkopts1",
+            path: `projects/${projectId}/task/chkopts1.md`,
+            title: `Feature checkout: ${featureId}`,
+            type: "task",
+            status: "pending",
+            link: "[[chkopts1]]",
+          },
+        };
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            execution_branch: "feature/work",
+            merge_target_branch: "main",
+            merge_policy: "auto_merge",
+            merge_strategy: "squash",
+            open_pr_before_merge: true,
+            execution_mode: "worktree",
+          }),
+        });
+
+        expect(res.status).toBe(200);
+        expect(capturedOptions).toEqual({
+          execution_branch: "feature/work",
+          merge_target_branch: "main",
+          merge_policy: "auto_merge",
+          merge_strategy: "squash",
+          open_pr_before_merge: true,
+          execution_mode: "worktree",
+        });
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
   });
 });

@@ -11,8 +11,9 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue } from './App';
 import type { TUIConfig } from './types';
+import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode } from '../../core/types';
 
 // Mock the hooks to isolate App component testing
 const mockTasks = [
@@ -379,6 +380,33 @@ describe('setsEqual', () => {
 
   it('returns false for empty vs non-empty', () => {
     expect(setsEqual(new Set(), new Set(['a']))).toBe(false);
+  });
+});
+
+describe('metadata field normalization/validation helpers', () => {
+  it('normalizes enum and boolean fields for popup text input', () => {
+    expect(normalizeMetadataFieldValue('execution_mode', '  WORKTREE ')).toBe('worktree');
+    expect(normalizeMetadataFieldValue('merge_policy', ' AUTO ')).toBe('auto');
+    expect(normalizeMetadataFieldValue('checkout_enabled', ' TRUE ')).toBe('true');
+  });
+
+  it('trims branch-like fields without lowercasing', () => {
+    expect(normalizeMetadataFieldValue('git_branch', '  feature/CheckoutFlow  ')).toBe('feature/CheckoutFlow');
+    expect(normalizeMetadataFieldValue('merge_target_branch', '  main  ')).toBe('main');
+  });
+
+  it('accepts valid feature settings values', () => {
+    expect(validateMetadataFieldValue('execution_mode', 'worktree')).toBeNull();
+    expect(validateMetadataFieldValue('merge_policy', 'prompt_only')).toBeNull();
+    expect(validateMetadataFieldValue('merge_strategy', 'squash')).toBeNull();
+    expect(validateMetadataFieldValue('checkout_enabled', 'false')).toBeNull();
+  });
+
+  it('returns user-facing errors for invalid feature settings values', () => {
+    expect(validateMetadataFieldValue('execution_mode', 'local')).toContain('Invalid execution mode');
+    expect(validateMetadataFieldValue('merge_policy', 'always')).toContain('Invalid merge policy');
+    expect(validateMetadataFieldValue('merge_strategy', 'octopus')).toContain('Invalid merge strategy');
+    expect(validateMetadataFieldValue('checkout_enabled', 'yes')).toBe('Invalid checkout_enabled: use true or false');
   });
 });
 
@@ -1399,7 +1427,19 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
   it('accepts onUpdateMetadata callback prop', () => {
     const mockUpdateMetadata = async (
       _taskPath: string, 
-      _fields: { status?: string; feature_id?: string; git_branch?: string; target_workdir?: string; schedule?: string }
+      _fields: {
+        status?: EntryStatus;
+        feature_id?: string;
+        git_branch?: string;
+        merge_target_branch?: string;
+        merge_policy?: MergePolicy;
+        merge_strategy?: MergeStrategy;
+        open_pr_before_merge?: boolean;
+        execution_mode?: ExecutionMode;
+        checkout_enabled?: boolean;
+        target_workdir?: string;
+        schedule?: string;
+      }
     ): Promise<void> => {};
     
     expect(() => {

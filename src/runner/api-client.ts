@@ -14,6 +14,9 @@ import type {
   TaskNextResponse,
   EntryStatus,
   Priority,
+  MergePolicy,
+  MergeStrategy,
+  ExecutionMode,
 } from "../core/types";
 import type {
   FeatureStatus,
@@ -58,6 +61,15 @@ export interface FeatureCheckoutResponse {
   created: boolean;
   generatedKey: string;
   task: BrainEntry;
+}
+
+export interface FeatureCheckoutRequest {
+  execution_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
 }
 
 export type CronEntry = Pick<
@@ -632,10 +644,10 @@ export class ApiClient {
       feature_id?: string;
       git_branch?: string;
       merge_target_branch?: string;
-      merge_policy?: "auto_merge" | "manual" | "none";
-      merge_strategy?: "squash" | "merge" | "rebase";
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
       open_pr_before_merge?: boolean;
-      execution_mode?: "worktree" | "in_branch";
+      execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
@@ -791,11 +803,17 @@ export class ApiClient {
    */
   async markFeatureForCheckout(
     projectId: string,
-    featureId: string
+    featureId: string,
+    options?: FeatureCheckoutRequest
   ): Promise<FeatureCheckoutResponse> {
+    const requestInit: RequestInit = { method: "POST" };
+    if (options !== undefined) {
+      requestInit.body = JSON.stringify(options);
+    }
+
     const response = await this.fetch(
       `/api/v1/tasks/${projectId}/features/${encodeURIComponent(featureId)}/checkout`,
-      { method: "POST" }
+      requestInit
     );
 
     if (!response.ok) {

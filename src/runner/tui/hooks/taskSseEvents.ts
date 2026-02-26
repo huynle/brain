@@ -53,6 +53,17 @@ function asNumber(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
 }
 
+function normalizeExecutionMode(value: unknown): TaskDisplay['executionMode'] {
+  const mode = asString(value);
+  if (mode === 'worktree' || mode === 'current_branch') {
+    return mode;
+  }
+  if (mode === 'in_branch') {
+    return 'current_branch';
+  }
+  return undefined;
+}
+
 function buildDependencyMap(tasks: RawTaskLike[]): Map<string, string[]> {
   const map = new Map<string, string[]>();
   for (const task of tasks) {
@@ -197,6 +208,16 @@ function normalizeTask(
     workdir: asString(rawTask.workdir) ?? null,
     gitRemote: asString(rawTask.git_remote) ?? null,
     gitBranch: asString(rawTask.git_branch) ?? null,
+    mergeTargetBranch: asString(rawTask.merge_target_branch) ?? null,
+    mergePolicy: asString(rawTask.merge_policy) as TaskDisplay['mergePolicy'],
+    mergeStrategy: asString(rawTask.merge_strategy) as TaskDisplay['mergeStrategy'],
+    openPrBeforeMerge:
+      typeof rawTask.open_pr_before_merge === 'boolean'
+        ? rawTask.open_pr_before_merge
+        : undefined,
+    executionMode: normalizeExecutionMode(rawTask.execution_mode),
+    checkoutEnabled:
+      typeof rawTask.checkout_enabled === 'boolean' ? rawTask.checkout_enabled : undefined,
     userOriginalRequest: asString(rawTask.user_original_request) ?? null,
     resolvedDeps: asStringArray(rawTask.resolved_deps).map((id) => idToTitle.get(id) ?? id),
     unresolvedDeps: asStringArray(rawTask.unresolved_deps),

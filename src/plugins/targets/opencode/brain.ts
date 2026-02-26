@@ -2248,10 +2248,10 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
               git_branch: string | null;
               git_remote: string | null;
               merge_target_branch?: string | null;
-              merge_policy?: "auto_merge" | "manual" | "none";
+              merge_policy?: "prompt_only" | "auto_pr" | "auto_merge";
               merge_strategy?: "squash" | "merge" | "rebase";
               open_pr_before_merge?: boolean;
-              execution_mode?: "worktree" | "in_branch";
+              execution_mode?: "worktree" | "current_branch";
               checkout_enabled?: boolean;
               agent: string | null;
               model: string | null;

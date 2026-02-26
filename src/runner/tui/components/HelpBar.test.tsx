@@ -13,6 +13,8 @@ describe('HelpBar', () => {
 
     expect(frame).toContain('f');
     expect(frame).toContain('Checkout');
+    expect(frame).toContain('s');
+    expect(frame).toContain('Meta/Feature');
 
     unmount();
   });

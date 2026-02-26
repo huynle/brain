@@ -142,6 +142,40 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Feature: auth-system');
       expect(frame).toContain('3 tasks');
     });
+
+    it('shows feature settings fields and hides task metadata fields in feature mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="feature"
+          featureId="auth-system"
+          mergeTargetBranchValue="main"
+          executionModeValue="worktree"
+          checkoutEnabledValue={true}
+          mergePolicyValue="prompt_only"
+          mergeStrategyValue="squash"
+          openPrBeforeMergeValue={false}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Execution');
+      expect(frame).toContain('Mode:');
+      expect(frame).toContain('Branch:');
+      expect(frame).toContain('Merge Target:');
+      expect(frame).toContain('Checkout');
+      expect(frame).toContain('Enabled:');
+      expect(frame).toContain('Merge Policy:');
+      expect(frame).toContain('Strategy:');
+      expect(frame).toContain('Open PR Before');
+      expect(frame).toContain('Merge:');
+
+      expect(frame).not.toContain('Status:');
+      expect(frame).not.toContain('Feature ID:');
+      expect(frame).not.toContain('Workdir:');
+      expect(frame).not.toContain('Schedule:');
+      expect(frame).not.toContain('Project:');
+    });
   });
 
   describe('field focus indication', () => {
@@ -169,6 +203,27 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
+      expect(frame).toContain('Enter to edit');
+    });
+
+    it('shows feature setting hint when execution mode is focused', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="feature"
+          featureId="auth-system"
+          focusedField="execution_mode"
+          executionModeValue="worktree"
+          mergeTargetBranchValue="main"
+          checkoutEnabledValue={true}
+          mergePolicyValue="prompt_only"
+          mergeStrategyValue="squash"
+          openPrBeforeMergeValue={false}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(worktree|direct)');
       expect(frame).toContain('Enter to edit');
     });
   });

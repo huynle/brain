@@ -793,7 +793,7 @@ describe("ApiClient", () => {
         merge_policy: "auto_merge",
         merge_strategy: "squash",
         open_pr_before_merge: true,
-        execution_mode: "worktree",
+        execution_mode: "current_branch",
         checkout_enabled: true,
       });
 
@@ -804,7 +804,7 @@ describe("ApiClient", () => {
           merge_policy: "auto_merge",
           merge_strategy: "squash",
           open_pr_before_merge: true,
-          execution_mode: "worktree",
+          execution_mode: "current_branch",
           checkout_enabled: true,
         })
       );

@@ -70,6 +70,7 @@ import type {
   RunFinalization,
   ZkNote,
   Task,
+  FeatureCheckoutRequest,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
@@ -1502,7 +1503,8 @@ export class BrainService {
 
   async markFeatureForCheckout(
     projectId: string,
-    featureId: string
+    featureId: string,
+    options?: FeatureCheckoutRequest
   ): Promise<MarkFeatureForCheckoutResult> {
     const sanitizedProjectId = sanitizeSimpleValue(projectId);
     const sanitizedFeatureId = sanitizeSimpleValue(featureId);
@@ -1512,6 +1514,31 @@ export class BrainService {
     }
     if (!sanitizedFeatureId) {
       throw new Error("featureId is required");
+    }
+
+    const normalizedOptions = this.normalizeFeatureCheckoutOptions(options);
+    const mergePolicy = normalizedOptions.merge_policy ?? "auto_merge";
+    const mergeStrategy = normalizedOptions.merge_strategy ?? "squash";
+    const executionMode = normalizedOptions.execution_mode ?? "worktree";
+    const openPrBeforeMerge = normalizedOptions.open_pr_before_merge ?? false;
+
+    if (
+      normalizedOptions.execution_branch
+      && normalizedOptions.merge_target_branch
+      && normalizedOptions.execution_branch === normalizedOptions.merge_target_branch
+    ) {
+      throw new Error("execution_branch must be different from merge_target_branch");
+    }
+
+    if (
+      mergePolicy === "auto_merge"
+      && normalizedOptions.merge_target_branch
+      && this.isProtectedMergeTargetBranch(normalizedOptions.merge_target_branch)
+      && openPrBeforeMerge !== true
+    ) {
+      throw new Error(
+        `open_pr_before_merge must be true when auto-merging into protected branch: ${normalizedOptions.merge_target_branch}`
+      );
     }
 
     const generatedKey = `feature-checkout:${sanitizedFeatureId}:round-1`;
@@ -1554,6 +1581,12 @@ export class BrainService {
           generated_kind: "feature_checkout",
           generated_key: generatedKey,
           generated_by: "feature-checkout",
+          git_branch: normalizedOptions.execution_branch,
+          merge_target_branch: normalizedOptions.merge_target_branch,
+          merge_policy: mergePolicy,
+          merge_strategy: mergeStrategy,
+          open_pr_before_merge: openPrBeforeMerge,
+          execution_mode: executionMode,
         });
 
         const finalized = completeGeneratedTaskLease(
@@ -1602,6 +1635,43 @@ export class BrainService {
         setTimeout(resolve, GENERATED_TASK_BUSY_POLL_INTERVAL_MS)
       );
     }
+  }
+
+  private normalizeFeatureCheckoutOptions(options?: FeatureCheckoutRequest): FeatureCheckoutRequest {
+    if (!options) {
+      return {};
+    }
+
+    const normalized: FeatureCheckoutRequest = { ...options };
+
+    if (normalized.execution_branch !== undefined) {
+      const value = sanitizeSimpleValue(normalized.execution_branch);
+      normalized.execution_branch = value || undefined;
+    }
+
+    if (normalized.merge_target_branch !== undefined) {
+      const value = sanitizeSimpleValue(normalized.merge_target_branch);
+      normalized.merge_target_branch = value || undefined;
+    }
+
+    if (normalized.merge_policy !== undefined) {
+      normalized.merge_policy = sanitizeSimpleValue(normalized.merge_policy) as FeatureCheckoutRequest["merge_policy"];
+    }
+
+    if (normalized.merge_strategy !== undefined) {
+      normalized.merge_strategy = sanitizeSimpleValue(normalized.merge_strategy) as FeatureCheckoutRequest["merge_strategy"];
+    }
+
+    if (normalized.execution_mode !== undefined) {
+      normalized.execution_mode = sanitizeSimpleValue(normalized.execution_mode) as FeatureCheckoutRequest["execution_mode"];
+    }
+
+    return normalized;
+  }
+
+  private isProtectedMergeTargetBranch(branch: string): boolean {
+    const normalized = branch.trim().toLowerCase();
+    return normalized === "main" || normalized === "master";
   }
 
   async reconcileFeatureCheckoutDependencies(projectId: string, featureId: string): Promise<void> {

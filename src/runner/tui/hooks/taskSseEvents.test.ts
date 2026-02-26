@@ -38,6 +38,13 @@ describe('taskSseEvents', () => {
             status: 'pending',
             priority: 'high',
             resolved_deps: ['task-b'],
+            git_branch: 'feature/task-a',
+            merge_target_branch: 'main',
+            merge_policy: 'auto_merge',
+            merge_strategy: 'squash',
+            open_pr_before_merge: true,
+            execution_mode: 'in_branch',
+            checkout_enabled: true,
           },
           {
             id: 'task-b',
@@ -77,6 +84,13 @@ describe('taskSseEvents', () => {
       dependents: [],
       dependentTitles: [],
       tags: [],
+      gitBranch: 'feature/task-a',
+      mergeTargetBranch: 'main',
+      mergePolicy: 'auto_merge',
+      mergeStrategy: 'squash',
+      openPrBeforeMerge: true,
+      executionMode: 'current_branch',
+      checkoutEnabled: true,
     });
   });
 

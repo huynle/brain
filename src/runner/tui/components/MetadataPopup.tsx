@@ -1,7 +1,7 @@
 /**
  * MetadataPopup - A modal popup for batch updating task metadata
  *
- * Displays editable fields for status, feature_id, git_branch, and target_workdir.
+ * Displays editable fields for task metadata and feature execution settings.
  * Supports single task, batch mode, and feature mode.
  *
  * Uses a 3-mode state machine for keyboard navigation:
@@ -24,11 +24,26 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { EntryStatus } from '../../../core/types';
+import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode } from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 /** Fields that can be focused in the metadata popup */
-export type MetadataField = 'status' | 'feature_id' | 'git_branch' | 'target_workdir' | 'schedule' | 'project' | 'agent' | 'model' | 'direct_prompt';
+export type MetadataField =
+  | 'status'
+  | 'feature_id'
+  | 'git_branch'
+  | 'merge_target_branch'
+  | 'execution_mode'
+  | 'checkout_enabled'
+  | 'merge_policy'
+  | 'merge_strategy'
+  | 'open_pr_before_merge'
+  | 'target_workdir'
+  | 'schedule'
+  | 'project'
+  | 'agent'
+  | 'model'
+  | 'direct_prompt';
 
 /** Mode for the metadata popup */
 export type MetadataPopupMode = 'single' | 'batch' | 'feature';
@@ -55,6 +70,18 @@ export interface MetadataPopupProps {
   featureIdValue: string;
   /** Current git_branch value */
   branchValue: string;
+  /** Current merge_target_branch value */
+  mergeTargetBranchValue?: string;
+  /** Current execution_mode value */
+  executionModeValue?: ExecutionMode;
+  /** Current checkout_enabled value */
+  checkoutEnabledValue?: boolean;
+  /** Current merge_policy value */
+  mergePolicyValue?: MergePolicy;
+  /** Current merge_strategy value */
+  mergeStrategyValue?: MergeStrategy;
+  /** Current open_pr_before_merge value */
+  openPrBeforeMergeValue?: boolean;
   /** Current target_workdir value */
   workdirValue: string;
   /** Current schedule value */
@@ -85,17 +112,53 @@ export interface MetadataPopupProps {
   cronNames?: Record<string, string>;
 }
 
-const FIELD_ORDER: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
+export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
+  'status',
+  'feature_id',
+  'git_branch',
+  'target_workdir',
+  'schedule',
+  'project',
+  'agent',
+  'model',
+  'direct_prompt',
+];
+
+export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] = [
+  'execution_mode',
+  'git_branch',
+  'merge_target_branch',
+  'checkout_enabled',
+  'merge_policy',
+  'merge_strategy',
+  'open_pr_before_merge',
+];
+
 const FIELD_LABELS: Record<MetadataField, string> = {
   status: 'Status',
   feature_id: 'Feature ID',
   git_branch: 'Branch',
+  merge_target_branch: 'Merge Target',
+  execution_mode: 'Execution Mode',
+  checkout_enabled: 'Checkout Enabled',
+  merge_policy: 'Merge Policy',
+  merge_strategy: 'Merge Strategy',
+  open_pr_before_merge: 'Open PR Before Merge',
   target_workdir: 'Workdir',
   schedule: 'Schedule',
   project: 'Project',
   agent: 'Agent',
   model: 'Model',
   direct_prompt: 'Prompt',
+};
+
+const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
+  execution_mode: '(worktree|direct)',
+  merge_target_branch: '(target branch for merge)',
+  checkout_enabled: '(true|false)',
+  merge_policy: '(prompt_only|auto)',
+  merge_strategy: '(squash|merge|rebase)',
+  open_pr_before_merge: '(true|false)',
 };
 
 export function MetadataPopup({
@@ -108,6 +171,12 @@ export function MetadataPopup({
   statusValue,
   featureIdValue,
   branchValue,
+  mergeTargetBranchValue,
+  executionModeValue,
+  checkoutEnabledValue,
+  mergePolicyValue,
+  mergeStrategyValue,
+  openPrBeforeMergeValue,
   workdirValue,
   scheduleValue,
   projectValue,
@@ -129,6 +198,8 @@ export function MetadataPopup({
     ? taskTitle.slice(0, maxTitleLen - 3) + '...'
     : taskTitle;
 
+  const fieldOrder = mode === 'feature' ? METADATA_FIELDS_FEATURE_SETTINGS : METADATA_FIELDS_DEFAULT;
+
   // Get value for a field
   const getFieldValue = (field: MetadataField): string => {
     switch (field) {
@@ -138,6 +209,18 @@ export function MetadataPopup({
         return featureIdValue || '(none)';
       case 'git_branch':
         return branchValue || '(none)';
+      case 'merge_target_branch':
+        return mergeTargetBranchValue || '(none)';
+      case 'execution_mode':
+        return executionModeValue || 'worktree';
+      case 'checkout_enabled':
+        return checkoutEnabledValue ? 'true' : 'false';
+      case 'merge_policy':
+        return mergePolicyValue || 'prompt_only';
+      case 'merge_strategy':
+        return mergeStrategyValue || 'squash';
+      case 'open_pr_before_merge':
+        return openPrBeforeMergeValue ? 'true' : 'false';
       case 'target_workdir':
         return workdirValue || '(none)';
       case 'schedule':
@@ -210,7 +293,7 @@ export function MetadataPopup({
 
       {/* Fields */}
       <Box flexDirection="column">
-        {FIELD_ORDER.map((field) => {
+        {fieldOrder.map((field) => {
           const isFocused = field === focusedField;
           const isEditing = isFieldEditing(field);
           const label = FIELD_LABELS[field];
@@ -358,6 +441,9 @@ export function MetadataPopup({
                   >
                     {value}
                   </Text>
+                  {isFocused && !isEditing && FIELD_HINTS[field] && (
+                    <Text dimColor> {FIELD_HINTS[field]}</Text>
+                  )}
                   {field === 'schedule' && (
                     <Text dimColor> (creates NEW cron)</Text>
                   )}

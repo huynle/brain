@@ -291,6 +291,15 @@ export interface UpdateEntryRequest {
   generated_by?: string;
 }
 
+export interface FeatureCheckoutRequest {
+  execution_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
+}
+
 export interface ListEntriesRequest {
   type?: EntryType;
   status?: EntryStatus;

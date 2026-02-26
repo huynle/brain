@@ -2,7 +2,14 @@
  * TUI-specific types for the Ink-based dashboard
  */
 
-import type { EntryStatus, Priority, SessionInfo } from '../../core/types';
+import type {
+  EntryStatus,
+  Priority,
+  SessionInfo,
+  MergePolicy,
+  MergeStrategy,
+  ExecutionMode,
+} from '../../core/types';
 import type {
   CronEntry,
   CronDetailResponse,
@@ -56,6 +63,12 @@ export interface TaskDisplay {
   workdir?: string | null;           // $HOME-relative working directory
   gitRemote?: string | null;         // Git remote URL
   gitBranch?: string | null;         // Branch context (worktree derived from this)
+  mergeTargetBranch?: string | null; // Target branch for merge operations
+  mergePolicy?: MergePolicy | null;  // Merge behavior at completion
+  mergeStrategy?: MergeStrategy | null; // Merge strategy when merging
+  openPrBeforeMerge?: boolean;       // Whether to require PR before merge
+  executionMode?: ExecutionMode;     // worktree or current_branch
+  checkoutEnabled?: boolean;         // Whether checkout automation is enabled
   userOriginalRequest?: string | null; // Original user request for validation
   
   // Dependency resolution fields
@@ -384,6 +397,12 @@ export interface AppProps {
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
+      open_pr_before_merge?: boolean;
+      execution_mode?: ExecutionMode;
+      checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;

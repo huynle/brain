@@ -2,6 +2,7 @@ import { describe, test, expect } from "bun:test";
 import {
   BrainEntrySchema,
   CreateEntryRequestSchema,
+  FeatureCheckoutRequestSchema,
   UpdateEntryRequestSchema,
 } from "./schemas";
 
@@ -167,5 +168,36 @@ describe("API schemas - cron fields", () => {
     expect(parsed.generated_kind).toBe("other");
     expect(parsed.generated_key).toBe("task-abc12def");
     expect(parsed.generated_by).toBe("manual");
+  });
+
+  test("FeatureCheckoutRequestSchema defaults merge policy and strategy", () => {
+    const parsed = FeatureCheckoutRequestSchema.parse({});
+
+    expect(parsed.merge_policy).toBe("auto_merge");
+    expect(parsed.merge_strategy).toBe("squash");
+    expect(parsed.execution_mode).toBe("worktree");
+  });
+
+  test("FeatureCheckoutRequestSchema rejects identical execution and merge target branches", () => {
+    expect(() =>
+      FeatureCheckoutRequestSchema.parse({
+        execution_branch: "main",
+        merge_target_branch: "main",
+      })
+    ).toThrow("execution_branch must be different from merge_target_branch");
+  });
+
+  test("FeatureCheckoutRequestSchema rejects legacy merge and execution enum values", () => {
+    expect(() =>
+      FeatureCheckoutRequestSchema.parse({
+        merge_policy: "manual",
+      })
+    ).toThrow();
+
+    expect(() =>
+      FeatureCheckoutRequestSchema.parse({
+        execution_mode: "in_branch",
+      })
+    ).toThrow();
   });
 });

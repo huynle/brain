@@ -916,6 +916,44 @@ export const FeatureListResponseSchema = z.object({
   }).optional().openapi({ description: "Aggregate statistics across all features" }),
 }).openapi("FeatureListResponse");
 
+export const FeatureCheckoutRequestSchema = z.object({
+  execution_branch: z.string().min(1).optional().openapi({
+    description: "Branch to execute feature work on",
+    example: "feature/auth-system",
+  }),
+  merge_target_branch: z.string().min(1).optional().openapi({
+    description: "Branch to merge completed feature work into",
+    example: "main",
+  }),
+  merge_policy: MergePolicySchema.optional().default("auto_merge").openapi({
+    description: "Merge behavior after checkout validation passes",
+    default: "auto_merge",
+  }),
+  merge_strategy: MergeStrategySchema.optional().default("squash").openapi({
+    description: "Merge strategy used when merge policy allows auto merge",
+    default: "squash",
+  }),
+  open_pr_before_merge: z.boolean().optional().default(false).openapi({
+    description: "Open a pull request before merge when enabled",
+    default: false,
+  }),
+  execution_mode: ExecutionModeSchema.optional().default("worktree").openapi({
+    description: "Execution mode for checkout processing",
+    default: "worktree",
+  }),
+}).superRefine((data, ctx) => {
+  const executionBranch = data.execution_branch?.trim();
+  const mergeTargetBranch = data.merge_target_branch?.trim();
+
+  if (executionBranch && mergeTargetBranch && executionBranch === mergeTargetBranch) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "execution_branch must be different from merge_target_branch",
+      path: ["execution_branch"],
+    });
+  }
+}).openapi("FeatureCheckoutRequest");
+
 export const FeatureCheckoutResponseSchema = z.object({
   created: z.boolean().openapi({
     description: "True when a new checkout task was created, false when an existing task was reused",

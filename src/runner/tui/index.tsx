@@ -21,7 +21,12 @@ import { App } from './App';
 import { setTerminalMouseMode } from './hooks/useMouseInput';
 import type { TUIConfig, ResourceMetrics, ProjectLimitEntry } from './types';
 import type { LogEntry } from './types';
-import type { EntryStatus } from '../../core/types';
+import type {
+  EntryStatus,
+  MergePolicy,
+  MergeStrategy,
+  ExecutionMode,
+} from '../../core/types';
 import type {
   CronEntry,
   CronDetailResponse,
@@ -110,6 +115,12 @@ export interface DashboardOptions {
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
+      open_pr_before_merge?: boolean;
+      execution_mode?: ExecutionMode;
+      checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;

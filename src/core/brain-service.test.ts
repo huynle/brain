@@ -1309,6 +1309,62 @@ Task content.
       }
     });
 
+    test("rejects checkout options when execution branch matches merge target", async () => {
+      await expect(
+        service.markFeatureForCheckout("test-project", "feature-guard", {
+          execution_branch: "main",
+          merge_target_branch: "main",
+        })
+      ).rejects.toThrow("execution_branch must be different from merge_target_branch");
+    });
+
+    test("applies deterministic merge defaults when checkout options are omitted", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalSave = service.save;
+
+      const capturedRequests: Array<Record<string, unknown>> = [];
+
+      TaskService.prototype.getTasksByFeature = async () => [] as any;
+
+      service.save = (async (request) => {
+        capturedRequests.push(request as unknown as Record<string, unknown>);
+        return {
+          id: "chkdefaults",
+          path: "projects/test-project/task/chkdefaults.md",
+          title: "Feature checkout: feature-defaults",
+          type: "task",
+          status: "pending",
+          link: "[[chkdefaults]]",
+        };
+      }) as typeof service.save;
+
+      try {
+        await service.markFeatureForCheckout("test-project", "feature-defaults");
+
+        expect(capturedRequests).toHaveLength(1);
+        expect(capturedRequests[0]?.merge_policy).toBe("auto_merge");
+        expect(capturedRequests[0]?.merge_strategy).toBe("squash");
+        expect(capturedRequests[0]?.execution_mode).toBe("worktree");
+        expect(capturedRequests[0]?.open_pr_before_merge).toBe(false);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        service.save = originalSave;
+      }
+    });
+
+    test("blocks auto-merge to protected target branch when PR-before-merge is disabled", async () => {
+      await expect(
+        service.markFeatureForCheckout("test-project", "feature-protected", {
+          execution_branch: "feature/protected-flow",
+          merge_target_branch: "main",
+          merge_policy: "auto_merge",
+          open_pr_before_merge: false,
+        })
+      ).rejects.toThrow(
+        "open_pr_before_merge must be true when auto-merging into protected branch: main"
+      );
+    });
+
     test("reconciles checkout depends_on with non-generated feature tasks and skips in-progress", async () => {
       const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
       const originalUpdateInternal = (service as any).updateInternal;

@@ -66,7 +66,7 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                    {'  '}
                    <Text bold>Space</Text> Select
                    {'  '}
-                   <Text bold>s</Text> Metadata
+                    <Text bold>s</Text> Meta/Feature
                    {'  '}
                    <Text bold>e</Text> Edit
                    {'  '}

@@ -30,6 +30,7 @@ import {
   ServiceUnavailableResponseSchema,
   ComputedFeatureSchema,
   FeatureListResponseSchema,
+  FeatureCheckoutRequestSchema,
   FeatureCheckoutResponseSchema,
   NotFoundResponseSchema,
   TaskStatusRequestSchema,
@@ -502,6 +503,14 @@ const markFeatureForCheckoutRoute = createRoute({
   description: "Creates or returns an idempotent generated checkout task for a feature",
   request: {
     params: FeatureIdParamSchema,
+    body: {
+      required: false,
+      content: {
+        "application/json": {
+          schema: FeatureCheckoutRequestSchema,
+        },
+      },
+    },
   },
   responses: {
     200: {
@@ -1241,8 +1250,25 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
     const { projectId, featureId } = c.req.valid("param");
     const brainService = getBrainService();
 
+    let checkoutOptions: z.infer<typeof FeatureCheckoutRequestSchema> | undefined;
+    const requestBody = await c.req.json().catch(() => undefined);
+
+    if (requestBody !== undefined) {
+      const parsedCheckoutOptions = FeatureCheckoutRequestSchema.safeParse(requestBody);
+      if (!parsedCheckoutOptions.success) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: parsedCheckoutOptions.error.issues[0]?.message ?? "Invalid checkout options",
+          },
+          400
+        );
+      }
+      checkoutOptions = parsedCheckoutOptions.data;
+    }
+
     try {
-      const result = await brainService.markFeatureForCheckout(projectId, featureId);
+      const result = await brainService.markFeatureForCheckout(projectId, featureId, checkoutOptions);
       publishProjectDirty(realtimeHub, projectId);
       await publishTaskSnapshot(realtimeHub, projectId);
       return c.json(result, 200);

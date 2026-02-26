@@ -51,12 +51,28 @@ import { TaskDetail } from './components/TaskDetail';
 import { CronDetail } from './components/CronDetail';
 import { CronLinkEditor } from './components/CronLinkEditor';
 import { HelpBar } from './components/HelpBar';
-import { MetadataPopup, type MetadataField, type MetadataPopupMode, type MetadataInteractionMode } from './components/MetadataPopup';
+import {
+  MetadataPopup,
+  METADATA_FIELDS_DEFAULT,
+  METADATA_FIELDS_FEATURE_SETTINGS,
+  type MetadataField,
+  type MetadataPopupMode,
+  type MetadataInteractionMode,
+} from './components/MetadataPopup';
 import { SettingsPopup } from './components/SettingsPopup';
 import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 import { SessionSelectPopup } from './components/SessionSelectPopup';
 
-import { ENTRY_STATUSES, type EntryStatus } from '../../core/types';
+import {
+  ENTRY_STATUSES,
+  EXECUTION_MODES,
+  MERGE_POLICIES,
+  MERGE_STRATEGIES,
+  type EntryStatus,
+  type MergePolicy,
+  type MergeStrategy,
+  type ExecutionMode,
+} from '../../core/types';
 import { useTaskSse } from './hooks/useTaskSse';
 import { useMultiProjectSse } from './hooks/useMultiProjectSse';
 import { useLogStream } from './hooks/useLogStream';
@@ -107,6 +123,72 @@ const STATUS_LABELS: Record<string, string> = {
   superseded: 'Superseded',
   archived: 'Archived',
 };
+
+const BOOLEAN_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
+  'checkout_enabled',
+  'open_pr_before_merge',
+]);
+
+const LOWERCASE_ENUM_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
+  'execution_mode',
+  'merge_policy',
+  'merge_strategy',
+]);
+
+const TRIMMED_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
+  'feature_id',
+  'git_branch',
+  'merge_target_branch',
+  'target_workdir',
+  'schedule',
+  'agent',
+  'model',
+]);
+
+/**
+ * Normalize user-entered metadata text before local state updates/save.
+ */
+export function normalizeMetadataFieldValue(field: MetadataField, rawValue: string): string {
+  if (LOWERCASE_ENUM_METADATA_FIELDS.has(field) || BOOLEAN_METADATA_FIELDS.has(field)) {
+    return rawValue.trim().toLowerCase();
+  }
+
+  if (TRIMMED_METADATA_FIELDS.has(field)) {
+    return rawValue.trim();
+  }
+
+  return rawValue;
+}
+
+/**
+ * Validate metadata field input and return user-facing error, or null if valid.
+ */
+export function validateMetadataFieldValue(field: MetadataField, value: string): string | null {
+  if (field === 'execution_mode' && value.length > 0 && !EXECUTION_MODES.includes(value as ExecutionMode)) {
+    return `Invalid execution mode: ${value}. Use one of: ${EXECUTION_MODES.join(', ')}`;
+  }
+
+  if (field === 'merge_policy' && value.length > 0 && !MERGE_POLICIES.includes(value as MergePolicy)) {
+    return `Invalid merge policy: ${value}. Use one of: ${MERGE_POLICIES.join(', ')}`;
+  }
+
+  if (field === 'merge_strategy' && value.length > 0 && !MERGE_STRATEGIES.includes(value as MergeStrategy)) {
+    return `Invalid merge strategy: ${value}. Use one of: ${MERGE_STRATEGIES.join(', ')}`;
+  }
+
+  if (BOOLEAN_METADATA_FIELDS.has(field) && value.length > 0 && value !== 'true' && value !== 'false') {
+    return `Invalid ${field}: use true or false`;
+  }
+
+  if (field === 'schedule' && value.length > 0) {
+    const fields = value.split(/\s+/);
+    if (fields.length !== 5) {
+      return `Invalid cron expression: expected 5 fields (minute hour day month weekday), got ${fields.length}`;
+    }
+  }
+
+  return null;
+}
 
 /**
  * Get visible (active) tasks for a feature, excluding group-status tasks.
@@ -461,6 +543,12 @@ export function App({
   const [metadataStatusValue, setMetadataStatusValue] = useState<EntryStatus>('pending');
   const [metadataFeatureIdValue, setMetadataFeatureIdValue] = useState('');
   const [metadataBranchValue, setMetadataBranchValue] = useState('');
+  const [metadataMergeTargetBranchValue, setMetadataMergeTargetBranchValue] = useState('');
+  const [metadataExecutionModeValue, setMetadataExecutionModeValue] = useState<ExecutionMode>('worktree');
+  const [metadataCheckoutEnabledValue, setMetadataCheckoutEnabledValue] = useState<boolean>(true);
+  const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('prompt_only');
+  const [metadataMergeStrategyValue, setMetadataMergeStrategyValue] = useState<MergeStrategy>('squash');
+  const [metadataOpenPrBeforeMergeValue, setMetadataOpenPrBeforeMergeValue] = useState<boolean>(false);
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
   const [metadataScheduleValue, setMetadataScheduleValue] = useState('');
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
@@ -478,13 +566,35 @@ export function App({
     status: EntryStatus;
     feature_id: string;
     git_branch: string;
+    merge_target_branch: string;
+    execution_mode: ExecutionMode;
+    checkout_enabled: boolean;
+    merge_policy: MergePolicy;
+    merge_strategy: MergeStrategy;
+    open_pr_before_merge: boolean;
     target_workdir: string;
     schedule: string;
     project: string;
     agent: string;
     model: string;
     direct_prompt: string;
-  }>({ status: 'pending', feature_id: '', git_branch: '', target_workdir: '', schedule: '', project: '', agent: '', model: '', direct_prompt: '' });
+  }>({
+    status: 'pending',
+    feature_id: '',
+    git_branch: '',
+    merge_target_branch: '',
+    execution_mode: 'worktree',
+    checkout_enabled: true,
+    merge_policy: 'prompt_only',
+    merge_strategy: 'squash',
+    open_pr_before_merge: false,
+    target_workdir: '',
+    schedule: '',
+    project: '',
+    agent: '',
+    model: '',
+    direct_prompt: '',
+  });
   // Track whether any metadata changes were saved while popup is open
   const [metadataDirty, setMetadataDirty] = useState(false);
   // All projects from API (for project picker in metadata popup)
@@ -1036,6 +1146,12 @@ export function App({
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
+      open_pr_before_merge?: boolean;
+      execution_mode?: ExecutionMode;
+      checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;
@@ -1051,6 +1167,24 @@ export function App({
     }
     if (effectiveBranch !== metadataOriginalValues.git_branch) {
       changedFields.git_branch = effectiveBranch;
+    }
+    if (metadataMergeTargetBranchValue !== metadataOriginalValues.merge_target_branch) {
+      changedFields.merge_target_branch = metadataMergeTargetBranchValue;
+    }
+    if (metadataExecutionModeValue !== metadataOriginalValues.execution_mode) {
+      changedFields.execution_mode = metadataExecutionModeValue;
+    }
+    if (metadataCheckoutEnabledValue !== metadataOriginalValues.checkout_enabled) {
+      changedFields.checkout_enabled = metadataCheckoutEnabledValue;
+    }
+    if (metadataMergePolicyValue !== metadataOriginalValues.merge_policy) {
+      changedFields.merge_policy = metadataMergePolicyValue;
+    }
+    if (metadataMergeStrategyValue !== metadataOriginalValues.merge_strategy) {
+      changedFields.merge_strategy = metadataMergeStrategyValue;
+    }
+    if (metadataOpenPrBeforeMergeValue !== metadataOriginalValues.open_pr_before_merge) {
+      changedFields.open_pr_before_merge = metadataOpenPrBeforeMergeValue;
     }
     if (effectiveWorkdir !== metadataOriginalValues.target_workdir) {
       changedFields.target_workdir = effectiveWorkdir;
@@ -1112,6 +1246,12 @@ export function App({
     metadataStatusValue,
     metadataFeatureIdValue,
     metadataBranchValue,
+    metadataMergeTargetBranchValue,
+    metadataExecutionModeValue,
+    metadataCheckoutEnabledValue,
+    metadataMergePolicyValue,
+    metadataMergeStrategyValue,
+    metadataOpenPrBeforeMergeValue,
     metadataWorkdirValue,
     metadataScheduleValue,
     metadataOriginalValues,
@@ -1150,6 +1290,12 @@ export function App({
     setMetadataStatusIndex(ENTRY_STATUSES.indexOf(task.status));
     setMetadataFeatureIdValue(task.feature_id || '');
     setMetadataBranchValue(task.gitBranch || '');
+    setMetadataMergeTargetBranchValue(task.mergeTargetBranch || '');
+    setMetadataExecutionModeValue(task.executionMode || 'worktree');
+    setMetadataCheckoutEnabledValue(task.checkoutEnabled ?? true);
+    setMetadataMergePolicyValue(task.mergePolicy || 'prompt_only');
+    setMetadataMergeStrategyValue(task.mergeStrategy || 'squash');
+    setMetadataOpenPrBeforeMergeValue(task.openPrBeforeMerge ?? false);
     setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
     setMetadataScheduleValue(task.schedule || '');
     setMetadataProjectValue(task.projectId || '');
@@ -1161,6 +1307,12 @@ export function App({
       status: task.status,
       feature_id: task.feature_id || '',
       git_branch: task.gitBranch || '',
+      merge_target_branch: task.mergeTargetBranch || '',
+      execution_mode: task.executionMode || 'worktree',
+      checkout_enabled: task.checkoutEnabled ?? true,
+      merge_policy: task.mergePolicy || 'prompt_only',
+      merge_strategy: task.mergeStrategy || 'squash',
+      open_pr_before_merge: task.openPrBeforeMerge ?? false,
       target_workdir: task.resolvedWorkdir || task.workdir || '',
       schedule: task.schedule || '',
       project: task.projectId || '',
@@ -1318,26 +1470,55 @@ export function App({
     // EDIT_STATUS: j/k cycles status options, Enter saves immediately, Esc discards
     // EDIT_PROJECT: j/k cycles project options, Enter moves task, Esc discards
     if (showMetadataPopup) {
-      const METADATA_FIELDS: MetadataField[] = ['status', 'feature_id', 'git_branch', 'target_workdir', 'schedule', 'project', 'agent', 'model', 'direct_prompt'];
+      const METADATA_FIELDS: MetadataField[] = metadataPopupMode === 'feature'
+        ? METADATA_FIELDS_FEATURE_SETTINGS
+        : METADATA_FIELDS_DEFAULT;
       
       // Helper: save a single field immediately to API
       // Helper: save a single field immediately to API
       const saveField = (field: MetadataField, value: string | EntryStatus) => {
         if (!onUpdateMetadata || metadataTargetTasks.length === 0) return;
-        
-        // Basic validation for schedule field
-        if (field === 'schedule' && typeof value === 'string' && value.trim().length > 0) {
-          const fields = value.trim().split(/\s+/);
-          if (fields.length !== 5) {
-            addLog({ 
-              level: 'error', 
-              message: `Invalid cron expression: expected 5 fields (minute hour day month weekday), got ${fields.length}` 
-            });
-            return; // Abort save
+
+        const normalizedValue = typeof value === 'string'
+          ? normalizeMetadataFieldValue(field, value)
+          : value;
+
+        if (typeof normalizedValue === 'string') {
+          const validationError = validateMetadataFieldValue(field, normalizedValue);
+          if (validationError) {
+            addLog({ level: 'error', message: validationError });
+            return;
           }
         }
-        
-        const updates: { [key: string]: string | EntryStatus } = { [field]: value };
+
+        const updates: {
+          [key: string]: string | EntryStatus | MergePolicy | MergeStrategy | ExecutionMode | boolean;
+        } = {};
+
+        if (field === 'execution_mode') {
+          if (typeof normalizedValue !== 'string' || !EXECUTION_MODES.includes(normalizedValue as ExecutionMode)) {
+            return;
+          }
+          updates.execution_mode = normalizedValue as ExecutionMode;
+        } else if (field === 'merge_policy') {
+          if (typeof normalizedValue !== 'string' || !MERGE_POLICIES.includes(normalizedValue as MergePolicy)) {
+            return;
+          }
+          updates.merge_policy = normalizedValue as MergePolicy;
+        } else if (field === 'merge_strategy') {
+          if (typeof normalizedValue !== 'string' || !MERGE_STRATEGIES.includes(normalizedValue as MergeStrategy)) {
+            return;
+          }
+          updates.merge_strategy = normalizedValue as MergeStrategy;
+        } else if (field === 'checkout_enabled' || field === 'open_pr_before_merge') {
+          if (typeof normalizedValue !== 'string') {
+            return;
+          }
+
+          updates[field] = normalizedValue === 'true';
+        } else {
+          updates[field] = normalizedValue;
+        }
         
         // Mark dirty synchronously so Escape handler sees it immediately
         setMetadataDirty(true);
@@ -1345,9 +1526,23 @@ export function App({
         Promise.all(
           metadataTargetTasks.map(task => onUpdateMetadata(task.path, updates))
         ).then(() => {
-          addLog({ level: 'info', message: `Updated ${field}: ${value}` });
+          addLog({ level: 'info', message: `Updated ${field}: ${Object.values(updates)[0]}` });
           // Update original values to reflect the saved state
-          setMetadataOriginalValues(prev => ({ ...prev, [field]: value }));
+          setMetadataOriginalValues(prev => ({
+            ...prev,
+            ...(field === 'execution_mode' ? { execution_mode: updates.execution_mode as ExecutionMode } : {}),
+            ...(field === 'merge_policy' ? { merge_policy: updates.merge_policy as MergePolicy } : {}),
+            ...(field === 'merge_strategy' ? { merge_strategy: updates.merge_strategy as MergeStrategy } : {}),
+            ...(field === 'checkout_enabled' ? { checkout_enabled: updates.checkout_enabled as boolean } : {}),
+            ...(field === 'open_pr_before_merge' ? { open_pr_before_merge: updates.open_pr_before_merge as boolean } : {}),
+              ...(field !== 'execution_mode' &&
+            field !== 'merge_policy' &&
+            field !== 'merge_strategy' &&
+            field !== 'checkout_enabled' &&
+            field !== 'open_pr_before_merge'
+              ? { [field]: normalizedValue }
+              : {}),
+          }));
           refetch();
         }).catch((err) => {
           addLog({ level: 'error', message: `Failed to update ${field}: ${err}` });
@@ -1448,6 +1643,24 @@ export function App({
               case 'git_branch':
                 currentValue = metadataBranchValue;
                 break;
+              case 'merge_target_branch':
+                currentValue = metadataMergeTargetBranchValue;
+                break;
+              case 'execution_mode':
+                currentValue = metadataExecutionModeValue;
+                break;
+              case 'checkout_enabled':
+                currentValue = metadataCheckoutEnabledValue ? 'true' : 'false';
+                break;
+              case 'merge_policy':
+                currentValue = metadataMergePolicyValue;
+                break;
+              case 'merge_strategy':
+                currentValue = metadataMergeStrategyValue;
+                break;
+              case 'open_pr_before_merge':
+                currentValue = metadataOpenPrBeforeMergeValue ? 'true' : 'false';
+                break;
               case 'target_workdir':
                 currentValue = metadataWorkdirValue;
                 break;
@@ -1478,7 +1691,7 @@ export function App({
       if (metadataInteractionMode === 'edit_text') {
         // Enter: save field immediately to API and return to NAVIGATE
         if (key.return) {
-          const value = metadataEditBuffer;
+          const value = normalizeMetadataFieldValue(metadataFocusedField, metadataEditBuffer);
           // Update local state
           switch (metadataFocusedField) {
             case 'feature_id':
@@ -1487,15 +1700,43 @@ export function App({
             case 'git_branch':
               setMetadataBranchValue(value);
               break;
-              case 'target_workdir':
-                setMetadataWorkdirValue(value);
-                break;
-              case 'schedule':
-                setMetadataScheduleValue(value);
-                break;
-              case 'agent':
-                setMetadataAgentValue(value);
-                break;
+            case 'merge_target_branch':
+              setMetadataMergeTargetBranchValue(value);
+              break;
+            case 'execution_mode':
+              if (EXECUTION_MODES.includes(value as ExecutionMode)) {
+                setMetadataExecutionModeValue(value as ExecutionMode);
+              }
+              break;
+            case 'checkout_enabled':
+              if (value === 'true' || value === 'false') {
+                setMetadataCheckoutEnabledValue(value === 'true');
+              }
+              break;
+            case 'merge_policy':
+              if (MERGE_POLICIES.includes(value as MergePolicy)) {
+                setMetadataMergePolicyValue(value as MergePolicy);
+              }
+              break;
+            case 'merge_strategy':
+              if (MERGE_STRATEGIES.includes(value as MergeStrategy)) {
+                setMetadataMergeStrategyValue(value as MergeStrategy);
+              }
+              break;
+            case 'open_pr_before_merge':
+              if (value === 'true' || value === 'false') {
+                setMetadataOpenPrBeforeMergeValue(value === 'true');
+              }
+              break;
+            case 'target_workdir':
+              setMetadataWorkdirValue(value);
+              break;
+            case 'schedule':
+              setMetadataScheduleValue(value);
+              break;
+            case 'agent':
+              setMetadataAgentValue(value);
+              break;
             case 'model':
               setMetadataModelValue(value);
               break;
@@ -2793,6 +3034,12 @@ export function App({
         prefillStatus: EntryStatus = 'pending',
         prefillFeatureId: string = '',
         prefillBranch: string = '',
+        prefillMergeTargetBranch: string = '',
+        prefillExecutionMode: ExecutionMode = 'worktree',
+        prefillCheckoutEnabled: boolean = true,
+        prefillMergePolicy: MergePolicy = 'prompt_only',
+        prefillMergeStrategy: MergeStrategy = 'squash',
+        prefillOpenPrBeforeMerge: boolean = false,
         prefillWorkdir: string = '',
         prefillSchedule: string = '',
         prefillProject: string = '',
@@ -2814,11 +3061,17 @@ export function App({
         
         setMetadataTargetTasks(targetTasks);
         setMetadataPopupMode(mode);
-        setMetadataFocusedField('status');
+        setMetadataFocusedField(mode === 'feature' ? 'execution_mode' : 'status');
         setMetadataStatusValue(prefillStatus);
         setMetadataStatusIndex(ENTRY_STATUSES.indexOf(prefillStatus));
         setMetadataFeatureIdValue(prefillFeatureId);
         setMetadataBranchValue(prefillBranch);
+        setMetadataMergeTargetBranchValue(prefillMergeTargetBranch);
+        setMetadataExecutionModeValue(prefillExecutionMode);
+        setMetadataCheckoutEnabledValue(prefillCheckoutEnabled);
+        setMetadataMergePolicyValue(prefillMergePolicy);
+        setMetadataMergeStrategyValue(prefillMergeStrategy);
+        setMetadataOpenPrBeforeMergeValue(prefillOpenPrBeforeMerge);
         setMetadataWorkdirValue(prefillWorkdir);
         setMetadataScheduleValue(prefillSchedule);
         setMetadataProjectValue(prefillProject);
@@ -2830,6 +3083,12 @@ export function App({
           status: prefillStatus,
           feature_id: prefillFeatureId,
           git_branch: prefillBranch,
+          merge_target_branch: prefillMergeTargetBranch,
+          execution_mode: prefillExecutionMode,
+          checkout_enabled: prefillCheckoutEnabled,
+          merge_policy: prefillMergePolicy,
+          merge_strategy: prefillMergeStrategy,
+          open_pr_before_merge: prefillOpenPrBeforeMerge,
           target_workdir: prefillWorkdir,
           schedule: prefillSchedule,
           project: prefillProject,
@@ -2856,6 +3115,12 @@ export function App({
             first.status,
             first.feature_id || '',
             first.gitBranch || '',
+            first.mergeTargetBranch || '',
+            first.executionMode || 'worktree',
+            first.checkoutEnabled ?? true,
+            first.mergePolicy || 'prompt_only',
+            first.mergeStrategy || 'squash',
+            first.openPrBeforeMerge ?? false,
             first.resolvedWorkdir || first.workdir || '',
             first.schedule || '',
             first.projectId || '',
@@ -2873,7 +3138,25 @@ export function App({
         const ungroupedTasks = getVisibleTasksForUngrouped(tasks);
         if (ungroupedTasks.length > 0) {
           const firstUngrouped = ungroupedTasks[0];
-          openMetadataPopup('feature', ungroupedTasks, 'pending', '', '', '', '', firstUngrouped.projectId || '', '', '');
+          openMetadataPopup(
+            'feature',
+            ungroupedTasks,
+            'pending',
+            '',
+            firstUngrouped.gitBranch || '',
+            firstUngrouped.mergeTargetBranch || '',
+            firstUngrouped.executionMode || 'worktree',
+            firstUngrouped.checkoutEnabled ?? true,
+            firstUngrouped.mergePolicy || 'prompt_only',
+            firstUngrouped.mergeStrategy || 'squash',
+            firstUngrouped.openPrBeforeMerge ?? false,
+            firstUngrouped.resolvedWorkdir || firstUngrouped.workdir || '',
+            firstUngrouped.schedule || '',
+            firstUngrouped.projectId || '',
+            firstUngrouped.agent || '',
+            firstUngrouped.model || '',
+            firstUngrouped.direct_prompt || ''
+          );
         }
         return;
       }
@@ -2885,7 +3168,25 @@ export function App({
         const featureTasks = getVisibleTasksForFeature(tasks, featureId);
         if (featureTasks.length > 0) {
           const firstFeatureTask = featureTasks[0];
-          openMetadataPopup('feature', featureTasks, 'pending', featureId, '', '', '', firstFeatureTask.projectId || '', '', '');
+          openMetadataPopup(
+            'feature',
+            featureTasks,
+            'pending',
+            featureId,
+            firstFeatureTask.gitBranch || '',
+            firstFeatureTask.mergeTargetBranch || '',
+            firstFeatureTask.executionMode || 'worktree',
+            firstFeatureTask.checkoutEnabled ?? true,
+            firstFeatureTask.mergePolicy || 'prompt_only',
+            firstFeatureTask.mergeStrategy || 'squash',
+            firstFeatureTask.openPrBeforeMerge ?? false,
+            firstFeatureTask.resolvedWorkdir || firstFeatureTask.workdir || '',
+            firstFeatureTask.schedule || '',
+            firstFeatureTask.projectId || '',
+            firstFeatureTask.agent || '',
+            firstFeatureTask.model || '',
+            firstFeatureTask.direct_prompt || ''
+          );
         }
         return;
       }
@@ -2903,8 +3204,20 @@ export function App({
               featureTasks,
               firstTask.status,
               featureId,
-               '', '', '', firstTask.projectId || '', '', ''
-             );
+              firstTask.gitBranch || '',
+              firstTask.mergeTargetBranch || '',
+              firstTask.executionMode || 'worktree',
+              firstTask.checkoutEnabled ?? true,
+              firstTask.mergePolicy || 'prompt_only',
+              firstTask.mergeStrategy || 'squash',
+              firstTask.openPrBeforeMerge ?? false,
+              firstTask.resolvedWorkdir || firstTask.workdir || '',
+              firstTask.schedule || '',
+              firstTask.projectId || '',
+              firstTask.agent || '',
+              firstTask.model || '',
+              firstTask.direct_prompt || ''
+            );
           }
           return;
         }
@@ -2918,6 +3231,12 @@ export function App({
           selectedTask.status,
           selectedTask.feature_id || '',
           selectedTask.gitBranch || '',
+          selectedTask.mergeTargetBranch || '',
+          selectedTask.executionMode || 'worktree',
+          selectedTask.checkoutEnabled ?? true,
+          selectedTask.mergePolicy || 'prompt_only',
+          selectedTask.mergeStrategy || 'squash',
+          selectedTask.openPrBeforeMerge ?? false,
           selectedTask.resolvedWorkdir || selectedTask.workdir || '',
           selectedTask.schedule || '',
           selectedTask.projectId || '',
@@ -3408,7 +3727,7 @@ export function App({
         <Text>  <Text bold>f</Text>         - Mark selected feature header for checkout</Text>
         <Text>  <Text bold>x</Text>         - Execute selected task/feature</Text>
         <Text>  <Text bold>X</Text>         - Cancel running selected task</Text>
-        <Text>  <Text bold>s</Text>         - Edit selected task metadata</Text>
+        <Text>  <Text bold>s</Text>         - Edit task metadata / feature settings</Text>
         <Text />
         <Text bold dimColor>Cron panel shortcuts (cron view):</Text>
         <Text>  <Text bold>Enter</Text>     - Show cron details panel</Text>
@@ -3449,6 +3768,12 @@ export function App({
           statusValue={metadataStatusValue}
           featureIdValue={metadataFeatureIdValue}
           branchValue={metadataBranchValue}
+          mergeTargetBranchValue={metadataMergeTargetBranchValue}
+          executionModeValue={metadataExecutionModeValue}
+          checkoutEnabledValue={metadataCheckoutEnabledValue}
+          mergePolicyValue={metadataMergePolicyValue}
+          mergeStrategyValue={metadataMergeStrategyValue}
+          openPrBeforeMergeValue={metadataOpenPrBeforeMergeValue}
           workdirValue={metadataWorkdirValue}
           scheduleValue={metadataScheduleValue}
           projectValue={metadataProjectValue}

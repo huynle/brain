@@ -16,7 +16,14 @@ import type {
   RunnerEvent,
   EventHandler,
 } from "./types";
-import type { ResolvedTask, EntryStatus, CronRun } from "../core/types";
+import type {
+  ResolvedTask,
+  EntryStatus,
+  CronRun,
+  MergePolicy,
+  MergeStrategy,
+  ExecutionMode as TaskExecutionMode,
+} from "../core/types";
 import { getRunnerConfig, isDebugEnabled } from "./config";
 import { ApiClient, getApiClient } from "./api-client";
 import { ProcessManager, getProcessManager, CompletionStatus } from "./process-manager";
@@ -2910,10 +2917,10 @@ export class TaskRunner {
       feature_id?: string;
       git_branch?: string;
       merge_target_branch?: string;
-      merge_policy?: "auto_merge" | "manual" | "none";
-      merge_strategy?: "squash" | "merge" | "rebase";
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
       open_pr_before_merge?: boolean;
-      execution_mode?: "worktree" | "in_branch";
+      execution_mode?: TaskExecutionMode;
       checkout_enabled?: boolean;
       target_workdir?: string;
       agent?: string;

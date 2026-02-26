@@ -6,7 +6,13 @@
  */
 
 import { z } from "@hono/zod-openapi";
-import { ENTRY_TYPES, ENTRY_STATUSES, PRIORITIES, TASK_CLASSIFICATIONS } from "../core/types";
+import {
+  ENTRY_TYPES,
+  ENTRY_STATUSES,
+  GENERATED_KINDS,
+  PRIORITIES,
+  TASK_CLASSIFICATIONS,
+} from "../core/types";
 import { parseCronExpression } from "../core/cron-service";
 
 // =============================================================================
@@ -26,6 +32,11 @@ export const EntryStatusSchema = z.enum(ENTRY_STATUSES).openapi({
 export const PrioritySchema = z.enum(PRIORITIES).openapi({
   description: "Priority level",
   example: "high",
+});
+
+export const GeneratedKindSchema = z.enum(GENERATED_KINDS).openapi({
+  description: "Kind of generated task metadata",
+  example: "gap_task",
 });
 
 export const TaskClassificationSchema = z.enum(TASK_CLASSIFICATIONS).openapi({
@@ -162,6 +173,19 @@ export const BrainEntrySchema = z.object({
       }
     }
   }),
+  generated: z.boolean().optional().openapi({ description: "Whether this entry was generated" }),
+  generated_kind: GeneratedKindSchema.optional().openapi({
+    description: "Category of generated entry metadata",
+    example: "feature_checkout",
+  }),
+  generated_key: z.string().optional().openapi({
+    description: "Stable key that identifies generated entry source",
+    example: "feature-checkout:missing-tests",
+  }),
+  generated_by: z.string().optional().openapi({
+    description: "Generator identity responsible for creating this entry",
+    example: "feature-checkout",
+  }),
 }).openapi("BrainEntry");
 
 export const BrainEntrySummarySchema = z.object({
@@ -228,6 +252,19 @@ export const CreateEntryRequestSchema = z.object({
   model: z.string().optional().openapi({ 
     description: "Override the default model (format: 'provider/model-id')",
     example: "anthropic/claude-sonnet-4-20250514" 
+  }),
+  generated: z.boolean().optional().openapi({ description: "Whether this entry was generated" }),
+  generated_kind: GeneratedKindSchema.optional().openapi({
+    description: "Category of generated entry metadata",
+    example: "gap_task",
+  }),
+  generated_key: z.string().optional().openapi({
+    description: "Stable key that identifies generated entry source",
+    example: "feature-checkout:missing-tests",
+  }),
+  generated_by: z.string().optional().openapi({
+    description: "Generator identity responsible for creating this entry",
+    example: "feature-checkout",
   }),
 }).openapi("CreateEntryRequest");
 
@@ -299,9 +336,22 @@ export const UpdateEntryRequestSchema = z.object({
   run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
     description: "Durable run completion markers keyed by run_id"
   }),
+  generated: z.boolean().optional().openapi({ description: "Whether this entry was generated" }),
+  generated_kind: GeneratedKindSchema.optional().openapi({
+    description: "Category of generated entry metadata",
+    example: "other",
+  }),
+  generated_key: z.string().optional().openapi({
+    description: "Stable key that identifies generated entry source",
+    example: "task-abc12def",
+  }),
+  generated_by: z.string().optional().openapi({
+    description: "Generator identity responsible for creating this entry",
+    example: "manual",
+  }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, or run_finalizations must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -547,6 +597,19 @@ export const TaskSchema = z.object({
   model: z.string().nullable().openapi({ 
     description: "Override model for this task",
     example: "anthropic/claude-sonnet-4-20250514" 
+  }),
+  generated: z.boolean().optional().openapi({ description: "Whether this task was generated" }),
+  generated_kind: GeneratedKindSchema.optional().openapi({
+    description: "Category of generated task metadata",
+    example: "gap_task",
+  }),
+  generated_key: z.string().optional().openapi({
+    description: "Stable key that identifies generated task source",
+    example: "feature-checkout:missing-tests",
+  }),
+  generated_by: z.string().optional().openapi({
+    description: "Generator identity responsible for creating this task",
+    example: "feature-checkout",
   }),
 }).openapi("Task");
 

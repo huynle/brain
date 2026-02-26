@@ -930,6 +930,77 @@ Task content.
     });
   });
 
+  describe("generated metadata fields", () => {
+    test("save() writes generated metadata to frontmatter and recall() returns it", async () => {
+      const result = await service.save({
+        type: "task",
+        title: "Generated Metadata Task",
+        content: "Generated task content",
+        generated: true,
+        generated_kind: "gap_task",
+        generated_key: "feature-checkout:missing-tests",
+        generated_by: "feature-checkout",
+      });
+
+      const fullPath = join(TEST_DIR, result.path);
+      const savedContent = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(savedContent);
+
+      expect(frontmatter.generated).toBe(true);
+      expect(frontmatter.generated_kind).toBe("gap_task");
+      expect(frontmatter.generated_key).toBe("feature-checkout:missing-tests");
+      expect(frontmatter.generated_by).toBe("feature-checkout");
+
+      const recalled = await service.recall(result.path);
+      expect(recalled.generated).toBe(true);
+      expect(recalled.generated_kind).toBe("gap_task");
+      expect(recalled.generated_key).toBe("feature-checkout:missing-tests");
+      expect(recalled.generated_by).toBe("feature-checkout");
+    });
+
+    test("update() patches generated metadata fields and preserves them", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const testFile = join(taskDir, "generated-update-test.md");
+      const testPath = "projects/test-project/task/generated-update-test.md";
+
+      writeFileSync(
+        testFile,
+        `---
+title: Generated Update Task
+type: task
+status: pending
+generated: true
+generated_kind: feature_checkout
+generated_key: feature-checkout:task-1
+generated_by: feature-checkout
+---
+
+Task content.
+`
+      );
+
+      const updated = await service.update(testPath, {
+        generated: false,
+        generated_kind: "other",
+        generated_key: "task-abc12def",
+        generated_by: "manual",
+      });
+
+      expect(updated.generated).toBe(false);
+      expect(updated.generated_kind).toBe("other");
+      expect(updated.generated_key).toBe("task-abc12def");
+      expect(updated.generated_by).toBe("manual");
+
+      const preserved = await service.update(testPath, { status: "in_progress" });
+      expect(preserved.generated).toBe(false);
+      expect(preserved.generated_kind).toBe("other");
+      expect(preserved.generated_key).toBe("task-abc12def");
+      expect(preserved.generated_by).toBe("manual");
+    });
+  });
+
   describe("update() field preservation", () => {
     let taskPath: string;
 

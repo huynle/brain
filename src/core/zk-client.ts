@@ -13,6 +13,7 @@ import type {
   EntryType,
   EntryStatus,
   Priority,
+  GeneratedKind,
   RunFinalization,
 } from "./types";
 import { ENTRY_TYPES, ENTRY_STATUSES } from "./types";
@@ -672,6 +673,34 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const generatedMatch = line.match(/^generated:\s*(true|false)\s*$/);
+    if (generatedMatch) {
+      frontmatter.generated = generatedMatch[1] === "true";
+      inTags = false;
+      continue;
+    }
+
+    const generatedKindMatch = line.match(/^generated_kind:\s*(\w+)\s*$/);
+    if (generatedKindMatch) {
+      frontmatter.generated_kind = generatedKindMatch[1];
+      inTags = false;
+      continue;
+    }
+
+    const generatedKeyMatch = line.match(/^generated_key:\s*(.+)$/);
+    if (generatedKeyMatch) {
+      frontmatter.generated_key = parseYamlStringValue(generatedKeyMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    const generatedByMatch = line.match(/^generated_by:\s*(.+)$/);
+    if (generatedByMatch) {
+      frontmatter.generated_by = parseYamlStringValue(generatedByMatch[1]);
+      inTags = false;
+      continue;
+    }
+
     // Handle tags array
     if (line.match(/^tags:\s*$/)) {
       inTags = true;
@@ -1258,6 +1287,11 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.agent) lines.push(`agent: ${escapeYamlValue(fm.agent as string)}`);
   if (fm.model) lines.push(`model: ${escapeYamlValue(fm.model as string)}`);
 
+  if (fm.generated !== undefined) lines.push(`generated: ${fm.generated}`);
+  if (fm.generated_kind) lines.push(`generated_kind: ${fm.generated_kind}`);
+  if (fm.generated_key) lines.push(`generated_key: ${escapeYamlValue(fm.generated_key as string)}`);
+  if (fm.generated_by) lines.push(`generated_by: ${escapeYamlValue(fm.generated_by as string)}`);
+
   // Session traceability (unified sessions map)
   if (fm.sessions && typeof fm.sessions === "object" && !Array.isArray(fm.sessions)) {
     const sessionMap = fm.sessions as Record<
@@ -1333,6 +1367,11 @@ export interface GenerateFrontmatterOptions {
   direct_prompt?: string;
   agent?: string;
   model?: string;
+  // Generated task metadata
+  generated?: boolean;
+  generated_kind?: GeneratedKind;
+  generated_key?: string;
+  generated_by?: string;
   // Session traceability
   sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
   run_finalizations?: Record<string, RunFinalization>;
@@ -1483,6 +1522,19 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.model) {
     lines.push(`model: ${escapeYamlValue(options.model)}`);
+  }
+
+  if (options.generated !== undefined) {
+    lines.push(`generated: ${options.generated}`);
+  }
+  if (options.generated_kind) {
+    lines.push(`generated_kind: ${options.generated_kind}`);
+  }
+  if (options.generated_key) {
+    lines.push(`generated_key: ${options.generated_key}`);
+  }
+  if (options.generated_by) {
+    lines.push(`generated_by: ${escapeYamlValue(options.generated_by)}`);
   }
 
   // Session traceability (unified sessions map)

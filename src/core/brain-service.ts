@@ -241,6 +241,8 @@ export class BrainService {
     // agent and model: sanitize as simple values (no newlines)
     if (request.agent) request.agent = sanitizeSimpleValue(request.agent);
     if (request.model) request.model = sanitizeSimpleValue(request.model);
+    if (request.generated_key) request.generated_key = sanitizeSimpleValue(request.generated_key);
+    if (request.generated_by) request.generated_by = sanitizeSimpleValue(request.generated_by);
 
     const entryType = request.type;
     // Tasks default to 'draft' status (user reviews before promoting to 'pending')
@@ -559,6 +561,19 @@ export class BrainService {
         zkArgs.push("--extra", `model=${request.model}`);
       }
 
+      if (request.generated !== undefined) {
+        zkArgs.push("--extra", `generated=${request.generated}`);
+      }
+      if (request.generated_kind) {
+        zkArgs.push("--extra", `generated_kind=${request.generated_kind}`);
+      }
+      if (request.generated_key) {
+        zkArgs.push("--extra", `generated_key=${request.generated_key}`);
+      }
+      if (request.generated_by) {
+        zkArgs.push("--extra", `generated_by=${request.generated_by}`);
+      }
+
       // Target workdir for task execution
       if (request.target_workdir) {
         zkArgs.push("--extra", `target_workdir=${request.target_workdir}`);
@@ -663,6 +678,11 @@ export class BrainService {
         // Session traceability
         sessions: request.sessions,
         run_finalizations: request.run_finalizations,
+        // Generated metadata
+        generated: request.generated,
+        generated_kind: request.generated_kind,
+        generated_key: request.generated_key,
+        generated_by: request.generated_by,
         // Cron metadata
         schedule: request.schedule,
         next_run: request.next_run,
@@ -871,6 +891,11 @@ export class BrainService {
       sessions: frontmatter.sessions as Record<string, SessionInfo> | undefined,
       run_finalizations:
         frontmatter.run_finalizations as Record<string, RunFinalization> | undefined,
+      // Generated metadata
+      generated: frontmatter.generated as boolean | undefined,
+      generated_kind: frontmatter.generated_kind as import("./types").GeneratedKind | undefined,
+      generated_key: frontmatter.generated_key as string | undefined,
+      generated_by: frontmatter.generated_by as string | undefined,
       // Cron metadata
       schedule: frontmatter.schedule as string | undefined,
       next_run: frontmatter.next_run as string | undefined,
@@ -910,6 +935,10 @@ export class BrainService {
       request.model === undefined &&
       request.sessions === undefined &&
       request.run_finalizations === undefined &&
+      request.generated === undefined &&
+      request.generated_kind === undefined &&
+      request.generated_key === undefined &&
+      request.generated_by === undefined &&
       request.schedule === undefined &&
       request.next_run === undefined &&
       request.max_runs === undefined &&
@@ -920,7 +949,7 @@ export class BrainService {
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
       );
     }
 
@@ -1039,6 +1068,19 @@ export class BrainService {
     }
     if (request.run_finalizations !== undefined) {
       updatedFrontmatter.run_finalizations = request.run_finalizations;
+    }
+
+    if (request.generated !== undefined) {
+      updatedFrontmatter.generated = request.generated;
+    }
+    if (request.generated_kind !== undefined) {
+      updatedFrontmatter.generated_kind = request.generated_kind;
+    }
+    if (request.generated_key !== undefined) {
+      updatedFrontmatter.generated_key = request.generated_key;
+    }
+    if (request.generated_by !== undefined) {
+      updatedFrontmatter.generated_by = request.generated_by;
     }
 
     // Update sessions with APPEND semantics (merge by session ID)

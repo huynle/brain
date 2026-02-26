@@ -9,8 +9,8 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
-import type { Task } from "./types";
+import { TaskService, normalizeDependencyRef, findDependents, mapZkNoteToTask } from "./task-service";
+import type { Task, ZkNote } from "./types";
 
 // =============================================================================
 // Test Helpers
@@ -475,6 +475,50 @@ describe("TaskService", () => {
       const result = findDependents("task-1", "proj-a", tasksByProject);
       expect(result).toHaveLength(1);
       expect(result[0].depRef).toBe("projects/proj-a/task/task-1");
+    });
+  });
+
+  describe("mapZkNoteToTask()", () => {
+    test("maps generated metadata fields from note frontmatter", () => {
+      const note: ZkNote = {
+        path: "projects/demo/task/abc12def.md",
+        title: "Generated Task",
+        tags: ["task"],
+        created: "2026-01-01T00:00:00.000Z",
+        metadata: {
+          status: "pending",
+          generated: true,
+          generated_kind: "gap_task",
+          generated_key: "feature-checkout:missing-tests",
+          generated_by: "feature-checkout",
+        },
+      };
+
+      const task = mapZkNoteToTask(note);
+
+      expect(task.generated).toBe(true);
+      expect(task.generated_kind).toBe("gap_task");
+      expect(task.generated_key).toBe("feature-checkout:missing-tests");
+      expect(task.generated_by).toBe("feature-checkout");
+    });
+
+    test("keeps generated metadata optional when not present", () => {
+      const note: ZkNote = {
+        path: "projects/demo/task/abc12def.md",
+        title: "Regular Task",
+        tags: ["task"],
+        created: "2026-01-01T00:00:00.000Z",
+        metadata: {
+          status: "pending",
+        },
+      };
+
+      const task = mapZkNoteToTask(note);
+
+      expect(task.generated).toBeUndefined();
+      expect(task.generated_kind).toBeUndefined();
+      expect(task.generated_key).toBeUndefined();
+      expect(task.generated_by).toBeUndefined();
     });
   });
 });

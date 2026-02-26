@@ -52,6 +52,9 @@ export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 export const PRIORITIES = ["high", "medium", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
+export const GENERATED_KINDS = ["feature_checkout", "gap_task", "other"] as const;
+export type GeneratedKind = (typeof GENERATED_KINDS)[number];
+
 export type SessionInfo = {
   timestamp: string;
   cron_id?: string;
@@ -151,6 +154,12 @@ export interface BrainEntry {
   sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
   // Durable run completion markers keyed by run_id
   run_finalizations?: Record<string, RunFinalization>;
+
+  // Generated task metadata
+  generated?: boolean;
+  generated_kind?: GeneratedKind;
+  generated_key?: string;
+  generated_by?: string;
 }
 
 // =============================================================================
@@ -199,6 +208,12 @@ export interface CreateEntryRequest {
   // Session traceability
   sessions?: Record<string, SessionInfo>;
   run_finalizations?: Record<string, RunFinalization>;
+
+  // Generated task metadata
+  generated?: boolean;
+  generated_kind?: GeneratedKind;
+  generated_key?: string;
+  generated_by?: string;
 }
 
 export interface CreateEntryResponse {
@@ -241,6 +256,12 @@ export interface UpdateEntryRequest {
   // Session traceability (append semantics - new entries are merged by session ID)
   sessions?: Record<string, SessionInfo>;
   run_finalizations?: Record<string, RunFinalization>;
+
+  // Generated task metadata
+  generated?: boolean;
+  generated_kind?: GeneratedKind;
+  generated_key?: string;
+  generated_by?: string;
 }
 
 export interface ListEntriesRequest {
@@ -404,6 +425,12 @@ export interface Task {
 
   // Session traceability
   sessions: Record<string, SessionInfo>; // Map of session ID to session metadata
+
+  // Generated task metadata
+  generated?: boolean;
+  generated_kind?: GeneratedKind;
+  generated_key?: string;
+  generated_by?: string;
 
   // Raw task frontmatter for UI rendering/debugging
   frontmatter?: Record<string, unknown>;

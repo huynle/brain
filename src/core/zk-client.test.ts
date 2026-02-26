@@ -94,6 +94,32 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("workdir: projects/my-project");
     });
 
+    test("includes generated metadata fields when provided", () => {
+      const fm = generateFrontmatter({
+        title: "Generated task",
+        type: "task",
+        generated: true,
+        generated_kind: "gap_task",
+        generated_key: "feature-checkout:missing-tests",
+        generated_by: "feature-checkout",
+      } as any);
+
+      expect(fm).toContain("generated: true");
+      expect(fm).toContain("generated_kind: gap_task");
+      expect(fm).toContain("generated_key: feature-checkout:missing-tests");
+      expect(fm).toContain("generated_by: feature-checkout");
+    });
+
+    test("preserves explicit generated false in generated frontmatter", () => {
+      const fm = generateFrontmatter({
+        title: "Manual task",
+        type: "task",
+        generated: false,
+      } as any);
+
+      expect(fm).toContain("generated: false");
+    });
+
     test("includes git_remote when provided", () => {
       const fm = generateFrontmatter({
         title: "Task with git_remote",
@@ -456,6 +482,40 @@ Body`;
     expect(frontmatter.next_run).toBeUndefined();
     expect(frontmatter.cron_ids).toBeUndefined();
     expect(frontmatter.runs).toBeUndefined();
+  });
+
+  test("parses generated metadata fields", () => {
+    const content = `---
+title: Generated Task
+type: task
+status: pending
+generated: true
+generated_kind: gap_task
+generated_key: feature-checkout:missing-tests
+generated_by: feature-checkout
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.generated).toBe(true);
+    expect(frontmatter.generated_kind).toBe("gap_task");
+    expect(frontmatter.generated_key).toBe("feature-checkout:missing-tests");
+    expect(frontmatter.generated_by).toBe("feature-checkout");
+  });
+
+  test("parses explicit generated false", () => {
+    const content = `---
+title: Manual Task
+type: task
+status: pending
+generated: false
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.generated).toBe(false);
   });
 });
 
@@ -1062,6 +1122,36 @@ describe("serializeFrontmatter()", () => {
     expect(result).toContain("    status: completed");
     expect(result).toContain('    finalized_at: "2026-02-25T10:05:00.000Z"');
     expect(result).toContain("    session_id: ses_abc123");
+  });
+
+  test("serializes generated metadata fields", () => {
+    const fm = {
+      title: "Generated Task",
+      type: "task",
+      status: "pending",
+      generated: true,
+      generated_kind: "feature_checkout",
+      generated_key: "feature-checkout:task-1",
+      generated_by: "feature-checkout",
+    };
+
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("generated: true");
+    expect(result).toContain("generated_kind: feature_checkout");
+    expect(result).toContain('generated_key: "feature-checkout:task-1"');
+    expect(result).toContain("generated_by: feature-checkout");
+  });
+
+  test("serializes explicit generated false", () => {
+    const fm = {
+      title: "Manual Task",
+      type: "task",
+      status: "pending",
+      generated: false,
+    };
+
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("generated: false");
   });
 });
 

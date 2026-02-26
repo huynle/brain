@@ -858,6 +858,82 @@ describe("ApiClient", () => {
     });
   });
 
+  describe("markFeatureForCheckout", () => {
+    it("posts checkout endpoint and returns checkout payload", async () => {
+      let capturedUrl: string | undefined;
+      let capturedMethod: string | undefined;
+      const mockResponse = {
+        created: true,
+        generatedKey: "feature-checkout:auth-system:round-1",
+        task: {
+          id: "tsk00001",
+          path: "projects/myproject/task/tsk00001.md",
+          title: "Feature checkout: auth-system",
+          status: "pending" as const,
+          type: "task" as const,
+          content: "Automated feature checkout",
+          tags: ["checkout", "auth-system"],
+          created: "2026-02-26T00:00:00.000Z",
+          modified: "2026-02-26T00:00:00.000Z",
+          link: "[Feature checkout: auth-system](tsk00001)",
+        },
+      };
+
+      globalThis.fetch = ((url: string, options?: RequestInit) => {
+        capturedUrl = url;
+        capturedMethod = options?.method;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      const result = await client.markFeatureForCheckout("myproject", "auth-system");
+
+      expect(capturedUrl).toContain("/api/v1/tasks/myproject/features/auth-system/checkout");
+      expect(capturedMethod).toBe("POST");
+      expect(result.created).toBe(true);
+      expect(result.generatedKey).toBe("feature-checkout:auth-system:round-1");
+      expect(result.task.id).toBe("tsk00001");
+    });
+
+    it("encodes feature ID in checkout endpoint", async () => {
+      let capturedUrl: string | undefined;
+      const mockResponse = {
+        created: false,
+        generatedKey: "feature-checkout:auth-system:round-1",
+        task: {
+          id: "tsk00001",
+          path: "projects/myproject/task/tsk00001.md",
+          title: "Feature checkout: auth-system",
+          status: "pending" as const,
+          type: "task" as const,
+          content: "Automated feature checkout",
+          tags: ["checkout", "auth-system"],
+          created: "2026-02-26T00:00:00.000Z",
+          modified: "2026-02-26T00:00:00.000Z",
+          link: "[Feature checkout: auth-system](tsk00001)",
+        },
+      };
+
+      globalThis.fetch = ((url: string) => {
+        capturedUrl = url;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      await client.markFeatureForCheckout("myproject", "auth/system");
+
+      expect(capturedUrl).toContain("/api/v1/tasks/myproject/features/auth%2Fsystem/checkout");
+    });
+
+    it("throws ApiError on non-ok response", async () => {
+      globalThis.fetch = createMockFetch(() =>
+        Promise.resolve(new Response("Validation error", { status: 400 }))
+      );
+
+      await expect(
+        client.markFeatureForCheckout("myproject", "auth-system")
+      ).rejects.toThrow(ApiError);
+    });
+  });
+
   describe("timeout handling", () => {
     it("throws ApiError with 408 on timeout", async () => {
       // Create client with very short timeout

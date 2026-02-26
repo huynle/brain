@@ -54,6 +54,12 @@ export interface FeatureResponse {
   feature: ApiFeature;
 }
 
+export interface FeatureCheckoutResponse {
+  created: boolean;
+  generatedKey: string;
+  task: BrainEntry;
+}
+
 export type CronEntry = Pick<
   BrainEntry,
   | "id"
@@ -765,6 +771,26 @@ export class ApiClient {
 
     const data = (await response.json()) as FeatureListResponse;
     return data.features;
+  }
+
+  /**
+   * Mark a feature for checkout.
+   * Creates (or returns) an idempotent generated checkout task.
+   */
+  async markFeatureForCheckout(
+    projectId: string,
+    featureId: string
+  ): Promise<FeatureCheckoutResponse> {
+    const response = await this.fetch(
+      `/api/v1/tasks/${projectId}/features/${encodeURIComponent(featureId)}/checkout`,
+      { method: "POST" }
+    );
+
+    if (!response.ok) {
+      throw new ApiError(response.status, await response.text());
+    }
+
+    return (await response.json()) as FeatureCheckoutResponse;
   }
 
   // ========================================

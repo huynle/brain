@@ -94,6 +94,21 @@ describe("installPlugin", () => {
 			"Treat \"not found/already deleted\" as success to keep the flow idempotent.",
 		);
 		expect(checkoutSkillContent).toContain("- remote branch deletion outcome");
+		expect(checkoutSkillContent).toContain("- `merge_policy`: `auto_merge`");
+		expect(checkoutSkillContent).toContain("- `merge_strategy`: `squash`");
+		expect(checkoutSkillContent).toContain("- `open_pr_before_merge`: `false`");
+		expect(checkoutSkillContent).toContain(
+			"If `open_pr_before_merge=true`, run the same PR flow as `auto_pr`",
+		);
+		expect(checkoutSkillContent).toContain(
+			"Otherwise perform direct merge with configured strategy (default squash)",
+		);
+		expect(checkoutSkillContent).toContain(
+			"Push resulting target branch update immediately",
+		);
+		expect(checkoutSkillContent).toContain(
+			"Clean up execution worktree/branch after successful merge",
+		);
 
 		// Generated metadata contract in auto-generated task examples
 		expect(commandContent).toContain("generated: true");

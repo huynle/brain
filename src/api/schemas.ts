@@ -874,6 +874,18 @@ export const FeatureListResponseSchema = z.object({
   }).optional().openapi({ description: "Aggregate statistics across all features" }),
 }).openapi("FeatureListResponse");
 
+export const FeatureCheckoutResponseSchema = z.object({
+  created: z.boolean().openapi({
+    description: "True when a new checkout task was created, false when an existing task was reused",
+    example: true,
+  }),
+  generatedKey: z.string().openapi({
+    description: "Stable generated key used for idempotent checkout task creation",
+    example: "feature-checkout:auth-system:round-1",
+  }),
+  task: CreateEntryResponseSchema,
+}).openapi("FeatureCheckoutResponse");
+
 // =============================================================================
 // Task Status Polling Schemas
 // =============================================================================

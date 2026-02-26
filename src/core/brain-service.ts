@@ -5,7 +5,7 @@
  * Implements all 17 brain operations.
  */
 
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from "fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, readdirSync } from "fs";
 import { join } from "path";
 import { getConfig } from "../config";
 import {
@@ -19,6 +19,9 @@ import {
   getTrackedEntryCount,
   deleteEntryMeta,
   moveEntryMeta,
+  acquireGeneratedTaskLease,
+  completeGeneratedTaskLease,
+  getGeneratedTaskKey,
 } from "./db";
 import {
   execZk,
@@ -66,6 +69,7 @@ import type {
   SessionInfo,
   RunFinalization,
   ZkNote,
+  Task,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
@@ -91,6 +95,9 @@ export class DependencyValidationError extends Error {
 // =============================================================================
 
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const GENERATED_TASK_LEASE_DURATION_MS = 30_000;
+const GENERATED_TASK_BUSY_WAIT_TIMEOUT_MS = 5_000;
+const GENERATED_TASK_BUSY_POLL_INTERVAL_MS = 50;
 
 function normalizeCronRuns(rawRuns: unknown): import("./types").CronRun[] | undefined {
   if (!Array.isArray(rawRuns)) {
@@ -180,6 +187,12 @@ export interface Section {
   level: number;
   startLine: number;
   endLine: number;
+}
+
+export interface MarkFeatureForCheckoutResult {
+  created: boolean;
+  generatedKey: string;
+  task: CreateEntryResponse;
 }
 
 // =============================================================================
@@ -1354,6 +1367,211 @@ export class BrainService {
       title,
       updatedDependents,
     };
+  }
+
+  async markFeatureForCheckout(
+    projectId: string,
+    featureId: string
+  ): Promise<MarkFeatureForCheckoutResult> {
+    const sanitizedProjectId = sanitizeSimpleValue(projectId);
+    const sanitizedFeatureId = sanitizeSimpleValue(featureId);
+
+    if (!sanitizedProjectId) {
+      throw new Error("projectId is required");
+    }
+    if (!sanitizedFeatureId) {
+      throw new Error("featureId is required");
+    }
+
+    const generatedKey = `feature-checkout:${sanitizedFeatureId}:round-1`;
+    const leaseOwner = `brain-service:${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2, 8)}`;
+    const waitDeadline = Date.now() + GENERATED_TASK_BUSY_WAIT_TIMEOUT_MS;
+
+    while (true) {
+      const lease = acquireGeneratedTaskLease(
+        sanitizedProjectId,
+        generatedKey,
+        leaseOwner,
+        GENERATED_TASK_LEASE_DURATION_MS
+      );
+
+      if (lease.status === "exists" && lease.taskPath) {
+        return {
+          created: false,
+          generatedKey,
+          task: await this.getCreateResponseForPath(lease.taskPath),
+        };
+      }
+
+      if (lease.status === "acquired") {
+        const dependsOn = await this.getNonGeneratedFeatureTaskIds(
+          sanitizedProjectId,
+          sanitizedFeatureId
+        );
+
+        const createdTask = await this.save({
+          type: "task",
+          title: `Feature checkout: ${sanitizedFeatureId}`,
+          content: "Automated feature checkout - verify all acceptance criteria are met.",
+          status: "pending",
+          priority: "medium",
+          project: sanitizedProjectId,
+          feature_id: sanitizedFeatureId,
+          depends_on: dependsOn,
+          tags: ["checkout", sanitizedFeatureId],
+          generated: true,
+          generated_kind: "feature_checkout",
+          generated_key: generatedKey,
+          generated_by: "feature-checkout",
+        });
+
+        const finalized = completeGeneratedTaskLease(
+          sanitizedProjectId,
+          generatedKey,
+          leaseOwner,
+          createdTask.path
+        );
+
+        if (!finalized) {
+          const row = getGeneratedTaskKey(sanitizedProjectId, generatedKey);
+          if (row?.task_path) {
+            return {
+              created: false,
+              generatedKey,
+              task: await this.getCreateResponseForPath(row.task_path),
+            };
+          }
+          throw new Error(
+            `Failed to finalize generated task lease for key ${generatedKey}`
+          );
+        }
+
+        return {
+          created: true,
+          generatedKey,
+          task: createdTask,
+        };
+      }
+
+      if (Date.now() >= waitDeadline) {
+        const row = getGeneratedTaskKey(sanitizedProjectId, generatedKey);
+        if (row?.task_path) {
+          return {
+            created: false,
+            generatedKey,
+            task: await this.getCreateResponseForPath(row.task_path),
+          };
+        }
+        throw new Error(
+          `Timed out waiting for generated task key lease: ${generatedKey}`
+        );
+      }
+
+      await new Promise((resolve) =>
+        setTimeout(resolve, GENERATED_TASK_BUSY_POLL_INTERVAL_MS)
+      );
+    }
+  }
+
+  private async getCreateResponseForPath(path: string): Promise<CreateEntryResponse> {
+    const entry = await this.recall(path);
+    return {
+      id: entry.id,
+      path: entry.path,
+      title: entry.title,
+      type: entry.type,
+      status: entry.status,
+      link: generateMarkdownLink(entry.id, entry.title),
+    };
+  }
+
+  private async getNonGeneratedFeatureTaskIds(
+    projectId: string,
+    featureId: string
+  ): Promise<string[]> {
+    const taskService = new TaskService(this.config, projectId);
+
+    try {
+      const featureTasks = await taskService.getTasksByFeature(projectId, featureId);
+      return this.extractUniqueNonGeneratedTaskIds(featureTasks);
+    } catch {
+      const fallbackTasks = this.getFeatureTasksFromFilesystem(projectId, featureId);
+      return this.extractUniqueNonGeneratedTaskIds(fallbackTasks);
+    }
+  }
+
+  private getFeatureTasksFromFilesystem(projectId: string, featureId: string): Task[] {
+    const taskDir = join(this.config.brainDir, "projects", projectId, "task");
+    if (!existsSync(taskDir)) {
+      return [];
+    }
+
+    const tasks: Task[] = [];
+    const entries = readdirSync(taskDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".md")) {
+        continue;
+      }
+
+      const relPath = `projects/${projectId}/task/${entry.name}`;
+      const fullPath = join(taskDir, entry.name);
+      const raw = readFileSync(fullPath, "utf-8");
+      const { frontmatter } = parseFrontmatter(raw);
+
+      if (frontmatter.feature_id !== featureId) {
+        continue;
+      }
+
+      tasks.push({
+        id: extractIdFromPath(relPath),
+        path: relPath,
+        title: (frontmatter.title as string) || extractIdFromPath(relPath),
+        priority: (frontmatter.priority as Task["priority"]) || "medium",
+        status: (frontmatter.status as Task["status"]) || "pending",
+        depends_on: (frontmatter.depends_on as string[]) || [],
+        cron_ids: (frontmatter.cron_ids as string[]) || [],
+        tags: (frontmatter.tags as string[]) || [],
+        created: (frontmatter.created as string) || "",
+        modified: undefined,
+        target_workdir: (frontmatter.target_workdir as string) || null,
+        workdir: (frontmatter.workdir as string) || null,
+        worktree: null,
+        git_remote: (frontmatter.git_remote as string) || null,
+        git_branch: (frontmatter.git_branch as string) || null,
+        user_original_request: (frontmatter.user_original_request as string) || null,
+        feature_id: (frontmatter.feature_id as string) || undefined,
+        feature_priority: (frontmatter.feature_priority as Task["feature_priority"]) || undefined,
+        feature_depends_on: (frontmatter.feature_depends_on as string[]) || undefined,
+        direct_prompt: (frontmatter.direct_prompt as string) || null,
+        agent: (frontmatter.agent as string) || null,
+        model: (frontmatter.model as string) || null,
+        sessions: (frontmatter.sessions as Task["sessions"]) || {},
+        generated: (frontmatter.generated as boolean) || undefined,
+        generated_kind: (frontmatter.generated_kind as Task["generated_kind"]) || undefined,
+        generated_key: (frontmatter.generated_key as string) || undefined,
+        generated_by: (frontmatter.generated_by as string) || undefined,
+        frontmatter: frontmatter as Record<string, unknown>,
+        projectId: projectId,
+      });
+    }
+
+    return tasks;
+  }
+
+  private extractUniqueNonGeneratedTaskIds(tasks: Task[]): string[] {
+    const ids = new Set<string>();
+
+    for (const task of tasks) {
+      if (task.generated === true) {
+        continue;
+      }
+      if (!task.id) {
+        continue;
+      }
+      ids.add(task.id);
+    }
+
+    return Array.from(ids).sort();
   }
 
   // ========================================

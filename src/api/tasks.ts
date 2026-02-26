@@ -8,6 +8,7 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getTaskService } from "../core/task-service";
 import type { TaskService } from "../core/task-service";
+import { getBrainService } from "../core/brain-service";
 import { computeAndResolveFeatures } from "../core/feature-service";
 import type { TaskClaim } from "../core/types";
 import {
@@ -29,6 +30,7 @@ import {
   ServiceUnavailableResponseSchema,
   ComputedFeatureSchema,
   FeatureListResponseSchema,
+  FeatureCheckoutResponseSchema,
   NotFoundResponseSchema,
   TaskStatusRequestSchema,
   TaskStatusResponseSchema,
@@ -477,6 +479,44 @@ const getFeatureRoute = createRoute({
       content: {
         "application/json": {
           schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// POST /:projectId/features/:featureId/checkout - Mark feature for checkout
+const markFeatureForCheckoutRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/features/{featureId}/checkout",
+  tags: ["Tasks"],
+  summary: "Mark feature for checkout",
+  description: "Creates or returns an idempotent generated checkout task for a feature",
+  request: {
+    params: FeatureIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Checkout task created or already exists",
+      content: {
+        "application/json": {
+          schema: FeatureCheckoutResponseSchema,
+        },
+      },
+    },
+    400: {
+      description: "Invalid project or feature identifier",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
         },
       },
     },
@@ -1190,6 +1230,42 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
             message: error.message,
           },
           503
+        );
+      }
+      throw error;
+    }
+  });
+
+  // POST /:projectId/features/:featureId/checkout - Mark feature for checkout
+  tasks.openapi(markFeatureForCheckoutRoute, async (c) => {
+    const { projectId, featureId } = c.req.valid("param");
+    const brainService = getBrainService();
+
+    try {
+      const result = await brainService.markFeatureForCheckout(projectId, featureId);
+      publishProjectDirty(realtimeHub, projectId);
+      await publishTaskSnapshot(realtimeHub, projectId);
+      return c.json(result, 200);
+    } catch (error) {
+      if (error instanceof Error && error.message.includes("zk CLI not available")) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      if (
+        error instanceof Error
+        && (error.message === "projectId is required" || error.message === "featureId is required")
+      ) {
+        return c.json(
+          {
+            error: "Validation Error",
+            message: error.message,
+          },
+          400
         );
       }
       throw error;

@@ -4,13 +4,15 @@
  * Tests for the core brain service operations.
  */
 
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { BrainService } from "./brain-service";
 import { parseFrontmatter } from "./zk-client";
 import type { BrainConfig } from "./types";
+import { initDatabase, acquireGeneratedTaskLease, completeGeneratedTaskLease } from "./db";
+import { TaskService } from "./task-service";
 
 // =============================================================================
 // Test Setup
@@ -1144,6 +1146,167 @@ Task content.
 
       const updated = await service.recall(testPath);
       expect(updated.run_finalizations).toBeUndefined();
+    });
+  });
+
+  describe("markFeatureForCheckout", () => {
+    beforeEach(() => {
+      const db = initDatabase();
+      db.run("DELETE FROM generated_task_keys");
+    });
+
+    test("creates checkout task with deterministic key and non-generated dependencies", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalSave = service.save;
+
+      const capturedRequests: Array<Record<string, unknown>> = [];
+
+      TaskService.prototype.getTasksByFeature = async () => [
+        {
+          id: "bcd23efg",
+          generated: undefined,
+          feature_id: "feature-a",
+        },
+        {
+          id: "abc12def",
+          generated: false,
+          feature_id: "feature-a",
+        },
+        {
+          id: "abc12def",
+          generated: false,
+          feature_id: "feature-a",
+        },
+        {
+          id: "cde34fgh",
+          generated: true,
+          feature_id: "feature-a",
+        },
+      ] as any;
+
+      service.save = (async (request) => {
+        capturedRequests.push(request as unknown as Record<string, unknown>);
+        return {
+          id: "chk12345",
+          path: "projects/test-project/task/chk12345.md",
+          title: "Feature checkout: feature-a",
+          type: "task",
+          status: "pending",
+          link: "[[chk12345]]",
+        };
+      }) as typeof service.save;
+
+      try {
+        const result = await service.markFeatureForCheckout("test-project", "feature-a");
+
+        expect(result.created).toBe(true);
+        expect(result.generatedKey).toBe("feature-checkout:feature-a:round-1");
+        expect(result.task.path).toBe("projects/test-project/task/chk12345.md");
+        expect(capturedRequests).toHaveLength(1);
+        expect(capturedRequests[0]?.generated).toBe(true);
+        expect(capturedRequests[0]?.generated_kind).toBe("feature_checkout");
+        expect(capturedRequests[0]?.generated_key).toBe("feature-checkout:feature-a:round-1");
+        expect(capturedRequests[0]?.generated_by).toBe("feature-checkout");
+        expect(capturedRequests[0]?.feature_id).toBe("feature-a");
+        expect(capturedRequests[0]?.tags).toEqual(["checkout", "feature-a"]);
+        expect(capturedRequests[0]?.depends_on).toEqual(["abc12def", "bcd23efg"]);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        service.save = originalSave;
+      }
+    });
+
+    test("returns existing checkout task on repeated calls with same generated key", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalSave = service.save;
+      const originalRecall = service.recall;
+
+      let saveCalls = 0;
+      let recallCalls = 0;
+
+      TaskService.prototype.getTasksByFeature = async () => [] as any;
+
+      service.save = (async () => {
+        saveCalls += 1;
+        return {
+          id: "repeat42",
+          path: "projects/test-project/task/repeat42.md",
+          title: "Feature checkout: feature-repeat",
+          type: "task",
+          status: "pending",
+          link: "[[repeat42]]",
+        };
+      }) as typeof service.save;
+
+      service.recall = (async () => {
+        recallCalls += 1;
+        return {
+          id: "repeat42",
+          path: "projects/test-project/task/repeat42.md",
+          title: "Feature checkout: feature-repeat",
+          type: "task",
+          status: "pending",
+          content: "",
+        };
+      }) as typeof service.recall;
+
+      try {
+        const first = await service.markFeatureForCheckout("test-project", "feature-repeat");
+        const second = await service.markFeatureForCheckout("test-project", "feature-repeat");
+
+        expect(first.created).toBe(true);
+        expect(second.created).toBe(false);
+        expect(first.generatedKey).toBe("feature-checkout:feature-repeat:round-1");
+        expect(second.generatedKey).toBe(first.generatedKey);
+        expect(first.task.path).toBe("projects/test-project/task/repeat42.md");
+        expect(second.task.path).toBe(first.task.path);
+        expect(saveCalls).toBe(1);
+        expect(recallCalls).toBe(1);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        service.save = originalSave;
+        service.recall = originalRecall;
+      }
+    });
+
+    test("returns existing checkout task when generated key already finalized", async () => {
+      const generatedKey = "feature-checkout:feature-b:round-1";
+      const existingPath = "projects/test-project/task/exist123.md";
+
+      const lease = acquireGeneratedTaskLease("test-project", generatedKey, "writer", 60_000);
+      expect(lease.status).toBe("acquired");
+      const completed = completeGeneratedTaskLease("test-project", generatedKey, "writer", existingPath);
+      expect(completed).toBe(true);
+
+      const originalSave = service.save;
+      const originalRecall = service.recall;
+
+      let saveCalls = 0;
+      service.save = (async () => {
+        saveCalls += 1;
+        throw new Error("save should not be called when generated task exists");
+      }) as typeof service.save;
+
+      service.recall = (async () => ({
+        id: "exist123",
+        path: existingPath,
+        title: "Feature checkout: feature-b",
+        type: "task",
+        status: "pending",
+        content: "",
+        tags: ["checkout", "feature-b"],
+      })) as typeof service.recall;
+
+      try {
+        const result = await service.markFeatureForCheckout("test-project", "feature-b");
+        expect(result.created).toBe(false);
+        expect(result.generatedKey).toBe(generatedKey);
+        expect(result.task.path).toBe(existingPath);
+        expect(saveCalls).toBe(0);
+      } finally {
+        service.save = originalSave;
+        service.recall = originalRecall;
+      }
     });
   });
 });

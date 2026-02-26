@@ -11,6 +11,22 @@ import { dirname } from "path";
 import { getConfig } from "../config";
 import type { EntryMeta } from "./types";
 
+export interface GeneratedTaskKeyRecord {
+  project_id: string;
+  generated_key: string;
+  lease_owner: string | null;
+  lease_expires_at: number | null;
+  task_path: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface GeneratedTaskLeaseResult {
+  status: "acquired" | "busy" | "exists";
+  record: GeneratedTaskKeyRecord;
+  taskPath?: string;
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -65,6 +81,24 @@ export function initDatabase(): Database {
   );
   db.run(
     "CREATE INDEX IF NOT EXISTS idx_entries_verified ON entries_meta(last_verified)"
+  );
+
+  // Generated task coordination table for idempotent create-or-return flows
+  db.run(`
+    CREATE TABLE IF NOT EXISTS generated_task_keys (
+      project_id TEXT NOT NULL,
+      generated_key TEXT NOT NULL,
+      lease_owner TEXT,
+      lease_expires_at INTEGER,
+      task_path TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, generated_key)
+    )
+  `);
+
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_generated_task_keys_task_path ON generated_task_keys(task_path)"
   );
 
   // OAuth 2.1 tables for MCP authentication
@@ -142,6 +176,96 @@ export function initDatabase(): Database {
  */
 export function getDb(): Database {
   return initDatabase();
+}
+
+export function getGeneratedTaskKey(
+  projectId: string,
+  generatedKey: string
+): GeneratedTaskKeyRecord | null {
+  const database = getDb();
+  const row = database
+    .prepare(
+      "SELECT project_id, generated_key, lease_owner, lease_expires_at, task_path, created_at, updated_at FROM generated_task_keys WHERE project_id = ? AND generated_key = ?"
+    )
+    .get(projectId, generatedKey) as GeneratedTaskKeyRecord | undefined;
+  return row || null;
+}
+
+export function acquireGeneratedTaskLease(
+  projectId: string,
+  generatedKey: string,
+  leaseOwner: string,
+  leaseDurationMs: number
+): GeneratedTaskLeaseResult {
+  const database = getDb();
+  const now = Date.now();
+  const safeLeaseDurationMs = Math.max(1, leaseDurationMs);
+  const leaseExpiresAt = now + safeLeaseDurationMs;
+
+  database.run(
+    "INSERT OR IGNORE INTO generated_task_keys (project_id, generated_key, lease_owner, lease_expires_at, task_path, created_at, updated_at) VALUES (?, ?, ?, ?, NULL, ?, ?)",
+    [projectId, generatedKey, leaseOwner, leaseExpiresAt, now, now]
+  );
+
+  database.run(
+    "UPDATE generated_task_keys SET lease_owner = ?, lease_expires_at = ?, updated_at = ? WHERE project_id = ? AND generated_key = ? AND task_path IS NULL AND (lease_owner IS NULL OR lease_expires_at IS NULL OR lease_expires_at < ? OR lease_owner = ?)",
+    [
+      leaseOwner,
+      leaseExpiresAt,
+      now,
+      projectId,
+      generatedKey,
+      now,
+      leaseOwner,
+    ]
+  );
+
+  const row = getGeneratedTaskKey(projectId, generatedKey);
+  if (!row) {
+    throw new Error("Failed to load generated task key row after lease attempt");
+  }
+
+  if (row.task_path) {
+    return {
+      status: "exists",
+      record: row,
+      taskPath: row.task_path,
+    };
+  }
+
+  if (row.lease_owner === leaseOwner && (row.lease_expires_at ?? 0) >= now) {
+    return {
+      status: "acquired",
+      record: row,
+    };
+  }
+
+  return {
+    status: "busy",
+    record: row,
+  };
+}
+
+export function completeGeneratedTaskLease(
+  projectId: string,
+  generatedKey: string,
+  leaseOwner: string,
+  taskPath: string
+): boolean {
+  const database = getDb();
+  const now = Date.now();
+
+  const result = database.run(
+    "UPDATE generated_task_keys SET task_path = ?, lease_owner = NULL, lease_expires_at = NULL, updated_at = ? WHERE project_id = ? AND generated_key = ? AND task_path IS NULL AND lease_owner = ?",
+    [taskPath, now, projectId, generatedKey, leaseOwner]
+  );
+
+  if (result.changes > 0) {
+    return true;
+  }
+
+  const existing = getGeneratedTaskKey(projectId, generatedKey);
+  return existing?.task_path === taskPath;
 }
 
 /**

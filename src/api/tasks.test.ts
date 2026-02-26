@@ -15,6 +15,7 @@ import { Hono } from "hono";
 import { createTaskRoutes } from "./tasks";
 import { getConfig } from "../config";
 import { createProjectRealtimeHub } from "../core/realtime-hub";
+import { BrainService } from "../core/brain-service";
 
 // =============================================================================
 // Test Setup
@@ -948,6 +949,144 @@ describe("Task API", () => {
 
       // Should handle gracefully - 200 or 503
       expect([200, 503].includes(res.status)).toBe(true);
+    });
+  });
+
+  describe("POST /:projectId/features/:featureId/checkout", () => {
+    test("returns checkout payload and publishes project-scoped events", async () => {
+      const hub = createProjectRealtimeHub();
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes({ realtimeHub: hub }));
+
+      const projectEvents: string[] = [];
+      const otherProjectEvents: string[] = [];
+      hub.subscribe(TEST_PROJECT, ({ event }) => projectEvents.push(event));
+      hub.subscribe("_other-project", ({ event }) => otherProjectEvents.push(event));
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      BrainService.prototype.markFeatureForCheckout = (async () => ({
+        created: true,
+        generatedKey: "feature-checkout:feature-api:round-1",
+        task: {
+          id: "chkapi01",
+          path: `projects/${TEST_PROJECT}/task/chkapi01.md`,
+          title: "Feature checkout: feature-api",
+          type: "task",
+          status: "pending",
+          link: "[[chkapi01]]",
+        },
+      })) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+        });
+
+        expect(res.status).toBe(200);
+        const json = await res.json();
+        expect(json.created).toBe(true);
+        expect(json.generatedKey).toBe("feature-checkout:feature-api:round-1");
+        expect(json.task.path).toBe(`projects/${TEST_PROJECT}/task/chkapi01.md`);
+
+        expect(projectEvents).toContain("project_dirty");
+        expect(projectEvents.some((event) => event === "tasks_snapshot" || event === "error")).toBe(
+          true
+        );
+        expect(otherProjectEvents).toEqual([]);
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
+
+    test("forwards idempotent created flag from coordinator across repeated calls", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      let callCount = 0;
+      BrainService.prototype.markFeatureForCheckout = (async (projectId: string, featureId: string) => {
+        callCount += 1;
+        return {
+          created: callCount === 1,
+          generatedKey: `feature-checkout:${featureId}:round-1`,
+          task: {
+            id: "chkidem1",
+            path: `projects/${projectId}/task/chkidem1.md`,
+            title: `Feature checkout: ${featureId}`,
+            type: "task",
+            status: "pending",
+            link: "[[chkidem1]]",
+          },
+        };
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const first = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-idem/checkout`, {
+          method: "POST",
+        });
+        const second = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-idem/checkout`, {
+          method: "POST",
+        });
+
+        expect(first.status).toBe(200);
+        expect(second.status).toBe(200);
+
+        const firstJson = await first.json();
+        const secondJson = await second.json();
+
+        expect(firstJson.created).toBe(true);
+        expect(secondJson.created).toBe(false);
+        expect(secondJson.generatedKey).toBe(firstJson.generatedKey);
+        expect(secondJson.task.path).toBe(firstJson.task.path);
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
+
+    test("maps coordinator validation errors to 400", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      BrainService.prototype.markFeatureForCheckout = (async () => {
+        throw new Error("featureId is required");
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+        });
+
+        expect(res.status).toBe(400);
+        const json = await res.json();
+        expect(json.error).toBe("Validation Error");
+        expect(json.message).toBe("featureId is required");
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
+
+    test("maps coordinator zk availability errors to 503", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      BrainService.prototype.markFeatureForCheckout = (async () => {
+        throw new Error("zk CLI not available. Install from https://github.com/zk-org/zk");
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+        });
+
+        expect(res.status).toBe(503);
+        const json = await res.json();
+        expect(json.error).toBe("Service Unavailable");
+        expect(json.message).toContain("zk CLI not available");
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
     });
   });
 });

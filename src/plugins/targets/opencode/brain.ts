@@ -500,6 +500,36 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Explicit working directory override for task execution (absolute path). PRIMARY USE CASE: Filing tasks across project boundaries - when an issue is detected in a dependent project, use target_workdir to file the task directly in the parent/target project so it executes there. The task runner will try this directory first before falling back to workdir resolution."
             ),
+          git_branch: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Execution branch override for this task. If not provided, defaults to the current git branch of the working directory."
+            ),
+          merge_target_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Branch to merge completed work into"),
+          merge_policy: tool.schema
+            .enum(["prompt_only", "auto_pr", "auto_merge"])
+            .optional()
+            .describe("Merge behavior at completion (default: auto_merge)"),
+          merge_strategy: tool.schema
+            .enum(["squash", "merge", "rebase"])
+            .optional()
+            .describe("Merge strategy for auto-merge (default: squash)"),
+          open_pr_before_merge: tool.schema
+            .boolean()
+            .optional()
+            .describe("Open PR before merge when enabled (default: false)"),
+          execution_mode: tool.schema
+            .enum(["worktree", "current_branch"])
+            .optional()
+            .describe("Task execution mode (default: worktree)"),
+          checkout_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe("Enable checkout/worktree flow for this task (default: true)"),
           direct_prompt: tool.schema
             .string()
             .optional()
@@ -549,7 +579,21 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               target_workdir: args.type === "task" ? args.target_workdir : undefined,
               workdir: args.type === "task" ? context.workdir : undefined,
               git_remote: args.type === "task" ? context.gitRemote : undefined,
-              git_branch: args.type === "task" ? context.gitBranch : undefined,
+              git_branch:
+                args.type === "task"
+                  ? args.git_branch ?? context.gitBranch
+                  : undefined,
+              merge_target_branch:
+                args.type === "task" ? args.merge_target_branch : undefined,
+              merge_policy: args.type === "task" ? args.merge_policy : undefined,
+              merge_strategy:
+                args.type === "task" ? args.merge_strategy : undefined,
+              open_pr_before_merge:
+                args.type === "task" ? args.open_pr_before_merge : undefined,
+              execution_mode:
+                args.type === "task" ? args.execution_mode : undefined,
+              checkout_enabled:
+                args.type === "task" ? args.checkout_enabled : undefined,
               // User intent for validation
               user_original_request:
                 args.type === "task" ? args.user_original_request : undefined,
@@ -1295,7 +1339,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .optional()
             .describe("Branch to merge completed work into"),
           merge_policy: tool.schema
-            .enum(["auto_merge", "manual", "none"])
+            .enum(["prompt_only", "auto_pr", "auto_merge"])
             .optional()
             .describe("Merge behavior at completion (default: auto_merge)"),
           merge_strategy: tool.schema
@@ -1307,7 +1351,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .optional()
             .describe("Open PR before merge when enabled (default: false)"),
           execution_mode: tool.schema
-            .enum(["worktree", "in_branch"])
+            .enum(["worktree", "current_branch"])
             .optional()
             .describe("Task execution mode (default: worktree)"),
           checkout_enabled: tool.schema

@@ -18,7 +18,7 @@ This skill runs **as a task in the work queue** via `direct_prompt`. It:
 3. Dispatches an explore agent to verify implementation against intent
 4. **Automatically decides** based on coverage results (no user input)
 5. If gaps exist: creates new tasks + a new checkout task (recursive loop)
-6. If no gaps: marks the feature as validated
+6. If no gaps: marks the feature as validated and executes merge intent policy
 
 The checkout task's `direct_prompt` should be:
 ```
@@ -36,7 +36,7 @@ Load the feature-checkout skill and process the checkout task at brain path: <ta
 - [ ] Step 6: For each phase, dispatch explore agent to verify criteria
 - [ ] Step 7: Merge phase results into unified coverage report
 - [ ] Step 8: Auto-decide: all covered → Step 9a, any gaps → Step 9b
-- [ ] Step 9a: If all covered — mark tasks validated, save summary, complete checkout task
+- [ ] Step 9a: If all covered — mark tasks validated, save summary, execute merge policy, complete checkout task
 - [ ] Step 9b: If gaps — create gap tasks + new checkout task, complete this checkout task
 
 ---
@@ -68,6 +68,11 @@ Extract and save — these fields will be copied to any gap tasks:
 - `execution.agent` → the `agent` (will be null for checkout tasks; gap tasks may override)
 - `execution.target_workdir` → the `target_workdir`
 - `execution.git_branch` → the `git_branch`
+- `execution.merge_target_branch` → merge destination branch (default `main` if unset)
+- `execution.merge_policy` → one of `prompt_only`, `auto_pr`, `auto_merge` (default `auto_merge`)
+- `execution.merge_strategy` → one of `squash`, `merge`, `rebase` (default `squash`)
+- `execution.open_pr_before_merge` → whether PR flow is required before merging
+- `execution.execution_mode` and `execution.checkout_enabled` → execution constraints for follow-up tasks
 - `tags` → base tags to propagate
 - `dependencies.depends_on` → raw dependency IDs (the tasks to audit)
 
@@ -238,7 +243,7 @@ Evaluate the coverage report:
 
 The decision is mechanical: zero gaps = validated, any gaps = follow-up tasks. No judgment call needed.
 
-## Step 9a: Feature Validated (All Criteria Covered)
+## Step 9a: Feature Validated + Merge Policy (All Criteria Covered)
 
 1. **Mark dependency tasks as validated:**
 
@@ -260,13 +265,60 @@ brain_save(
 )
 ```
 
-3. **Complete checkout task:**
+3. **Execute merge intent policy** (after validation preconditions):
+
+### Hard Preconditions
+
+Before any merge action, all of the following must be true:
+- Coverage matrix has zero GAP/PARTIAL items
+- Dependency tasks are marked `validated`
+- User-intent validation is explicitly recorded in the coverage report
+- A code review step has been completed and noted in the task output
+
+### Policy Contract
+
+Use metadata defaults when fields are missing:
+- `merge_policy`: `auto_merge`
+- `merge_strategy`: `squash`
+- `merge_target_branch`: `main`
+- `open_pr_before_merge`: `false`
+
+Then apply policy:
+
+- `prompt_only`:
+  - Do not merge automatically
+  - Create a follow-up task with explicit merge instructions and context
+  - Include target branch, strategy, and branch/worktree details in the task content
+
+- `auto_pr`:
+  - Create or open a PR from execution branch to `merge_target_branch`
+  - Merge via configured strategy (default squash) after checks are green
+  - Push resulting target branch update immediately
+  - Clean up execution worktree/branch after successful merge
+
+- `auto_merge`:
+  - If `open_pr_before_merge=true`, run the same PR flow as `auto_pr`
+  - Otherwise perform direct merge with configured strategy (default squash)
+  - Push resulting target branch update immediately
+  - Clean up execution worktree/branch after successful merge
+
+### Audit Output (required)
+
+Append a `## Merge Result` section to the checkout task with:
+- merge target branch
+- merge policy and strategy used
+- whether PR flow was used
+- push result
+- cleanup result
+- final commit/merge reference (hash/PR URL when available)
+
+4. **Complete checkout task:**
 
 ```
 brain_update(
   path: "<task-path>",
   status: "completed",
-  append: "## Result\n\nFeature approved. All <N> criteria covered. <N> tasks validated."
+  append: "## Result\n\nFeature approved. All <N> criteria covered. <N> tasks validated. Merge policy executed and audited in `## Merge Result`."
 )
 ```
 
@@ -308,6 +360,13 @@ brain_save(
   depends_on: ["<THIS CHECKOUT TASK'S ID>"],
   user_original_request: "<the specific part of the original request that wasn't covered>",
   target_workdir: "<same target_workdir>",
+  git_branch: "<same git_branch>",
+  merge_target_branch: "<same merge_target_branch>",
+  merge_policy: "<same merge_policy>",
+  merge_strategy: "<same merge_strategy>",
+  open_pr_before_merge: <same open_pr_before_merge>,
+  execution_mode: "<same execution_mode>",
+  checkout_enabled: <same checkout_enabled>,
   generated: true,
   generated_kind: "gap_task",
   generated_key: "feature-checkout:gap:<feature_id>:criterion-<N>",
@@ -336,6 +395,13 @@ brain_save(
   depends_on: [<all new gap task IDs>],
   direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <NEW_TASK_PATH>. Validate implementation coverage against dependency tasks' user_original_request intent. Start now.",
   target_workdir: "<same target_workdir>",
+  git_branch: "<same git_branch>",
+  merge_target_branch: "<same merge_target_branch>",
+  merge_policy: "<same merge_policy>",
+  merge_strategy: "<same merge_strategy>",
+  open_pr_before_merge: <same open_pr_before_merge>,
+  execution_mode: "<same execution_mode>",
+  checkout_enabled: <same checkout_enabled>,
   generated: true,
   generated_kind: "feature_checkout",
   generated_key: "feature-checkout:<feature_id>:round-<N+1>",
@@ -415,6 +481,13 @@ brain_save(
   depends_on: [<all implementation task IDs>],
   direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <TASK_PATH>. Validate implementation coverage against dependency tasks' user_original_request intent. Start now.",
   target_workdir: "<target_workdir>",
+  git_branch: "<execution_branch>",
+  merge_target_branch: "<merge_target_branch>",
+  merge_policy: "auto_merge",
+  merge_strategy: "squash",
+  open_pr_before_merge: false,
+  execution_mode: "worktree",
+  checkout_enabled: true,
   generated: true,
   generated_kind: "feature_checkout",
   generated_key: "feature-checkout:<feature_id>:round-1",

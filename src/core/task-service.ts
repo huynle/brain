@@ -52,6 +52,17 @@ export function mapZkNoteToTask(note: ZkNote): Task {
     worktree: null, // Deprecated: now derived from git_branch via deriveWorktreePath()
     git_remote: (note.metadata?.git_remote as string) || null,
     git_branch: (note.metadata?.git_branch as string) || null,
+    merge_target_branch: (note.metadata?.merge_target_branch as string) || null,
+    merge_policy:
+      (note.metadata?.merge_policy as Task["merge_policy"]) || "auto_merge",
+    merge_strategy:
+      (note.metadata?.merge_strategy as Task["merge_strategy"]) || "squash",
+    open_pr_before_merge:
+      (note.metadata?.open_pr_before_merge as boolean) || false,
+    execution_mode:
+      (note.metadata?.execution_mode as Task["execution_mode"]) || "worktree",
+    checkout_enabled:
+      (note.metadata?.checkout_enabled as boolean) ?? true,
     user_original_request:
       (note.metadata?.user_original_request as string) || null,
     // Feature grouping fields

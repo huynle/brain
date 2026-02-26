@@ -55,6 +55,15 @@ export type Priority = (typeof PRIORITIES)[number];
 export const GENERATED_KINDS = ["feature_checkout", "gap_task", "other"] as const;
 export type GeneratedKind = (typeof GENERATED_KINDS)[number];
 
+export const MERGE_POLICIES = ["prompt_only", "auto_pr", "auto_merge"] as const;
+export type MergePolicy = (typeof MERGE_POLICIES)[number];
+
+export const MERGE_STRATEGIES = ["squash", "merge", "rebase"] as const;
+export type MergeStrategy = (typeof MERGE_STRATEGIES)[number];
+
+export const EXECUTION_MODES = ["worktree", "current_branch"] as const;
+export type ExecutionMode = (typeof EXECUTION_MODES)[number];
+
 export type SessionInfo = {
   timestamp: string;
   cron_id?: string;
@@ -146,6 +155,12 @@ export interface BrainEntry {
   worktree?: string; // Specific git worktree path (legacy, prefer git_branch + ensureWorktree)
   git_remote?: string; // Git remote URL for verification
   git_branch?: string; // Branch context when task was created
+  merge_target_branch?: string; // Branch to merge completed work into
+  merge_policy?: MergePolicy; // Merge behavior at checkout completion
+  merge_strategy?: MergeStrategy; // Git merge strategy used when auto-merging
+  open_pr_before_merge?: boolean; // Whether to open PR before merge
+  execution_mode?: ExecutionMode; // How task executes: worktree or current branch
+  checkout_enabled?: boolean; // Whether dedicated checkout/worktree flow is enabled
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
@@ -191,6 +206,12 @@ export interface CreateEntryRequest {
   workdir?: string;
   git_remote?: string;
   git_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
+  checkout_enabled?: boolean;
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
@@ -244,6 +265,12 @@ export interface UpdateEntryRequest {
   runs?: CronRun[];
   target_workdir?: string;
   git_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
+  checkout_enabled?: boolean;
   // Feature grouping (for task organization)
   feature_id?: string;
   feature_priority?: Priority;
@@ -411,6 +438,12 @@ export interface Task {
   worktree: string | null; // Specific git worktree path (legacy, prefer git_branch + ensureWorktree)
   git_remote: string | null;
   git_branch: string | null;
+  merge_target_branch?: string | null;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
+  checkout_enabled?: boolean;
   user_original_request: string | null; // Verbatim user request for validation during task completion
 
   // Feature grouping (optional)

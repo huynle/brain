@@ -9,7 +9,10 @@ import { z } from "@hono/zod-openapi";
 import {
   ENTRY_TYPES,
   ENTRY_STATUSES,
+  EXECUTION_MODES,
   GENERATED_KINDS,
+  MERGE_POLICIES,
+  MERGE_STRATEGIES,
   PRIORITIES,
   TASK_CLASSIFICATIONS,
 } from "../core/types";
@@ -37,6 +40,21 @@ export const PrioritySchema = z.enum(PRIORITIES).openapi({
 export const GeneratedKindSchema = z.enum(GENERATED_KINDS).openapi({
   description: "Kind of generated task metadata",
   example: "gap_task",
+});
+
+export const MergePolicySchema = z.enum(MERGE_POLICIES).openapi({
+  description: "Merge behavior at feature/task completion",
+  example: "auto_merge",
+});
+
+export const MergeStrategySchema = z.enum(MERGE_STRATEGIES).openapi({
+  description: "Merge strategy when auto-merging",
+  example: "squash",
+});
+
+export const ExecutionModeSchema = z.enum(EXECUTION_MODES).openapi({
+  description: "Execution mode for feature/task work",
+  example: "worktree",
 });
 
 export const TaskClassificationSchema = z.enum(TASK_CLASSIFICATIONS).openapi({
@@ -142,6 +160,12 @@ export const BrainEntrySchema = z.object({
   workdir: z.string().optional().openapi({ description: "$HOME-relative path to main repo" }),
   git_remote: z.string().optional().openapi({ description: "Git remote URL for verification" }),
   git_branch: z.string().optional().openapi({ description: "Branch context when entry was created" }),
+  merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
+  merge_policy: MergePolicySchema.optional().openapi({ default: "auto_merge" }),
+  merge_strategy: MergeStrategySchema.optional().openapi({ default: "squash" }),
+  open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge when enabled", default: false }),
+  execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for task work", default: "worktree" }),
+  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution for this task", default: true }),
   user_original_request: z.string().optional().openapi({ 
     description: "Verbatim user request for validation during task completion",
     example: "Add a dark mode toggle to the settings page" 
@@ -232,6 +256,12 @@ export const CreateEntryRequestSchema = z.object({
   workdir: z.string().optional(),
   git_remote: z.string().optional(),
   git_branch: z.string().optional(),
+  merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
+  merge_policy: MergePolicySchema.optional().default("auto_merge").openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
+  merge_strategy: MergeStrategySchema.optional().default("squash").openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
+  execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", default: "worktree" }),
+  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
   user_original_request: z.string().optional().openapi({
     description: "Verbatim user request for validation during task completion. Highly recommended for tasks to enable intent verification. Supports multiline content, code blocks, and special characters.",
     example: "Add a dark mode toggle to the settings page with the following requirements:\n- Toggle should persist across sessions\n- Use CSS variables for theming"
@@ -300,6 +330,12 @@ export const UpdateEntryRequestSchema = z.object({
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   target_workdir: z.string().optional().openapi({ description: "Target working directory for the task" }),
   git_branch: z.string().optional().openapi({ description: "Git branch for task execution context" }),
+  merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
+  merge_policy: MergePolicySchema.optional().openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
+  merge_strategy: MergeStrategySchema.optional().openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
+  execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", example: "worktree" }),
+  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution" }),
   // Feature grouping for task organization
   feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" }),
   feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature group" }),
@@ -350,8 +386,8 @@ export const UpdateEntryRequestSchema = z.object({
     example: "manual",
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -581,6 +617,12 @@ export const TaskSchema = z.object({
   workdir: z.string().nullable(),
   git_remote: z.string().nullable(),
   git_branch: z.string().nullable(),
+  merge_target_branch: z.string().nullable().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
+  merge_policy: MergePolicySchema.optional().openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
+  merge_strategy: MergeStrategySchema.optional().openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge", default: false }),
+  execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for this task", default: "worktree" }),
+  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
   // Feature grouping (optional)
   feature_id: z.string().optional().openapi({ description: "Feature group identifier", example: "auth-system" }),
   feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature" }),

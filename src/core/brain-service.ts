@@ -240,6 +240,9 @@ export class BrainService {
     if (request.workdir) request.workdir = sanitizeSimpleValue(request.workdir);
     if (request.git_remote) request.git_remote = sanitizeSimpleValue(request.git_remote);
     if (request.git_branch) request.git_branch = sanitizeSimpleValue(request.git_branch);
+    if (request.merge_target_branch) {
+      request.merge_target_branch = sanitizeSimpleValue(request.merge_target_branch);
+    }
     if (request.project) request.project = sanitizeSimpleValue(request.project);
     if (request.depends_on) {
       request.depends_on = request.depends_on.map(sanitizeDependsOnEntry);
@@ -259,6 +262,10 @@ export class BrainService {
     // agent and model: sanitize as simple values (no newlines)
     if (request.agent) request.agent = sanitizeSimpleValue(request.agent);
     if (request.model) request.model = sanitizeSimpleValue(request.model);
+    if (request.execution_mode) {
+      request.execution_mode = sanitizeSimpleValue(request.execution_mode) as
+        CreateEntryRequest["execution_mode"];
+    }
     if (request.generated_key) request.generated_key = sanitizeSimpleValue(request.generated_key);
     if (request.generated_by) request.generated_by = sanitizeSimpleValue(request.generated_by);
 
@@ -266,6 +273,15 @@ export class BrainService {
     // Tasks default to 'draft' status (user reviews before promoting to 'pending')
     // All other entry types default to 'active'
     const entryStatus = request.status || (entryType === "task" ? "draft" : "active");
+
+    if (entryType === "task") {
+      request.merge_policy ??= "auto_merge";
+      request.merge_strategy ??= "squash";
+      request.open_pr_before_merge ??= false;
+      request.execution_mode ??= "worktree";
+      request.checkout_enabled ??= true;
+    }
+
     const isGlobal = request.global ?? false;
 
     if (entryType === "cron" && request.run_once_at && !request.next_run) {
@@ -555,6 +571,24 @@ export class BrainService {
       if (request.git_branch) {
         zkArgs.push("--extra", `git_branch=${request.git_branch}`);
       }
+      if (request.merge_target_branch) {
+        zkArgs.push("--extra", `merge_target_branch=${request.merge_target_branch}`);
+      }
+      if (request.merge_policy) {
+        zkArgs.push("--extra", `merge_policy=${request.merge_policy}`);
+      }
+      if (request.merge_strategy) {
+        zkArgs.push("--extra", `merge_strategy=${request.merge_strategy}`);
+      }
+      if (request.open_pr_before_merge !== undefined) {
+        zkArgs.push("--extra", `open_pr_before_merge=${request.open_pr_before_merge}`);
+      }
+      if (request.execution_mode) {
+        zkArgs.push("--extra", `execution_mode=${request.execution_mode}`);
+      }
+      if (request.checkout_enabled !== undefined) {
+        zkArgs.push("--extra", `checkout_enabled=${request.checkout_enabled}`);
+      }
 
       // User original request for validation
       // Note: Complex values (newlines, special chars) are handled above by forcing
@@ -682,6 +716,12 @@ export class BrainService {
         workdir: request.workdir,
         git_remote: request.git_remote,
         git_branch: request.git_branch,
+        merge_target_branch: request.merge_target_branch,
+        merge_policy: request.merge_policy,
+        merge_strategy: request.merge_strategy,
+        open_pr_before_merge: request.open_pr_before_merge,
+        execution_mode: request.execution_mode,
+        checkout_enabled: request.checkout_enabled,
         target_workdir: request.target_workdir,
         // User intent for validation
         user_original_request: request.user_original_request,
@@ -910,6 +950,12 @@ export class BrainService {
       workdir: frontmatter.workdir as string | undefined,
       git_remote: frontmatter.git_remote as string | undefined,
       git_branch: frontmatter.git_branch as string | undefined,
+      merge_target_branch: frontmatter.merge_target_branch as string | undefined,
+      merge_policy: frontmatter.merge_policy as BrainEntry["merge_policy"] | undefined,
+      merge_strategy: frontmatter.merge_strategy as BrainEntry["merge_strategy"] | undefined,
+      open_pr_before_merge: frontmatter.open_pr_before_merge as boolean | undefined,
+      execution_mode: frontmatter.execution_mode as BrainEntry["execution_mode"] | undefined,
+      checkout_enabled: frontmatter.checkout_enabled as boolean | undefined,
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
@@ -963,6 +1009,12 @@ export class BrainService {
       request.feature_depends_on === undefined &&
       request.target_workdir === undefined &&
       request.git_branch === undefined &&
+      request.merge_target_branch === undefined &&
+      request.merge_policy === undefined &&
+      request.merge_strategy === undefined &&
+      request.open_pr_before_merge === undefined &&
+      request.execution_mode === undefined &&
+      request.checkout_enabled === undefined &&
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
@@ -982,7 +1034,7 @@ export class BrainService {
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
       );
     }
 
@@ -1064,6 +1116,24 @@ export class BrainService {
     // Update git_branch if provided
     if (request.git_branch !== undefined) {
       updatedFrontmatter.git_branch = request.git_branch;
+    }
+    if (request.merge_target_branch !== undefined) {
+      updatedFrontmatter.merge_target_branch = request.merge_target_branch;
+    }
+    if (request.merge_policy !== undefined) {
+      updatedFrontmatter.merge_policy = request.merge_policy;
+    }
+    if (request.merge_strategy !== undefined) {
+      updatedFrontmatter.merge_strategy = request.merge_strategy;
+    }
+    if (request.open_pr_before_merge !== undefined) {
+      updatedFrontmatter.open_pr_before_merge = request.open_pr_before_merge;
+    }
+    if (request.execution_mode !== undefined) {
+      updatedFrontmatter.execution_mode = request.execution_mode;
+    }
+    if (request.checkout_enabled !== undefined) {
+      updatedFrontmatter.checkout_enabled = request.checkout_enabled;
     }
 
     // Update OpenCode execution options if provided
@@ -1650,6 +1720,16 @@ export class BrainService {
         worktree: null,
         git_remote: (frontmatter.git_remote as string) || null,
         git_branch: (frontmatter.git_branch as string) || null,
+        merge_target_branch: (frontmatter.merge_target_branch as string) || null,
+        merge_policy:
+          (frontmatter.merge_policy as Task["merge_policy"]) || "auto_merge",
+        merge_strategy:
+          (frontmatter.merge_strategy as Task["merge_strategy"]) || "squash",
+        open_pr_before_merge:
+          (frontmatter.open_pr_before_merge as boolean) || false,
+        execution_mode:
+          (frontmatter.execution_mode as Task["execution_mode"]) || "worktree",
+        checkout_enabled: (frontmatter.checkout_enabled as boolean) ?? true,
         user_original_request: (frontmatter.user_original_request as string) || null,
         feature_id: (frontmatter.feature_id as string) || undefined,
         feature_priority: (frontmatter.feature_priority as Task["feature_priority"]) || undefined,

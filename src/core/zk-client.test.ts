@@ -141,6 +141,26 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("git_branch: feature/new-feature");
     });
 
+    test("includes merge intent fields when provided", () => {
+      const fm = generateFrontmatter({
+        title: "Task with merge intent",
+        type: "task",
+        merge_target_branch: "main",
+        merge_policy: "auto_merge",
+        merge_strategy: "squash",
+        open_pr_before_merge: true,
+        execution_mode: "worktree",
+        checkout_enabled: true,
+      });
+
+      expect(fm).toContain("merge_target_branch: main");
+      expect(fm).toContain("merge_policy: auto_merge");
+      expect(fm).toContain("merge_strategy: squash");
+      expect(fm).toContain("open_pr_before_merge: true");
+      expect(fm).toContain("execution_mode: worktree");
+      expect(fm).toContain("checkout_enabled: true");
+    });
+
     test("includes all execution context fields together", () => {
       const fm = generateFrontmatter({
         title: "Full task context",
@@ -502,6 +522,30 @@ Body`;
     expect(frontmatter.generated_kind).toBe("gap_task");
     expect(frontmatter.generated_key).toBe("feature-checkout:missing-tests");
     expect(frontmatter.generated_by).toBe("feature-checkout");
+  });
+
+  test("parses merge intent metadata fields", () => {
+    const content = `---
+title: Merge Intent Task
+type: task
+status: pending
+merge_target_branch: main
+merge_policy: auto_merge
+merge_strategy: squash
+open_pr_before_merge: false
+execution_mode: current_branch
+checkout_enabled: true
+---
+
+Body`;
+
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.merge_target_branch).toBe("main");
+    expect(frontmatter.merge_policy).toBe("auto_merge");
+    expect(frontmatter.merge_strategy).toBe("squash");
+    expect(frontmatter.open_pr_before_merge).toBe(false);
+    expect(frontmatter.execution_mode).toBe("current_branch");
+    expect(frontmatter.checkout_enabled).toBe(true);
   });
 
   test("parses explicit generated false", () => {
@@ -945,6 +989,12 @@ describe("serializeFrontmatter()", () => {
       worktree: "projects/test-feature",
       git_remote: "git@github.com:user/repo",
       git_branch: "feature-branch",
+      merge_target_branch: "main",
+      merge_policy: "auto_merge",
+      merge_strategy: "squash",
+      open_pr_before_merge: false,
+      execution_mode: "worktree",
+      checkout_enabled: true,
       user_original_request: "Do the thing",
     };
     const result = serializeFrontmatter(fm);
@@ -956,6 +1006,12 @@ describe("serializeFrontmatter()", () => {
     expect(result).toContain('  - "dep1"');
     expect(result).toContain("workdir: projects/test");
     expect(result).toContain("git_remote:");
+    expect(result).toContain("merge_target_branch: main");
+    expect(result).toContain("merge_policy: auto_merge");
+    expect(result).toContain("merge_strategy: squash");
+    expect(result).toContain("open_pr_before_merge: false");
+    expect(result).toContain("execution_mode: worktree");
+    expect(result).toContain("checkout_enabled: true");
     expect(result).toContain("user_original_request: Do the thing");
   });
 

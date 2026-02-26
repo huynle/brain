@@ -624,6 +624,48 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const mergeTargetBranchMatch = line.match(/^merge_target_branch:\s*(.+)$/);
+    if (mergeTargetBranchMatch) {
+      frontmatter.merge_target_branch = parseYamlStringValue(mergeTargetBranchMatch[1]);
+      inTags = false;
+      continue;
+    }
+
+    const mergePolicyMatch = line.match(/^merge_policy:\s*(\w+)\s*$/);
+    if (mergePolicyMatch) {
+      frontmatter.merge_policy = mergePolicyMatch[1];
+      inTags = false;
+      continue;
+    }
+
+    const mergeStrategyMatch = line.match(/^merge_strategy:\s*(\w+)\s*$/);
+    if (mergeStrategyMatch) {
+      frontmatter.merge_strategy = mergeStrategyMatch[1];
+      inTags = false;
+      continue;
+    }
+
+    const openPrBeforeMergeMatch = line.match(/^open_pr_before_merge:\s*(true|false)\s*$/);
+    if (openPrBeforeMergeMatch) {
+      frontmatter.open_pr_before_merge = openPrBeforeMergeMatch[1] === "true";
+      inTags = false;
+      continue;
+    }
+
+    const executionModeMatch = line.match(/^execution_mode:\s*(\w+)\s*$/);
+    if (executionModeMatch) {
+      frontmatter.execution_mode = executionModeMatch[1];
+      inTags = false;
+      continue;
+    }
+
+    const checkoutEnabledMatch = line.match(/^checkout_enabled:\s*(true|false)\s*$/);
+    if (checkoutEnabledMatch) {
+      frontmatter.checkout_enabled = checkoutEnabledMatch[1] === "true";
+      inTags = false;
+      continue;
+    }
+
     // Handle user_original_request - can be single-line or multi-line (literal block scalar)
     // Single-line: user_original_request: simple request
     // Multi-line: user_original_request: |
@@ -1273,6 +1315,18 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.workdir) lines.push(`workdir: ${escapeYamlValue(fm.workdir as string)}`);
   if (fm.git_remote) lines.push(`git_remote: ${escapeYamlValue(fm.git_remote as string)}`);
   if (fm.git_branch) lines.push(`git_branch: ${escapeYamlValue(fm.git_branch as string)}`);
+  if (fm.merge_target_branch) {
+    lines.push(`merge_target_branch: ${escapeYamlValue(fm.merge_target_branch as string)}`);
+  }
+  if (fm.merge_policy) lines.push(`merge_policy: ${fm.merge_policy}`);
+  if (fm.merge_strategy) lines.push(`merge_strategy: ${fm.merge_strategy}`);
+  if (fm.open_pr_before_merge !== undefined) {
+    lines.push(`open_pr_before_merge: ${fm.open_pr_before_merge}`);
+  }
+  if (fm.execution_mode) lines.push(`execution_mode: ${fm.execution_mode}`);
+  if (fm.checkout_enabled !== undefined) {
+    lines.push(`checkout_enabled: ${fm.checkout_enabled}`);
+  }
   if (fm.target_workdir) lines.push(`target_workdir: ${escapeYamlValue(fm.target_workdir as string)}`);
 
   // User original request - use multiline format if contains newlines
@@ -1360,6 +1414,12 @@ export interface GenerateFrontmatterOptions {
   workdir?: string;
   git_remote?: string;
   git_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: "prompt_only" | "auto_pr" | "auto_merge";
+  merge_strategy?: "squash" | "merge" | "rebase";
+  open_pr_before_merge?: boolean;
+  execution_mode?: "worktree" | "current_branch";
+  checkout_enabled?: boolean;
   target_workdir?: string;
   // User intent for validation
   user_original_request?: string;
@@ -1503,6 +1563,24 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.git_branch) {
     lines.push(`git_branch: ${escapeYamlValue(options.git_branch)}`);
+  }
+  if (options.merge_target_branch) {
+    lines.push(`merge_target_branch: ${escapeYamlValue(options.merge_target_branch)}`);
+  }
+  if (options.merge_policy) {
+    lines.push(`merge_policy: ${options.merge_policy}`);
+  }
+  if (options.merge_strategy) {
+    lines.push(`merge_strategy: ${options.merge_strategy}`);
+  }
+  if (options.open_pr_before_merge !== undefined) {
+    lines.push(`open_pr_before_merge: ${options.open_pr_before_merge}`);
+  }
+  if (options.execution_mode) {
+    lines.push(`execution_mode: ${options.execution_mode}`);
+  }
+  if (options.checkout_enabled !== undefined) {
+    lines.push(`checkout_enabled: ${options.checkout_enabled}`);
   }
   if (options.target_workdir) {
     lines.push(`target_workdir: ${escapeYamlValue(options.target_workdir)}`);

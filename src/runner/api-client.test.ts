@@ -954,6 +954,51 @@ describe("ApiClient", () => {
       expect(capturedUrl).toContain("/api/v1/tasks/myproject/features/auth%2Fsystem/checkout");
     });
 
+    it("sends checkout options payload when provided", async () => {
+      let capturedBody: string | undefined;
+      const mockResponse = {
+        created: true,
+        generatedKey: "feature-checkout:auth-system:round-2",
+        task: {
+          id: "tsk00002",
+          path: "projects/myproject/task/tsk00002.md",
+          title: "Feature checkout: auth-system",
+          status: "pending" as const,
+          type: "task" as const,
+          content: "Automated feature checkout",
+          tags: ["checkout", "auth-system"],
+          created: "2026-02-26T00:00:00.000Z",
+          modified: "2026-02-26T00:00:00.000Z",
+          link: "[Feature checkout: auth-system](tsk00002)",
+        },
+      };
+
+      globalThis.fetch = ((_url: string, options?: RequestInit) => {
+        capturedBody = typeof options?.body === "string" ? options.body : undefined;
+        return Promise.resolve(new Response(JSON.stringify(mockResponse), { status: 200 }));
+      }) as typeof fetch;
+
+      await client.markFeatureForCheckout("myproject", "auth-system", {
+        execution_branch: "feature/auth-system",
+        merge_target_branch: "develop",
+        merge_policy: "auto_pr",
+        merge_strategy: "rebase",
+        open_pr_before_merge: true,
+        execution_mode: "worktree",
+      });
+
+      expect(capturedBody).toBe(
+        JSON.stringify({
+          execution_branch: "feature/auth-system",
+          merge_target_branch: "develop",
+          merge_policy: "auto_pr",
+          merge_strategy: "rebase",
+          open_pr_before_merge: true,
+          execution_mode: "worktree",
+        })
+      );
+    });
+
     it("throws ApiError on non-ok response", async () => {
       globalThis.fetch = createMockFetch(() =>
         Promise.resolve(new Response("Validation error", { status: 400 }))

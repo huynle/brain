@@ -1365,6 +1365,48 @@ Task content.
       );
     });
 
+    test("writes checkout task content with merge safety gates and cleanup guardrail", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalSave = service.save;
+
+      const capturedRequests: Array<Record<string, unknown>> = [];
+
+      TaskService.prototype.getTasksByFeature = async () => [] as any;
+
+      service.save = (async (request) => {
+        capturedRequests.push(request as unknown as Record<string, unknown>);
+        return {
+          id: "chkgates1",
+          path: "projects/test-project/task/chkgates1.md",
+          title: "Feature checkout: feature-gates",
+          type: "task",
+          status: "pending",
+          link: "[[chkgates1]]",
+        };
+      }) as typeof service.save;
+
+      try {
+        await service.markFeatureForCheckout("test-project", "feature-gates", {
+          execution_branch: "feature/safety",
+          merge_target_branch: "develop",
+          merge_policy: "auto_merge",
+          merge_strategy: "squash",
+        });
+
+        expect(capturedRequests).toHaveLength(1);
+        const content = String(capturedRequests[0]?.content ?? "");
+        expect(content).toContain("checkout validation pass");
+        expect(content).toContain("merge precheck pass");
+        expect(content).toContain("verification commands pass");
+        expect(content).toContain("cleanup only after confirmed successful push");
+        expect(content).toContain("protected branch");
+        expect(content).toContain("open_pr_before_merge");
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        service.save = originalSave;
+      }
+    });
+
     test("reconciles checkout depends_on with non-generated feature tasks and skips in-progress", async () => {
       const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
       const originalUpdateInternal = (service as any).updateInternal;

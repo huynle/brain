@@ -1066,6 +1066,29 @@ describe("Task API", () => {
       }
     });
 
+    test("maps checkout option safety validation errors to 400", async () => {
+      const checkoutApp = new Hono();
+      checkoutApp.route("/tasks", createTaskRoutes());
+
+      const originalCheckout = BrainService.prototype.markFeatureForCheckout;
+      BrainService.prototype.markFeatureForCheckout = (async () => {
+        throw new Error("open_pr_before_merge must be true when auto-merging into protected branch: main");
+      }) as typeof BrainService.prototype.markFeatureForCheckout;
+
+      try {
+        const res = await checkoutApp.request(`/tasks/${TEST_PROJECT}/features/feature-api/checkout`, {
+          method: "POST",
+        });
+
+        expect(res.status).toBe(400);
+        const json = await res.json();
+        expect(json.error).toBe("Validation Error");
+        expect(json.message).toContain("open_pr_before_merge");
+      } finally {
+        BrainService.prototype.markFeatureForCheckout = originalCheckout;
+      }
+    });
+
     test("maps coordinator zk availability errors to 503", async () => {
       const checkoutApp = new Hono();
       checkoutApp.route("/tasks", createTaskRoutes());

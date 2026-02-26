@@ -84,7 +84,15 @@ export interface DashboardOptions {
   /** Callback to mark a feature for checkout task generation. */
   onMarkFeatureForCheckout?: (
     projectId: string,
-    featureId: string
+    featureId: string,
+    options: {
+      execution_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
+      open_pr_before_merge?: boolean;
+      execution_mode?: ExecutionMode;
+    }
   ) => Promise<{
     created: boolean;
     taskId: string;

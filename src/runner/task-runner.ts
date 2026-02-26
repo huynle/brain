@@ -3285,8 +3285,8 @@ export class TaskRunner {
         onEditTask: (taskId, taskPath) => this.editTask(taskId, taskPath),
         onExecuteTask: (taskId, taskPath) => this.executeTaskManually(taskId, taskPath),
         onExecuteFeature: (featureId) => this.executeFeature(featureId),
-        onMarkFeatureForCheckout: async (projectId, featureId) => {
-          const response = await this.apiClient.markFeatureForCheckout(projectId, featureId);
+        onMarkFeatureForCheckout: async (projectId, featureId, options) => {
+          const response = await this.apiClient.markFeatureForCheckout(projectId, featureId, options);
           return {
             created: response.created,
             taskId: response.task.id,

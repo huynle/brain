@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue, buildMetadataPrefillFromTasks, buildMetadataApplyPlan, isFeatureCheckoutTask } from './App';
 import type { TUIConfig } from './types';
 import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode } from '../../core/types';
 
@@ -407,6 +407,85 @@ describe('metadata field normalization/validation helpers', () => {
     expect(validateMetadataFieldValue('merge_policy', 'always')).toContain('Invalid merge policy');
     expect(validateMetadataFieldValue('merge_strategy', 'octopus')).toContain('Invalid merge strategy');
     expect(validateMetadataFieldValue('checkout_enabled', 'yes')).toBe('Invalid checkout_enabled: use true or false');
+  });
+});
+
+describe('metadata bulk prefill/apply helpers', () => {
+  const baseTask = (overrides: Partial<TaskDisplay>): TaskDisplay => ({
+    id: 'task-1',
+    title: 'Task 1',
+    status: 'pending',
+    priority: 'medium',
+    dependencies: [],
+    dependents: [],
+    dependencyTitles: [],
+    dependentTitles: [],
+    tags: [],
+    path: '/tmp/task-1.md',
+    feature_id: 'feature-a',
+    gitBranch: 'feature/a',
+    mergeTargetBranch: 'main',
+    executionMode: 'worktree',
+    checkoutEnabled: true,
+    mergePolicy: 'auto_merge',
+    mergeStrategy: 'squash',
+    openPrBeforeMerge: false,
+    workdir: '/work/a',
+    ...overrides,
+  });
+
+  it('buildMetadataPrefillFromTasks keeps shared values and clears mixed branch/workdir', () => {
+    const tasks: TaskDisplay[] = [
+      baseTask({ id: 'a1', path: '/tmp/a1.md', gitBranch: 'feature/a', workdir: '/work/a' }),
+      baseTask({ id: 'a2', path: '/tmp/a2.md', gitBranch: 'feature/b', workdir: '/work/b' }),
+    ];
+
+    const prefill = buildMetadataPrefillFromTasks(tasks, 'feature', 'feature-a');
+
+    expect(prefill.feature_id).toBe('feature-a');
+    expect(prefill.git_branch).toBe('');
+    expect(prefill.target_workdir).toBe('');
+    expect(prefill.merge_target_branch).toBe('main');
+    expect(prefill.execution_mode).toBe('worktree');
+  });
+
+  it('isFeatureCheckoutTask detects generated checkout tasks from tags/frontmatter', () => {
+    expect(isFeatureCheckoutTask(baseTask({ tags: ['checkout'] }))).toBe(true);
+    expect(
+      isFeatureCheckoutTask(baseTask({ frontmatter: { generated_by: 'feature-checkout' } }))
+    ).toBe(true);
+    expect(
+      isFeatureCheckoutTask(baseTask({ frontmatter: { generated_key: 'feature-checkout:feature-a:round-1' } }))
+    ).toBe(true);
+    expect(isFeatureCheckoutTask(baseTask({ tags: ['normal'] }))).toBe(false);
+  });
+
+  it('buildMetadataApplyPlan deterministically skips terminal and checkout tasks in feature mode', () => {
+    const tasks: TaskDisplay[] = [
+      baseTask({ id: 'z', path: '/tmp/z.md', status: 'pending' }),
+      baseTask({ id: 'c', path: '/tmp/c.md', tags: ['checkout'], status: 'pending' }),
+      baseTask({ id: 'a', path: '/tmp/a.md', status: 'completed' }),
+      baseTask({ id: 'b', path: '/tmp/b.md', status: 'active' }),
+    ];
+
+    const plan = buildMetadataApplyPlan(tasks, 'feature');
+
+    expect(plan.updatable.map((task) => task.id)).toEqual(['b', 'z']);
+    expect(plan.skippedTerminal.map((task) => task.id)).toEqual(['a']);
+    expect(plan.skippedCheckout.map((task) => task.id)).toEqual(['c']);
+  });
+
+  it('buildMetadataApplyPlan keeps all tasks in non-feature modes', () => {
+    const tasks: TaskDisplay[] = [
+      baseTask({ id: 'task-b', path: '/tmp/b.md', status: 'completed' }),
+      baseTask({ id: 'task-a', path: '/tmp/a.md', tags: ['checkout'] }),
+    ];
+
+    const plan = buildMetadataApplyPlan(tasks, 'batch');
+
+    expect(plan.updatable.map((task) => task.id)).toEqual(['task-a', 'task-b']);
+    expect(plan.skippedTerminal).toHaveLength(0);
+    expect(plan.skippedCheckout).toHaveLength(0);
   });
 });
 

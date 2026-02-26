@@ -4,7 +4,13 @@ import {
   FEATURE_HEADER_PREFIX,
   parseTaskTreeRowTarget,
 } from './components/TaskTree';
-import { triggerFeatureCheckoutFromSelection, type FeatureCheckoutResult } from './App';
+import {
+  DEFAULT_FEATURE_CHECKOUT_OPTIONS,
+  resolveFeatureCheckoutOptionsForSelection,
+  triggerFeatureCheckoutFromSelection,
+  type FeatureCheckoutResult,
+} from './App';
+import type { TaskDisplay } from './types';
 
 type LogEntry = { level: string; message: string };
 
@@ -20,6 +26,20 @@ function formatCheckoutSuccessMessage(result: FeatureCheckoutResult): string {
 async function flushPromises(): Promise<void> {
   await Promise.resolve();
   await Promise.resolve();
+}
+
+function createTaskDisplay(overrides: Partial<TaskDisplay>): TaskDisplay {
+  return {
+    id: 'task-1',
+    path: 'projects/project-a/task/task-1.md',
+    title: 'Task 1',
+    status: 'pending',
+    priority: 'medium',
+    created: '2026-01-01T00:00:00.000Z',
+    modified: '2026-01-01T00:00:00.000Z',
+    type: 'task',
+    ...overrides,
+  } as TaskDisplay;
 }
 
 describe('App feature checkout row gating', () => {
@@ -57,6 +77,53 @@ describe('App feature checkout success logging', () => {
 });
 
 describe('App feature checkout trigger behavior', () => {
+  it('uses feature task metadata when resolving checkout options', () => {
+    const options = resolveFeatureCheckoutOptionsForSelection({
+      selectedTaskId: `${FEATURE_HEADER_PREFIX}feature-alpha`,
+      isMultiProject: false,
+      activeProject: 'ignored-in-single-project',
+      project: 'project-a',
+      tasks: [
+        createTaskDisplay({
+          feature_id: 'feature-alpha',
+          projectId: 'project-a',
+          gitBranch: 'feature/alpha',
+          mergeTargetBranch: 'develop',
+          executionMode: 'current_branch',
+          mergePolicy: 'auto_pr',
+          mergeStrategy: 'rebase',
+          openPrBeforeMerge: true,
+        }),
+      ],
+    });
+
+    expect(options).toEqual({
+      execution_branch: 'feature/alpha',
+      merge_target_branch: 'develop',
+      execution_mode: 'current_branch',
+      merge_policy: 'auto_pr',
+      merge_strategy: 'rebase',
+      open_pr_before_merge: true,
+    });
+  });
+
+  it('falls back to canonical defaults when feature has no active task metadata', () => {
+    const options = resolveFeatureCheckoutOptionsForSelection({
+      selectedTaskId: `${FEATURE_HEADER_PREFIX}feature-alpha`,
+      isMultiProject: false,
+      activeProject: 'ignored-in-single-project',
+      project: 'project-a',
+      tasks: [
+        createTaskDisplay({
+          feature_id: 'feature-beta',
+          projectId: 'project-a',
+        }),
+      ],
+    });
+
+    expect(options).toEqual(DEFAULT_FEATURE_CHECKOUT_OPTIONS);
+  });
+
   it('returns false for non-feature rows and does not call callback', () => {
     const onMarkFeatureForCheckout = mock(async () => ({
       created: true,
@@ -144,7 +211,11 @@ describe('App feature checkout trigger behavior', () => {
 
     expect(handled).toBe(true);
     expect(onMarkFeatureForCheckout).toHaveBeenCalledTimes(1);
-    expect(onMarkFeatureForCheckout).toHaveBeenCalledWith('project-a', 'feature-alpha');
+    expect(onMarkFeatureForCheckout).toHaveBeenCalledWith(
+      'project-a',
+      'feature-alpha',
+      DEFAULT_FEATURE_CHECKOUT_OPTIONS
+    );
     expect(logs).toEqual([
       { level: 'info', message: 'Marking feature for checkout: feature-alpha' },
       {
@@ -203,6 +274,68 @@ describe('App feature checkout trigger behavior', () => {
     expect(logs[1]).toEqual({
       level: 'error',
       message: 'Failed to mark feature checkout: Error: boom',
+    });
+  });
+
+  it('passes explicit checkout options to callback when provided', async () => {
+    const onMarkFeatureForCheckout = mock(async () => ({
+      created: true,
+      taskId: 'abc12def',
+      taskTitle: 'Run feature checkout',
+    }));
+    const logs: LogEntry[] = [];
+
+    const checkoutOptions = {
+      execution_branch: 'feature/alpha',
+      merge_target_branch: 'develop',
+      execution_mode: 'worktree' as const,
+      merge_policy: 'auto_pr' as const,
+      merge_strategy: 'rebase' as const,
+      open_pr_before_merge: true,
+    };
+
+    triggerFeatureCheckoutFromSelection({
+      selectedTaskId: `${FEATURE_HEADER_PREFIX}feature-alpha`,
+      isMultiProject: false,
+      activeProject: 'ignored-in-single-project',
+      project: 'project-a',
+      onMarkFeatureForCheckout,
+      checkoutOptions,
+      addLog: (entry: LogEntry) => logs.push(entry),
+    });
+
+    await flushPromises();
+
+    expect(onMarkFeatureForCheckout).toHaveBeenCalledWith(
+      'project-a',
+      'feature-alpha',
+      checkoutOptions
+    );
+  });
+
+  it('surfaces checkout validation error messages from API payload', async () => {
+    const onMarkFeatureForCheckout = mock(async () => {
+      throw new Error(
+        'API Error (400): {"error":"Validation Error","message":"execution_branch must be different from merge_target_branch"}'
+      );
+    });
+    const logs: LogEntry[] = [];
+
+    triggerFeatureCheckoutFromSelection({
+      selectedTaskId: `${FEATURE_HEADER_PREFIX}feature-alpha`,
+      isMultiProject: false,
+      activeProject: 'ignored-in-single-project',
+      project: 'project-a',
+      onMarkFeatureForCheckout,
+      addLog: (entry: LogEntry) => logs.push(entry),
+    });
+
+    await flushPromises();
+
+    expect(logs[1]).toEqual({
+      level: 'error',
+      message:
+        'Failed to mark feature checkout: execution_branch must be different from merge_target_branch',
     });
   });
 });

@@ -169,12 +169,32 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Strategy:');
       expect(frame).toContain('Open PR Before');
       expect(frame).toContain('Merge:');
+      expect(frame).toContain('Workdir:');
 
       expect(frame).not.toContain('Status:');
       expect(frame).not.toContain('Feature ID:');
-      expect(frame).not.toContain('Workdir:');
       expect(frame).not.toContain('Schedule:');
       expect(frame).not.toContain('Project:');
+    });
+
+    it('shows current execution mode hint values when focused', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="feature"
+          featureId="auth-system"
+          focusedField="execution_mode"
+          executionModeValue="worktree"
+          mergeTargetBranchValue="main"
+          checkoutEnabledValue={true}
+          mergePolicyValue="prompt_only"
+          mergeStrategyValue="squash"
+          openPrBeforeMergeValue={false}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(worktree|current_branch)');
     });
   });
 
@@ -223,7 +243,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('(worktree|direct)');
+      expect(frame).toContain('(worktree|current_branch)');
       expect(frame).toContain('Enter to edit');
     });
   });

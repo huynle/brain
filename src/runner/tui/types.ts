@@ -363,10 +363,18 @@ export interface AppProps {
   onExecuteTask?: (taskId: string, taskPath: string) => Promise<boolean>;
   /** Callback to execute all ready tasks for a feature. Returns number of tasks started. */
   onExecuteFeature?: (featureId: string) => Promise<number>;
-  /** Callback to mark a feature for checkout task generation. */
+  /** Checkout options sent when generating a feature checkout task. */
   onMarkFeatureForCheckout?: (
     projectId: string,
-    featureId: string
+    featureId: string,
+    options: {
+      execution_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: MergePolicy;
+      merge_strategy?: MergeStrategy;
+      open_pr_before_merge?: boolean;
+      execution_mode?: ExecutionMode;
+    }
   ) => Promise<{
     created: boolean;
     taskId: string;

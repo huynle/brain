@@ -1284,7 +1284,12 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
       }
       if (
         error instanceof Error
-        && (error.message === "projectId is required" || error.message === "featureId is required")
+        && (
+          error.message === "projectId is required"
+          || error.message === "featureId is required"
+          || error.message === "execution_branch must be different from merge_target_branch"
+          || error.message.includes("open_pr_before_merge must be true when auto-merging into protected branch")
+        )
       ) {
         return c.json(
           {

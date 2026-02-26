@@ -127,6 +127,7 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
 export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] = [
   'execution_mode',
   'git_branch',
+  'target_workdir',
   'merge_target_branch',
   'checkout_enabled',
   'merge_policy',
@@ -153,10 +154,12 @@ const FIELD_LABELS: Record<MetadataField, string> = {
 };
 
 const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
-  execution_mode: '(worktree|direct)',
+  git_branch: '(source branch for feature execution)',
+  execution_mode: '(worktree|current_branch)',
+  target_workdir: '(worktree/current-branch root path)',
   merge_target_branch: '(target branch for merge)',
   checkout_enabled: '(true|false)',
-  merge_policy: '(prompt_only|auto)',
+  merge_policy: '(prompt_only|auto_pr|auto_merge)',
   merge_strategy: '(squash|merge|rebase)',
   open_pr_before_merge: '(true|false)',
 };

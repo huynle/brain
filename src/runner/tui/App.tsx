@@ -190,6 +190,181 @@ export function validateMetadataFieldValue(field: MetadataField, value: string):
   return null;
 }
 
+const TERMINAL_METADATA_SKIP_STATUSES: ReadonlySet<EntryStatus> = new Set([
+  'completed',
+  'validated',
+  'cancelled',
+  'superseded',
+  'archived',
+]);
+
+type MetadataPrefillValues = {
+  status: EntryStatus;
+  feature_id: string;
+  git_branch: string;
+  merge_target_branch: string;
+  execution_mode: ExecutionMode;
+  checkout_enabled: boolean;
+  merge_policy: MergePolicy;
+  merge_strategy: MergeStrategy;
+  open_pr_before_merge: boolean;
+  target_workdir: string;
+  schedule: string;
+  project: string;
+  agent: string;
+  model: string;
+  direct_prompt: string;
+};
+
+const DEFAULT_METADATA_PREFILL: MetadataPrefillValues = {
+  status: 'pending',
+  feature_id: '',
+  git_branch: '',
+  merge_target_branch: '',
+  execution_mode: 'worktree',
+  checkout_enabled: true,
+  merge_policy: 'auto_merge',
+  merge_strategy: 'squash',
+  open_pr_before_merge: false,
+  target_workdir: '',
+  schedule: '',
+  project: '',
+  agent: '',
+  model: '',
+  direct_prompt: '',
+};
+
+function allEqual<T>(values: readonly T[]): boolean {
+  if (values.length <= 1) return true;
+  const first = values[0];
+  return values.every((value) => value === first);
+}
+
+function sharedString(
+  tasks: TaskDisplay[],
+  selector: (task: TaskDisplay) => string | null | undefined,
+): string {
+  if (tasks.length === 0) return '';
+  const values = tasks.map((task) => selector(task) ?? '');
+  return allEqual(values) ? values[0] : '';
+}
+
+function sharedEnum<T extends string>(
+  tasks: TaskDisplay[],
+  selector: (task: TaskDisplay) => T | null | undefined,
+  fallback: T,
+): T {
+  if (tasks.length === 0) return fallback;
+  const values = tasks.map((task) => selector(task) ?? fallback);
+  return allEqual(values) ? values[0] : fallback;
+}
+
+function sharedBoolean(
+  tasks: TaskDisplay[],
+  selector: (task: TaskDisplay) => boolean | null | undefined,
+  fallback: boolean,
+): boolean {
+  if (tasks.length === 0) return fallback;
+  const values = tasks.map((task) => selector(task) ?? fallback);
+  return allEqual(values) ? values[0] : fallback;
+}
+
+export function buildMetadataPrefillFromTasks(
+  tasks: TaskDisplay[],
+  mode: MetadataPopupMode,
+  featureIdOverride?: string,
+): MetadataPrefillValues {
+  if (tasks.length === 0) return { ...DEFAULT_METADATA_PREFILL, feature_id: featureIdOverride ?? '' };
+
+  const first = tasks[0];
+
+  return {
+    status: mode === 'single'
+      ? first.status
+      : sharedEnum(tasks, (task) => task.status, 'pending'),
+    feature_id: featureIdOverride ?? sharedString(tasks, (task) => task.feature_id),
+    git_branch: sharedString(tasks, (task) => task.gitBranch),
+    merge_target_branch: sharedString(tasks, (task) => task.mergeTargetBranch),
+    execution_mode: sharedEnum(tasks, (task) => task.executionMode, 'worktree'),
+    checkout_enabled: sharedBoolean(tasks, (task) => task.checkoutEnabled, true),
+    merge_policy: sharedEnum(tasks, (task) => task.mergePolicy, 'auto_merge'),
+    merge_strategy: sharedEnum(tasks, (task) => task.mergeStrategy, 'squash'),
+    open_pr_before_merge: sharedBoolean(tasks, (task) => task.openPrBeforeMerge, false),
+    target_workdir: sharedString(tasks, (task) => task.resolvedWorkdir || task.workdir),
+    schedule: sharedString(tasks, (task) => task.schedule),
+    project: sharedString(tasks, (task) => task.projectId),
+    agent: sharedString(tasks, (task) => task.agent),
+    model: sharedString(tasks, (task) => task.model),
+    direct_prompt: sharedString(tasks, (task) => task.direct_prompt),
+  };
+}
+
+export function isFeatureCheckoutTask(task: TaskDisplay): boolean {
+  if (task.tags.includes('checkout')) return true;
+
+  const generatedBy = typeof task.frontmatter?.generated_by === 'string'
+    ? task.frontmatter.generated_by
+    : null;
+  if (generatedBy === 'feature-checkout') return true;
+
+  const generatedKind = typeof task.frontmatter?.generated_kind === 'string'
+    ? task.frontmatter.generated_kind
+    : null;
+  if (generatedKind === 'feature_checkout') return true;
+
+  const generatedKey = typeof task.frontmatter?.generated_key === 'string'
+    ? task.frontmatter.generated_key
+    : null;
+  if (generatedKey?.startsWith('feature-checkout:')) return true;
+
+  return false;
+}
+
+export type MetadataApplyPlan = {
+  updatable: TaskDisplay[];
+  skippedTerminal: TaskDisplay[];
+  skippedCheckout: TaskDisplay[];
+};
+
+export function buildMetadataApplyPlan(
+  tasks: TaskDisplay[],
+  mode: MetadataPopupMode,
+): MetadataApplyPlan {
+  const orderedTasks = [...tasks].sort((a, b) => {
+    const byPath = a.path.localeCompare(b.path);
+    if (byPath !== 0) return byPath;
+    return a.id.localeCompare(b.id);
+  });
+
+  if (mode !== 'feature') {
+    return {
+      updatable: orderedTasks,
+      skippedTerminal: [],
+      skippedCheckout: [],
+    };
+  }
+
+  const updatable: TaskDisplay[] = [];
+  const skippedTerminal: TaskDisplay[] = [];
+  const skippedCheckout: TaskDisplay[] = [];
+
+  for (const task of orderedTasks) {
+    if (TERMINAL_METADATA_SKIP_STATUSES.has(task.status)) {
+      skippedTerminal.push(task);
+      continue;
+    }
+
+    if (isFeatureCheckoutTask(task)) {
+      skippedCheckout.push(task);
+      continue;
+    }
+
+    updatable.push(task);
+  }
+
+  return { updatable, skippedTerminal, skippedCheckout };
+}
+
 /**
  * Get visible (active) tasks for a feature, excluding group-status tasks.
  * Used when pressing 's' on a feature header to bulk update metadata.
@@ -419,6 +594,76 @@ export type FeatureCheckoutResult = {
   taskTitle: string;
 };
 
+export type FeatureCheckoutOptions = {
+  execution_branch?: string;
+  merge_target_branch?: string;
+  merge_policy?: MergePolicy;
+  merge_strategy?: MergeStrategy;
+  open_pr_before_merge?: boolean;
+  execution_mode?: ExecutionMode;
+};
+
+export const DEFAULT_FEATURE_CHECKOUT_OPTIONS: FeatureCheckoutOptions = {
+  execution_mode: 'worktree',
+  merge_policy: 'auto_merge',
+  merge_strategy: 'squash',
+  open_pr_before_merge: false,
+};
+
+type ResolveFeatureCheckoutOptionsParams = {
+  selectedTaskId: string | null;
+  isMultiProject: boolean;
+  activeProject: string;
+  project: string;
+  tasks: TaskDisplay[];
+};
+
+export function resolveFeatureCheckoutOptionsForSelection(
+  params: ResolveFeatureCheckoutOptionsParams
+): FeatureCheckoutOptions {
+  const selectedRowTarget = params.selectedTaskId
+    ? parseTaskTreeRowTarget(params.selectedTaskId)
+    : null;
+
+  if (!selectedRowTarget || selectedRowTarget.kind !== 'feature_header' || !selectedRowTarget.featureId) {
+    return DEFAULT_FEATURE_CHECKOUT_OPTIONS;
+  }
+
+  const targetProjectId = params.isMultiProject ? params.activeProject : params.project;
+  if (!targetProjectId || targetProjectId === 'all') {
+    return DEFAULT_FEATURE_CHECKOUT_OPTIONS;
+  }
+
+  const matchingTask = params.tasks.find(task => (
+    task.feature_id === selectedRowTarget.featureId
+    && task.projectId === targetProjectId
+    && !GROUP_STATUSES.includes(task.status)
+  ));
+
+  if (!matchingTask) {
+    return DEFAULT_FEATURE_CHECKOUT_OPTIONS;
+  }
+
+  const options: FeatureCheckoutOptions = {
+    execution_mode: matchingTask.executionMode || DEFAULT_FEATURE_CHECKOUT_OPTIONS.execution_mode,
+    merge_policy: matchingTask.mergePolicy || DEFAULT_FEATURE_CHECKOUT_OPTIONS.merge_policy,
+    merge_strategy: matchingTask.mergeStrategy || DEFAULT_FEATURE_CHECKOUT_OPTIONS.merge_strategy,
+    open_pr_before_merge: matchingTask.openPrBeforeMerge ?? DEFAULT_FEATURE_CHECKOUT_OPTIONS.open_pr_before_merge,
+  };
+
+  const executionBranch = matchingTask.gitBranch?.trim();
+  if (executionBranch) {
+    options.execution_branch = executionBranch;
+  }
+
+  const mergeTargetBranch = matchingTask.mergeTargetBranch?.trim();
+  if (mergeTargetBranch) {
+    options.merge_target_branch = mergeTargetBranch;
+  }
+
+  return options;
+}
+
 type FeatureCheckoutLogEntry = {
   level: 'info' | 'warn' | 'error';
   message: string;
@@ -429,9 +674,32 @@ type TriggerFeatureCheckoutParams = {
   isMultiProject: boolean;
   activeProject: string;
   project: string;
-  onMarkFeatureForCheckout?: (projectId: string, featureId: string) => Promise<FeatureCheckoutResult>;
+  onMarkFeatureForCheckout?: (
+    projectId: string,
+    featureId: string,
+    options: FeatureCheckoutOptions
+  ) => Promise<FeatureCheckoutResult>;
+  checkoutOptions?: FeatureCheckoutOptions;
   addLog: (entry: FeatureCheckoutLogEntry) => void;
 };
+
+function formatCheckoutFailureReason(error: unknown): string {
+  const raw = String(error);
+  const jsonStart = raw.indexOf('{');
+  if (jsonStart >= 0) {
+    const candidate = raw.slice(jsonStart);
+    try {
+      const parsed = JSON.parse(candidate) as { message?: unknown };
+      if (typeof parsed.message === 'string' && parsed.message.length > 0) {
+        return parsed.message;
+      }
+    } catch {
+      // Fall back to raw error text
+    }
+  }
+
+  return raw;
+}
 
 export function triggerFeatureCheckoutFromSelection(params: TriggerFeatureCheckoutParams): boolean {
   const selectedRowTarget = params.selectedTaskId
@@ -464,7 +732,9 @@ export function triggerFeatureCheckoutFromSelection(params: TriggerFeatureChecko
     message: `Marking feature for checkout: ${featureId}`,
   });
 
-  params.onMarkFeatureForCheckout(targetProjectId, featureId)
+  const checkoutOptions = params.checkoutOptions ?? DEFAULT_FEATURE_CHECKOUT_OPTIONS;
+
+  params.onMarkFeatureForCheckout(targetProjectId, featureId, checkoutOptions)
     .then((result) => {
       params.addLog({
         level: 'info',
@@ -474,7 +744,7 @@ export function triggerFeatureCheckoutFromSelection(params: TriggerFeatureChecko
     .catch((err) => {
       params.addLog({
         level: 'error',
-        message: `Failed to mark feature checkout: ${err}`,
+        message: `Failed to mark feature checkout: ${formatCheckoutFailureReason(err)}`,
       });
     });
 
@@ -546,7 +816,7 @@ export function App({
   const [metadataMergeTargetBranchValue, setMetadataMergeTargetBranchValue] = useState('');
   const [metadataExecutionModeValue, setMetadataExecutionModeValue] = useState<ExecutionMode>('worktree');
   const [metadataCheckoutEnabledValue, setMetadataCheckoutEnabledValue] = useState<boolean>(true);
-  const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('prompt_only');
+  const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('auto_merge');
   const [metadataMergeStrategyValue, setMetadataMergeStrategyValue] = useState<MergeStrategy>('squash');
   const [metadataOpenPrBeforeMergeValue, setMetadataOpenPrBeforeMergeValue] = useState<boolean>(false);
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
@@ -585,7 +855,7 @@ export function App({
     merge_target_branch: '',
     execution_mode: 'worktree',
     checkout_enabled: true,
-    merge_policy: 'prompt_only',
+    merge_policy: 'auto_merge',
     merge_strategy: 'squash',
     open_pr_before_merge: false,
     target_workdir: '',
@@ -1293,7 +1563,7 @@ export function App({
     setMetadataMergeTargetBranchValue(task.mergeTargetBranch || '');
     setMetadataExecutionModeValue(task.executionMode || 'worktree');
     setMetadataCheckoutEnabledValue(task.checkoutEnabled ?? true);
-    setMetadataMergePolicyValue(task.mergePolicy || 'prompt_only');
+    setMetadataMergePolicyValue(task.mergePolicy || 'auto_merge');
     setMetadataMergeStrategyValue(task.mergeStrategy || 'squash');
     setMetadataOpenPrBeforeMergeValue(task.openPrBeforeMerge ?? false);
     setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
@@ -1310,7 +1580,7 @@ export function App({
       merge_target_branch: task.mergeTargetBranch || '',
       execution_mode: task.executionMode || 'worktree',
       checkout_enabled: task.checkoutEnabled ?? true,
-      merge_policy: task.mergePolicy || 'prompt_only',
+      merge_policy: task.mergePolicy || 'auto_merge',
       merge_strategy: task.mergeStrategy || 'squash',
       open_pr_before_merge: task.openPrBeforeMerge ?? false,
       target_workdir: task.resolvedWorkdir || task.workdir || '',
@@ -1523,10 +1793,31 @@ export function App({
         // Mark dirty synchronously so Escape handler sees it immediately
         setMetadataDirty(true);
         
+        const applyPlan = buildMetadataApplyPlan(metadataTargetTasks, metadataPopupMode);
+        const totalSkipped = applyPlan.skippedTerminal.length + applyPlan.skippedCheckout.length;
+
+        if (metadataPopupMode === 'feature' && totalSkipped > 0) {
+          addLog({
+            level: 'info',
+            message: `Feature-scope apply (${field}): updating ${applyPlan.updatable.length}, skipped ${applyPlan.skippedTerminal.length} terminal, ${applyPlan.skippedCheckout.length} checkout`,
+          });
+        }
+
+        if (applyPlan.updatable.length === 0) {
+          addLog({
+            level: 'warn',
+            message: `Skipped metadata update (${field}): no eligible tasks`,
+          });
+          return;
+        }
+
         Promise.all(
-          metadataTargetTasks.map(task => onUpdateMetadata(task.path, updates))
+          applyPlan.updatable.map(task => onUpdateMetadata(task.path, updates))
         ).then(() => {
-          addLog({ level: 'info', message: `Updated ${field}: ${Object.values(updates)[0]}` });
+          addLog({
+            level: 'info',
+            message: `Updated ${field} for ${applyPlan.updatable.length} task(s): ${Object.values(updates)[0]}`,
+          });
           // Update original values to reflect the saved state
           setMetadataOriginalValues(prev => ({
             ...prev,
@@ -2629,12 +2920,21 @@ export function App({
 
     // f key: Mark selected feature header for checkout task generation
     if (input === 'f' && viewMode === 'tasks' && focusedPanel === 'tasks') {
+      const checkoutOptions = resolveFeatureCheckoutOptionsForSelection({
+        selectedTaskId,
+        isMultiProject,
+        activeProject,
+        project: config.project,
+        tasks,
+      });
+
       const handled = triggerFeatureCheckoutFromSelection({
         selectedTaskId,
         isMultiProject,
         activeProject,
         project: config.project,
         onMarkFeatureForCheckout,
+        checkoutOptions,
         addLog,
       });
       if (handled) {
@@ -3031,21 +3331,7 @@ export function App({
       const openMetadataPopup = async (
         mode: MetadataPopupMode,
         targetTasks: TaskDisplay[],
-        prefillStatus: EntryStatus = 'pending',
-        prefillFeatureId: string = '',
-        prefillBranch: string = '',
-        prefillMergeTargetBranch: string = '',
-        prefillExecutionMode: ExecutionMode = 'worktree',
-        prefillCheckoutEnabled: boolean = true,
-        prefillMergePolicy: MergePolicy = 'prompt_only',
-        prefillMergeStrategy: MergeStrategy = 'squash',
-        prefillOpenPrBeforeMerge: boolean = false,
-        prefillWorkdir: string = '',
-        prefillSchedule: string = '',
-        prefillProject: string = '',
-        prefillAgent: string = '',
-        prefillModel: string = '',
-        prefillDirectPrompt: string = ''
+        prefill: MetadataPrefillValues,
       ) => {
         // Fetch all projects from API for the project picker
         let fetchedProjects = projects; // fallback to monitored projects
@@ -3062,39 +3348,39 @@ export function App({
         setMetadataTargetTasks(targetTasks);
         setMetadataPopupMode(mode);
         setMetadataFocusedField(mode === 'feature' ? 'execution_mode' : 'status');
-        setMetadataStatusValue(prefillStatus);
-        setMetadataStatusIndex(ENTRY_STATUSES.indexOf(prefillStatus));
-        setMetadataFeatureIdValue(prefillFeatureId);
-        setMetadataBranchValue(prefillBranch);
-        setMetadataMergeTargetBranchValue(prefillMergeTargetBranch);
-        setMetadataExecutionModeValue(prefillExecutionMode);
-        setMetadataCheckoutEnabledValue(prefillCheckoutEnabled);
-        setMetadataMergePolicyValue(prefillMergePolicy);
-        setMetadataMergeStrategyValue(prefillMergeStrategy);
-        setMetadataOpenPrBeforeMergeValue(prefillOpenPrBeforeMerge);
-        setMetadataWorkdirValue(prefillWorkdir);
-        setMetadataScheduleValue(prefillSchedule);
-        setMetadataProjectValue(prefillProject);
-        setMetadataProjectIndex(fetchedProjects.indexOf(prefillProject) >= 0 ? fetchedProjects.indexOf(prefillProject) : 0);
-        setMetadataAgentValue(prefillAgent);
-        setMetadataModelValue(prefillModel);
-        setMetadataDirectPromptValue(prefillDirectPrompt);
+        setMetadataStatusValue(prefill.status);
+        setMetadataStatusIndex(ENTRY_STATUSES.indexOf(prefill.status));
+        setMetadataFeatureIdValue(prefill.feature_id);
+        setMetadataBranchValue(prefill.git_branch);
+        setMetadataMergeTargetBranchValue(prefill.merge_target_branch);
+        setMetadataExecutionModeValue(prefill.execution_mode);
+        setMetadataCheckoutEnabledValue(prefill.checkout_enabled);
+        setMetadataMergePolicyValue(prefill.merge_policy);
+        setMetadataMergeStrategyValue(prefill.merge_strategy);
+        setMetadataOpenPrBeforeMergeValue(prefill.open_pr_before_merge);
+        setMetadataWorkdirValue(prefill.target_workdir);
+        setMetadataScheduleValue(prefill.schedule);
+        setMetadataProjectValue(prefill.project);
+        setMetadataProjectIndex(fetchedProjects.indexOf(prefill.project) >= 0 ? fetchedProjects.indexOf(prefill.project) : 0);
+        setMetadataAgentValue(prefill.agent);
+        setMetadataModelValue(prefill.model);
+        setMetadataDirectPromptValue(prefill.direct_prompt);
         setMetadataOriginalValues({
-          status: prefillStatus,
-          feature_id: prefillFeatureId,
-          git_branch: prefillBranch,
-          merge_target_branch: prefillMergeTargetBranch,
-          execution_mode: prefillExecutionMode,
-          checkout_enabled: prefillCheckoutEnabled,
-          merge_policy: prefillMergePolicy,
-          merge_strategy: prefillMergeStrategy,
-          open_pr_before_merge: prefillOpenPrBeforeMerge,
-          target_workdir: prefillWorkdir,
-          schedule: prefillSchedule,
-          project: prefillProject,
-          agent: prefillAgent,
-          model: prefillModel,
-          direct_prompt: prefillDirectPrompt,
+          status: prefill.status,
+          feature_id: prefill.feature_id,
+          git_branch: prefill.git_branch,
+          merge_target_branch: prefill.merge_target_branch,
+          execution_mode: prefill.execution_mode,
+          checkout_enabled: prefill.checkout_enabled,
+          merge_policy: prefill.merge_policy,
+          merge_strategy: prefill.merge_strategy,
+          open_pr_before_merge: prefill.open_pr_before_merge,
+          target_workdir: prefill.target_workdir,
+          schedule: prefill.schedule,
+          project: prefill.project,
+          agent: prefill.agent,
+          model: prefill.model,
+          direct_prompt: prefill.direct_prompt,
         });
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
@@ -3107,26 +3393,11 @@ export function App({
         // Resolve all selected task IDs to TaskDisplay objects
         const batchTasks = tasks.filter(t => selectedTaskIds.has(t.id));
         if (batchTasks.length > 0) {
-          // Use first task's values as defaults (or empty for truly mixed)
-          const first = batchTasks[0];
+          const prefill = buildMetadataPrefillFromTasks(batchTasks, 'batch');
           openMetadataPopup(
             'batch',
             batchTasks,
-            first.status,
-            first.feature_id || '',
-            first.gitBranch || '',
-            first.mergeTargetBranch || '',
-            first.executionMode || 'worktree',
-            first.checkoutEnabled ?? true,
-            first.mergePolicy || 'prompt_only',
-            first.mergeStrategy || 'squash',
-            first.openPrBeforeMerge ?? false,
-            first.resolvedWorkdir || first.workdir || '',
-            first.schedule || '',
-            first.projectId || '',
-            first.agent || '',
-            first.model || '',
-            first.direct_prompt || ''
+            prefill,
           );
         }
         return;
@@ -3137,25 +3408,11 @@ export function App({
       if (selectedTaskId === UNGROUPED_HEADER_ID) {
         const ungroupedTasks = getVisibleTasksForUngrouped(tasks);
         if (ungroupedTasks.length > 0) {
-          const firstUngrouped = ungroupedTasks[0];
+          const prefill = buildMetadataPrefillFromTasks(ungroupedTasks, 'feature', '');
           openMetadataPopup(
             'feature',
             ungroupedTasks,
-            'pending',
-            '',
-            firstUngrouped.gitBranch || '',
-            firstUngrouped.mergeTargetBranch || '',
-            firstUngrouped.executionMode || 'worktree',
-            firstUngrouped.checkoutEnabled ?? true,
-            firstUngrouped.mergePolicy || 'prompt_only',
-            firstUngrouped.mergeStrategy || 'squash',
-            firstUngrouped.openPrBeforeMerge ?? false,
-            firstUngrouped.resolvedWorkdir || firstUngrouped.workdir || '',
-            firstUngrouped.schedule || '',
-            firstUngrouped.projectId || '',
-            firstUngrouped.agent || '',
-            firstUngrouped.model || '',
-            firstUngrouped.direct_prompt || ''
+            prefill,
           );
         }
         return;
@@ -3167,25 +3424,11 @@ export function App({
         const featureId = selectedTaskId.replace(FEATURE_HEADER_PREFIX, '');
         const featureTasks = getVisibleTasksForFeature(tasks, featureId);
         if (featureTasks.length > 0) {
-          const firstFeatureTask = featureTasks[0];
+          const prefill = buildMetadataPrefillFromTasks(featureTasks, 'feature', featureId);
           openMetadataPopup(
             'feature',
             featureTasks,
-            'pending',
-            featureId,
-            firstFeatureTask.gitBranch || '',
-            firstFeatureTask.mergeTargetBranch || '',
-            firstFeatureTask.executionMode || 'worktree',
-            firstFeatureTask.checkoutEnabled ?? true,
-            firstFeatureTask.mergePolicy || 'prompt_only',
-            firstFeatureTask.mergeStrategy || 'squash',
-            firstFeatureTask.openPrBeforeMerge ?? false,
-            firstFeatureTask.resolvedWorkdir || firstFeatureTask.workdir || '',
-            firstFeatureTask.schedule || '',
-            firstFeatureTask.projectId || '',
-            firstFeatureTask.agent || '',
-            firstFeatureTask.model || '',
-            firstFeatureTask.direct_prompt || ''
+            prefill,
           );
         }
         return;
@@ -3198,25 +3441,11 @@ export function App({
           const featureId = selectedTaskId.replace(prefix, '');
           const featureTasks = getTasksForStatusGroupFeature(tasks, featureId, groupStatuses);
           if (featureTasks.length > 0) {
-            const firstTask = featureTasks[0];
+            const prefill = buildMetadataPrefillFromTasks(featureTasks, 'feature', featureId);
             openMetadataPopup(
               'feature',
               featureTasks,
-              firstTask.status,
-              featureId,
-              firstTask.gitBranch || '',
-              firstTask.mergeTargetBranch || '',
-              firstTask.executionMode || 'worktree',
-              firstTask.checkoutEnabled ?? true,
-              firstTask.mergePolicy || 'prompt_only',
-              firstTask.mergeStrategy || 'squash',
-              firstTask.openPrBeforeMerge ?? false,
-              firstTask.resolvedWorkdir || firstTask.workdir || '',
-              firstTask.schedule || '',
-              firstTask.projectId || '',
-              firstTask.agent || '',
-              firstTask.model || '',
-              firstTask.direct_prompt || ''
+              prefill,
             );
           }
           return;
@@ -3225,24 +3454,11 @@ export function App({
       
       // Case 4: Single task selected - single mode
       if (selectedTask) {
+        const prefill = buildMetadataPrefillFromTasks([selectedTask], 'single', selectedTask.feature_id || '');
         openMetadataPopup(
           'single',
           [selectedTask],
-          selectedTask.status,
-          selectedTask.feature_id || '',
-          selectedTask.gitBranch || '',
-          selectedTask.mergeTargetBranch || '',
-          selectedTask.executionMode || 'worktree',
-          selectedTask.checkoutEnabled ?? true,
-          selectedTask.mergePolicy || 'prompt_only',
-          selectedTask.mergeStrategy || 'squash',
-          selectedTask.openPrBeforeMerge ?? false,
-          selectedTask.resolvedWorkdir || selectedTask.workdir || '',
-          selectedTask.schedule || '',
-          selectedTask.projectId || '',
-          selectedTask.agent || '',
-          selectedTask.model || '',
-          selectedTask.direct_prompt || ''
+          prefill,
         );
       }
       return;

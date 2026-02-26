@@ -1570,7 +1570,14 @@ export class BrainService {
         const createdTask = await this.save({
           type: "task",
           title: `Feature checkout: ${sanitizedFeatureId}`,
-          content: "Automated feature checkout - verify all acceptance criteria are met.",
+          content: this.buildFeatureCheckoutContent({
+            featureId: sanitizedFeatureId,
+            executionBranch: normalizedOptions.execution_branch,
+            mergeTargetBranch: normalizedOptions.merge_target_branch,
+            mergePolicy,
+            mergeStrategy,
+            openPrBeforeMerge,
+          }),
           status: "pending",
           priority: "medium",
           project: sanitizedProjectId,
@@ -1672,6 +1679,40 @@ export class BrainService {
   private isProtectedMergeTargetBranch(branch: string): boolean {
     const normalized = branch.trim().toLowerCase();
     return normalized === "main" || normalized === "master";
+  }
+
+  private buildFeatureCheckoutContent(params: {
+    featureId: string;
+    executionBranch?: string;
+    mergeTargetBranch?: string;
+    mergePolicy: NonNullable<FeatureCheckoutRequest["merge_policy"]>;
+    mergeStrategy: NonNullable<FeatureCheckoutRequest["merge_strategy"]>;
+    openPrBeforeMerge: boolean;
+  }): string {
+    const executionBranch = params.executionBranch ?? "(default branch for execution context)";
+    const mergeTargetBranch = params.mergeTargetBranch ?? "(no explicit merge target)";
+    const lines = [
+      `Automated feature checkout for ${params.featureId}.`,
+      "",
+      "Merge intent:",
+      `- execution_branch: ${executionBranch}`,
+      `- merge_target_branch: ${mergeTargetBranch}`,
+      `- merge_policy: ${params.mergePolicy}`,
+      `- merge_strategy: ${params.mergeStrategy}`,
+      `- open_pr_before_merge: ${params.openPrBeforeMerge}`,
+      "",
+      "Safety gates before merge:",
+      "- checkout validation pass",
+      "- merge precheck pass",
+      "- verification commands pass",
+      "",
+      "Guardrails:",
+      "- If merge target is a protected branch, use open_pr_before_merge before auto merge",
+      "- For optional PR-before-merge flow, ensure PR checks are green before final merge",
+      "- cleanup only after confirmed successful push",
+    ];
+
+    return lines.join("\n");
   }
 
   async reconcileFeatureCheckoutDependencies(projectId: string, featureId: string): Promise<void> {

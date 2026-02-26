@@ -778,6 +778,37 @@ describe("ApiClient", () => {
         })
       );
     });
+
+    it("includes merge intent fields in PATCH payload when provided", async () => {
+      let capturedBody: string | undefined;
+
+      globalThis.fetch = ((_: string, options?: RequestInit) => {
+        capturedBody = options?.body as string;
+        return Promise.resolve(new Response("{}", { status: 200 }));
+      }) as typeof fetch;
+
+      await client.updateEntryMetadata("projects/test/task/abc.md", {
+        git_branch: "feature/auth-flow",
+        merge_target_branch: "main",
+        merge_policy: "auto_merge",
+        merge_strategy: "squash",
+        open_pr_before_merge: true,
+        execution_mode: "worktree",
+        checkout_enabled: true,
+      });
+
+      expect(capturedBody).toBe(
+        JSON.stringify({
+          git_branch: "feature/auth-flow",
+          merge_target_branch: "main",
+          merge_policy: "auto_merge",
+          merge_strategy: "squash",
+          open_pr_before_merge: true,
+          execution_mode: "worktree",
+          checkout_enabled: true,
+        })
+      );
+    });
   });
 
   describe("claimTask", () => {

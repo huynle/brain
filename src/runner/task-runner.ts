@@ -2909,6 +2909,12 @@ export class TaskRunner {
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: "auto_merge" | "manual" | "none";
+      merge_strategy?: "squash" | "merge" | "rebase";
+      open_pr_before_merge?: boolean;
+      execution_mode?: "worktree" | "in_branch";
+      checkout_enabled?: boolean;
       target_workdir?: string;
       agent?: string;
       model?: string;

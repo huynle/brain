@@ -631,6 +631,12 @@ export class ApiClient {
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
+      merge_target_branch?: string;
+      merge_policy?: "auto_merge" | "manual" | "none";
+      merge_strategy?: "squash" | "merge" | "rebase";
+      open_pr_before_merge?: boolean;
+      execution_mode?: "worktree" | "in_branch";
+      checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
       priority?: Priority;
@@ -651,6 +657,12 @@ export class ApiClient {
     if (fields.status !== undefined) payload.status = fields.status;
     if (fields.feature_id !== undefined) payload.feature_id = fields.feature_id;
     if (fields.git_branch !== undefined) payload.git_branch = fields.git_branch;
+    if (fields.merge_target_branch !== undefined) payload.merge_target_branch = fields.merge_target_branch;
+    if (fields.merge_policy !== undefined) payload.merge_policy = fields.merge_policy;
+    if (fields.merge_strategy !== undefined) payload.merge_strategy = fields.merge_strategy;
+    if (fields.open_pr_before_merge !== undefined) payload.open_pr_before_merge = fields.open_pr_before_merge;
+    if (fields.execution_mode !== undefined) payload.execution_mode = fields.execution_mode;
+    if (fields.checkout_enabled !== undefined) payload.checkout_enabled = fields.checkout_enabled;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
     if (fields.schedule !== undefined) payload.schedule = fields.schedule;
     if (fields.priority !== undefined) payload.priority = fields.priority;

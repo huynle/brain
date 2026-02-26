@@ -1286,6 +1286,34 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Update task execution directory (absolute path). PRIMARY USE CASE: Cross-project task filing - ensures task executes in the correct project. Task runner will try this first before fallback."),
+          git_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Git branch to execute this task on"),
+          merge_target_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Branch to merge completed work into"),
+          merge_policy: tool.schema
+            .enum(["auto_merge", "manual", "none"])
+            .optional()
+            .describe("Merge behavior at completion (default: auto_merge)"),
+          merge_strategy: tool.schema
+            .enum(["squash", "merge", "rebase"])
+            .optional()
+            .describe("Merge strategy for auto-merge (default: squash)"),
+          open_pr_before_merge: tool.schema
+            .boolean()
+            .optional()
+            .describe("Open PR before merge when enabled (default: false)"),
+          execution_mode: tool.schema
+            .enum(["worktree", "in_branch"])
+            .optional()
+            .describe("Task execution mode (default: worktree)"),
+          checkout_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe("Enable checkout/worktree flow for this task (default: true)"),
           direct_prompt: tool.schema
             .string()
             .optional()
@@ -1300,8 +1328,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.checkout_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, direct_prompt, agent, model`;
           }
 
           try {
@@ -1322,6 +1350,13 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               feature_priority: args.feature_priority,
               feature_depends_on: args.feature_depends_on,
               target_workdir: args.target_workdir,
+              git_branch: args.git_branch,
+              merge_target_branch: args.merge_target_branch,
+              merge_policy: args.merge_policy,
+              merge_strategy: args.merge_strategy,
+              open_pr_before_merge: args.open_pr_before_merge,
+              execution_mode: args.execution_mode,
+              checkout_enabled: args.checkout_enabled,
               direct_prompt: args.direct_prompt,
               agent: args.agent,
               model: args.model,
@@ -1347,6 +1382,20 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
             if (args.target_workdir)
               changes.push(`Target Workdir: ${args.target_workdir}`);
+            if (args.git_branch)
+              changes.push(`Git Branch: ${args.git_branch}`);
+            if (args.merge_target_branch)
+              changes.push(`Merge Target Branch: ${args.merge_target_branch}`);
+            if (args.merge_policy)
+              changes.push(`Merge Policy: ${args.merge_policy}`);
+            if (args.merge_strategy)
+              changes.push(`Merge Strategy: ${args.merge_strategy}`);
+            if (args.open_pr_before_merge !== undefined)
+              changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
+            if (args.execution_mode)
+              changes.push(`Execution Mode: ${args.execution_mode}`);
+            if (args.checkout_enabled !== undefined)
+              changes.push(`Checkout Enabled: ${args.checkout_enabled}`);
             if (args.direct_prompt)
               changes.push(`Direct Prompt: set`);
             if (args.agent)
@@ -2151,6 +2200,7 @@ Use this to get detailed information about a specific task including:
 
 Returns structured JSON with:
 - **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote
+- **Merge intent:** merge_target_branch, merge_policy (default auto_merge), merge_strategy (default squash), open_pr_before_merge, execution_mode, checkout_enabled
 - **Feature grouping:** feature_id, feature_priority, feature_depends_on
 - **Raw dependencies:** depends_on (IDs), resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle
 - **Timestamps:** created, modified
@@ -2197,6 +2247,12 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
               resolved_workdir: string | null;
               git_branch: string | null;
               git_remote: string | null;
+              merge_target_branch?: string | null;
+              merge_policy?: "auto_merge" | "manual" | "none";
+              merge_strategy?: "squash" | "merge" | "rebase";
+              open_pr_before_merge?: boolean;
+              execution_mode?: "worktree" | "in_branch";
+              checkout_enabled?: boolean;
               agent: string | null;
               model: string | null;
               direct_prompt: string | null;
@@ -2258,6 +2314,12 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
                 resolved_workdir: task.resolved_workdir,
                 git_branch: task.git_branch,
                 git_remote: task.git_remote,
+                merge_target_branch: task.merge_target_branch ?? null,
+                merge_policy: task.merge_policy ?? "auto_merge",
+                merge_strategy: task.merge_strategy ?? "squash",
+                open_pr_before_merge: task.open_pr_before_merge ?? false,
+                execution_mode: task.execution_mode ?? "worktree",
+                checkout_enabled: task.checkout_enabled ?? true,
               },
 
               // Feature grouping

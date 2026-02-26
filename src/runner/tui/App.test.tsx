@@ -2289,6 +2289,28 @@ describe('App - Cron View Mode (C key)', () => {
     unmount();
   });
 
+  it('keeps task-mode help hints and ? overlay shortcuts consistent for checkout/settings', async () => {
+    const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
+
+    const normalFrame = lastFrame() || '';
+    expect(normalFrame).toContain('Meta/Feature');
+    expect(normalFrame).toContain('Checkout');
+    expect(normalFrame).toContain('Settings');
+    expect(normalFrame).toContain('View');
+
+    stdin.write('?');
+    await new Promise(r => setTimeout(r, 20));
+
+    const helpFrame = lastFrame() || '';
+    expect(helpFrame).toContain('Task panel shortcuts (task view):');
+    expect(helpFrame).toContain('Mark selected feature header for checkout');
+    expect(helpFrame).toContain('Edit task metadata / feature settings');
+    expect(helpFrame).toContain('Open settings');
+    expect(helpFrame).toContain('Toggle task/cron view');
+
+    unmount();
+  });
+
   it('supports j/k navigation in cron view without crashing', async () => {
     const { stdin, lastFrame, unmount } = render(<App config={defaultConfig} />);
 

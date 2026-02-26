@@ -121,7 +121,42 @@ describe('App feature checkout trigger behavior', () => {
       ],
     });
 
-    expect(options).toEqual(DEFAULT_FEATURE_CHECKOUT_OPTIONS);
+    expect(options).toEqual({
+      execution_mode: 'worktree',
+      merge_policy: 'auto_merge',
+      merge_strategy: 'squash',
+      open_pr_before_merge: false,
+    });
+  });
+
+  it('falls back missing metadata fields to canonical defaults', () => {
+    const options = resolveFeatureCheckoutOptionsForSelection({
+      selectedTaskId: `${FEATURE_HEADER_PREFIX}feature-alpha`,
+      isMultiProject: false,
+      activeProject: 'ignored-in-single-project',
+      project: 'project-a',
+      tasks: [
+        createTaskDisplay({
+          feature_id: 'feature-alpha',
+          projectId: 'project-a',
+          executionMode: 'current_branch',
+          mergePolicy: undefined,
+          mergeStrategy: undefined,
+          openPrBeforeMerge: undefined,
+          gitBranch: 'feature/alpha',
+          mergeTargetBranch: 'develop',
+        }),
+      ],
+    });
+
+    expect(options).toEqual({
+      execution_branch: 'feature/alpha',
+      merge_target_branch: 'develop',
+      execution_mode: 'current_branch',
+      merge_policy: 'auto_merge',
+      merge_strategy: 'squash',
+      open_pr_before_merge: false,
+    });
   });
 
   it('returns false for non-feature rows and does not call callback', () => {

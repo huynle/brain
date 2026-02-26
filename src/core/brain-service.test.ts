@@ -1344,8 +1344,44 @@ Task content.
         expect(capturedRequests).toHaveLength(1);
         expect(capturedRequests[0]?.merge_policy).toBe("auto_merge");
         expect(capturedRequests[0]?.merge_strategy).toBe("squash");
+        expect(capturedRequests[0]?.remote_branch_policy).toBe("delete");
         expect(capturedRequests[0]?.execution_mode).toBe("worktree");
         expect(capturedRequests[0]?.open_pr_before_merge).toBe(false);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        service.save = originalSave;
+      }
+    });
+
+    test("forwards explicit remote branch policy to generated checkout task", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalSave = service.save;
+
+      const capturedRequests: Array<Record<string, unknown>> = [];
+
+      TaskService.prototype.getTasksByFeature = async () => [] as any;
+
+      service.save = (async (request) => {
+        capturedRequests.push(request as unknown as Record<string, unknown>);
+        return {
+          id: "chkremote",
+          path: "projects/test-project/task/chkremote.md",
+          title: "Feature checkout: feature-remote",
+          type: "task",
+          status: "pending",
+          link: "[[chkremote]]",
+        };
+      }) as typeof service.save;
+
+      try {
+        await service.markFeatureForCheckout(
+          "test-project",
+          "feature-remote",
+          { remote_branch_policy: "keep" } as any
+        );
+
+        expect(capturedRequests).toHaveLength(1);
+        expect(capturedRequests[0]?.remote_branch_policy).toBe("keep");
       } finally {
         TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
         service.save = originalSave;
@@ -1395,6 +1431,11 @@ Task content.
 
         expect(capturedRequests).toHaveLength(1);
         const content = String(capturedRequests[0]?.content ?? "");
+        expect(content).toContain("Merge intent:");
+        expect(content).toContain("- merge_policy: auto_merge");
+        expect(content).toContain("- merge_strategy: squash");
+        expect(content).toContain("- remote_branch_policy: delete");
+        expect(content).toContain("- open_pr_before_merge: false");
         expect(content).toContain("checkout validation pass");
         expect(content).toContain("merge precheck pass");
         expect(content).toContain("verification commands pass");

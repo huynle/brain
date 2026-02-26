@@ -175,7 +175,43 @@ describe("API schemas - cron fields", () => {
 
     expect(parsed.merge_policy).toBe("auto_merge");
     expect(parsed.merge_strategy).toBe("squash");
+    expect(parsed.open_pr_before_merge).toBe(false);
+    expect(parsed.remote_branch_policy).toBe("delete");
     expect(parsed.execution_mode).toBe("worktree");
+  });
+
+  test("CreateEntryRequestSchema accepts remote_branch_policy", () => {
+    const parsed = CreateEntryRequestSchema.parse({
+      type: "task",
+      title: "Task with remote branch policy",
+      content: "body",
+      remote_branch_policy: "keep",
+    });
+
+    expect(parsed.remote_branch_policy).toBe("keep");
+  });
+
+  test("UpdateEntryRequestSchema accepts remote_branch_policy-only updates", () => {
+    const parsed = UpdateEntryRequestSchema.parse({
+      remote_branch_policy: "delete",
+    });
+
+    expect(parsed.remote_branch_policy).toBe("delete");
+  });
+
+  test("BrainEntrySchema includes remote_branch_policy field", () => {
+    const parsed = BrainEntrySchema.parse({
+      id: "abc12def",
+      path: "projects/my-project/task/abc12def.md",
+      title: "Task entry",
+      type: "task",
+      status: "pending",
+      content: "body",
+      tags: ["task"],
+      remote_branch_policy: "keep",
+    });
+
+    expect(parsed.remote_branch_policy).toBe("keep");
   });
 
   test("FeatureCheckoutRequestSchema rejects identical execution and merge target branches", () => {

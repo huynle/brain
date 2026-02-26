@@ -350,6 +350,15 @@ export interface AppProps {
   onExecuteTask?: (taskId: string, taskPath: string) => Promise<boolean>;
   /** Callback to execute all ready tasks for a feature. Returns number of tasks started. */
   onExecuteFeature?: (featureId: string) => Promise<number>;
+  /** Callback to mark a feature for checkout task generation. */
+  onMarkFeatureForCheckout?: (
+    projectId: string,
+    featureId: string
+  ) => Promise<{
+    created: boolean;
+    taskId: string;
+    taskTitle: string;
+  }>;
   /** Callback to get the actual count of running OpenCode processes */
   getRunningProcessCount?: () => number;
   /** Callback to get resource metrics (CPU/memory) for running OpenCode processes */

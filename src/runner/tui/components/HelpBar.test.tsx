@@ -4,6 +4,19 @@ import { render } from 'ink-testing-library';
 import { HelpBar } from './HelpBar';
 
 describe('HelpBar', () => {
+  it('shows checkout shortcut hint in task view', () => {
+    const { lastFrame, unmount } = render(
+      <HelpBar focusedPanel="tasks" viewMode="tasks" />
+    );
+
+    const frame = lastFrame() || '';
+
+    expect(frame).toContain('f');
+    expect(frame).toContain('Checkout');
+
+    unmount();
+  });
+
   it('shows cron action shortcuts clearly in cron view', () => {
     const { lastFrame, unmount } = render(
       <HelpBar focusedPanel="tasks" viewMode="crons" />

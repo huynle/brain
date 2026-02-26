@@ -3272,6 +3272,14 @@ export class TaskRunner {
         onEditTask: (taskId, taskPath) => this.editTask(taskId, taskPath),
         onExecuteTask: (taskId, taskPath) => this.executeTaskManually(taskId, taskPath),
         onExecuteFeature: (featureId) => this.executeFeature(featureId),
+        onMarkFeatureForCheckout: async (projectId, featureId) => {
+          const response = await this.apiClient.markFeatureForCheckout(projectId, featureId);
+          return {
+            created: response.created,
+            taskId: response.task.id,
+            taskTitle: response.task.title,
+          };
+        },
         // Pause/resume callbacks (async — persisted via root task status)
         onPause: (projectId) => this.pause(projectId),
         onResume: (projectId) => this.resume(projectId),

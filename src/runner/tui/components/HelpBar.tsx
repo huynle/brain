@@ -80,10 +80,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                    )}
                    <Text bold>y</Text> Yank
                    {'  '}
-                   <Text bold>x</Text> Execute
-                   {'  '}
-                   <Text bold>X</Text> Cancel
-                   {'  '}
+                    <Text bold>x</Text> Execute
+                    {'  '}
+                    <Text bold>f</Text> Checkout
+                    {'  '}
+                    <Text bold>X</Text> Cancel
+                    {'  '}
                    {hasSelectedTasks && (
                      <>
                        <Text bold color="red">⌫</Text> <Text color="red">Delete</Text>

@@ -344,6 +344,7 @@ export function App({
   onEditTask,
   onExecuteTask,
   onExecuteFeature,
+  onMarkFeatureForCheckout,
   getRunningProcessCount,
   getResourceMetrics,
   getProjectLimits,
@@ -2317,6 +2318,53 @@ export function App({
       }
     }
 
+    // f key: Mark selected feature header for checkout task generation
+    if (input === 'f' && viewMode === 'tasks' && focusedPanel === 'tasks') {
+      const selectedRowTarget = selectedTaskId ? parseTaskTreeRowTarget(selectedTaskId) : null;
+      if (!selectedRowTarget || selectedRowTarget.kind !== 'feature_header' || !selectedRowTarget.featureId) {
+        return;
+      }
+
+      if (!onMarkFeatureForCheckout) {
+        addLog({
+          level: 'warn',
+          message: 'Feature checkout action unavailable',
+        });
+        return;
+      }
+
+      const featureId = selectedRowTarget.featureId;
+      const targetProjectId = isMultiProject ? activeProject : config.project;
+      if (!targetProjectId || targetProjectId === 'all') {
+        addLog({
+          level: 'warn',
+          message: 'Select a specific project tab before marking feature checkout',
+        });
+        return;
+      }
+
+      addLog({
+        level: 'info',
+        message: `Marking feature for checkout: ${featureId}`,
+      });
+
+      onMarkFeatureForCheckout(targetProjectId, featureId)
+        .then((result) => {
+          addLog({
+            level: 'info',
+            message: `${result.created ? 'Created' : 'Reused'} checkout task: ${result.taskId} - ${result.taskTitle}`,
+          });
+        })
+        .catch((err) => {
+          addLog({
+            level: 'error',
+            message: `Failed to mark feature checkout: ${err}`,
+          });
+        });
+
+      return;
+    }
+
     // x key: Execute feature immediately or execute single task
     // - On feature header: enable feature AND immediately execute ready tasks
     // - On ungrouped header: enable ungrouped AND immediately execute ready tasks
@@ -3321,7 +3369,7 @@ export function App({
         <Text />
         <Text bold dimColor>Task panel shortcuts (task view):</Text>
         <Text>  <Text bold>e</Text>         - Edit selected task in $EDITOR</Text>
-        <Text>  <Text bold>f</Text>         - Focus on feature</Text>
+        <Text>  <Text bold>f</Text>         - Mark selected feature header for checkout</Text>
         <Text>  <Text bold>x</Text>         - Execute selected task/feature</Text>
         <Text>  <Text bold>X</Text>         - Cancel running selected task</Text>
         <Text>  <Text bold>s</Text>         - Edit selected task metadata</Text>

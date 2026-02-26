@@ -22,7 +22,7 @@ This skill runs **as a task in the work queue** via `direct_prompt`. It:
 
 The checkout task's `direct_prompt` should be:
 ```
-Load the feature-checkout skill and process the checkout task at brain path: <task-path>. Start now.
+Load the feature-checkout skill and process the checkout task at brain path: <task-path>. Validate implementation coverage against dependency tasks' user_original_request intent. Start now.
 ```
 
 ## Checklist
@@ -308,6 +308,10 @@ brain_save(
   depends_on: ["<THIS CHECKOUT TASK'S ID>"],
   user_original_request: "<the specific part of the original request that wasn't covered>",
   target_workdir: "<same target_workdir>",
+  generated: true,
+  generated_kind: "gap_task",
+  generated_key: "feature-checkout:gap:<feature_id>:criterion-<N>",
+  generated_by: "feature-checkout",
   tags: ["gap", "follow-up", "<feature_id>"]
 )
 ```
@@ -330,8 +334,12 @@ brain_save(
   feature_priority: "<same feature_priority>",
   feature_depends_on: <same feature_depends_on>,
   depends_on: [<all new gap task IDs>],
-  direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <NEW_TASK_PATH>. Start now.",
+  direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <NEW_TASK_PATH>. Validate implementation coverage against dependency tasks' user_original_request intent. Start now.",
   target_workdir: "<same target_workdir>",
+  generated: true,
+  generated_kind: "feature_checkout",
+  generated_key: "feature-checkout:<feature_id>:round-<N+1>",
+  generated_by: "feature-checkout",
   tags: ["checkout", "<feature_id>"]
 )
 ```
@@ -405,8 +413,12 @@ brain_save(
   feature_priority: "<feature_priority>",
   feature_depends_on: <feature_depends_on>,
   depends_on: [<all implementation task IDs>],
-  direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <TASK_PATH>. Start now.",
+  direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: <TASK_PATH>. Validate implementation coverage against dependency tasks' user_original_request intent. Start now.",
   target_workdir: "<target_workdir>",
+  generated: true,
+  generated_kind: "feature_checkout",
+  generated_key: "feature-checkout:<feature_id>:round-1",
+  generated_by: "feature-checkout",
   tags: ["checkout", "<feature_id>"]
 )
 ```

@@ -370,7 +370,17 @@ IF user_requested_verification OR feature_needs_integration_test:
     depends_on: [task1_path, task2_path, task3_path],  # Depends on ALL tasks
     tags: ["do-work", FEATURE_ID, "checkout"],
     user_original_request: "<exact user input>",
-    content: @checkout_content  # Verification checklist
+    content: @checkout_content,  # Verification checklist
+    generated: true,
+    generated_kind: "feature_checkout",
+    generated_key: "feature-checkout:${FEATURE_ID}:round-1",
+    generated_by: "feature-checkout"
+  )
+
+  # CRITICAL: Set direct_prompt with the ACTUAL saved path to avoid runtime fallback.
+  brain_update(
+    path: checkout_path,
+    direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: ${checkout_path}. Validate implementation coverage against dependency tasks' user_original_request intent. Start now."
   )
 
 # Step 5: BATCH PROMOTE - All tasks created, now make them visible to do-work

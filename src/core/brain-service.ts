@@ -195,6 +195,11 @@ export interface MarkFeatureForCheckoutResult {
   task: CreateEntryResponse;
 }
 
+interface UpdateOptions {
+  skipFeatureCheckoutReconcile?: boolean;
+  skipDependsOnValidation?: boolean;
+}
+
 // =============================================================================
 // Brain Service Class
 // =============================================================================
@@ -713,6 +718,13 @@ export class BrainService {
     // Initialize in database
     initEntry(relativePath, effectiveProjectId);
 
+    if (entryType === "task") {
+      const featureId = this.normalizeFeatureId(request.feature_id);
+      if (featureId) {
+        await this.reconcileFeatureCheckoutDependencies(effectiveProjectId, featureId);
+      }
+    }
+
     // Return display title (normalized but not escaped) for client use
     const link = generateMarkdownLink(noteId, displayTitle);
 
@@ -924,6 +936,14 @@ export class BrainService {
    * Update an existing entry (brain_update)
    */
   async update(path: string, request: UpdateEntryRequest): Promise<BrainEntry> {
+    return this.updateInternal(path, request);
+  }
+
+  private async updateInternal(
+    path: string,
+    request: UpdateEntryRequest,
+    options: UpdateOptions = {}
+  ): Promise<BrainEntry> {
     const fullPath = join(this.config.brainDir, path);
     if (!existsSync(fullPath)) {
       throw new Error(`Entry not found: ${path}`);
@@ -979,7 +999,12 @@ export class BrainService {
     const projectId = projectMatch ? projectMatch[1] : (frontmatter.projectId as string) || this.projectId;
 
     // Validate depends_on for task entries
-    if (isTask && request.depends_on !== undefined && request.depends_on.length > 0) {
+    if (
+      isTask &&
+      request.depends_on !== undefined &&
+      request.depends_on.length > 0 &&
+      !options.skipDependsOnValidation
+    ) {
       const taskService = new TaskService(this.config, projectId);
       const validation = await taskService.validateDependencies(
         request.depends_on,
@@ -1179,6 +1204,23 @@ export class BrainService {
     // Record access
     recordAccess(path);
 
+    if (isTask && !options.skipFeatureCheckoutReconcile) {
+      const featureIdsToReconcile = new Set<string>();
+      const oldFeatureId = this.normalizeFeatureId(frontmatter.feature_id);
+      const newFeatureId = this.normalizeFeatureId(updatedFrontmatter.feature_id);
+
+      if (oldFeatureId) {
+        featureIdsToReconcile.add(oldFeatureId);
+      }
+      if (newFeatureId) {
+        featureIdsToReconcile.add(newFeatureId);
+      }
+
+      for (const featureId of featureIdsToReconcile) {
+        await this.reconcileFeatureCheckoutDependencies(projectId, featureId);
+      }
+    }
+
     return this.recall(path);
   }
 
@@ -1191,11 +1233,24 @@ export class BrainService {
       throw new Error(`Entry not found: ${path}`);
     }
 
+    const content = readFileSync(fullPath, "utf-8");
+    const { frontmatter } = parseFrontmatter(content);
+    const entryType = (frontmatter.type as string) || "";
+    const isTask = entryType === "task" || path.includes("/task/");
+    const featureId = this.normalizeFeatureId(frontmatter.feature_id);
+    const projectMatch = path.match(/^projects\/([^/]+)\//);
+    const projectId =
+      projectMatch?.[1] || (frontmatter.projectId as string) || this.projectId;
+
     // Delete file
     unlinkSync(fullPath);
 
     // Remove from database
     deleteEntryMeta(path);
+
+    if (isTask && featureId) {
+      await this.reconcileFeatureCheckoutDependencies(projectId, featureId);
+    }
   }
 
   /**
@@ -1243,6 +1298,7 @@ export class BrainService {
     // Get current project from path
     const currentProjectMatch = path.match(/^projects\/([^/]+)\//);
     const currentProjectId = currentProjectMatch ? currentProjectMatch[1] : null;
+    const featureId = this.normalizeFeatureId(frontmatter.feature_id);
     
     // Validate not moving to same project
     if (currentProjectId === newProjectId) {
@@ -1357,6 +1413,11 @@ export class BrainService {
       } catch {
         // Dep rewriting is best-effort — don't fail the move
       }
+    }
+
+    if (entryType === "task" && featureId && currentProjectId) {
+      await this.reconcileFeatureCheckoutDependencies(currentProjectId, featureId);
+      await this.reconcileFeatureCheckoutDependencies(newProjectId, featureId);
     }
     
     return {
@@ -1473,6 +1534,51 @@ export class BrainService {
     }
   }
 
+  async reconcileFeatureCheckoutDependencies(projectId: string, featureId: string): Promise<void> {
+    const sanitizedProjectId = sanitizeSimpleValue(projectId);
+    const sanitizedFeatureId = sanitizeSimpleValue(featureId);
+
+    if (!sanitizedProjectId) {
+      throw new Error("projectId is required");
+    }
+    if (!sanitizedFeatureId) {
+      throw new Error("featureId is required");
+    }
+
+    const featureTasks = await this.getFeatureTasks(sanitizedProjectId, sanitizedFeatureId);
+    const desiredDependsOn = this.extractUniqueNonGeneratedTaskIds(featureTasks);
+    const checkoutTasks = this.extractFeatureCheckoutTasks(featureTasks);
+
+    for (const checkoutTask of checkoutTasks) {
+      if (checkoutTask.status === "in_progress") {
+        continue;
+      }
+      if (!checkoutTask.path) {
+        continue;
+      }
+
+      const currentDependsOn = this.normalizeTaskIds(checkoutTask.depends_on);
+      if (this.areTaskIdArraysEqual(currentDependsOn, desiredDependsOn)) {
+        continue;
+      }
+
+      await this.updateInternal(
+        checkoutTask.path,
+        { depends_on: desiredDependsOn },
+        { skipFeatureCheckoutReconcile: true, skipDependsOnValidation: true }
+      );
+    }
+  }
+
+  private normalizeFeatureId(value: unknown): string | undefined {
+    if (typeof value !== "string") {
+      return undefined;
+    }
+
+    const sanitized = sanitizeSimpleValue(value);
+    return sanitized || undefined;
+  }
+
   private async getCreateResponseForPath(path: string): Promise<CreateEntryResponse> {
     const entry = await this.recall(path);
     return {
@@ -1489,14 +1595,17 @@ export class BrainService {
     projectId: string,
     featureId: string
   ): Promise<string[]> {
+    const featureTasks = await this.getFeatureTasks(projectId, featureId);
+    return this.extractUniqueNonGeneratedTaskIds(featureTasks);
+  }
+
+  private async getFeatureTasks(projectId: string, featureId: string): Promise<Task[]> {
     const taskService = new TaskService(this.config, projectId);
 
     try {
-      const featureTasks = await taskService.getTasksByFeature(projectId, featureId);
-      return this.extractUniqueNonGeneratedTaskIds(featureTasks);
+      return await taskService.getTasksByFeature(projectId, featureId);
     } catch {
-      const fallbackTasks = this.getFeatureTasksFromFilesystem(projectId, featureId);
-      return this.extractUniqueNonGeneratedTaskIds(fallbackTasks);
+      return this.getFeatureTasksFromFilesystem(projectId, featureId);
     }
   }
 
@@ -1572,6 +1681,45 @@ export class BrainService {
     }
 
     return Array.from(ids).sort();
+  }
+
+  private extractFeatureCheckoutTasks(tasks: Task[]): Task[] {
+    return tasks.filter(
+      (task) =>
+        task.generated === true &&
+        task.generated_kind === "feature_checkout" &&
+        task.generated_by === "feature-checkout"
+    );
+  }
+
+  private normalizeTaskIds(ids: string[] | undefined): string[] {
+    if (!ids || ids.length === 0) {
+      return [];
+    }
+
+    const normalized = new Set<string>();
+    for (const id of ids) {
+      const sanitized = sanitizeDependsOnEntry(id);
+      if (sanitized) {
+        normalized.add(sanitized);
+      }
+    }
+
+    return Array.from(normalized).sort();
+  }
+
+  private areTaskIdArraysEqual(a: string[], b: string[]): boolean {
+    if (a.length !== b.length) {
+      return false;
+    }
+
+    for (let i = 0; i < a.length; i += 1) {
+      if (a[i] !== b[i]) {
+        return false;
+      }
+    }
+
+    return true;
   }
 
   // ========================================

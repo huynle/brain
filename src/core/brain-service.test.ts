@@ -1308,5 +1308,336 @@ Task content.
         service.recall = originalRecall;
       }
     });
+
+    test("reconciles checkout depends_on with non-generated feature tasks and skips in-progress", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalUpdateInternal = (service as any).updateInternal;
+
+      const updateCalls: Array<{
+        path: string;
+        request: Record<string, unknown>;
+        options: Record<string, unknown> | undefined;
+      }> = [];
+
+      TaskService.prototype.getTasksByFeature = async () =>
+        [
+          {
+            id: "task-z",
+            generated: false,
+            feature_id: "feature-reconcile",
+            status: "pending",
+          },
+          {
+            id: "task-a",
+            generated: false,
+            feature_id: "feature-reconcile",
+            status: "pending",
+          },
+          {
+            id: "task-z",
+            generated: false,
+            feature_id: "feature-reconcile",
+            status: "pending",
+          },
+          {
+            id: "chk-pending",
+            path: "projects/test-project/task/chk-pending.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-reconcile",
+            status: "pending",
+            depends_on: ["task-a"],
+          },
+          {
+            id: "chk-active",
+            path: "projects/test-project/task/chk-active.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-reconcile",
+            status: "in_progress",
+            depends_on: ["task-a"],
+          },
+          {
+            id: "chk-same",
+            path: "projects/test-project/task/chk-same.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-reconcile",
+            status: "pending",
+            depends_on: ["task-a", "task-z"],
+          },
+        ] as any;
+
+      (service as any).updateInternal = async (
+        path: string,
+        request: Record<string, unknown>,
+        options?: Record<string, unknown>
+      ) => {
+        updateCalls.push({
+          path,
+          request: request as unknown as Record<string, unknown>,
+          options: options as unknown as Record<string, unknown> | undefined,
+        });
+        return {
+          id: "chk-pending",
+          path,
+          title: "Feature checkout",
+          type: "task",
+          status: "pending",
+          content: "",
+        } as any;
+      };
+
+      try {
+        await (service as any).reconcileFeatureCheckoutDependencies(
+          "test-project",
+          "feature-reconcile"
+        );
+
+        expect(updateCalls).toHaveLength(1);
+        expect(updateCalls[0]?.path).toBe("projects/test-project/task/chk-pending.md");
+        expect(updateCalls[0]?.request.depends_on).toEqual(["task-a", "task-z"]);
+        expect(updateCalls[0]?.options).toEqual({
+          skipFeatureCheckoutReconcile: true,
+          skipDependsOnValidation: true,
+        });
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        (service as any).updateInternal = originalUpdateInternal;
+      }
+    });
+  });
+
+  describe("feature checkout reconciliation hooks", () => {
+    const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+
+    beforeEach(() => {
+      TaskService.prototype.getTasksByFeature = async () => {
+        throw new Error("force filesystem fallback");
+      };
+    });
+
+    const writeTask = (params: {
+      projectId: string;
+      fileId: string;
+      title: string;
+      featureId: string;
+      status?: string;
+      dependsOn?: string[];
+      generated?: boolean;
+      generatedKind?: string;
+      generatedBy?: string;
+    }) => {
+      const taskDir = join(TEST_DIR, "projects", params.projectId, "task");
+      mkdirSync(taskDir, { recursive: true });
+
+      const dependsOnBlock =
+        params.dependsOn && params.dependsOn.length > 0
+          ? `depends_on:\n${params.dependsOn.map((id) => `  - ${id}`).join("\n")}\n`
+          : "";
+      const generatedBlock =
+        params.generated === true
+          ? `generated: true\ngenerated_kind: ${params.generatedKind || "feature_checkout"}\ngenerated_by: ${params.generatedBy || "feature-checkout"}\n`
+          : "";
+
+      const relativePath = `projects/${params.projectId}/task/${params.fileId}.md`;
+      const fullPath = join(TEST_DIR, relativePath);
+      writeFileSync(
+        fullPath,
+        `---
+title: ${params.title}
+type: task
+status: ${params.status || "pending"}
+feature_id: ${params.featureId}
+projectId: ${params.projectId}
+${dependsOnBlock}${generatedBlock}---
+
+Task content.
+`
+      );
+
+      return relativePath;
+    };
+
+    afterAll(() => {
+      TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+    });
+
+    const readDependsOn = (relativePath: string): string[] => {
+      const raw = readFileSync(join(TEST_DIR, relativePath), "utf-8");
+      const { frontmatter } = parseFrontmatter(raw);
+      return ((frontmatter.depends_on as string[] | undefined) || []).slice().sort();
+    };
+
+    test("save() reconciles checkout dependencies and does not mutate active checkout", async () => {
+      const projectId = `recon-save-${Date.now()}`;
+      const featureId = "feature-save-scope";
+
+      writeTask({
+        projectId,
+        fileId: "taska001",
+        title: "Base feature task",
+        featureId,
+      });
+
+      const pendingCheckoutPath = writeTask({
+        projectId,
+        fileId: "chkp0001",
+        title: "Pending checkout",
+        featureId,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["taska001"],
+      });
+
+      const activeCheckoutPath = writeTask({
+        projectId,
+        fileId: "chka0001",
+        title: "Active checkout",
+        featureId,
+        status: "in_progress",
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["taska001"],
+      });
+
+      const created = await service.save({
+        type: "task",
+        title: "Task created through save hook",
+        content: "content",
+        status: "pending",
+        feature_id: featureId,
+        project: projectId,
+      });
+
+      const expected = ["taska001", created.id].sort();
+      expect(readDependsOn(pendingCheckoutPath)).toEqual(expected);
+      expect(readDependsOn(activeCheckoutPath)).toEqual(["taska001"]);
+    });
+
+    test("update() feature reassignment reconciles old and new feature checkout scopes", async () => {
+      const projectId = `recon-update-${Date.now()}`;
+      const oldFeature = "feature-old-scope";
+      const newFeature = "feature-new-scope";
+
+      const movedTaskPath = writeTask({
+        projectId,
+        fileId: "movf0001",
+        title: "Task to reassign",
+        featureId: oldFeature,
+      });
+
+      const oldCheckoutPath = writeTask({
+        projectId,
+        fileId: "oldc0001",
+        title: "Old feature checkout",
+        featureId: oldFeature,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["movf0001"],
+      });
+
+      const newCheckoutPath = writeTask({
+        projectId,
+        fileId: "newc0001",
+        title: "New feature checkout",
+        featureId: newFeature,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: [],
+      });
+
+      await service.update(movedTaskPath, { feature_id: newFeature });
+
+      expect(readDependsOn(oldCheckoutPath)).toEqual([]);
+      expect(readDependsOn(newCheckoutPath)).toEqual(["movf0001"]);
+    });
+
+    test("delete() reconciles checkout deps and repeated reconcile is idempotent", async () => {
+      const projectId = `recon-delete-${Date.now()}`;
+      const featureId = "feature-delete-scope";
+
+      writeTask({
+        projectId,
+        fileId: "dela0001",
+        title: "Task A",
+        featureId,
+      });
+
+      const taskBPath = writeTask({
+        projectId,
+        fileId: "delb0001",
+        title: "Task B",
+        featureId,
+      });
+
+      const checkoutPath = writeTask({
+        projectId,
+        fileId: "delc0001",
+        title: "Delete feature checkout",
+        featureId,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["dela0001", "delb0001"],
+      });
+
+      await service.delete(taskBPath);
+      expect(readDependsOn(checkoutPath)).toEqual(["dela0001"]);
+
+      const before = readFileSync(join(TEST_DIR, checkoutPath), "utf-8");
+      await service.reconcileFeatureCheckoutDependencies(projectId, featureId);
+      const after = readFileSync(join(TEST_DIR, checkoutPath), "utf-8");
+      expect(after).toBe(before);
+    });
+
+    test("moveEntry() reconciles source and destination project checkout scopes", async () => {
+      const sourceProject = `recon-move-src-${Date.now()}`;
+      const destinationProject = `recon-move-dst-${Date.now()}`;
+      const featureId = "feature-cross-project";
+
+      const movedTaskPath = writeTask({
+        projectId: sourceProject,
+        fileId: "movx0001",
+        title: "Cross-project task",
+        featureId,
+      });
+
+      const sourceCheckoutPath = writeTask({
+        projectId: sourceProject,
+        fileId: "srcx0001",
+        title: "Source checkout",
+        featureId,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["movx0001"],
+      });
+
+      const destinationCheckoutPath = writeTask({
+        projectId: destinationProject,
+        fileId: "dstx0001",
+        title: "Destination checkout",
+        featureId,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: [],
+      });
+
+      const result = await service.moveEntry(movedTaskPath, destinationProject);
+
+      expect(result.oldPath).toBe(movedTaskPath);
+      expect(result.newPath).toBe(`projects/${destinationProject}/task/movx0001.md`);
+      expect(readDependsOn(sourceCheckoutPath)).toEqual([]);
+      expect(readDependsOn(destinationCheckoutPath)).toEqual(["movx0001"]);
+    });
   });
 });

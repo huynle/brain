@@ -154,6 +154,7 @@ describe('MetadataPopup', () => {
           checkoutEnabledValue={true}
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
+          remoteBranchPolicyValue="delete"
           openPrBeforeMergeValue={false}
         />
       );
@@ -167,6 +168,8 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Enabled:');
       expect(frame).toContain('Merge Policy:');
       expect(frame).toContain('Strategy:');
+      expect(frame).toContain('Remote Branch');
+      expect(frame).toContain('Policy:');
       expect(frame).toContain('Open PR Before');
       expect(frame).toContain('Merge:');
       expect(frame).toContain('Workdir:');
@@ -189,6 +192,7 @@ describe('MetadataPopup', () => {
           checkoutEnabledValue={true}
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
+          remoteBranchPolicyValue="delete"
           openPrBeforeMergeValue={false}
         />
       );
@@ -238,6 +242,7 @@ describe('MetadataPopup', () => {
           checkoutEnabledValue={true}
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
+          remoteBranchPolicyValue="delete"
           openPrBeforeMergeValue={false}
         />
       );

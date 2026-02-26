@@ -211,6 +211,7 @@ function normalizeTask(
     mergeTargetBranch: asString(rawTask.merge_target_branch) ?? null,
     mergePolicy: asString(rawTask.merge_policy) as TaskDisplay['mergePolicy'],
     mergeStrategy: asString(rawTask.merge_strategy) as TaskDisplay['mergeStrategy'],
+    remoteBranchPolicy: asString(rawTask.remote_branch_policy) as TaskDisplay['remoteBranchPolicy'],
     openPrBeforeMerge:
       typeof rawTask.open_pr_before_merge === 'boolean'
         ? rawTask.open_pr_before_merge

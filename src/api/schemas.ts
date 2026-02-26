@@ -14,6 +14,7 @@ import {
   MERGE_POLICIES,
   MERGE_STRATEGIES,
   PRIORITIES,
+  REMOTE_BRANCH_POLICIES,
   TASK_CLASSIFICATIONS,
 } from "../core/types";
 import { parseCronExpression } from "../core/cron-service";
@@ -55,6 +56,11 @@ export const MergeStrategySchema = z.enum(MERGE_STRATEGIES).openapi({
 export const ExecutionModeSchema = z.enum(EXECUTION_MODES).openapi({
   description: "Execution mode for feature/task work",
   example: "worktree",
+});
+
+export const RemoteBranchPolicySchema = z.enum(REMOTE_BRANCH_POLICIES).openapi({
+  description: "Remote feature branch handling after successful auto-merge",
+  example: "delete",
 });
 
 export const TaskClassificationSchema = z.enum(TASK_CLASSIFICATIONS).openapi({
@@ -163,6 +169,7 @@ export const BrainEntrySchema = z.object({
   merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
   merge_policy: MergePolicySchema.optional().openapi({ default: "auto_merge" }),
   merge_strategy: MergeStrategySchema.optional().openapi({ default: "squash" }),
+  remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge when enabled", default: false }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for task work", default: "worktree" }),
   checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution for this task", default: true }),
@@ -259,6 +266,7 @@ export const CreateEntryRequestSchema = z.object({
   merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
   merge_policy: MergePolicySchema.optional().default("auto_merge").openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
   merge_strategy: MergeStrategySchema.optional().default("squash").openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  remote_branch_policy: RemoteBranchPolicySchema.optional().default("delete").openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", default: "worktree" }),
   checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
@@ -333,6 +341,7 @@ export const UpdateEntryRequestSchema = z.object({
   merge_target_branch: z.string().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
   merge_policy: MergePolicySchema.optional().openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
   merge_strategy: MergeStrategySchema.optional().openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", example: "worktree" }),
   checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution" }),
@@ -386,8 +395,8 @@ export const UpdateEntryRequestSchema = z.object({
     example: "manual",
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.remote_branch_policy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -620,6 +629,7 @@ export const TaskSchema = z.object({
   merge_target_branch: z.string().nullable().optional().openapi({ description: "Branch to merge completed work into", example: "main" }),
   merge_policy: MergePolicySchema.optional().openapi({ description: "Merge behavior at completion", default: "auto_merge" }),
   merge_strategy: MergeStrategySchema.optional().openapi({ description: "Merge strategy for auto-merge", default: "squash" }),
+  remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge", default: false }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for this task", default: "worktree" }),
   checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
@@ -932,6 +942,10 @@ export const FeatureCheckoutRequestSchema = z.object({
   merge_strategy: MergeStrategySchema.optional().default("squash").openapi({
     description: "Merge strategy used when merge policy allows auto merge",
     default: "squash",
+  }),
+  remote_branch_policy: RemoteBranchPolicySchema.optional().default("delete").openapi({
+    description: "Remote branch handling after successful auto-merge",
+    default: "delete",
   }),
   open_pr_before_merge: z.boolean().optional().default(false).openapi({
     description: "Open a pull request before merge when enabled",

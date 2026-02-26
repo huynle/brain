@@ -8,6 +8,7 @@ import type {
   SessionInfo,
   MergePolicy,
   MergeStrategy,
+  RemoteBranchPolicy,
   ExecutionMode,
 } from '../../core/types';
 import type {
@@ -66,6 +67,7 @@ export interface TaskDisplay {
   mergeTargetBranch?: string | null; // Target branch for merge operations
   mergePolicy?: MergePolicy | null;  // Merge behavior at completion
   mergeStrategy?: MergeStrategy | null; // Merge strategy when merging
+  remoteBranchPolicy?: RemoteBranchPolicy | null; // Remote branch handling after auto-merge
   openPrBeforeMerge?: boolean;       // Whether to require PR before merge
   executionMode?: ExecutionMode;     // worktree or current_branch
   checkoutEnabled?: boolean;         // Whether checkout automation is enabled
@@ -369,12 +371,13 @@ export interface AppProps {
     featureId: string,
     options: {
       execution_branch?: string;
-      merge_target_branch?: string;
-      merge_policy?: MergePolicy;
-      merge_strategy?: MergeStrategy;
-      open_pr_before_merge?: boolean;
-      execution_mode?: ExecutionMode;
-    }
+       merge_target_branch?: string;
+       merge_policy?: MergePolicy;
+       merge_strategy?: MergeStrategy;
+       remote_branch_policy?: RemoteBranchPolicy;
+       open_pr_before_merge?: boolean;
+       execution_mode?: ExecutionMode;
+     }
   ) => Promise<{
     created: boolean;
     taskId: string;
@@ -405,12 +408,13 @@ export interface AppProps {
       status?: EntryStatus;
       feature_id?: string;
       git_branch?: string;
-      merge_target_branch?: string;
-      merge_policy?: MergePolicy;
-      merge_strategy?: MergeStrategy;
-      open_pr_before_merge?: boolean;
-      execution_mode?: ExecutionMode;
-      checkout_enabled?: boolean;
+       merge_target_branch?: string;
+       merge_policy?: MergePolicy;
+       merge_strategy?: MergeStrategy;
+       remote_branch_policy?: RemoteBranchPolicy;
+       open_pr_before_merge?: boolean;
+       execution_mode?: ExecutionMode;
+       checkout_enabled?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;

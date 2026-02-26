@@ -1184,6 +1184,7 @@ describe("Task API", () => {
           merge_target_branch: "main",
           merge_policy: "auto_merge",
           merge_strategy: "squash",
+          remote_branch_policy: "delete",
           open_pr_before_merge: true,
           execution_mode: "worktree",
         });

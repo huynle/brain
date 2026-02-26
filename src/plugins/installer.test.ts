@@ -84,6 +84,16 @@ describe("installPlugin", () => {
 		expect(checkoutSkillContent).toContain(
 			"Validate implementation coverage against dependency tasks' user_original_request intent. Start now.",
 		);
+		expect(checkoutSkillContent).toContain(
+			"Only attempt remote branch deletion after merge + push have been confirmed successful.",
+		);
+		expect(checkoutSkillContent).toContain(
+			"Never delete protected/default branches (for example: main, master, or the configured merge target).",
+		);
+		expect(checkoutSkillContent).toContain(
+			"Treat \"not found/already deleted\" as success to keep the flow idempotent.",
+		);
+		expect(checkoutSkillContent).toContain("- remote branch deletion outcome");
 
 		// Generated metadata contract in auto-generated task examples
 		expect(commandContent).toContain("generated: true");

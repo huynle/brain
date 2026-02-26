@@ -13,7 +13,7 @@ import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
 import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue, buildMetadataPrefillFromTasks, buildMetadataApplyPlan, isFeatureCheckoutTask } from './App';
 import type { TUIConfig } from './types';
-import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode } from '../../core/types';
+import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode, RemoteBranchPolicy } from '../../core/types';
 
 // Mock the hooks to isolate App component testing
 const mockTasks = [
@@ -399,6 +399,7 @@ describe('metadata field normalization/validation helpers', () => {
     expect(validateMetadataFieldValue('execution_mode', 'worktree')).toBeNull();
     expect(validateMetadataFieldValue('merge_policy', 'prompt_only')).toBeNull();
     expect(validateMetadataFieldValue('merge_strategy', 'squash')).toBeNull();
+    expect(validateMetadataFieldValue('remote_branch_policy', 'delete')).toBeNull();
     expect(validateMetadataFieldValue('checkout_enabled', 'false')).toBeNull();
   });
 
@@ -406,6 +407,7 @@ describe('metadata field normalization/validation helpers', () => {
     expect(validateMetadataFieldValue('execution_mode', 'local')).toContain('Invalid execution mode');
     expect(validateMetadataFieldValue('merge_policy', 'always')).toContain('Invalid merge policy');
     expect(validateMetadataFieldValue('merge_strategy', 'octopus')).toContain('Invalid merge strategy');
+    expect(validateMetadataFieldValue('remote_branch_policy', 'clean')).toContain('Invalid remote branch policy');
     expect(validateMetadataFieldValue('checkout_enabled', 'yes')).toBe('Invalid checkout_enabled: use true or false');
   });
 });
@@ -429,6 +431,7 @@ describe('metadata bulk prefill/apply helpers', () => {
     checkoutEnabled: true,
     mergePolicy: 'auto_merge',
     mergeStrategy: 'squash',
+    remoteBranchPolicy: 'delete',
     openPrBeforeMerge: false,
     workdir: '/work/a',
     ...overrides,
@@ -447,6 +450,7 @@ describe('metadata bulk prefill/apply helpers', () => {
     expect(prefill.target_workdir).toBe('');
     expect(prefill.merge_target_branch).toBe('main');
     expect(prefill.execution_mode).toBe('worktree');
+    expect(prefill.remote_branch_policy).toBe('delete');
   });
 
   it('isFeatureCheckoutTask detects generated checkout tasks from tags/frontmatter', () => {
@@ -1513,6 +1517,7 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
         merge_target_branch?: string;
         merge_policy?: MergePolicy;
         merge_strategy?: MergeStrategy;
+        remote_branch_policy?: RemoteBranchPolicy;
         open_pr_before_merge?: boolean;
         execution_mode?: ExecutionMode;
         checkout_enabled?: boolean;

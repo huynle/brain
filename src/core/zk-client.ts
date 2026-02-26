@@ -645,6 +645,13 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const remoteBranchPolicyMatch = line.match(/^remote_branch_policy:\s*(\w+)\s*$/);
+    if (remoteBranchPolicyMatch) {
+      frontmatter.remote_branch_policy = remoteBranchPolicyMatch[1];
+      inTags = false;
+      continue;
+    }
+
     const openPrBeforeMergeMatch = line.match(/^open_pr_before_merge:\s*(true|false)\s*$/);
     if (openPrBeforeMergeMatch) {
       frontmatter.open_pr_before_merge = openPrBeforeMergeMatch[1] === "true";
@@ -1320,6 +1327,7 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   }
   if (fm.merge_policy) lines.push(`merge_policy: ${fm.merge_policy}`);
   if (fm.merge_strategy) lines.push(`merge_strategy: ${fm.merge_strategy}`);
+  if (fm.remote_branch_policy) lines.push(`remote_branch_policy: ${fm.remote_branch_policy}`);
   if (fm.open_pr_before_merge !== undefined) {
     lines.push(`open_pr_before_merge: ${fm.open_pr_before_merge}`);
   }
@@ -1417,6 +1425,7 @@ export interface GenerateFrontmatterOptions {
   merge_target_branch?: string;
   merge_policy?: "prompt_only" | "auto_pr" | "auto_merge";
   merge_strategy?: "squash" | "merge" | "rebase";
+  remote_branch_policy?: "keep" | "delete";
   open_pr_before_merge?: boolean;
   execution_mode?: "worktree" | "current_branch";
   checkout_enabled?: boolean;
@@ -1572,6 +1581,9 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.merge_strategy) {
     lines.push(`merge_strategy: ${options.merge_strategy}`);
+  }
+  if (options.remote_branch_policy) {
+    lines.push(`remote_branch_policy: ${options.remote_branch_policy}`);
   }
   if (options.open_pr_before_merge !== undefined) {
     lines.push(`open_pr_before_merge: ${options.open_pr_before_merge}`);

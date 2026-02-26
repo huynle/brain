@@ -24,7 +24,13 @@
 
 import React from 'react';
 import { Box, Text } from 'ink';
-import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode } from '../../../core/types';
+import type {
+  EntryStatus,
+  MergePolicy,
+  MergeStrategy,
+  RemoteBranchPolicy,
+  ExecutionMode,
+} from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
 /** Fields that can be focused in the metadata popup */
@@ -37,6 +43,7 @@ export type MetadataField =
   | 'checkout_enabled'
   | 'merge_policy'
   | 'merge_strategy'
+  | 'remote_branch_policy'
   | 'open_pr_before_merge'
   | 'target_workdir'
   | 'schedule'
@@ -80,6 +87,8 @@ export interface MetadataPopupProps {
   mergePolicyValue?: MergePolicy;
   /** Current merge_strategy value */
   mergeStrategyValue?: MergeStrategy;
+  /** Current remote_branch_policy value */
+  remoteBranchPolicyValue?: RemoteBranchPolicy;
   /** Current open_pr_before_merge value */
   openPrBeforeMergeValue?: boolean;
   /** Current target_workdir value */
@@ -132,6 +141,7 @@ export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] = [
   'checkout_enabled',
   'merge_policy',
   'merge_strategy',
+  'remote_branch_policy',
   'open_pr_before_merge',
 ];
 
@@ -144,6 +154,7 @@ const FIELD_LABELS: Record<MetadataField, string> = {
   checkout_enabled: 'Checkout Enabled',
   merge_policy: 'Merge Policy',
   merge_strategy: 'Merge Strategy',
+  remote_branch_policy: 'Remote Branch Policy',
   open_pr_before_merge: 'Open PR Before Merge',
   target_workdir: 'Workdir',
   schedule: 'Schedule',
@@ -161,6 +172,7 @@ const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
   checkout_enabled: '(true|false)',
   merge_policy: '(prompt_only|auto_pr|auto_merge)',
   merge_strategy: '(squash|merge|rebase)',
+  remote_branch_policy: '(keep|delete)',
   open_pr_before_merge: '(true|false)',
 };
 
@@ -179,6 +191,7 @@ export function MetadataPopup({
   checkoutEnabledValue,
   mergePolicyValue,
   mergeStrategyValue,
+  remoteBranchPolicyValue,
   openPrBeforeMergeValue,
   workdirValue,
   scheduleValue,
@@ -222,6 +235,8 @@ export function MetadataPopup({
         return mergePolicyValue || 'prompt_only';
       case 'merge_strategy':
         return mergeStrategyValue || 'squash';
+      case 'remote_branch_policy':
+        return remoteBranchPolicyValue || 'delete';
       case 'open_pr_before_merge':
         return openPrBeforeMergeValue ? 'true' : 'false';
       case 'target_workdir':

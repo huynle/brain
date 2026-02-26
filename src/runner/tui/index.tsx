@@ -25,6 +25,7 @@ import type {
   EntryStatus,
   MergePolicy,
   MergeStrategy,
+  RemoteBranchPolicy,
   ExecutionMode,
 } from '../../core/types';
 import type {
@@ -90,6 +91,7 @@ export interface DashboardOptions {
       merge_target_branch?: string;
       merge_policy?: MergePolicy;
       merge_strategy?: MergeStrategy;
+      remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
     }
@@ -126,6 +128,7 @@ export interface DashboardOptions {
       merge_target_branch?: string;
       merge_policy?: MergePolicy;
       merge_strategy?: MergeStrategy;
+      remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;

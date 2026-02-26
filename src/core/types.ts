@@ -61,6 +61,9 @@ export type MergePolicy = (typeof MERGE_POLICIES)[number];
 export const MERGE_STRATEGIES = ["squash", "merge", "rebase"] as const;
 export type MergeStrategy = (typeof MERGE_STRATEGIES)[number];
 
+export const REMOTE_BRANCH_POLICIES = ["keep", "delete"] as const;
+export type RemoteBranchPolicy = (typeof REMOTE_BRANCH_POLICIES)[number];
+
 export const EXECUTION_MODES = ["worktree", "current_branch"] as const;
 export type ExecutionMode = (typeof EXECUTION_MODES)[number];
 
@@ -158,6 +161,7 @@ export interface BrainEntry {
   merge_target_branch?: string; // Branch to merge completed work into
   merge_policy?: MergePolicy; // Merge behavior at checkout completion
   merge_strategy?: MergeStrategy; // Git merge strategy used when auto-merging
+  remote_branch_policy?: RemoteBranchPolicy; // Remote branch cleanup policy after successful auto-merge
   open_pr_before_merge?: boolean; // Whether to open PR before merge
   execution_mode?: ExecutionMode; // How task executes: worktree or current branch
   checkout_enabled?: boolean; // Whether dedicated checkout/worktree flow is enabled
@@ -209,6 +213,7 @@ export interface CreateEntryRequest {
   merge_target_branch?: string;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;
@@ -268,6 +273,7 @@ export interface UpdateEntryRequest {
   merge_target_branch?: string;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;
@@ -296,6 +302,7 @@ export interface FeatureCheckoutRequest {
   merge_target_branch?: string;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
 }
@@ -450,6 +457,7 @@ export interface Task {
   merge_target_branch?: string | null;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;

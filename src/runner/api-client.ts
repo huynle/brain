@@ -16,6 +16,7 @@ import type {
   Priority,
   MergePolicy,
   MergeStrategy,
+  RemoteBranchPolicy,
   ExecutionMode,
 } from "../core/types";
 import type {
@@ -68,6 +69,7 @@ export interface FeatureCheckoutRequest {
   merge_target_branch?: string;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
 }
@@ -646,6 +648,7 @@ export class ApiClient {
       merge_target_branch?: string;
       merge_policy?: MergePolicy;
       merge_strategy?: MergeStrategy;
+      remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;
@@ -672,6 +675,7 @@ export class ApiClient {
     if (fields.merge_target_branch !== undefined) payload.merge_target_branch = fields.merge_target_branch;
     if (fields.merge_policy !== undefined) payload.merge_policy = fields.merge_policy;
     if (fields.merge_strategy !== undefined) payload.merge_strategy = fields.merge_strategy;
+    if (fields.remote_branch_policy !== undefined) payload.remote_branch_policy = fields.remote_branch_policy;
     if (fields.open_pr_before_merge !== undefined) payload.open_pr_before_merge = fields.open_pr_before_merge;
     if (fields.execution_mode !== undefined) payload.execution_mode = fields.execution_mode;
     if (fields.checkout_enabled !== undefined) payload.checkout_enabled = fields.checkout_enabled;

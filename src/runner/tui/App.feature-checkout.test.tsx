@@ -92,6 +92,7 @@ describe('App feature checkout trigger behavior', () => {
           executionMode: 'current_branch',
           mergePolicy: 'auto_pr',
           mergeStrategy: 'rebase',
+          remoteBranchPolicy: 'keep',
           openPrBeforeMerge: true,
         }),
       ],
@@ -103,6 +104,7 @@ describe('App feature checkout trigger behavior', () => {
       execution_mode: 'current_branch',
       merge_policy: 'auto_pr',
       merge_strategy: 'rebase',
+      remote_branch_policy: 'keep',
       open_pr_before_merge: true,
     });
   });
@@ -125,6 +127,7 @@ describe('App feature checkout trigger behavior', () => {
       execution_mode: 'worktree',
       merge_policy: 'auto_merge',
       merge_strategy: 'squash',
+      remote_branch_policy: 'delete',
       open_pr_before_merge: false,
     });
   });
@@ -142,6 +145,7 @@ describe('App feature checkout trigger behavior', () => {
           executionMode: 'current_branch',
           mergePolicy: undefined,
           mergeStrategy: undefined,
+          remoteBranchPolicy: undefined,
           openPrBeforeMerge: undefined,
           gitBranch: 'feature/alpha',
           mergeTargetBranch: 'develop',
@@ -155,6 +159,7 @@ describe('App feature checkout trigger behavior', () => {
       execution_mode: 'current_branch',
       merge_policy: 'auto_merge',
       merge_strategy: 'squash',
+      remote_branch_policy: 'delete',
       open_pr_before_merge: false,
     });
   });
@@ -326,6 +331,7 @@ describe('App feature checkout trigger behavior', () => {
       execution_mode: 'worktree' as const,
       merge_policy: 'auto_pr' as const,
       merge_strategy: 'rebase' as const,
+      remote_branch_policy: 'keep' as const,
       open_pr_before_merge: true,
     };
 

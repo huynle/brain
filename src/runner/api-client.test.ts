@@ -792,6 +792,7 @@ describe("ApiClient", () => {
         merge_target_branch: "main",
         merge_policy: "auto_merge",
         merge_strategy: "squash",
+        remote_branch_policy: "delete",
         open_pr_before_merge: true,
         execution_mode: "current_branch",
         checkout_enabled: true,
@@ -803,6 +804,7 @@ describe("ApiClient", () => {
           merge_target_branch: "main",
           merge_policy: "auto_merge",
           merge_strategy: "squash",
+          remote_branch_policy: "delete",
           open_pr_before_merge: true,
           execution_mode: "current_branch",
           checkout_enabled: true,
@@ -983,6 +985,7 @@ describe("ApiClient", () => {
         merge_target_branch: "develop",
         merge_policy: "auto_pr",
         merge_strategy: "rebase",
+        remote_branch_policy: "keep",
         open_pr_before_merge: true,
         execution_mode: "worktree",
       });
@@ -993,6 +996,7 @@ describe("ApiClient", () => {
           merge_target_branch: "develop",
           merge_policy: "auto_pr",
           merge_strategy: "rebase",
+          remote_branch_policy: "keep",
           open_pr_before_merge: true,
           execution_mode: "worktree",
         })

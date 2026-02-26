@@ -67,10 +67,12 @@ import {
   ENTRY_STATUSES,
   EXECUTION_MODES,
   MERGE_POLICIES,
+  REMOTE_BRANCH_POLICIES,
   MERGE_STRATEGIES,
   type EntryStatus,
   type MergePolicy,
   type MergeStrategy,
+  type RemoteBranchPolicy,
   type ExecutionMode,
 } from '../../core/types';
 import { useTaskSse } from './hooks/useTaskSse';
@@ -133,6 +135,7 @@ const LOWERCASE_ENUM_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
   'execution_mode',
   'merge_policy',
   'merge_strategy',
+  'remote_branch_policy',
 ]);
 
 const TRIMMED_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
@@ -176,6 +179,10 @@ export function validateMetadataFieldValue(field: MetadataField, value: string):
     return `Invalid merge strategy: ${value}. Use one of: ${MERGE_STRATEGIES.join(', ')}`;
   }
 
+  if (field === 'remote_branch_policy' && value.length > 0 && !REMOTE_BRANCH_POLICIES.includes(value as RemoteBranchPolicy)) {
+    return `Invalid remote branch policy: ${value}. Use one of: ${REMOTE_BRANCH_POLICIES.join(', ')}`;
+  }
+
   if (BOOLEAN_METADATA_FIELDS.has(field) && value.length > 0 && value !== 'true' && value !== 'false') {
     return `Invalid ${field}: use true or false`;
   }
@@ -207,6 +214,7 @@ type MetadataPrefillValues = {
   checkout_enabled: boolean;
   merge_policy: MergePolicy;
   merge_strategy: MergeStrategy;
+  remote_branch_policy: RemoteBranchPolicy;
   open_pr_before_merge: boolean;
   target_workdir: string;
   schedule: string;
@@ -225,6 +233,7 @@ const DEFAULT_METADATA_PREFILL: MetadataPrefillValues = {
   checkout_enabled: true,
   merge_policy: 'auto_merge',
   merge_strategy: 'squash',
+  remote_branch_policy: 'delete',
   open_pr_before_merge: false,
   target_workdir: '',
   schedule: '',
@@ -289,6 +298,7 @@ export function buildMetadataPrefillFromTasks(
     checkout_enabled: sharedBoolean(tasks, (task) => task.checkoutEnabled, true),
     merge_policy: sharedEnum(tasks, (task) => task.mergePolicy, 'auto_merge'),
     merge_strategy: sharedEnum(tasks, (task) => task.mergeStrategy, 'squash'),
+    remote_branch_policy: sharedEnum(tasks, (task) => task.remoteBranchPolicy, 'delete'),
     open_pr_before_merge: sharedBoolean(tasks, (task) => task.openPrBeforeMerge, false),
     target_workdir: sharedString(tasks, (task) => task.resolvedWorkdir || task.workdir),
     schedule: sharedString(tasks, (task) => task.schedule),
@@ -599,6 +609,7 @@ export type FeatureCheckoutOptions = {
   merge_target_branch?: string;
   merge_policy?: MergePolicy;
   merge_strategy?: MergeStrategy;
+  remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
 };
@@ -607,6 +618,7 @@ export const DEFAULT_FEATURE_CHECKOUT_OPTIONS: FeatureCheckoutOptions = {
   execution_mode: 'worktree',
   merge_policy: 'auto_merge',
   merge_strategy: 'squash',
+  remote_branch_policy: 'delete',
   open_pr_before_merge: false,
 };
 
@@ -648,6 +660,7 @@ export function resolveFeatureCheckoutOptionsForSelection(
     execution_mode: matchingTask.executionMode || DEFAULT_FEATURE_CHECKOUT_OPTIONS.execution_mode,
     merge_policy: matchingTask.mergePolicy || DEFAULT_FEATURE_CHECKOUT_OPTIONS.merge_policy,
     merge_strategy: matchingTask.mergeStrategy || DEFAULT_FEATURE_CHECKOUT_OPTIONS.merge_strategy,
+    remote_branch_policy: matchingTask.remoteBranchPolicy || DEFAULT_FEATURE_CHECKOUT_OPTIONS.remote_branch_policy,
     open_pr_before_merge: matchingTask.openPrBeforeMerge ?? DEFAULT_FEATURE_CHECKOUT_OPTIONS.open_pr_before_merge,
   };
 
@@ -818,6 +831,7 @@ export function App({
   const [metadataCheckoutEnabledValue, setMetadataCheckoutEnabledValue] = useState<boolean>(true);
   const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('auto_merge');
   const [metadataMergeStrategyValue, setMetadataMergeStrategyValue] = useState<MergeStrategy>('squash');
+  const [metadataRemoteBranchPolicyValue, setMetadataRemoteBranchPolicyValue] = useState<RemoteBranchPolicy>('delete');
   const [metadataOpenPrBeforeMergeValue, setMetadataOpenPrBeforeMergeValue] = useState<boolean>(false);
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
   const [metadataScheduleValue, setMetadataScheduleValue] = useState('');
@@ -841,6 +855,7 @@ export function App({
     checkout_enabled: boolean;
     merge_policy: MergePolicy;
     merge_strategy: MergeStrategy;
+    remote_branch_policy: RemoteBranchPolicy;
     open_pr_before_merge: boolean;
     target_workdir: string;
     schedule: string;
@@ -857,6 +872,7 @@ export function App({
     checkout_enabled: true,
     merge_policy: 'auto_merge',
     merge_strategy: 'squash',
+    remote_branch_policy: 'delete',
     open_pr_before_merge: false,
     target_workdir: '',
     schedule: '',
@@ -1419,6 +1435,7 @@ export function App({
       merge_target_branch?: string;
       merge_policy?: MergePolicy;
       merge_strategy?: MergeStrategy;
+      remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;
@@ -1452,6 +1469,9 @@ export function App({
     }
     if (metadataMergeStrategyValue !== metadataOriginalValues.merge_strategy) {
       changedFields.merge_strategy = metadataMergeStrategyValue;
+    }
+    if (metadataRemoteBranchPolicyValue !== metadataOriginalValues.remote_branch_policy) {
+      changedFields.remote_branch_policy = metadataRemoteBranchPolicyValue;
     }
     if (metadataOpenPrBeforeMergeValue !== metadataOriginalValues.open_pr_before_merge) {
       changedFields.open_pr_before_merge = metadataOpenPrBeforeMergeValue;
@@ -1521,6 +1541,7 @@ export function App({
     metadataCheckoutEnabledValue,
     metadataMergePolicyValue,
     metadataMergeStrategyValue,
+    metadataRemoteBranchPolicyValue,
     metadataOpenPrBeforeMergeValue,
     metadataWorkdirValue,
     metadataScheduleValue,
@@ -1565,6 +1586,7 @@ export function App({
     setMetadataCheckoutEnabledValue(task.checkoutEnabled ?? true);
     setMetadataMergePolicyValue(task.mergePolicy || 'auto_merge');
     setMetadataMergeStrategyValue(task.mergeStrategy || 'squash');
+    setMetadataRemoteBranchPolicyValue(task.remoteBranchPolicy || 'delete');
     setMetadataOpenPrBeforeMergeValue(task.openPrBeforeMerge ?? false);
     setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
     setMetadataScheduleValue(task.schedule || '');
@@ -1582,6 +1604,7 @@ export function App({
       checkout_enabled: task.checkoutEnabled ?? true,
       merge_policy: task.mergePolicy || 'auto_merge',
       merge_strategy: task.mergeStrategy || 'squash',
+      remote_branch_policy: task.remoteBranchPolicy || 'delete',
       open_pr_before_merge: task.openPrBeforeMerge ?? false,
       target_workdir: task.resolvedWorkdir || task.workdir || '',
       schedule: task.schedule || '',
@@ -1762,7 +1785,7 @@ export function App({
         }
 
         const updates: {
-          [key: string]: string | EntryStatus | MergePolicy | MergeStrategy | ExecutionMode | boolean;
+          [key: string]: string | EntryStatus | MergePolicy | MergeStrategy | RemoteBranchPolicy | ExecutionMode | boolean;
         } = {};
 
         if (field === 'execution_mode') {
@@ -1780,6 +1803,11 @@ export function App({
             return;
           }
           updates.merge_strategy = normalizedValue as MergeStrategy;
+        } else if (field === 'remote_branch_policy') {
+          if (typeof normalizedValue !== 'string' || !REMOTE_BRANCH_POLICIES.includes(normalizedValue as RemoteBranchPolicy)) {
+            return;
+          }
+          updates.remote_branch_policy = normalizedValue as RemoteBranchPolicy;
         } else if (field === 'checkout_enabled' || field === 'open_pr_before_merge') {
           if (typeof normalizedValue !== 'string') {
             return;
@@ -1824,11 +1852,13 @@ export function App({
             ...(field === 'execution_mode' ? { execution_mode: updates.execution_mode as ExecutionMode } : {}),
             ...(field === 'merge_policy' ? { merge_policy: updates.merge_policy as MergePolicy } : {}),
             ...(field === 'merge_strategy' ? { merge_strategy: updates.merge_strategy as MergeStrategy } : {}),
+            ...(field === 'remote_branch_policy' ? { remote_branch_policy: updates.remote_branch_policy as RemoteBranchPolicy } : {}),
             ...(field === 'checkout_enabled' ? { checkout_enabled: updates.checkout_enabled as boolean } : {}),
             ...(field === 'open_pr_before_merge' ? { open_pr_before_merge: updates.open_pr_before_merge as boolean } : {}),
               ...(field !== 'execution_mode' &&
             field !== 'merge_policy' &&
             field !== 'merge_strategy' &&
+            field !== 'remote_branch_policy' &&
             field !== 'checkout_enabled' &&
             field !== 'open_pr_before_merge'
               ? { [field]: normalizedValue }
@@ -1949,6 +1979,9 @@ export function App({
               case 'merge_strategy':
                 currentValue = metadataMergeStrategyValue;
                 break;
+              case 'remote_branch_policy':
+                currentValue = metadataRemoteBranchPolicyValue;
+                break;
               case 'open_pr_before_merge':
                 currentValue = metadataOpenPrBeforeMergeValue ? 'true' : 'false';
                 break;
@@ -2012,6 +2045,11 @@ export function App({
             case 'merge_strategy':
               if (MERGE_STRATEGIES.includes(value as MergeStrategy)) {
                 setMetadataMergeStrategyValue(value as MergeStrategy);
+              }
+              break;
+            case 'remote_branch_policy':
+              if (REMOTE_BRANCH_POLICIES.includes(value as RemoteBranchPolicy)) {
+                setMetadataRemoteBranchPolicyValue(value as RemoteBranchPolicy);
               }
               break;
             case 'open_pr_before_merge':
@@ -3357,6 +3395,7 @@ export function App({
         setMetadataCheckoutEnabledValue(prefill.checkout_enabled);
         setMetadataMergePolicyValue(prefill.merge_policy);
         setMetadataMergeStrategyValue(prefill.merge_strategy);
+        setMetadataRemoteBranchPolicyValue(prefill.remote_branch_policy);
         setMetadataOpenPrBeforeMergeValue(prefill.open_pr_before_merge);
         setMetadataWorkdirValue(prefill.target_workdir);
         setMetadataScheduleValue(prefill.schedule);
@@ -3371,10 +3410,11 @@ export function App({
           git_branch: prefill.git_branch,
           merge_target_branch: prefill.merge_target_branch,
           execution_mode: prefill.execution_mode,
-          checkout_enabled: prefill.checkout_enabled,
-          merge_policy: prefill.merge_policy,
-          merge_strategy: prefill.merge_strategy,
-          open_pr_before_merge: prefill.open_pr_before_merge,
+           checkout_enabled: prefill.checkout_enabled,
+           merge_policy: prefill.merge_policy,
+           merge_strategy: prefill.merge_strategy,
+           remote_branch_policy: prefill.remote_branch_policy,
+           open_pr_before_merge: prefill.open_pr_before_merge,
           target_workdir: prefill.target_workdir,
           schedule: prefill.schedule,
           project: prefill.project,
@@ -3989,6 +4029,7 @@ export function App({
           checkoutEnabledValue={metadataCheckoutEnabledValue}
           mergePolicyValue={metadataMergePolicyValue}
           mergeStrategyValue={metadataMergeStrategyValue}
+          remoteBranchPolicyValue={metadataRemoteBranchPolicyValue}
           openPrBeforeMergeValue={metadataOpenPrBeforeMergeValue}
           workdirValue={metadataWorkdirValue}
           scheduleValue={metadataScheduleValue}

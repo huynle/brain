@@ -267,6 +267,10 @@ export class BrainService {
       request.execution_mode = sanitizeSimpleValue(request.execution_mode) as
         CreateEntryRequest["execution_mode"];
     }
+    if (request.remote_branch_policy) {
+      request.remote_branch_policy = sanitizeSimpleValue(request.remote_branch_policy) as
+        CreateEntryRequest["remote_branch_policy"];
+    }
     if (request.generated_key) request.generated_key = sanitizeSimpleValue(request.generated_key);
     if (request.generated_by) request.generated_by = sanitizeSimpleValue(request.generated_by);
 
@@ -278,6 +282,7 @@ export class BrainService {
     if (entryType === "task") {
       request.merge_policy ??= "auto_merge";
       request.merge_strategy ??= "squash";
+      request.remote_branch_policy ??= "delete";
       request.open_pr_before_merge ??= false;
       request.execution_mode ??= "worktree";
       request.checkout_enabled ??= true;
@@ -581,6 +586,9 @@ export class BrainService {
       if (request.merge_strategy) {
         zkArgs.push("--extra", `merge_strategy=${request.merge_strategy}`);
       }
+      if (request.remote_branch_policy) {
+        zkArgs.push("--extra", `remote_branch_policy=${request.remote_branch_policy}`);
+      }
       if (request.open_pr_before_merge !== undefined) {
         zkArgs.push("--extra", `open_pr_before_merge=${request.open_pr_before_merge}`);
       }
@@ -720,6 +728,7 @@ export class BrainService {
         merge_target_branch: request.merge_target_branch,
         merge_policy: request.merge_policy,
         merge_strategy: request.merge_strategy,
+        remote_branch_policy: request.remote_branch_policy,
         open_pr_before_merge: request.open_pr_before_merge,
         execution_mode: request.execution_mode,
         checkout_enabled: request.checkout_enabled,
@@ -954,6 +963,8 @@ export class BrainService {
       merge_target_branch: frontmatter.merge_target_branch as string | undefined,
       merge_policy: frontmatter.merge_policy as BrainEntry["merge_policy"] | undefined,
       merge_strategy: frontmatter.merge_strategy as BrainEntry["merge_strategy"] | undefined,
+      remote_branch_policy:
+        frontmatter.remote_branch_policy as BrainEntry["remote_branch_policy"] | undefined,
       open_pr_before_merge: frontmatter.open_pr_before_merge as boolean | undefined,
       execution_mode: frontmatter.execution_mode as BrainEntry["execution_mode"] | undefined,
       checkout_enabled: frontmatter.checkout_enabled as boolean | undefined,
@@ -1013,6 +1024,7 @@ export class BrainService {
       request.merge_target_branch === undefined &&
       request.merge_policy === undefined &&
       request.merge_strategy === undefined &&
+      request.remote_branch_policy === undefined &&
       request.open_pr_before_merge === undefined &&
       request.execution_mode === undefined &&
       request.checkout_enabled === undefined &&
@@ -1035,7 +1047,7 @@ export class BrainService {
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
       );
     }
 
@@ -1126,6 +1138,9 @@ export class BrainService {
     }
     if (request.merge_strategy !== undefined) {
       updatedFrontmatter.merge_strategy = request.merge_strategy;
+    }
+    if (request.remote_branch_policy !== undefined) {
+      updatedFrontmatter.remote_branch_policy = request.remote_branch_policy;
     }
     if (request.open_pr_before_merge !== undefined) {
       updatedFrontmatter.open_pr_before_merge = request.open_pr_before_merge;
@@ -1519,6 +1534,7 @@ export class BrainService {
     const normalizedOptions = this.normalizeFeatureCheckoutOptions(options);
     const mergePolicy = normalizedOptions.merge_policy ?? "auto_merge";
     const mergeStrategy = normalizedOptions.merge_strategy ?? "squash";
+    const remoteBranchPolicy = normalizedOptions.remote_branch_policy ?? "delete";
     const executionMode = normalizedOptions.execution_mode ?? "worktree";
     const openPrBeforeMerge = normalizedOptions.open_pr_before_merge ?? false;
 
@@ -1576,6 +1592,7 @@ export class BrainService {
             mergeTargetBranch: normalizedOptions.merge_target_branch,
             mergePolicy,
             mergeStrategy,
+            remoteBranchPolicy,
             openPrBeforeMerge,
           }),
           status: "pending",
@@ -1592,6 +1609,7 @@ export class BrainService {
           merge_target_branch: normalizedOptions.merge_target_branch,
           merge_policy: mergePolicy,
           merge_strategy: mergeStrategy,
+          remote_branch_policy: remoteBranchPolicy,
           open_pr_before_merge: openPrBeforeMerge,
           execution_mode: executionMode,
         });
@@ -1673,6 +1691,10 @@ export class BrainService {
       normalized.execution_mode = sanitizeSimpleValue(normalized.execution_mode) as FeatureCheckoutRequest["execution_mode"];
     }
 
+    if (normalized.remote_branch_policy !== undefined) {
+      normalized.remote_branch_policy = sanitizeSimpleValue(normalized.remote_branch_policy) as FeatureCheckoutRequest["remote_branch_policy"];
+    }
+
     return normalized;
   }
 
@@ -1687,6 +1709,7 @@ export class BrainService {
     mergeTargetBranch?: string;
     mergePolicy: NonNullable<FeatureCheckoutRequest["merge_policy"]>;
     mergeStrategy: NonNullable<FeatureCheckoutRequest["merge_strategy"]>;
+    remoteBranchPolicy: NonNullable<FeatureCheckoutRequest["remote_branch_policy"]>;
     openPrBeforeMerge: boolean;
   }): string {
     const executionBranch = params.executionBranch ?? "(default branch for execution context)";
@@ -1699,6 +1722,7 @@ export class BrainService {
       `- merge_target_branch: ${mergeTargetBranch}`,
       `- merge_policy: ${params.mergePolicy}`,
       `- merge_strategy: ${params.mergeStrategy}`,
+      `- remote_branch_policy: ${params.remoteBranchPolicy}`,
       `- open_pr_before_merge: ${params.openPrBeforeMerge}`,
       "",
       "Safety gates before merge:",
@@ -1836,6 +1860,8 @@ export class BrainService {
           (frontmatter.merge_policy as Task["merge_policy"]) || "auto_merge",
         merge_strategy:
           (frontmatter.merge_strategy as Task["merge_strategy"]) || "squash",
+        remote_branch_policy:
+          (frontmatter.remote_branch_policy as Task["remote_branch_policy"]) || "delete",
         open_pr_before_merge:
           (frontmatter.open_pr_before_merge as boolean) || false,
         execution_mode:

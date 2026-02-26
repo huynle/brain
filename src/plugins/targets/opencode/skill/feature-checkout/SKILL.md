@@ -71,6 +71,7 @@ Extract and save — these fields will be copied to any gap tasks:
 - `execution.merge_target_branch` → merge destination branch (default `main` if unset)
 - `execution.merge_policy` → one of `prompt_only`, `auto_pr`, `auto_merge` (default `auto_merge`)
 - `execution.merge_strategy` → one of `squash`, `merge`, `rebase` (default `squash`)
+- `execution.remote_branch_policy` → one of `delete`, `keep` (default `delete`)
 - `execution.open_pr_before_merge` → whether PR flow is required before merging
 - `execution.execution_mode` and `execution.checkout_enabled` → execution constraints for follow-up tasks
 - `tags` → base tags to propagate
@@ -281,6 +282,7 @@ Use metadata defaults when fields are missing:
 - `merge_policy`: `auto_merge`
 - `merge_strategy`: `squash`
 - `merge_target_branch`: `main`
+- `remote_branch_policy`: `delete`
 - `open_pr_before_merge`: `false`
 
 Then apply policy:
@@ -294,13 +296,26 @@ Then apply policy:
   - Create or open a PR from execution branch to `merge_target_branch`
   - Merge via configured strategy (default squash) after checks are green
   - Push resulting target branch update immediately
+  - Apply `remote_branch_policy` after merge+push confirmation
   - Clean up execution worktree/branch after successful merge
 
 - `auto_merge`:
   - If `open_pr_before_merge=true`, run the same PR flow as `auto_pr`
   - Otherwise perform direct merge with configured strategy (default squash)
   - Push resulting target branch update immediately
+  - Apply `remote_branch_policy` after merge+push confirmation
   - Clean up execution worktree/branch after successful merge
+
+### Remote Branch Policy (post-merge)
+
+When `remote_branch_policy=delete`, delete the remote execution branch with these guardrails:
+
+- Only attempt remote branch deletion after merge + push have been confirmed successful.
+- Never delete protected/default branches (for example: main, master, or the configured merge target).
+- Treat "not found/already deleted" as success to keep the flow idempotent.
+- Any other deletion failure must be reported as a non-fatal cleanup error in merge audit output.
+
+When `remote_branch_policy=keep`, skip remote branch deletion and report that the branch was intentionally retained.
 
 ### Audit Output (required)
 
@@ -309,6 +324,7 @@ Append a `## Merge Result` section to the checkout task with:
 - merge policy and strategy used
 - whether PR flow was used
 - push result
+- remote branch deletion outcome
 - cleanup result
 - final commit/merge reference (hash/PR URL when available)
 

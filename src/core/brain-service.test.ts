@@ -1409,6 +1409,121 @@ Task content.
         (service as any).updateInternal = originalUpdateInternal;
       }
     });
+
+    test("does not reconcile terminal generated checkout tasks", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalUpdateInternal = (service as any).updateInternal;
+
+      const updateCalls: Array<{
+        path: string;
+        request: Record<string, unknown>;
+        options: Record<string, unknown> | undefined;
+      }> = [];
+
+      TaskService.prototype.getTasksByFeature = async () =>
+        [
+          {
+            id: "task-a",
+            generated: false,
+            feature_id: "feature-terminal",
+            status: "pending",
+          },
+          {
+            id: "chk-pending",
+            path: "projects/test-project/task/chk-pending.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "pending",
+            depends_on: [],
+          },
+          {
+            id: "chk-completed",
+            path: "projects/test-project/task/chk-completed.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "completed",
+            depends_on: [],
+          },
+          {
+            id: "chk-validated",
+            path: "projects/test-project/task/chk-validated.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "validated",
+            depends_on: [],
+          },
+          {
+            id: "chk-superseded",
+            path: "projects/test-project/task/chk-superseded.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "superseded",
+            depends_on: [],
+          },
+          {
+            id: "chk-archived",
+            path: "projects/test-project/task/chk-archived.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "archived",
+            depends_on: [],
+          },
+          {
+            id: "chk-cancelled",
+            path: "projects/test-project/task/chk-cancelled.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-terminal",
+            status: "cancelled",
+            depends_on: [],
+          },
+        ] as any;
+
+      (service as any).updateInternal = async (
+        path: string,
+        request: Record<string, unknown>,
+        options?: Record<string, unknown>
+      ) => {
+        updateCalls.push({
+          path,
+          request: request as unknown as Record<string, unknown>,
+          options: options as unknown as Record<string, unknown> | undefined,
+        });
+        return {
+          id: "chk-pending",
+          path,
+          title: "Feature checkout",
+          type: "task",
+          status: "pending",
+          content: "",
+        } as any;
+      };
+
+      try {
+        await (service as any).reconcileFeatureCheckoutDependencies(
+          "test-project",
+          "feature-terminal"
+        );
+
+        expect(updateCalls).toHaveLength(1);
+        expect(updateCalls[0]?.path).toBe("projects/test-project/task/chk-pending.md");
+        expect(updateCalls[0]?.request.depends_on).toEqual(["task-a"]);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        (service as any).updateInternal = originalUpdateInternal;
+      }
+    });
   });
 
   describe("feature checkout reconciliation hooks", () => {
@@ -1518,6 +1633,65 @@ Task content.
       const expected = ["taska001", created.id].sort();
       expect(readDependsOn(pendingCheckoutPath)).toEqual(expected);
       expect(readDependsOn(activeCheckoutPath)).toEqual(["taska001"]);
+    });
+
+    test("save() does not mutate terminal generated checkout tasks", async () => {
+      const projectId = `recon-save-terminal-${Date.now()}`;
+      const featureId = "feature-save-terminal";
+
+      writeTask({
+        projectId,
+        fileId: "term0001",
+        title: "Base feature task",
+        featureId,
+      });
+
+      const pendingCheckoutPath = writeTask({
+        projectId,
+        fileId: "termpend",
+        title: "Pending checkout",
+        featureId,
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["term0001"],
+      });
+
+      const completedCheckoutPath = writeTask({
+        projectId,
+        fileId: "termdone",
+        title: "Completed checkout",
+        featureId,
+        status: "completed",
+        generated: true,
+        generatedKind: "feature_checkout",
+        generatedBy: "feature-checkout",
+        dependsOn: ["term0001"],
+      });
+
+      const terminalBefore = readFileSync(
+        join(TEST_DIR, completedCheckoutPath),
+        "utf-8"
+      );
+
+      const created = await service.save({
+        type: "task",
+        title: "Task created through save hook",
+        content: "content",
+        status: "pending",
+        feature_id: featureId,
+        project: projectId,
+      });
+
+      const expected = ["term0001", created.id].sort();
+      expect(readDependsOn(pendingCheckoutPath)).toEqual(expected);
+
+      const terminalAfter = readFileSync(
+        join(TEST_DIR, completedCheckoutPath),
+        "utf-8"
+      );
+      expect(terminalAfter).toBe(terminalBefore);
+      expect(readDependsOn(completedCheckoutPath)).toEqual(["term0001"]);
     });
 
     test("update() feature reassignment reconciles old and new feature checkout scopes", async () => {

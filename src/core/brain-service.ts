@@ -1553,6 +1553,9 @@ export class BrainService {
       if (checkoutTask.status === "in_progress") {
         continue;
       }
+      if (this.isTerminalCheckoutStatus(checkoutTask.status)) {
+        continue;
+      }
       if (!checkoutTask.path) {
         continue;
       }
@@ -1689,6 +1692,16 @@ export class BrainService {
         task.generated === true &&
         task.generated_kind === "feature_checkout" &&
         task.generated_by === "feature-checkout"
+    );
+  }
+
+  private isTerminalCheckoutStatus(status: Task["status"]): boolean {
+    return (
+      status === "completed" ||
+      status === "validated" ||
+      status === "cancelled" ||
+      status === "superseded" ||
+      status === "archived"
     );
   }
 

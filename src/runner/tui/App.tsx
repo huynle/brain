@@ -331,6 +331,74 @@ export function getTasksForStatusGroupFeature(
   return tasks.filter(t => t.feature_id === featureId && groupStatuses.includes(t.status));
 }
 
+export type FeatureCheckoutResult = {
+  created: boolean;
+  taskId: string;
+  taskTitle: string;
+};
+
+type FeatureCheckoutLogEntry = {
+  level: 'info' | 'warn' | 'error';
+  message: string;
+};
+
+type TriggerFeatureCheckoutParams = {
+  selectedTaskId: string | null;
+  isMultiProject: boolean;
+  activeProject: string;
+  project: string;
+  onMarkFeatureForCheckout?: (projectId: string, featureId: string) => Promise<FeatureCheckoutResult>;
+  addLog: (entry: FeatureCheckoutLogEntry) => void;
+};
+
+export function triggerFeatureCheckoutFromSelection(params: TriggerFeatureCheckoutParams): boolean {
+  const selectedRowTarget = params.selectedTaskId
+    ? parseTaskTreeRowTarget(params.selectedTaskId)
+    : null;
+  if (!selectedRowTarget || selectedRowTarget.kind !== 'feature_header' || !selectedRowTarget.featureId) {
+    return false;
+  }
+
+  if (!params.onMarkFeatureForCheckout) {
+    params.addLog({
+      level: 'warn',
+      message: 'Feature checkout action unavailable',
+    });
+    return true;
+  }
+
+  const featureId = selectedRowTarget.featureId;
+  const targetProjectId = params.isMultiProject ? params.activeProject : params.project;
+  if (!targetProjectId || targetProjectId === 'all') {
+    params.addLog({
+      level: 'warn',
+      message: 'Select a specific project tab before marking feature checkout',
+    });
+    return true;
+  }
+
+  params.addLog({
+    level: 'info',
+    message: `Marking feature for checkout: ${featureId}`,
+  });
+
+  params.onMarkFeatureForCheckout(targetProjectId, featureId)
+    .then((result) => {
+      params.addLog({
+        level: 'info',
+        message: `${result.created ? 'Created' : 'Reused'} checkout task: ${result.taskId} - ${result.taskTitle}`,
+      });
+    })
+    .catch((err) => {
+      params.addLog({
+        level: 'error',
+        message: `Failed to mark feature checkout: ${err}`,
+      });
+    });
+
+  return true;
+}
+
 export function App({ 
   config, 
   onLogCallback, 
@@ -2320,49 +2388,17 @@ export function App({
 
     // f key: Mark selected feature header for checkout task generation
     if (input === 'f' && viewMode === 'tasks' && focusedPanel === 'tasks') {
-      const selectedRowTarget = selectedTaskId ? parseTaskTreeRowTarget(selectedTaskId) : null;
-      if (!selectedRowTarget || selectedRowTarget.kind !== 'feature_header' || !selectedRowTarget.featureId) {
-        return;
-      }
-
-      if (!onMarkFeatureForCheckout) {
-        addLog({
-          level: 'warn',
-          message: 'Feature checkout action unavailable',
-        });
-        return;
-      }
-
-      const featureId = selectedRowTarget.featureId;
-      const targetProjectId = isMultiProject ? activeProject : config.project;
-      if (!targetProjectId || targetProjectId === 'all') {
-        addLog({
-          level: 'warn',
-          message: 'Select a specific project tab before marking feature checkout',
-        });
-        return;
-      }
-
-      addLog({
-        level: 'info',
-        message: `Marking feature for checkout: ${featureId}`,
+      const handled = triggerFeatureCheckoutFromSelection({
+        selectedTaskId,
+        isMultiProject,
+        activeProject,
+        project: config.project,
+        onMarkFeatureForCheckout,
+        addLog,
       });
-
-      onMarkFeatureForCheckout(targetProjectId, featureId)
-        .then((result) => {
-          addLog({
-            level: 'info',
-            message: `${result.created ? 'Created' : 'Reused'} checkout task: ${result.taskId} - ${result.taskTitle}`,
-          });
-        })
-        .catch((err) => {
-          addLog({
-            level: 'error',
-            message: `Failed to mark feature checkout: ${err}`,
-          });
-        });
-
-      return;
+      if (handled) {
+        return;
+      }
     }
 
     // x key: Execute feature immediately or execute single task

@@ -121,7 +121,19 @@ Start now.`;
   // ========================================
 
   async resolveWorkdir(task: ResolvedTask): Promise<string> {
-    // Priority: target_workdir > ensured worktree > task worktree > task workdir > resolved_workdir > config default
+    const executionMode = task.execution_mode ?? "worktree";
+
+    // Priority by execution mode:
+    // - worktree: ensured worktree > target_workdir > task worktree > task workdir > resolved_workdir > config default
+    // - current_branch: target_workdir > task worktree > task workdir > resolved_workdir > config default
+
+    if (executionMode === "worktree") {
+      // Try to ensure worktree exists (creates if needed with git_branch)
+      const worktreePath = await this.ensureWorktree(task);
+      if (worktreePath) {
+        return worktreePath;
+      }
+    }
 
     // target_workdir is an explicit override, check first (absolute path)
     if (task.target_workdir) {
@@ -134,12 +146,6 @@ Start now.`;
       if (isDebugEnabled()) {
         console.log(`[OpencodeExecutor] target_workdir not found, falling back: ${task.target_workdir}`);
       }
-    }
-
-    // Try to ensure worktree exists (creates if needed with git_branch)
-    const worktreePath = await this.ensureWorktree(task);
-    if (worktreePath) {
-      return worktreePath;
     }
 
     if (task.worktree) {
@@ -589,12 +595,24 @@ exit $exit_code
    * @throws Error if worktree creation or setup fails (caller should mark task as blocked)
    */
   async ensureWorktree(task: ResolvedTask): Promise<string | null> {
-    if (!task.workdir || !task.git_branch) {
+    if (task.execution_mode === "current_branch") {
+      return null; // Explicitly run in current workspace without worktree setup
+    }
+
+    if (!task.git_branch) {
       return null; // No branch context, use main workdir
     }
     
     const home = homedir();
-    const mainRepoPath = join(home, task.workdir);
+    const mainRepoPath = task.workdir
+      ? join(home, task.workdir)
+      : task.target_workdir && existsSync(task.target_workdir)
+        ? task.target_workdir
+        : null;
+
+    if (!mainRepoPath) {
+      return null; // No repo context, use fallback workdir resolution
+    }
     
     // Skip worktree for default branch (main/master)
     // These should use the main repo directly

@@ -302,6 +302,45 @@ Step 3: Commit changes`;
       const workdir = await executor.resolveWorkdir(task);
       expect(workdir).toBe(resolvedDir);
     });
+
+    test("current_branch mode skips ensureWorktree and uses repo workdir", async () => {
+      const currentRepoDir = join(homedir(), ".test-current-branch-workdir");
+
+      try {
+        mkdirSync(currentRepoDir, { recursive: true });
+
+        const ensureWorktreeSpy = spyOn(executor, "ensureWorktree").mockResolvedValue(null);
+        const task = createMockTask("task-current-branch", {
+          execution_mode: "current_branch",
+          git_branch: "feature/current-branch-mode",
+          workdir: ".test-current-branch-workdir",
+        });
+
+        const workdir = await executor.resolveWorkdir(task);
+        expect(workdir).toBe(currentRepoDir);
+        expect(ensureWorktreeSpy).not.toHaveBeenCalled();
+      } finally {
+        try { rmSync(currentRepoDir, { recursive: true, force: true }); } catch {}
+      }
+    });
+
+    test("worktree mode prioritizes ensured worktree over target_workdir", async () => {
+      const targetDir = join(testStateDir, "target-workdir");
+      mkdirSync(targetDir, { recursive: true });
+
+      const ensuredWorktree = join(testStateDir, "ensured-worktree");
+      const ensureWorktreeSpy = spyOn(executor, "ensureWorktree").mockResolvedValue(ensuredWorktree);
+      const task = createMockTask("task-worktree-priority", {
+        execution_mode: "worktree",
+        git_branch: "feature/worktree-mode",
+        target_workdir: targetDir,
+      });
+
+      const workdir = await executor.resolveWorkdir(task);
+
+      expect(workdir).toBe(ensuredWorktree);
+      expect(ensureWorktreeSpy).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("spawn() - prompt file creation", () => {

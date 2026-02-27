@@ -41,8 +41,11 @@ export function parseMouseInput(input: string): TUIMouseEvent[] {
       continue;
     }
 
-    // Ignore wheel events.
+    // Scroll wheel events: bit 6 (0b1000000 = 64) is set.
+    // Scroll up = code 64, scroll down = code 65 (bit 0 determines direction).
     if ((code & 0b1000000) !== 0) {
+      const direction = (code & 0b1) === 0 ? 'up' : 'down';
+      events.push({ kind: 'scroll', direction, column, row });
       continue;
     }
 

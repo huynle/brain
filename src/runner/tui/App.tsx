@@ -1695,6 +1695,69 @@ export function App({
       return;
     }
 
+    // Handle scroll wheel events — route to the focused panel
+    if (event.kind === 'scroll') {
+      if (focusedPanel === 'tasks') {
+        if (viewMode === 'crons') {
+          const currentIndex = crons.findIndex((cron) => cron.id === selectedCronId);
+          if (event.direction === 'up') {
+            if (currentIndex > 0) {
+              setSelectedCronId(crons[currentIndex - 1]?.id ?? selectedCronId);
+            } else if (currentIndex === -1 && crons.length > 0) {
+              setSelectedCronId(crons[crons.length - 1]?.id ?? null);
+            }
+          } else {
+            if (currentIndex === -1 && crons.length > 0) {
+              setSelectedCronId(crons[0]?.id ?? null);
+            } else if (currentIndex < crons.length - 1) {
+              setSelectedCronId(crons[currentIndex + 1]?.id ?? selectedCronId);
+            }
+          }
+        } else {
+          const currentIndex = navigationOrder.indexOf(selectedTaskId || '');
+          const findNextNavigable = (startIndex: number, direction: 1 | -1): string | null => {
+            let idx = startIndex + direction;
+            while (idx >= 0 && idx < navigationOrder.length) {
+              const id = navigationOrder[idx];
+              if (!id.startsWith(SPACER_PREFIX)) return id;
+              idx += direction;
+            }
+            return null;
+          };
+          if (event.direction === 'up') {
+            if (currentIndex > 0) {
+              const nextId = findNextNavigable(currentIndex, -1);
+              if (nextId) setSelectedTaskId(nextId);
+            } else if (currentIndex === -1 && navigationOrder.length > 0) {
+              const lastId = findNextNavigable(navigationOrder.length, -1);
+              if (lastId) setSelectedTaskId(lastId);
+            }
+          } else {
+            if (currentIndex === -1 && navigationOrder.length > 0) {
+              const firstId = findNextNavigable(-1, 1);
+              if (firstId) setSelectedTaskId(firstId);
+            } else if (currentIndex < navigationOrder.length - 1) {
+              const nextId = findNextNavigable(currentIndex, 1);
+              if (nextId) setSelectedTaskId(nextId);
+            }
+          }
+        }
+      } else if (focusedPanel === 'logs') {
+        if (event.direction === 'up') {
+          setLogScrollOffset(prev => Math.min(prev + 1, Math.max(0, logs.length - logMaxLines)));
+        } else {
+          setLogScrollOffset(prev => Math.max(0, prev - 1));
+        }
+      } else if (focusedPanel === 'details') {
+        if (event.direction === 'up') {
+          setDetailsScrollOffset(prev => Math.max(0, prev - 1));
+        } else {
+          setDetailsScrollOffset(prev => prev + 1);
+        }
+      }
+      return;
+    }
+
     const viewportStartRow = getTaskTreeViewportStartRow(isMultiProject, filterMode);
     const rowTarget = findTaskTreeTargetFromMouseRow(taskTreeVisibleRows, event.row, viewportStartRow);
 
@@ -1748,6 +1811,13 @@ export function App({
     tasks,
     editTaskInEditor,
     openSingleTaskMetadataPopup,
+    focusedPanel,
+    navigationOrder,
+    selectedTaskId,
+    logs.length,
+    logMaxLines,
+    crons,
+    selectedCronId,
   ]);
 
   useMouseInput(onMouseEvent);

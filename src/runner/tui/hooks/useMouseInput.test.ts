@@ -26,9 +26,35 @@ describe('parseMouseInput', () => {
     ]);
   });
 
-  it('ignores release and unsupported buttons', () => {
+  it('ignores release events', () => {
     expect(parseMouseInput('\u001b[<0;12;7m')).toEqual([]);
-    expect(parseMouseInput('\u001b[<64;12;7M')).toEqual([]);
+  });
+
+  it('parses scroll up SGR mouse sequences', () => {
+    expect(parseMouseInput('\u001b[<64;12;7M')).toEqual([
+      { kind: 'scroll', direction: 'up', column: 12, row: 7 },
+    ]);
+  });
+
+  it('parses scroll down SGR mouse sequences', () => {
+    expect(parseMouseInput('\u001b[<65;20;3M')).toEqual([
+      { kind: 'scroll', direction: 'down', column: 20, row: 3 },
+    ]);
+  });
+
+  it('parses multiple scroll events in sequence', () => {
+    expect(parseMouseInput('\u001b[<64;5;5M\u001b[<64;5;5M\u001b[<65;5;5M')).toEqual([
+      { kind: 'scroll', direction: 'up', column: 5, row: 5 },
+      { kind: 'scroll', direction: 'up', column: 5, row: 5 },
+      { kind: 'scroll', direction: 'down', column: 5, row: 5 },
+    ]);
+  });
+
+  it('parses mixed click and scroll events', () => {
+    expect(parseMouseInput('\u001b[<0;1;2M\u001b[<64;3;4M')).toEqual([
+      { kind: 'press', button: 'left', column: 1, row: 2 },
+      { kind: 'scroll', direction: 'up', column: 3, row: 4 },
+    ]);
   });
 
   it('parses drag as move events', () => {

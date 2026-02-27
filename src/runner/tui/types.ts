@@ -299,6 +299,12 @@ export type TUIMouseEvent =
       button: TUIMouseButton;
       row: number;
       column: number;
+    }
+  | {
+      kind: 'scroll';
+      direction: 'up' | 'down';
+      row: number;
+      column: number;
     };
 
 /**

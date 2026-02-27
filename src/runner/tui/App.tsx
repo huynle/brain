@@ -2235,6 +2235,7 @@ export function App({
               priority: selectedTask.priority,
               projectId: selectedTask.projectId || 'unknown',
               workdir: selectedTask.resolvedWorkdir || selectedTask.workdir || process.cwd(),
+              completeOnIdle: selectedTask.completeOnIdle,
             } : undefined;
             onOpenSessionTmux(sessionId, taskCtx).catch((err: unknown) => {
               addLog({
@@ -3277,6 +3278,7 @@ export function App({
             priority: selectedTask.priority,
             projectId: selectedTask.projectId || 'unknown',
             workdir: selectedTask.resolvedWorkdir || selectedTask.workdir || process.cwd(),
+            completeOnIdle: selectedTask.completeOnIdle,
           };
           addLog({
             level: 'info',

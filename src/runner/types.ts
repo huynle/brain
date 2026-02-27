@@ -61,6 +61,7 @@ export interface RunningTask {
   opencodePort?: number;   // OpenCode HTTP API port (discovered via lsof)
   sessionId?: string;      // OpenCode session ID (discovered via /session endpoint)
   idleSince?: string;      // ISO timestamp when idle was first detected
+  completeOnIdle?: boolean; // Whether to auto-complete task when runner detects idle
   cronId?: string;
   runId?: string;
 }

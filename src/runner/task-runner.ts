@@ -1641,6 +1641,7 @@ export class TaskRunner {
         workdir,
         opencodePort: result.opencodePort,
         sessionId: result.sessionId,
+        completeOnIdle: task.complete_on_idle ?? false,
       };
 
       // Attach cron context if this task was triggered by a cron run
@@ -1909,7 +1910,7 @@ export class TaskRunner {
       const status = await checkOpencodeStatus(task.opencodePort);
 
       if (status === "idle") {
-        // OpenCode is idle - check if we need to mark as blocked
+        // OpenCode is idle - check if we need to mark as blocked or completed
         const now = Date.now();
         
         if (!task.idleSince) {
@@ -1921,8 +1922,13 @@ export class TaskRunner {
           const idleDuration = now - new Date(task.idleSince).getTime();
           
           if (idleDuration >= this.config.idleDetectionThreshold) {
-            // Mark task as blocked
-            await this.markTaskBlocked(taskId, task, "OpenCode idle - waiting for user input");
+            if (task.completeOnIdle) {
+              // Auto-complete: mark task as completed and clean up
+              await this.markTaskAutoCompleted(taskId, task, "OpenCode idle - auto-completed (complete_on_idle=true)");
+            } else {
+              // Default behavior: mark task as blocked
+              await this.markTaskBlocked(taskId, task, "OpenCode idle - waiting for user input");
+            }
           }
         }
       } else if (status === "busy") {
@@ -2016,6 +2022,39 @@ export class TaskRunner {
       task.idleSince = undefined;
     } catch (error) {
       this.logger.error("Failed to mark task as blocked", {
+        taskId,
+        error: String(error),
+      });
+    }
+  }
+
+  /**
+   * Mark a task as auto-completed when complete_on_idle is true and idle threshold is exceeded.
+   * Completes the task via handleTuiTaskCompletion which handles cleanup, stats, and event emission.
+   */
+  private async markTaskAutoCompleted(taskId: string, task: RunningTask, reason: string): Promise<void> {
+    try {
+      // Update status in Brain API to completed
+      await this.apiClient.updateTaskStatus(task.path, "completed");
+
+      // Append completion note to task file
+      const note = `\n\n## Auto-Completed: ${reason}\n` +
+        `- Detected at: ${new Date().toISOString()}\n` +
+        `- Tmux window: ${task.windowName || task.paneId || 'unknown'}\n` +
+        `- complete_on_idle: true\n`;
+
+      await this.apiClient.appendToTask(task.path, note);
+
+      this.logger.info("Task auto-completed (complete_on_idle)", { taskId, reason });
+      this.tuiLog('info', `Task auto-completed: ${task.title} (complete_on_idle)`, taskId, task.projectId);
+
+      // Clear idle state
+      task.idleSince = undefined;
+
+      // Full completion cleanup: stats, events, claim release, tmux cleanup
+      await this.handleTuiTaskCompletion(taskId, task, CompletionStatus.Completed);
+    } catch (error) {
+      this.logger.error("Failed to auto-complete task", {
         taskId,
         error: String(error),
       });
@@ -2311,6 +2350,7 @@ export class TaskRunner {
             startedAt: new Date().toISOString(),
             isResume: true,
             workdir,
+            completeOnIdle: task.complete_on_idle ?? false,
           };
 
           // Orphaned tasks from previous sessions always require explicit user action.
@@ -2583,6 +2623,7 @@ export class TaskRunner {
         workdir,
         opencodePort: result.opencodePort,
         sessionId: result.sessionId,
+        completeOnIdle: task.complete_on_idle ?? false,
       };
 
       // Attach cron context if this task was triggered by a cron run
@@ -2719,6 +2760,7 @@ export class TaskRunner {
         workdir,
         opencodePort: result.opencodePort,
         sessionId: result.sessionId,
+        completeOnIdle: task.complete_on_idle ?? false,
       };
 
       // Attach cron context if this task was triggered by a cron run
@@ -3159,6 +3201,7 @@ export class TaskRunner {
           workdir: taskContext.workdir,
           opencodePort,
           sessionId,
+          completeOnIdle: taskContext.completeOnIdle ?? false,
         };
 
         this.tuiTasks.set(taskContext.taskId, runningTask);

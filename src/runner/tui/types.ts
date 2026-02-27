@@ -489,4 +489,5 @@ export interface OpenSessionTaskContext {
   priority: Priority;
   projectId: string;
   workdir: string;
+  completeOnIdle?: boolean;
 }

@@ -415,6 +415,18 @@ export const STATUS_GROUP_MAP: Record<string, EntryStatus[]> = {
   [ARCHIVED_FEATURE_PREFIX]: ['archived'],
 };
 
+/**
+ * Map from status group name (e.g. 'completed', 'draft') to the EntryStatus[] it contains.
+ * Used by group-level multi-select (Space on status headers) to resolve tasks.
+ */
+export const STATUS_GROUP_STATUSES: Record<string, EntryStatus[]> = {
+  completed: ['completed', 'validated'],
+  draft: ['draft'],
+  cancelled: ['cancelled'],
+  superseded: ['superseded'],
+  archived: ['archived'],
+};
+
 export type TaskTreeClickAction = 'open_editor' | 'open_metadata' | 'toggle_collapsed' | 'noop';
 
 /**
@@ -3787,27 +3799,18 @@ export function App({
         return;
       }
 
-      // Space key: Toggle multi-select for the currently cursor'd task
+      // Space key: Toggle multi-select for individual tasks or all tasks in a group header
       if (input === ' ') {
-        // Only toggle selection for actual tasks, not headers or spacers
-        if (
-          selectedTaskId &&
-          !selectedTaskId.startsWith(FEATURE_HEADER_PREFIX) &&
-          !selectedTaskId.startsWith(COMPLETED_FEATURE_PREFIX) &&
-          !selectedTaskId.startsWith(DRAFT_FEATURE_PREFIX) &&
-          !selectedTaskId.startsWith(CANCELLED_FEATURE_PREFIX) &&
-          !selectedTaskId.startsWith(SUPERSEDED_FEATURE_PREFIX) &&
-          !selectedTaskId.startsWith(ARCHIVED_FEATURE_PREFIX) &&
-          !selectedTaskId.startsWith(GROUP_HEADER_PREFIX) &&
-          !selectedTaskId.startsWith(SPACER_PREFIX) &&
-          selectedTaskId !== COMPLETED_HEADER_ID &&
-          selectedTaskId !== DRAFT_HEADER_ID &&
-          selectedTaskId !== CANCELLED_HEADER_ID &&
-          selectedTaskId !== SUPERSEDED_HEADER_ID &&
-          selectedTaskId !== ARCHIVED_HEADER_ID &&
-          selectedTaskId !== UNGROUPED_HEADER_ID &&
-          navigationOrder.includes(selectedTaskId)
-        ) {
+        if (!selectedTaskId) return;
+
+        const target = selectedRowTarget;
+        if (!target) return;
+
+        // Skip spacers — nothing to select
+        if (target.kind === 'spacer') return;
+
+        // Case 1: On a task row — toggle individual task (existing behavior)
+        if (target.kind === 'task' && navigationOrder.includes(selectedTaskId)) {
           setSelectedTaskIds(prev => {
             const next = new Set(prev);
             if (next.has(selectedTaskId)) {
@@ -3817,7 +3820,60 @@ export function App({
             }
             return next;
           });
+          return;
         }
+
+        // Case 2: On a header row — toggle all tasks in the group
+        let groupTasks: TaskDisplay[] = [];
+
+        switch (target.kind) {
+          case 'feature_header':
+            if (target.featureId) {
+              groupTasks = getVisibleTasksForFeature(tasks, target.featureId);
+            }
+            break;
+          case 'ungrouped_header':
+            groupTasks = getVisibleTasksForUngrouped(tasks);
+            break;
+          case 'status_header':
+            if (target.statusGroup) {
+              const statuses = STATUS_GROUP_STATUSES[target.statusGroup];
+              if (statuses) {
+                groupTasks = tasks.filter(t => statuses.includes(t.status));
+              }
+            }
+            break;
+          case 'status_feature_header':
+            if (target.featureId && target.statusGroup) {
+              const statuses = STATUS_GROUP_STATUSES[target.statusGroup];
+              if (statuses) {
+                groupTasks = getTasksForStatusGroupFeature(tasks, target.featureId, statuses);
+              }
+            }
+            break;
+          case 'project_header':
+            if (target.projectId) {
+              groupTasks = tasks.filter(t => t.projectId === target.projectId);
+            }
+            break;
+        }
+
+        if (groupTasks.length === 0) return;
+
+        const groupIds = groupTasks.map(t => t.id);
+        const allSelected = groupIds.every(id => selectedTaskIds.has(id));
+
+        setSelectedTaskIds(prev => {
+          const next = new Set(prev);
+          if (allSelected) {
+            // Deselect all in group
+            groupIds.forEach(id => next.delete(id));
+          } else {
+            // Select all in group
+            groupIds.forEach(id => next.add(id));
+          }
+          return next;
+        });
         return;
       }
 

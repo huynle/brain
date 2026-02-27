@@ -286,6 +286,7 @@ export class BrainService {
       request.open_pr_before_merge ??= false;
       request.execution_mode ??= "worktree";
       request.checkout_enabled ??= true;
+      request.complete_on_idle ??= false;
     }
 
     const isGlobal = request.global ?? false;
@@ -598,6 +599,9 @@ export class BrainService {
       if (request.checkout_enabled !== undefined) {
         zkArgs.push("--extra", `checkout_enabled=${request.checkout_enabled}`);
       }
+      if (request.complete_on_idle !== undefined) {
+        zkArgs.push("--extra", `complete_on_idle=${request.complete_on_idle}`);
+      }
 
       // User original request for validation
       // Note: Complex values (newlines, special chars) are handled above by forcing
@@ -732,6 +736,7 @@ export class BrainService {
         open_pr_before_merge: request.open_pr_before_merge,
         execution_mode: request.execution_mode,
         checkout_enabled: request.checkout_enabled,
+        complete_on_idle: request.complete_on_idle,
         target_workdir: request.target_workdir,
         // User intent for validation
         user_original_request: request.user_original_request,
@@ -968,6 +973,7 @@ export class BrainService {
       open_pr_before_merge: frontmatter.open_pr_before_merge as boolean | undefined,
       execution_mode: frontmatter.execution_mode as BrainEntry["execution_mode"] | undefined,
       checkout_enabled: frontmatter.checkout_enabled as boolean | undefined,
+      complete_on_idle: frontmatter.complete_on_idle as boolean | undefined,
       // User intent for validation
       user_original_request: frontmatter.user_original_request as string | undefined,
       // Session traceability
@@ -1028,6 +1034,7 @@ export class BrainService {
       request.open_pr_before_merge === undefined &&
       request.execution_mode === undefined &&
       request.checkout_enabled === undefined &&
+      request.complete_on_idle === undefined &&
       request.direct_prompt === undefined &&
       request.agent === undefined &&
       request.model === undefined &&
@@ -1047,7 +1054,7 @@ export class BrainService {
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
       );
     }
 
@@ -1150,6 +1157,9 @@ export class BrainService {
     }
     if (request.checkout_enabled !== undefined) {
       updatedFrontmatter.checkout_enabled = request.checkout_enabled;
+    }
+    if (request.complete_on_idle !== undefined) {
+      updatedFrontmatter.complete_on_idle = request.complete_on_idle;
     }
 
     // Update OpenCode execution options if provided

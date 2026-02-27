@@ -63,6 +63,8 @@ export function mapZkNoteToTask(note: ZkNote): Task {
       (note.metadata?.execution_mode as Task["execution_mode"]) || "worktree",
     checkout_enabled:
       (note.metadata?.checkout_enabled as boolean) ?? true,
+    complete_on_idle:
+      (note.metadata?.complete_on_idle as boolean) ?? false,
     user_original_request:
       (note.metadata?.user_original_request as string) || null,
     // Feature grouping fields

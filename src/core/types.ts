@@ -165,6 +165,7 @@ export interface BrainEntry {
   open_pr_before_merge?: boolean; // Whether to open PR before merge
   execution_mode?: ExecutionMode; // How task executes: worktree or current branch
   checkout_enabled?: boolean; // Whether dedicated checkout/worktree flow is enabled
+  complete_on_idle?: boolean; // Mark task completed instead of blocked when agent goes idle
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
@@ -217,6 +218,7 @@ export interface CreateEntryRequest {
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;
+  complete_on_idle?: boolean;
 
   // User intent for validation
   user_original_request?: string; // Verbatim user request for validation during task completion
@@ -277,6 +279,7 @@ export interface UpdateEntryRequest {
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;
+  complete_on_idle?: boolean;
   // Feature grouping (for task organization)
   feature_id?: string;
   feature_priority?: Priority;
@@ -461,6 +464,7 @@ export interface Task {
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
   checkout_enabled?: boolean;
+  complete_on_idle?: boolean;
   user_original_request: string | null; // Verbatim user request for validation during task completion
 
   // Feature grouping (optional)

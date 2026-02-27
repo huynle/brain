@@ -673,6 +673,13 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const completeOnIdleMatch = line.match(/^complete_on_idle:\s*(true|false)\s*$/);
+    if (completeOnIdleMatch) {
+      frontmatter.complete_on_idle = completeOnIdleMatch[1] === "true";
+      inTags = false;
+      continue;
+    }
+
     // Handle user_original_request - can be single-line or multi-line (literal block scalar)
     // Single-line: user_original_request: simple request
     // Multi-line: user_original_request: |
@@ -1335,6 +1342,9 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.checkout_enabled !== undefined) {
     lines.push(`checkout_enabled: ${fm.checkout_enabled}`);
   }
+  if (fm.complete_on_idle !== undefined) {
+    lines.push(`complete_on_idle: ${fm.complete_on_idle}`);
+  }
   if (fm.target_workdir) lines.push(`target_workdir: ${escapeYamlValue(fm.target_workdir as string)}`);
 
   // User original request - use multiline format if contains newlines
@@ -1429,6 +1439,7 @@ export interface GenerateFrontmatterOptions {
   open_pr_before_merge?: boolean;
   execution_mode?: "worktree" | "current_branch";
   checkout_enabled?: boolean;
+  complete_on_idle?: boolean;
   target_workdir?: string;
   // User intent for validation
   user_original_request?: string;
@@ -1593,6 +1604,9 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   }
   if (options.checkout_enabled !== undefined) {
     lines.push(`checkout_enabled: ${options.checkout_enabled}`);
+  }
+  if (options.complete_on_idle !== undefined) {
+    lines.push(`complete_on_idle: ${options.complete_on_idle}`);
   }
   if (options.target_workdir) {
     lines.push(`target_workdir: ${escapeYamlValue(options.target_workdir)}`);

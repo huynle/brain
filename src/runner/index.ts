@@ -383,6 +383,13 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   if (options.agent) {
     configOverrides.opencode = { ...config.opencode, agent: options.agent };
   }
+  if (options.model) {
+    configOverrides.opencode = {
+      ...config.opencode,
+      ...(configOverrides.opencode ?? {}),
+      model: options.model,
+    };
+  }
 
   // Create and start TaskRunner
   try {

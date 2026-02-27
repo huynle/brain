@@ -58,7 +58,7 @@ describe("config", () => {
       expect(config.taskTimeout).toBe(0);
       expect(config.opencode.bin).toBe("opencode");
       expect(config.opencode.agent).toBe("");
-      expect(config.opencode.model).toBe("openai/gpt-5.3-codex");
+      expect(config.opencode.model).toBe("");
       expect(config.excludeProjects).toEqual([]);
     });
 

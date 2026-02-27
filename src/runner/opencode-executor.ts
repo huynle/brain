@@ -261,8 +261,7 @@ Start now.`;
         this.config.opencode.bin,
         "run",
         ...(agent ? ["--agent", agent] : []),
-        "--model",
-        model,
+        ...(model ? ["--model", model] : []),
         promptContent,
       ],
       cwd: workdir,
@@ -317,9 +316,10 @@ Start now.`;
       `runner_${projectId}_${task.id}.sh`
     );
     const agentFlag = agent ? `--agent "${agent}" ` : "";
+    const modelFlag = model ? `--model "${model}" ` : "";
     const script = `#!/bin/bash
 cd "${workdir}"
-"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"
+"${this.config.opencode.bin}" ${agentFlag}${modelFlag}--port 0 --prompt "$(cat '${promptFile}')"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
@@ -406,7 +406,8 @@ exit $exit_code
       `runner_${projectId}_${task.id}.sh`
     );
     const agentFlag = agent ? `--agent "${agent}" ` : "";
-    const opencodeCmd = `"${this.config.opencode.bin}" ${agentFlag}--model "${model}" --port 0 --prompt "$(cat '${promptFile}')"`;
+    const modelFlag = model ? `--model "${model}" ` : "";
+    const opencodeCmd = `"${this.config.opencode.bin}" ${agentFlag}${modelFlag}--port 0 --prompt "$(cat '${promptFile}')"`;
     const script = `#!/bin/bash
 cd "${workdir}"
 ${opencodeCmd}
@@ -802,7 +803,8 @@ If setup fails, output "SETUP_FAILED: <reason>" at the end.`;
 
     try {
       const agentArgs = this.config.opencode.agent ? ["--agent", this.config.opencode.agent] : [];
-      const shellPromise = Bun.$`${this.config.opencode.bin} run ${agentArgs} --model ${this.config.opencode.model} ${setupPrompt}`
+      const modelArgs = this.config.opencode.model ? ["--model", this.config.opencode.model] : [];
+      const shellPromise = Bun.$`${this.config.opencode.bin} run ${agentArgs} ${modelArgs} ${setupPrompt}`
         .cwd(worktreePath)
         .text();
       

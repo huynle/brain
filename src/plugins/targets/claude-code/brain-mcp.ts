@@ -388,6 +388,16 @@ const tools: Tool[] = [
         agent: { type: "string", description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')" },
         model: { type: "string", description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')" },
         schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step." },
+        git_branch: { type: "string", description: "Git branch for the task" },
+        merge_target_branch: { type: "string", description: "Branch to merge completed work into" },
+        merge_policy: { type: "string", enum: ["prompt_only", "auto_pr", "auto_merge"], description: "Merge behavior at checkout completion" },
+        merge_strategy: { type: "string", enum: ["squash", "merge", "rebase"], description: "Git merge strategy" },
+        remote_branch_policy: { type: "string", enum: ["keep", "delete"], description: "Remote branch cleanup after merge" },
+        open_pr_before_merge: { type: "boolean", description: "Require PR before merge" },
+        execution_mode: { type: "string", enum: ["worktree", "current_branch"], description: "Task execution mode (default: worktree)" },
+        checkout_enabled: { type: "boolean", description: "Enable checkout/worktree flow for this task (default: true)" },
+        complete_on_idle: { type: "boolean", description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks." },
+        relatedEntries: { type: "array", items: { type: "string" }, description: "Related brain entry paths to link" },
       },
       required: ["type", "title", "content"],
     },
@@ -476,6 +486,19 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
         append: { type: "string", description: "Content to append" },
         note: { type: "string", description: "Short note to add" },
         depends_on: { type: "array", items: { type: "string" }, description: "Task dependencies - list of task IDs or titles" },
+        tags: { type: "array", items: { type: "string" }, description: "Update tags for the entry" },
+        priority: { type: "string", enum: PRIORITIES, description: "Priority level" },
+        target_workdir: { type: "string", description: "Explicit working directory override for task execution" },
+        git_branch: { type: "string", description: "Git branch for the task" },
+        merge_target_branch: { type: "string", description: "Branch to merge completed work into" },
+        merge_policy: { type: "string", enum: ["prompt_only", "auto_pr", "auto_merge"], description: "Merge behavior at checkout completion" },
+        merge_strategy: { type: "string", enum: ["squash", "merge", "rebase"], description: "Git merge strategy" },
+        remote_branch_policy: { type: "string", enum: ["keep", "delete"], description: "Remote branch cleanup after merge" },
+        open_pr_before_merge: { type: "boolean", description: "Require PR before merge" },
+        execution_mode: { type: "string", enum: ["worktree", "current_branch"], description: "Task execution mode (default: worktree)" },
+        checkout_enabled: { type: "boolean", description: "Enable checkout/worktree flow for this task" },
+        complete_on_idle: { type: "boolean", description: "Mark task as completed when agent becomes idle" },
+        schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *')" },
         feature_id: { type: "string", description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" },
         feature_priority: { type: "string", enum: PRIORITIES, description: "Priority for this feature group" },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on" },
@@ -1003,7 +1026,15 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           target_workdir: args.type === "task" ? args.target_workdir : undefined,
           workdir: args.type === "task" ? context.workdir : undefined,
           git_remote: args.type === "task" ? context.gitRemote : undefined,
-          git_branch: args.type === "task" ? context.gitBranch : undefined,
+          git_branch: args.type === "task" ? (args.git_branch ?? context.gitBranch) : undefined,
+          merge_target_branch: args.type === "task" ? args.merge_target_branch : undefined,
+          merge_policy: args.type === "task" ? args.merge_policy : undefined,
+          merge_strategy: args.type === "task" ? args.merge_strategy : undefined,
+          remote_branch_policy: args.type === "task" ? args.remote_branch_policy : undefined,
+          open_pr_before_merge: args.type === "task" ? args.open_pr_before_merge : undefined,
+          execution_mode: args.type === "task" ? args.execution_mode : undefined,
+          checkout_enabled: args.type === "task" ? args.checkout_enabled : undefined,
+          complete_on_idle: args.type === "task" ? args.complete_on_idle : undefined,
           // Only include user_original_request for tasks
           user_original_request:
             args.type === "task" ? args.user_original_request : undefined,
@@ -1117,8 +1148,60 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           path: string;
           title: string;
           status: string;
-        }>("PATCH", `/entries/${args.path}`, args);
-        return `Updated: ${response.path}\nStatus: ${response.status}\nTitle: ${response.title}`;
+        }>("PATCH", `/entries/${args.path}`, {
+          status: args.status,
+          title: args.title,
+          append: args.append,
+          note: args.note,
+          depends_on: args.depends_on,
+          tags: args.tags,
+          priority: args.priority,
+          target_workdir: args.target_workdir,
+          git_branch: args.git_branch,
+          merge_target_branch: args.merge_target_branch,
+          merge_policy: args.merge_policy,
+          merge_strategy: args.merge_strategy,
+          remote_branch_policy: args.remote_branch_policy,
+          open_pr_before_merge: args.open_pr_before_merge,
+          execution_mode: args.execution_mode,
+          checkout_enabled: args.checkout_enabled,
+          complete_on_idle: args.complete_on_idle,
+          schedule: args.schedule,
+          feature_id: args.feature_id,
+          feature_priority: args.feature_priority,
+          feature_depends_on: args.feature_depends_on,
+          direct_prompt: args.direct_prompt,
+          agent: args.agent,
+          model: args.model,
+        });
+
+        const changes: string[] = [];
+        if (args.status) changes.push(`Status: -> ${args.status}`);
+        if (args.title) changes.push(`Title: -> "${args.title}"`);
+        if (args.note) changes.push(`Note: "${args.note}"`);
+        if (args.append) changes.push(`Appended ${(args.append as string).length} characters`);
+        if (args.depends_on) changes.push(`Dependencies: ${(args.depends_on as string[]).length} task(s)`);
+        if (args.tags !== undefined) changes.push(`Tags: ${(args.tags as string[]).length > 0 ? (args.tags as string[]).join(", ") : "(cleared)"}`);
+        if (args.priority) changes.push(`Priority: ${args.priority}`);
+        if (args.target_workdir) changes.push(`Target Workdir: ${args.target_workdir}`);
+        if (args.git_branch) changes.push(`Git Branch: ${args.git_branch}`);
+        if (args.merge_target_branch) changes.push(`Merge Target Branch: ${args.merge_target_branch}`);
+        if (args.merge_policy) changes.push(`Merge Policy: ${args.merge_policy}`);
+        if (args.merge_strategy) changes.push(`Merge Strategy: ${args.merge_strategy}`);
+        if (args.remote_branch_policy) changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
+        if (args.open_pr_before_merge !== undefined) changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
+        if (args.execution_mode) changes.push(`Execution Mode: ${args.execution_mode}`);
+        if (args.checkout_enabled !== undefined) changes.push(`Checkout Enabled: ${args.checkout_enabled}`);
+        if (args.complete_on_idle !== undefined) changes.push(`Complete On Idle: ${args.complete_on_idle}`);
+        if (args.schedule) changes.push(`Schedule: ${args.schedule}`);
+        if (args.feature_id) changes.push(`Feature ID: ${args.feature_id}`);
+        if (args.feature_priority) changes.push(`Feature Priority: ${args.feature_priority}`);
+        if (args.feature_depends_on) changes.push(`Feature Dependencies: ${(args.feature_depends_on as string[]).length} feature(s)`);
+        if (args.direct_prompt) changes.push(`Direct Prompt: set`);
+        if (args.agent) changes.push(`Agent: ${args.agent}`);
+        if (args.model) changes.push(`Model: ${args.model}`);
+
+        return `Updated: ${response.path}\n\n**Changes:**\n${changes.map(c => `- ${c}`).join("\n")}\n\n**Current Status:** ${response.status}\n**Title:** ${response.title}\n\nUse \`brain_recall\` to view the full entry.`;
       }
 
       case "brain_move": {

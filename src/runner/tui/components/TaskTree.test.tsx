@@ -218,8 +218,9 @@ describe('TaskTree', () => {
     });
   });
 
-  describe('hover preview highlighting', () => {
-    it('keeps selected and hovered rows independent', () => {
+  describe('hover preview highlighting (disabled)', () => {
+    it('never marks rows as hovered — hover highlighting removed', () => {
+      // Hover was removed: only click/scroll changes selection
       expect(resolveTaskRowVisualState('task-a', 'task-a', 'task-b')).toEqual({
         isSelected: true,
         isHovered: false,
@@ -227,21 +228,14 @@ describe('TaskTree', () => {
 
       expect(resolveTaskRowVisualState('task-b', 'task-a', 'task-b')).toEqual({
         isSelected: false,
-        isHovered: true,
-      });
-    });
-
-    it('does not mark hover when hovering the selected row', () => {
-      expect(resolveTaskRowVisualState('task-a', 'task-a', 'task-a')).toEqual({
-        isSelected: true,
         isHovered: false,
       });
     });
 
-    it('marks hovered row when there is no persistent selection', () => {
+    it('does not mark hover even when hoveredId matches', () => {
       expect(resolveTaskRowVisualState('task-b', null, 'task-b')).toEqual({
         isSelected: false,
-        isHovered: true,
+        isHovered: false,
       });
     });
   });

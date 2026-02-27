@@ -11,7 +11,7 @@
 import React from 'react';
 import { describe, it, expect, mock } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, resolveHoveredTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue, buildMetadataPrefillFromTasks, buildMetadataApplyPlan, isFeatureCheckoutTask } from './App';
+import { App, setsEqual, resolveTaskTreeClickAction, isTaskTreeCollapseToggleTarget, getTaskTreeCollapseKey, getTaskTreeViewportStartRow, findTaskTreeTargetFromMouseRow, shouldHandleTaskTreeMouseEvent, resolvePreviewTaskId, normalizeMetadataFieldValue, validateMetadataFieldValue, buildMetadataPrefillFromTasks, buildMetadataApplyPlan, isFeatureCheckoutTask } from './App';
 import type { TUIConfig } from './types';
 import type { EntryStatus, MergePolicy, MergeStrategy, ExecutionMode, RemoteBranchPolicy } from '../../core/types';
 
@@ -564,62 +564,19 @@ describe('App click helper exports', () => {
     expect(getTaskTreeCollapseKey({ kind: 'project_header', id: 'h1', projectId: 'brain-api' })).toBe('project:brain-api');
   });
 
-  it('exports preview-id resolver with hover precedence', async () => {
-    expect(resolvePreviewTaskId('selected-1', 'hovered-1')).toBe('hovered-1');
-    expect(resolvePreviewTaskId('selected-1', null)).toBe('selected-1');
-    expect(resolvePreviewTaskId(null, null)).toBeNull();
+  it('exports preview-id resolver using selected task only', async () => {
+    expect(resolvePreviewTaskId('selected-1')).toBe('selected-1');
+    expect(resolvePreviewTaskId(null)).toBeNull();
   });
 
-  it('falls back to selected task when hovered task is unavailable', () => {
+  it('returns selected task when available in set', () => {
     const availableTaskIds = new Set(['selected-1']);
-    expect(resolvePreviewTaskId('selected-1', 'hovered-1', availableTaskIds)).toBe('selected-1');
+    expect(resolvePreviewTaskId('selected-1', availableTaskIds)).toBe('selected-1');
   });
 
-  it('returns null when neither selected nor hovered task is available', () => {
+  it('returns null when selected task is not available', () => {
     const availableTaskIds = new Set(['other-task']);
-    expect(resolvePreviewTaskId('selected-1', 'hovered-1', availableTaskIds)).toBeNull();
-  });
-
-  it('exports hover resolver that clears on non-task/outside rows', () => {
-    expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'task', id: 'task-1' }, null)).toBe('task-1');
-    expect(resolveHoveredTaskId({ kind: 'move' }, { kind: 'feature_header', id: '__feature_header__f' }, 'task-1')).toBeNull();
-    expect(resolveHoveredTaskId({ kind: 'move' }, null, 'task-1')).toBeNull();
-    expect(resolveHoveredTaskId({ kind: 'press' }, { kind: 'task', id: 'task-2' }, 'task-1')).toBe('task-1');
-  });
-
-  it('keeps persistent selection unchanged while hover drives preview details', () => {
-    const selectedTaskId = 'task-selected';
-    const hoveredTaskId = resolveHoveredTaskId(
-      { kind: 'move' },
-      { kind: 'task', id: 'task-hovered', taskId: 'task-hovered' },
-      null,
-    );
-
-    const previewTaskId = resolvePreviewTaskId(
-      selectedTaskId,
-      hoveredTaskId,
-      new Set(['task-selected', 'task-hovered']),
-    );
-
-    expect(previewTaskId).toBe('task-hovered');
-    expect(selectedTaskId).toBe('task-selected');
-  });
-
-  it('returns preview to selected task after hover leaves task rows', () => {
-    const selectedTaskId = 'task-selected';
-    const hoverOnTask = resolveHoveredTaskId(
-      { kind: 'move' },
-      { kind: 'task', id: 'task-hovered', taskId: 'task-hovered' },
-      null,
-    );
-    const hoverCleared = resolveHoveredTaskId(
-      { kind: 'move' },
-      { kind: 'feature_header', id: '__feature_header__f' },
-      hoverOnTask,
-    );
-
-    expect(hoverCleared).toBeNull();
-    expect(resolvePreviewTaskId(selectedTaskId, hoverCleared, new Set(['task-selected']))).toBe('task-selected');
+    expect(resolvePreviewTaskId('selected-1', availableTaskIds)).toBeNull();
   });
 });
 

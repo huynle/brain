@@ -544,46 +544,15 @@ export function shouldHandleTaskTreeMouseEvent(state: TaskTreeMouseGuardState): 
 
 /**
  * Resolve which task ID should drive preview rendering.
- * Hovered task takes precedence over persistent selection.
+ * Only the persistent selection drives preview — hover was removed.
  */
 export function resolvePreviewTaskId(
   selectedTaskId: string | null,
-  hoveredTaskId: string | null,
   availableTaskIds?: ReadonlySet<string>,
 ): string | null {
-  const isAvailable = (taskId: string | null): taskId is string => {
-    if (!taskId) return false;
-    if (!availableTaskIds) return true;
-    return availableTaskIds.has(taskId);
-  };
-
-  if (isAvailable(hoveredTaskId)) {
-    return hoveredTaskId;
-  }
-
-  if (isAvailable(selectedTaskId)) {
-    return selectedTaskId;
-  }
-
-  return null;
-}
-
-/**
- * Resolve hovered task ID from a mouse event and row hit-target.
- * - move on task row => hovered task id
- * - move outside/non-task row => clear hover
- * - press events keep existing hover unchanged
- */
-export function resolveHoveredTaskId(
-  event: Pick<TUIMouseEvent, 'kind'>,
-  rowTarget: TaskTreeRowTarget | null,
-  currentHoveredTaskId: string | null,
-): string | null {
-  if (event.kind !== 'move') {
-    return currentHoveredTaskId;
-  }
-
-  return rowTarget?.kind === 'task' ? rowTarget.id : null;
+  if (!selectedTaskId) return null;
+  if (!availableTaskIds) return selectedTaskId;
+  return availableTaskIds.has(selectedTaskId) ? selectedTaskId : null;
 }
 
 /**
@@ -814,7 +783,7 @@ export function App({
 
   // State
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [hoveredTaskId, setHoveredTaskId] = useState<string | null>(null);
+
   const [selectedCronId, setSelectedCronId] = useState<string | null>(null);
   const [focusedPanel, setFocusedPanel] = useState<FocusedPanel>('tasks');
   const [viewMode, setViewMode] = useState<ViewMode>('tasks');
@@ -1215,7 +1184,7 @@ export function App({
 
   // Find selected task
   const selectedTask = tasks.find((t) => t.id === selectedTaskId) || null;
-  const previewTaskId = resolvePreviewTaskId(selectedTaskId, hoveredTaskId, availableTaskIds);
+  const previewTaskId = resolvePreviewTaskId(selectedTaskId, availableTaskIds);
   const previewTask = tasks.find((t) => t.id === previewTaskId) || null;
   const selectedCron = crons.find((c) => c.id === selectedCronId) || null;
 
@@ -1687,19 +1656,16 @@ export function App({
       showHelp,
       isEditing,
     })) {
-      if (event.kind === 'move') {
-        setHoveredTaskId(null);
-      }
+      return;
+    }
+
+    // Ignore mouse movement — only clicks change selection
+    if (event.kind === 'move') {
       return;
     }
 
     const viewportStartRow = getTaskTreeViewportStartRow(isMultiProject, filterMode);
     const rowTarget = findTaskTreeTargetFromMouseRow(taskTreeVisibleRows, event.row, viewportStartRow);
-
-    if (event.kind === 'move') {
-      setHoveredTaskId((currentHoveredTaskId) => resolveHoveredTaskId(event, rowTarget, currentHoveredTaskId));
-      return;
-    }
 
     if (!rowTarget) return;
 
@@ -4192,7 +4158,7 @@ export function App({
                 <TaskTree
                   tasks={filteredTasks}
                   selectedId={selectedTaskId}
-                  hoveredId={hoveredTaskId}
+                  hoveredId={null}
                   onSelect={setSelectedTaskId}
                   completedCollapsed={completedCollapsed}
                   onToggleCompleted={handleToggleCompleted}

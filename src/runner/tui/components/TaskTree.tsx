@@ -24,6 +24,7 @@ type ColoredPrefixSegment = Pick<LanePrefixSegment, 'text' | 'kind'>;
 interface TaskTreeProps {
   tasks: TaskDisplay[];
   selectedId: string | null;
+  /** @deprecated Hover highlighting removed — only click selects. Always null. */
   hoveredId?: string | null;
   onSelect: (id: string) => void;
   completedCollapsed: boolean;
@@ -1334,16 +1335,16 @@ function truncateTitle(title: string, maxWidth: number): string {
 export function resolveTaskRowVisualState(
   taskId: string,
   selectedId: string | null,
-  hoveredId: string | null,
+  _hoveredId: string | null,
 ): { isSelected: boolean; isHovered: boolean } {
   const isSelected = taskId === selectedId;
-  const isHovered = !isSelected && taskId === hoveredId;
-  return { isSelected, isHovered };
+  // Hover highlighting removed — only click/scroll changes selection
+  return { isSelected, isHovered: false };
 }
 
-function getTaskRowBackgroundColor(isSelected: boolean, isHovered: boolean): string | undefined {
+function getTaskRowBackgroundColor(isSelected: boolean, _isHovered: boolean): string | undefined {
   if (isSelected) return 'blue';
-  if (isHovered) return 'gray';
+  // Hover gray background removed — only selected task is highlighted
   return undefined;
 }
 

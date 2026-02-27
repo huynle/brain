@@ -128,6 +128,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 const BOOLEAN_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
   'checkout_enabled',
+  'complete_on_idle',
   'open_pr_before_merge',
 ]);
 
@@ -212,6 +213,7 @@ type MetadataPrefillValues = {
   merge_target_branch: string;
   execution_mode: ExecutionMode;
   checkout_enabled: boolean;
+  complete_on_idle: boolean;
   merge_policy: MergePolicy;
   merge_strategy: MergeStrategy;
   remote_branch_policy: RemoteBranchPolicy;
@@ -231,6 +233,7 @@ const DEFAULT_METADATA_PREFILL: MetadataPrefillValues = {
   merge_target_branch: '',
   execution_mode: 'worktree',
   checkout_enabled: true,
+  complete_on_idle: false,
   merge_policy: 'auto_merge',
   merge_strategy: 'squash',
   remote_branch_policy: 'delete',
@@ -296,6 +299,7 @@ export function buildMetadataPrefillFromTasks(
     merge_target_branch: sharedString(tasks, (task) => task.mergeTargetBranch),
     execution_mode: sharedEnum(tasks, (task) => task.executionMode, 'worktree'),
     checkout_enabled: sharedBoolean(tasks, (task) => task.checkoutEnabled, true),
+    complete_on_idle: sharedBoolean(tasks, (task) => task.completeOnIdle, false),
     merge_policy: sharedEnum(tasks, (task) => task.mergePolicy, 'auto_merge'),
     merge_strategy: sharedEnum(tasks, (task) => task.mergeStrategy, 'squash'),
     remote_branch_policy: sharedEnum(tasks, (task) => task.remoteBranchPolicy, 'delete'),
@@ -751,6 +755,8 @@ export function App({
   getResourceMetrics,
   getProjectLimits,
   setProjectLimit,
+  getMaxParallel,
+  setMaxParallel,
   getRuntimeDefaultModel,
   setRuntimeDefaultModel,
   onEnableFeature,
@@ -798,6 +804,7 @@ export function App({
   const [metadataMergeTargetBranchValue, setMetadataMergeTargetBranchValue] = useState('');
   const [metadataExecutionModeValue, setMetadataExecutionModeValue] = useState<ExecutionMode>('worktree');
   const [metadataCheckoutEnabledValue, setMetadataCheckoutEnabledValue] = useState<boolean>(true);
+  const [metadataCompleteOnIdleValue, setMetadataCompleteOnIdleValue] = useState<boolean>(false);
   const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('auto_merge');
   const [metadataMergeStrategyValue, setMetadataMergeStrategyValue] = useState<MergeStrategy>('squash');
   const [metadataRemoteBranchPolicyValue, setMetadataRemoteBranchPolicyValue] = useState<RemoteBranchPolicy>('delete');
@@ -822,6 +829,7 @@ export function App({
     merge_target_branch: string;
     execution_mode: ExecutionMode;
     checkout_enabled: boolean;
+    complete_on_idle: boolean;
     merge_policy: MergePolicy;
     merge_strategy: MergeStrategy;
     remote_branch_policy: RemoteBranchPolicy;
@@ -839,6 +847,7 @@ export function App({
     merge_target_branch: '',
     execution_mode: 'worktree',
     checkout_enabled: true,
+    complete_on_idle: false,
     merge_policy: 'auto_merge',
     merge_strategy: 'squash',
     remote_branch_policy: 'delete',
@@ -861,12 +870,14 @@ export function App({
   const [showSettingsPopup, setShowSettingsPopup] = useState(false);
   const [settingsSelectedIndex, setSettingsSelectedIndex] = useState(0);
   const [projectLimitsState, setProjectLimitsState] = useState<ProjectLimitEntry[]>([]);
+  const [maxParallelState, setMaxParallelState] = useState<number>(0);
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
   const [draftCollapsed, setDraftCollapsed] = useState(true);
   const [cancelledCollapsed, setCancelledCollapsed] = useState(true);
   const [supersededCollapsed, setSupersededCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
+  const [collapsedTasks, setCollapsedTasks] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   
   // Group visibility settings - persisted to ~/.brain/tui-settings.json
@@ -1250,6 +1261,7 @@ export function App({
     completedCollapsed,
     draftCollapsed,
     collapsedFeatures,
+    collapsedTasks,
     collapsedProjects,
     visibleGroups,
     cancelledCollapsed,
@@ -1408,6 +1420,7 @@ export function App({
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;
+      complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;
@@ -1432,6 +1445,9 @@ export function App({
     }
     if (metadataCheckoutEnabledValue !== metadataOriginalValues.checkout_enabled) {
       changedFields.checkout_enabled = metadataCheckoutEnabledValue;
+    }
+    if (metadataCompleteOnIdleValue !== metadataOriginalValues.complete_on_idle) {
+      changedFields.complete_on_idle = metadataCompleteOnIdleValue;
     }
     if (metadataMergePolicyValue !== metadataOriginalValues.merge_policy) {
       changedFields.merge_policy = metadataMergePolicyValue;
@@ -1508,6 +1524,7 @@ export function App({
     metadataMergeTargetBranchValue,
     metadataExecutionModeValue,
     metadataCheckoutEnabledValue,
+    metadataCompleteOnIdleValue,
     metadataMergePolicyValue,
     metadataMergeStrategyValue,
     metadataRemoteBranchPolicyValue,
@@ -1553,6 +1570,7 @@ export function App({
     setMetadataMergeTargetBranchValue(task.mergeTargetBranch || '');
     setMetadataExecutionModeValue(task.executionMode || 'worktree');
     setMetadataCheckoutEnabledValue(task.checkoutEnabled ?? true);
+    setMetadataCompleteOnIdleValue(task.completeOnIdle ?? false);
     setMetadataMergePolicyValue(task.mergePolicy || 'auto_merge');
     setMetadataMergeStrategyValue(task.mergeStrategy || 'squash');
     setMetadataRemoteBranchPolicyValue(task.remoteBranchPolicy || 'delete');
@@ -1571,6 +1589,7 @@ export function App({
       merge_target_branch: task.mergeTargetBranch || '',
       execution_mode: task.executionMode || 'worktree',
       checkout_enabled: task.checkoutEnabled ?? true,
+      complete_on_idle: task.completeOnIdle ?? false,
       merge_policy: task.mergePolicy || 'auto_merge',
       merge_strategy: task.mergeStrategy || 'squash',
       remote_branch_policy: task.remoteBranchPolicy || 'delete',
@@ -1820,12 +1839,14 @@ export function App({
             ...(field === 'merge_strategy' ? { merge_strategy: updates.merge_strategy as MergeStrategy } : {}),
             ...(field === 'remote_branch_policy' ? { remote_branch_policy: updates.remote_branch_policy as RemoteBranchPolicy } : {}),
             ...(field === 'checkout_enabled' ? { checkout_enabled: updates.checkout_enabled as boolean } : {}),
+            ...(field === 'complete_on_idle' ? { complete_on_idle: updates.complete_on_idle as boolean } : {}),
             ...(field === 'open_pr_before_merge' ? { open_pr_before_merge: updates.open_pr_before_merge as boolean } : {}),
               ...(field !== 'execution_mode' &&
             field !== 'merge_policy' &&
             field !== 'merge_strategy' &&
             field !== 'remote_branch_policy' &&
             field !== 'checkout_enabled' &&
+            field !== 'complete_on_idle' &&
             field !== 'open_pr_before_merge'
               ? { [field]: normalizedValue }
               : {}),
@@ -1939,6 +1960,9 @@ export function App({
               case 'checkout_enabled':
                 currentValue = metadataCheckoutEnabledValue ? 'true' : 'false';
                 break;
+              case 'complete_on_idle':
+                currentValue = metadataCompleteOnIdleValue ? 'true' : 'false';
+                break;
               case 'merge_policy':
                 currentValue = metadataMergePolicyValue;
                 break;
@@ -2001,6 +2025,11 @@ export function App({
             case 'checkout_enabled':
               if (value === 'true' || value === 'false') {
                 setMetadataCheckoutEnabledValue(value === 'true');
+              }
+              break;
+            case 'complete_on_idle':
+              if (value === 'true' || value === 'false') {
+                setMetadataCompleteOnIdleValue(value === 'true');
               }
               break;
             case 'merge_policy':
@@ -2524,80 +2553,86 @@ export function App({
       // Section-specific handling
       if (settingsSection === 'limits') {
         // Use React state for navigation bounds (synced when popup opened)
+        // Index 0 = global max-parallel row, indices 1+ = per-project rows
         const currentLimits = projectLimitsState;
+        const totalRows = currentLimits.length + 1; // +1 for global row
+        const isGlobalRow = settingsSelectedIndex === 0;
+        const projectIndex = settingsSelectedIndex - 1; // offset for per-project entries
 
-        // Navigate project list with j/k or arrows
+        // Navigate list with j/k or arrows
         if (key.upArrow || input === 'k') {
           setSettingsSelectedIndex((prev) => Math.max(0, prev - 1));
           return;
         }
 
         if (key.downArrow || input === 'j') {
-          setSettingsSelectedIndex((prev) => Math.min(currentLimits.length - 1, prev + 1));
+          setSettingsSelectedIndex((prev) => Math.min(totalRows - 1, prev + 1));
           return;
         }
 
         // + or = to increase limit
-        if ((input === '+' || input === '=') && setProjectLimit && currentLimits.length > 0) {
-          const entry = currentLimits[settingsSelectedIndex];
-          if (entry) {
-            const newLimit = (entry.limit ?? 0) + 1;
-            setProjectLimit(entry.projectId, newLimit);
-            // Update React state to trigger re-render
-            setProjectLimitsState(prev => prev.map((e, i) => 
-              i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
-            ));
-            addLog({
-              level: 'info',
-              message: `Set ${entry.projectId} limit: ${newLimit}`,
-            });
-          }
-          return;
-        }
-
-        // - to decrease limit (min 1, or remove limit if at 1)
-        if (input === '-' && setProjectLimit && currentLimits.length > 0) {
-          const entry = currentLimits[settingsSelectedIndex];
-          if (entry && entry.limit !== undefined) {
-            if (entry.limit <= 1) {
-              setProjectLimit(entry.projectId, undefined);
-              // Update React state to trigger re-render
-              setProjectLimitsState(prev => prev.map((e, i) => 
-                i === settingsSelectedIndex ? { ...e, limit: undefined } : e
-              ));
-              addLog({
-                level: 'info',
-                message: `Removed ${entry.projectId} limit`,
-              });
-            } else {
-              const newLimit = entry.limit - 1;
+        if (input === '+' || input === '=') {
+          if (isGlobalRow && setMaxParallel) {
+            const newValue = maxParallelState + 1;
+            setMaxParallel(newValue);
+            setMaxParallelState(getMaxParallel ? getMaxParallel() : newValue);
+            addLog({ level: 'info', message: `Global max-parallel: ${getMaxParallel ? getMaxParallel() : newValue}` });
+          } else if (!isGlobalRow && setProjectLimit && currentLimits.length > 0) {
+            const entry = currentLimits[projectIndex];
+            if (entry) {
+              const newLimit = (entry.limit ?? 0) + 1;
               setProjectLimit(entry.projectId, newLimit);
-              // Update React state to trigger re-render
               setProjectLimitsState(prev => prev.map((e, i) => 
-                i === settingsSelectedIndex ? { ...e, limit: newLimit } : e
+                i === projectIndex ? { ...e, limit: newLimit } : e
               ));
-              addLog({
-                level: 'info',
-                message: `Set ${entry.projectId} limit: ${newLimit}`,
-              });
+              addLog({ level: 'info', message: `Set ${entry.projectId} limit: ${newLimit}` });
             }
           }
           return;
         }
 
-        // 0 to remove limit entirely
-        if (input === '0' && setProjectLimit && currentLimits.length > 0) {
-          const entry = currentLimits[settingsSelectedIndex];
-          if (entry) {
-            setProjectLimit(entry.projectId, undefined);
-            // Update React state to trigger re-render
-            setProjectLimitsState(prev => prev.map((e, i) => 
-              i === settingsSelectedIndex ? { ...e, limit: undefined } : e
-            ));
-            addLog({
-              level: 'info',
-              message: `Removed ${entry.projectId} limit`,
-            });
+        // - to decrease limit
+        if (input === '-') {
+          if (isGlobalRow && setMaxParallel) {
+            const newValue = maxParallelState - 1;
+            if (newValue >= 1) {
+              setMaxParallel(newValue);
+              setMaxParallelState(getMaxParallel ? getMaxParallel() : newValue);
+              addLog({ level: 'info', message: `Global max-parallel: ${getMaxParallel ? getMaxParallel() : newValue}` });
+            }
+          } else if (!isGlobalRow && setProjectLimit && currentLimits.length > 0) {
+            const entry = currentLimits[projectIndex];
+            if (entry && entry.limit !== undefined) {
+              if (entry.limit <= 1) {
+                setProjectLimit(entry.projectId, undefined);
+                setProjectLimitsState(prev => prev.map((e, i) => 
+                  i === projectIndex ? { ...e, limit: undefined } : e
+                ));
+                addLog({ level: 'info', message: `Removed ${entry.projectId} limit` });
+              } else {
+                const newLimit = entry.limit - 1;
+                setProjectLimit(entry.projectId, newLimit);
+                setProjectLimitsState(prev => prev.map((e, i) => 
+                  i === projectIndex ? { ...e, limit: newLimit } : e
+                ));
+                addLog({ level: 'info', message: `Set ${entry.projectId} limit: ${newLimit}` });
+              }
+            }
+          }
+          return;
+        }
+
+        // 0 to remove limit (per-project only; no-op for global since min is 1)
+        if (input === '0') {
+          if (!isGlobalRow && setProjectLimit && currentLimits.length > 0) {
+            const entry = currentLimits[projectIndex];
+            if (entry) {
+              setProjectLimit(entry.projectId, undefined);
+              setProjectLimitsState(prev => prev.map((e, i) => 
+                i === projectIndex ? { ...e, limit: undefined } : e
+              ));
+              addLog({ level: 'info', message: `Removed ${entry.projectId} limit` });
+            }
           }
           return;
         }
@@ -3359,6 +3394,7 @@ export function App({
         setMetadataMergeTargetBranchValue(prefill.merge_target_branch);
         setMetadataExecutionModeValue(prefill.execution_mode);
         setMetadataCheckoutEnabledValue(prefill.checkout_enabled);
+        setMetadataCompleteOnIdleValue(prefill.complete_on_idle);
         setMetadataMergePolicyValue(prefill.merge_policy);
         setMetadataMergeStrategyValue(prefill.merge_strategy);
         setMetadataRemoteBranchPolicyValue(prefill.remote_branch_policy);
@@ -3377,6 +3413,7 @@ export function App({
           merge_target_branch: prefill.merge_target_branch,
           execution_mode: prefill.execution_mode,
            checkout_enabled: prefill.checkout_enabled,
+           complete_on_idle: prefill.complete_on_idle,
            merge_policy: prefill.merge_policy,
            merge_strategy: prefill.merge_strategy,
            remote_branch_policy: prefill.remote_branch_policy,
@@ -3481,6 +3518,9 @@ export function App({
       // Sync React state with external limits when opening popup
       if (getProjectLimits) {
         setProjectLimitsState(getProjectLimits());
+      }
+      if (getMaxParallel) {
+        setMaxParallelState(getMaxParallel());
       }
       const runtimeModel = getRuntimeDefaultModel?.() ?? '';
       setRuntimeDefaultModelState(runtimeModel);
@@ -3993,6 +4033,7 @@ export function App({
           mergeTargetBranchValue={metadataMergeTargetBranchValue}
           executionModeValue={metadataExecutionModeValue}
           checkoutEnabledValue={metadataCheckoutEnabledValue}
+          completeOnIdleValue={metadataCompleteOnIdleValue}
           mergePolicyValue={metadataMergePolicyValue}
           mergeStrategyValue={metadataMergeStrategyValue}
           remoteBranchPolicyValue={metadataRemoteBranchPolicyValue}
@@ -4024,6 +4065,8 @@ export function App({
           projects={projectLimitsState}
           selectedIndex={settingsSelectedIndex}
           section={settingsSection}
+          globalMaxParallel={maxParallelState}
+          totalRunning={getRunningProcessCount?.() ?? 0}
           groups={groupVisibilityState}
           runtimeDefaultModel={runtimeDefaultModelState}
           runtimeEditMode={runtimeModelEditMode}
@@ -4172,6 +4215,7 @@ export function App({
                   scrollOffset={taskScrollOffset}
                   viewportHeight={taskViewportHeight}
                   collapsedFeatures={collapsedFeatures}
+                  collapsedTasks={collapsedTasks}
                   collapsedProjects={collapsedProjects}
                   activeFeatures={activeFeatures}
                   selectedTaskIds={selectedTaskIds}

@@ -652,6 +652,7 @@ export class ApiClient {
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
       checkout_enabled?: boolean;
+      complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
       priority?: Priority;
@@ -679,6 +680,7 @@ export class ApiClient {
     if (fields.open_pr_before_merge !== undefined) payload.open_pr_before_merge = fields.open_pr_before_merge;
     if (fields.execution_mode !== undefined) payload.execution_mode = fields.execution_mode;
     if (fields.checkout_enabled !== undefined) payload.checkout_enabled = fields.checkout_enabled;
+    if (fields.complete_on_idle !== undefined) payload.complete_on_idle = fields.complete_on_idle;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
     if (fields.schedule !== undefined) payload.schedule = fields.schedule;
     if (fields.priority !== undefined) payload.priority = fields.priority;

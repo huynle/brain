@@ -71,6 +71,7 @@ export interface TaskDisplay {
   openPrBeforeMerge?: boolean;       // Whether to require PR before merge
   executionMode?: ExecutionMode;     // worktree or current_branch
   checkoutEnabled?: boolean;         // Whether checkout automation is enabled
+  completeOnIdle?: boolean;          // Whether to auto-complete task when runner detects idle
   userOriginalRequest?: string | null; // Original user request for validation
   
   // Dependency resolution fields
@@ -391,6 +392,10 @@ export interface AppProps {
   getProjectLimits?: () => ProjectLimitEntry[];
   /** Set per-project concurrent task limit (undefined to remove limit) */
   setProjectLimit?: (projectId: string, limit: number | undefined) => void;
+  /** Get the current global max-parallel limit */
+  getMaxParallel?: () => number;
+  /** Set the global max-parallel limit at runtime (clamped to [1, maxTotalProcesses]) */
+  setMaxParallel?: (value: number) => void;
   /** Get in-memory runtime default model override */
   getRuntimeDefaultModel?: () => string | undefined;
   /** Set in-memory runtime default model override (undefined/empty clears override) */
@@ -415,6 +420,7 @@ export interface AppProps {
        open_pr_before_merge?: boolean;
        execution_mode?: ExecutionMode;
        checkout_enabled?: boolean;
+       complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
       agent?: string;

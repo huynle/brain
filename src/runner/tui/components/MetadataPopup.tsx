@@ -41,6 +41,7 @@ export type MetadataField =
   | 'merge_target_branch'
   | 'execution_mode'
   | 'checkout_enabled'
+  | 'complete_on_idle'
   | 'merge_policy'
   | 'merge_strategy'
   | 'remote_branch_policy'
@@ -83,6 +84,8 @@ export interface MetadataPopupProps {
   executionModeValue?: ExecutionMode;
   /** Current checkout_enabled value */
   checkoutEnabledValue?: boolean;
+  /** Current complete_on_idle value */
+  completeOnIdleValue?: boolean;
   /** Current merge_policy value */
   mergePolicyValue?: MergePolicy;
   /** Current merge_strategy value */
@@ -139,6 +142,7 @@ export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] = [
   'target_workdir',
   'merge_target_branch',
   'checkout_enabled',
+  'complete_on_idle',
   'merge_policy',
   'merge_strategy',
   'remote_branch_policy',
@@ -152,6 +156,7 @@ const FIELD_LABELS: Record<MetadataField, string> = {
   merge_target_branch: 'Merge Target',
   execution_mode: 'Execution Mode',
   checkout_enabled: 'Checkout Enabled',
+  complete_on_idle: 'Complete on Idle',
   merge_policy: 'Merge Policy',
   merge_strategy: 'Merge Strategy',
   remote_branch_policy: 'Remote Branch Policy',
@@ -170,6 +175,7 @@ const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
   target_workdir: '(worktree/current-branch root path)',
   merge_target_branch: '(target branch for merge)',
   checkout_enabled: '(true|false)',
+  complete_on_idle: '(true|false)',
   merge_policy: '(prompt_only|auto_pr|auto_merge)',
   merge_strategy: '(squash|merge|rebase)',
   remote_branch_policy: '(keep|delete)',
@@ -189,6 +195,7 @@ export function MetadataPopup({
   mergeTargetBranchValue,
   executionModeValue,
   checkoutEnabledValue,
+  completeOnIdleValue,
   mergePolicyValue,
   mergeStrategyValue,
   remoteBranchPolicyValue,
@@ -231,6 +238,8 @@ export function MetadataPopup({
         return executionModeValue || 'worktree';
       case 'checkout_enabled':
         return checkoutEnabledValue ? 'true' : 'false';
+      case 'complete_on_idle':
+        return completeOnIdleValue ? 'true' : 'false';
       case 'merge_policy':
         return mergePolicyValue || 'prompt_only';
       case 'merge_strategy':

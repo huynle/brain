@@ -219,6 +219,8 @@ function normalizeTask(
     executionMode: normalizeExecutionMode(rawTask.execution_mode),
     checkoutEnabled:
       typeof rawTask.checkout_enabled === 'boolean' ? rawTask.checkout_enabled : undefined,
+    completeOnIdle:
+      typeof rawTask.complete_on_idle === 'boolean' ? rawTask.complete_on_idle : undefined,
     userOriginalRequest: asString(rawTask.user_original_request) ?? null,
     resolvedDeps: asStringArray(rawTask.resolved_deps).map((id) => idToTitle.get(id) ?? id),
     unresolvedDeps: asStringArray(rawTask.unresolved_deps),

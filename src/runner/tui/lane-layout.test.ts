@@ -820,7 +820,7 @@ describe('edge cases', () => {
 
   // Edge case 7: Empty dependencies (roots) mixed with dependent chains
   describe('independent roots mixed with chains', () => {
-    it('assigns independent roots to separate lanes', () => {
+    it('independent root frees its lane so next task reuses it', () => {
       const a = createTask({ id: 'a', dependencies: [], dependents: [] });
       const b = createTask({ id: 'b', dependencies: [], dependents: ['c'] });
       const c = createTask({ id: 'c', dependencies: ['b'], dependents: [] });
@@ -828,13 +828,62 @@ describe('edge cases', () => {
       const sorted = topoSort([a, b, c]);
       const assignments = assignLanes(sorted);
 
-      // a gets its own lane, b+c share a lane
+      // a frees its lane (no dependents), b reuses lane 0, c inherits from b
       const aLane = assignments.find((x) => x.taskId === 'a')!.lane;
       const bLane = assignments.find((x) => x.taskId === 'b')!.lane;
       const cLane = assignments.find((x) => x.taskId === 'c')!.lane;
 
-      expect(bLane).toBe(cLane); // b and c should share a lane
-      expect(aLane).not.toBe(bLane); // a is independent
+      expect(aLane).toBe(0);
+      expect(bLane).toBe(0); // reuses lane freed by a
+      expect(cLane).toBe(0); // inherits from b
+    });
+  });
+
+  // Edge case 8: Independent tasks render as flat siblings, not parent-child chain
+  describe('independent tasks render as flat siblings', () => {
+    it('all independent tasks share lane 0 (lanes freed immediately)', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: [] });
+      const b = createTask({ id: 'b', dependencies: [], dependents: [] });
+      const c = createTask({ id: 'c', dependencies: [], dependents: [] });
+
+      const sorted = topoSort([a, b, c]);
+      const assignments = assignLanes(sorted);
+
+      // All independent tasks should reuse lane 0
+      expect(assignments.every((x) => x.lane === 0)).toBe(true);
+    });
+
+    it('independent tasks render flat ├─/└─ not nested │ ├─/│ └─', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: [] });
+      const b = createTask({ id: 'b', dependencies: [], dependents: [] });
+      const c = createTask({ id: 'c', dependencies: [], dependents: [] });
+
+      const sorted = topoSort([a, b, c]);
+      const assignments = assignLanes(sorted);
+
+      // a continues (b and c follow on same lane)
+      const prefixA = generatePrefix(assignments[0], 0, assignments);
+      expect(prefixA).toBe('├─');
+
+      // b continues (c follows on same lane)
+      const prefixB = generatePrefix(assignments[1], 1, assignments);
+      expect(prefixB).toBe('├─');
+
+      // c is last (terminal)
+      const prefixC = generatePrefix(assignments[2], 2, assignments);
+      expect(prefixC).toBe('└─');
+    });
+
+    it('two independent tasks render as ├─ and └─', () => {
+      const a = createTask({ id: 'a', dependencies: [], dependents: [] });
+      const b = createTask({ id: 'b', dependencies: [], dependents: [] });
+
+      const result = assignLanes([a, b]);
+      expect(result[0].lane).toBe(0);
+      expect(result[1].lane).toBe(0);
+
+      expect(generatePrefix(result[0], 0, result)).toBe('├─');
+      expect(generatePrefix(result[1], 1, result)).toBe('└─');
     });
   });
 });

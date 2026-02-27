@@ -302,6 +302,20 @@ export function assignLanes(sortedTasks: TaskDisplay[]): LaneAssignment[] {
       isMerge,
       mergeFromLanes,
     });
+
+    // Free lanes for truly independent tasks (no in-tree deps AND no in-tree
+    // dependents). Without this, independent tasks each hold a unique lane
+    // that is never freed, causing stale activeLanes to accumulate and
+    // rendering flat siblings as a nested parent-child chain.
+    // We only free for fully independent tasks — leaf nodes of a fork (which
+    // have inTreeDeps but no dependents) keep their lane so the parent's
+    // visual continuation renders correctly.
+    // This must happen AFTER the activeLanes snapshot so the current row
+    // still shows the lane as active for its own rendering.
+    const remaining = remainingDependents.get(task.id) || 0;
+    if (remaining <= 0 && inTreeDeps.length === 0) {
+      freeLane(lane);
+    }
   }
 
   return results;

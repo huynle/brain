@@ -591,6 +591,31 @@ export class DoctorService {
       }
     }
 
+    // Check required agents
+    const requiredAgents = [
+      { name: "brain-planner", description: "pure coordination, delegates to subagents" },
+    ];
+
+    for (const agent of requiredAgents) {
+      const agentPath = join(opencodeConfigDir, "agent", `${agent.name}.md`);
+      if (existsSync(agentPath)) {
+        checks.push({
+          name: `opencode-agent-${agent.name}`,
+          status: "pass",
+          message: `${agent.name} agent installed`,
+          fixable: false,
+        });
+      } else {
+        checks.push({
+          name: `opencode-agent-${agent.name}`,
+          status: "warn",
+          message: `${agent.name} agent not installed`,
+          fixable: true,
+          details: `Run: brain install opencode (${agent.description})`,
+        });
+      }
+    }
+
     return checks;
   }
 

@@ -47,6 +47,10 @@ import skillWritingPlansPath from "./targets/opencode/skill/writing-plans/SKILL.
 // @ts-ignore - Bun import attribute syntax
 import skillFeatureCheckoutPath from "./targets/opencode/skill/feature-checkout/SKILL.md" with { type: "file" };
 
+// OpenCode agents
+// @ts-ignore - Bun import attribute syntax
+import agentBrainPlannerPath from "./targets/opencode/agent/brain-planner.md" with { type: "file" };
+
 // OpenCode commands
 // @ts-ignore - Bun import attribute syntax
 import commandDoPath from "./targets/opencode/command/do.md" with { type: "file" };
@@ -79,6 +83,7 @@ const EMBEDDED_ADDITIONAL_FILES: Partial<Record<InstallTarget, Record<string, st
     "command/do.md": commandDoPath,
     "command/work.md": commandWorkPath,
     "command/plan-to-tasks.md": commandPlanToTasksPath,
+    "agent/brain-planner.md": agentBrainPlannerPath,
   },
 };
 
@@ -220,6 +225,14 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
         targetFile: "plan-to-tasks.md",
         description: "/plan-to-tasks command (convert plan to tasks)",
         componentType: "command",
+      },
+      // Agents
+      {
+        sourcePath: "agent/brain-planner.md",
+        targetDir: (home) => join(home, ".config/opencode/agent"),
+        targetFile: "brain-planner.md",
+        description: "brain-planner agent (pure coordination, delegates to subagents)",
+        componentType: "agent",
       },
     ],
   },
@@ -527,6 +540,7 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
   const plugins = installedFiles.filter((f) => f.componentType === "plugin");
   const skills = installedFiles.filter((f) => f.componentType === "skill");
   const commands = installedFiles.filter((f) => f.componentType === "command");
+  const agents = installedFiles.filter((f) => f.componentType === "agent");
 
   const postInstallMessages = config.postInstall ? config.postInstall(pluginPath) : [];
 
@@ -554,6 +568,14 @@ export async function installPlugin(options: InstallOptions): Promise<InstallRes
   if (commands.length > 0) {
     messages.push(`Commands (${commands.length}):`);
     for (const f of commands) {
+      messages.push(`  - ${f.description}`);
+    }
+    messages.push("");
+  }
+
+  if (agents.length > 0) {
+    messages.push(`Agents (${agents.length}):`);
+    for (const f of agents) {
       messages.push(`  - ${f.description}`);
     }
     messages.push("");

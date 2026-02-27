@@ -804,6 +804,24 @@ export class TaskRunner {
   }
 
   /**
+   * Set the global max-parallel limit at runtime.
+   * Clamped to [1, maxTotalProcesses]. Does not affect currently running tasks.
+   */
+  setMaxParallel(value: number): void {
+    const clamped = Math.max(1, Math.min(value, this.config.maxTotalProcesses));
+    this.config.maxParallel = clamped;
+    this.logger.info("Max parallel updated", { maxParallel: clamped });
+    this.tuiLog('info', `Global max-parallel: ${clamped}`);
+  }
+
+  /**
+   * Get the current global max-parallel limit.
+   */
+  getMaxParallel(): number {
+    return this.config.maxParallel;
+  }
+
+  /**
    * Set runtime default model override used for new task execution.
    * Pass undefined/empty to clear and fall back to config default.
    */
@@ -3309,6 +3327,8 @@ export class TaskRunner {
           running: this.getRunningCountForProject(projectId),
         })),
         setProjectLimit: (projectId, limit) => this.setProjectLimit(projectId, limit),
+        getMaxParallel: () => this.getMaxParallel(),
+        setMaxParallel: (value: number) => this.setMaxParallel(value),
         getRuntimeDefaultModel: () => this.getRuntimeDefaultModel(),
         setRuntimeDefaultModel: (model: string | undefined) => this.setRuntimeDefaultModel(model),
         // Feature enable/disable callbacks (whitelist for paused projects)

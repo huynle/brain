@@ -27,10 +27,14 @@ import type { ProjectLimitEntry, GroupVisibilityEntry, SettingsSection } from '.
 export interface SettingsPopupProps {
   /** List of projects with their current limits */
   projects: ProjectLimitEntry[];
-  /** Currently selected index (project or group depending on section) */
+  /** Currently selected index (0 = global row, 1+ = projects; or group depending on section) */
   selectedIndex: number;
   /** Current active section */
   section?: SettingsSection;
+  /** Global max-parallel limit value (shown as first row in limits section) */
+  globalMaxParallel?: number;
+  /** Total running tasks across all projects (shown next to global row) */
+  totalRunning?: number;
   /** List of status groups with visibility settings */
   groups?: GroupVisibilityEntry[];
   /** Current runtime default model override (empty means config default) */
@@ -45,11 +49,14 @@ export function SettingsPopup({
   projects,
   selectedIndex,
   section = 'limits',
+  globalMaxParallel,
+  totalRunning = 0,
   groups = [],
   runtimeDefaultModel = '',
   runtimeEditMode = false,
   runtimeEditBuffer = '',
 }: SettingsPopupProps): React.ReactElement {
+  const hasGlobalRow = globalMaxParallel !== undefined;
   const isLimitsSection = section === 'limits';
   const isGroupsSection = section === 'groups';
   const isRuntimeSection = section === 'runtime';
@@ -95,13 +102,46 @@ export function SettingsPopup({
       {/* Limits section content */}
       {isLimitsSection && (
         <Box flexDirection="column">
-          <Text dimColor>Per-project task limits</Text>
+          <Text dimColor>Task concurrency limits</Text>
           <Box marginTop={1} flexDirection="column">
+            {/* Global max-parallel row */}
+            {hasGlobalRow && (
+              <>
+                <Box>
+                  <Text color={selectedIndex === 0 ? 'cyan' : undefined}>
+                    {selectedIndex === 0 ? '→ ' : '  '}
+                  </Text>
+                  <Box width={20}>
+                    <Text
+                      color={selectedIndex === 0 ? 'yellow' : 'yellow'}
+                      bold
+                    >
+                      Global max-parallel
+                    </Text>
+                  </Box>
+                  <Text
+                    color="green"
+                    bold={selectedIndex === 0}
+                  >
+                    [{globalMaxParallel}]
+                  </Text>
+                  <Text dimColor>
+                    {' '}({totalRunning} running)
+                  </Text>
+                </Box>
+                <Box>
+                  <Text dimColor>  ────────────────────────────────</Text>
+                </Box>
+              </>
+            )}
+            {/* Per-project rows */}
             {projects.length === 0 ? (
               <Text dimColor>No projects available</Text>
             ) : (
               projects.map((entry, index) => {
-                const isSelected = index === selectedIndex;
+                // When global row is present, project rows start at selectedIndex 1
+                const rowIndex = hasGlobalRow ? index + 1 : index;
+                const isSelected = rowIndex === selectedIndex;
                 const limitDisplay = entry.limit === undefined 
                   ? 'no limit' 
                   : String(entry.limit);

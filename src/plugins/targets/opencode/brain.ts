@@ -2848,6 +2848,41 @@ Requires confirmation to prevent accidental deletion.`,
       }),
 
       // ========================================
+      // brain_task_trigger
+      // ========================================
+      brain_task_trigger: tool({
+        description:
+          "Manually trigger a scheduled task and its downstream dependents.",
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              taskId: string;
+              run: unknown;
+              pipeline: unknown[];
+              pipelineCount: number;
+              message: string;
+            }>(
+              "POST",
+              `/tasks/${encodeURIComponent(proj)}/${encodeURIComponent(args.taskId)}/trigger`
+            );
+            return formatCronResult("task_trigger", proj, response);
+          } catch (error) {
+            return formatCronError("task_trigger", proj, error);
+          }
+        },
+      }),
+
+      // ========================================
       // brain_cron_runs
       // ========================================
       brain_cron_runs: tool({

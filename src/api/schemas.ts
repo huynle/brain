@@ -161,7 +161,6 @@ export const BrainEntrySchema = z.object({
   window_expires_at_utc: z.string().optional().openapi({ description: "Normalized UTC end window for display", example: "2026-02-28T23:59:59.000Z" }),
   starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
   expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
-  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   workdir: z.string().optional().openapi({ description: "$HOME-relative path to main repo" }),
   git_remote: z.string().optional().openapi({ description: "Git remote URL for verification" }),
@@ -255,7 +254,6 @@ export const CreateEntryRequestSchema = z.object({
   starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
   expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
   run_once_at: z.string().optional().openapi({ description: "Loose local datetime input for one-time scheduling (normalized to UTC)", example: "next friday at 5pm" }),
-  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   run_finalizations: z.record(z.string(), RunFinalizationSchema).optional().openapi({
     description: "Durable run completion markers keyed by run_id"
@@ -335,7 +333,6 @@ export const UpdateEntryRequestSchema = z.object({
   starts_at: z.string().optional().openapi({ description: "UTC ISO datetime before which this cron will not run", example: "2026-02-23T00:00:00.000Z" }),
   expires_at: z.string().optional().openapi({ description: "UTC ISO datetime after which this cron will no longer run", example: "2026-02-28T23:59:59.000Z" }),
   run_once_at: z.string().optional().openapi({ description: "Loose local datetime input for one-time scheduling (normalized to UTC)", example: "in 2 hours" }),
-  cron_ids: z.array(z.string()).optional().openapi({ description: "Cron IDs that trigger this task", example: ["cron_daily"] }),
   runs: z.array(CronRunSchema).optional().openapi({ description: "Cron run history" }),
   target_workdir: z.string().optional().openapi({ description: "Target working directory for the task" }),
   git_branch: z.string().optional().openapi({ description: "Git branch for task execution context" }),
@@ -397,8 +394,8 @@ export const UpdateEntryRequestSchema = z.object({
     example: "manual",
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.cron_ids !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.remote_branch_policy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.complete_on_idle !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.remote_branch_policy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.complete_on_idle !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -1015,6 +1012,18 @@ export const TaskStatusResponseSchema = z.object({
   changed: z.boolean().openapi({ description: "Whether any status changed during wait" }),
   timedOut: z.boolean().openapi({ description: "Whether timeout was reached" }),
 }).openapi("TaskStatusResponse");
+
+// =============================================================================
+// Task Trigger Schemas
+// =============================================================================
+
+export const TaskTriggerResponseSchema = z.object({
+  taskId: TaskIdSchema,
+  run: CronRunSchema,
+  pipeline: z.array(TaskSchema),
+  pipelineCount: z.number(),
+  message: z.string(),
+}).openapi("TaskTriggerResponse");
 
 // =============================================================================
 // Move Entry Schemas

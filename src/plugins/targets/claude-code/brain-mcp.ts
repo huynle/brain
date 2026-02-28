@@ -792,6 +792,18 @@ Requires confirmation to prevent accidental deletion.`,
     },
   },
   {
+    name: "brain_task_trigger",
+    description: "Manually trigger a scheduled task and its downstream dependents.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Task ID (8-char alphanumeric)" },
+        project: { type: "string", description: "Override auto-detected project" },
+      },
+      required: ["taskId"],
+    },
+  },
+  {
     name: "brain_cron_runs",
     description: "Get cron run history.",
     inputSchema: {
@@ -2004,6 +2016,25 @@ Use brain_tasks to see the full task list and dependency status.`;
           return formatCronResult("trigger", proj, response);
         } catch (error) {
           return formatCronError("trigger", proj, error);
+        }
+      }
+
+      case "brain_task_trigger": {
+        const proj = (args.project as string) || context.projectId;
+        try {
+          const response = await apiRequest<{
+            taskId: string;
+            run: unknown;
+            pipeline: unknown[];
+            pipelineCount: number;
+            message: string;
+          }>(
+            "POST",
+            `/tasks/${encodeURIComponent(proj)}/${encodeURIComponent(args.taskId as string)}/trigger`
+          );
+          return formatCronResult("task_trigger", proj, response);
+        } catch (error) {
+          return formatCronError("task_trigger", proj, error);
         }
       }
 

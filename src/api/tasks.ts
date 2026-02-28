@@ -35,7 +35,16 @@ import {
   NotFoundResponseSchema,
   TaskStatusRequestSchema,
   TaskStatusResponseSchema,
+  TaskTriggerResponseSchema,
 } from "./schemas";
+import {
+  canRunWithinBounds,
+  canTriggerPipeline,
+  generateRunId,
+  getNextRun,
+} from "../core/cron-service";
+import { getDownstreamTasks } from "../core/task-deps";
+import type { CronRun } from "../core/types";
 import { TASK_SSE_HEARTBEAT_MS } from "./sse-config";
 
 // =============================================================================
@@ -523,6 +532,61 @@ const markFeatureForCheckoutRoute = createRoute({
     },
     400: {
       description: "Invalid project or feature identifier",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
+    503: {
+      description: "Service unavailable",
+      content: {
+        "application/json": {
+          schema: ServiceUnavailableResponseSchema,
+        },
+      },
+    },
+  },
+});
+
+// POST /:projectId/:taskId/trigger - Manually trigger a scheduled task
+const triggerTaskRoute = createRoute({
+  method: "post",
+  path: "/{projectId}/{taskId}/trigger",
+  tags: ["Tasks"],
+  summary: "Manually trigger a scheduled task",
+  description:
+    "Trigger a task that has a schedule field, resetting it and its downstream dependents to pending",
+  request: {
+    params: TaskIdParamSchema,
+  },
+  responses: {
+    200: {
+      description: "Task trigger accepted",
+      content: {
+        "application/json": {
+          schema: TaskTriggerResponseSchema,
+        },
+      },
+    },
+    400: {
+      description: "Task has no schedule field",
+      content: {
+        "application/json": {
+          schema: ErrorResponseSchema,
+        },
+      },
+    },
+    404: {
+      description: "Task not found",
+      content: {
+        "application/json": {
+          schema: NotFoundResponseSchema,
+        },
+      },
+    },
+    409: {
+      description: "Task cannot be triggered (overlap or bounds)",
       content: {
         "application/json": {
           schema: ErrorResponseSchema,
@@ -1429,6 +1493,121 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
       success: true,
       ...status,
     }, 200);
+  });
+
+  // POST /:projectId/:taskId/trigger - Manually trigger a scheduled task
+  tasks.openapi(triggerTaskRoute, async (c) => {
+    const { projectId, taskId } = c.req.valid("param");
+    const brainService = getBrainService();
+    const taskService = getTaskService();
+
+    try {
+      // 1. Look up the task
+      const taskResult = await taskService.getTasksWithDependencies(projectId);
+      const task = taskResult.tasks.find((t) => t.id === taskId);
+      if (!task) {
+        return c.json(
+          {
+            error: "Not Found",
+            message: `Task '${taskId}' not found in project '${projectId}'`,
+          },
+          404
+        );
+      }
+
+      // 2. Verify it has a schedule field
+      if (!task.schedule) {
+        return c.json(
+          {
+            error: "Bad Request",
+            message: `Task '${taskId}' has no schedule field and cannot be triggered`,
+          },
+          400
+        );
+      }
+
+      // 3. Find downstream dependents via getDownstreamTasks
+      const pipeline = getDownstreamTasks(taskId, taskResult.tasks);
+
+      // 4. Check bounds (canRunWithinBounds)
+      const now = new Date();
+      const boundsCheck = canRunWithinBounds(task, now);
+      if (!boundsCheck.canRun) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: `Task cannot be triggered: ${boundsCheck.reason || "outside run bounds"}`,
+          },
+          409
+        );
+      }
+
+      // 5. Check overlap (any task in pipeline is in_progress -> reject)
+      const triggerCheck = canTriggerPipeline(pipeline, task.runs);
+      if (!triggerCheck.canTrigger) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: triggerCheck.reason || "Task pipeline cannot be triggered",
+          },
+          409
+        );
+      }
+
+      // 6. Generate run ID and create run entry
+      const runId = generateRunId(now);
+      const run: CronRun = {
+        run_id: runId,
+        status: "in_progress",
+        started: now.toISOString(),
+        tasks: pipeline.length,
+      };
+
+      // 7. Record run in task's runs[] array
+      const existingRuns = task.runs || [];
+      const runs = [run, ...existingRuns];
+
+      // 8. Reset the task + all downstream dependents to status: "pending"
+      for (const pipelineTask of pipeline) {
+        await brainService.update(pipelineTask.path, { status: "pending" });
+      }
+
+      // 9. Advance next_run on the task and save runs
+      const nextRun = getNextRun(task.schedule, now);
+      await brainService.update(task.path, {
+        runs,
+        next_run: nextRun.toISOString(),
+      });
+
+      // 10. Publish realtime updates
+      await publishTaskSnapshot(realtimeHub, projectId);
+      publishProjectDirty(realtimeHub, projectId);
+
+      return c.json(
+        {
+          taskId: task.id,
+          run,
+          pipeline,
+          pipelineCount: pipeline.length,
+          message: "Task run triggered",
+        },
+        200
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("zk CLI not available")
+      ) {
+        return c.json(
+          {
+            error: "Service Unavailable",
+            message: error.message,
+          },
+          503
+        );
+      }
+      throw error;
+    }
   });
 
   return tasks;

@@ -334,7 +334,7 @@ export function MetadataPopup({
               </Text>
 
               {/* Field label (fixed width for alignment) */}
-              <Box width={14}>
+              <Box width={22} flexShrink={0}>
                 <Text
                   color={isFocused ? 'cyan' : undefined}
                   bold={isFocused}
@@ -490,7 +490,7 @@ export function MetadataPopup({
             <Text>  </Text>
 
             {/* Field label (fixed width for alignment) */}
-            <Box width={14}>
+            <Box width={22} flexShrink={0}>
               <Text>Cron Links:</Text>
             </Box>
 

@@ -160,18 +160,14 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('Execution');
-      expect(frame).toContain('Mode:');
+      expect(frame).toContain('Execution Mode:');
       expect(frame).toContain('Branch:');
       expect(frame).toContain('Merge Target:');
-      expect(frame).toContain('Checkout');
-      expect(frame).toContain('Enabled:');
+      expect(frame).toContain('Checkout Enabled:');
       expect(frame).toContain('Merge Policy:');
-      expect(frame).toContain('Strategy:');
-      expect(frame).toContain('Remote Branch');
-      expect(frame).toContain('Policy:');
-      expect(frame).toContain('Open PR Before');
-      expect(frame).toContain('Merge:');
+      expect(frame).toContain('Merge Strategy:');
+      expect(frame).toContain('Remote Branch Policy:');
+      expect(frame).toContain('Open PR Before Merge:');
       expect(frame).toContain('Workdir:');
 
       expect(frame).not.toContain('Status:');

@@ -13,7 +13,7 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **Persistent memory** — Save decisions, explorations, patterns, and learnings that survive across sessions
 - **Structured task queues** — Break work into dependency-tracked tasks that agents execute autonomously
 - **Feature orchestration** — Group related tasks into features, execute them in order, and track progress
-- **Cron scheduling** — Schedule recurring task pipelines with cron expressions
+- **Scheduled tasks** — Schedule recurring tasks with cron expressions directly in task frontmatter
 - **Knowledge graph** — Link entries together, find related context, and maintain a growing knowledge base
 - **Multi-project support** — Monitor and execute tasks across all your projects from a single dashboard
 - **Git worktree isolation** — Each task runs in its own worktree so parallel work never conflicts
@@ -42,21 +42,19 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **PID liveness checks** — detects and cleans up orphaned processes
 - **Configurable execution**: per-task agent, model, working directory, and direct prompt overrides
 
-### Cron Scheduling
-- **Cron expression scheduling** with standard 5-field syntax
+### Scheduled Tasks
+- **Cron expression scheduling** via `schedule` field in task frontmatter (standard 5-field syntax)
 - **Bounded schedules** with optional `not_before` / `not_after` datetime constraints
-- **Task pipelines** — link multiple tasks to a cron for sequential/parallel execution
-- **Run history** tracking with trigger timestamps and outcomes
-- **Manual triggers** — fire a cron run on demand
-- **Automatic reset** — completed pipeline tasks reset for the next scheduled run
+- **Run history** tracking with trigger timestamps and outcomes via `runs` field
+- **Manual triggers** — trigger a scheduled task on demand with `brain_task_trigger`
+- **Automatic reset** — completed scheduled tasks reset for the next run
 
 ### Interactive TUI Dashboard
 - **Real-time task tree** with dependency visualization and git-graph style lane rendering
 - **Feature grouping** with collapsible headers, status indicators, and bulk operations
 - **Multi-select** with Space key for batch status changes and deletions
-- **Metadata popup** for editing task properties (status, priority, feature, project, cron links)
+- **Metadata popup** for editing task properties (status, priority, feature, project, schedule)
 - **Settings popup** for per-project concurrency limits and runtime model overrides
-- **Cron panel** with schedule browser, run history, and task-to-cron link editor
 - **Mouse support** with click-to-select, hover preview, and collapsible sections
 - **External editor integration** — press `e` to edit a task in `$EDITOR`
 - **Clipboard support** — press `y` to yank task info to system clipboard
@@ -73,7 +71,7 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **OAuth 2.1 with PKCE** for secure remote client authentication
 - **HTTPS/TLS support** for Claude web connector integration
 - **Plugin targets** for Claude Code and OpenCode with full tool parity
-- Tools span: entry CRUD, search, graph traversal, task management, cron scheduling, section extraction, verification, and link generation
+- Tools span: entry CRUD, search, graph traversal, task management, scheduled task triggers, section extraction, verification, and link generation
 
 ### Multi-Project Mode
 - **Shared execution pool** across all projects with a single `--max-parallel` limit
@@ -191,16 +189,8 @@ bun run lint
 - `GET /api/v1/features/:projectId` - List features for project
 - `POST /api/v1/features/:featureId/checkout` - Trigger feature checkout
 
-#### Cron Endpoints
-- `GET /api/v1/crons/:projectId` - List cron entries
-- `POST /api/v1/crons/:projectId` - Create cron entry
-- `GET /api/v1/crons/:projectId/:cronId` - Get cron with pipeline tasks
-- `PATCH /api/v1/crons/:projectId/:cronId` - Update cron entry
-- `DELETE /api/v1/crons/:projectId/:cronId` - Delete cron entry
-- `POST /api/v1/crons/:projectId/:cronId/trigger` - Manually trigger cron run
-- `GET /api/v1/crons/:projectId/:cronId/runs` - Get run history
-- `GET /api/v1/crons/:projectId/:cronId/tasks` - List linked tasks
-- `POST /api/v1/crons/:projectId/:cronId/tasks` - Link/unlink tasks
+#### Scheduled Task Endpoints
+- `POST /api/v1/tasks/:taskId/trigger` - Manually trigger a scheduled task
 
 #### SSE Streaming
 - `GET /api/v1/tasks/:projectId/stream` - Real-time task updates via Server-Sent Events
@@ -326,20 +316,10 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem bun run dev
 | `brain_task_metadata` | Get execution config (agent, model, workdir, merge intent, feature grouping) |
 | `brain_tasks_status` | Batch status check with optional blocking wait for completion |
 
-#### Cron Scheduling Tools
+#### Scheduled Task Tools
 | Tool | Description |
 |------|-------------|
-| `brain_cron_list` | List cron entries for a project |
-| `brain_cron_get` | Get a cron entry with pipeline tasks |
-| `brain_cron_create` | Create a cron with schedule and optional task links |
-| `brain_cron_update` | Update cron schedule, title, status, or tags |
-| `brain_cron_delete` | Delete a cron entry (preserves linked tasks) |
-| `brain_cron_trigger` | Manually fire a cron run |
-| `brain_cron_runs` | Get cron run history |
-| `brain_cron_linked_tasks` | List tasks linked to a cron |
-| `brain_cron_linked_task_add` | Link a task to a cron |
-| `brain_cron_linked_task_remove` | Unlink a task from a cron |
-| `brain_cron_linked_tasks_set` | Replace all linked tasks for a cron |
+| `brain_task_trigger` | Manually trigger a scheduled task run |
 
 #### Graph Traversal Tools
 | Tool | Description |
@@ -420,7 +400,6 @@ The `--tui` flag enables an interactive terminal dashboard built with [Ink](http
 - **Multi-select operations** for batch status changes and deletions
 - **Metadata popup** for editing all task properties inline
 - **Settings popup** with concurrency limits, model overrides, and group visibility
-- **Cron panel** for browsing schedules, run history, and managing task-cron links
 - **Mouse support** with click navigation, hover preview, and header collapse
 - **Live resource metrics** (CPU/memory) and connection status in the status bar
 - **SSE streaming** with automatic polling fallback for reliability
@@ -444,7 +423,6 @@ The `--tui` flag enables an interactive terminal dashboard built with [Ink](http
 | `O` | Open OpenCode session in tmux |
 | `r` | Refresh task list |
 | `L` | Toggle logs panel visibility |
-| `c` | Switch to cron panel |
 | `Backspace` | Open metadata popup |
 | `d` | Delete selected tasks |
 | `?` | Toggle help overlay |
@@ -624,10 +602,9 @@ This is an alias for `brain-runner` with commonly used defaults.
                            │  REST + MCP (Hono/Bun)   │
                            │  OAuth 2.1 + TLS         │
                            ├─────────────────────────┤
-                           │  BrainService            │
-                           │  TaskService             │
-                           │  CronService             │
-                           │  FeatureService          │
+                            │  BrainService            │
+                            │  TaskService             │
+                            │  FeatureService          │
                            └────────────┬────────────┘
                                         │
                     ┌───────────────────┼───────────────────┐
@@ -640,9 +617,9 @@ This is an alias for `brain-runner` with commonly used defaults.
 ┌──────────────────────────────────────────────────────────────────┐
 │                      Task Runner (brain-runner)                   │
 ├──────────────────────────────────────────────────────────────────┤
-│  Process Manager     │  Cron Scheduler     │  Feature Executor   │
+│  Process Manager     │  Schedule Executor  │  Feature Executor   │
 │  (parallel exec,     │  (cron parsing,     │  (worktree setup,   │
-│   PID tracking,      │   pipeline reset,   │   merge intent,     │
+│   PID tracking,      │   schedule reset,   │   merge intent,     │
 │   memory limits)     │   bounded sched)    │   focus mode)       │
 ├──────────────────────────────────────────────────────────────────┤
 │                    OpenCode Executor                              │
@@ -652,10 +629,10 @@ This is an alias for `brain-runner` with commonly used defaults.
 ┌──────────────────────────────────────────────────────────────────┐
 │                         TUI Dashboard (Ink)                       │
 ├──────────────────────────────────────────────────────────────────┤
-│  StatusBar  │  TaskTree    │  LogViewer  │  CronPanel            │
-│  (stats,    │  (lanes,     │  (real-time │  (schedules,          │
-│   metrics)  │   features,  │   SSE logs) │   run history,        │
-│             │   mouse)     │             │   task links)         │
+│  StatusBar  │  TaskTree    │  LogViewer  │  TaskDetail           │
+│  (stats,    │  (lanes,     │  (real-time │  (properties,         │
+│   metrics)  │   features,  │   SSE logs) │   schedule info,      │
+│             │   mouse)     │             │   dependencies)       │
 ├──────────────────────────────────────────────────────────────────┤
 │  MetadataPopup  │  SettingsPopup  │  PausePopup  │  HelpOverlay │
 └──────────────────────────────────────────────────────────────────┘

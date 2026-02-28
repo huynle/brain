@@ -30,7 +30,7 @@ describe('HelpBar', () => {
     expect(frame).toContain('Enter');
     expect(frame).toContain('Details');
 
-    // Schedule view should NOT show old cron action shortcuts
+    // Schedule view should NOT show legacy action shortcuts
     expect(frame).not.toContain('New/Edit');
     expect(frame).not.toContain('Trigger now');
     expect(frame).not.toContain('Edit links');

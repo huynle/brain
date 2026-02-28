@@ -6,11 +6,11 @@ import {
   UpdateEntryRequestSchema,
 } from "./schemas";
 
-describe("API schemas - cron fields", () => {
-  test("CreateEntryRequestSchema accepts cron fields", () => {
+describe("API schemas - schedule fields", () => {
+  test("CreateEntryRequestSchema accepts schedule fields on tasks", () => {
     const parsed = CreateEntryRequestSchema.parse({
-      type: "cron",
-      title: "Nightly Cron",
+      type: "task",
+      title: "Nightly Scheduled Task",
       content: "Run nightly",
       schedule: "0 2 * * *",
       next_run: "2026-02-23T02:00:00.000Z",
@@ -36,7 +36,7 @@ describe("API schemas - cron fields", () => {
     expect(parsed.runs?.[0]?.duration).toBe(8000);
   });
 
-  test("UpdateEntryRequestSchema accepts cron-only updates", () => {
+  test("UpdateEntryRequestSchema accepts schedule-only updates", () => {
     const parsed = UpdateEntryRequestSchema.parse({
       schedule: "*/5 * * * *",
       next_run: "2026-02-22T10:35:00.000Z",
@@ -58,15 +58,15 @@ describe("API schemas - cron fields", () => {
     expect(parsed.runs?.[0]?.failed_task).toBe("abc12def");
   });
 
-  test("BrainEntrySchema includes cron run shape", () => {
+  test("BrainEntrySchema includes scheduled task run shape", () => {
     const parsed = BrainEntrySchema.parse({
       id: "abc12def",
-      path: "projects/my-project/cron/abc12def.md",
-      title: "Cron Entry",
-      type: "cron",
+      path: "projects/my-project/task/abc12def.md",
+      title: "Scheduled Task Entry",
+      type: "task",
       status: "active",
       content: "body",
-      tags: ["cron"],
+      tags: ["task"],
       schedule: "0 2 * * *",
       next_run: "2026-02-23T02:00:00.000Z",
       max_runs: 2,

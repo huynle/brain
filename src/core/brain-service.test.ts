@@ -567,17 +567,17 @@ Task content.
     });
   });
 
-  describe("cron fields parity", () => {
-    test("save() computes next_run for cron entries with schedule", async () => {
+  describe("task schedule fields parity", () => {
+    test("save() computes next_run for tasks with schedule", async () => {
       const result = await service.save({
-        type: "cron",
-        title: "Nightly Cron",
+        type: "task",
+        title: "Nightly Scheduled Task",
         content: "Run nightly pipeline",
         schedule: "0 2 * * *",
       });
 
       const recalled = await service.recall(result.path);
-      expect(recalled.type).toBe("cron");
+      expect(recalled.type).toBe("task");
       expect(recalled.schedule).toBe("0 2 * * *");
       expect(typeof recalled.next_run).toBe("string");
 
@@ -586,20 +586,20 @@ Task content.
       expect(parsed.getTime()).toBeGreaterThan(Date.now());
     });
 
-    test("recall() includes runs fields", async () => {
-      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
-      mkdirSync(cronDir, { recursive: true });
+    test("recall() includes runs fields on tasks", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
 
-      const cronFile = join(cronDir, "cron-with-runs.md");
-      const cronPath = "projects/test-project/cron/cron-with-runs.md";
+      const taskFile = join(taskDir, "task-with-runs.md");
+      const taskPath = "projects/test-project/task/task-with-runs.md";
 
       writeFileSync(
-        cronFile,
+        taskFile,
         `---
-title: Cron With Runs
-type: cron
+title: Task With Runs
+type: task
 status: active
-schedule: */15 * * * *
+schedule: "*/15 * * * *"
 next_run: 2030-01-01T00:15:00.000Z
 runs:
   - run_id: 20300101-0000
@@ -610,11 +610,11 @@ runs:
     tasks: 3
 ---
 
-Cron body.
+Task body.
 `
       );
 
-      const recalled = await service.recall(cronPath);
+      const recalled = await service.recall(taskPath);
       expect(recalled.runs).toEqual([
         {
           run_id: "20300101-0000",
@@ -627,28 +627,28 @@ Cron body.
       ]);
     });
 
-    test("update() recalculates next_run when schedule changes", async () => {
-      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
-      mkdirSync(cronDir, { recursive: true });
+    test("update() recalculates next_run when schedule changes on task", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
 
-      const cronFile = join(cronDir, "cron-update-schedule.md");
-      const cronPath = "projects/test-project/cron/cron-update-schedule.md";
+      const taskFile = join(taskDir, "task-update-schedule.md");
+      const taskPath = "projects/test-project/task/task-update-schedule.md";
 
       writeFileSync(
-        cronFile,
+        taskFile,
         `---
-title: Cron Update Schedule
-type: cron
+title: Task Update Schedule
+type: task
 status: active
 schedule: 0 2 * * *
 next_run: 2030-01-01T02:00:00.000Z
 ---
 
-Cron body.
+Task body.
 `
       );
 
-      const updated = await service.update(cronPath, {
+      const updated = await service.update(taskPath, {
         schedule: "*/5 * * * *",
       });
 
@@ -656,32 +656,32 @@ Cron body.
       expect(updated.next_run).toBeDefined();
       expect(updated.next_run).not.toBe("2030-01-01T02:00:00.000Z");
 
-      const content = readFileSync(cronFile, "utf-8");
+      const content = readFileSync(taskFile, "utf-8");
       const { frontmatter } = parseFrontmatter(content);
       expect(frontmatter.schedule).toBe("*/5 * * * *");
       expect(frontmatter.next_run).not.toBe("2030-01-01T02:00:00.000Z");
     });
 
-    test("update() accepts runs and next_run updates", async () => {
-      const cronDir = join(TEST_DIR, "projects", "test-project", "cron");
-      mkdirSync(cronDir, { recursive: true });
+    test("update() accepts runs and next_run updates on tasks", async () => {
+      const taskDir = join(TEST_DIR, "projects", "test-project", "task");
+      mkdirSync(taskDir, { recursive: true });
 
-      const cronFile = join(cronDir, "cron-update-fields.md");
-      const cronPath = "projects/test-project/cron/cron-update-fields.md";
+      const taskFile = join(taskDir, "task-update-fields.md");
+      const taskPath = "projects/test-project/task/task-update-fields.md";
 
       writeFileSync(
-        cronFile,
+        taskFile,
         `---
-title: Cron Update Fields
-type: cron
+title: Task Update Fields
+type: task
 status: active
 ---
 
-Cron body.
+Task body.
 `
       );
 
-      const updated = await service.update(cronPath, {
+      const updated = await service.update(taskPath, {
         next_run: "2031-01-01T00:00:00.000Z",
         runs: [
           {

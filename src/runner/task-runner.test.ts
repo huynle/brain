@@ -2171,16 +2171,16 @@ describe("TaskRunner - openSessionInTmux tracking", () => {
 });
 
 // =============================================================================
-// TaskRunner - Cron Polling (Phase 1)
+// TaskRunner - Schedule Polling
 // =============================================================================
 
-describe("TaskRunner - cron polling infrastructure", () => {
+describe("TaskRunner - schedule polling infrastructure", () => {
   let testDir: string;
   let config: RunnerConfig;
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
-    testDir = join(tmpdir(), `task-runner-cron-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(tmpdir(), `task-runner-schedule-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     mkdirSync(join(testDir, "log"), { recursive: true });
 
@@ -2216,15 +2216,15 @@ describe("TaskRunner - cron polling infrastructure", () => {
     }
   });
 
-  test("exposes cronCheckDue guard method", () => {
-    const runner = new TaskRunner({ projectId: "cron-project", config });
+  test("exposes cronCheckDue guard method for schedule polling", () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
     const maybeCronCheckDue = (runner as unknown as { cronCheckDue?: unknown }).cronCheckDue;
 
     expect(typeof maybeCronCheckDue).toBe("function");
   });
 
-  test("cronCheckDue follows poll interval cadence", () => {
-    const runner = new TaskRunner({ projectId: "cron-project", config });
+  test("cronCheckDue follows poll interval cadence for schedule checks", () => {
+    const runner = new TaskRunner({ projectId: "test-project", config });
     const typedRunner = runner as unknown as {
       cronCheckDue: (nowMs?: number) => boolean;
       lastCronCheckAtMs: number | null;
@@ -2262,7 +2262,7 @@ describe("TaskRunner - cron polling infrastructure", () => {
         ),
     });
 
-    const runner = new TaskRunner({ projectId: "cron-project", config });
+    const runner = new TaskRunner({ projectId: "test-project", config });
 
     // Keep poll focused on scheduled task integration behavior
     (runner as unknown as { checkRunningTasks: () => Promise<void> }).checkRunningTasks = async () => {};
@@ -2333,7 +2333,7 @@ describe("TaskRunner - scheduled task trigger and overlap", () => {
         return Promise.resolve(new Response(JSON.stringify({ tasks })));
       }
 
-      // GET entry (for updateCronRun read-modify-write)
+      // GET entry (for schedule run read-modify-write)
       if (url.includes("/entries/") && method === "GET") {
         return Promise.resolve(new Response(JSON.stringify({ runs: [] })));
       }
@@ -2596,7 +2596,7 @@ describe("TaskRunner - scheduled context propagation", () => {
   let originalFetch: typeof fetch;
 
   beforeEach(() => {
-    testDir = join(tmpdir(), `task-runner-cron-p3-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    testDir = join(tmpdir(), `task-runner-schedule-p3-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(testDir, { recursive: true });
     mkdirSync(join(testDir, "log"), { recursive: true });
     config = createTestConfig(testDir);
@@ -2660,7 +2660,7 @@ describe("TaskRunner - scheduled context propagation", () => {
         );
       }
 
-      // GET entry (for getTaskByPath, updateCronRun read step)
+      // GET entry (for getTaskByPath, schedule run read step)
       if (url.includes("/entries/") && method === "GET") {
         return Promise.resolve(
           new Response(
@@ -2861,7 +2861,7 @@ describe("TaskRunner - scheduled context propagation", () => {
     const runningTask: RunningTask = {
       id: "task-1",
       path: "projects/test-project/task/task-1.md",
-      title: "Cron Task",
+      title: "Scheduled Task",
       priority: "medium",
       projectId: "test-project",
       pid: 0,

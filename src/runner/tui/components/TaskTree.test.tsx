@@ -83,7 +83,7 @@ describe('TaskTree', () => {
     it('renders scheduled indicator for tasks with schedule field', () => {
       const tasks = [
         createTask({
-          id: 'cron-1',
+          id: 'sched-1',
           title: 'Nightly Sync',
           schedule: '0 2 * * *',
         }),

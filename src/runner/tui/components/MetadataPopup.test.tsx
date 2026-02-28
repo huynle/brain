@@ -537,7 +537,7 @@ describe('MetadataPopup', () => {
   });
 
   describe('schedule field', () => {
-    it('should not show "(creates NEW cron)" help text for schedule field', () => {
+    it('should not show legacy help text for schedule field', () => {
       const { lastFrame } = render(
         <MetadataPopup {...defaultProps} />
       );
@@ -547,7 +547,7 @@ describe('MetadataPopup', () => {
       expect(frame).not.toContain('(creates NEW cron)');
     });
 
-    it('should not show "Cron Links:" field (removed)', () => {
+    it('should not show legacy "Cron Links:" field', () => {
       const { lastFrame } = render(
         <MetadataPopup {...defaultProps} />
       );
@@ -561,25 +561,25 @@ describe('MetadataPopup', () => {
     // These are validation helper tests - the actual validation happens in App.tsx
     // We export the helper for testing
 
-    it('valid cron: 5 fields separated by spaces', () => {
+    it('valid schedule expression: 5 fields separated by spaces', () => {
       const schedule = '0 2 * * *';
       const fields = schedule.trim().split(/\s+/);
       expect(fields.length).toBe(5);
     });
 
-    it('invalid cron: too few fields', () => {
+    it('invalid schedule expression: too few fields', () => {
       const schedule = '0 2 *';
       const fields = schedule.trim().split(/\s+/);
       expect(fields.length).not.toBe(5);
     });
 
-    it('invalid cron: too many fields', () => {
+    it('invalid schedule expression: too many fields', () => {
       const schedule = '0 2 * * * * *';
       const fields = schedule.trim().split(/\s+/);
       expect(fields.length).not.toBe(5);
     });
 
-    it('empty schedule should be valid (clears cron)', () => {
+    it('empty schedule should be valid (clears schedule)', () => {
       const schedule = '';
       expect(schedule.length === 0 || schedule.trim().split(/\s+/).length === 5).toBe(true);
     });

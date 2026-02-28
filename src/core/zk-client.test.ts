@@ -405,16 +405,13 @@ Body`;
     expect((frontmatter.sessions as Record<string, { timestamp: string }>).ses_old999zzz).toBeUndefined();
   });
 
-  test("parses cron frontmatter fields", () => {
+  test("parses schedule frontmatter fields on tasks", () => {
     const content = `---
 title: Scheduled Task
 type: task
 status: pending
 schedule: "0 */2 * * *"
 next_run: "2026-03-01T10:00:00.000Z"
-cron_ids:
-  - "cron_a"
-  - "cron_b"
 runs:
   - run_id: "run_001"
     status: completed
@@ -439,7 +436,6 @@ Body`;
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.schedule).toBe("0 */2 * * *");
     expect(frontmatter.next_run).toBe("2026-03-01T10:00:00.000Z");
-    expect(frontmatter.cron_ids).toEqual(["cron_a", "cron_b"]);
     expect(frontmatter.runs).toEqual([
       {
         run_id: "run_001",
@@ -488,7 +484,7 @@ Body`;
     });
   });
 
-  test("keeps backward compatibility when cron fields are missing", () => {
+  test("keeps backward compatibility when schedule fields are missing", () => {
     const content = `---
 title: Legacy Task
 type: task
@@ -500,7 +496,6 @@ Body`;
     const { frontmatter } = parseFrontmatter(content);
     expect(frontmatter.schedule).toBeUndefined();
     expect(frontmatter.next_run).toBeUndefined();
-    expect(frontmatter.cron_ids).toBeUndefined();
     expect(frontmatter.runs).toBeUndefined();
   });
 
@@ -1119,14 +1114,13 @@ describe("serializeFrontmatter()", () => {
     expect(result).not.toContain("session_timestamps:");
   });
 
-  test("serializes cron frontmatter fields", () => {
+  test("serializes schedule frontmatter fields on tasks", () => {
     const fm = {
       title: "Scheduled Task",
       type: "task",
       status: "pending",
       schedule: "0 */2 * * *",
       next_run: "2026-03-01T10:00:00.000Z",
-      cron_ids: ["cron_a", "cron_b"],
       runs: [
         {
           run_id: "run_001",
@@ -1144,9 +1138,7 @@ describe("serializeFrontmatter()", () => {
     const result = serializeFrontmatter(fm);
     expect(result).toContain('schedule: "0 */2 * * *"');
     expect(result).toContain('next_run: "2026-03-01T10:00:00.000Z"');
-    expect(result).toContain("cron_ids:");
-    expect(result).toContain('  - cron_a');
-    expect(result).toContain('  - cron_b');
+    expect(result).not.toContain("cron_ids:");
     expect(result).toContain("runs:");
     expect(result).toContain('  - run_id: run_001');
     expect(result).toContain('    status: completed');
@@ -1233,15 +1225,14 @@ describe("generateFrontmatter() with sessions", () => {
   });
 });
 
-describe("cron frontmatter round-trip", () => {
-  test("generateFrontmatter and parseFrontmatter round-trip cron fields", () => {
+describe("schedule frontmatter round-trip", () => {
+  test("generateFrontmatter and parseFrontmatter round-trip schedule fields", () => {
     const generated = generateFrontmatter({
-      title: "Cron Round Trip",
+      title: "Schedule Round Trip",
       type: "task",
       status: "pending",
       schedule: "*/15 * * * *",
       next_run: "2026-03-01T11:15:00.000Z",
-      cron_ids: ["cron_main", "cron_backup"],
       runs: [
         {
           run_id: "run_100",
@@ -1261,7 +1252,6 @@ describe("cron frontmatter round-trip", () => {
 
     expect(frontmatter.schedule).toBe("*/15 * * * *");
     expect(frontmatter.next_run).toBe("2026-03-01T11:15:00.000Z");
-    expect(frontmatter.cron_ids).toEqual(["cron_main", "cron_backup"]);
     expect(frontmatter.runs).toEqual([
       {
         run_id: "run_100",
@@ -1276,14 +1266,13 @@ describe("cron frontmatter round-trip", () => {
     ]);
   });
 
-  test("serialize then parse preserves cron fields", () => {
+  test("serialize then parse preserves schedule fields", () => {
     const original = {
-      title: "Cron Serialize Round Trip",
+      title: "Schedule Serialize Round Trip",
       type: "task",
       status: "active",
       schedule: "0 0 * * *",
       next_run: "2026-03-02T00:00:00.000Z",
-      cron_ids: ["cron_nightly"],
       runs: [
         {
           run_id: "run_nightly_1",
@@ -1304,7 +1293,6 @@ describe("cron frontmatter round-trip", () => {
 
     expect(frontmatter.schedule).toBe(original.schedule);
     expect(frontmatter.next_run).toBe(original.next_run);
-    expect(frontmatter.cron_ids).toEqual(original.cron_ids);
     expect(frontmatter.runs).toEqual(original.runs);
   });
 });

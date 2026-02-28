@@ -291,14 +291,14 @@ export class BrainService {
 
     const isGlobal = request.global ?? false;
 
-    if (entryType === "cron" && request.run_once_at && !request.next_run) {
+    if ((entryType === "cron" || (entryType === "task" && request.schedule)) && request.run_once_at && !request.next_run) {
       request.next_run = request.run_once_at;
       if (request.max_runs === undefined) {
         request.max_runs = 1;
       }
     }
 
-    if (entryType === "cron" && request.schedule && !request.next_run) {
+    if ((entryType === "cron" || (entryType === "task" && request.schedule)) && request.schedule && !request.next_run) {
       request.next_run = getNextRun(request.schedule).toISOString();
     }
 
@@ -322,34 +322,7 @@ export class BrainService {
       request.depends_on = validation.normalized;
     }
 
-    // Auto-create cron entry if task has schedule parameter
-    if (entryType === "task" && request.schedule && (!request.cron_ids || request.cron_ids.length === 0)) {
-      // Validate schedule before creating cron
-      try {
-        const { parseCronExpression } = await import("./cron-service");
-        parseCronExpression(request.schedule);
-      } catch (error) {
-        throw new Error(`Invalid cron expression: ${error instanceof Error ? error.message : String(error)}`);
-      }
-
-      // Create cron entry with "(Cron)" suffix
-      const displayTitle = normalizeTitle(request.title);
-      const cronResult = await this.save({
-        type: "cron",
-        title: `${displayTitle} (Cron)`,
-        content: "",
-        schedule: request.schedule,
-        status: "active",
-        // Don't pass project - let it use same logic as task (this.projectId.slice(0, 8))
-      });
-
-      // Link cron to task
-      request.cron_ids = [cronResult.id];
-
-      // Remove schedule and next_run from task (they belong to cron)
-      delete request.schedule;
-      delete request.next_run;
-    }
+    // Schedule fields stay on the task directly (no separate cron entry created)
 
     // Determine directory for zk
     const projectDir =
@@ -490,9 +463,10 @@ export class BrainService {
     const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
     let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
 
-    // Cron entries require schedule/next_run frontmatter fields that are not guaranteed
-    // by zk templates in user notebooks. Force manual creation for deterministic metadata.
-    if (entryType === "cron") {
+    // Cron entries and tasks with schedules require schedule/next_run frontmatter fields
+    // that are not guaranteed by zk templates in user notebooks. Force manual creation
+    // for deterministic metadata.
+    if (entryType === "cron" || (entryType === "task" && request.schedule)) {
       zkAvailable = false;
     }
 

@@ -360,3 +360,106 @@ export function getNextTask(result: DependencyResult): ResolvedTask | null {
   const ungroupedReady = allReady.filter((t) => !t.feature_id);
   return ungroupedReady.length > 0 ? ungroupedReady[0] : null;
 }
+
+// =============================================================================
+// Downstream (Transitive Dependents) Resolution
+// =============================================================================
+
+/**
+ * Find all tasks that transitively depend on a given root task.
+ *
+ * Builds a reverse dependency map (task -> its dependents), then BFS from
+ * the root to collect all transitive dependents. Returns the root task
+ * followed by dependents in topological order (execution order).
+ *
+ * Handles cycles gracefully: cycle participants are appended at the end
+ * rather than causing an infinite loop.
+ */
+export function getDownstreamTasks(
+  rootTaskId: string,
+  allTasks: Task[]
+): Task[] {
+  if (allTasks.length === 0) return [];
+
+  const maps = buildLookupMaps(allTasks);
+  const rootTask = maps.byId.get(rootTaskId);
+  if (!rootTask) return [];
+
+  // Build reverse dependency map: taskId -> list of tasks that depend on it
+  const dependentsMap = new Map<string, string[]>();
+  for (const task of allTasks) {
+    for (const depRef of task.depends_on || []) {
+      const depId = resolveDep(depRef, maps);
+      if (!depId) continue;
+      const list = dependentsMap.get(depId) || [];
+      list.push(task.id);
+      dependentsMap.set(depId, list);
+    }
+  }
+
+  // BFS from root to collect all transitive dependents
+  const included = new Set<string>([rootTaskId]);
+  const queue = [rootTaskId];
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    for (const depId of dependentsMap.get(current) || []) {
+      if (!included.has(depId)) {
+        included.add(depId);
+        queue.push(depId);
+      }
+    }
+  }
+
+  // If only the root, return early
+  if (included.size === 1) return [rootTask];
+
+  // Topological sort (Kahn's algorithm) over the included subset
+  // Compute in-degree: count of dependencies within the included set
+  const indegree = new Map<string, number>();
+  for (const id of included) {
+    indegree.set(id, 0);
+  }
+
+  for (const id of included) {
+    const task = maps.byId.get(id);
+    if (!task) continue;
+    for (const depRef of task.depends_on || []) {
+      const depId = resolveDep(depRef, maps);
+      if (depId && included.has(depId)) {
+        indegree.set(id, (indegree.get(id) || 0) + 1);
+      }
+    }
+  }
+
+  // Seed with zero-indegree nodes (root should be first)
+  const zeroQueue = Array.from(included).filter(
+    (id) => (indegree.get(id) || 0) === 0
+  );
+
+  const ordered: string[] = [];
+  while (zeroQueue.length > 0) {
+    const id = zeroQueue.shift()!;
+    ordered.push(id);
+
+    for (const depId of dependentsMap.get(id) || []) {
+      if (!included.has(depId)) continue;
+      const next = (indegree.get(depId) || 0) - 1;
+      indegree.set(depId, next);
+      if (next === 0) {
+        zeroQueue.push(depId);
+      }
+    }
+  }
+
+  // Cycle handling: any remaining nodes not in ordered are cycle participants
+  if (ordered.length < included.size) {
+    const remaining = Array.from(included).filter(
+      (id) => !ordered.includes(id)
+    );
+    ordered.push(...remaining);
+  }
+
+  return ordered
+    .map((id) => maps.byId.get(id))
+    .filter((t): t is Task => t !== undefined);
+}

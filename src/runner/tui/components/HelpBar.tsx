@@ -7,7 +7,7 @@ import { Box, Text } from 'ink';
 
 interface HelpBarProps {
   focusedPanel?: 'tasks' | 'details' | 'logs';
-  viewMode?: 'tasks' | 'crons';
+  viewMode?: 'tasks' | 'schedules';
   /** Whether in multi-project mode (shows tab shortcuts) */
   isMultiProject?: boolean;
   /** Whether filter is currently active (locked in) */
@@ -24,9 +24,9 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
   // Show different hints based on which panel is focused
   const isLogsFocused = focusedPanel === 'logs';
   const isDetailsFocused = focusedPanel === 'details';
-  const isCronView = viewMode === 'crons';
-  const focusLabel = isCronView
-    ? (focusedPanel === 'tasks' ? 'crons' : focusedPanel === 'details' ? 'cron details' : focusedPanel)
+  const isScheduleView = viewMode === 'schedules';
+  const focusLabel = isScheduleView
+    ? (focusedPanel === 'tasks' ? 'schedules' : focusedPanel === 'details' ? 'schedule details' : focusedPanel)
     : focusedPanel;
   
   return (
@@ -50,12 +50,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
              </>
            ) : isDetailsFocused ? (
              <>
-               <Text bold>{isCronView ? 'j/k' : 'd'}</Text> {isCronView ? 'Scroll' : 'Dependencies'}
+               <Text bold>{isScheduleView ? 'j/k' : 'd'}</Text> {isScheduleView ? 'Scroll' : 'Dependencies'}
                {'  '}
              </>
            ) : (
              <>
-               {!isCronView && (
+               {!isScheduleView && (
                  <>
                    <Text bold>/</Text>{' '}
                    {isFilterActive ? (
@@ -94,22 +94,12 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                    )}
                  </>
                )}
-                {isCronView && (
-                  <>
-                    <Text bold>Enter</Text> Details
-                    {'  '}
-                 <Text bold>n/e</Text> New/Edit
-                 {'  '}
-                  <Text bold>x</Text> Trigger now
-                  {'  '}
-                  <Text bold>p</Text> Pause/Enable
-                  {'  '}
-                  <Text bold>a/u/R</Text> Edit links
-                  {'  '}
-                  <Text bold color="red">D</Text> <Text color="red">Delete</Text>
-                 {'  '}
-               </>
-             )}
+                 {isScheduleView && (
+                   <>
+                     <Text bold>Enter</Text> Details
+                     {'  '}
+                   </>
+                 )}
              </>
            )}
           {isMultiProject ? (

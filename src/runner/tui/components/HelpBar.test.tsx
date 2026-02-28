@@ -19,26 +19,27 @@ describe('HelpBar', () => {
     unmount();
   });
 
-  it('shows cron action shortcuts clearly in cron view', () => {
+  it('shows simplified shortcuts in schedule view', () => {
     const { lastFrame, unmount } = render(
-      <HelpBar focusedPanel="tasks" viewMode="crons" />
+      <HelpBar focusedPanel="tasks" viewMode="schedules" />
     );
 
     const frame = lastFrame() || '';
 
+    // Schedule view should show Enter/Details
     expect(frame).toContain('Enter');
     expect(frame).toContain('Details');
-    expect(frame).toContain('n/e');
-    expect(frame).toContain('New/Edit');
-    expect(frame).toContain('x');
-    expect(frame).toContain('Trigger now');
-    expect(frame).toContain('p');
-    expect(frame).toContain('Pause/Enable');
-    expect(frame).toContain('a/u/R');
-    expect(frame).toContain('Edit');
-    expect(frame).toContain('links');
-    expect(frame).toContain('D');
-    expect(frame).toContain('Delete');
+
+    // Schedule view should NOT show old cron action shortcuts
+    expect(frame).not.toContain('New/Edit');
+    expect(frame).not.toContain('Trigger now');
+    expect(frame).not.toContain('Edit links');
+    expect(frame).not.toContain('Delete');
+
+    // Schedule view should NOT show task-specific shortcuts
+    expect(frame).not.toContain('Filter');
+    expect(frame).not.toContain('Select');
+    expect(frame).not.toContain('Meta/Feature');
 
     unmount();
   });

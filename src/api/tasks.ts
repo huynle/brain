@@ -41,7 +41,7 @@ import {
   canRunWithinBounds,
   generateRunId,
   getNextRun,
-} from "../core/cron-service";
+} from "../core/schedule-utils";
 import { getDownstreamTasks } from "../core/task-deps";
 import type { CronRun } from "../core/types";
 import { TASK_SSE_HEARTBEAT_MS } from "./sse-config";

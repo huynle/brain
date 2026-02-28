@@ -8,6 +8,7 @@
 import type { RunnerConfig, ApiHealth, ClaimResult } from "./types";
 import type {
   BrainEntry,
+  CronRun,
   ResolvedTask,
   TaskListResponse,
   TaskNextResponse,
@@ -395,6 +396,34 @@ export class ApiClient {
 
     if (!response.ok) {
       throw new ApiError(response.status, await response.text());
+    }
+  }
+
+  /**
+   * Update a single run entry in a scheduled task's runs[] array.
+   * Reads the current entry, upserts the run by run_id, and PATCHes back.
+   */
+  async updateScheduledRun(taskPath: string, run: CronRun): Promise<void> {
+    const encodedPath = encodeURIComponent(taskPath);
+
+    const getResponse = await this.fetch(`/api/v1/entries/${encodedPath}`);
+
+    if (!getResponse.ok) {
+      throw new ApiError(getResponse.status, await getResponse.text());
+    }
+
+    const entry = (await getResponse.json()) as { runs?: CronRun[] };
+    const existingRuns = entry.runs ?? [];
+    const remainingRuns = existingRuns.filter((existing) => existing.run_id !== run.run_id);
+    const runs = [run, ...remainingRuns];
+
+    const patchResponse = await this.fetch(`/api/v1/entries/${encodedPath}`, {
+      method: "PATCH",
+      body: JSON.stringify({ runs }),
+    });
+
+    if (!patchResponse.ok) {
+      throw new ApiError(patchResponse.status, await patchResponse.text());
     }
   }
 

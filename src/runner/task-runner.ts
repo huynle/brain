@@ -44,7 +44,7 @@ import {
   canRunWithinBounds,
   generateRunId,
   getNextRun,
-} from "../core/cron-service";
+} from "../core/schedule-utils";
 import { getDownstreamTasks } from "../core/task-deps";
 
 // =============================================================================
@@ -1269,7 +1269,7 @@ export class TaskRunner {
 
     if (isFailure) {
       try {
-        await this.apiClient.updateCronRun(run.scheduledTaskPath, {
+        await this.apiClient.updateScheduledRun(run.scheduledTaskPath, {
           run_id: runId,
           status: "failed",
           started: run.startedAtIso,
@@ -1296,7 +1296,7 @@ export class TaskRunner {
     }
 
     try {
-      await this.apiClient.updateCronRun(run.scheduledTaskPath, {
+      await this.apiClient.updateScheduledRun(run.scheduledTaskPath, {
         run_id: runId,
         status: "completed",
         started: run.startedAtIso,
@@ -1339,10 +1339,15 @@ export class TaskRunner {
     for (const projectId of this.projects) {
       try {
         const allTasks = await this.apiClient.getAllTasks(projectId);
-        // Filter tasks that have a schedule field and are active
+        // Filter tasks that have a schedule field and are eligible to trigger.
+        // "active" tasks are the normal case. "completed" tasks with a schedule
+        // are also eligible — the scheduler resets them to pending on trigger,
+        // enabling recurring execution (e.g. complete_on_idle tasks that finished
+        // their previous run and are waiting for the next scheduled time).
         const scheduledTasks = allTasks.filter((task) => task.schedule);
         const dueTasks = scheduledTasks.filter((task) => {
-          if (task.status !== "active") {
+          const eligibleStatuses = ["active", "completed"];
+          if (!eligibleStatuses.includes(task.status)) {
             return false;
           }
 
@@ -1417,7 +1422,7 @@ export class TaskRunner {
     if (!hasOverlap) {
       // Record run as in_progress on the scheduled task's runs[] before resetting tasks
       const startedAtIso = now.toISOString();
-      await this.apiClient.updateCronRun(scheduledTask.path, {
+      await this.apiClient.updateScheduledRun(scheduledTask.path, {
         run_id: runId,
         status: "in_progress",
         started: startedAtIso,
@@ -1457,7 +1462,7 @@ export class TaskRunner {
       }
     } else {
       // Overlap: record skipped run on the scheduled task's runs[]
-      await this.apiClient.updateCronRun(scheduledTask.path, {
+      await this.apiClient.updateScheduledRun(scheduledTask.path, {
         run_id: runId,
         status: "skipped",
         started: now.toISOString(),

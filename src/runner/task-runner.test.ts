@@ -765,6 +765,7 @@ describe("TaskRunner - API interactions", () => {
 describe("TaskRunner - Pause/Resume", () => {
   let testDir: string;
   let config: RunnerConfig;
+  let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     testDir = join(tmpdir(), `task-runner-pause-test-${Date.now()}`);
@@ -772,6 +773,7 @@ describe("TaskRunner - Pause/Resume", () => {
     mkdirSync(join(testDir, "log"), { recursive: true });
 
     config = createTestConfig(testDir);
+    originalFetch = globalThis.fetch;
 
     resetTaskRunner();
     resetApiClient();
@@ -783,6 +785,7 @@ describe("TaskRunner - Pause/Resume", () => {
   });
 
   afterEach(async () => {
+    globalThis.fetch = originalFetch;
     resetTaskRunner();
     resetApiClient();
     resetProcessManager();
@@ -2499,7 +2502,7 @@ describe("TaskRunner - scheduled task trigger and overlap", () => {
     expect(newNextRun.getTime()).toBeGreaterThan(new Date("2025-01-15T09:00:00Z").getTime());
   });
 
-  test("checkScheduledTasks ignores scheduled tasks when status is not active", async () => {
+   test("checkScheduledTasks ignores scheduled tasks when status is not active or completed", async () => {
     const scheduledTask = createMockTask("sched-root", {
       path: "projects/test-project/task/sched-root.md",
       status: "pending",
@@ -2520,6 +2523,33 @@ describe("TaskRunner - scheduled task trigger and overlap", () => {
 
     const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
     expect(patchCalls.length).toBe(0);
+  });
+
+  test("checkScheduledTasks triggers completed scheduled tasks (recurring after complete_on_idle)", async () => {
+    const scheduledTask = createMockTask("sched-root", {
+      path: "projects/test-project/task/sched-root.md",
+      status: "completed",
+      schedule: "*/3 * * * *",
+      next_run: "2025-01-15T09:03:00Z",
+      runs: [
+        { run_id: "20250115-0900-aaaaaa", status: "completed", started: "2025-01-15T09:00:00Z", completed: "2025-01-15T09:01:30Z" },
+      ],
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:03:30Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // Should have PATCH calls: one to record run in_progress, one to reset task to pending, one to advance next_run
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBeGreaterThanOrEqual(2);
   });
 
   test("checkScheduledTasks skips when max_runs attempts are already exhausted", async () => {

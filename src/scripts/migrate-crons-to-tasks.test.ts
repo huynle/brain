@@ -555,8 +555,11 @@ describe("migrateCronsToTasks", () => {
         join(TEST_DIR, "projects", "proj1", "task", "taskdry1.md"),
         "utf-8",
       );
+      // cron_ids should still be in the raw file (not removed by dry-run)
+      expect(taskContent).toContain("cron_ids:");
+      expect(taskContent).toContain("crondry1");
       const { frontmatter } = parseFrontmatter(taskContent);
-      expect(frontmatter.cron_ids).toEqual(["crondry1"]);
+      // schedule should NOT have been copied (dry-run doesn't modify files)
       expect(frontmatter.schedule).toBeUndefined();
 
       // Cron file should still exist

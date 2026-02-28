@@ -210,6 +210,37 @@ interface TaskEntry {
 }
 
 /**
+ * Extract cron_ids from raw file content.
+ * parseFrontmatter discards cron_ids (legacy field), so we extract them
+ * directly from the raw YAML frontmatter before parsing.
+ */
+function extractCronIds(rawContent: string): string[] {
+  const fmMatch = rawContent.match(/^---\n([\s\S]*?)\n---/);
+  if (!fmMatch) return [];
+
+  const fmBlock = fmMatch[1];
+  const cronIds: string[] = [];
+  let inCronIds = false;
+
+  for (const line of fmBlock.split("\n")) {
+    if (line.match(/^cron_ids:\s*$/)) {
+      inCronIds = true;
+      continue;
+    }
+    if (inCronIds) {
+      const itemMatch = line.match(/^\s+-\s+(.+?)\s*$/);
+      if (itemMatch) {
+        cronIds.push(itemMatch[1]);
+      } else if (!line.match(/^\s/)) {
+        inCronIds = false;
+      }
+    }
+  }
+
+  return cronIds;
+}
+
+/**
  * Load all task entries from a task directory.
  */
 function loadTaskEntries(taskDir: string): TaskEntry[] {
@@ -223,6 +254,13 @@ function loadTaskEntries(taskDir: string): TaskEntry[] {
       const filePath = join(taskDir, f);
       const content = readFileSync(filePath, "utf-8");
       const { frontmatter, body } = parseFrontmatter(content);
+
+      // Restore cron_ids from raw content (parseFrontmatter discards them)
+      const cronIds = extractCronIds(content);
+      if (cronIds.length > 0) {
+        frontmatter.cron_ids = cronIds;
+      }
+
       return {
         id: f.replace(/\.md$/, ""),
         filePath,

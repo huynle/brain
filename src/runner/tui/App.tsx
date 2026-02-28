@@ -935,7 +935,6 @@ export function App({
   const [supersededCollapsed, setSupersededCollapsed] = useState(true);
   const [archivedCollapsed, setArchivedCollapsed] = useState(true);
   const [collapsedFeatures, setCollapsedFeatures] = useState<Set<string>>(new Set());
-  const [collapsedTasks, setCollapsedTasks] = useState<Set<string>>(new Set());
   const [collapsedProjects, setCollapsedProjects] = useState<Set<string>>(new Set());
   
   // Group visibility settings - persisted to ~/.brain/tui-settings.json
@@ -1252,7 +1251,6 @@ export function App({
     completedCollapsed,
     draftCollapsed,
     collapsedFeatures,
-    collapsedTasks,
     collapsedProjects,
     visibleGroups,
     cancelledCollapsed,
@@ -3805,7 +3803,6 @@ export function App({
                   scrollOffset={taskScrollOffset}
                   viewportHeight={taskViewportHeight}
                   collapsedFeatures={collapsedFeatures}
-                  collapsedTasks={collapsedTasks}
                   collapsedProjects={collapsedProjects}
                   activeFeatures={activeFeatures}
                   selectedTaskIds={selectedTaskIds}

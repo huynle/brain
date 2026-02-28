@@ -75,7 +75,7 @@ import type {
 import { ENTRY_STATUSES } from "./types";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
 import type { DependencyValidationResult, DependentInfo } from "./task-service";
-import { getNextRun } from "./cron-service";
+import { getNextRun } from "./schedule-utils";
 
 // =============================================================================
 // Dependency Validation Error
@@ -291,14 +291,14 @@ export class BrainService {
 
     const isGlobal = request.global ?? false;
 
-    if ((entryType === "cron" || (entryType === "task" && request.schedule)) && request.run_once_at && !request.next_run) {
+    if (entryType === "task" && request.schedule && request.run_once_at && !request.next_run) {
       request.next_run = request.run_once_at;
       if (request.max_runs === undefined) {
         request.max_runs = 1;
       }
     }
 
-    if ((entryType === "cron" || (entryType === "task" && request.schedule)) && request.schedule && !request.next_run) {
+    if (entryType === "task" && request.schedule && !request.next_run) {
       request.next_run = getNextRun(request.schedule).toISOString();
     }
 
@@ -463,10 +463,10 @@ export class BrainService {
     const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
     let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
 
-    // Cron entries and tasks with schedules require schedule/next_run frontmatter fields
+    // Tasks with schedules require schedule/next_run frontmatter fields
     // that are not guaranteed by zk templates in user notebooks. Force manual creation
     // for deterministic metadata.
-    if (entryType === "cron" || (entryType === "task" && request.schedule)) {
+    if (entryType === "task" && request.schedule) {
       zkAvailable = false;
     }
 

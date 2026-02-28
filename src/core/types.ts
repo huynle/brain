@@ -21,7 +21,6 @@ export const ENTRY_TYPES = [
   "exploration",
   "execution",
   "task",
-  "cron",
 ] as const;
 
 export type EntryType = (typeof ENTRY_TYPES)[number];

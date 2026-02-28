@@ -5,7 +5,7 @@ import {
   shouldTrigger,
   canRunWithinBounds,
   generateRunId,
-} from "./cron-service";
+} from "./schedule-utils";
 import type { CronRun } from "./types";
 
 describe("parseCronExpression", () => {

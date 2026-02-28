@@ -3541,7 +3541,7 @@ export function App({
         
         setMetadataTargetTasks(targetTasks);
         setMetadataPopupMode(mode);
-        setMetadataFocusedField(mode === 'feature' ? 'execution_mode' : 'status');
+        setMetadataFocusedField('status');
         setMetadataStatusValue(prefill.status);
         setMetadataStatusIndex(ENTRY_STATUSES.indexOf(prefill.status));
         setMetadataFeatureIdValue(prefill.feature_id);

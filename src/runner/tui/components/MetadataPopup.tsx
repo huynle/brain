@@ -138,18 +138,21 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
   'direct_prompt',
 ];
 
-export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] = [
-  'execution_mode',
-  'git_branch',
-  'target_workdir',
-  'merge_target_branch',
-  'checkout_enabled',
-  'complete_on_idle',
-  'merge_policy',
-  'merge_strategy',
-  'remote_branch_policy',
-  'open_pr_before_merge',
+/** Field groups for feature-mode popup (visual separators between groups) */
+export const FEATURE_FIELD_GROUPS: Array<{ label: string; fields: MetadataField[] }> = [
+  { label: 'Task', fields: ['status', 'feature_id', 'project'] },
+  { label: 'Execution', fields: ['execution_mode', 'agent', 'model', 'direct_prompt', 'schedule', 'complete_on_idle'] },
+  { label: 'Git / Branch', fields: ['git_branch', 'target_workdir', 'checkout_enabled'] },
+  { label: 'Merge / PR', fields: ['merge_target_branch', 'merge_policy', 'merge_strategy', 'remote_branch_policy', 'open_pr_before_merge'] },
 ];
+
+/** Flat merged array of all feature fields (for navigation) */
+export const METADATA_FIELDS_FEATURE_SETTINGS: MetadataField[] =
+  FEATURE_FIELD_GROUPS.flatMap(g => g.fields);
+
+/** Lookup: field -> group label (for rendering separators) */
+const FEATURE_FIELD_TO_GROUP = new Map<MetadataField, string>();
+FEATURE_FIELD_GROUPS.forEach(g => g.fields.forEach(f => FEATURE_FIELD_TO_GROUP.set(f, g.label)));
 
 const FIELD_LABELS: Record<MetadataField, string> = {
   status: 'Status',
@@ -333,14 +336,30 @@ export function MetadataPopup({
 
       {/* Fields */}
       <Box flexDirection="column">
-        {fieldOrder.map((field) => {
+        {fieldOrder.map((field, idx) => {
           const isFocused = field === focusedField;
           const isEditing = isFieldEditing(field);
           const label = FIELD_LABELS[field];
           const value = getFieldValue(field);
 
+          // Group separator for feature mode
+          let separator: React.ReactElement | null = null;
+          if (mode === 'feature') {
+            const currentGroup = FEATURE_FIELD_TO_GROUP.get(field);
+            const prevGroup = idx > 0 ? FEATURE_FIELD_TO_GROUP.get(fieldOrder[idx - 1]) : undefined;
+            if (currentGroup && currentGroup !== prevGroup) {
+              separator = (
+                <Box marginTop={idx > 0 ? 1 : 0} key={`sep-${currentGroup}`}>
+                  <Text dimColor bold>{`── ${currentGroup} ──`}</Text>
+                </Box>
+              );
+            }
+          }
+
           return (
-            <Box key={field}>
+            <React.Fragment key={field}>
+            {separator}
+            <Box>
               {/* Selection indicator */}
               <Text color={isFocused ? 'cyan' : undefined}>
                 {isFocused ? '→ ' : '  '}
@@ -503,6 +522,7 @@ export function MetadataPopup({
                 </Box>
               )}
             </Box>
+            </React.Fragment>
           );
         })}
 

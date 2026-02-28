@@ -5,7 +5,7 @@
 import React from 'react';
 import { describe, it, expect } from 'bun:test';
 import { render } from 'ink-testing-library';
-import { MetadataPopup, type MetadataField, type MetadataPopupMode } from './MetadataPopup';
+import { MetadataPopup, FEATURE_FIELD_GROUPS, type MetadataField, type MetadataPopupMode } from './MetadataPopup';
 import { ENTRY_STATUSES, type EntryStatus } from '../../../core/types';
 
 import type { MetadataInteractionMode } from './MetadataPopup';
@@ -143,12 +143,13 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('3 tasks');
     });
 
-    it('shows feature settings fields and hides task metadata fields in feature mode', () => {
+    it('shows all 17 fields in feature mode (merged task + feature settings)', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...defaultProps}
           mode="feature"
           featureId="auth-system"
+          focusedField="status"
           mergeTargetBranchValue="main"
           executionModeValue="worktree"
           checkoutEnabledValue={true}
@@ -160,20 +161,60 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
+      // Task group
+      expect(frame).toContain('Status:');
+      expect(frame).toContain('Feature ID:');
+      expect(frame).toContain('Project:');
+      // Execution group
       expect(frame).toContain('Execution Mode:');
+      expect(frame).toContain('Agent:');
+      expect(frame).toContain('Model:');
+      expect(frame).toContain('Prompt:');
+      expect(frame).toContain('Schedule:');
+      expect(frame).toContain('Complete on Idle:');
+      // Git / Branch group
       expect(frame).toContain('Branch:');
-      expect(frame).toContain('Merge Target:');
+      expect(frame).toContain('Workdir:');
       expect(frame).toContain('Checkout Enabled:');
+      // Merge / PR group
+      expect(frame).toContain('Merge Target:');
       expect(frame).toContain('Merge Policy:');
       expect(frame).toContain('Merge Strategy:');
       expect(frame).toContain('Remote Branch Policy:');
       expect(frame).toContain('Open PR Before Merge:');
-      expect(frame).toContain('Workdir:');
+    });
 
-      expect(frame).not.toContain('Status:');
-      expect(frame).not.toContain('Feature ID:');
-      expect(frame).not.toContain('Schedule:');
-      expect(frame).not.toContain('Project:');
+    it('shows group separator headers in feature mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="feature"
+          featureId="auth-system"
+          focusedField="status"
+          mergeTargetBranchValue="main"
+          executionModeValue="worktree"
+          checkoutEnabledValue={true}
+          mergePolicyValue="prompt_only"
+          mergeStrategyValue="squash"
+          remoteBranchPolicyValue="delete"
+          openPrBeforeMergeValue={false}
+        />
+      );
+
+      const frame = lastFrame();
+      for (const group of FEATURE_FIELD_GROUPS) {
+        expect(frame).toContain(`── ${group.label} ──`);
+      }
+    });
+
+    it('does NOT show group separators in single mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup {...defaultProps} mode="single" />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('── Task ──');
+      expect(frame).not.toContain('── Execution ──');
     });
 
     it('shows current execution mode hint values when focused', () => {

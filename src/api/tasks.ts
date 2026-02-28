@@ -39,7 +39,6 @@ import {
 } from "./schemas";
 import {
   canRunWithinBounds,
-  canTriggerPipeline,
   generateRunId,
   getNextRun,
 } from "../core/cron-service";
@@ -1543,12 +1542,33 @@ export function createTaskRoutes(options?: TaskRouteOptions): OpenAPIHono {
       }
 
       // 5. Check overlap (any task in pipeline is in_progress -> reject)
-      const triggerCheck = canTriggerPipeline(pipeline, task.runs);
-      if (!triggerCheck.canTrigger) {
+      const activeRun = (task.runs || []).find(
+        (run) => run.status === "in_progress" || String(run.status) === "active"
+      );
+      if (activeRun) {
         return c.json(
           {
             error: "Conflict",
-            message: triggerCheck.reason || "Task pipeline cannot be triggered",
+            message: `cron run ${activeRun.run_id} already in_progress`,
+          },
+          409
+        );
+      }
+      if (pipeline.length === 0) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: "no tasks in pipeline",
+          },
+          409
+        );
+      }
+      const inProgressTask = pipeline.find((t) => t.status === "in_progress");
+      if (inProgressTask) {
+        return c.json(
+          {
+            error: "Conflict",
+            message: `task ${inProgressTask.id} already in_progress`,
           },
           409
         );

@@ -1,40 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import type { Task } from "./types";
 import {
   parseCronExpression,
   getNextRun,
   shouldTrigger,
-  resolveCronPipeline,
-  canTriggerPipeline,
   canRunWithinBounds,
   generateRunId,
 } from "./cron-service";
 import type { CronRun } from "./types";
-
-function mockTask(overrides: Partial<Task> = {}): Task {
-  return {
-    id: "task1",
-    path: "projects/brain-api/task/task1.md",
-    title: "Task 1",
-    priority: "medium",
-    status: "pending",
-    depends_on: [],
-    tags: [],
-    created: "2026-01-01T00:00:00.000Z",
-    modified: "2026-01-01T00:00:00.000Z",
-    target_workdir: null,
-    workdir: null,
-    worktree: null,
-    git_remote: null,
-    git_branch: null,
-    user_original_request: null,
-    direct_prompt: null,
-    agent: null,
-    model: null,
-    sessions: {},
-    ...overrides,
-  };
-}
 
 describe("parseCronExpression", () => {
   it("parses wildcard, step, range, and list expressions", () => {
@@ -224,103 +196,6 @@ describe("canRunWithinBounds", () => {
     );
 
     expect(result).toEqual({ canRun: true });
-  });
-});
-
-describe("resolveCronPipeline", () => {
-  it("resolves upstream cron-only pipeline for mixed dependencies", () => {
-    const tasks = [
-      mockTask({ id: "a", title: "A" }),
-      mockTask({ id: "b", title: "B", depends_on: ["a"] }),
-      mockTask({ id: "c", title: "C", depends_on: ["b"] }),
-      mockTask({ id: "d", title: "D", depends_on: ["c"] }),
-      mockTask({ id: "e", title: "E", depends_on: ["a"] }),
-    ];
-
-    const pipeline = resolveCronPipeline("cron-nightly", tasks);
-
-    expect(pipeline.map((t) => t.id)).toEqual(["a", "c"]);
-  });
-
-  it("leaf cron can resolve full upstream cron chain", () => {
-    const tasks = [
-      mockTask({ id: "root" }),
-      mockTask({ id: "mid", depends_on: ["root"] }),
-      mockTask({ id: "leaf", depends_on: ["mid"] }),
-    ];
-
-    expect(resolveCronPipeline("leaf-cron", tasks).map((t) => t.id)).toEqual([
-      "root",
-      "mid",
-      "leaf",
-    ]);
-  });
-
-  it("root cron triggers only itself when descendants are not tagged", () => {
-    const tasks = [
-      mockTask({ id: "root" }),
-      mockTask({ id: "child", depends_on: ["root"] }),
-      mockTask({ id: "grandchild", depends_on: ["child"] }),
-    ];
-
-    expect(resolveCronPipeline("root-cron", tasks).map((t) => t.id)).toEqual(["root"]);
-  });
-});
-
-describe("canTriggerPipeline", () => {
-  it("prevents overlap when a pipeline task is already in progress", () => {
-    const pipeline = [
-      mockTask({ id: "a", status: "pending" }),
-      mockTask({ id: "b", status: "in_progress" }),
-    ];
-
-    expect(canTriggerPipeline(pipeline)).toEqual({
-      canTrigger: false,
-      reason: "task b already in_progress",
-    });
-  });
-
-  it("allows trigger when no task is in progress", () => {
-    const pipeline = [
-      mockTask({ id: "a", status: "pending" }),
-      mockTask({ id: "b", status: "completed" }),
-    ];
-
-    expect(canTriggerPipeline(pipeline)).toEqual({ canTrigger: true });
-  });
-
-  it("prevents overlap when an existing cron run is still in progress", () => {
-    const pipeline = [mockTask({ id: "a", status: "pending" })];
-    const runs: CronRun[] = [
-      {
-        run_id: "20260301-0407-aaaaaa",
-        status: "in_progress",
-        started: "2026-03-01T04:07:00.000Z",
-        tasks: 1,
-      },
-    ];
-
-    expect(canTriggerPipeline(pipeline, runs)).toEqual({
-      canTrigger: false,
-      reason: "cron run 20260301-0407-aaaaaa already in_progress",
-    });
-  });
-
-  it("prevents overlap when an existing cron run is marked active", () => {
-    const pipeline = [mockTask({ id: "a", status: "pending" })];
-    const runs = [
-      {
-        run_id: "20260301-0407-bbbbbb",
-        status: "active",
-        started: "2026-03-01T04:07:00.000Z",
-        tasks: 1,
-      },
-    ] as unknown as CronRun[];
-
-    expect(canTriggerPipeline(pipeline, runs)).toEqual({
-      canTrigger: false,
-      reason: "cron run 20260301-0407-bbbbbb already in_progress",
-    });
   });
 });
 

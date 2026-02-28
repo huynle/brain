@@ -41,12 +41,11 @@ import { getAvailableMemoryPercent, getProcessResourceUsage } from "./system-uti
 import type { ResourceMetrics } from "./tui/types";
 import {
   shouldTrigger,
-  resolveCronPipeline,
-  canTriggerPipeline,
   canRunWithinBounds,
   generateRunId,
   getNextRun,
 } from "../core/cron-service";
+import { getDownstreamTasks } from "../core/task-deps";
 
 // =============================================================================
 // Types
@@ -131,19 +130,19 @@ export class TaskRunner {
   // Map key is taskId, value is RunningTask placeholder
   private pendingResumeTasks: Map<string, RunningTask> = new Map();
 
-  // Cron tracking: active runs and task-to-run mapping (Phase 2/4)
-  // activeCronRuns: Map<run_id, { cronId, cronPath, projectId, taskIds, startedAtIso, startedAtMs, pendingTaskIds }>
-  private activeCronRuns: Map<string, {
-    cronId: string;
-    cronPath: string;
+  // Scheduled task run tracking: active runs and task-to-run mapping
+  // activeScheduledRuns: Map<run_id, { scheduledTaskId, scheduledTaskPath, projectId, taskIds, startedAtIso, startedAtMs, pendingTaskIds }>
+  private activeScheduledRuns: Map<string, {
+    scheduledTaskId: string;
+    scheduledTaskPath: string;
     projectId: string;
     taskIds: string[];
     startedAtIso: string;
     startedAtMs: number;
     pendingTaskIds: Set<string>;
   }> = new Map();
-  // taskToCronRun: Map<taskId, run_id> — reverse lookup for completion tracking
-  private taskToCronRun: Map<string, string> = new Map();
+  // taskToScheduledRun: Map<taskId, run_id> — reverse lookup for completion tracking
+  private taskToScheduledRun: Map<string, string> = new Map();
 
   // Event handling
   private eventHandlers: EventHandler[] = [];
@@ -952,8 +951,8 @@ export class TaskRunner {
       // Step 1: Check completion of running tasks
       await this.checkRunningTasks();
 
-      // Step 1b: Cron schedule evaluation (guarded to avoid frequent API scans)
-      await this.checkCronSchedules();
+      // Step 1b: Scheduled task evaluation (guarded to avoid frequent API scans)
+      await this.checkScheduledTasks();
 
       // Step 2: Check if at max parallel capacity (include TUI tasks)
       // Note: maxParallel is SHARED across ALL projects
@@ -1221,43 +1220,43 @@ export class TaskRunner {
   }
 
   /**
-   * Look up cron context for a task.
-   * Returns { cronId, runId } if the task was triggered by a cron run, undefined otherwise.
+   * Look up scheduled task context for a task.
+   * Returns { scheduledTaskId, runId } if the task was triggered by a scheduled run, undefined otherwise.
    */
-  private resolveCronContext(taskId: string): { cronId: string; runId: string } | undefined {
-    const runId = this.taskToCronRun.get(taskId);
+  private resolveScheduledContext(taskId: string): { scheduledTaskId: string; runId: string } | undefined {
+    const runId = this.taskToScheduledRun.get(taskId);
     if (!runId) return undefined;
-    const run = this.activeCronRuns.get(runId);
+    const run = this.activeScheduledRuns.get(runId);
     if (!run) return undefined;
-    return { cronId: run.cronId, runId };
+    return { scheduledTaskId: run.scheduledTaskId, runId };
   }
 
-  private cleanupCronRunTracking(
+  private cleanupScheduledRunTracking(
     runId: string,
     run: { taskIds: string[] }
   ): void {
-    this.activeCronRuns.delete(runId);
+    this.activeScheduledRuns.delete(runId);
     for (const runTaskId of run.taskIds) {
-      if (this.taskToCronRun.get(runTaskId) === runId) {
-        this.taskToCronRun.delete(runTaskId);
+      if (this.taskToScheduledRun.get(runTaskId) === runId) {
+        this.taskToScheduledRun.delete(runTaskId);
       }
     }
   }
 
-  private async finalizeCronRunForTask(
+  private async finalizeScheduledRunForTask(
     taskId: string,
     status: CompletionStatus,
     completedAt: Date = new Date()
   ): Promise<void> {
-    const runId = this.taskToCronRun.get(taskId);
+    const runId = this.taskToScheduledRun.get(taskId);
     if (!runId) {
       return;
     }
 
     // This task is now terminal regardless of outcome.
-    this.taskToCronRun.delete(taskId);
+    this.taskToScheduledRun.delete(taskId);
 
-    const run = this.activeCronRuns.get(runId);
+    const run = this.activeScheduledRuns.get(runId);
     if (!run) {
       return;
     }
@@ -1270,7 +1269,7 @@ export class TaskRunner {
 
     if (isFailure) {
       try {
-        await this.apiClient.updateCronRun(run.cronPath, {
+        await this.apiClient.updateCronRun(run.scheduledTaskPath, {
           run_id: runId,
           status: "failed",
           started: run.startedAtIso,
@@ -1280,14 +1279,14 @@ export class TaskRunner {
           tasks: run.taskIds.length,
         });
       } catch (error) {
-        this.logger.warn("Failed to finalize cron run as failed", {
+        this.logger.warn("Failed to finalize scheduled run as failed", {
           runId,
-          cronId: run.cronId,
+          scheduledTaskId: run.scheduledTaskId,
           taskId,
           error: String(error),
         });
       } finally {
-        this.cleanupCronRunTracking(runId, run);
+        this.cleanupScheduledRunTracking(runId, run);
       }
       return;
     }
@@ -1297,7 +1296,7 @@ export class TaskRunner {
     }
 
     try {
-      await this.apiClient.updateCronRun(run.cronPath, {
+      await this.apiClient.updateCronRun(run.scheduledTaskPath, {
         run_id: runId,
         status: "completed",
         started: run.startedAtIso,
@@ -1306,13 +1305,13 @@ export class TaskRunner {
         tasks: run.taskIds.length,
       });
     } catch (error) {
-      this.logger.warn("Failed to finalize cron run as completed", {
+      this.logger.warn("Failed to finalize scheduled run as completed", {
         runId,
-        cronId: run.cronId,
+        scheduledTaskId: run.scheduledTaskId,
         error: String(error),
       });
     } finally {
-      this.cleanupCronRunTracking(runId, run);
+      this.cleanupScheduledRunTracking(runId, run);
     }
   }
 
@@ -1329,7 +1328,7 @@ export class TaskRunner {
     return Math.max(TaskRunner.MIN_CRON_CHECK_INTERVAL_MS, configuredMs);
   }
 
-  private async checkCronSchedules(now: Date = new Date()): Promise<void> {
+  private async checkScheduledTasks(now: Date = new Date()): Promise<void> {
     const nowMs = now.getTime();
     if (!this.cronCheckDue(nowMs)) {
       return;
@@ -1339,13 +1338,15 @@ export class TaskRunner {
 
     for (const projectId of this.projects) {
       try {
-        const cronEntries = await this.apiClient.getCronEntries(projectId);
-        const dueEntries = cronEntries.filter((entry) => {
-          if (entry.status !== "active") {
+        const allTasks = await this.apiClient.getAllTasks(projectId);
+        // Filter tasks that have a schedule field and are active
+        const scheduledTasks = allTasks.filter((task) => task.schedule);
+        const dueTasks = scheduledTasks.filter((task) => {
+          if (task.status !== "active") {
             return false;
           }
 
-          const boundsCheck = canRunWithinBounds(entry, now, {
+          const boundsCheck = canRunWithinBounds(task, now, {
             countAttemptsForMaxRuns: true,
           });
           if (!boundsCheck.canRun) {
@@ -1354,49 +1355,35 @@ export class TaskRunner {
 
           return shouldTrigger(
             {
-              schedule: entry.schedule,
-              next_run: entry.next_run,
+              schedule: task.schedule,
+              next_run: task.next_run,
             },
             now
           );
         });
 
         if (isDebugEnabled()) {
-          this.logger.debug("Cron schedule scan complete", {
+          this.logger.debug("Scheduled task scan complete", {
             projectId,
-            cronCount: cronEntries.length,
-            dueCount: dueEntries.length,
+            scheduledCount: scheduledTasks.length,
+            dueCount: dueTasks.length,
           });
         }
 
-        // Phase 2: Process due entries (schedule already validated by filter above)
-        for (const entry of dueEntries) {
+        // Process due scheduled tasks
+        for (const task of dueTasks) {
           try {
-            await this.processDueCronEntry(
-              {
-                id: entry.id,
-                path: entry.path,
-                title: entry.title,
-                schedule: entry.schedule,
-                next_run: entry.next_run,
-                max_runs: entry.max_runs,
-                starts_at: entry.starts_at,
-                expires_at: entry.expires_at,
-                runs: entry.runs,
-              },
-              projectId,
-              now
-            );
+            await this.processScheduledTask(task, allTasks, projectId, now);
           } catch (error) {
-            this.logger.warn("Failed to process cron entry", {
-              cronId: entry.id,
+            this.logger.warn("Failed to process scheduled task", {
+              taskId: task.id,
               projectId,
               error: String(error),
             });
           }
         }
       } catch (error) {
-        this.logger.warn("Cron schedule scan failed", {
+        this.logger.warn("Scheduled task scan failed", {
           projectId,
           error: String(error),
         });
@@ -1404,77 +1391,33 @@ export class TaskRunner {
     }
   }
 
-  private async processDueCronEntry(
-    cronEntry: {
-      id: string;
-      path: string;
-      title: string;
-      schedule?: string;
-      next_run?: string;
-      max_runs?: number;
-      starts_at?: string;
-      expires_at?: string;
-      runs?: CronRun[];
-    },
+  private async processScheduledTask(
+    scheduledTask: ResolvedTask,
+    allTasks: ResolvedTask[],
     projectId: string,
     now: Date
   ): Promise<void> {
-    // Resolve pipeline tasks
-    const allTasks = await this.apiClient.getAllTasks(projectId);
-    const pipelineTasks = resolveCronPipeline(cronEntry.id, allTasks);
+    // Discover pipeline: the scheduled task itself + all downstream dependents
+    const pipelineTasks = getDownstreamTasks(scheduledTask.id, allTasks);
 
     if (pipelineTasks.length === 0) {
       if (isDebugEnabled()) {
-        this.logger.debug("Cron entry has no pipeline tasks", {
-          cronId: cronEntry.id,
+        this.logger.debug("Scheduled task has no pipeline tasks", {
+          taskId: scheduledTask.id,
           projectId,
         });
       }
       return;
     }
 
-    // Check overlap guard (run-aware)
-    let recentRuns: CronRun[] = [];
-    try {
-      const runsResponse = await this.apiClient.getCronRuns(projectId, cronEntry.id);
-      recentRuns = runsResponse.runs;
-    } catch (error) {
-      this.logger.warn("Failed to fetch cron runs for overlap guard", {
-        cronId: cronEntry.id,
-        projectId,
-        error: String(error),
-      });
-    }
-
-    const boundsCheck = canRunWithinBounds(
-      {
-        max_runs: cronEntry.max_runs,
-        starts_at: cronEntry.starts_at,
-        expires_at: cronEntry.expires_at,
-        runs: recentRuns,
-      },
-      new Date(),
-      { countAttemptsForMaxRuns: true }
-    );
-
-    if (!boundsCheck.canRun) {
-      if (isDebugEnabled()) {
-        this.logger.debug("Skipping cron entry at trigger point due to bounds", {
-          cronId: cronEntry.id,
-          projectId,
-          reason: boundsCheck.reason,
-        });
-      }
-      return;
-    }
-
-    const overlapCheck = canTriggerPipeline(pipelineTasks, recentRuns);
+    // Overlap guard: check if the scheduled task or any downstream is in_progress
+    const hasOverlap = pipelineTasks.some((t) => t.status === "in_progress");
     const runId = generateRunId(now);
 
-    if (overlapCheck.canTrigger) {
-      // Record run as in_progress before resetting tasks to reduce race windows.
+    if (!hasOverlap) {
+      // Record run as in_progress on the scheduled task's runs[] before resetting tasks
       const startedAtIso = now.toISOString();
-      await this.apiClient.updateCronRun(cronEntry.path, {
+      await this.apiClient.updateCronRun(scheduledTask.path, {
         run_id: runId,
         status: "in_progress",
         started: startedAtIso,
@@ -1488,11 +1431,11 @@ export class TaskRunner {
         });
       }
 
-      // Track in memory for Phase 4 completion detection
+      // Track in memory for completion detection
       const taskIds = pipelineTasks.map((t) => t.id);
-      this.activeCronRuns.set(runId, {
-        cronId: cronEntry.id,
-        cronPath: cronEntry.path,
+      this.activeScheduledRuns.set(runId, {
+        scheduledTaskId: scheduledTask.id,
+        scheduledTaskPath: scheduledTask.path,
         projectId,
         taskIds,
         startedAtIso,
@@ -1500,36 +1443,36 @@ export class TaskRunner {
         pendingTaskIds: new Set(taskIds),
       });
       for (const taskId of taskIds) {
-        this.taskToCronRun.set(taskId, runId);
+        this.taskToScheduledRun.set(taskId, runId);
       }
 
       this.logger.info(
-        `Triggered cron '${cronEntry.title}' run ${runId} (${pipelineTasks.length} tasks)`
+        `Triggered scheduled task '${scheduledTask.title}' run ${runId} (${pipelineTasks.length} tasks)`
       );
 
-      if (!cronEntry.schedule) {
-        await this.apiClient.updateEntryMetadata(cronEntry.path, {
+      if (!scheduledTask.schedule) {
+        await this.apiClient.updateEntryMetadata(scheduledTask.path, {
           next_run: "",
         });
       }
     } else {
-      // Overlap: record skipped run
-      await this.apiClient.updateCronRun(cronEntry.path, {
+      // Overlap: record skipped run on the scheduled task's runs[]
+      await this.apiClient.updateCronRun(scheduledTask.path, {
         run_id: runId,
         status: "skipped",
         started: now.toISOString(),
-        skip_reason: overlapCheck.reason ?? "overlap",
+        skip_reason: "overlap",
       });
 
       this.logger.warn(
-        `Skipped cron '${cronEntry.title}' run ${runId}: ${overlapCheck.reason ?? "overlap"}`
+        `Skipped scheduled task '${scheduledTask.title}' run ${runId}: overlap`
       );
     }
 
     // Advance next_run only for recurring schedules.
-    if (cronEntry.schedule) {
-      const nextRun = getNextRun(cronEntry.schedule, now);
-      await this.apiClient.updateEntryMetadata(cronEntry.path, {
+    if (scheduledTask.schedule) {
+      const nextRun = getNextRun(scheduledTask.schedule, now);
+      await this.apiClient.updateEntryMetadata(scheduledTask.path, {
         next_run: nextRun.toISOString(),
       });
     }
@@ -1645,9 +1588,9 @@ export class TaskRunner {
       };
 
       // Attach cron context if this task was triggered by a cron run
-      const cronCtx = this.resolveCronContext(task.id);
+      const cronCtx = this.resolveScheduledContext(task.id);
       if (cronCtx) {
-        runningTask.cronId = cronCtx.cronId;
+        runningTask.scheduledTaskId = cronCtx.scheduledTaskId;
         runningTask.runId = cronCtx.runId;
       }
 
@@ -1673,11 +1616,11 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
-          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+          const sessionMeta: { timestamp: string; scheduled_task_id?: string; run_id?: string } = {
             timestamp: new Date().toISOString(),
           };
           if (cronCtx) {
-            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.scheduled_task_id = cronCtx.scheduledTaskId;
             sessionMeta.run_id = cronCtx.runId;
           }
           await this.apiClient.updateEntryMetadata(task.path, {
@@ -2143,7 +2086,7 @@ export class TaskRunner {
 
     this.stats.totalRuntime += result.duration;
 
-    await this.finalizeCronRunForTask(taskId, status);
+    await this.finalizeScheduledRunForTask(taskId, status);
 
     // Release claim
     try {
@@ -2236,7 +2179,7 @@ export class TaskRunner {
 
     this.stats.totalRuntime += duration;
 
-    await this.finalizeCronRunForTask(taskId, status);
+    await this.finalizeScheduledRunForTask(taskId, status);
 
     // Release claim
     try {
@@ -2431,9 +2374,9 @@ export class TaskRunner {
       };
 
       // Attach cron context if this task was triggered by a cron run
-      const cronCtx = this.resolveCronContext(task.id);
+      const cronCtx = this.resolveScheduledContext(task.id);
       if (cronCtx) {
-        newRunningTask.cronId = cronCtx.cronId;
+        newRunningTask.scheduledTaskId = cronCtx.scheduledTaskId;
         newRunningTask.runId = cronCtx.runId;
       }
 
@@ -2447,11 +2390,11 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (newRunningTask.sessionId) {
         try {
-          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+          const sessionMeta: { timestamp: string; scheduled_task_id?: string; run_id?: string } = {
             timestamp: new Date().toISOString(),
           };
           if (cronCtx) {
-            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.scheduled_task_id = cronCtx.scheduledTaskId;
             sessionMeta.run_id = cronCtx.runId;
           }
           await this.apiClient.updateEntryMetadata(task.path, {
@@ -2627,9 +2570,9 @@ export class TaskRunner {
       };
 
       // Attach cron context if this task was triggered by a cron run
-      const cronCtx = this.resolveCronContext(taskId);
+      const cronCtx = this.resolveScheduledContext(taskId);
       if (cronCtx) {
-        runningTask.cronId = cronCtx.cronId;
+        runningTask.scheduledTaskId = cronCtx.scheduledTaskId;
         runningTask.runId = cronCtx.runId;
       }
 
@@ -2654,11 +2597,11 @@ export class TaskRunner {
       // Persist session metadata to task frontmatter for traceability
       if (runningTask.sessionId) {
         try {
-          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+          const sessionMeta: { timestamp: string; scheduled_task_id?: string; run_id?: string } = {
             timestamp: new Date().toISOString(),
           };
           if (cronCtx) {
-            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.scheduled_task_id = cronCtx.scheduledTaskId;
             sessionMeta.run_id = cronCtx.runId;
           }
           await this.apiClient.updateEntryMetadata(taskPath, {
@@ -2764,9 +2707,9 @@ export class TaskRunner {
       };
 
       // Attach cron context if this task was triggered by a cron run
-      const cronCtx = this.resolveCronContext(taskId);
+      const cronCtx = this.resolveScheduledContext(taskId);
       if (cronCtx) {
-        runningTask.cronId = cronCtx.cronId;
+        runningTask.scheduledTaskId = cronCtx.scheduledTaskId;
         runningTask.runId = cronCtx.runId;
       }
 
@@ -2782,11 +2725,11 @@ export class TaskRunner {
       // Step 6: Persist new session metadata to task frontmatter
       if (runningTask.sessionId) {
         try {
-          const sessionMeta: { timestamp: string; cron_id?: string; run_id?: string } = {
+          const sessionMeta: { timestamp: string; scheduled_task_id?: string; run_id?: string } = {
             timestamp: new Date().toISOString(),
           };
           if (cronCtx) {
-            sessionMeta.cron_id = cronCtx.cronId;
+            sessionMeta.scheduled_task_id = cronCtx.scheduledTaskId;
             sessionMeta.run_id = cronCtx.runId;
           }
           await this.apiClient.updateEntryMetadata(taskPath, {
@@ -3390,23 +3333,7 @@ export class TaskRunner {
         onOpenSession: (sessionId) => this.openSession(sessionId),
         // Open OpenCode session in tmux window (O key) - with task context for idle monitoring
         onOpenSessionTmux: (sessionId, taskContext) => this.openSessionInTmux(sessionId, taskContext),
-        // Cron callbacks (Phase 1 groundwork for cron panel/actions)
-        onListCrons: (projectId) => this.apiClient.getCronEntries(projectId),
-        onGetCron: (projectId, cronId) => this.apiClient.getCronEntry(projectId, cronId),
-        onCreateCron: (projectId, request) => this.apiClient.createCronEntry(projectId, request),
-        onUpdateCron: (projectId, cronId, request) =>
-          this.apiClient.updateCronEntry(projectId, cronId, request),
-        onDeleteCron: (projectId, cronId) => this.apiClient.deleteCronEntry(projectId, cronId),
-        onGetCronRuns: (projectId, cronId) => this.apiClient.getCronRuns(projectId, cronId),
-        onGetCronLinkedTasks: (projectId, cronId) =>
-          this.apiClient.getCronLinkedTasks(projectId, cronId),
-        onSetCronLinkedTasks: (projectId, cronId, taskIds) =>
-          this.apiClient.setCronLinkedTasks(projectId, cronId, taskIds),
-        onAddCronLinkedTask: (projectId, cronId, taskId) =>
-          this.apiClient.addCronLinkedTask(projectId, cronId, taskId),
-        onRemoveCronLinkedTask: (projectId, cronId, taskId) =>
-          this.apiClient.removeCronLinkedTask(projectId, cronId, taskId),
-        onTriggerCron: (projectId, cronId) => this.apiClient.triggerCron(projectId, cronId),
+        // Cron callbacks removed — scheduling now handled via task frontmatter
       });
 
       this.logger.info("Ink TUI dashboard initialized", { 
@@ -3541,7 +3468,7 @@ export class TaskRunner {
     const runningInfo = this.processManager.get(taskId);
     const trackedTask = runningInfo?.task ?? this.tuiTasks.get(taskId);
     const taskPath = trackedTask?.path;
-    const runId = trackedTask?.runId ?? this.taskToCronRun.get(taskId);
+    const runId = trackedTask?.runId ?? this.taskToScheduledRun.get(taskId);
     
     if (taskPath) {
       try {
@@ -3606,7 +3533,7 @@ export class TaskRunner {
         });
       }
 
-      await this.finalizeCronRunForTask(taskId, completionStatus);
+      await this.finalizeScheduledRunForTask(taskId, completionStatus);
 
       // Release the claim
       try {

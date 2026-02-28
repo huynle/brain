@@ -62,7 +62,7 @@ export interface RunningTask {
   sessionId?: string;      // OpenCode session ID (discovered via /session endpoint)
   idleSince?: string;      // ISO timestamp when idle was first detected
   completeOnIdle?: boolean; // Whether to auto-complete task when runner detects idle
-  cronId?: string;
+  scheduledTaskId?: string;
   runId?: string;
 }
 
@@ -73,7 +73,7 @@ export interface TaskResult {
   completedAt: string;
   duration: number; // ms
   exitCode?: number;
-  cronId?: string;
+  scheduledTaskId?: string;
 }
 
 // =============================================================================

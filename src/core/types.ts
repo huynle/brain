@@ -467,6 +467,14 @@ export interface Task {
   complete_on_idle?: boolean;
   user_original_request: string | null; // Verbatim user request for validation during task completion
 
+  // Schedule fields (from cron/scheduled tasks)
+  schedule?: string; // cron expression e.g. "0 2 * * *"
+  next_run?: string; // ISO timestamp of next scheduled run
+  max_runs?: number; // optional execution cap
+  starts_at?: string; // optional ISO timestamp gate (inclusive lower bound)
+  expires_at?: string; // optional ISO timestamp gate (inclusive upper bound)
+  runs?: CronRun[]; // execution history
+
   // Feature grouping (optional)
   feature_id?: string; // e.g., "auth-system", "payment-flow"
   feature_priority?: Priority; // Priority for this feature

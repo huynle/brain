@@ -67,6 +67,13 @@ export function mapZkNoteToTask(note: ZkNote): Task {
       (note.metadata?.complete_on_idle as boolean) ?? false,
     user_original_request:
       (note.metadata?.user_original_request as string) || null,
+    // Schedule fields
+    schedule: (note.metadata?.schedule as string) ?? undefined,
+    next_run: (note.metadata?.next_run as string) ?? undefined,
+    max_runs: (note.metadata?.max_runs as number) ?? undefined,
+    starts_at: (note.metadata?.starts_at as string) ?? undefined,
+    expires_at: (note.metadata?.expires_at as string) ?? undefined,
+    runs: (note.metadata?.runs as Task["runs"]) ?? undefined,
     // Feature grouping fields
     feature_id: (note.metadata?.feature_id as string) ?? undefined,
     feature_priority:

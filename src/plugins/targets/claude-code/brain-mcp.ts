@@ -388,6 +388,7 @@ const tools: Tool[] = [
         agent: { type: "string", description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')" },
         model: { type: "string", description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')" },
         schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step." },
+        schedule_enabled: { type: "boolean", description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling." },
         git_branch: { type: "string", description: "Git branch for the task" },
         merge_target_branch: { type: "string", description: "Branch to merge completed work into" },
         merge_policy: { type: "string", enum: ["prompt_only", "auto_pr", "auto_merge"], description: "Merge behavior at checkout completion" },
@@ -499,6 +500,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
         checkout_enabled: { type: "boolean", description: "Enable checkout/worktree flow for this task" },
         complete_on_idle: { type: "boolean", description: "Mark task as completed when agent becomes idle" },
         schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *')" },
+        schedule_enabled: { type: "boolean", description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling." },
         feature_id: { type: "string", description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" },
         feature_priority: { type: "string", enum: PRIORITIES, description: "Priority for this feature group" },
         feature_depends_on: { type: "array", items: { type: "string" }, description: "Feature IDs this feature depends on" },
@@ -866,6 +868,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           model: args.type === "task" ? args.model : undefined,
           // Cron scheduling for tasks
           schedule: args.type === "task" ? args.schedule : undefined,
+          schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
         });
         return `Saved to brain\n\nPath: ${response.path}\nID: ${response.id}\nTitle: ${response.title}\nType: ${response.type}\nStatus: ${response.status}`;
       }
@@ -985,6 +988,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           checkout_enabled: args.checkout_enabled,
           complete_on_idle: args.complete_on_idle,
           schedule: args.schedule,
+          schedule_enabled: args.schedule_enabled,
           feature_id: args.feature_id,
           feature_priority: args.feature_priority,
           feature_depends_on: args.feature_depends_on,
@@ -1012,6 +1016,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         if (args.checkout_enabled !== undefined) changes.push(`Checkout Enabled: ${args.checkout_enabled}`);
         if (args.complete_on_idle !== undefined) changes.push(`Complete On Idle: ${args.complete_on_idle}`);
         if (args.schedule) changes.push(`Schedule: ${args.schedule}`);
+        if (args.schedule_enabled !== undefined) changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
         if (args.feature_id) changes.push(`Feature ID: ${args.feature_id}`);
         if (args.feature_priority) changes.push(`Feature Priority: ${args.feature_priority}`);
         if (args.feature_depends_on) changes.push(`Feature Dependencies: ${(args.feature_depends_on as string[]).length} feature(s)`);

@@ -1444,6 +1444,7 @@ export interface GenerateFrontmatterOptions {
   run_finalizations?: Record<string, RunFinalization>;
   // Cron scheduling metadata
   schedule?: string;
+  schedule_enabled?: boolean;
   next_run?: string;
   max_runs?: number;
   starts_at?: string;
@@ -1484,6 +1485,10 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.schedule) {
     lines.push(`schedule: ${escapeYamlValue(options.schedule)}`);
+  }
+
+  if (options.schedule_enabled !== undefined) {
+    lines.push(`schedule_enabled: ${options.schedule_enabled}`);
   }
 
   if (options.next_run) {

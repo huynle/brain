@@ -532,6 +532,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps (create task + create cron + link) to 1 step."
             ),
+          schedule_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."
+            ),
         },
         async execute(args) {
           try {
@@ -589,6 +595,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               model: args.type === "task" ? args.model : undefined,
               // Cron scheduling for tasks
               schedule: args.type === "task" ? args.schedule : undefined,
+              schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";
@@ -1352,6 +1359,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When set, creates/updates linked cron entry."),
+          schedule_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe("Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."),
           direct_prompt: tool.schema
             .string()
             .optional()
@@ -1366,8 +1377,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.checkout_enabled === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, remote_branch_policy, schedule, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.checkout_enabled === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, direct_prompt, agent, model`;
           }
 
           try {
@@ -1398,6 +1409,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               complete_on_idle: args.complete_on_idle,
               remote_branch_policy: args.remote_branch_policy,
               schedule: args.schedule,
+              schedule_enabled: args.schedule_enabled,
               direct_prompt: args.direct_prompt,
               agent: args.agent,
               model: args.model,
@@ -1443,6 +1455,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
             if (args.schedule)
               changes.push(`Schedule: ${args.schedule}`);
+            if (args.schedule_enabled !== undefined)
+              changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
             if (args.direct_prompt)
               changes.push(`Direct Prompt: set`);
             if (args.agent)

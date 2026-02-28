@@ -139,6 +139,7 @@ export interface BrainEntry {
   access_count?: number;
   last_verified?: string;
   schedule?: string; // cron expression e.g. "0 2 * * *"
+  schedule_enabled?: boolean; // whether the schedule is active (default true when schedule exists)
   next_run?: string; // ISO timestamp of next scheduled run
   max_runs?: number; // optional execution cap for this cron
   attempts_used?: number; // derived attempted run count for cron visibility
@@ -196,6 +197,7 @@ export interface CreateEntryRequest {
   project?: string;
   relatedEntries?: string[];
   schedule?: string;
+  schedule_enabled?: boolean;
   next_run?: string;
   max_runs?: number;
   starts_at?: string;
@@ -260,6 +262,7 @@ export interface UpdateEntryRequest {
   tags?: string[];
   priority?: Priority;
   schedule?: string;
+  schedule_enabled?: boolean;
   next_run?: string;
   max_runs?: number;
   starts_at?: string;
@@ -464,6 +467,7 @@ export interface Task {
 
   // Schedule fields (from cron/scheduled tasks)
   schedule?: string; // cron expression e.g. "0 2 * * *"
+  schedule_enabled?: boolean; // whether the schedule is active (default true)
   next_run?: string; // ISO timestamp of next scheduled run
   max_runs?: number; // optional execution cap
   starts_at?: string; // optional ISO timestamp gate (inclusive lower bound)

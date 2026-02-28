@@ -1345,27 +1345,62 @@ export class TaskRunner {
         // enabling recurring execution (e.g. complete_on_idle tasks that finished
         // their previous run and are waiting for the next scheduled time).
         const scheduledTasks = allTasks.filter((task) => task.schedule);
-        const dueTasks = scheduledTasks.filter((task) => {
+        const dueTasks: ResolvedTask[] = [];
+        for (const task of scheduledTasks) {
           const eligibleStatuses = ["active", "completed"];
           if (!eligibleStatuses.includes(task.status)) {
-            return false;
+            continue;
+          }
+
+          // Check if schedule is explicitly disabled
+          if (task.schedule_enabled === false) {
+            continue;
           }
 
           const boundsCheck = canRunWithinBounds(task, now, {
             countAttemptsForMaxRuns: true,
           });
           if (!boundsCheck.canRun) {
-            return false;
+            // Only disable schedule for permanent conditions (max_runs exhausted, after expires_at)
+            // "before starts_at" is temporary — the task will become eligible later
+            const isPermanent = boundsCheck.reason &&
+              (boundsCheck.reason.startsWith("max_runs") || boundsCheck.reason.startsWith("after expires_at"));
+            if (isPermanent) {
+              try {
+                await this.apiClient.updateEntryMetadata(task.path, {
+                  schedule_enabled: false,
+                });
+                const note = `\n\n## Schedule Disabled\n` +
+                  `- Reason: ${boundsCheck.reason}\n` +
+                  `- Disabled at: ${now.toISOString()}\n` +
+                  `- To re-enable: set schedule_enabled to true\n`;
+                await this.apiClient.appendToTask(task.path, note);
+                this.logger.info("Schedule disabled for task", {
+                  taskId: task.id,
+                  projectId,
+                  reason: boundsCheck.reason,
+                });
+              } catch (error) {
+                this.logger.warn("Failed to disable schedule for task", {
+                  taskId: task.id,
+                  projectId,
+                  error: String(error),
+                });
+              }
+            }
+            continue;
           }
 
-          return shouldTrigger(
+          if (shouldTrigger(
             {
               schedule: task.schedule,
               next_run: task.next_run,
             },
             now
-          );
-        });
+          )) {
+            dueTasks.push(task);
+          }
+        }
 
         if (isDebugEnabled()) {
           this.logger.debug("Scheduled task scan complete", {

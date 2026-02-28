@@ -2577,7 +2577,20 @@ describe("TaskRunner - scheduled task trigger and overlap", () => {
     await checkScheduledTasks(now);
 
     const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
-    expect(patchCalls.length).toBe(0);
+    // Task is not triggered (no pipeline reset), but schedule is disabled with a note
+    const disablePatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return body?.schedule_enabled === false;
+    });
+    expect(disablePatch).toBeDefined();
+    const appendPatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return typeof body?.append === "string" && (body.append as string).includes("Schedule Disabled");
+    });
+    expect(appendPatch).toBeDefined();
+    // No task reset to pending (no pipeline trigger)
+    const taskResets = patchCalls.filter((c) => (c.body as Record<string, unknown>)?.status === "pending");
+    expect(taskResets.length).toBe(0);
   });
 
   test("checkScheduledTasks skips when trigger time is outside configured window", async () => {
@@ -2613,6 +2626,165 @@ describe("TaskRunner - scheduled task trigger and overlap", () => {
 
     expect(activeScheduledRuns).toBeInstanceOf(Map);
     expect(taskToScheduledRun).toBeInstanceOf(Map);
+  });
+
+  test("checkScheduledTasks skips tasks with schedule_enabled=false", async () => {
+    const scheduledTask = createMockTask("sched-disabled", {
+      path: "projects/test-project/task/sched-disabled.md",
+      status: "active",
+      schedule: "0 9 * * *",
+      schedule_enabled: false,
+      next_run: "2025-01-15T09:00:00Z",
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // No PATCH calls should be made — task is skipped entirely
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBe(0);
+  });
+
+  test("checkScheduledTasks triggers tasks with schedule_enabled=true (explicit)", async () => {
+    const scheduledTask = createMockTask("sched-enabled", {
+      path: "projects/test-project/task/sched-enabled.md",
+      status: "active",
+      schedule: "0 9 * * *",
+      schedule_enabled: true,
+      next_run: "2025-01-15T09:00:00Z",
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // Task should be triggered — PATCH calls for reset and run recording
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBeGreaterThan(0);
+  });
+
+  test("checkScheduledTasks triggers tasks with schedule_enabled undefined (defaults to enabled)", async () => {
+    const scheduledTask = createMockTask("sched-default", {
+      path: "projects/test-project/task/sched-default.md",
+      status: "active",
+      schedule: "0 9 * * *",
+      // schedule_enabled is NOT set — should default to enabled
+      next_run: "2025-01-15T09:00:00Z",
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // Task should be triggered — PATCH calls for reset and run recording
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+    expect(patchCalls.length).toBeGreaterThan(0);
+  });
+
+  test("checkScheduledTasks disables schedule and appends note when max_runs exhausted", async () => {
+    const scheduledTask = createMockTask("sched-maxed", {
+      path: "projects/test-project/task/sched-maxed.md",
+      status: "active",
+      schedule: "0 9 * * *",
+      next_run: "2025-01-15T09:00:00Z",
+      max_runs: 1,
+      runs: [
+        {
+          run_id: "20250114-0900",
+          status: "completed",
+          started: "2025-01-14T09:00:00Z",
+          completed: "2025-01-14T09:05:00Z",
+        },
+      ],
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // Should have PATCH calls: one to disable schedule_enabled, one to append note
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+
+    // Check that schedule_enabled was set to false
+    const disablePatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return body?.schedule_enabled === false;
+    });
+    expect(disablePatch).toBeDefined();
+
+    // Check that a note was appended explaining why
+    const appendPatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return typeof body?.append === "string" && (body.append as string).includes("Schedule Disabled");
+    });
+    expect(appendPatch).toBeDefined();
+  });
+
+  test("checkScheduledTasks disables schedule and appends note when expires_at passed", async () => {
+    const scheduledTask = createMockTask("sched-expired", {
+      path: "projects/test-project/task/sched-expired.md",
+      status: "active",
+      schedule: "0 9 * * *",
+      next_run: "2025-01-15T09:00:00Z",
+      expires_at: "2025-01-14T23:59:59Z", // Expired yesterday
+    });
+
+    const { fetchFn, calls } = createScheduledTaskFetch([scheduledTask]);
+    globalThis.fetch = fetchFn;
+
+    const now = new Date("2025-01-15T09:01:00Z");
+    const runner = new TaskRunner({ projectId: "test-project", config });
+    const checkScheduledTasks = (runner as unknown as {
+      checkScheduledTasks: (now?: Date) => Promise<void>;
+    }).checkScheduledTasks.bind(runner);
+
+    await checkScheduledTasks(now);
+
+    // Should have PATCH calls: one to disable schedule_enabled, one to append note
+    const patchCalls = calls.filter((c) => c.method === "PATCH" && c.url.includes("/entries/"));
+
+    // Check that schedule_enabled was set to false
+    const disablePatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return body?.schedule_enabled === false;
+    });
+    expect(disablePatch).toBeDefined();
+
+    // Check that a note was appended explaining why
+    const appendPatch = patchCalls.find((c) => {
+      const body = c.body as Record<string, unknown>;
+      return typeof body?.append === "string" && (body.append as string).includes("Schedule Disabled");
+    });
+    expect(appendPatch).toBeDefined();
   });
 });
 

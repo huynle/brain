@@ -193,6 +193,8 @@ function normalizeTask(
     priority: (asString(rawTask.priority) ?? 'medium') as TaskDisplay['priority'],
     tags: asStringArray(rawTask.tags),
     schedule: asString(rawTask.schedule) ?? null,
+    scheduleEnabled:
+      typeof rawTask.schedule_enabled === 'boolean' ? rawTask.schedule_enabled : undefined,
     dependencies: depIds,
     dependents: dependentIds,
     dependencyTitles: depIds.map((id) => idToTitle.get(id) ?? id),

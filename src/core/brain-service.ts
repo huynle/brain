@@ -636,6 +636,10 @@ export class BrainService {
         zkArgs.push("--extra", `schedule=${request.schedule}`);
       }
 
+      if (request.schedule_enabled !== undefined) {
+        zkArgs.push("--extra", `schedule_enabled=${request.schedule_enabled}`);
+      }
+
       if (request.next_run) {
         zkArgs.push("--extra", `next_run=${request.next_run}`);
       }
@@ -725,6 +729,7 @@ export class BrainService {
         generated_by: request.generated_by,
         // Cron metadata
         schedule: request.schedule,
+        schedule_enabled: request.schedule_enabled,
         next_run: request.next_run,
         max_runs: request.max_runs,
         starts_at: request.starts_at,
@@ -953,6 +958,7 @@ export class BrainService {
       generated_by: frontmatter.generated_by as string | undefined,
       // Cron metadata
       schedule: frontmatter.schedule as string | undefined,
+      schedule_enabled: frontmatter.schedule_enabled as boolean | undefined,
       next_run: frontmatter.next_run as string | undefined,
       max_runs: frontmatter.max_runs as number | undefined,
       starts_at: frontmatter.starts_at as string | undefined,
@@ -1010,6 +1016,7 @@ export class BrainService {
       request.generated_key === undefined &&
       request.generated_by === undefined &&
       request.schedule === undefined &&
+      request.schedule_enabled === undefined &&
       request.next_run === undefined &&
       request.max_runs === undefined &&
       request.starts_at === undefined &&
@@ -1018,7 +1025,7 @@ export class BrainService {
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, schedule_enabled, next_run, max_runs, starts_at, expires_at, run_once_at, runs"
       );
     }
 
@@ -1142,6 +1149,9 @@ export class BrainService {
       if (request.schedule && request.next_run === undefined) {
         updatedFrontmatter.next_run = getNextRun(request.schedule).toISOString();
       }
+    }
+    if (request.schedule_enabled !== undefined) {
+      updatedFrontmatter.schedule_enabled = request.schedule_enabled;
     }
     if (request.run_once_at !== undefined) {
       updatedFrontmatter.next_run = request.run_once_at;

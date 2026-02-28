@@ -20,6 +20,7 @@ created: {{format-date now}}
 {{/if}}{{#if extra.agent}}agent: "{{extra.agent}}"
 {{/if}}{{#if extra.model}}model: "{{extra.model}}"
 {{/if}}{{#if extra.schedule}}schedule: "{{extra.schedule}}"
+{{/if}}{{#if extra.schedule_enabled}}schedule_enabled: {{extra.schedule_enabled}}
 {{/if}}{{#if extra.execution_mode}}execution_mode: {{extra.execution_mode}}
 {{/if}}{{#if extra.merge_target_branch}}merge_target_branch: "{{extra.merge_target_branch}}"
 {{/if}}{{#if extra.merge_policy}}merge_policy: {{extra.merge_policy}}

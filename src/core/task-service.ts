@@ -68,6 +68,7 @@ export function mapZkNoteToTask(note: ZkNote): Task {
       (note.metadata?.user_original_request as string) || null,
     // Schedule fields
     schedule: (note.metadata?.schedule as string) ?? undefined,
+    schedule_enabled: (note.metadata?.schedule_enabled as boolean) ?? undefined,
     next_run: (note.metadata?.next_run as string) ?? undefined,
     max_runs: (note.metadata?.max_runs as number) ?? undefined,
     starts_at: (note.metadata?.starts_at as string) ?? undefined,

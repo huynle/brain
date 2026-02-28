@@ -29,6 +29,7 @@ export interface TaskDisplay {
   priority: Priority;
   tags: string[];               // Tags for filtering and categorization
   schedule?: string | null;     // Cron expression for periodic execution
+  scheduleEnabled?: boolean;    // Whether the schedule is active (default true when schedule exists)
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building
   dependencyTitles: string[];   // Direct dependency titles for display in TaskDetail
@@ -386,6 +387,7 @@ export interface AppProps {
        complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
+      schedule_enabled?: boolean;
       agent?: string;
       model?: string;
       direct_prompt?: string;

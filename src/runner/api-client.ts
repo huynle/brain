@@ -353,6 +353,7 @@ export class ApiClient {
       complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
+      schedule_enabled?: boolean;
       priority?: Priority;
       tags?: string[];
       depends_on?: string[];
@@ -380,6 +381,7 @@ export class ApiClient {
     if (fields.complete_on_idle !== undefined) payload.complete_on_idle = fields.complete_on_idle;
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
     if (fields.schedule !== undefined) payload.schedule = fields.schedule;
+    if (fields.schedule_enabled !== undefined) payload.schedule_enabled = fields.schedule_enabled;
     if (fields.priority !== undefined) payload.priority = fields.priority;
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;

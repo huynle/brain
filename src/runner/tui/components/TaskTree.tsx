@@ -1391,10 +1391,8 @@ const TaskRow = React.memo(function TaskRow({
   // Cycle indicator
   const cycleSuffix = inCycle ? ' ↺' : '';
 
-  // Cron indicator for scheduled tasks (based on schedule field)
-  const cronSuffix = task.schedule
-    ? ` [cron: ${task.schedule}]`
-    : '';
+  // Schedule indicator for scheduled tasks
+  const scheduleSuffix = task.schedule ? ' [scheduled]' : '';
   
   // Checkbox indicator (only when multi-select is active)
   const checkboxPrefix = showCheckboxes ? (isChecked ? '[x] ' : '[ ] ') : '';
@@ -1475,12 +1473,12 @@ const TaskRow = React.memo(function TaskRow({
           {cycleSuffix}
         </Text>
       )}
-      {cronSuffix && (
+      {scheduleSuffix && (
         <Text
           color={isSelected ? 'white' : 'yellow'}
           backgroundColor={rowBackgroundColor}
         >
-          {cronSuffix}
+          {scheduleSuffix}
         </Text>
       )}
     </Box>

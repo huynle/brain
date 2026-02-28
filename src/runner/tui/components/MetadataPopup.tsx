@@ -118,10 +118,6 @@ export interface MetadataPopupProps {
   interactionMode: MetadataInteractionMode;
   /** Current edit buffer for text fields or status selection */
   editBuffer?: string;
-  /** Cron IDs linked to this task */
-  cronIds?: string[];
-  /** Cron names map (cron ID -> cron title) */
-  cronNames?: Record<string, string>;
   /** Fields with mixed values across selected tasks (batch/feature mode only) */
   mixedFields?: ReadonlySet<MetadataField>;
 }
@@ -217,8 +213,6 @@ export function MetadataPopup({
   allowedStatuses,
   interactionMode,
   editBuffer = '',
-  cronIds,
-  cronNames,
   mixedFields,
 }: MetadataPopupProps): React.ReactElement {
   // Truncate title if too long
@@ -308,8 +302,6 @@ export function MetadataPopup({
         return 'j/k: navigate  Enter: edit  Esc: close';
     }
   };
-
-  const validCronIds = (cronIds ?? []).filter((cronId) => Boolean(cronNames?.[cronId]));
 
   return (
     <Box
@@ -513,9 +505,6 @@ export function MetadataPopup({
                   {isFocused && !isEditing && FIELD_HINTS[field] && (
                     <Text dimColor> {FIELD_HINTS[field]}</Text>
                   )}
-                  {field === 'schedule' && (
-                    <Text dimColor> (creates NEW cron)</Text>
-                  )}
                   {isFocused && (
                     <Text dimColor> (Enter to edit)</Text>
                   )}
@@ -526,32 +515,7 @@ export function MetadataPopup({
           );
         })}
 
-        {/* Cron Links field (read-only, only shown if cronIds present) */}
-        {validCronIds.length > 0 && (
-          <Box>
-            {/* No selection indicator for read-only field */}
-            <Text>  </Text>
 
-            {/* Field label (fixed width for alignment) */}
-            <Box width={22} flexShrink={0}>
-              <Text>Cron Links:</Text>
-            </Box>
-
-            {/* Cron badges */}
-            <Box flexDirection="column" flexShrink={1}>
-              <Text dimColor>{validCronIds.length} linked cron{validCronIds.length === 1 ? '' : 's'}</Text>
-              {validCronIds.map((cronId) => {
-                const cronName = cronNames?.[cronId] as string;
-                return (
-                  <Box key={cronId}>
-                    <Text dimColor>📅 {cronName}</Text>
-                  </Box>
-                );
-              })}
-              <Text dimColor>Hint: open the Crons view to inspect local next-run and run bounds.</Text>
-            </Box>
-          </Box>
-        )}
       </Box>
 
       {/* Footer with shortcuts */}

@@ -536,180 +536,24 @@ describe('MetadataPopup', () => {
     });
   });
 
-  describe('cron links field', () => {
-    it('should show "Cron Links:" field when task has cron_ids', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={['cron1', 'cron2']}
-          cronNames={{ cron1: 'Daily Backup', cron2: 'Weekly Report' }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('Cron Links:');
-    });
-
-    it('should display cron name badges with calendar emoji', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={['cron1']}
-          cronNames={{ cron1: 'Daily Backup' }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('📅 Daily Backup');
-    });
-
-    it('should display multiple cron badges, one per line', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={['cron1', 'cron2', 'cron3']}
-          cronNames={{ 
-            cron1: 'Daily Backup', 
-            cron2: 'Weekly Report',
-            cron3: 'Monthly Cleanup'
-          }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('📅 Daily Backup');
-      expect(frame).toContain('📅 Weekly Report');
-      expect(frame).toContain('📅 Monthly Cleanup');
-    });
-
-    it('should only show cron links that exist in cronNames', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={['cron1', 'cron2']}
-          cronNames={{ cron1: 'Daily Backup' }} // cron2 missing
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('📅 Daily Backup');
-      expect(frame).not.toContain('cron2');
-    });
-
-    it('should keep valid cron badge and suppress stale cron ID text', () => {
-      const { lastFrame } = render(
-        <MetadataPopup
-          {...defaultProps}
-          cronIds={['crn00001', 'stale-cron-id']}
-          cronNames={{ crn00001: 'Nightly Cleanup' }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('Cron Links:');
-      expect(frame).toContain('📅 Nightly Cleanup');
-      expect(frame).not.toContain('stale-cron-id');
-    });
-
-    it('should not show "Cron Links:" field when cronIds is empty', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={[]}
-          cronNames={{}}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).not.toContain('Cron Links:');
-    });
-
-    it('should not show "Cron Links:" field when cronIds is undefined', () => {
-      const { lastFrame } = render(
-        <MetadataPopup 
-          {...defaultProps} 
-          cronIds={undefined}
-          cronNames={{}}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).not.toContain('Cron Links:');
-    });
-
-    it('should not show "Cron Links:" field when no cron IDs resolve to names', () => {
-      const { lastFrame } = render(
-        <MetadataPopup
-          {...defaultProps}
-          cronIds={['orphan-cron-id']}
-          cronNames={{}}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).not.toContain('Cron Links:');
-      expect(frame).not.toContain('orphan-cron-id');
-    });
-  });
-
-  describe('schedule field help text', () => {
-    it('should show "(creates NEW cron)" help text for schedule field', () => {
+  describe('schedule field', () => {
+    it('should not show "(creates NEW cron)" help text for schedule field', () => {
       const { lastFrame } = render(
         <MetadataPopup {...defaultProps} />
       );
 
       const frame = lastFrame();
       expect(frame).toContain('Schedule:');
-      expect(frame).toContain('(creates NEW cron)');
-    });
-  });
-
-  describe('Phase 4: Integration - cronIds prop', () => {
-    it('should accept cronIds prop from parent and display cron badges', () => {
-      const { lastFrame } = render(
-        <MetadataPopup
-          {...defaultProps}
-          cronIds={['cron123', 'cron456']}
-          cronNames={{
-            'cron123': 'Daily Backup',
-            'cron456': 'Weekly Cleanup'
-          }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('Cron Links:');
-      expect(frame).toContain('Daily Backup');
-      expect(frame).toContain('Weekly Cleanup');
+      expect(frame).not.toContain('(creates NEW cron)');
     });
 
-    it('should handle empty cronIds gracefully', () => {
+    it('should not show "Cron Links:" field (removed)', () => {
       const { lastFrame } = render(
-        <MetadataPopup
-          {...defaultProps}
-          cronIds={[]}
-          cronNames={{}}
-        />
+        <MetadataPopup {...defaultProps} />
       );
 
       const frame = lastFrame();
       expect(frame).not.toContain('Cron Links:');
-    });
-
-    it('should hide unknown cron IDs when cronNames is missing entries', () => {
-      const { lastFrame } = render(
-        <MetadataPopup
-          {...defaultProps}
-          cronIds={['cron123', 'unknown456']}
-          cronNames={{
-            'cron123': 'Daily Backup'
-          }}
-        />
-      );
-
-      const frame = lastFrame();
-      expect(frame).toContain('Daily Backup');
-      expect(frame).not.toContain('unknown456');
     });
   });
 

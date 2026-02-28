@@ -80,7 +80,7 @@ describe('TaskTree', () => {
       expect(lastFrame()).toContain('Tasks (3)');
     });
 
-    it('renders cron indicator for cron-linked tasks', () => {
+    it('renders scheduled indicator for tasks with schedule field', () => {
       const tasks = [
         createTask({
           id: 'cron-1',
@@ -93,7 +93,7 @@ describe('TaskTree', () => {
         <TaskTree tasks={tasks} selectedId={null} onSelect={() => {}} {...defaultTreeProps} />
       );
 
-      expect(lastFrame()).toContain('[cron: 0 2 * * *]');
+      expect(lastFrame()).toContain('[scheduled]');
     });
   });
 

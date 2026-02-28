@@ -44,7 +44,6 @@ function createTask(id: string, overrides: Partial<ResolvedTask> = {}): Resolved
     priority: "medium",
     status: "pending",
     depends_on: [],
-    cron_ids: ["cron-daily"],
     tags: [],
     created: new Date().toISOString(),
     target_workdir: null,

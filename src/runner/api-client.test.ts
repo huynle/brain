@@ -758,27 +758,6 @@ describe("ApiClient", () => {
   });
 
   describe("updateEntryMetadata", () => {
-    it("includes cron_ids in PATCH payload when provided", async () => {
-      let capturedBody: string | undefined;
-
-      globalThis.fetch = ((_: string, options?: RequestInit) => {
-        capturedBody = options?.body as string;
-        return Promise.resolve(new Response("{}", { status: 200 }));
-      }) as typeof fetch;
-
-      await client.updateEntryMetadata("projects/test/task/abc.md", {
-        status: "pending",
-        cron_ids: ["crn00001", "crn00002"],
-      });
-
-      expect(capturedBody).toBe(
-        JSON.stringify({
-          status: "pending",
-          cron_ids: ["crn00001", "crn00002"],
-        })
-      );
-    });
-
     it("includes merge intent fields in PATCH payload when provided", async () => {
       let capturedBody: string | undefined;
 

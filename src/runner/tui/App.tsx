@@ -1620,9 +1620,9 @@ export function App({
       }
     }
 
-    // Fetch cron names if task has cron_ids
+    // cron_ids field removed — fetch cron names based on schedule field instead
     let fetchedCronNames: Record<string, string> = {};
-    if (task.cron_ids && task.cron_ids.length > 0 && task.projectId) {
+    if (task.schedule && task.projectId) {
       try {
         const apiClient = getApiClient();
         fetchedCronNames = await apiClient.getCronNames(task.projectId);
@@ -3084,10 +3084,8 @@ export function App({
         }
 
         if (input === 'a' || input === 'u' || input === 'R') {
-          const linkedIds = tasks
-            .filter((task) => taskBelongsToProject(task, selectedProjectId))
-            .filter((task) => task.cron_ids?.includes(selectedCron.id))
-            .map((task) => task.id);
+          // cron_ids field removed — no tasks are linked via cron_ids anymore
+          const linkedIds: string[] = [];
 
           const initialLinked = new Set(linkedIds);
           setCronLinkEditorProjectId(selectedProjectId);
@@ -4253,7 +4251,7 @@ export function App({
           allowedStatuses={ENTRY_STATUSES}
           interactionMode={metadataInteractionMode}
           editBuffer={metadataEditBuffer}
-          cronIds={metadataTargetTasks[0]?.cron_ids}
+          cronIds={undefined}
           cronNames={cronNames}
           mixedFields={metadataMixedFields}
         />

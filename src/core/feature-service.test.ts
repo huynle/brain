@@ -26,7 +26,6 @@ function mockTask(overrides: Partial<ResolvedTask> = {}): ResolvedTask {
     priority: "medium",
     status: "pending",
     depends_on: [],
-    cron_ids: [],
     tags: [],
     created: "2024-01-01",
     target_workdir: null,

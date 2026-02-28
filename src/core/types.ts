@@ -149,7 +149,6 @@ export interface BrainEntry {
   window_expires_at_utc?: string; // normalized UTC expires_at value for display contracts
   starts_at?: string; // optional ISO timestamp gate (inclusive lower bound)
   expires_at?: string; // optional ISO timestamp gate (inclusive upper bound)
-  cron_ids?: string[]; // for tasks: which cron entries trigger this task
   runs?: CronRun[]; // for cron entries: execution history
 
   // Execution context for tasks
@@ -203,7 +202,6 @@ export interface CreateEntryRequest {
   starts_at?: string;
   expires_at?: string;
   run_once_at?: string; // loose datetime input; normalized to UTC by API layer
-  cron_ids?: string[];
   runs?: CronRun[];
 
   // Execution context for tasks
@@ -268,7 +266,6 @@ export interface UpdateEntryRequest {
   starts_at?: string;
   expires_at?: string;
   run_once_at?: string; // loose datetime input; normalized to UTC by API layer
-  cron_ids?: string[];
   runs?: CronRun[];
   target_workdir?: string;
   git_branch?: string;
@@ -449,7 +446,6 @@ export interface Task {
   status: EntryStatus;
   depends_on: string[];
   tags: string[]; // Tags for filtering and categorization
-  cron_ids: string[]; // IDs of cron entries that trigger this task
   created: string;
   modified?: string; // ISO timestamp when last modified
   target_workdir: string | null; // Explicit workdir override for task execution (absolute path)

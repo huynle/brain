@@ -297,7 +297,6 @@ describe("TaskService", () => {
         priority: "medium",
         status: "pending",
         tags: [],
-        cron_ids: [],
         created: "2025-01-01",
         target_workdir: null,
         workdir: null,

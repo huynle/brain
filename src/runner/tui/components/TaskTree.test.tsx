@@ -85,7 +85,6 @@ describe('TaskTree', () => {
         createTask({
           id: 'cron-1',
           title: 'Nightly Sync',
-          cron_ids: ['crn12345'],
           schedule: '0 2 * * *',
         }),
       ];

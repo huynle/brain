@@ -20,7 +20,6 @@ function mockTask(overrides: Partial<Task> = {}): Task {
     status: "pending",
     depends_on: [],
     tags: [],
-    cron_ids: [],
     created: "2026-01-01T00:00:00.000Z",
     modified: "2026-01-01T00:00:00.000Z",
     target_workdir: null,
@@ -231,11 +230,11 @@ describe("canRunWithinBounds", () => {
 describe("resolveCronPipeline", () => {
   it("resolves upstream cron-only pipeline for mixed dependencies", () => {
     const tasks = [
-      mockTask({ id: "a", title: "A", cron_ids: ["cron-nightly"] }),
+      mockTask({ id: "a", title: "A" }),
       mockTask({ id: "b", title: "B", depends_on: ["a"] }),
-      mockTask({ id: "c", title: "C", depends_on: ["b"], cron_ids: ["cron-nightly"] }),
+      mockTask({ id: "c", title: "C", depends_on: ["b"] }),
       mockTask({ id: "d", title: "D", depends_on: ["c"] }),
-      mockTask({ id: "e", title: "E", depends_on: ["a"], cron_ids: ["other-cron"] }),
+      mockTask({ id: "e", title: "E", depends_on: ["a"] }),
     ];
 
     const pipeline = resolveCronPipeline("cron-nightly", tasks);
@@ -245,9 +244,9 @@ describe("resolveCronPipeline", () => {
 
   it("leaf cron can resolve full upstream cron chain", () => {
     const tasks = [
-      mockTask({ id: "root", cron_ids: ["leaf-cron"] }),
-      mockTask({ id: "mid", depends_on: ["root"], cron_ids: ["leaf-cron"] }),
-      mockTask({ id: "leaf", depends_on: ["mid"], cron_ids: ["leaf-cron"] }),
+      mockTask({ id: "root" }),
+      mockTask({ id: "mid", depends_on: ["root"] }),
+      mockTask({ id: "leaf", depends_on: ["mid"] }),
     ];
 
     expect(resolveCronPipeline("leaf-cron", tasks).map((t) => t.id)).toEqual([
@@ -259,7 +258,7 @@ describe("resolveCronPipeline", () => {
 
   it("root cron triggers only itself when descendants are not tagged", () => {
     const tasks = [
-      mockTask({ id: "root", cron_ids: ["root-cron"] }),
+      mockTask({ id: "root" }),
       mockTask({ id: "child", depends_on: ["root"] }),
       mockTask({ id: "grandchild", depends_on: ["child"] }),
     ];

@@ -448,7 +448,6 @@ export function parseFrontmatter(content: string): {
   const tags: string[] = [];
   const dependsOn: string[] = [];
   const featureDependsOn: string[] = [];
-  const cronIds: string[] = [];
   const runs: CronRun[] = [];
   const sessions: Record<
     string,
@@ -792,7 +791,7 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
-    // Handle cron_ids array
+    // Ignore legacy cron_ids array (field removed, but may exist in old files)
     if (line.match(/^cron_ids:\s*$/)) {
       inCronIds = true;
       inRuns = false;
@@ -985,10 +984,9 @@ export function parseFrontmatter(content: string): {
     }
 
     if (inCronIds) {
+      // Consume and discard legacy cron_ids items
       const cronIdMatch = line.match(/^\s+-\s+(.+?)\s*$/);
-      if (cronIdMatch) {
-        cronIds.push(parseYamlStringValue(cronIdMatch[1]));
-      } else if (!line.match(/^\s/)) {
+      if (!cronIdMatch && !line.match(/^\s/)) {
         inCronIds = false;
       }
     }
@@ -1045,10 +1043,6 @@ export function parseFrontmatter(content: string): {
 
   if (featureDependsOn.length > 0) {
     frontmatter.feature_depends_on = featureDependsOn;
-  }
-
-  if (cronIds.length > 0) {
-    frontmatter.cron_ids = cronIds;
   }
 
   if (runs.length > 0) {
@@ -1275,13 +1269,6 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
   if (fm.starts_at) lines.push(`starts_at: ${escapeYamlValue(fm.starts_at as string)}`);
   if (fm.expires_at) lines.push(`expires_at: ${escapeYamlValue(fm.expires_at as string)}`);
 
-  if (Array.isArray(fm.cron_ids) && fm.cron_ids.length > 0) {
-    lines.push("cron_ids:");
-    for (const cronId of fm.cron_ids) {
-      lines.push(`  - ${escapeYamlValue(String(cronId))}`);
-    }
-  }
-
   if (Array.isArray(fm.runs) && fm.runs.length > 0) {
     lines.push("runs:");
     for (const rawRun of fm.runs) {
@@ -1461,7 +1448,6 @@ export interface GenerateFrontmatterOptions {
   max_runs?: number;
   starts_at?: string;
   expires_at?: string;
-  cron_ids?: string[];
   runs?: CronRun[];
   // Timestamp for chronological ordering (matches zk template `created: {{format-date now}}`)
   created?: string;
@@ -1514,13 +1500,6 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
 
   if (options.expires_at) {
     lines.push(`expires_at: ${escapeYamlValue(options.expires_at)}`);
-  }
-
-  if (options.cron_ids && options.cron_ids.length > 0) {
-    lines.push("cron_ids:");
-    for (const cronId of options.cron_ids) {
-      lines.push(`  - ${escapeYamlValue(cronId)}`);
-    }
   }
 
   if (options.runs && options.runs.length > 0) {

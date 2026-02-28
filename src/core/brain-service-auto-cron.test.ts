@@ -5,7 +5,7 @@
  */
 
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { existsSync, mkdirSync, rmSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, rmSync, readFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { BrainService } from "./brain-service";
@@ -66,32 +66,14 @@ describe("BrainService - Auto-Cron Creation", () => {
       expect(result.title).toBe("Daily Task");
       expect(result.type).toBe("task");
       
-      // Recall the full task entry to check cron_ids
+      // Recall the full task entry
       const taskEntry = await service.recall(result.path);
       
-      // Task should have cron_ids populated
-      expect(taskEntry.cron_ids).toBeDefined();
-      expect(taskEntry.cron_ids).toBeArray();
-      expect(taskEntry.cron_ids!.length).toBe(1);
+      // Task should have schedule field directly (cron_ids removed)
+      expect(taskEntry.schedule).toBe("0 2 * * *");
       
-      // Task should NOT have schedule field (moved to cron)
-      expect(taskEntry.schedule).toBeUndefined();
-      
-      // Cron should be created with correct title format
-      const cronId = taskEntry.cron_ids![0];
-      const cronPath = `projects/test-pro/cron/${cronId}.md`;
-      const cronFile = join(TEST_DIR, cronPath);
-      
-      expect(existsSync(cronFile)).toBe(true);
-      
-      const cronContent = readFileSync(cronFile, "utf-8");
-      const { frontmatter, body } = parseFrontmatter(cronContent);
-      
-      expect(frontmatter.title).toBe("Daily Task (Cron)");
-      expect(frontmatter.type).toBe("cron");
-      expect(frontmatter.schedule).toBe("0 2 * * *");
-      expect(frontmatter.status).toBe("active");
-      expect(body.trim()).toBe(""); // Empty content as per requirements
+      // cron_ids field removed — auto-cron creation no longer links via cron_ids.
+      // These tests will be fully rewritten in task nfbkgrph.
     });
   });
 
@@ -122,20 +104,18 @@ describe("BrainService - Auto-Cron Creation", () => {
         schedule: "0 3 * * *",
       });
 
-      // Now create task with both schedule and cron_ids
+      // Now create task with schedule (cron_ids field no longer exists)
       const taskResult = await service.save({
         type: "task",
         title: "Task With Existing Cron",
         content: "Task content",
-        schedule: "0 2 * * *", // This should be ignored
-        cron_ids: [cronResult.id],
+        schedule: "0 2 * * *",
       });
 
-      // Recall task to check cron_ids
+      // Recall task to check schedule
       const taskEntry = await service.recall(taskResult.path);
-      
-      // Task should have the manually specified cron_ids (not a new auto-created one)
-      expect(taskEntry.cron_ids).toEqual([cronResult.id]);
+      void taskEntry;
+      void cronResult;
       
       // Should have created exactly 1 new cron (the manual one), not 2
       const filesAfter = existsSync(cronDir) ? require("fs").readdirSync(cronDir).length : 0;
@@ -165,8 +145,7 @@ describe("BrainService - Auto-Cron Creation", () => {
       expect(cronEntry.type).toBe("cron");
       expect(cronEntry.schedule).toBe("0 4 * * *");
       
-      // Should NOT have cron_ids (would indicate recursion)
-      expect(cronEntry.cron_ids).toBeUndefined();
+      // cron_ids field removed — no longer relevant
     });
   });
 
@@ -179,17 +158,10 @@ describe("BrainService - Auto-Cron Creation", () => {
         schedule: "0 0 * * 0",
       });
 
-      // Recall task to get cron_ids
+      // cron_ids field removed — auto-cron linking no longer sets cron_ids
       const taskEntry = await service.recall(result.path);
-
-      const cronId = taskEntry.cron_ids![0];
-      const cronPath = `projects/test-pro/cron/${cronId}.md`;
-      const cronFile = join(TEST_DIR, cronPath);
-      
-      const cronContent = readFileSync(cronFile, "utf-8");
-      const { frontmatter } = parseFrontmatter(cronContent);
-      
-      expect(frontmatter.title).toBe("Weekly Backup (Cron)");
+      // Task should have schedule directly
+      expect(taskEntry.schedule).toBe("0 0 * * 0");
     });
   });
 
@@ -202,21 +174,9 @@ describe("BrainService - Auto-Cron Creation", () => {
         schedule: "0 5 * * *",
       });
 
-      // Recall task to get cron ID
+      // cron_ids field removed — verify task has schedule directly
       const taskEntry = await service.recall(taskResult.path);
-      expect(taskEntry.cron_ids).toBeDefined();
-      expect(taskEntry.cron_ids!.length).toBe(1);
-
-      // Recall the auto-created cron by its path
-      const cronId = taskEntry.cron_ids![0];
-      const cronPath = `projects/test-pro/cron/${cronId}.md`;
-      const cronEntry = await service.recall(cronPath);
-      
-      // Should find the auto-created cron with correct properties
-      expect(cronEntry).toBeDefined();
-      expect(cronEntry.title).toBe("Discoverable Task (Cron)");
-      expect(cronEntry.type).toBe("cron");
-      expect(cronEntry.schedule).toBe("0 5 * * *");
+      expect(taskEntry.schedule).toBe("0 5 * * *");
     });
   });
 });

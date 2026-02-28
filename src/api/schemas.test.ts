@@ -17,7 +17,6 @@ describe("API schemas - cron fields", () => {
       max_runs: 3,
       starts_at: "2026-02-22T00:00:00.000Z",
       expires_at: "2026-03-01T00:00:00.000Z",
-      cron_ids: ["cron_daily"],
       runs: [
         {
           run_id: "20260222-0200",
@@ -34,7 +33,6 @@ describe("API schemas - cron fields", () => {
     expect(parsed.max_runs).toBe(3);
     expect(parsed.starts_at).toBe("2026-02-22T00:00:00.000Z");
     expect(parsed.expires_at).toBe("2026-03-01T00:00:00.000Z");
-    expect(parsed.cron_ids).toEqual(["cron_daily"]);
     expect(parsed.runs?.[0]?.duration).toBe(8000);
   });
 
@@ -44,7 +42,6 @@ describe("API schemas - cron fields", () => {
       next_run: "2026-02-22T10:35:00.000Z",
       max_runs: 1,
       run_once_at: "in 2 hours",
-      cron_ids: ["cron_fast"],
       runs: [
         {
           run_id: "20260222-1030",
@@ -58,7 +55,6 @@ describe("API schemas - cron fields", () => {
     expect(parsed.schedule).toBe("*/5 * * * *");
     expect(parsed.max_runs).toBe(1);
     expect(parsed.run_once_at).toBe("in 2 hours");
-    expect(parsed.cron_ids).toEqual(["cron_fast"]);
     expect(parsed.runs?.[0]?.failed_task).toBe("abc12def");
   });
 

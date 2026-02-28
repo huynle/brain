@@ -40,7 +40,6 @@ export interface TaskDisplay {
   status: EntryStatus;
   priority: Priority;
   tags: string[];               // Tags for filtering and categorization
-  cron_ids?: string[];          // Cron entry IDs that can trigger this task
   schedule?: string | null;     // Cron expression for periodic execution
   dependencies: string[];       // Raw IDs for tree building
   dependents: string[];         // Raw IDs for tree building

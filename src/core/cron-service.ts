@@ -250,9 +250,9 @@ export function resolveCronPipeline(cronId: string, tasks: Task[]): Task[] {
   const maps = buildLookupMaps(tasks);
   const byId = maps.byId;
 
-  const seedIds = tasks
-    .filter((task) => task.cron_ids.includes(cronId))
-    .map((task) => task.id);
+  // cron_ids field removed — seed tasks can no longer be identified by cron link.
+  // This function will be deleted in task 4zy62odi.
+  const seedIds: string[] = [];
 
   if (seedIds.length === 0) return [];
 
@@ -274,7 +274,8 @@ export function resolveCronPipeline(cronId: string, tasks: Task[]): Task[] {
       const depTask = byId.get(depId);
       if (!depTask) continue;
 
-      if (depTask.cron_ids.includes(cronId) && !included.has(depId)) {
+      // cron_ids field removed — skip cron link check for upstream deps
+      if (!included.has(depId)) {
         included.add(depId);
       }
 

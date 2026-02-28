@@ -69,7 +69,6 @@ function createMockTask(
     priority: "medium",
     status: "pending",
     depends_on: [],
-    cron_ids: [],
     tags: [],
 
     created: new Date().toISOString(),

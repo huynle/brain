@@ -652,13 +652,6 @@ export class BrainService {
         zkArgs.push("--extra", `expires_at=${request.expires_at}`);
       }
 
-      if (request.cron_ids && request.cron_ids.length > 0) {
-        const formattedCronIds = request.cron_ids
-          .map((id) => `\n  - "${id.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
-          .join("");
-        zkArgs.push("--extra", `cron_ids=${formattedCronIds}`);
-      }
-
       if (!isGlobal) {
         zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
       }
@@ -736,7 +729,6 @@ export class BrainService {
         max_runs: request.max_runs,
         starts_at: request.starts_at,
         expires_at: request.expires_at,
-        cron_ids: request.cron_ids,
         runs: request.runs as unknown as import("./zk-client").CronRun[] | undefined,
       });
 
@@ -965,7 +957,6 @@ export class BrainService {
       max_runs: frontmatter.max_runs as number | undefined,
       starts_at: frontmatter.starts_at as string | undefined,
       expires_at: frontmatter.expires_at as string | undefined,
-      cron_ids: frontmatter.cron_ids as string[] | undefined,
       runs: normalizeCronRuns(frontmatter.runs),
     };
   }
@@ -1024,11 +1015,10 @@ export class BrainService {
       request.starts_at === undefined &&
       request.expires_at === undefined &&
       request.run_once_at === undefined &&
-      request.cron_ids === undefined &&
       request.runs === undefined
     ) {
       throw new Error(
-        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, cron_ids, runs"
+        "No updates specified. Provide at least one of: status, title, content, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, generated_by, schedule, next_run, max_runs, starts_at, expires_at, run_once_at, runs"
       );
     }
 
@@ -1167,9 +1157,6 @@ export class BrainService {
     }
     if (request.expires_at !== undefined) {
       updatedFrontmatter.expires_at = request.expires_at;
-    }
-    if (request.cron_ids !== undefined) {
-      updatedFrontmatter.cron_ids = request.cron_ids;
     }
     if (request.runs !== undefined) {
       updatedFrontmatter.runs = request.runs;
@@ -1830,7 +1817,6 @@ export class BrainService {
         priority: (frontmatter.priority as Task["priority"]) || "medium",
         status: (frontmatter.status as Task["status"]) || "pending",
         depends_on: (frontmatter.depends_on as string[]) || [],
-        cron_ids: (frontmatter.cron_ids as string[]) || [],
         tags: (frontmatter.tags as string[]) || [],
         created: (frontmatter.created as string) || "",
         modified: undefined,

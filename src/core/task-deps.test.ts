@@ -15,7 +15,6 @@ function makeTask(id: string, depends_on: string[] = []): Task {
     status: "pending",
     depends_on,
     tags: [],
-    cron_ids: [],
     created: "2026-01-01T00:00:00Z",
     target_workdir: null,
     workdir: null,

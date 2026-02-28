@@ -515,13 +515,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 
 IMPORTANT LIMITATIONS:
 - ✅ Works for: tasks, summaries, reports, plans, and other note types
-- ❌ Does NOT work for: cron entries (crons are project-scoped and cannot be moved)
 - ❌ Cannot move entries currently in 'in_progress' status
-
-If you need a cron in a different project:
-- Use brain_cron_create to create a new cron in the target project
-- Use brain_cron_linked_tasks_set to link the appropriate tasks
-- Optionally brain_cron_delete the old cron if no longer needed
 
 Use cases:
 - Bulk reassign tasks to a different project

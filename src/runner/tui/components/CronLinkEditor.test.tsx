@@ -14,7 +14,7 @@ const cron: CronDisplay = {
   runs: [],
 };
 
-function makeTask(id: string, title: string, cronIds: string[] = []): TaskDisplay {
+function makeTask(id: string, title: string, _cronIds: string[] = []): TaskDisplay {
   return {
     id,
     path: `projects/test-project/task/${id}.md`,
@@ -26,7 +26,6 @@ function makeTask(id: string, title: string, cronIds: string[] = []): TaskDispla
     dependencyTitles: [],
     dependentTitles: [],
     tags: [],
-    cron_ids: cronIds,
   };
 }
 

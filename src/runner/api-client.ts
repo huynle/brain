@@ -656,7 +656,6 @@ export class ApiClient {
       target_workdir?: string;
       schedule?: string;
       priority?: Priority;
-      cron_ids?: string[];
       tags?: string[];
       depends_on?: string[];
       sessions?: Record<string, { timestamp: string; cron_id?: string; run_id?: string }>;
@@ -684,7 +683,6 @@ export class ApiClient {
     if (fields.target_workdir !== undefined) payload.target_workdir = fields.target_workdir;
     if (fields.schedule !== undefined) payload.schedule = fields.schedule;
     if (fields.priority !== undefined) payload.priority = fields.priority;
-    if (fields.cron_ids !== undefined) payload.cron_ids = fields.cron_ids;
     if (fields.tags !== undefined) payload.tags = fields.tags;
     if (fields.depends_on !== undefined) payload.depends_on = fields.depends_on;
     if (fields.sessions !== undefined) payload.sessions = fields.sessions;

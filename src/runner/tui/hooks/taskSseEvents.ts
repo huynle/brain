@@ -192,7 +192,6 @@ function normalizeTask(
     status: (asString(rawTask.status) ?? 'pending') as TaskDisplay['status'],
     priority: (asString(rawTask.priority) ?? 'medium') as TaskDisplay['priority'],
     tags: asStringArray(rawTask.tags),
-    cron_ids: asStringArray(rawTask.cron_ids),
     schedule: asString(rawTask.schedule) ?? null,
     dependencies: depIds,
     dependents: dependentIds,

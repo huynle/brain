@@ -122,6 +122,8 @@ export interface MetadataPopupProps {
   cronIds?: string[];
   /** Cron names map (cron ID -> cron title) */
   cronNames?: Record<string, string>;
+  /** Fields with mixed values across selected tasks (batch/feature mode only) */
+  mixedFields?: ReadonlySet<MetadataField>;
 }
 
 export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
@@ -214,6 +216,7 @@ export function MetadataPopup({
   editBuffer = '',
   cronIds,
   cronNames,
+  mixedFields,
 }: MetadataPopupProps): React.ReactElement {
   // Truncate title if too long
   const maxTitleLen = 30;
@@ -223,8 +226,18 @@ export function MetadataPopup({
 
   const fieldOrder = mode === 'feature' ? METADATA_FIELDS_FEATURE_SETTINGS : METADATA_FIELDS_DEFAULT;
 
+  // Check if a field has mixed values across selected tasks (batch/feature only)
+  const isFieldMixed = (field: MetadataField): boolean => {
+    if (mode === 'single') return false;
+    return mixedFields?.has(field) ?? false;
+  };
+
   // Get value for a field
   const getFieldValue = (field: MetadataField): string => {
+    // Show "(mixed)" for fields with differing values across tasks (not in edit mode)
+    if (isFieldMixed(field) && !isFieldEditing(field)) {
+      return '(mixed)';
+    }
     switch (field) {
       case 'status':
         return getStatusLabel(statusValue);
@@ -344,7 +357,17 @@ export function MetadataPopup({
               </Box>
 
               {/* Field value */}
-              {field === 'status' ? (
+              {field === 'status' && isFieldMixed('status') && !isEditing ? (
+                // Status field with mixed values: show "(mixed)" instead of icon/label
+                <Box flexShrink={1}>
+                  <Text color="yellow" dimColor>
+                    {'(mixed)'}
+                  </Text>
+                  {isFocused && (
+                    <Text dimColor> (Enter to select)</Text>
+                  )}
+                </Box>
+              ) : field === 'status' ? (
                 // Status field: show icon and label
                 <Box flexDirection="column">
                   <Box>
@@ -462,9 +485,9 @@ export function MetadataPopup({
                 // Text field: show value
                 <Box flexShrink={1}>
                   <Text
-                    color={isFocused ? 'cyan' : undefined}
+                    color={value === '(mixed)' ? 'yellow' : isFocused ? 'cyan' : undefined}
                     bold={isFocused}
-                    dimColor={!isFocused && (value === '(none)')}
+                    dimColor={!isFocused && (value === '(none)' || value === '(mixed)')}
                   >
                     {value}
                   </Text>

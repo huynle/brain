@@ -313,6 +313,66 @@ export function buildMetadataPrefillFromTasks(
   };
 }
 
+/**
+ * Detect which metadata fields have mixed (disagreeing) values across tasks.
+ * Returns a Set of field names where tasks have different values.
+ * Only meaningful for batch/feature modes (returns empty set for single).
+ */
+export function detectMixedFields(
+  tasks: TaskDisplay[],
+  mode: MetadataPopupMode,
+  featureIdOverride?: string,
+): Set<MetadataField> {
+  const mixed = new Set<MetadataField>();
+  if (mode === 'single' || tasks.length <= 1) return mixed;
+
+  // String fields: mixed when allEqual returns false (sharedString returns '')
+  const stringChecks: Array<[MetadataField, (task: TaskDisplay) => string | null | undefined]> = [
+    ['git_branch', (task) => task.gitBranch],
+    ['merge_target_branch', (task) => task.mergeTargetBranch],
+    ['target_workdir', (task) => task.resolvedWorkdir || task.workdir],
+    ['schedule', (task) => task.schedule],
+    ['project', (task) => task.projectId],
+    ['agent', (task) => task.agent],
+    ['model', (task) => task.model],
+    ['direct_prompt', (task) => task.direct_prompt],
+  ];
+  // Only check feature_id if no override (override forces a value)
+  if (featureIdOverride === undefined) {
+    stringChecks.push(['feature_id', (task) => task.feature_id]);
+  }
+  for (const [field, selector] of stringChecks) {
+    const values = tasks.map((task) => selector(task) ?? '');
+    if (!allEqual(values)) mixed.add(field);
+  }
+
+  // Enum fields
+  const enumChecks: Array<[MetadataField, (task: TaskDisplay) => string | null | undefined, string]> = [
+    ['status', (task) => task.status, 'pending'],
+    ['execution_mode', (task) => task.executionMode, 'worktree'],
+    ['merge_policy', (task) => task.mergePolicy, 'auto_merge'],
+    ['merge_strategy', (task) => task.mergeStrategy, 'squash'],
+    ['remote_branch_policy', (task) => task.remoteBranchPolicy, 'delete'],
+  ];
+  for (const [field, selector, fallback] of enumChecks) {
+    const values = tasks.map((task) => selector(task) ?? fallback);
+    if (!allEqual(values)) mixed.add(field);
+  }
+
+  // Boolean fields
+  const boolChecks: Array<[MetadataField, (task: TaskDisplay) => boolean | null | undefined, boolean]> = [
+    ['checkout_enabled', (task) => task.checkoutEnabled, true],
+    ['complete_on_idle', (task) => task.completeOnIdle, false],
+    ['open_pr_before_merge', (task) => task.openPrBeforeMerge, false],
+  ];
+  for (const [field, selector, fallback] of boolChecks) {
+    const values = tasks.map((task) => selector(task) ?? fallback);
+    if (!allEqual(values)) mixed.add(field);
+  }
+
+  return mixed;
+}
+
 export function isFeatureCheckoutTask(task: TaskDisplay): boolean {
   if (task.tags.includes('checkout')) return true;
 
@@ -833,6 +893,8 @@ export function App({
   const [metadataInteractionMode, setMetadataInteractionMode] = useState<MetadataInteractionMode>('navigate');
   const [metadataEditBuffer, setMetadataEditBuffer] = useState('');
   const [metadataTargetTasks, setMetadataTargetTasks] = useState<TaskDisplay[]>([]);
+  // Track which fields have mixed values across selected tasks (batch/feature only)
+  const [metadataMixedFields, setMetadataMixedFields] = useState<Set<MetadataField>>(new Set());
   // Original values for comparison (only send changed fields)
   const [metadataOriginalValues, setMetadataOriginalValues] = useState<{
     status: EntryStatus;
@@ -1887,6 +1949,14 @@ export function App({
         
         // Mark dirty synchronously so Escape handler sees it immediately
         setMetadataDirty(true);
+        
+        // Clear mixed indicator for this field since user chose a definitive value
+        setMetadataMixedFields(prev => {
+          if (!prev.has(field)) return prev;
+          const next = new Set(prev);
+          next.delete(field);
+          return next;
+        });
         
         const applyPlan = buildMetadataApplyPlan(metadataTargetTasks, metadataPopupMode);
         const totalSkipped = applyPlan.skippedTerminal.length + applyPlan.skippedCheckout.length;
@@ -3455,6 +3525,7 @@ export function App({
         mode: MetadataPopupMode,
         targetTasks: TaskDisplay[],
         prefill: MetadataPrefillValues,
+        featureIdOverride?: string,
       ) => {
         // Fetch all projects from API for the project picker
         let fetchedProjects = projects; // fallback to monitored projects
@@ -3512,6 +3583,7 @@ export function App({
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
         setMetadataDirty(false);
+        setMetadataMixedFields(detectMixedFields(targetTasks, mode, featureIdOverride));
         setShowMetadataPopup(true);
       };
 
@@ -3540,6 +3612,7 @@ export function App({
             'feature',
             ungroupedTasks,
             prefill,
+            '',
           );
         }
         return;
@@ -3556,6 +3629,7 @@ export function App({
             'feature',
             featureTasks,
             prefill,
+            featureId,
           );
         }
         return;
@@ -3573,6 +3647,7 @@ export function App({
               'feature',
               featureTasks,
               prefill,
+              featureId,
             );
           }
           return;
@@ -4180,6 +4255,7 @@ export function App({
           editBuffer={metadataEditBuffer}
           cronIds={metadataTargetTasks[0]?.cron_ids}
           cronNames={cronNames}
+          mixedFields={metadataMixedFields}
         />
       </Box>
     );

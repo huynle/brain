@@ -699,4 +699,177 @@ describe('MetadataPopup', () => {
       expect(schedule.length === 0 || schedule.trim().split(/\s+/).length === 5).toBe(true);
     });
   });
+
+  describe('mixed-value detection', () => {
+    it('should show "(mixed)" for a field in mixedFields set', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          branchValue=""
+          mixedFields={new Set<MetadataField>(['git_branch'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(mixed)');
+    });
+
+    it('should show normal value for a field NOT in mixedFields', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          branchValue="feature/shared"
+          mixedFields={new Set<MetadataField>(['feature_id'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('feature/shared');
+    });
+
+    it('should show edit buffer when editing a mixed field, not "(mixed)"', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          focusedField="git_branch"
+          branchValue=""
+          interactionMode="edit_text"
+          editBuffer="new-branch"
+          mixedFields={new Set<MetadataField>(['git_branch'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('new-branch');
+      expect(frame).not.toContain('(mixed)');
+    });
+
+    it('should display multiple mixed fields correctly', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          featureIdValue=""
+          branchValue=""
+          workdirValue=""
+          mixedFields={new Set<MetadataField>(['feature_id', 'git_branch', 'target_workdir'])}
+        />
+      );
+
+      const frame = lastFrame();
+      // Count occurrences of "(mixed)" - should appear for all three fields
+      const matches = frame!.match(/\(mixed\)/g);
+      expect(matches).not.toBeNull();
+      expect(matches!.length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('should show normal behavior when mixedFields is empty', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          branchValue="feature/shared"
+          mixedFields={new Set<MetadataField>()}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('feature/shared');
+      expect(frame).not.toContain('(mixed)');
+    });
+
+    it('should show normal behavior when mixedFields is undefined', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          branchValue="feature/shared"
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('feature/shared');
+      expect(frame).not.toContain('(mixed)');
+    });
+
+    it('should show "(mixed)" for feature mode too', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="feature"
+          featureId="auth-system"
+          batchCount={3}
+          branchValue=""
+          executionModeValue="worktree"
+          mergeTargetBranchValue=""
+          checkoutEnabledValue={true}
+          mergePolicyValue="auto_merge"
+          mergeStrategyValue="squash"
+          remoteBranchPolicyValue="delete"
+          openPrBeforeMergeValue={false}
+          mixedFields={new Set<MetadataField>(['git_branch'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(mixed)');
+    });
+
+    it('should NOT show "(mixed)" in single mode even if mixedFields is set', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="single"
+          branchValue="feature/test"
+          mixedFields={new Set<MetadataField>(['git_branch'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('feature/test');
+      expect(frame).not.toContain('(mixed)');
+    });
+
+    it('should show "(mixed)" for status field in batch mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          statusValue="pending"
+          mixedFields={new Set<MetadataField>(['status'])}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('(mixed)');
+    });
+
+    it('should show status dropdown when editing a mixed status field', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          focusedField="status"
+          statusValue="pending"
+          interactionMode="edit_status"
+          mixedFields={new Set<MetadataField>(['status'])}
+        />
+      );
+
+      const frame = lastFrame();
+      // Should show the status selection sub-popup, not "(mixed)"
+      expect(frame).toContain('Select Status');
+    });
+  });
 });

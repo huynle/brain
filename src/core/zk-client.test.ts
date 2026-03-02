@@ -1297,6 +1297,75 @@ describe("schedule frontmatter round-trip", () => {
   });
 });
 
+describe("schedule_enabled frontmatter round-trip", () => {
+  test("serializeFrontmatter emits schedule_enabled: false", () => {
+    const fm = {
+      title: "Disabled Schedule",
+      type: "task",
+      status: "completed",
+      schedule: "*/5 * * * *",
+      schedule_enabled: false,
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("schedule_enabled: false");
+  });
+
+  test("serializeFrontmatter emits schedule_enabled: true", () => {
+    const fm = {
+      title: "Enabled Schedule",
+      type: "task",
+      status: "active",
+      schedule: "*/5 * * * *",
+      schedule_enabled: true,
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).toContain("schedule_enabled: true");
+  });
+
+  test("serializeFrontmatter omits schedule_enabled when undefined", () => {
+    const fm = {
+      title: "No Flag",
+      type: "task",
+      status: "active",
+      schedule: "*/5 * * * *",
+    };
+    const result = serializeFrontmatter(fm);
+    expect(result).not.toContain("schedule_enabled");
+  });
+
+  test("parseFrontmatter reads schedule_enabled: false as boolean false", () => {
+    const content = `---\ntitle: Test\ntype: task\nstatus: completed\nschedule: "*/5 * * * *"\nschedule_enabled: false\n---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule_enabled).toBe(false);
+  });
+
+  test("parseFrontmatter reads schedule_enabled: true as boolean true", () => {
+    const content = `---\ntitle: Test\ntype: task\nstatus: active\nschedule: "*/5 * * * *"\nschedule_enabled: true\n---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule_enabled).toBe(true);
+  });
+
+  test("parseFrontmatter leaves schedule_enabled undefined when absent", () => {
+    const content = `---\ntitle: Test\ntype: task\nstatus: active\nschedule: "*/5 * * * *"\n---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule_enabled).toBeUndefined();
+  });
+
+  test("round-trip: serialize then parse preserves schedule_enabled: false", () => {
+    const original = {
+      title: "Round Trip False",
+      type: "task",
+      status: "completed",
+      schedule: "0 * * * *",
+      schedule_enabled: false,
+    };
+    const serialized = serializeFrontmatter(original);
+    const content = `---\n${serialized}---\n\nBody`;
+    const { frontmatter } = parseFrontmatter(content);
+    expect(frontmatter.schedule_enabled).toBe(false);
+  });
+});
+
 // =============================================================================
 // Tests for direct_prompt, agent, model in generateFrontmatter
 // =============================================================================

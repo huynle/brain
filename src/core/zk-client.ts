@@ -501,6 +501,15 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
+    const scheduleEnabledMatch = line.match(/^schedule_enabled:\s*(true|false)\s*$/);
+    if (scheduleEnabledMatch) {
+      frontmatter.schedule_enabled = scheduleEnabledMatch[1] === "true";
+      inTags = false;
+      inCronIds = false;
+      inRuns = false;
+      continue;
+    }
+
     const nextRunMatch = line.match(/^next_run:\s*(.+)$/);
     if (nextRunMatch) {
       frontmatter.next_run = parseYamlStringValue(nextRunMatch[1]);
@@ -1264,6 +1273,9 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
 
   if (fm.status) lines.push(`status: ${fm.status}`);
   if (fm.schedule) lines.push(`schedule: ${escapeYamlValue(fm.schedule as string)}`);
+  if (fm.schedule_enabled !== undefined) {
+    lines.push(`schedule_enabled: ${fm.schedule_enabled}`);
+  }
   if (fm.next_run) lines.push(`next_run: ${escapeYamlValue(fm.next_run as string)}`);
   if (fm.max_runs !== undefined) lines.push(`max_runs: ${fm.max_runs}`);
   if (fm.starts_at) lines.push(`starts_at: ${escapeYamlValue(fm.starts_at as string)}`);

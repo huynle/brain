@@ -48,6 +48,7 @@ export type MetadataField =
   | 'open_pr_before_merge'
   | 'target_workdir'
   | 'schedule'
+  | 'schedule_enabled'
   | 'project'
   | 'agent'
   | 'model'
@@ -98,6 +99,8 @@ export interface MetadataPopupProps {
   workdirValue: string;
   /** Current schedule value */
   scheduleValue: string;
+  /** Current schedule_enabled value */
+  scheduleEnabledValue?: boolean;
   /** Current project value */
   projectValue: string;
   /** Current agent value (OpenCode agent override) */
@@ -128,6 +131,7 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
   'git_branch',
   'target_workdir',
   'schedule',
+  'schedule_enabled',
   'project',
   'agent',
   'model',
@@ -137,7 +141,7 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
 /** Field groups for feature-mode popup (visual separators between groups) */
 export const FEATURE_FIELD_GROUPS: Array<{ label: string; fields: MetadataField[] }> = [
   { label: 'Task', fields: ['status', 'feature_id', 'project'] },
-  { label: 'Execution', fields: ['execution_mode', 'agent', 'model', 'direct_prompt', 'schedule', 'complete_on_idle'] },
+  { label: 'Execution', fields: ['execution_mode', 'agent', 'model', 'direct_prompt', 'schedule', 'schedule_enabled', 'complete_on_idle'] },
   { label: 'Git / Branch', fields: ['git_branch', 'target_workdir', 'checkout_enabled'] },
   { label: 'Merge / PR', fields: ['merge_target_branch', 'merge_policy', 'merge_strategy', 'remote_branch_policy', 'open_pr_before_merge'] },
 ];
@@ -164,6 +168,7 @@ const FIELD_LABELS: Record<MetadataField, string> = {
   open_pr_before_merge: 'Open PR Before Merge',
   target_workdir: 'Workdir',
   schedule: 'Schedule',
+  schedule_enabled: 'Schedule Enabled',
   project: 'Project',
   agent: 'Agent',
   model: 'Model',
@@ -181,6 +186,7 @@ const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
   merge_strategy: '(squash|merge|rebase)',
   remote_branch_policy: '(keep|delete)',
   open_pr_before_merge: '(true|false)',
+  schedule_enabled: '(true|false)',
 };
 
 export function MetadataPopup({
@@ -203,6 +209,7 @@ export function MetadataPopup({
   openPrBeforeMergeValue,
   workdirValue,
   scheduleValue,
+  scheduleEnabledValue,
   projectValue,
   agentValue,
   modelValue,
@@ -262,6 +269,8 @@ export function MetadataPopup({
         return workdirValue || '(none)';
       case 'schedule':
         return scheduleValue || '(none)';
+      case 'schedule_enabled':
+        return scheduleEnabledValue ? 'true' : 'false';
       case 'project':
         return projectValue || '(none)';
       case 'agent':

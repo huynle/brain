@@ -94,12 +94,14 @@ export const HelpBar = React.memo(function HelpBar({ focusedPanel, viewMode = 't
                    )}
                  </>
                )}
-                 {isScheduleView && (
-                   <>
-                     <Text bold>Enter</Text> Details
-                     {'  '}
-                   </>
-                 )}
+                  {isScheduleView && (
+                    <>
+                      <Text bold>d</Text> Toggle
+                      {'  '}
+                      <Text bold>Enter</Text> Details
+                      {'  '}
+                    </>
+                  )}
              </>
            )}
           {isMultiProject ? (

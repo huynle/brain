@@ -43,16 +43,22 @@ export const ScheduleList = React.memo(function ScheduleList({
         const statusColor = getStatusColor(task.status, isReady);
         const projectPrefix = showProjectPrefix && task.projectId ? `[${task.projectId}] ` : '';
 
+        const isDisabled = task.scheduleEnabled === false;
+
         return (
           <Box key={task.id}>
             <Text color={isSelected ? 'cyan' : undefined}>{isSelected ? '> ' : '  '}</Text>
             <Text color={statusColor}>{statusIcon}</Text>
             <Text> </Text>
-            <Text color={isSelected ? 'cyan' : undefined}>
+            <Text color={isSelected ? 'cyan' : undefined} dimColor={isDisabled}>
               {projectPrefix}
               {task.title}
             </Text>
-            <Text color="magenta">  [scheduled]</Text>
+            {isDisabled ? (
+              <Text color="yellow">  [disabled]</Text>
+            ) : (
+              <Text color="magenta">  [scheduled]</Text>
+            )}
             <Text dimColor>  {task.schedule || '(no schedule)'}</Text>
             {task.priority !== 'medium' && (
               <Text dimColor>  pri:{task.priority}</Text>

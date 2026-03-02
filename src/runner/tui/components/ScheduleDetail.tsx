@@ -30,6 +30,7 @@ export const ScheduleDetail = React.memo(function ScheduleDetail({
       <Text bold>{task.title}</Text>
       <Text>ID: <Text dimColor>{task.id}</Text></Text>
       <Text>Schedule: <Text dimColor>{task.schedule || '(none)'}</Text></Text>
+      <Text>Enabled: <Text color={task.scheduleEnabled === false ? 'yellow' : 'green'}>{task.scheduleEnabled === false ? 'no' : 'yes'}</Text></Text>
       <Text>Status: <Text color={statusColor}>{statusIcon} {getStatusLabel(task.status)}</Text></Text>
       <Text>Priority: <Text dimColor>{task.priority}</Text></Text>
       {task.tags.length > 0 && (

@@ -1,0 +1,7 @@
+{
+  "enabledMcpjsonServers": [
+    "sqlite",
+    "filesystem"
+  ],
+  "enableAllProjectMcpServers": true
+}

@@ -129,6 +129,7 @@ const BOOLEAN_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
   'checkout_enabled',
   'complete_on_idle',
   'open_pr_before_merge',
+  'schedule_enabled',
 ]);
 
 const LOWERCASE_ENUM_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
@@ -219,6 +220,7 @@ type MetadataPrefillValues = {
   open_pr_before_merge: boolean;
   target_workdir: string;
   schedule: string;
+  schedule_enabled: boolean;
   project: string;
   agent: string;
   model: string;
@@ -239,6 +241,7 @@ const DEFAULT_METADATA_PREFILL: MetadataPrefillValues = {
   open_pr_before_merge: false,
   target_workdir: '',
   schedule: '',
+  schedule_enabled: true,
   project: '',
   agent: '',
   model: '',
@@ -305,6 +308,7 @@ export function buildMetadataPrefillFromTasks(
     open_pr_before_merge: sharedBoolean(tasks, (task) => task.openPrBeforeMerge, false),
     target_workdir: sharedString(tasks, (task) => task.resolvedWorkdir || task.workdir),
     schedule: sharedString(tasks, (task) => task.schedule),
+    schedule_enabled: sharedBoolean(tasks, (task) => task.scheduleEnabled, true),
     project: sharedString(tasks, (task) => task.projectId),
     agent: sharedString(tasks, (task) => task.agent),
     model: sharedString(tasks, (task) => task.model),
@@ -3276,6 +3280,18 @@ export function App({
           const lastIndex = scheduledTasks.length - 1;
           setSelectedTaskId(scheduledTasks[lastIndex]?.id ?? null);
           setTaskScrollOffset(Math.max(0, scheduledTasks.length - taskViewportHeight));
+          return;
+        }
+
+        if (input === 'd' && onUpdateMetadata) {
+          const task = scheduledTasks.find((t) => t.id === selectedTaskId);
+          if (task) {
+            const newEnabled = !(task.scheduleEnabled !== false);
+            addLog({ level: 'info', message: `${newEnabled ? 'Enabling' : 'Disabling'} schedule for: ${task.title}` });
+            Promise.resolve(onUpdateMetadata(task.path, { schedule_enabled: newEnabled })).catch((err) => {
+              addLog({ level: 'error', message: `Failed to toggle schedule: ${err}` });
+            });
+          }
           return;
         }
 

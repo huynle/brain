@@ -17,6 +17,7 @@ import { createTaskRoutes } from "./api/tasks";
 import { createMcpRoutes } from "./mcp/transport";
 import { createOAuthRoutes } from "./mcp/auth";
 import { createProjectRealtimeHub } from "./core/realtime-hub";
+import { createMonitorRoutes } from "./api/monitors";
 
 export function createApp(config: Config): OpenAPIHono {
   const app = new OpenAPIHono();
@@ -58,6 +59,9 @@ export function createApp(config: Config): OpenAPIHono {
 
   // Entry CRUD routes
   api.route("/entries", createEntriesRoutes({ realtimeHub: taskRealtimeHub }));
+
+  // Monitor routes (templates, create, toggle, delete)
+  api.route("/monitors", createMonitorRoutes());
 
   // Search routes (search and inject)
   api.route("/", createSearchRoutes());
@@ -135,6 +139,10 @@ When enabled, pass the API key in the \`Authorization\` header.`,
       {
         name: "Health",
         description: "Health checks, statistics, and maintenance",
+      },
+      {
+        name: "Monitors",
+        description: "Monitor template management and lifecycle",
       },
     ],
   }));

@@ -173,6 +173,101 @@ describe("Scheduled Templates", () => {
       expect(prompt).toContain("auth-system");
       expect(prompt).toContain("brain-api");
     });
+
+    it("returns non-empty string for all scope types", () => {
+      const scopes: TemplateScope[] = [
+        { type: "all" },
+        { type: "project", project: "test-proj" },
+        { type: "feature", feature_id: "feat-1", project: "test-proj" },
+      ];
+      for (const scope of scopes) {
+        const prompt = template.buildPrompt(scope);
+        expect(typeof prompt).toBe("string");
+        expect(prompt.length).toBeGreaterThan(100);
+      }
+    });
+
+    it("includes scope-specific discovery instructions for all", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("brain_tasks()");
+      expect(prompt).toContain("iterate each project");
+    });
+
+    it("includes scope-specific discovery instructions for project", () => {
+      const prompt = template.buildPrompt({
+        type: "project",
+        project: "my-proj",
+      });
+      expect(prompt).toContain('project: "my-proj"');
+      expect(prompt).toContain('status: "blocked"');
+    });
+
+    it("includes scope-specific discovery instructions for feature", () => {
+      const prompt = template.buildPrompt({
+        type: "feature",
+        feature_id: "auth",
+        project: "my-proj",
+      });
+      expect(prompt).toContain('feature_id: "auth"');
+      expect(prompt).toContain('project: "my-proj"');
+    });
+
+    it("includes safety rule: no draft changes", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("NEVER change the status of `draft` tasks");
+    });
+
+    it("includes safety rule: no self-inspection", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("NEVER inspect or modify your own task");
+    });
+
+    it("includes safety rule: max 5 actions per run", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("Limit actions per run to 5");
+    });
+
+    it("includes safety rule: no force-unblock of agent self-blocks", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("NEVER force-unblock agent self-blocks");
+    });
+
+    it("includes safety rule: be conservative", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("Be conservative");
+    });
+
+    it("references correct brain tools", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("brain_tasks");
+      expect(prompt).toContain("brain_task_get");
+      expect(prompt).toContain("brain_update");
+      expect(prompt).toContain("brain_recall");
+      expect(prompt).toContain("brain_search");
+    });
+
+    it("includes block classification categories", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("Agent self-block");
+      expect(prompt).toContain("Dependency block");
+      expect(prompt).toContain("Process crash");
+      expect(prompt).toContain("Idle detection timeout");
+      expect(prompt).toContain("Worktree setup failure");
+    });
+
+    it("instructs agent to log actions to its own task", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      expect(prompt).toContain("your-own-task-path");
+      expect(prompt).toContain("Log All Actions");
+    });
+
+    it("does NOT include direct notification instructions", () => {
+      const prompt = template.buildPrompt({ type: "all" });
+      // Agent should NOT send notifications directly — relies on runner hooks
+      expect(prompt).not.toContain("osascript");
+      expect(prompt).not.toContain("notify(");
+      expect(prompt).not.toContain("sendNotification");
+    });
   });
 
   // ========================================

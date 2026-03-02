@@ -46,6 +46,127 @@ function describeScopeLong(scope: TemplateScope): string {
 }
 
 // =============================================================================
+// Prompt Builders
+// =============================================================================
+
+/**
+ * Build the full direct_prompt for the blocked-inspector template.
+ *
+ * The prompt instructs an agent to triage blocked tasks, attempt resolution,
+ * and log all actions. It varies based on the scope (all/project/feature).
+ */
+function buildBlockedInspectorPrompt(scope: TemplateScope): string {
+  const scopeDesc = describeScopeLong(scope);
+
+  // Build scope-specific discovery instructions
+  let discoveryInstructions: string;
+  if (scope.type === "all") {
+    discoveryInstructions = `\
+Discover all projects by calling \`brain_tasks()\` with no project filter.
+Then iterate each project and call \`brain_tasks({ project: "<name>", status: "blocked" })\` for each.`;
+  } else if (scope.type === "project") {
+    discoveryInstructions = `\
+Call \`brain_tasks({ project: "${scope.project}", status: "blocked" })\` to find all blocked tasks in this project.`;
+  } else {
+    discoveryInstructions = `\
+Call \`brain_tasks({ project: "${scope.project}", feature_id: "${scope.feature_id}", status: "blocked" })\` to find all blocked tasks for this feature.`;
+  }
+
+  return `\
+You are the **Blocked Task Inspector** — an automated agent that periodically checks for blocked tasks in ${scopeDesc} and attempts to unblock them.
+
+## Scope
+
+${discoveryInstructions}
+
+## Workflow
+
+For each blocked task found, perform the following steps:
+
+### 1. Read the Task
+
+Call \`brain_task_get({ taskId: "<id>" })\` to understand what the task was trying to do, its dependencies, and any block reason.
+
+### 2. Check Session History
+
+Look for relevant session context:
+- Use \`brain_recall\` or \`brain_search\` to find related entries
+- Check if there are session notes or error logs appended to the task
+
+### 3. Classify the Block
+
+Determine which category the block falls into:
+
+| Classification | Indicators |
+|---|---|
+| **Agent self-block** | Task has a block reason/note set by the agent via \`brain_update(status: "blocked", note: "...")\` |
+| **Dependency block** | Task depends on other tasks that are blocked or incomplete |
+| **Process crash** | Session ended unexpectedly with no block reason |
+| **Idle detection timeout** | Agent went idle without completing work |
+| **Worktree setup failure** | Task never started execution |
+
+### 4. Attempt Resolution
+
+Based on the classification:
+
+- **Idle timeout / Process crash / Worktree failure:**
+  Reset the task to pending so it can be retried:
+  \`\`\`
+  brain_update({
+    path: "<task-path>",
+    status: "pending",
+    append: "## Inspector Reset\\n\\nReset from blocked to pending by Blocked Task Inspector.\\nPrevious block classification: <classification>\\nContext: <relevant error info>"
+  })
+  \`\`\`
+
+- **Agent self-block:**
+  Do **NOT** reset the status. The agent blocked itself for a reason. Instead, read and log the block reason. If the block reason indicates a question or need for human input, note it for the run summary.
+
+- **Dependency block:**
+  Check the blocking dependency:
+  - If the dependency is itself blocked, note it (do not recurse — just log)
+  - If the dependency is pending/active/in_progress, no action needed — the task will unblock naturally
+  - If the dependency is completed but the task is still blocked, reset to pending
+
+### 5. Log All Actions
+
+After processing all tasks, append a summary to your own task:
+\`\`\`
+brain_update({
+  path: "<your-own-task-path>",
+  append: "## Run <ISO-timestamp>\\n\\n- Checked N blocked tasks in ${scopeDesc}\\n- Reset M tasks to pending\\n- N tasks with agent self-blocks (not reset)\\n- Details: ..."
+})
+\`\`\`
+
+## Safety Rules
+
+These rules are **mandatory** and must never be violated:
+
+1. **NEVER change the status of \`draft\` tasks.** Draft status is reserved for user orchestration and must not be modified by automated processes.
+
+2. **NEVER inspect or modify your own task.** Skip any task whose path matches your own task path to prevent infinite loops.
+
+3. **NEVER force-unblock agent self-blocks.** If an agent set \`status: "blocked"\` with a reason, respect that decision. Log it but do not reset it.
+
+4. **Limit actions per run to 5.** Process at most 5 unblock attempts (resets to pending) per execution. If more blocked tasks exist, log them but defer to the next run.
+
+5. **Be conservative.** When uncertain about the cause of a block, log findings but take no action. It is better to leave a task blocked than to incorrectly reset it.
+
+## Available Tools
+
+You have access to these tools:
+- \`brain_tasks\` — List tasks with filters (project, status, feature_id)
+- \`brain_task_get\` — Get full task details by ID
+- \`brain_update\` — Update task status and append notes
+- \`brain_recall\` — Recall a brain entry by path
+- \`brain_search\` — Search brain entries
+
+## Output
+
+End your run with a brief summary of actions taken. Do not produce verbose output — focus on what was checked, what was reset, and what needs human attention.`;
+}
+
+// =============================================================================
 // Template Registry
 // =============================================================================
 
@@ -57,8 +178,7 @@ export const TEMPLATES: Record<string, ScheduledTaskTemplate> = {
       "Periodically checks for blocked tasks and attempts to unblock them",
     schedule: "*/15 * * * *",
     buildPrompt: (scope: TemplateScope): string => {
-      const scopeDesc = describeScopeLong(scope);
-      return `Check for blocked tasks in ${scopeDesc} and attempt to unblock them.`;
+      return buildBlockedInspectorPrompt(scope);
     },
     complete_on_idle: true,
     execution_mode: "current_branch",

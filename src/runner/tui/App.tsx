@@ -367,6 +367,7 @@ export function detectMixedFields(
     ['checkout_enabled', (task) => task.checkoutEnabled, true],
     ['complete_on_idle', (task) => task.completeOnIdle, false],
     ['open_pr_before_merge', (task) => task.openPrBeforeMerge, false],
+    ['schedule_enabled', (task) => task.scheduleEnabled, true],
   ];
   for (const [field, selector, fallback] of boolChecks) {
     const values = tasks.map((task) => selector(task) ?? fallback);
@@ -872,6 +873,7 @@ export function App({
   const [metadataOpenPrBeforeMergeValue, setMetadataOpenPrBeforeMergeValue] = useState<boolean>(false);
   const [metadataWorkdirValue, setMetadataWorkdirValue] = useState('');
   const [metadataScheduleValue, setMetadataScheduleValue] = useState('');
+  const [metadataScheduleEnabledValue, setMetadataScheduleEnabledValue] = useState<boolean>(true);
   const [metadataStatusIndex, setMetadataStatusIndex] = useState(0);
   const [metadataProjectValue, setMetadataProjectValue] = useState('');
   const [metadataProjectIndex, setMetadataProjectIndex] = useState(0);
@@ -899,6 +901,7 @@ export function App({
     open_pr_before_merge: boolean;
     target_workdir: string;
     schedule: string;
+    schedule_enabled: boolean;
     project: string;
     agent: string;
     model: string;
@@ -917,6 +920,7 @@ export function App({
     open_pr_before_merge: false,
     target_workdir: '',
     schedule: '',
+    schedule_enabled: true,
     project: '',
     agent: '',
     model: '',
@@ -1359,6 +1363,7 @@ export function App({
       complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
+      schedule_enabled?: boolean;
       agent?: string;
       model?: string;
       direct_prompt?: string;
@@ -1402,6 +1407,9 @@ export function App({
     }
     if (metadataScheduleValue !== metadataOriginalValues.schedule) {
       changedFields.schedule = metadataScheduleValue;
+    }
+    if (metadataScheduleEnabledValue !== metadataOriginalValues.schedule_enabled) {
+      changedFields.schedule_enabled = metadataScheduleEnabledValue;
     }
     if (metadataAgentValue !== metadataOriginalValues.agent) {
       changedFields.agent = metadataAgentValue;
@@ -1467,6 +1475,7 @@ export function App({
     metadataOpenPrBeforeMergeValue,
     metadataWorkdirValue,
     metadataScheduleValue,
+    metadataScheduleEnabledValue,
     metadataOriginalValues,
     addLog,
     refetch,
@@ -1500,6 +1509,7 @@ export function App({
     setMetadataOpenPrBeforeMergeValue(task.openPrBeforeMerge ?? false);
     setMetadataWorkdirValue(task.resolvedWorkdir || task.workdir || '');
     setMetadataScheduleValue(task.schedule || '');
+    setMetadataScheduleEnabledValue(task.scheduleEnabled ?? true);
     setMetadataProjectValue(task.projectId || '');
     setMetadataProjectIndex(fetchedProjects.indexOf(task.projectId || '') >= 0 ? fetchedProjects.indexOf(task.projectId || '') : 0);
     setMetadataAgentValue(task.agent || '');
@@ -1519,6 +1529,7 @@ export function App({
       open_pr_before_merge: task.openPrBeforeMerge ?? false,
       target_workdir: task.resolvedWorkdir || task.workdir || '',
       schedule: task.schedule || '',
+      schedule_enabled: task.scheduleEnabled ?? true,
       project: task.projectId || '',
       agent: task.agent || '',
       model: task.model || '',
@@ -1763,7 +1774,7 @@ export function App({
             return;
           }
           updates.remote_branch_policy = normalizedValue as RemoteBranchPolicy;
-        } else if (field === 'checkout_enabled' || field === 'open_pr_before_merge') {
+        } else if (field === 'checkout_enabled' || field === 'open_pr_before_merge' || field === 'schedule_enabled') {
           if (typeof normalizedValue !== 'string') {
             return;
           }
@@ -1819,13 +1830,15 @@ export function App({
             ...(field === 'checkout_enabled' ? { checkout_enabled: updates.checkout_enabled as boolean } : {}),
             ...(field === 'complete_on_idle' ? { complete_on_idle: updates.complete_on_idle as boolean } : {}),
             ...(field === 'open_pr_before_merge' ? { open_pr_before_merge: updates.open_pr_before_merge as boolean } : {}),
+            ...(field === 'schedule_enabled' ? { schedule_enabled: updates.schedule_enabled as boolean } : {}),
               ...(field !== 'execution_mode' &&
             field !== 'merge_policy' &&
             field !== 'merge_strategy' &&
             field !== 'remote_branch_policy' &&
             field !== 'checkout_enabled' &&
             field !== 'complete_on_idle' &&
-            field !== 'open_pr_before_merge'
+            field !== 'open_pr_before_merge' &&
+            field !== 'schedule_enabled'
               ? { [field]: normalizedValue }
               : {}),
           }));
@@ -1941,6 +1954,9 @@ export function App({
               case 'complete_on_idle':
                 currentValue = metadataCompleteOnIdleValue ? 'true' : 'false';
                 break;
+              case 'schedule_enabled':
+                currentValue = metadataScheduleEnabledValue ? 'true' : 'false';
+                break;
               case 'merge_policy':
                 currentValue = metadataMergePolicyValue;
                 break;
@@ -2008,6 +2024,11 @@ export function App({
             case 'complete_on_idle':
               if (value === 'true' || value === 'false') {
                 setMetadataCompleteOnIdleValue(value === 'true');
+              }
+              break;
+            case 'schedule_enabled':
+              if (value === 'true' || value === 'false') {
+                setMetadataScheduleEnabledValue(value === 'true');
               }
               break;
             case 'merge_policy':
@@ -3009,6 +3030,7 @@ export function App({
         setMetadataOpenPrBeforeMergeValue(prefill.open_pr_before_merge);
         setMetadataWorkdirValue(prefill.target_workdir);
         setMetadataScheduleValue(prefill.schedule);
+        setMetadataScheduleEnabledValue(prefill.schedule_enabled);
         setMetadataProjectValue(prefill.project);
         setMetadataProjectIndex(fetchedProjects.indexOf(prefill.project) >= 0 ? fetchedProjects.indexOf(prefill.project) : 0);
         setMetadataAgentValue(prefill.agent);
@@ -3028,6 +3050,7 @@ export function App({
            open_pr_before_merge: prefill.open_pr_before_merge,
           target_workdir: prefill.target_workdir,
           schedule: prefill.schedule,
+          schedule_enabled: prefill.schedule_enabled,
           project: prefill.project,
           agent: prefill.agent,
           model: prefill.model,
@@ -3699,6 +3722,7 @@ export function App({
           openPrBeforeMergeValue={metadataOpenPrBeforeMergeValue}
           workdirValue={metadataWorkdirValue}
           scheduleValue={metadataScheduleValue}
+          scheduleEnabledValue={metadataScheduleEnabledValue}
           projectValue={metadataProjectValue}
           agentValue={metadataAgentValue}
           modelValue={metadataModelValue}

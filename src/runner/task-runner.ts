@@ -2967,7 +2967,10 @@ export class TaskRunner {
       open_pr_before_merge?: boolean;
       execution_mode?: TaskExecutionMode;
       checkout_enabled?: boolean;
+      complete_on_idle?: boolean;
       target_workdir?: string;
+      schedule?: string;
+      schedule_enabled?: boolean;
       agent?: string;
       model?: string;
       direct_prompt?: string;

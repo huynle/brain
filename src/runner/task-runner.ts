@@ -46,6 +46,7 @@ import {
   getNextRun,
 } from "../core/schedule-utils";
 import { getDownstreamTasks } from "../core/task-deps";
+import { notifyBlocked, notifyFailed } from "./notify";
 
 // =============================================================================
 // Types
@@ -2073,6 +2074,9 @@ export class TaskRunner {
       this.logger.info("Task marked as blocked", { taskId, reason });
       this.tuiLog('warn', `Task blocked: ${task.title} (${reason})`, taskId, task.projectId);
 
+      // Send desktop notification for blocked task
+      notifyBlocked(task.title, reason, task.projectId);
+
       // Clear idle state since we've now acted on it
       task.idleSince = undefined;
     } catch (error) {
@@ -2181,6 +2185,9 @@ export class TaskRunner {
       });
       this.tuiLog('error', `Task failed: ${info.task.title} (${result.status})`, taskId, info.task.projectId);
 
+      // Send desktop notification for failed task
+      notifyFailed(info.task.title, `Process ${result.status}`, info.task.projectId);
+
       // Update task status to blocked in the brain (failed tasks are marked as blocked)
       try {
         await this.apiClient.updateTaskStatus(info.task.path, "blocked");
@@ -2287,6 +2294,9 @@ export class TaskRunner {
         projectId: task.projectId,
       });
       this.tuiLog('error', `Task failed: ${task.title} (${result.status})`, taskId, task.projectId);
+
+      // Send desktop notification for failed TUI task
+      notifyFailed(task.title, `Process ${result.status}`, task.projectId);
     }
 
     this.stats.totalRuntime += duration;

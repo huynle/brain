@@ -33,6 +33,15 @@ import type {
 } from '../../../core/types';
 import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display';
 
+/** State of a monitoring template row in the popup */
+export interface MonitoringTemplateState {
+  templateId: string;
+  label: string;
+  status: 'loading' | 'enabled' | 'disabled' | 'create';
+  schedule: string;
+  taskPath?: string;
+}
+
 /** Fields that can be focused in the metadata popup */
 export type MetadataField =
   | 'status'
@@ -123,6 +132,12 @@ export interface MetadataPopupProps {
   editBuffer?: string;
   /** Fields with mixed values across selected tasks (batch/feature mode only) */
   mixedFields?: ReadonlySet<MetadataField>;
+  /** Monitoring template states for feature mode */
+  monitoringTemplates?: MonitoringTemplateState[];
+  /** Whether monitoring templates are still being fetched */
+  monitoringLoading?: boolean;
+  /** Which monitoring row has focus (-1 or undefined = none focused) */
+  focusedMonitoringIndex?: number;
 }
 
 export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
@@ -144,6 +159,7 @@ export const FEATURE_FIELD_GROUPS: Array<{ label: string; fields: MetadataField[
   { label: 'Execution', fields: ['execution_mode', 'agent', 'model', 'direct_prompt', 'schedule', 'schedule_enabled', 'complete_on_idle'] },
   { label: 'Git / Branch', fields: ['git_branch', 'target_workdir', 'checkout_enabled'] },
   { label: 'Merge / PR', fields: ['merge_target_branch', 'merge_policy', 'merge_strategy', 'remote_branch_policy', 'open_pr_before_merge'] },
+  { label: 'Monitoring', fields: [] },
 ];
 
 /** Flat merged array of all feature fields (for navigation) */
@@ -221,6 +237,9 @@ export function MetadataPopup({
   interactionMode,
   editBuffer = '',
   mixedFields,
+  monitoringTemplates,
+  monitoringLoading,
+  focusedMonitoringIndex,
 }: MetadataPopupProps): React.ReactElement {
   // Truncate title if too long
   const maxTitleLen = 30;
@@ -524,6 +543,52 @@ export function MetadataPopup({
           );
         })}
 
+        {/* Monitoring separator (always shown in feature mode) */}
+        {mode === 'feature' && (
+          <Box marginTop={1}>
+            <Text dimColor bold>{`── Monitoring ──`}</Text>
+          </Box>
+        )}
+
+        {/* Monitoring content (feature mode only, when templates available) */}
+        {mode === 'feature' && monitoringLoading && (
+          <Box>
+            <Text dimColor>  Loading...</Text>
+          </Box>
+        )}
+        {mode === 'feature' && !monitoringLoading && monitoringTemplates && monitoringTemplates.length > 0 && (
+          monitoringTemplates.map((template, idx) => {
+            const isFocused = focusedMonitoringIndex === idx;
+            const statusIcon = template.status === 'enabled' ? '●'
+              : template.status === 'disabled' ? '●'
+              : '○';
+            const statusColor = template.status === 'enabled' ? 'green'
+              : template.status === 'disabled' ? 'red'
+              : undefined;
+            const tagText = `[${template.status}]`;
+
+            return (
+              <Box key={template.templateId}>
+                <Text color={isFocused ? 'cyan' : undefined}>
+                  {isFocused ? '→ ' : '  '}
+                </Text>
+                <Text color={statusColor} dimColor={template.status === 'create'}>
+                  {statusIcon}
+                </Text>
+                <Text color={isFocused ? 'cyan' : undefined} bold={isFocused}>
+                  {' '}{template.label}
+                </Text>
+                <Text> </Text>
+                <Text color={statusColor} dimColor={template.status === 'create'}>
+                  {tagText}
+                </Text>
+                {(template.status === 'enabled' || template.status === 'disabled') && (
+                  <Text dimColor> {template.schedule}</Text>
+                )}
+              </Box>
+            );
+          })
+        )}
 
       </Box>
 

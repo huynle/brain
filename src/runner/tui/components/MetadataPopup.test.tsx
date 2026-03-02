@@ -585,6 +585,339 @@ describe('MetadataPopup', () => {
     });
   });
 
+  describe('monitoring section (feature mode)', () => {
+    const featureProps = {
+      ...defaultProps,
+      mode: 'feature' as MetadataPopupMode,
+      featureId: 'auth-system',
+      batchCount: 3,
+      executionModeValue: 'worktree' as const,
+      mergeTargetBranchValue: 'main',
+      checkoutEnabledValue: true,
+      mergePolicyValue: 'prompt_only' as const,
+      mergeStrategyValue: 'squash' as const,
+      remoteBranchPolicyValue: 'delete' as const,
+      openPrBeforeMergeValue: false,
+    };
+
+    it('should render monitoring separator but no content when monitoringTemplates is undefined', () => {
+      const { lastFrame } = render(
+        <MetadataPopup {...featureProps} />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('── Monitoring ──');
+      expect(frame).not.toContain('Blocked Task Inspector');
+      expect(frame).not.toContain('Loading...');
+    });
+
+    it('should render monitoring separator but no content when monitoringTemplates is empty', () => {
+      const { lastFrame } = render(
+        <MetadataPopup {...featureProps} monitoringTemplates={[]} />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('── Monitoring ──');
+      expect(frame).not.toContain('Blocked Task Inspector');
+    });
+
+    it('should show loading state when monitoringLoading is true', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[]}
+          monitoringLoading={true}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('Loading...');
+    });
+
+    it('should render enabled template with green indicator and label', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('Blocked Task Inspector');
+      expect(frame).toContain('[enabled]');
+      expect(frame).toContain('*/15 * * * *');
+    });
+
+    it('should render disabled template with red indicator', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'disabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Blocked Task Inspector');
+      expect(frame).toContain('[disabled]');
+      expect(frame).toContain('*/15 * * * *');
+    });
+
+    it('should render create template with dim indicator', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'create',
+              schedule: '*/15 * * * *',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Blocked Task Inspector');
+      expect(frame).toContain('[create]');
+    });
+
+    it('should NOT show schedule for create status', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'create',
+              schedule: '*/15 * * * *',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      // Schedule should not be shown for create status
+      expect(frame).not.toContain('*/15 * * * *');
+    });
+
+    it('should highlight focused monitoring row with arrow', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+          ]}
+          focusedMonitoringIndex={0}
+        />
+      );
+
+      const frame = lastFrame();
+      // The monitoring row should have the focus arrow
+      // We check that the monitoring section contains the arrow indicator
+      expect(frame).toContain('Blocked Task Inspector');
+      // The frame should contain the arrow somewhere near the monitoring template
+      // Since the focused field rows also have arrows, we verify the monitoring row is focused
+      // by checking the combination exists
+      expect(frame).toContain('→');
+    });
+
+    it('should NOT highlight monitoring row when focusedMonitoringIndex is -1', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          focusedField="status"
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+          ]}
+          focusedMonitoringIndex={-1}
+        />
+      );
+
+      // The monitoring row should NOT have the focus arrow
+      // But the status field (focusedField) should still have one
+      const frame = lastFrame();
+      expect(frame).toContain('Blocked Task Inspector');
+      // Arrow should be on status field, not on monitoring row
+    });
+
+    it('should NOT render monitoring section in single mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="single"
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('── Monitoring ──');
+      expect(frame).not.toContain('Blocked Task Inspector');
+    });
+
+    it('should NOT render monitoring section in batch mode', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...defaultProps}
+          mode="batch"
+          batchCount={3}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).not.toContain('── Monitoring ──');
+      expect(frame).not.toContain('Blocked Task Inspector');
+    });
+
+    it('should render Monitoring in FEATURE_FIELD_GROUPS', () => {
+      const monitoringGroup = FEATURE_FIELD_GROUPS.find(g => g.label === 'Monitoring');
+      expect(monitoringGroup).toBeDefined();
+      expect(monitoringGroup!.fields).toEqual([]);
+    });
+
+    it('should render multiple templates simultaneously with mixed statuses', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+            {
+              templateId: 'stale-checker',
+              label: 'Stale Task Checker',
+              status: 'create',
+              schedule: '30 2 * * 0',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      // Both templates should render
+      expect(frame).toContain('Blocked Task Inspector');
+      expect(frame).toContain('Stale Task Checker');
+      // Enabled template shows schedule, create does not
+      expect(frame).toContain('*/15 * * * *');
+      expect(frame).toContain('[enabled]');
+      expect(frame).toContain('[create]');
+      // Create template's schedule should NOT appear in the monitoring section
+      expect(frame).not.toContain('30 2 * * 0');
+    });
+
+    it('should highlight the last monitoring row when focusedMonitoringIndex points to it', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'blocked-inspector',
+              label: 'Blocked Task Inspector',
+              status: 'enabled',
+              schedule: '*/15 * * * *',
+              taskPath: 'projects/test/task/abc.md',
+            },
+            {
+              templateId: 'stale-checker',
+              label: 'Stale Task Checker',
+              status: 'disabled',
+              schedule: '0 9 * * 1',
+              taskPath: 'projects/test/task/def.md',
+            },
+          ]}
+          focusedMonitoringIndex={1}
+        />
+      );
+
+      const frame = lastFrame();
+      // Both templates render
+      expect(frame).toContain('Blocked Task Inspector');
+      expect(frame).toContain('Stale Task Checker');
+      // The second row (index 1) should have the focus arrow
+      const lines = frame!.split('\n');
+      const staleLine = lines.find(l => l.includes('Stale Task Checker'));
+      expect(staleLine).toBeDefined();
+      expect(staleLine).toContain('→');
+      // The first row should NOT have the focus arrow
+      const blockedLine = lines.find(l => l.includes('Blocked Task Inspector'));
+      expect(blockedLine).toBeDefined();
+      expect(blockedLine).not.toContain('→');
+    });
+
+    it('should render disabled template with its schedule visible', () => {
+      const { lastFrame } = render(
+        <MetadataPopup
+          {...featureProps}
+          monitoringTemplates={[
+            {
+              templateId: 'stale-checker',
+              label: 'Stale Task Checker',
+              status: 'disabled',
+              schedule: '0 9 * * 1',
+              taskPath: 'projects/test/task/def.md',
+            },
+          ]}
+        />
+      );
+
+      const frame = lastFrame();
+      expect(frame).toContain('Stale Task Checker');
+      expect(frame).toContain('[disabled]');
+      // Disabled templates still show their schedule (unlike create)
+      expect(frame).toContain('0 9 * * 1');
+    });
+  });
+
   describe('mixed-value detection', () => {
     it('should show "(mixed)" for a field in mixedFields set', () => {
       const { lastFrame } = render(

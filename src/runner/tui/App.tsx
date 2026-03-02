@@ -57,7 +57,15 @@ import {
   type MetadataField,
   type MetadataPopupMode,
   type MetadataInteractionMode,
+  type MonitoringTemplateState,
 } from './components/MetadataPopup';
+import {
+  TEMPLATE_LIST,
+  findScheduledTask,
+  createScheduledTask,
+  toggleScheduledTask,
+  type TemplateScope,
+} from '../scheduled-templates';
 import { SettingsPopup } from './components/SettingsPopup';
 import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 import { SessionSelectPopup } from './components/SessionSelectPopup';
@@ -886,6 +894,10 @@ export function App({
   const [metadataTargetTasks, setMetadataTargetTasks] = useState<TaskDisplay[]>([]);
   // Track which fields have mixed values across selected tasks (batch/feature only)
   const [metadataMixedFields, setMetadataMixedFields] = useState<Set<MetadataField>>(new Set());
+  // Monitoring template states for feature mode
+  const [monitoringTemplates, setMonitoringTemplates] = useState<MonitoringTemplateState[]>([]);
+  const [monitoringLoading, setMonitoringLoading] = useState(false);
+  const [focusedMonitoringIndex, setFocusedMonitoringIndex] = useState(-1);
   // Original values for comparison (only send changed fields)
   const [metadataOriginalValues, setMetadataOriginalValues] = useState<{
     status: EntryStatus;
@@ -1899,6 +1911,10 @@ export function App({
           setShowMetadataPopup(false);
           setMetadataInteractionMode('navigate');
           setMetadataEditBuffer('');
+          // Reset monitoring state
+          setMonitoringTemplates([]);
+          setMonitoringLoading(false);
+          setFocusedMonitoringIndex(-1);
           // Exit multi-select mode if changes were saved during this popup session
           if (metadataDirty) {
             setSelectedTaskIds(new Set());
@@ -1910,22 +1926,123 @@ export function App({
 
       // === NAVIGATE MODE ===
       if (metadataInteractionMode === 'navigate') {
-        // j/k or Down/Up: navigate between fields
+        // j/k or Down/Up: navigate between fields and monitoring rows
         if (input === 'j' || key.downArrow) {
-          const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
-          const nextIndex = Math.min(currentIndex + 1, METADATA_FIELDS.length - 1);
-          setMetadataFocusedField(METADATA_FIELDS[nextIndex]);
+          if (focusedMonitoringIndex >= 0) {
+            // Currently in monitoring section
+            if (focusedMonitoringIndex < monitoringTemplates.length - 1) {
+              setFocusedMonitoringIndex(focusedMonitoringIndex + 1);
+            } else {
+              // Wrap to first regular field
+              setFocusedMonitoringIndex(-1);
+              setMetadataFocusedField(METADATA_FIELDS[0]);
+            }
+          } else {
+            const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
+            if (currentIndex >= METADATA_FIELDS.length - 1) {
+              // At last regular field: move to monitoring if available
+              if (metadataPopupMode === 'feature' && monitoringTemplates.length > 0) {
+                setFocusedMonitoringIndex(0);
+              }
+              // else stay at last field (no wrap)
+            } else {
+              setMetadataFocusedField(METADATA_FIELDS[currentIndex + 1]);
+            }
+          }
           return;
         }
         if (input === 'k' || key.upArrow) {
-          const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
-          const prevIndex = Math.max(currentIndex - 1, 0);
-          setMetadataFocusedField(METADATA_FIELDS[prevIndex]);
+          if (focusedMonitoringIndex > 0) {
+            // Move up within monitoring section
+            setFocusedMonitoringIndex(focusedMonitoringIndex - 1);
+          } else if (focusedMonitoringIndex === 0) {
+            // At first monitoring row: go back to last regular field
+            setFocusedMonitoringIndex(-1);
+            setMetadataFocusedField(METADATA_FIELDS[METADATA_FIELDS.length - 1]);
+          } else {
+            // In regular fields
+            const currentIndex = METADATA_FIELDS.indexOf(metadataFocusedField);
+            if (currentIndex <= 0) {
+              // At first regular field: wrap to last monitoring row if available
+              if (metadataPopupMode === 'feature' && monitoringTemplates.length > 0) {
+                setFocusedMonitoringIndex(monitoringTemplates.length - 1);
+              }
+              // else stay at first field
+            } else {
+              setMetadataFocusedField(METADATA_FIELDS[currentIndex - 1]);
+            }
+          }
           return;
         }
 
-        // Enter: enter edit mode for focused field
-        if (key.return) {
+        // Enter/Space: toggle monitoring row or enter edit mode for focused field
+        if (key.return || (input === ' ' && focusedMonitoringIndex >= 0)) {
+          // Handle monitoring row toggle
+          if (focusedMonitoringIndex >= 0 && monitoringTemplates.length > 0) {
+            const template = monitoringTemplates[focusedMonitoringIndex];
+            if (template && template.status !== 'loading') {
+              const featureIdForScope = metadataFeatureIdValue;
+              const projectForScope = metadataProjectValue;
+              if (featureIdForScope && projectForScope) {
+                const scope: TemplateScope = { type: 'feature', feature_id: featureIdForScope, project: projectForScope };
+                // Update to loading state
+                setMonitoringTemplates(prev => prev.map((t, i) =>
+                  i === focusedMonitoringIndex ? { ...t, status: 'loading' as const } : t
+                ));
+                if (template.status === 'create') {
+                  const matchingTemplate = TEMPLATE_LIST.find(t => t.id === template.templateId);
+                  if (matchingTemplate) {
+                    createScheduledTask(matchingTemplate, scope, config.apiUrl)
+                      .then((result) => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t
+                        ));
+                        addLog({ level: 'info', message: `Created monitoring task: ${template.label}` });
+                      })
+                      .catch((err) => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'create' as const } : t
+                        ));
+                        addLog({ level: 'error', message: `Failed to create monitoring task: ${err}` });
+                      });
+                  }
+                } else if (template.status === 'enabled' && template.taskPath) {
+                  toggleScheduledTask(template.taskPath, false, config.apiUrl)
+                    .then(() => {
+                      setMonitoringTemplates(prev => prev.map((t, i) =>
+                        i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
+                      ));
+                      addLog({ level: 'info', message: `Disabled monitoring task: ${template.label}` });
+                    })
+                    .catch((err) => {
+                      setMonitoringTemplates(prev => prev.map((t, i) =>
+                        i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
+                      ));
+                      addLog({ level: 'error', message: `Failed to disable monitoring task: ${err}` });
+                    });
+                } else if (template.status === 'disabled' && template.taskPath) {
+                  toggleScheduledTask(template.taskPath, true, config.apiUrl)
+                    .then(() => {
+                      setMonitoringTemplates(prev => prev.map((t, i) =>
+                        i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
+                      ));
+                      addLog({ level: 'info', message: `Enabled monitoring task: ${template.label}` });
+                    })
+                    .catch((err) => {
+                      setMonitoringTemplates(prev => prev.map((t, i) =>
+                        i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
+                      ));
+                      addLog({ level: 'error', message: `Failed to enable monitoring task: ${err}` });
+                    });
+                }
+              }
+            }
+            return;
+          }
+
+          // Regular field edit handling (only on Enter, not Space)
+          if (!key.return) return;
+
           if (metadataFocusedField === 'status') {
             // Status field: transition to EDIT_STATUS mode
             setMetadataInteractionMode('edit_status');
@@ -3059,6 +3176,56 @@ export function App({
         setMetadataInteractionMode('navigate');
         setMetadataEditBuffer('');
         setMetadataDirty(false);
+        // Initialize monitoring state
+        setMonitoringTemplates([]);
+        setMonitoringLoading(false);
+        setFocusedMonitoringIndex(-1);
+
+        // Fetch monitoring template statuses for feature mode
+        if (mode === 'feature') {
+          setMonitoringLoading(true);
+          const featureIdForScope = featureIdOverride ?? prefill.feature_id;
+          const projectForScope = prefill.project;
+          if (featureIdForScope && projectForScope) {
+            const scope: TemplateScope = { type: 'feature', feature_id: featureIdForScope, project: projectForScope };
+            Promise.all(
+              TEMPLATE_LIST.map(async (template): Promise<MonitoringTemplateState> => {
+                try {
+                  const existing = await findScheduledTask(template.id, scope, config.apiUrl);
+                  if (existing) {
+                    return {
+                      templateId: template.id,
+                      label: template.label,
+                      status: existing.enabled ? 'enabled' : 'disabled',
+                      schedule: template.schedule,
+                      taskPath: existing.path,
+                    };
+                  }
+                  return {
+                    templateId: template.id,
+                    label: template.label,
+                    status: 'create',
+                    schedule: template.schedule,
+                  };
+                } catch {
+                  return {
+                    templateId: template.id,
+                    label: template.label,
+                    status: 'create',
+                    schedule: template.schedule,
+                  };
+                }
+              })
+            ).then((results) => {
+              setMonitoringTemplates(results);
+              setMonitoringLoading(false);
+            }).catch(() => {
+              setMonitoringLoading(false);
+            });
+          } else {
+            setMonitoringLoading(false);
+          }
+        }
         setMetadataMixedFields(detectMixedFields(targetTasks, mode, featureIdOverride));
         setShowMetadataPopup(true);
       };
@@ -3735,6 +3902,9 @@ export function App({
           editBuffer={metadataEditBuffer}
 
           mixedFields={metadataMixedFields}
+          monitoringTemplates={monitoringTemplates}
+          monitoringLoading={monitoringLoading}
+          focusedMonitoringIndex={focusedMonitoringIndex}
         />
       </Box>
     );

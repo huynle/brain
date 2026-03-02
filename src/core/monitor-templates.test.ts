@@ -248,7 +248,72 @@ describe("buildPrompt", () => {
     const prompt = template.buildPrompt({ type: "all" });
     expect(prompt).toContain("brain_tasks");
     expect(prompt).toContain("brain_task_get");
+    expect(prompt).toContain("brain_update");
     expect(prompt).toContain("brain_recall");
     expect(prompt).toContain("brain_search");
+  });
+
+  it("references session history tools", () => {
+    const prompt = template.buildPrompt({ type: "all" });
+    expect(prompt).toContain("session_list");
+    expect(prompt).toContain("session_read");
+    expect(prompt).toContain("session_search");
+  });
+
+  it("references opencode control tools", () => {
+    const prompt = template.buildPrompt({ type: "all" });
+    expect(prompt).toContain("oc_discover");
+    expect(prompt).toContain("oc_status");
+    expect(prompt).toContain("oc_send");
+  });
+
+  it("includes block classification categories", () => {
+    const prompt = template.buildPrompt({ type: "all" });
+    expect(prompt).toContain("Worktree setup failure");
+    expect(prompt).toContain("Idle detection timeout");
+    expect(prompt).toContain("Process crash");
+    expect(prompt).toContain("Agent self-block");
+    expect(prompt).toContain("Dependency block");
+  });
+
+  it("includes resolution instructions per classification", () => {
+    const prompt = template.buildPrompt({ type: "all" });
+    // Worktree failure resolution
+    expect(prompt).toContain("runner will automatically retry");
+    // Idle timeout with live process
+    expect(prompt).toContain("oc_send");
+    // Agent self-block resolution
+    expect(prompt).toContain("Do **NOT** auto-reset");
+    // Dependency block resolution
+    expect(prompt).toContain("depth limit: 3");
+  });
+
+  it("includes scope-specific discovery for project scope", () => {
+    const prompt = template.buildPrompt({
+      type: "project",
+      project: "brain-api",
+    });
+    expect(prompt).toContain(
+      'brain_tasks({ project: "brain-api", status: "blocked" })',
+    );
+    expect(prompt).not.toContain("Discover all projects");
+  });
+
+  it("includes scope-specific discovery for feature scope", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "auth-system",
+      project: "brain-api",
+    });
+    expect(prompt).toContain(
+      'brain_tasks({ project: "brain-api", feature_id: "auth-system", status: "blocked" })',
+    );
+    expect(prompt).not.toContain("Discover all projects");
+  });
+
+  it("includes all-projects discovery for scope all", () => {
+    const prompt = template.buildPrompt({ type: "all" });
+    expect(prompt).toContain("Discover all projects");
+    expect(prompt).toContain("brain_tasks()");
   });
 });

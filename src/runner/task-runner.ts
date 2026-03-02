@@ -1243,6 +1243,44 @@ export class TaskRunner {
     }
   }
 
+  /**
+   * Clean up all in-flight tasks spawned by a schedule that was just disabled.
+   * Finds active runs for the given scheduledTaskId and completes any tasks
+   * still tracked in tuiTasks, preventing indefinite monitoring after max_runs
+   * or expiry disables the schedule.
+   */
+  private async cleanupDisabledScheduleInFlightTasks(
+    scheduledTaskId: string,
+    projectId: string,
+    reason: string
+  ): Promise<void> {
+    // Find all active runs belonging to this scheduled task
+    for (const [runId, run] of this.activeScheduledRuns) {
+      if (run.scheduledTaskId !== scheduledTaskId) continue;
+
+      // Complete any in-flight tuiTasks from this run
+      for (const taskId of run.taskIds) {
+        const tuiTask = this.tuiTasks.get(taskId);
+        if (tuiTask) {
+          this.logger.info("Cleaning up in-flight task from disabled schedule", {
+            taskId,
+            scheduledTaskId,
+            runId,
+            projectId,
+            reason,
+          });
+          this.tuiLog(
+            'info',
+            `Completing task from disabled schedule (${reason}): ${tuiTask.title}`,
+            taskId,
+            projectId
+          );
+          await this.handleTuiTaskCompletion(taskId, tuiTask, CompletionStatus.Completed);
+        }
+      }
+    }
+  }
+
   private async finalizeScheduledRunForTask(
     taskId: string,
     status: CompletionStatus,
@@ -1344,10 +1382,13 @@ export class TaskRunner {
         // are also eligible — the scheduler resets them to pending on trigger,
         // enabling recurring execution (e.g. complete_on_idle tasks that finished
         // their previous run and are waiting for the next scheduled time).
+        // "blocked" tasks must also be evaluated so that max_runs auto-disable
+        // logic can fire — otherwise blocked tasks that hit max_runs stay in
+        // tuiTasks indefinitely, causing infinite monitoring loops.
         const scheduledTasks = allTasks.filter((task) => task.schedule);
         const dueTasks: ResolvedTask[] = [];
         for (const task of scheduledTasks) {
-          const eligibleStatuses = ["active", "completed"];
+          const eligibleStatuses = ["active", "completed", "blocked"];
           if (!eligibleStatuses.includes(task.status)) {
             continue;
           }
@@ -1380,6 +1421,12 @@ export class TaskRunner {
                   projectId,
                   reason: boundsCheck.reason,
                 });
+
+                // Clean up ALL in-flight tasks spawned by this schedule's active runs.
+                // Without this, tasks from a disabled schedule continue being monitored
+                // indefinitely — tmux windows stay open, logs keep flowing, and
+                // checkBlockedTasksForResume() can even auto-resume them.
+                await this.cleanupDisabledScheduleInFlightTasks(task.id, projectId, boundsCheck.reason ?? "schedule disabled");
               } catch (error) {
                 this.logger.warn("Failed to disable schedule for task", {
                   taskId: task.id,
@@ -1759,6 +1806,24 @@ export class TaskRunner {
   private async checkTuiTasks(): Promise<void> {
     for (const [taskId, task] of this.tuiTasks) {
       try {
+        // Detect orphaned schedule tasks: if the task was spawned by a schedule
+        // but has no active run tracking, the schedule was disabled (e.g. max_runs hit).
+        // Complete these tasks immediately to stop monitoring.
+        if (task.scheduledTaskId && !this.taskToScheduledRun.has(taskId)) {
+          this.logger.info("Cleaning up orphaned schedule task from tuiTasks", {
+            taskId,
+            scheduledTaskId: task.scheduledTaskId,
+          });
+          this.tuiLog(
+            'info',
+            `Completing orphaned schedule task: ${task.title}`,
+            taskId,
+            task.projectId
+          );
+          await this.handleTuiTaskCompletion(taskId, task, CompletionStatus.Completed);
+          continue;
+        }
+
         // Check task status from brain API
         const encodedPath = encodeURIComponent(task.path);
         const response = await fetch(
@@ -1932,6 +1997,13 @@ export class TaskRunner {
    */
   private async checkBlockedTasksForResume(): Promise<void> {
     for (const [taskId, task] of this.tuiTasks) {
+      // Skip orphaned schedule tasks: if the task was spawned by a schedule
+      // but has no active run tracking, the schedule was disabled (e.g. max_runs hit).
+      // Don't auto-resume tasks from disabled schedules.
+      if (task.scheduledTaskId && !this.taskToScheduledRun.has(taskId)) {
+        continue;
+      }
+
       // Check current status from Brain API
       try {
         const encodedPath = encodeURIComponent(task.path);

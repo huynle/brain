@@ -317,3 +317,151 @@ describe("buildPrompt", () => {
     expect(prompt).toContain("brain_tasks()");
   });
 });
+
+// =============================================================================
+// feature-review template
+// =============================================================================
+
+describe("feature-review template", () => {
+  it("exists in MONITOR_TEMPLATES", () => {
+    expect(MONITOR_TEMPLATES["feature-review"]).toBeDefined();
+  });
+
+  it("has all required fields", () => {
+    const t = MONITOR_TEMPLATES["feature-review"];
+    expect(t.id).toBe("feature-review");
+    expect(t.label).toBe("Feature Code Review");
+    expect(typeof t.description).toBe("string");
+    expect(t.description.length).toBeGreaterThan(0);
+    expect(t.defaultSchedule).toBe("");
+    expect(typeof t.buildPrompt).toBe("function");
+    expect(Array.isArray(t.tags)).toBe(true);
+    expect(t.tags).toContain("review");
+  });
+
+  it("appears in MONITOR_TEMPLATE_LIST", () => {
+    const found = MONITOR_TEMPLATE_LIST.find((t) => t.id === "feature-review");
+    expect(found).toBeDefined();
+    expect(found).toBe(MONITOR_TEMPLATES["feature-review"]);
+  });
+});
+
+describe("feature-review buildPrompt", () => {
+  const template = MONITOR_TEMPLATES["feature-review"];
+
+  it("throws for scope 'all'", () => {
+    expect(() => template.buildPrompt({ type: "all" })).toThrow(
+      "feature-review template only supports feature scope",
+    );
+  });
+
+  it("throws for scope 'project'", () => {
+    expect(() =>
+      template.buildPrompt({ type: "project", project: "brain-api" }),
+    ).toThrow("feature-review template only supports feature scope");
+  });
+
+  it("generates prompt for scope 'feature'", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "auth-system",
+      project: "brain-api",
+    });
+    expect(typeof prompt).toBe("string");
+    expect(prompt.length).toBeGreaterThan(100);
+  });
+
+  it("includes feature_id and project in prompt", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "auth-system",
+      project: "brain-api",
+    });
+    expect(prompt).toContain("auth-system");
+    expect(prompt).toContain("brain-api");
+  });
+
+  it("includes Phase 1 completeness instructions", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("Phase 1: Completeness Review");
+    expect(prompt).toContain("user_original_request");
+    expect(prompt).toContain("IMPLEMENTED");
+    expect(prompt).toContain("PARTIAL");
+    expect(prompt).toContain("MISSING");
+  });
+
+  it("includes Phase 2 quality review instructions", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("Phase 2: Code Quality Review");
+    expect(prompt).toContain("Patterns");
+    expect(prompt).toContain("Testing");
+    expect(prompt).toContain("Error handling");
+    expect(prompt).toContain("Security");
+    expect(prompt).toContain("Performance");
+  });
+
+  it("includes brain_tasks discovery call with correct filters", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "auth-system",
+      project: "brain-api",
+    });
+    expect(prompt).toContain(
+      'brain_tasks({ project: "brain-api", feature_id: "auth-system" })',
+    );
+  });
+
+  it("includes safety rules", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("READ-ONLY review");
+    expect(prompt).toContain("Do NOT create follow-up tasks");
+    expect(prompt).toContain("Do NOT modify reviewed tasks");
+  });
+
+  it("includes report output structure", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("brain_save");
+    expect(prompt).toContain('type: "report"');
+    expect(prompt).toContain("Feature Review: feat-1");
+    expect(prompt).toContain("Completeness Score");
+    expect(prompt).toContain("Quality Findings");
+  });
+
+  it("skips generated and draft tasks", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("Skip tasks with `generated: true`");
+    expect(prompt).toContain("Skip tasks in `draft` status");
+  });
+
+  it("references available tools", () => {
+    const prompt = template.buildPrompt({
+      type: "feature",
+      feature_id: "feat-1",
+      project: "test-proj",
+    });
+    expect(prompt).toContain("brain_tasks");
+    expect(prompt).toContain("brain_task_get");
+    expect(prompt).toContain("brain_save");
+    expect(prompt).toContain("brain_recall");
+  });
+});

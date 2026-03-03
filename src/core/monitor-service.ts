@@ -104,6 +104,78 @@ export class MonitorService {
   }
 
   /**
+   * Create a one-shot review task for a feature, triggered by dependency completion.
+   *
+   * Unlike create(), this method:
+   * - Does NOT set schedule/schedule_enabled (one-shot, not recurring)
+   * - Auto-computes depends_on from all other tasks in the feature
+   * - Sets generated metadata for dedup and tracking
+   * - Status is "pending" — becomes "ready" when all deps complete (via runner)
+   *
+   * @throws Error if template not found
+   * @throws Error if template doesn't support feature scope
+   * @throws MonitorConflictError if review task already exists for this feature
+   */
+  async createForFeature(
+    templateId: string,
+    scope: { type: "feature"; feature_id: string; project: string },
+    project: string,
+  ): Promise<CreateMonitorResult> {
+    const template = MONITOR_TEMPLATES[templateId];
+    if (!template) {
+      throw new Error(`Unknown monitor template: ${templateId}`);
+    }
+
+    // Check for existing review task (dedup)
+    const existing = await this.find(templateId, scope);
+    if (existing) {
+      throw new MonitorConflictError(
+        `Monitor already exists for template "${templateId}" with feature "${scope.feature_id}"`,
+        existing.id,
+        existing.path,
+      );
+    }
+
+    // Build the prompt (will throw if template doesn't support feature scope)
+    const prompt = template.buildPrompt(scope);
+
+    const tag = buildMonitorTag(templateId, scope);
+    const title = buildMonitorTitle(template, scope);
+
+    // Fetch all tasks in the feature to compute depends_on
+    const featureTasks = await this.brainService.list({
+      type: "task",
+      feature_id: scope.feature_id,
+      limit: 200,
+    });
+
+    // Collect paths as depends_on, excluding generated tasks (other monitors/reviews)
+    const dependsOn = featureTasks.entries
+      .filter((entry) => !entry.generated)
+      .map((entry) => entry.path);
+
+    const result = await this.brainService.save({
+      type: "task",
+      title,
+      content: `## Feature Review Task\n\nTemplate: ${template.label}\nFeature: ${scope.feature_id}\nProject: ${project}\n\nThis task was created as a one-shot feature review. It becomes ready when all dependency tasks complete.`,
+      direct_prompt: prompt,
+      complete_on_idle: true,
+      execution_mode: "current_branch",
+      status: "pending",
+      feature_id: scope.feature_id,
+      depends_on: dependsOn,
+      generated: true,
+      generated_kind: "feature_review",
+      generated_key: `feature-review:${scope.feature_id}`,
+      generated_by: "feature-completion-hook",
+      tags: [...template.tags, tag],
+      project,
+    });
+
+    return { id: result.id, path: result.path, title };
+  }
+
+  /**
    * Find existing monitor for a template+scope combo (by tag lookup).
    */
   async find(

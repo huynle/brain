@@ -51,7 +51,7 @@ export type EntryStatus = (typeof ENTRY_STATUSES)[number];
 export const PRIORITIES = ["high", "medium", "low"] as const;
 export type Priority = (typeof PRIORITIES)[number];
 
-export const GENERATED_KINDS = ["feature_checkout", "gap_task", "other"] as const;
+export const GENERATED_KINDS = ["feature_checkout", "feature_review", "gap_task", "other"] as const;
 export type GeneratedKind = (typeof GENERATED_KINDS)[number];
 
 export const MERGE_POLICIES = ["prompt_only", "auto_pr", "auto_merge"] as const;

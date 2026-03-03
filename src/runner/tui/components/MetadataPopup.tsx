@@ -37,7 +37,7 @@ import { getStatusIcon, getStatusColor, getStatusLabel } from '../status-display
 export interface MonitoringTemplateState {
   templateId: string;
   label: string;
-  status: 'loading' | 'enabled' | 'disabled' | 'create';
+  status: 'loading' | 'enabled' | 'create';
   schedule: string;
   taskPath?: string;
 }
@@ -559,12 +559,8 @@ export function MetadataPopup({
         {mode === 'feature' && !monitoringLoading && monitoringTemplates && monitoringTemplates.length > 0 && (
           monitoringTemplates.map((template, idx) => {
             const isFocused = focusedMonitoringIndex === idx;
-            const statusIcon = template.status === 'enabled' ? '●'
-              : template.status === 'disabled' ? '●'
-              : '○';
-            const statusColor = template.status === 'enabled' ? 'green'
-              : template.status === 'disabled' ? 'red'
-              : undefined;
+            const statusIcon = template.status === 'enabled' ? '●' : '○';
+            const statusColor = template.status === 'enabled' ? 'green' : undefined;
             const tagText = `[${template.status}]`;
 
             return (
@@ -582,7 +578,7 @@ export function MetadataPopup({
                 <Text color={statusColor} dimColor={template.status === 'create'}>
                   {tagText}
                 </Text>
-                {(template.status === 'enabled' || template.status === 'disabled') && (
+                {template.status === 'enabled' && (
                   <Text dimColor> {template.schedule}</Text>
                 )}
               </Box>

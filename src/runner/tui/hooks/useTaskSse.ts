@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import type { ProjectStats, TaskDisplay, TUISSEEvent } from '../types';
-import { isSseDebugLoggingEnabled, normalizeTaskSSEEvent } from './taskSseEvents';
+import { isSseDebugLoggingEnabled, normalizeTaskSSEEvent, normalizeTasksSnapshot } from './taskSseEvents';
 import type { TaskStats, UseTaskResult } from './taskTypes';
 import { appendFileSync } from 'fs';
 import { EventSource as EventSourcePolyfill } from 'eventsource';
@@ -365,10 +365,41 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
     reconnectDelayMs,  // Only include reconnectDelayMs, not the callback itself
   ]);
 
-  // refetch is a no-op in pure SSE mode (no manual polling)
+  // Manual refetch via REST API — fallback when SSE push doesn't arrive
   const refetch = useCallback(async () => {
-    // Pure SSE mode - no manual refetch needed
-  }, []);
+    if (!enabled) return;
+    try {
+      const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}`;
+      debugLog(`[useTaskSse:refetch] Fetching ${url}`);
+      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!response.ok) {
+        debugLog(`[useTaskSse:refetch] Failed: ${response.status}`);
+        return;
+      }
+      const data = await response.json() as {
+        tasks: Record<string, unknown>[];
+        stats: Record<string, unknown>;
+      };
+      // Normalize through the same pipeline as SSE events so field names
+      // (depends_on → dependencies, etc.) are mapped consistently
+      const normalized = normalizeTasksSnapshot(data.tasks, projectId);
+      debugLog(`[useTaskSse:refetch] Got ${normalized.tasks.length} tasks, dispatching SNAPSHOT_SUCCESS`);
+      dispatch({
+        type: 'SNAPSHOT_SUCCESS',
+        tasks: normalized.tasks,
+        stats: {
+          total: normalized.tasks.length,
+          ready: normalized.stats.ready,
+          waiting: normalized.stats.waiting,
+          blocked: normalized.stats.blocked,
+          inProgress: normalized.stats.inProgress,
+          completed: normalized.stats.completed,
+        },
+      });
+    } catch (err) {
+      debugLog(`[useTaskSse:refetch] Error: ${err}`);
+    }
+  }, [apiUrl, projectId, enabled]);
 
   return {
     tasks: state.tasks,

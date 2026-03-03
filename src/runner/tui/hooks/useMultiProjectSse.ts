@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import type { ProjectStats, TaskDisplay, TUISSEEvent } from '../types';
-import { normalizeTaskSSEEvent } from './taskSseEvents';
+import { normalizeTaskSSEEvent, normalizeTasksSnapshot } from './taskSseEvents';
 import type { TaskStats } from './taskTypes';
 import {
   aggregateProjectStats,
@@ -397,10 +397,41 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
     scheduleProjectReconnect,
   ]);
 
-  // refetch is a no-op in pure SSE mode (no manual polling)
+  // Manual refetch via REST API — fallback when SSE push doesn't arrive
   const refetch = useCallback(async () => {
-    // Pure SSE mode - no manual refetch needed
-  }, []);
+    if (!enabled || projects.length === 0) return;
+    try {
+      await Promise.all(
+        projects.map(async (projectId) => {
+          const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}`;
+          const response = await fetch(url, { headers: { Accept: 'application/json' } });
+          if (!response.ok) return;
+          const data = await response.json() as {
+            tasks: Record<string, unknown>[];
+            stats: Record<string, unknown>;
+          };
+          // Normalize through the same pipeline as SSE events so field names
+          // (depends_on → dependencies, etc.) are mapped consistently
+          const normalized = normalizeTasksSnapshot(data.tasks, projectId);
+          dispatch({
+            type: 'PROJECT_SNAPSHOT_SUCCESS',
+            projectId,
+            tasks: normalized.tasks,
+            stats: {
+              total: normalized.tasks.length,
+              ready: normalized.stats.ready,
+              waiting: normalized.stats.waiting,
+              blocked: normalized.stats.blocked,
+              inProgress: normalized.stats.inProgress,
+              completed: normalized.stats.completed,
+            },
+          });
+        })
+      );
+    } catch {
+      // Ignore errors — SSE will recover
+    }
+  }, [apiUrl, projects, enabled]);
 
   const aggregateStats = useMemo(
     () => aggregateProjectStats(state.statsByProject),

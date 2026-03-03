@@ -658,7 +658,7 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('*/15 * * * *');
     });
 
-    it('should render disabled template with red indicator', () => {
+    it('should render enabled template with green indicator and schedule', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...featureProps}
@@ -666,7 +666,7 @@ describe('MetadataPopup', () => {
             {
               templateId: 'blocked-inspector',
               label: 'Blocked Task Inspector',
-              status: 'disabled',
+              status: 'enabled',
               schedule: '*/15 * * * *',
               taskPath: 'projects/test/task/abc.md',
             },
@@ -676,7 +676,7 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).toContain('Blocked Task Inspector');
-      expect(frame).toContain('[disabled]');
+      expect(frame).toContain('[enabled]');
       expect(frame).toContain('*/15 * * * *');
     });
 
@@ -870,9 +870,8 @@ describe('MetadataPopup', () => {
             {
               templateId: 'stale-checker',
               label: 'Stale Task Checker',
-              status: 'disabled',
+              status: 'create',
               schedule: '0 9 * * 1',
-              taskPath: 'projects/test/task/def.md',
             },
           ]}
           focusedMonitoringIndex={1}
@@ -894,7 +893,7 @@ describe('MetadataPopup', () => {
       expect(blockedLine).not.toContain('→');
     });
 
-    it('should render disabled template with its schedule visible', () => {
+    it('should render create template without schedule visible', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...featureProps}
@@ -902,9 +901,8 @@ describe('MetadataPopup', () => {
             {
               templateId: 'stale-checker',
               label: 'Stale Task Checker',
-              status: 'disabled',
+              status: 'create',
               schedule: '0 9 * * 1',
-              taskPath: 'projects/test/task/def.md',
             },
           ]}
         />
@@ -912,9 +910,9 @@ describe('MetadataPopup', () => {
 
       const frame = lastFrame();
       expect(frame).toContain('Stale Task Checker');
-      expect(frame).toContain('[disabled]');
-      // Disabled templates still show their schedule (unlike create)
-      expect(frame).toContain('0 9 * * 1');
+      expect(frame).toContain('[create]');
+      // Create templates do not show their schedule
+      expect(frame).not.toContain('0 9 * * 1');
     });
   });
 

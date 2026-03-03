@@ -351,3 +351,31 @@ export function normalizeTaskSSEEvent(params: NormalizeTaskSSEEventParams): TUIS
   debugLog(`[normalizeTaskSSEEvent] Unknown event type: ${type}`);
   return null;
 }
+
+/**
+ * Normalize a raw tasks snapshot from the REST API into TaskDisplay[].
+ * Re-uses the same normalizeTask() pipeline as SSE events so field names
+ * (depends_on → dependencies, etc.) are mapped consistently.
+ */
+export function normalizeTasksSnapshot(
+  rawTasks: Record<string, unknown>[],
+  projectId: string,
+): { tasks: TaskDisplay[]; stats: ProjectStats['stats'] } {
+  const idToTitle = new Map<string, string>();
+  for (const rawTask of rawTasks) {
+    const id = asString(rawTask.id);
+    const title = asString(rawTask.title);
+    if (id && title) {
+      idToTitle.set(id, title);
+    }
+  }
+
+  const dependencyMap = buildDependencyMap(rawTasks);
+  const dependentsMap = computeDependents(rawTasks, dependencyMap);
+
+  const tasks = rawTasks.map((rawTask) =>
+    normalizeTask(rawTask, idToTitle, dependentsMap, dependencyMap, projectId)
+  );
+
+  return { tasks, stats: normalizeSnapshotStats(undefined, tasks) };
+}

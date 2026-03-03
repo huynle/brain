@@ -228,6 +228,7 @@ export async function createScheduledTask(
   template: ScheduledTaskTemplate,
   scope: TemplateScope,
   apiBase: string,
+  options?: { status?: string },
 ): Promise<{ id: string; path: string }> {
   const tag = buildScheduledTaskTag(template.id, scope);
   const body: Record<string, unknown> = {
@@ -243,6 +244,10 @@ export async function createScheduledTask(
     execution_mode: template.execution_mode,
     tags: [...template.tags, tag],
   };
+
+  if (options?.status) {
+    body.status = options.status;
+  }
 
   if (scope.type === "project") {
     body.project = scope.project;
@@ -329,6 +334,30 @@ export async function toggleScheduledTask(
   if (!response.ok) {
     throw new Error(
       `Failed to toggle scheduled task: ${response.status}`,
+    );
+  }
+}
+
+/**
+ * Delete a scheduled task via the entries API.
+ * Used for consistent create/delete toggle behavior (no disable state).
+ */
+export async function deleteScheduledTask(
+  taskPath: string,
+  apiBase: string,
+): Promise<void> {
+  const encoded = encodeURIComponent(taskPath);
+  const response = await fetch(
+    `${apiBase}/api/v1/entries/${encoded}?confirm=true`,
+    {
+      method: "DELETE",
+      headers: { Accept: "application/json" },
+    },
+  );
+
+  if (!response.ok) {
+    throw new Error(
+      `Failed to delete scheduled task: ${response.status}`,
     );
   }
 }

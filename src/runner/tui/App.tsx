@@ -63,7 +63,7 @@ import {
   TEMPLATE_LIST,
   findScheduledTask,
   createScheduledTask,
-  toggleScheduledTask,
+  deleteScheduledTask,
   findMonitorTask,
   createMonitorTask,
   deleteMonitorTask,
@@ -2020,7 +2020,7 @@ export function App({
                     // Recurring scheduled template: create via entries API
                     const matchingTemplate = TEMPLATE_LIST.find(t => t.id === template.templateId);
                     if (matchingTemplate) {
-                      createScheduledTask(matchingTemplate, scope, config.apiUrl)
+                      createScheduledTask(matchingTemplate, scope, config.apiUrl, { status: metadataStatusValue })
                         .then((result) => {
                           setMonitoringTemplates(prev => prev.map((t, i) =>
                             i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t
@@ -2056,37 +2056,22 @@ export function App({
                         addLog({ level: 'error', message: `Failed to remove review task: ${err}` });
                       });
                   } else {
-                    // Recurring scheduled template: disable (keep task, stop scheduling)
-                    toggleScheduledTask(template.taskPath, false, config.apiUrl)
+                    // Recurring scheduled template: toggle OFF = delete the task entirely
+                    deleteScheduledTask(template.taskPath, config.apiUrl)
                       .then(() => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
-                          i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
+                          i === focusedMonitoringIndex ? { ...t, status: 'create' as const, taskPath: undefined } : t
                         ));
-                        addLog({ level: 'info', message: `Disabled monitoring task: ${template.label}` });
+                        addLog({ level: 'info', message: `Removed monitoring task: ${template.label}` });
                         refetch();
                       })
                       .catch((err) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
                           i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
                         ));
-                        addLog({ level: 'error', message: `Failed to disable monitoring task: ${err}` });
+                        addLog({ level: 'error', message: `Failed to remove monitoring task: ${err}` });
                       });
                   }
-                } else if (template.status === 'disabled' && template.taskPath) {
-                  toggleScheduledTask(template.taskPath, true, config.apiUrl)
-                    .then(() => {
-                      setMonitoringTemplates(prev => prev.map((t, i) =>
-                        i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
-                      ));
-                      addLog({ level: 'info', message: `Enabled monitoring task: ${template.label}` });
-                      refetch();
-                    })
-                    .catch((err) => {
-                      setMonitoringTemplates(prev => prev.map((t, i) =>
-                        i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
-                      ));
-                      addLog({ level: 'error', message: `Failed to enable monitoring task: ${err}` });
-                    });
                 }
               }
             }
@@ -3249,7 +3234,7 @@ export function App({
                   return {
                     templateId: template.id,
                     label: template.label,
-                    status: existing.enabled ? 'enabled' : 'disabled',
+                    status: 'enabled' as const,
                     schedule: template.schedule,
                     taskPath: existing.path,
                   };
@@ -3257,14 +3242,14 @@ export function App({
                 return {
                   templateId: template.id,
                   label: template.label,
-                  status: 'create',
+                  status: 'create' as const,
                   schedule: template.schedule,
                 };
               } catch {
                 return {
                   templateId: template.id,
                   label: template.label,
-                  status: 'create',
+                  status: 'create' as const,
                   schedule: template.schedule,
                 };
               }
@@ -3280,7 +3265,7 @@ export function App({
                     return {
                       templateId: template.id,
                       label: template.label,
-                      status: existing.enabled ? 'enabled' : 'disabled',
+                      status: 'enabled' as const,
                       schedule: template.defaultSchedule || 'one-shot',
                       taskPath: existing.path,
                     };

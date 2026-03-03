@@ -820,6 +820,53 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
       },
     },
   },
+  {
+    name: "brain_monitor_templates",
+    description: "List available monitor templates. Returns template IDs, labels, descriptions, and default schedules. Use with brain_monitor_create to attach a monitor to a feature or project.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+    },
+  },
+  {
+    name: "brain_monitor_create",
+    description: "Create a monitoring task from a template. The server generates the appropriate direct_prompt based on the template and scope. The task runs on schedule with complete_on_idle.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        templateId: { type: "string", description: "Template ID from brain_monitor_templates" },
+        scope_type: { type: "string", enum: ["all", "project", "feature"], description: "What to monitor" },
+        project: { type: "string", description: "Required for project/feature scope" },
+        feature_id: { type: "string", description: "Required for feature scope" },
+        schedule: { type: "string", description: "Override default cron schedule" },
+      },
+      required: ["templateId", "scope_type"],
+    },
+  },
+  {
+    name: "brain_monitor_toggle",
+    description: "Enable or disable a monitoring task. When disabled, the schedule stops firing but the task remains for re-enabling later.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        taskId: { type: "string", description: "Monitor task ID" },
+        enabled: { type: "boolean", description: "true to enable, false to disable" },
+      },
+      required: ["taskId", "enabled"],
+    },
+  },
+  {
+    name: "brain_monitor_list",
+    description: "List active monitors, optionally filtered by project, feature, or template. Shows which monitoring tasks are currently enabled/disabled.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Filter by project" },
+        feature_id: { type: "string", description: "Filter by feature" },
+        template_id: { type: "string", description: "Filter by template type" },
+      },
+    },
+  },
 ];
 
 // ============================================================================
@@ -1974,6 +2021,137 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
           lines.push(`${indent}- ${section.title} (line ${section.line})`);
         }
 
+        return lines.join("\n");
+      }
+
+      case "brain_monitor_templates": {
+        const response = await apiRequest<{
+          templates: Array<{
+            id: string;
+            label: string;
+            description: string;
+            defaultSchedule: string;
+            tags: string[];
+          }>;
+          count: number;
+        }>("GET", "/monitors/templates");
+
+        const lines = [
+          `## Monitor Templates (${response.count})`,
+          "",
+        ];
+        for (const t of response.templates) {
+          lines.push(`### ${t.label}`);
+          lines.push(`- **ID:** ${t.id}`);
+          lines.push(`- **Description:** ${t.description}`);
+          lines.push(`- **Default Schedule:** ${t.defaultSchedule}`);
+          lines.push(`- **Tags:** ${t.tags.join(", ")}`);
+          lines.push("");
+        }
+        return lines.join("\n");
+      }
+
+      case "brain_monitor_create": {
+        const scopeType = args.scope_type as string;
+        const project = args.project as string | undefined;
+        const featureId = args.feature_id as string | undefined;
+
+        // Validate scope requirements
+        if (scopeType === "project" && !project) {
+          return `Error: 'project' is required when scope_type is "project".`;
+        }
+        if (scopeType === "feature") {
+          if (!project || !featureId) {
+            return `Error: Both 'project' and 'feature_id' are required when scope_type is "feature".`;
+          }
+        }
+
+        // Build scope object from flat args
+        let scope: Record<string, string>;
+        if (scopeType === "all") {
+          scope = { type: "all" };
+        } else if (scopeType === "project") {
+          scope = { type: "project", project: project! };
+        } else {
+          scope = { type: "feature", project: project!, feature_id: featureId! };
+        }
+
+        const body: Record<string, unknown> = { templateId: args.templateId as string, scope };
+        if (args.schedule) body.schedule = args.schedule as string;
+
+        try {
+          const response = await apiRequest<{
+            id: string;
+            path: string;
+            title: string;
+          }>("POST", "/monitors", body);
+
+          return [
+            `Monitor created successfully:`,
+            `- **ID:** ${response.id}`,
+            `- **Path:** ${response.path}`,
+            `- **Title:** ${response.title}`,
+          ].join("\n");
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+            return `Monitor already exists for this template+scope. Use brain_monitor_toggle to enable/disable it.`;
+          }
+          throw error;
+        }
+      }
+
+      case "brain_monitor_toggle": {
+        const response = await apiRequest<{
+          message: string;
+          taskId: string;
+          enabled: boolean;
+        }>(
+          "PATCH",
+          `/monitors/${encodeURIComponent(args.taskId as string)}/toggle`,
+          { enabled: args.enabled as boolean }
+        );
+
+        return `Monitor ${response.taskId} ${response.enabled ? "enabled" : "disabled"}.`;
+      }
+
+      case "brain_monitor_list": {
+        const queryParams: Record<string, string> = {};
+        if (args.project) queryParams.project = args.project as string;
+        if (args.feature_id) queryParams.feature_id = args.feature_id as string;
+        if (args.template_id) queryParams.template_id = args.template_id as string;
+
+        const response = await apiRequest<{
+          monitors: Array<{
+            id: string;
+            path: string;
+            templateId: string;
+            scope: Record<string, string>;
+            enabled: boolean;
+            schedule: string;
+            title: string;
+          }>;
+          count: number;
+        }>("GET", "/monitors", undefined, queryParams);
+
+        if (response.monitors.length === 0) {
+          return "No monitors found matching the given filters.";
+        }
+
+        const lines = [
+          `## Monitors (${response.count})`,
+          "",
+        ];
+        for (const m of response.monitors) {
+          const status = m.enabled ? "✅ enabled" : "⏸️ disabled";
+          lines.push(`### ${m.title}`);
+          lines.push(`- **ID:** ${m.id}`);
+          lines.push(`- **Template:** ${m.templateId}`);
+          lines.push(`- **Scope:** ${JSON.stringify(m.scope)}`);
+          lines.push(`- **Status:** ${status}`);
+          lines.push(`- **Schedule:** ${m.schedule}`);
+          lines.push("");
+        }
         return lines.join("\n");
       }
 

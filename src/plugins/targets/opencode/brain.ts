@@ -2644,6 +2644,216 @@ Example - wait for completion:
           }
         },
       }),
+
+      // ========================================
+      // brain_monitor_templates
+      // ========================================
+      brain_monitor_templates: tool({
+        description:
+          "List available monitor templates. Returns template IDs, labels, descriptions, and default schedules. Use with brain_monitor_create to attach a monitor to a feature or project.",
+        args: {},
+        async execute() {
+          try {
+            const response = await apiRequest<{
+              templates: Array<{
+                id: string;
+                label: string;
+                description: string;
+                defaultSchedule: string;
+                tags: string[];
+              }>;
+              count: number;
+            }>("GET", "/monitors/templates");
+
+            const lines = [
+              `## Monitor Templates (${response.count})`,
+              "",
+            ];
+            for (const t of response.templates) {
+              lines.push(`### ${t.label}`);
+              lines.push(`- **ID:** ${t.id}`);
+              lines.push(`- **Description:** ${t.description}`);
+              lines.push(`- **Default Schedule:** ${t.defaultSchedule}`);
+              lines.push(`- **Tags:** ${t.tags.join(", ")}`);
+              lines.push("");
+            }
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to list monitor templates: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_monitor_create
+      // ========================================
+      brain_monitor_create: tool({
+        description:
+          "Create a monitoring task from a template. The server generates the appropriate direct_prompt based on the template and scope. The task runs on schedule with complete_on_idle.",
+        args: {
+          templateId: tool.schema
+            .string()
+            .describe("Template ID from brain_monitor_templates"),
+          scope_type: tool.schema
+            .enum(["all", "project", "feature"])
+            .describe("What to monitor"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Required for project/feature scope"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Required for feature scope"),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Override default cron schedule"),
+        },
+        async execute(args) {
+          // Validate scope requirements
+          if (args.scope_type === "project" && !args.project) {
+            return `Error: 'project' is required when scope_type is "project".`;
+          }
+          if (args.scope_type === "feature") {
+            if (!args.project || !args.feature_id) {
+              return `Error: Both 'project' and 'feature_id' are required when scope_type is "feature".`;
+            }
+          }
+
+          // Build scope object from flat args
+          let scope: Record<string, string>;
+          if (args.scope_type === "all") {
+            scope = { type: "all" };
+          } else if (args.scope_type === "project") {
+            scope = { type: "project", project: args.project! };
+          } else {
+            scope = { type: "feature", project: args.project!, feature_id: args.feature_id! };
+          }
+
+          const body: Record<string, unknown> = { templateId: args.templateId, scope };
+          if (args.schedule) body.schedule = args.schedule;
+
+          try {
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+            }>("POST", "/monitors", body);
+
+            return [
+              `Monitor created successfully:`,
+              `- **ID:** ${response.id}`,
+              `- **Path:** ${response.path}`,
+              `- **Title:** ${response.title}`,
+            ].join("\n");
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+              return `Monitor already exists for this template+scope. Use brain_monitor_toggle to enable/disable it.`;
+            }
+            return `Failed to create monitor: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_monitor_toggle
+      // ========================================
+      brain_monitor_toggle: tool({
+        description:
+          "Enable or disable a monitoring task. When disabled, the schedule stops firing but the task remains for re-enabling later.",
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Monitor task ID"),
+          enabled: tool.schema
+            .boolean()
+            .describe("true to enable, false to disable"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              message: string;
+              taskId: string;
+              enabled: boolean;
+            }>(
+              "PATCH",
+              `/monitors/${encodeURIComponent(args.taskId)}/toggle`,
+              { enabled: args.enabled }
+            );
+
+            return `Monitor ${response.taskId} ${response.enabled ? "enabled" : "disabled"}.`;
+          } catch (error) {
+            return `Failed to toggle monitor: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_monitor_list
+      // ========================================
+      brain_monitor_list: tool({
+        description:
+          "List active monitors, optionally filtered by project, feature, or template. Shows which monitoring tasks are currently enabled/disabled.",
+        args: {
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by project"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by feature"),
+          template_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by template type"),
+        },
+        async execute(args) {
+          try {
+            const queryParams: Record<string, string> = {};
+            if (args.project) queryParams.project = args.project;
+            if (args.feature_id) queryParams.feature_id = args.feature_id;
+            if (args.template_id) queryParams.template_id = args.template_id;
+
+            const response = await apiRequest<{
+              monitors: Array<{
+                id: string;
+                path: string;
+                templateId: string;
+                scope: Record<string, string>;
+                enabled: boolean;
+                schedule: string;
+                title: string;
+              }>;
+              count: number;
+            }>("GET", "/monitors", undefined, queryParams);
+
+            if (response.monitors.length === 0) {
+              return "No monitors found matching the given filters.";
+            }
+
+            const lines = [
+              `## Monitors (${response.count})`,
+              "",
+            ];
+            for (const m of response.monitors) {
+              const status = m.enabled ? "✅ enabled" : "⏸️ disabled";
+              lines.push(`### ${m.title}`);
+              lines.push(`- **ID:** ${m.id}`);
+              lines.push(`- **Template:** ${m.templateId}`);
+              lines.push(`- **Scope:** ${JSON.stringify(m.scope)}`);
+              lines.push(`- **Status:** ${status}`);
+              lines.push(`- **Schedule:** ${m.schedule}`);
+              lines.push("");
+            }
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to list monitors: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
     },
   };
 };

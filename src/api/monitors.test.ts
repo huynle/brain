@@ -42,6 +42,25 @@ describe("GET /monitors/templates", () => {
     expect(blocked!.tags).toContain("scheduled");
   });
 
+  it("includes feature-review template with correct metadata", async () => {
+    const res = await app.request("/monitors/templates");
+    const json = (await res.json()) as {
+      templates: Array<{
+        id: string;
+        label: string;
+        description: string;
+        defaultSchedule: string;
+        tags: string[];
+      }>;
+    };
+    const review = json.templates.find((t) => t.id === "feature-review");
+    expect(review).toBeDefined();
+    expect(review!.label).toBe("Feature Code Review");
+    expect(review!.defaultSchedule).toBe("");
+    expect(review!.tags).toContain("review");
+    expect(review!.description).toContain("completeness");
+  });
+
   it("does not include buildPrompt function in response", async () => {
     const res = await app.request("/monitors/templates");
     const json = await res.json();

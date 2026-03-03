@@ -64,8 +64,13 @@ import {
   findScheduledTask,
   createScheduledTask,
   toggleScheduledTask,
+  findMonitorTask,
+  createMonitorTask,
+  deleteMonitorTask,
   type TemplateScope,
 } from '../scheduled-templates';
+import { MONITOR_TEMPLATE_LIST } from '../../core/monitor-templates';
+import { notifyFeatureReviewQueued } from '../notify';
 import { SettingsPopup } from './components/SettingsPopup';
 import { DeleteConfirmPopup } from './components/DeleteConfirmPopup';
 import { SessionSelectPopup } from './components/SessionSelectPopup';
@@ -1989,37 +1994,80 @@ export function App({
                 setMonitoringTemplates(prev => prev.map((t, i) =>
                   i === focusedMonitoringIndex ? { ...t, status: 'loading' as const } : t
                 ));
+                // Determine if this is a one-shot monitor template (e.g., feature-review)
+                // vs a recurring scheduled template (e.g., blocked-inspector)
+                const isMonitorTemplate = !TEMPLATE_LIST.find(t => t.id === template.templateId);
+
                 if (template.status === 'create') {
-                  const matchingTemplate = TEMPLATE_LIST.find(t => t.id === template.templateId);
-                  if (matchingTemplate) {
-                    createScheduledTask(matchingTemplate, scope, config.apiUrl)
+                  if (isMonitorTemplate) {
+                    // One-shot monitor: create via monitor API (routes to createForFeature server-side)
+                    createMonitorTask(template.templateId, scope, config.apiUrl)
                       .then((result) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
                           i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t
                         ));
-                        addLog({ level: 'info', message: `Created monitoring task: ${template.label}` });
+                        addLog({ level: 'info', message: `Created review task: ${template.label}` });
+                        notifyFeatureReviewQueued(featureIdForScope, projectForScope);
                       })
                       .catch((err) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
                           i === focusedMonitoringIndex ? { ...t, status: 'create' as const } : t
                         ));
-                        addLog({ level: 'error', message: `Failed to create monitoring task: ${err}` });
+                        addLog({ level: 'error', message: `Failed to create review task: ${err}` });
                       });
+                  } else {
+                    // Recurring scheduled template: create via entries API
+                    const matchingTemplate = TEMPLATE_LIST.find(t => t.id === template.templateId);
+                    if (matchingTemplate) {
+                      createScheduledTask(matchingTemplate, scope, config.apiUrl)
+                        .then((result) => {
+                          setMonitoringTemplates(prev => prev.map((t, i) =>
+                            i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t
+                          ));
+                          addLog({ level: 'info', message: `Created monitoring task: ${template.label}` });
+                        })
+                        .catch((err) => {
+                          setMonitoringTemplates(prev => prev.map((t, i) =>
+                            i === focusedMonitoringIndex ? { ...t, status: 'create' as const } : t
+                          ));
+                          addLog({ level: 'error', message: `Failed to create monitoring task: ${err}` });
+                        });
+                    }
                   }
                 } else if (template.status === 'enabled' && template.taskPath) {
-                  toggleScheduledTask(template.taskPath, false, config.apiUrl)
-                    .then(() => {
-                      setMonitoringTemplates(prev => prev.map((t, i) =>
-                        i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
-                      ));
-                      addLog({ level: 'info', message: `Disabled monitoring task: ${template.label}` });
-                    })
-                    .catch((err) => {
-                      setMonitoringTemplates(prev => prev.map((t, i) =>
-                        i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
-                      ));
-                      addLog({ level: 'error', message: `Failed to disable monitoring task: ${err}` });
-                    });
+                  if (isMonitorTemplate) {
+                    // One-shot monitor: toggle OFF = delete the task entirely
+                    // Extract task ID from path (last segment before .md, 8-char ID)
+                    const taskId = template.taskPath.split('/').pop()?.replace('.md', '') ?? '';
+                    deleteMonitorTask(taskId, config.apiUrl)
+                      .then(() => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'create' as const, taskPath: undefined } : t
+                        ));
+                        addLog({ level: 'info', message: `Removed review task: ${template.label}` });
+                      })
+                      .catch((err) => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
+                        ));
+                        addLog({ level: 'error', message: `Failed to remove review task: ${err}` });
+                      });
+                  } else {
+                    // Recurring scheduled template: disable (keep task, stop scheduling)
+                    toggleScheduledTask(template.taskPath, false, config.apiUrl)
+                      .then(() => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
+                        ));
+                        addLog({ level: 'info', message: `Disabled monitoring task: ${template.label}` });
+                      })
+                      .catch((err) => {
+                        setMonitoringTemplates(prev => prev.map((t, i) =>
+                          i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
+                        ));
+                        addLog({ level: 'error', message: `Failed to disable monitoring task: ${err}` });
+                      });
+                  }
                 } else if (template.status === 'disabled' && template.taskPath) {
                   toggleScheduledTask(template.taskPath, true, config.apiUrl)
                     .then(() => {
@@ -3188,16 +3236,47 @@ export function App({
           const projectForScope = prefill.project;
           if (featureIdForScope && projectForScope) {
             const scope: TemplateScope = { type: 'feature', feature_id: featureIdForScope, project: projectForScope };
-            Promise.all(
-              TEMPLATE_LIST.map(async (template): Promise<MonitoringTemplateState> => {
+            // Load scheduled templates (recurring) and monitor templates (one-shot) in parallel
+            const scheduledPromises = TEMPLATE_LIST.map(async (template): Promise<MonitoringTemplateState> => {
+              try {
+                const existing = await findScheduledTask(template.id, scope, config.apiUrl);
+                if (existing) {
+                  return {
+                    templateId: template.id,
+                    label: template.label,
+                    status: existing.enabled ? 'enabled' : 'disabled',
+                    schedule: template.schedule,
+                    taskPath: existing.path,
+                  };
+                }
+                return {
+                  templateId: template.id,
+                  label: template.label,
+                  status: 'create',
+                  schedule: template.schedule,
+                };
+              } catch {
+                return {
+                  templateId: template.id,
+                  label: template.label,
+                  status: 'create',
+                  schedule: template.schedule,
+                };
+              }
+            });
+
+            // One-shot monitor templates (feature-review) — use monitor API
+            const monitorPromises = MONITOR_TEMPLATE_LIST
+              .filter(t => t.id !== 'blocked-inspector') // Skip templates already covered by TEMPLATE_LIST
+              .map(async (template): Promise<MonitoringTemplateState> => {
                 try {
-                  const existing = await findScheduledTask(template.id, scope, config.apiUrl);
+                  const existing = await findMonitorTask(template.id, scope, config.apiUrl);
                   if (existing) {
                     return {
                       templateId: template.id,
                       label: template.label,
                       status: existing.enabled ? 'enabled' : 'disabled',
-                      schedule: template.schedule,
+                      schedule: template.defaultSchedule || 'one-shot',
                       taskPath: existing.path,
                     };
                   }
@@ -3205,23 +3284,25 @@ export function App({
                     templateId: template.id,
                     label: template.label,
                     status: 'create',
-                    schedule: template.schedule,
+                    schedule: template.defaultSchedule || 'one-shot',
                   };
                 } catch {
                   return {
                     templateId: template.id,
                     label: template.label,
                     status: 'create',
-                    schedule: template.schedule,
+                    schedule: template.defaultSchedule || 'one-shot',
                   };
                 }
-              })
-            ).then((results) => {
-              setMonitoringTemplates(results);
-              setMonitoringLoading(false);
-            }).catch(() => {
-              setMonitoringLoading(false);
-            });
+              });
+
+            Promise.all([...scheduledPromises, ...monitorPromises])
+              .then((results) => {
+                setMonitoringTemplates(results);
+                setMonitoringLoading(false);
+              }).catch(() => {
+                setMonitoringLoading(false);
+              });
           } else {
             setMonitoringLoading(false);
           }

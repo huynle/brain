@@ -332,3 +332,90 @@ export async function toggleScheduledTask(
     );
   }
 }
+
+// =============================================================================
+// Monitor API Functions (for one-shot templates like feature-review)
+// =============================================================================
+
+/**
+ * Find an existing monitor for a template+scope via the Monitor REST API.
+ * Used by TUI to check if a feature-review task already exists.
+ */
+export async function findMonitorTask(
+  templateId: string,
+  scope: TemplateScope,
+  apiBase: string,
+): Promise<{ id: string; path: string; enabled: boolean } | null> {
+  const params = new URLSearchParams({ template_id: templateId });
+  if (scope.type === "project") {
+    params.set("project", scope.project);
+  } else if (scope.type === "feature") {
+    params.set("project", scope.project);
+    params.set("feature_id", scope.feature_id);
+  }
+
+  const response = await fetch(`${apiBase}/api/v1/monitors?${params}`, {
+    headers: { Accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to search for monitor task: ${response.status}`);
+  }
+
+  const result = (await response.json()) as {
+    monitors: Array<{
+      id: string;
+      path: string;
+      enabled: boolean;
+    }>;
+  };
+
+  if (result.monitors.length === 0) return null;
+  const monitor = result.monitors[0];
+  return { id: monitor.id, path: monitor.path, enabled: monitor.enabled };
+}
+
+/**
+ * Create a monitor task via the Monitor REST API.
+ * For feature-review template, this routes to createForFeature() server-side.
+ */
+export async function createMonitorTask(
+  templateId: string,
+  scope: TemplateScope,
+  apiBase: string,
+): Promise<{ id: string; path: string }> {
+  const response = await fetch(`${apiBase}/api/v1/monitors`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ templateId, scope }),
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Failed to create monitor task: ${response.status} ${text}`);
+  }
+
+  const result = (await response.json()) as { id: string; path: string };
+  return { id: result.id, path: result.path };
+}
+
+/**
+ * Delete a monitor task via the Monitor REST API.
+ * Used for one-shot monitors like feature-review (toggle OFF = delete).
+ */
+export async function deleteMonitorTask(
+  taskId: string,
+  apiBase: string,
+): Promise<void> {
+  const response = await fetch(`${apiBase}/api/v1/monitors/${taskId}`, {
+    method: "DELETE",
+    headers: { Accept: "application/json" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to delete monitor task: ${response.status}`);
+  }
+}

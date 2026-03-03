@@ -176,3 +176,18 @@ export function notifyCompleted(taskTitle: string, project?: string): void {
   const subtitle = project ? `Project: ${project}` : undefined;
   notifyWithSound("Task Completed", taskTitle, "Pop", subtitle);
 }
+
+/**
+ * Notify that a feature review has been queued.
+ * Sent when the user enables auto-review for a feature via the TUI.
+ * Uses "Pop" sound for positive feedback.
+ */
+export function notifyFeatureReviewQueued(featureId: string, project: string): void {
+  const subtitle = `Project: ${project}`;
+  notifyWithSound(
+    `Review Enabled: ${featureId}`,
+    "Auto-review will run when all tasks complete.",
+    "Pop",
+    subtitle,
+  );
+}

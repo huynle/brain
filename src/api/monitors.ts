@@ -288,10 +288,21 @@ export function createMonitorRoutes(): OpenAPIHono {
     const service = getMonitorService();
 
     try {
-      const result = await service.create(body.templateId, body.scope, {
-        schedule: body.schedule,
-        project: body.project,
-      });
+      // Feature-review template with feature scope uses createForFeature()
+      // (one-shot with depends_on, not scheduled)
+      let result;
+      if (body.templateId === "feature-review" && body.scope.type === "feature") {
+        result = await service.createForFeature(
+          body.templateId,
+          body.scope,
+          body.scope.project,
+        );
+      } else {
+        result = await service.create(body.templateId, body.scope, {
+          schedule: body.schedule,
+          project: body.project,
+        });
+      }
       return c.json(result, 201);
     } catch (error) {
       if (error instanceof MonitorConflictError) {

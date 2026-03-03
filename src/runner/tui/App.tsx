@@ -2026,6 +2026,7 @@ export function App({
                             i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t
                           ));
                           addLog({ level: 'info', message: `Created monitoring task: ${template.label}` });
+                          refetch();
                         })
                         .catch((err) => {
                           setMonitoringTemplates(prev => prev.map((t, i) =>
@@ -2062,6 +2063,7 @@ export function App({
                           i === focusedMonitoringIndex ? { ...t, status: 'disabled' as const } : t
                         ));
                         addLog({ level: 'info', message: `Disabled monitoring task: ${template.label}` });
+                        refetch();
                       })
                       .catch((err) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
@@ -2077,6 +2079,7 @@ export function App({
                         i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const } : t
                       ));
                       addLog({ level: 'info', message: `Enabled monitoring task: ${template.label}` });
+                      refetch();
                     })
                     .catch((err) => {
                       setMonitoringTemplates(prev => prev.map((t, i) =>

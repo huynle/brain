@@ -691,7 +691,7 @@ export class BrainService {
         type: entryType,
         tags: request.tags,
         status: entryStatus,
-        projectId: isGlobal ? undefined : this.projectId,
+        projectId: isGlobal ? undefined : effectiveProjectId,
         priority: request.priority,
         created: new Date().toISOString(),
         // Task dependencies (already normalized above)

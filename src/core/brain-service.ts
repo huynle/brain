@@ -868,7 +868,7 @@ export class BrainService {
       }
     }
 
-    // Fall back to direct file read
+    // Fall back to direct file read (for full paths like "projects/foo/task/abc.md")
     if (!note && pathOrId && !isId) {
       const fullPath = join(this.config.brainDir, pathOrId);
       if (existsSync(fullPath)) {
@@ -882,6 +882,28 @@ export class BrainService {
           metadata: frontmatter,
         };
         notePath = pathOrId;
+      }
+    }
+
+    // Fall back to glob search for 8-char IDs (zk list treats IDs as dir filters
+    // and often returns empty; this finds the actual file by globbing **/<id>.md)
+    if (!note && pathOrId && isId) {
+      const glob = new Bun.Glob(`**/${pathOrId}.md`);
+      for (const match of glob.scanSync({ cwd: this.config.brainDir })) {
+        const fullPath = join(this.config.brainDir, match);
+        if (existsSync(fullPath)) {
+          const content = readFileSync(fullPath, "utf-8");
+          const { frontmatter } = parseFrontmatter(content);
+          note = {
+            path: match,
+            title: (frontmatter.title as string) || match,
+            rawContent: content,
+            tags: [],
+            metadata: frontmatter,
+          };
+          notePath = match;
+          break;
+        }
       }
     }
 
@@ -2030,8 +2052,10 @@ export class BrainService {
       );
     }
 
-    const needsCodeFiltering = request.status || request.filename || request.feature_id || request.tags;
-    const fetchLimit = needsCodeFiltering ? Math.max(limit * 5, 100) : limit + offset;
+    const needsCodeFiltering = request.status || request.filename || request.feature_id;
+    // Tags can be passed to zk directly via --tag, so they don't need code filtering
+    const hasTagsForZk = request.tags && request.tags.length > 0;
+    const fetchLimit = needsCodeFiltering ? Math.max(limit * 10, 500) : limit + offset;
     const zkArgs = [
       "list",
       "--format",
@@ -2043,6 +2067,13 @@ export class BrainService {
 
     if (request.type) {
       zkArgs.push("--tag", request.type);
+    }
+
+    // Pass requested tags directly to zk for native filtering
+    if (hasTagsForZk) {
+      for (const tag of request.tags!) {
+        zkArgs.push("--tag", tag);
+      }
     }
 
     if (request.global) {

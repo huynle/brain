@@ -61,7 +61,7 @@ export function createApp(config: Config): OpenAPIHono {
   api.route("/entries", createEntriesRoutes({ realtimeHub: taskRealtimeHub }));
 
   // Monitor routes (templates, create, toggle, delete)
-  api.route("/monitors", createMonitorRoutes());
+  api.route("/monitors", createMonitorRoutes({ realtimeHub: taskRealtimeHub }));
 
   // Search routes (search and inject)
   api.route("/", createSearchRoutes());

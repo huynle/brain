@@ -883,9 +883,14 @@ describe("sanitizeTag()", () => {
     expect(sanitizeTag("   ")).toBeNull();
   });
 
-  test("returns null for tags with colons (YAML corruption)", () => {
+  test("returns null for tags with colon+space (YAML key-value corruption)", () => {
     expect(sanitizeTag("bad: tag")).toBeNull();
-    expect(sanitizeTag("key:value")).toBeNull();
+    expect(sanitizeTag("key: value")).toBeNull();
+  });
+
+  test("allows bare colons without trailing space (safe in YAML list items)", () => {
+    expect(sanitizeTag("key:value")).toBe("key:value");
+    expect(sanitizeTag("monitor:feature-review:feature:my-feat:my-proj")).toBe("monitor:feature-review:feature:my-feat:my-proj");
   });
 
   test("strips newlines from tags", () => {

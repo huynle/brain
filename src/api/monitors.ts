@@ -13,6 +13,11 @@ import {
 } from "../core/monitor-service";
 import { MONITOR_TEMPLATE_LIST } from "../core/monitor-templates";
 import { ErrorResponseSchema, NotFoundResponseSchema } from "./schemas";
+import {
+  createProjectRealtimeHub,
+  type ProjectRealtimeHub,
+} from "../core/realtime-hub";
+import { getTaskService } from "../core/task-service";
 
 // =============================================================================
 // Schemas
@@ -235,7 +240,44 @@ const deleteMonitorRoute = createRoute({
 // Route Factory
 // =============================================================================
 
-export function createMonitorRoutes(): OpenAPIHono {
+type MonitorRouteOptions = {
+  realtimeHub?: ProjectRealtimeHub;
+};
+
+async function publishTaskSnapshot(
+  realtimeHub: ProjectRealtimeHub,
+  projectId: string,
+): Promise<void> {
+  const taskService = getTaskService();
+  try {
+    const snapshot = await taskService.getTasksWithDependencies(projectId);
+    realtimeHub.publish(projectId, {
+      event: "tasks_snapshot",
+      payload: {
+        type: "tasks_snapshot",
+        transport: "sse",
+        timestamp: new Date().toISOString(),
+        projectId,
+        tasks: snapshot.tasks,
+        count: snapshot.tasks.length,
+        stats: snapshot.stats,
+        cycles: snapshot.cycles,
+      },
+    });
+  } catch {
+    // Best-effort — don't fail the mutation if snapshot publishing fails
+  }
+}
+
+/** Extract project ID from an entry path like "projects/brain-api/task/abc.md" */
+function extractProjectFromPath(entryPath: string): string | null {
+  const match = entryPath.match(/^projects\/([^/]+)\//);
+  return match ? match[1] : null;
+}
+
+export function createMonitorRoutes(options?: MonitorRouteOptions): OpenAPIHono {
+  const realtimeHub = options?.realtimeHub ?? createProjectRealtimeHub();
+
   const monitors = new OpenAPIHono({
     defaultHook: (result, c) => {
       if (!result.success) {
@@ -303,6 +345,12 @@ export function createMonitorRoutes(): OpenAPIHono {
           project: body.project,
         });
       }
+      // Publish SSE snapshot so connected TUI clients see the new task
+      const projectId = extractProjectFromPath(result.path);
+      if (projectId) {
+        await publishTaskSnapshot(realtimeHub, projectId);
+      }
+
       return c.json(result, 201);
     } catch (error) {
       if (error instanceof MonitorConflictError) {
@@ -339,7 +387,12 @@ export function createMonitorRoutes(): OpenAPIHono {
     const service = getMonitorService();
 
     try {
-      await service.toggle(taskId, enabled);
+      const { path: entryPath } = await service.toggle(taskId, enabled);
+      // Publish SSE snapshot so connected TUI clients see the updated state
+      const projectId = extractProjectFromPath(entryPath);
+      if (projectId) {
+        await publishTaskSnapshot(realtimeHub, projectId);
+      }
       return c.json(
         {
           message: `Monitor ${enabled ? "enabled" : "disabled"}`,
@@ -369,7 +422,12 @@ export function createMonitorRoutes(): OpenAPIHono {
     const service = getMonitorService();
 
     try {
-      await service.delete(taskId);
+      const { path: entryPath } = await service.delete(taskId);
+      // Publish SSE snapshot so connected TUI clients see the task removed
+      const projectId = extractProjectFromPath(entryPath);
+      if (projectId) {
+        await publishTaskSnapshot(realtimeHub, projectId);
+      }
       return c.json(
         { message: "Monitor deleted successfully", taskId },
         200,

@@ -363,8 +363,9 @@ export function sanitizeTag(tag: string): string | null {
   result = result.trim();
   // Return null for empty tags
   if (result.length === 0) return null;
-  // Return null for tags with colons (would be parsed as YAML key-value pairs)
-  if (result.includes(":")) return null;
+  // Return null for tags with ": " (colon+space) which YAML parses as key-value pairs.
+  // Bare colons without trailing space are safe in YAML list items (e.g. "monitor:feature-review:...")
+  if (result.includes(": ")) return null;
   return result;
 }
 

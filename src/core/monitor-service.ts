@@ -208,11 +208,11 @@ export class MonitorService {
     feature_id?: string;
     templateId?: string;
   }): Promise<MonitorInfo[]> {
-    // List all tasks with any "monitor:" tag
-    // We use a broad search then filter in code
+    // Use "monitor" tag to narrow zk search (all monitor tags start with "monitor:")
     const result = await this.brainService.list({
       type: "task",
-      limit: 100,
+      tags: ["monitor"],
+      limit: 200,
     });
 
     const monitors: MonitorInfo[] = [];
@@ -265,21 +265,23 @@ export class MonitorService {
   /**
    * Toggle schedule_enabled on an existing monitor.
    */
-  async toggle(taskId: string, enabled: boolean): Promise<void> {
+  async toggle(taskId: string, enabled: boolean): Promise<{ path: string }> {
     // Resolve 8-char ID to path
     const entry = await this.brainService.recall(taskId);
     await this.brainService.update(entry.path, {
       schedule_enabled: enabled,
     });
+    return { path: entry.path };
   }
 
   /**
    * Delete a monitor task.
    */
-  async delete(taskId: string): Promise<void> {
+  async delete(taskId: string): Promise<{ path: string }> {
     // Resolve 8-char ID to path
     const entry = await this.brainService.recall(taskId);
     await this.brainService.delete(entry.path);
+    return { path: entry.path };
   }
 }
 

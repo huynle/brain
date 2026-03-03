@@ -2008,6 +2008,7 @@ export function App({
                         ));
                         addLog({ level: 'info', message: `Created review task: ${template.label}` });
                         notifyFeatureReviewQueued(featureIdForScope, projectForScope);
+                        refetch();
                       })
                       .catch((err) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
@@ -2045,6 +2046,7 @@ export function App({
                           i === focusedMonitoringIndex ? { ...t, status: 'create' as const, taskPath: undefined } : t
                         ));
                         addLog({ level: 'info', message: `Removed review task: ${template.label}` });
+                        refetch();
                       })
                       .catch((err) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>

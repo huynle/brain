@@ -18,6 +18,7 @@ import { createMcpRoutes } from "./mcp/transport";
 import { createOAuthRoutes } from "./mcp/auth";
 import { createProjectRealtimeHub } from "./core/realtime-hub";
 import { createMonitorRoutes } from "./api/monitors";
+import { apiAuth } from "./auth";
 
 export function createApp(config: Config): OpenAPIHono {
   const app = new OpenAPIHono();
@@ -30,7 +31,7 @@ export function createApp(config: Config): OpenAPIHono {
   const api = new OpenAPIHono();
   const taskRealtimeHub = createProjectRealtimeHub();
 
-  // Health check endpoint
+  // Health check endpoint (unauthenticated - registered before auth middleware)
   api.get("/health", async (c) => {
     const health = await getHealthStatus();
     return c.json({
@@ -38,6 +39,11 @@ export function createApp(config: Config): OpenAPIHono {
       version: "0.1.0",
     });
   });
+
+  // API authentication middleware
+  // Protects all routes registered AFTER this point when ENABLE_AUTH=true.
+  // Health endpoint above is exempt. Accepts Bearer header or ?token= query param.
+  api.use("*", apiAuth(config.server.enableAuth));
 
   // Health and stats routes (stats, orphans, stale, verify, link)
   // NOTE: Must be registered BEFORE entry CRUD routes to avoid conflicts

@@ -7,3 +7,4 @@ export {
   getApiTokenByName,
 } from "./token-store";
 export type { ApiToken, ApiTokenInfo, ApiTokenValidation } from "./token-store";
+export { apiAuth } from "./middleware";

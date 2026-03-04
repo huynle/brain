@@ -260,6 +260,34 @@ describe("Note CRUD", () => {
     expect(result).toBeNull();
   });
 
+  // --- getNoteByTitle ---
+
+  test("getNoteByTitle returns the note with exact title match", () => {
+    const input = makeTestNote({ title: "My Unique Title" });
+    storage.insertNote(input);
+
+    const result = storage.getNoteByTitle("My Unique Title");
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("My Unique Title");
+    expect(result!.path).toBe(input.path);
+  });
+
+  test("getNoteByTitle returns null for missing title", () => {
+    const result = storage.getNoteByTitle("Nonexistent Title");
+    expect(result).toBeNull();
+  });
+
+  test("getNoteByTitle returns first match when multiple notes have same title", () => {
+    const note1 = makeTestNote({ title: "Duplicate Title", path: "a/first.md", short_id: "aaaaaaaa" });
+    const note2 = makeTestNote({ title: "Duplicate Title", path: "b/second.md", short_id: "bbbbbbbb" });
+    storage.insertNote(note1);
+    storage.insertNote(note2);
+
+    const result = storage.getNoteByTitle("Duplicate Title");
+    expect(result).not.toBeNull();
+    expect(result!.title).toBe("Duplicate Title");
+  });
+
   // --- updateNote ---
 
   test("updateNote updates specified fields only", () => {
@@ -710,6 +738,8 @@ describe("Search", () => {
         title: "Running the test suite",
         body: "Instructions for running all tests in the project",
         lead: "Instructions for running",
+        type: "task",
+        status: "active",
       })
     );
     storage.insertNote(
@@ -719,6 +749,8 @@ describe("Search", () => {
         title: "Architecture overview",
         body: "The system uses a layered architecture with running services",
         lead: "The system uses",
+        type: "plan",
+        status: "active",
       })
     );
     storage.insertNote(
@@ -728,6 +760,8 @@ describe("Search", () => {
         title: "Deploy pipeline",
         body: "CI/CD pipeline configuration for deployment",
         lead: "CI/CD pipeline",
+        type: "task",
+        status: "active",
       })
     );
     storage.insertNote(
@@ -737,6 +771,8 @@ describe("Search", () => {
         title: "Database migration plan",
         body: "Steps to migrate the database schema safely",
         lead: "Steps to migrate",
+        type: "plan",
+        status: "active",
       })
     );
     storage.insertNote(
@@ -746,6 +782,8 @@ describe("Search", () => {
         title: "Performance improvements",
         body: "Ideas for improving query performance and caching",
         lead: "Ideas for improving",
+        type: "idea",
+        status: "active",
       })
     );
   });
@@ -821,6 +859,75 @@ describe("Search", () => {
     expect(
       results.some((r) => r.title === "Running the test suite")
     ).toBe(true);
+  });
+
+  test("searchNotes filters by type when provided", () => {
+    // note1 is type=task, note2 is type=plan — both match "running"
+    const results = storage.searchNotes("running", { type: "task" });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r) => r.type === "task")).toBe(true);
+    // Should NOT include the plan note
+    expect(results.some((r) => r.title === "Architecture overview")).toBe(false);
+  });
+
+  test("searchNotes filters by status when provided", () => {
+    // Insert a note with status "completed"
+    storage.insertNote(
+      makeTestNote({
+        path: "projects/alpha/task/done1111.md",
+        short_id: "done1111",
+        title: "Completed task about running",
+        body: "This running task is done",
+        lead: "This running task",
+        type: "task",
+        status: "completed",
+      })
+    );
+
+    const results = storage.searchNotes("running", { status: "completed" });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r) => r.status === "completed")).toBe(true);
+  });
+
+  test("searchNotes combines type and status filters", () => {
+    storage.insertNote(
+      makeTestNote({
+        path: "projects/alpha/plan/done2222.md",
+        short_id: "done2222",
+        title: "Completed plan about running",
+        body: "This running plan is done",
+        lead: "This running plan",
+        type: "plan",
+        status: "completed",
+      })
+    );
+
+    const results = storage.searchNotes("running", {
+      type: "plan",
+      status: "completed",
+    });
+    expect(results.length).toBe(1);
+    expect(results[0].type).toBe("plan");
+    expect(results[0].status).toBe("completed");
+  });
+
+  test("searchNotes type filter works with exact strategy", () => {
+    const results = storage.searchNotes("Deploy pipeline", {
+      matchStrategy: "exact",
+      type: "task",
+    });
+    // note3 is a task with exact title "Deploy pipeline"
+    expect(results.length).toBe(1);
+    expect(results[0].type).toBe("task");
+  });
+
+  test("searchNotes type filter works with like strategy", () => {
+    const results = storage.searchNotes("migrat", {
+      matchStrategy: "like",
+      type: "plan",
+    });
+    expect(results.length).toBeGreaterThanOrEqual(1);
+    expect(results.every((r) => r.type === "plan")).toBe(true);
   });
 });
 
@@ -1036,6 +1143,37 @@ describe("List / Filter", () => {
   test("listNotes returns empty array when no matches", () => {
     const results = storage.listNotes({ type: "nonexistent" });
     expect(results).toEqual([]);
+  });
+
+  test("listNotes filters by tags (OR logic) — matches any tag", () => {
+    // "frontend" tag is on Alpha Task Three
+    // "deploy" tag is on Beta Task Two
+    const results = storage.listNotes({ tags: ["frontend", "deploy"] });
+    expect(results.length).toBe(2);
+    const titles = results.map((r) => r.title).sort();
+    expect(titles).toContain("Alpha Task Three");
+    expect(titles).toContain("Beta Task Two");
+  });
+
+  test("listNotes filters by single tag in tags array", () => {
+    // "urgent" tag is only on Alpha Task One
+    const results = storage.listNotes({ tags: ["urgent"] });
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Alpha Task One");
+  });
+
+  test("listNotes tags filter combines with other filters", () => {
+    // backend tag is on Alpha Task One and Beta Task Two
+    // Filter to only alpha project
+    const results = storage.listNotes({ tags: ["backend"], project: "alpha" });
+    expect(results.length).toBe(1);
+    expect(results[0].title).toBe("Alpha Task One");
+  });
+
+  test("listNotes with empty tags array returns all notes", () => {
+    const allResults = storage.listNotes();
+    const tagResults = storage.listNotes({ tags: [] });
+    expect(tagResults.length).toBe(allResults.length);
   });
 });
 

@@ -73,9 +73,90 @@ import type {
   FeatureCheckoutRequest,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
+import type { StorageLayer, NoteRow } from "./storage";
+import type { Indexer } from "./indexer";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
 import type { DependencyValidationResult, DependentInfo } from "./task-service";
 import { getNextRun } from "./schedule-utils";
+
+// =============================================================================
+// NoteRow → BrainEntry Conversion
+// =============================================================================
+
+/**
+ * Convert a StorageLayer NoteRow to the BrainEntry format used by the API.
+ *
+ * Maps: path, id (shortId), title, type, status, tags, body (→ content),
+ * lead, wordCount, created, modified, and all metadata fields from the
+ * JSON metadata column.
+ */
+export function noteRowToBrainEntry(noteRow: NoteRow): BrainEntry {
+  // Parse the JSON metadata for fields not stored as top-level columns
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = noteRow.metadata ? JSON.parse(noteRow.metadata) : {};
+  } catch {
+    metadata = {};
+  }
+
+  // Extract tags from metadata (stored as array in frontmatter)
+  const tags: string[] = Array.isArray(metadata.tags)
+    ? (metadata.tags as string[])
+    : [];
+
+  return {
+    id: noteRow.short_id,
+    path: noteRow.path,
+    title: noteRow.title,
+    type: (noteRow.type as EntryType) || "scratch",
+    status: (noteRow.status as EntryStatus) || "active",
+    content: noteRow.body,
+    tags,
+    priority: (noteRow.priority as BrainEntry["priority"]) || undefined,
+    depends_on: metadata.depends_on as string[] | undefined,
+    project_id: noteRow.project_id || undefined,
+    created: noteRow.created || undefined,
+    modified: noteRow.modified || undefined,
+    // Execution context from metadata
+    workdir: metadata.workdir as string | undefined,
+    git_remote: metadata.git_remote as string | undefined,
+    git_branch: metadata.git_branch as string | undefined,
+    merge_target_branch: metadata.merge_target_branch as string | undefined,
+    merge_policy: metadata.merge_policy as BrainEntry["merge_policy"] | undefined,
+    merge_strategy: metadata.merge_strategy as BrainEntry["merge_strategy"] | undefined,
+    remote_branch_policy: metadata.remote_branch_policy as BrainEntry["remote_branch_policy"] | undefined,
+    open_pr_before_merge: metadata.open_pr_before_merge as boolean | undefined,
+    execution_mode: metadata.execution_mode as BrainEntry["execution_mode"] | undefined,
+    complete_on_idle: metadata.complete_on_idle as boolean | undefined,
+    target_workdir: metadata.target_workdir as string | undefined,
+    user_original_request: metadata.user_original_request as string | undefined,
+    // Session traceability
+    sessions: metadata.sessions as Record<string, SessionInfo> | undefined,
+    run_finalizations: metadata.run_finalizations as Record<string, RunFinalization> | undefined,
+    // Generated metadata
+    generated: metadata.generated as boolean | undefined,
+    generated_kind: metadata.generated_kind as BrainEntry["generated_kind"] | undefined,
+    generated_key: metadata.generated_key as string | undefined,
+    generated_by: metadata.generated_by as string | undefined,
+    // Cron metadata
+    schedule: metadata.schedule as string | undefined,
+    schedule_enabled: metadata.schedule_enabled as boolean | undefined,
+    next_run: metadata.next_run as string | undefined,
+    max_runs: metadata.max_runs as number | undefined,
+    starts_at: metadata.starts_at as string | undefined,
+    expires_at: metadata.expires_at as string | undefined,
+    runs: normalizeCronRuns(metadata.runs),
+  };
+}
+
+// =============================================================================
+// StorageLayer Dependencies (optional)
+// =============================================================================
+
+export interface BrainServiceDeps {
+  storage?: StorageLayer;
+  indexer?: Indexer;
+}
 
 // =============================================================================
 // Dependency Validation Error
@@ -208,14 +289,28 @@ interface UpdateOptions {
 export class BrainService {
   private config: BrainConfig;
   private projectId: string;
+  private storageLayer: StorageLayer | null = null;
+  private indexerInstance: Indexer | null = null;
 
-  constructor(config?: BrainConfig, projectId?: string) {
+  constructor(config?: BrainConfig, projectId?: string, deps?: BrainServiceDeps) {
     const fullConfig = getConfig();
     this.config = config || fullConfig.brain;
     this.projectId = projectId || fullConfig.brain.defaultProject;
 
+    if (deps?.storage) {
+      this.storageLayer = deps.storage;
+    }
+    if (deps?.indexer) {
+      this.indexerInstance = deps.indexer;
+    }
+
     // Ensure database is initialized
     initDatabase();
+  }
+
+  /** Get the StorageLayer instance, or null if not provided. */
+  getStorageLayer(): StorageLayer | null {
+    return this.storageLayer;
   }
 
   // ========================================
@@ -341,36 +436,134 @@ export class BrainService {
     let finalContent = request.content;
 
     if (request.relatedEntries && request.relatedEntries.length > 0) {
-      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
       const resolvedLinks: string[] = [];
       const unresolvedEntries: string[] = [];
 
-      for (const entry of request.relatedEntries) {
-        const isPath = entry.includes("/") || entry.endsWith(".md");
-        const isId = /^[a-z0-9]{8}$/.test(entry);
+      // --- StorageLayer path for related entry resolution ---
+      if (this.storageLayer) {
+        for (const entry of request.relatedEntries) {
+          const isPath = entry.includes("/") || entry.endsWith(".md");
+          const isId = /^[a-z0-9]{8}$/.test(entry);
 
-        if (isPath || isId) {
-          const entryPath = isId
-            ? entry
-            : entry.endsWith(".md")
+          try {
+            let noteRow: NoteRow | null = null;
+
+            if (isId) {
+              noteRow = this.storageLayer.getNoteByShortId(entry);
+            } else if (isPath) {
+              const entryPath = entry.endsWith(".md") ? entry : `${entry}.md`;
+              noteRow = this.storageLayer.getNoteByPath(entryPath);
+            } else {
+              // Title-based search
+              noteRow = this.storageLayer.getNoteByTitle(entry);
+              if (!noteRow) {
+                const searchResults = this.storageLayer.searchNotes(entry, {
+                  matchStrategy: "exact",
+                  limit: 1,
+                });
+                if (searchResults.length > 0) {
+                  noteRow = searchResults[0];
+                }
+              }
+            }
+
+            if (noteRow) {
+              const id = noteRow.short_id || extractIdFromPath(noteRow.path);
+              resolvedLinks.push(`- ${generateMarkdownLink(id, noteRow.title)}`);
+            } else {
+              unresolvedEntries.push(entry);
+            }
+          } catch {
+            unresolvedEntries.push(entry);
+          }
+        }
+      } else {
+        // --- Legacy execZk / disk fallback path ---
+        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+
+        for (const entry of request.relatedEntries) {
+          const isPath = entry.includes("/") || entry.endsWith(".md");
+          const isId = /^[a-z0-9]{8}$/.test(entry);
+
+          if (isPath || isId) {
+            const entryPath = isId
               ? entry
-              : `${entry}.md`;
+              : entry.endsWith(".md")
+                ? entry
+                : `${entry}.md`;
 
-          if (zkAvailable) {
+            if (zkAvailable) {
+              try {
+                const result = await execZk([
+                  "list",
+                  "--format",
+                  "json",
+                  "--quiet",
+                  entryPath,
+                ]);
+                if (result.exitCode === 0) {
+                  const notes = parseZkJsonOutput(result.stdout);
+                  if (notes.length > 0) {
+                    const note = notes[0];
+                    const id = extractIdFromPath(note.path);
+                    resolvedLinks.push(`- ${generateMarkdownLink(id, note.title)}`);
+                  } else {
+                    unresolvedEntries.push(entry);
+                  }
+                } else {
+                  unresolvedEntries.push(entry);
+                }
+              } catch {
+                unresolvedEntries.push(entry);
+              }
+            } else {
+              const fullEntryPath = join(
+                this.config.brainDir,
+                entryPath.endsWith(".md") ? entryPath : `${entryPath}.md`
+              );
+              if (existsSync(fullEntryPath)) {
+                let entryTitle = entry;
+                try {
+                  const entryContent = readFileSync(fullEntryPath, "utf-8");
+                  const { frontmatter: entryFm } = parseFrontmatter(entryContent);
+                  entryTitle = (entryFm.title as string) || entry;
+                } catch {
+                  /* use entry as title */
+                }
+                const id = extractIdFromPath(entryPath);
+                resolvedLinks.push(`- ${generateMarkdownLink(id, entryTitle)}`);
+              } else {
+                unresolvedEntries.push(entry);
+              }
+            }
+          } else if (zkAvailable) {
             try {
               const result = await execZk([
                 "list",
                 "--format",
                 "json",
                 "--quiet",
-                entryPath,
+                "--match",
+                entry,
+                "--match-strategy",
+                "exact",
               ]);
+
               if (result.exitCode === 0) {
                 const notes = parseZkJsonOutput(result.stdout);
-                if (notes.length > 0) {
-                  const note = notes[0];
-                  const id = extractIdFromPath(note.path);
-                  resolvedLinks.push(`- ${generateMarkdownLink(id, note.title)}`);
+                const exactMatch = notes.find((n) => n.title === entry);
+
+                if (exactMatch) {
+                  const id = extractIdFromPath(exactMatch.path);
+                  resolvedLinks.push(
+                    `- ${generateMarkdownLink(id, exactMatch.title)}`
+                  );
+                } else if (notes.length > 0) {
+                  const firstMatch = notes[0];
+                  const id = extractIdFromPath(firstMatch.path);
+                  resolvedLinks.push(
+                    `- ${generateMarkdownLink(id, firstMatch.title)}`
+                  );
                 } else {
                   unresolvedEntries.push(entry);
                 }
@@ -381,64 +574,8 @@ export class BrainService {
               unresolvedEntries.push(entry);
             }
           } else {
-            const fullEntryPath = join(
-              this.config.brainDir,
-              entryPath.endsWith(".md") ? entryPath : `${entryPath}.md`
-            );
-            if (existsSync(fullEntryPath)) {
-              let entryTitle = entry;
-              try {
-                const entryContent = readFileSync(fullEntryPath, "utf-8");
-                const { frontmatter: entryFm } = parseFrontmatter(entryContent);
-                entryTitle = (entryFm.title as string) || entry;
-              } catch {
-                /* use entry as title */
-              }
-              const id = extractIdFromPath(entryPath);
-              resolvedLinks.push(`- ${generateMarkdownLink(id, entryTitle)}`);
-            } else {
-              unresolvedEntries.push(entry);
-            }
-          }
-        } else if (zkAvailable) {
-          try {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--match",
-              entry,
-              "--match-strategy",
-              "exact",
-            ]);
-
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              const exactMatch = notes.find((n) => n.title === entry);
-
-              if (exactMatch) {
-                const id = extractIdFromPath(exactMatch.path);
-                resolvedLinks.push(
-                  `- ${generateMarkdownLink(id, exactMatch.title)}`
-                );
-              } else if (notes.length > 0) {
-                const firstMatch = notes[0];
-                const id = extractIdFromPath(firstMatch.path);
-                resolvedLinks.push(
-                  `- ${generateMarkdownLink(id, firstMatch.title)}`
-                );
-              } else {
-                unresolvedEntries.push(entry);
-              }
-            } else {
-              unresolvedEntries.push(entry);
-            }
-          } catch {
             unresolvedEntries.push(entry);
           }
-        } else {
-          unresolvedEntries.push(entry);
         }
       }
 
@@ -459,9 +596,11 @@ export class BrainService {
       }
     }
 
+    // When StorageLayer is available, always use manual file creation path
+    // (skip execZkNew entirely — we'll insert into StorageLayer DB after)
     // Check if zk is available
     const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
-    let zkAvailable = hasNotebookInConfiguredDir && (await isZkAvailable());
+    let zkAvailable = !this.storageLayer && hasNotebookInConfiguredDir && (await isZkAvailable());
 
     // Tasks with schedules require schedule/next_run frontmatter fields
     // that are not guaranteed by zk templates in user notebooks. Force manual creation
@@ -742,6 +881,68 @@ export class BrainService {
     // Initialize in database
     initEntry(relativePath, effectiveProjectId);
 
+    // Insert into StorageLayer DB for indexed access
+    if (this.storageLayer) {
+      try {
+        const now = new Date().toISOString();
+        // Build metadata object matching what parseFrontmatter would produce
+        const metadata: Record<string, unknown> = {};
+        if (request.tags && request.tags.length > 0) metadata.tags = request.tags;
+        if (request.priority) metadata.priority = request.priority;
+        if (request.depends_on) metadata.depends_on = request.depends_on;
+        if (request.workdir) metadata.workdir = request.workdir;
+        if (request.git_remote) metadata.git_remote = request.git_remote;
+        if (request.git_branch) metadata.git_branch = request.git_branch;
+        if (request.merge_target_branch) metadata.merge_target_branch = request.merge_target_branch;
+        if (request.merge_policy) metadata.merge_policy = request.merge_policy;
+        if (request.merge_strategy) metadata.merge_strategy = request.merge_strategy;
+        if (request.remote_branch_policy) metadata.remote_branch_policy = request.remote_branch_policy;
+        if (request.open_pr_before_merge !== undefined) metadata.open_pr_before_merge = request.open_pr_before_merge;
+        if (request.execution_mode) metadata.execution_mode = request.execution_mode;
+        if (request.complete_on_idle !== undefined) metadata.complete_on_idle = request.complete_on_idle;
+        if (request.target_workdir) metadata.target_workdir = request.target_workdir;
+        if (request.user_original_request) metadata.user_original_request = request.user_original_request;
+        if (request.feature_id) metadata.feature_id = request.feature_id;
+        if (request.feature_priority) metadata.feature_priority = request.feature_priority;
+        if (request.feature_depends_on) metadata.feature_depends_on = request.feature_depends_on;
+        if (request.direct_prompt) metadata.direct_prompt = request.direct_prompt;
+        if (request.agent) metadata.agent = request.agent;
+        if (request.model) metadata.model = request.model;
+        if (request.schedule) metadata.schedule = request.schedule;
+        if (request.schedule_enabled !== undefined) metadata.schedule_enabled = request.schedule_enabled;
+        if (request.next_run) metadata.next_run = request.next_run;
+        if (request.sessions) metadata.sessions = request.sessions;
+        if (request.run_finalizations) metadata.run_finalizations = request.run_finalizations;
+        if (request.generated !== undefined) metadata.generated = request.generated;
+        if (request.generated_kind) metadata.generated_kind = request.generated_kind;
+        if (request.generated_key) metadata.generated_key = request.generated_key;
+        if (request.generated_by) metadata.generated_by = request.generated_by;
+        metadata.projectId = isGlobal ? undefined : effectiveProjectId;
+
+        const words = finalContent.split(/\s+/).filter(Boolean);
+        this.storageLayer.insertNote({
+          path: relativePath,
+          short_id: noteId,
+          title: displayTitle,
+          lead: finalContent.slice(0, 200),
+          body: finalContent,
+          raw_content: readFileSync(join(this.config.brainDir, relativePath), "utf-8"),
+          word_count: words.length,
+          checksum: null,
+          metadata: JSON.stringify(metadata),
+          type: entryType,
+          status: entryStatus,
+          priority: request.priority || null,
+          project_id: effectiveProjectId,
+          feature_id: request.feature_id || null,
+          created: now,
+          modified: now,
+        });
+      } catch {
+        // StorageLayer insertion is best-effort; file is already on disk
+      }
+    }
+
     if (entryType === "task") {
       const featureId = this.normalizeFeatureId(request.feature_id);
       if (featureId) {
@@ -774,70 +975,47 @@ export class BrainService {
     let notePath: string | null = null;
 
     const isId = pathOrId && /^[a-z0-9]{8}$/.test(pathOrId);
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
 
-    if (zkAvailable) {
+    // --- StorageLayer path (preferred when available) ---
+    if (this.storageLayer) {
       try {
+        let noteRow: NoteRow | null = null;
+
         if (pathOrId) {
-          const result = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            pathOrId,
-          ]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            if (notes.length > 0) {
-              note = isId
-                ? notes[0]
-                : notes.find((n) => n.path === pathOrId) || notes[0];
-              if (note) notePath = note.path;
-            }
+          if (isId) {
+            noteRow = this.storageLayer.getNoteByShortId(pathOrId);
+          } else {
+            noteRow = this.storageLayer.getNoteByPath(pathOrId);
           }
         }
 
-        if (!note && (title || (isId && !notePath))) {
+        if (!noteRow && (title || (isId && !noteRow))) {
           const searchTerm = title || pathOrId;
-          const result = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            "--match",
-            searchTerm!,
-            "--match-strategy",
-            "exact",
-          ]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            note = notes.find((n) => n.title === searchTerm) || null;
-            if (note) {
-              notePath = note.path;
-            } else if (notes.length > 0) {
-              const suggestions = notes.slice(0, 5).map((n) => ({
-                title: n.title,
-                id: extractIdFromPath(n.path),
-                path: n.path,
-              }));
-              throw new Error(
-                `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
-              );
-            }
-          }
+          if (searchTerm) {
+            // Try exact title match first
+            noteRow = this.storageLayer.getNoteByTitle(searchTerm);
 
-          // Search execution entries by name field
-          if (!note && searchTerm) {
-            const execResult = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--tag",
-              "execution",
-            ]);
-            if (execResult.exitCode === 0) {
-              const execNotes = parseZkJsonOutput(execResult.stdout);
+            // If no exact match, search for suggestions
+            if (!noteRow) {
+              const searchResults = this.storageLayer.searchNotes(searchTerm, {
+                matchStrategy: "exact",
+                limit: 5,
+              });
+              if (searchResults.length > 0) {
+                const suggestions = searchResults.slice(0, 5).map((n) => ({
+                  title: n.title,
+                  id: n.short_id,
+                  path: n.path,
+                }));
+                throw new Error(
+                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
+                );
+              }
+            }
+
+            // Search execution entries by name field
+            if (!noteRow && searchTerm) {
+              const execNotes = this.storageLayer.listNotes({ tags: ["execution"] });
               for (const execNote of execNotes) {
                 const execPath = join(this.config.brainDir, execNote.path);
                 if (existsSync(execPath)) {
@@ -845,12 +1023,7 @@ export class BrainService {
                   const { frontmatter: execFm } = parseFrontmatter(execContent);
 
                   if (execFm.name === searchTerm) {
-                    note = {
-                      ...execNote,
-                      rawContent: execContent,
-                      metadata: execFm,
-                    };
-                    notePath = execNote.path;
+                    noteRow = execNote;
                     break;
                   }
                 }
@@ -858,11 +1031,126 @@ export class BrainService {
             }
           }
         }
+
+        if (noteRow) {
+          // Read full content from disk (StorageLayer body may be truncated)
+          const fullPath = join(this.config.brainDir, noteRow.path);
+          let rawContent = noteRow.raw_content;
+          if (existsSync(fullPath)) {
+            rawContent = readFileSync(fullPath, "utf-8");
+          }
+          const parsedMeta = noteRow.metadata ? JSON.parse(noteRow.metadata) : {};
+          note = {
+            path: noteRow.path,
+            title: noteRow.title,
+            rawContent,
+            tags: Array.isArray(parsedMeta.tags) ? parsedMeta.tags : [],
+            metadata: parsedMeta,
+            created: noteRow.created || undefined,
+            modified: noteRow.modified || undefined,
+          };
+          notePath = noteRow.path;
+        }
       } catch (error) {
         if (error instanceof Error && error.message.includes("No exact match")) {
           throw error;
         }
-        // Fall through to direct file read
+        // Fall through to execZk / direct file read
+      }
+    }
+
+    // --- Legacy execZk path (fallback when StorageLayer not available or didn't find note) ---
+    if (!note) {
+      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+
+      if (zkAvailable) {
+        try {
+          if (pathOrId) {
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              pathOrId,
+            ]);
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              if (notes.length > 0) {
+                note = isId
+                  ? notes[0]
+                  : notes.find((n) => n.path === pathOrId) || notes[0];
+                if (note) notePath = note.path;
+              }
+            }
+          }
+
+          if (!note && (title || (isId && !notePath))) {
+            const searchTerm = title || pathOrId;
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              "--match",
+              searchTerm!,
+              "--match-strategy",
+              "exact",
+            ]);
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              note = notes.find((n) => n.title === searchTerm) || null;
+              if (note) {
+                notePath = note.path;
+              } else if (notes.length > 0) {
+                const suggestions = notes.slice(0, 5).map((n) => ({
+                  title: n.title,
+                  id: extractIdFromPath(n.path),
+                  path: n.path,
+                }));
+                throw new Error(
+                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
+                );
+              }
+            }
+
+            // Search execution entries by name field
+            if (!note && searchTerm) {
+              const execResult = await execZk([
+                "list",
+                "--format",
+                "json",
+                "--quiet",
+                "--tag",
+                "execution",
+              ]);
+              if (execResult.exitCode === 0) {
+                const execNotes = parseZkJsonOutput(execResult.stdout);
+                for (const execNote of execNotes) {
+                  const execPath = join(this.config.brainDir, execNote.path);
+                  if (existsSync(execPath)) {
+                    const execContent = readFileSync(execPath, "utf-8");
+                    const { frontmatter: execFm } = parseFrontmatter(execContent);
+
+                    if (execFm.name === searchTerm) {
+                      note = {
+                        ...execNote,
+                        rawContent: execContent,
+                        metadata: execFm,
+                      };
+                      notePath = execNote.path;
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        } catch (error) {
+          if (error instanceof Error && error.message.includes("No exact match")) {
+            throw error;
+          }
+          // Fall through to direct file read
+        }
       }
     }
 
@@ -1428,11 +1716,46 @@ export class BrainService {
     
     // Update SQLite atomically
     moveEntryMeta(path, newPath, newProjectId);
+
+    // --- StorageLayer path: update note path in StorageLayer DB ---
+    if (this.storageLayer) {
+      try {
+        // Read the old note from DB before deleting
+        const oldNoteRow = this.storageLayer.getNoteByPath(path);
+        // Delete old path
+        this.storageLayer.deleteNote(path);
+        // Insert at new path with updated project_id
+        const newFileContent = readFileSync(newFullPath, "utf-8");
+        const { frontmatter: newFm, body: newBody } = parseFrontmatter(newFileContent);
+        const now = new Date().toISOString();
+        const words = newBody.split(/\s+/).filter(Boolean);
+        this.storageLayer.insertNote({
+          path: newPath,
+          short_id: id,
+          title: (newFm.title as string) || title,
+          lead: newBody.slice(0, 200),
+          body: newBody,
+          raw_content: newFileContent,
+          word_count: words.length,
+          checksum: oldNoteRow?.checksum || null,
+          metadata: oldNoteRow?.metadata || JSON.stringify({}),
+          type: entryType,
+          status: status || (oldNoteRow?.status || "active"),
+          priority: oldNoteRow?.priority || null,
+          project_id: newProjectId,
+          feature_id: oldNoteRow?.feature_id || null,
+          created: oldNoteRow?.created || now,
+          modified: now,
+        });
+      } catch {
+        // StorageLayer update is best-effort; file move already completed
+      }
+    }
     
     // Run zk index to update zk's internal index (with retry on failure)
     // Uses incremental index (no --force) to avoid full reindex of entire brain.
     // Retries handle transient SQLite locks from concurrent access.
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    const zkAvailable = !this.storageLayer && isZkNotebookExists() && (await isZkAvailable());
     if (zkAvailable) {
       const MAX_INDEX_RETRIES = 3;
       const RETRY_BASE_DELAY_MS = 150;
@@ -1959,6 +2282,44 @@ export class BrainService {
    */
   async search(request: SearchRequest): Promise<SearchResponse> {
     const limit = request.limit ?? 10;
+
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const pathPrefix = request.global ? "global" : undefined;
+      let noteRows = this.storageLayer.searchNotes(request.query, {
+        limit: request.feature_id || request.tags ? limit * 5 : limit,
+        type: request.type,
+        status: request.status,
+        path: pathPrefix,
+      });
+
+      // Feature ID filtering (not supported by StorageLayer search)
+      if (request.feature_id) {
+        noteRows = noteRows.filter((row) => row.feature_id === request.feature_id);
+      }
+
+      // Tag filtering (OR logic)
+      if (request.tags && request.tags.length > 0) {
+        noteRows = noteRows.filter((row) => {
+          const meta = row.metadata ? JSON.parse(row.metadata) : {};
+          const noteTags: string[] = Array.isArray(meta.tags) ? meta.tags : [];
+          return request.tags!.some((tag) => noteTags.includes(tag));
+        });
+      }
+
+      noteRows = noteRows.slice(0, limit);
+
+      const results: BrainEntry[] = noteRows.map((row) => {
+        const entry = noteRowToBrainEntry(row);
+        // For search results, truncate content to lead/preview
+        entry.content = row.lead || row.body?.slice(0, 150) || "";
+        return entry;
+      });
+
+      return { results, total: results.length };
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
 
     if (!zkAvailable) {
@@ -2040,6 +2401,50 @@ export class BrainService {
   async list(request: ListEntriesRequest): Promise<ListEntriesResponse> {
     const limit = request.limit ?? 20;
     const offset = request.offset ?? 0;
+
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const pathPrefix = request.global ? "global" : undefined;
+      const needsCodeFiltering = request.filename || request.feature_id;
+      const fetchLimit = needsCodeFiltering ? Math.max(limit * 10, 500) : limit + offset;
+
+      let noteRows = this.storageLayer.listNotes({
+        type: request.type,
+        status: request.status,
+        tags: request.tags,
+        path: pathPrefix,
+        limit: fetchLimit,
+        sortBy: request.sortBy === "priority" ? "priority" : "modified",
+        sortOrder: "desc",
+      });
+
+      // Filename filtering (not supported by StorageLayer)
+      if (request.filename) {
+        noteRows = noteRows.filter((row) => {
+          const noteFilename = extractIdFromPath(row.path);
+          return matchesFilenamePattern(noteFilename, request.filename!);
+        });
+      }
+
+      // Feature ID filtering
+      if (request.feature_id) {
+        noteRows = noteRows.filter((row) => row.feature_id === request.feature_id);
+      }
+
+      const total = noteRows.length;
+      noteRows = noteRows.slice(offset, offset + limit);
+
+      const entries: BrainEntry[] = noteRows.map((row) => {
+        const entry = noteRowToBrainEntry(row);
+        entry.content = ""; // List doesn't include content
+        entry.access_count = getEntryMeta(row.path)?.access_count ?? 0;
+        return entry;
+      });
+
+      return { entries, total, limit, offset };
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
 
     if (!zkAvailable) {
@@ -2145,6 +2550,71 @@ export class BrainService {
    */
   async inject(request: InjectRequest): Promise<InjectResponse> {
     const limit = request.maxEntries ?? 5;
+
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.searchNotes(request.query, {
+        limit,
+        type: request.type,
+      });
+
+      if (noteRows.length === 0) {
+        return {
+          context: `No relevant brain context found for "${request.query}"`,
+          entries: [],
+        };
+      }
+
+      // Record access for all returned entries
+      for (const row of noteRows) {
+        recordAccess(row.path);
+      }
+
+      const lines = [
+        `## Relevant Brain Context`,
+        "",
+        `Found ${noteRows.length} relevant entries for: "${request.query}"`,
+        "",
+        "---",
+        "",
+      ];
+
+      const entries: BrainEntry[] = [];
+
+      for (const row of noteRows) {
+        // Read full content from disk
+        const fullPath = join(this.config.brainDir, row.path);
+        let content = "";
+        if (existsSync(fullPath)) {
+          const raw = readFileSync(fullPath, "utf-8");
+          const { body } = parseFrontmatter(raw);
+          content = body;
+        } else {
+          content = row.body || "";
+        }
+
+        const entry = noteRowToBrainEntry(row);
+        entry.content = content;
+        const globalBadge = row.path.startsWith("global/") ? " (global)" : "";
+
+        lines.push(`### ${row.title}${globalBadge}`);
+        lines.push(`*Type: ${entry.type} | Tags: ${entry.tags?.join(", ") || "none"}*`);
+        lines.push("");
+        lines.push(content || row.body || row.lead || "(no content)");
+        lines.push("");
+        lines.push("---");
+        lines.push("");
+
+        entries.push(entry);
+      }
+
+      return {
+        context: lines.join("\n"),
+        entries,
+      };
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
 
     if (!zkAvailable) {
@@ -2251,6 +2721,13 @@ export class BrainService {
    * Find entries that link TO a given entry (brain_backlinks)
    */
   async getBacklinks(path: string): Promise<BrainEntry[]> {
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.getBacklinks(path);
+      return noteRows.map((row) => noteRowToBrainEntry(row));
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (!zkAvailable) {
       throw new Error("zk CLI not available for backlink detection");
@@ -2289,6 +2766,13 @@ export class BrainService {
    * Find entries that a given entry links TO (brain_outlinks)
    */
   async getOutlinks(path: string): Promise<BrainEntry[]> {
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.getOutlinks(path);
+      return noteRows.map((row) => noteRowToBrainEntry(row));
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (!zkAvailable) {
       throw new Error("zk CLI not available for outlink detection");
@@ -2327,6 +2811,13 @@ export class BrainService {
    * Find entries that share linked notes with a given entry (brain_related)
    */
   async getRelated(path: string, limit = 10): Promise<BrainEntry[]> {
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.getRelated(path, limit);
+      return noteRows.map((row) => noteRowToBrainEntry(row));
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (!zkAvailable) {
       throw new Error("zk CLI not available for related note detection");
@@ -2371,6 +2862,13 @@ export class BrainService {
    * Find entries with no incoming links (brain_orphans)
    */
   async getOrphans(type?: EntryType, limit = 20): Promise<BrainEntry[]> {
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.getOrphans({ type, limit });
+      return noteRows.map((row) => noteRowToBrainEntry(row));
+    }
+
+    // --- Legacy execZk path ---
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (!zkAvailable) {
       throw new Error("zk CLI not available for orphan detection");
@@ -2425,7 +2923,6 @@ export class BrainService {
       return [];
     }
 
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     const results: BrainEntry[] = [];
 
     let count = 0;
@@ -2437,25 +2934,37 @@ export class BrainService {
       let type: EntryType = "scratch";
       let status: EntryStatus = "active";
 
-      if (zkAvailable) {
-        try {
-          const result = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            path,
-          ]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            if (notes[0]) {
-              title = notes[0].title;
-              type = extractType(notes[0]);
-              status = extractStatus(notes[0]);
+      // --- StorageLayer path ---
+      if (this.storageLayer) {
+        const noteRow = this.storageLayer.getNoteByPath(path);
+        if (noteRow) {
+          title = noteRow.title;
+          type = (noteRow.type as EntryType) || "scratch";
+          status = (noteRow.status as EntryStatus) || "active";
+        }
+      } else {
+        // --- Legacy execZk path ---
+        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+        if (zkAvailable) {
+          try {
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              path,
+            ]);
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              if (notes[0]) {
+                title = notes[0].title;
+                type = extractType(notes[0]);
+                status = extractStatus(notes[0]);
+              }
             }
+          } catch {
+            /* use defaults */
           }
-        } catch {
-          /* use defaults */
         }
       }
 
@@ -2493,43 +3002,61 @@ export class BrainService {
    * Get brain statistics (brain_stats)
    */
   async getStats(global?: boolean): Promise<StatsResponse> {
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    const zkVersion = zkAvailable ? await getZkVersion() : null;
-
     let totalEntries = 0;
     let globalEntries = 0;
     let projectEntries = 0;
-    const byType: Record<string, number> = {};
+    let byType: Record<string, number> = {};
     let orphanCount = 0;
+    let zkAvailable = false;
+    let zkVersion: string | null = null;
 
-    if (zkAvailable) {
-      try {
-        const result = await execZk(["list", "--format", "json", "--quiet"]);
-        if (result.exitCode === 0) {
-          const notes = parseZkJsonOutput(result.stdout);
-          totalEntries = notes.length;
+    // --- StorageLayer path ---
+    if (this.storageLayer) {
+      const stats = this.storageLayer.getStats();
+      totalEntries = stats.total;
+      byType = stats.byType;
+      orphanCount = stats.orphanCount;
 
-          for (const note of notes) {
-            const type = extractType(note);
-            byType[type] = (byType[type] || 0) + 1;
-            if (note.path.startsWith("global/")) globalEntries++;
-            else projectEntries++;
+      // Count global vs project entries
+      const allNotes = this.storageLayer.listNotes({ limit: 100000 });
+      for (const note of allNotes) {
+        if (note.path.startsWith("global/")) globalEntries++;
+        else projectEntries++;
+      }
+    } else {
+      // --- Legacy execZk path ---
+      zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+      zkVersion = zkAvailable ? await getZkVersion() : null;
+
+      if (zkAvailable) {
+        try {
+          const result = await execZk(["list", "--format", "json", "--quiet"]);
+          if (result.exitCode === 0) {
+            const notes = parseZkJsonOutput(result.stdout);
+            totalEntries = notes.length;
+
+            for (const note of notes) {
+              const type = extractType(note);
+              byType[type] = (byType[type] || 0) + 1;
+              if (note.path.startsWith("global/")) globalEntries++;
+              else projectEntries++;
+            }
+
+            const orphanResult = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              "--orphan",
+            ]);
+            if (orphanResult.exitCode === 0) {
+              const orphans = parseZkJsonOutput(orphanResult.stdout);
+              orphanCount = orphans.length;
+            }
           }
-
-          const orphanResult = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            "--orphan",
-          ]);
-          if (orphanResult.exitCode === 0) {
-            const orphans = parseZkJsonOutput(orphanResult.stdout);
-            orphanCount = orphans.length;
-          }
+        } catch {
+          /* ignore */
         }
-      } catch {
-        /* ignore */
       }
     }
 
@@ -2537,7 +3064,7 @@ export class BrainService {
     const staleCount = getStaleEntries(30).length;
 
     return {
-      zkAvailable,
+      zkAvailable: zkAvailable || !!this.storageLayer,
       zkVersion,
       notebookExists: isZkNotebookExists(),
       brainDir: this.config.brainDir,
@@ -2573,103 +3100,163 @@ export class BrainService {
 
     const isId = request.path && /^[a-z0-9]{8}$/.test(request.path);
 
-    if (request.path) {
-      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    // --- StorageLayer path (preferred when available) ---
+    if (this.storageLayer) {
+      try {
+        let noteRow: NoteRow | null = null;
 
-      if (zkAvailable) {
-        try {
-          const result = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            request.path,
-          ]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            if (notes.length > 0) {
-              const note = notes[0];
-              resolvedPath = note.path;
-              resolvedTitle = note.title;
-              resolvedId = extractIdFromPath(note.path);
+        if (request.path) {
+          if (isId) {
+            noteRow = this.storageLayer.getNoteByShortId(request.path);
+          } else {
+            noteRow = this.storageLayer.getNoteByPath(
+              request.path.endsWith(".md") ? request.path : `${request.path}.md`
+            );
+            // Also try without .md suffix
+            if (!noteRow) {
+              noteRow = this.storageLayer.getNoteByPath(request.path);
             }
           }
-        } catch {
-          /* fall through */
         }
-      }
 
-      if (!resolvedPath) {
-        const pathToCheck = isId
-          ? request.path
-          : request.path.endsWith(".md")
-            ? request.path
-            : `${request.path}.md`;
-        const fullPath = join(this.config.brainDir, pathToCheck);
+        if (!noteRow && (request.title || (isId && !noteRow))) {
+          const searchTerm = request.title || request.path;
+          if (searchTerm) {
+            noteRow = this.storageLayer.getNoteByTitle(searchTerm);
 
-        if (existsSync(fullPath)) {
-          resolvedPath = pathToCheck;
-          resolvedId = extractIdFromPath(pathToCheck);
-
-          try {
-            const content = readFileSync(fullPath, "utf-8");
-            const { frontmatter } = parseFrontmatter(content);
-            resolvedTitle = (frontmatter.title as string) || request.path;
-          } catch {
-            resolvedTitle = request.path;
+            if (!noteRow) {
+              const searchResults = this.storageLayer.searchNotes(searchTerm, {
+                matchStrategy: "exact",
+                limit: 5,
+              });
+              if (searchResults.length > 0) {
+                const suggestions = searchResults.slice(0, 5).map((n) => ({
+                  title: n.title,
+                  path: n.path,
+                  id: n.short_id,
+                }));
+                throw new Error(
+                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
+                );
+              } else {
+                throw new Error(`No entry found matching: "${searchTerm}"`);
+              }
+            }
           }
-        } else if (!isId) {
-          throw new Error(`Entry not found at path: ${request.path}`);
         }
-      }
-    }
 
-    if (!resolvedPath && (request.title || (isId && !resolvedPath))) {
-      const searchTerm = request.title || request.path;
-      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-      if (!zkAvailable) {
-        throw new Error("zk CLI not available. Cannot resolve title to path.");
-      }
-
-      try {
-        const result = await execZk([
-          "list",
-          "--format",
-          "json",
-          "--quiet",
-          "--match",
-          searchTerm!,
-          "--match-strategy",
-          "exact",
-        ]);
-
-        if (result.exitCode === 0) {
-          const notes = parseZkJsonOutput(result.stdout);
-          const exactMatch = notes.find((n) => n.title === searchTerm);
-
-          if (exactMatch) {
-            resolvedPath = exactMatch.path;
-            resolvedTitle = exactMatch.title;
-            resolvedId = extractIdFromPath(exactMatch.path);
-          } else if (notes.length > 0) {
-            const suggestions = notes.slice(0, 5).map((n) => ({
-              title: n.title,
-              path: n.path,
-              id: extractIdFromPath(n.path),
-            }));
-            throw new Error(
-              `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
-            );
-          } else {
-            throw new Error(`No entry found matching: "${searchTerm}"`);
-          }
-        } else {
-          throw new Error(`zk search failed: ${result.stderr || "Unknown error"}`);
+        if (noteRow) {
+          resolvedPath = noteRow.path;
+          resolvedTitle = noteRow.title;
+          resolvedId = noteRow.short_id;
         }
       } catch (error) {
         if (error instanceof Error) throw error;
-        throw new Error(`Failed to search: ${String(error)}`);
+      }
+    }
+
+    // --- Legacy execZk + file fallback (when StorageLayer not available or didn't resolve) ---
+    if (!resolvedPath) {
+      if (request.path) {
+        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+
+        if (zkAvailable) {
+          try {
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              request.path,
+            ]);
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              if (notes.length > 0) {
+                const note = notes[0];
+                resolvedPath = note.path;
+                resolvedTitle = note.title;
+                resolvedId = extractIdFromPath(note.path);
+              }
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+
+        if (!resolvedPath) {
+          const pathToCheck = isId
+            ? request.path
+            : request.path.endsWith(".md")
+              ? request.path
+              : `${request.path}.md`;
+          const fullPath = join(this.config.brainDir, pathToCheck);
+
+          if (existsSync(fullPath)) {
+            resolvedPath = pathToCheck;
+            resolvedId = extractIdFromPath(pathToCheck);
+
+            try {
+              const content = readFileSync(fullPath, "utf-8");
+              const { frontmatter } = parseFrontmatter(content);
+              resolvedTitle = (frontmatter.title as string) || request.path;
+            } catch {
+              resolvedTitle = request.path;
+            }
+          } else if (!isId) {
+            throw new Error(`Entry not found at path: ${request.path}`);
+          }
+        }
+      }
+
+      if (!resolvedPath && (request.title || (isId && !resolvedPath))) {
+        const searchTerm = request.title || request.path;
+        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+
+        if (!zkAvailable && !this.storageLayer) {
+          throw new Error("zk CLI not available. Cannot resolve title to path.");
+        }
+
+        if (zkAvailable) {
+          try {
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              "--match",
+              searchTerm!,
+              "--match-strategy",
+              "exact",
+            ]);
+
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              const exactMatch = notes.find((n) => n.title === searchTerm);
+
+              if (exactMatch) {
+                resolvedPath = exactMatch.path;
+                resolvedTitle = exactMatch.title;
+                resolvedId = extractIdFromPath(exactMatch.path);
+              } else if (notes.length > 0) {
+                const suggestions = notes.slice(0, 5).map((n) => ({
+                  title: n.title,
+                  path: n.path,
+                  id: extractIdFromPath(n.path),
+                }));
+                throw new Error(
+                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
+                );
+              } else {
+                throw new Error(`No entry found matching: "${searchTerm}"`);
+              }
+            } else {
+              throw new Error(`zk search failed: ${result.stderr || "Unknown error"}`);
+            }
+          } catch (error) {
+            if (error instanceof Error) throw error;
+            throw new Error(`Failed to search: ${String(error)}`);
+          }
+        }
       }
     }
 
@@ -2704,26 +3291,23 @@ export class BrainService {
 
     // Find by title if needed
     if (!existsSync(join(this.config.brainDir, notePath))) {
-      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-      if (zkAvailable) {
+      let resolved = false;
+
+      // --- StorageLayer path (preferred when available) ---
+      if (this.storageLayer) {
         try {
-          const result = await execZk([
-            "list",
-            "--format",
-            "json",
-            "--quiet",
-            "--match",
-            pathOrTitle,
-            "--match-strategy",
-            "exact",
-          ]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            const exactMatch = notes.find((n) => n.title === pathOrTitle);
-            if (exactMatch) {
-              notePath = exactMatch.path;
-            } else if (notes.length > 0) {
-              const suggestions = notes.slice(0, 5).map((n) => n.title);
+          const noteRow = this.storageLayer.getNoteByTitle(pathOrTitle);
+          if (noteRow) {
+            notePath = noteRow.path;
+            resolved = true;
+          } else {
+            // Search for suggestions
+            const searchResults = this.storageLayer.searchNotes(pathOrTitle, {
+              matchStrategy: "exact",
+              limit: 5,
+            });
+            if (searchResults.length > 0) {
+              const suggestions = searchResults.slice(0, 5).map((n) => n.title);
               throw new Error(
                 `No exact match for title: "${pathOrTitle}". Suggestions: ${suggestions.join(", ")}`
               );
@@ -2731,6 +3315,39 @@ export class BrainService {
           }
         } catch (error) {
           if (error instanceof Error) throw error;
+        }
+      }
+
+      // --- Legacy execZk path (fallback) ---
+      if (!resolved) {
+        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+        if (zkAvailable) {
+          try {
+            const result = await execZk([
+              "list",
+              "--format",
+              "json",
+              "--quiet",
+              "--match",
+              pathOrTitle,
+              "--match-strategy",
+              "exact",
+            ]);
+            if (result.exitCode === 0) {
+              const notes = parseZkJsonOutput(result.stdout);
+              const exactMatch = notes.find((n) => n.title === pathOrTitle);
+              if (exactMatch) {
+                notePath = exactMatch.path;
+              } else if (notes.length > 0) {
+                const suggestions = notes.slice(0, 5).map((n) => n.title);
+                throw new Error(
+                  `No exact match for title: "${pathOrTitle}". Suggestions: ${suggestions.join(", ")}`
+                );
+              }
+            }
+          } catch (error) {
+            if (error instanceof Error) throw error;
+          }
         }
       }
     }

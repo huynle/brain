@@ -8,11 +8,13 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from "bun:tes
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { BrainService } from "./brain-service";
+import { BrainService, noteRowToBrainEntry } from "./brain-service";
 import { parseFrontmatter } from "./zk-client";
 import type { BrainConfig } from "./types";
 import { initDatabase, acquireGeneratedTaskLease, completeGeneratedTaskLease } from "./db";
 import { TaskService } from "./task-service";
+import { createStorageLayer, type NoteRow } from "./storage";
+import { Indexer } from "./indexer";
 
 // =============================================================================
 // Test Setup
@@ -59,6 +61,150 @@ describe("BrainService", () => {
     test("should create service instance", () => {
       expect(service).toBeDefined();
       expect(service).toBeInstanceOf(BrainService);
+    });
+
+    test("should accept optional StorageLayer and Indexer", () => {
+      const storage = createStorageLayer(":memory:");
+      const indexer = new Indexer(TEST_DIR, storage, (filePath, brainDir) => {
+        throw new Error("not used in this test");
+      });
+
+      const svc = new BrainService(testConfig, "test-project", {
+        storage,
+        indexer,
+      });
+      expect(svc).toBeInstanceOf(BrainService);
+      expect(svc.getStorageLayer()).toBe(storage);
+      storage.close();
+    });
+
+    test("getStorageLayer returns null when no storage provided", () => {
+      const svc = new BrainService(testConfig, "test-project");
+      expect(svc.getStorageLayer()).toBeNull();
+    });
+  });
+
+  describe("noteRowToBrainEntry", () => {
+    test("maps NoteRow fields to BrainEntry correctly", () => {
+      const noteRow: NoteRow = {
+        id: 1,
+        path: "projects/alpha/task/abc12def.md",
+        short_id: "abc12def",
+        title: "Test Task",
+        lead: "A test task",
+        body: "This is the body content",
+        raw_content: "---\ntitle: Test Task\n---\nThis is the body content",
+        word_count: 6,
+        checksum: "abc123",
+        metadata: JSON.stringify({
+          title: "Test Task",
+          type: "task",
+          status: "active",
+          tags: ["backend", "urgent"],
+          priority: "high",
+          projectId: "alpha",
+          depends_on: ["dep11111"],
+          created: "2024-01-01T00:00:00Z",
+        }),
+        type: "task",
+        status: "active",
+        priority: "high",
+        project_id: "alpha",
+        feature_id: "feat-a",
+        created: "2024-01-01T00:00:00Z",
+        modified: "2024-01-02T00:00:00Z",
+      };
+
+      const entry = noteRowToBrainEntry(noteRow);
+
+      expect(entry.id).toBe("abc12def");
+      expect(entry.path).toBe("projects/alpha/task/abc12def.md");
+      expect(entry.title).toBe("Test Task");
+      expect(entry.type).toBe("task");
+      expect(entry.status).toBe("active");
+      expect(entry.content).toBe("This is the body content");
+      expect(entry.tags).toEqual(["backend", "urgent"]);
+      expect(entry.priority).toBe("high");
+      expect(entry.project_id).toBe("alpha");
+      expect(entry.depends_on).toEqual(["dep11111"]);
+      expect(entry.created).toBe("2024-01-01T00:00:00Z");
+      expect(entry.modified).toBe("2024-01-02T00:00:00Z");
+    });
+
+    test("handles NoteRow with minimal metadata", () => {
+      const noteRow: NoteRow = {
+        id: 2,
+        path: "global/scratch/xyz99999.md",
+        short_id: "xyz99999",
+        title: "Simple Note",
+        lead: "A simple note",
+        body: "Just some content",
+        raw_content: "---\ntitle: Simple Note\n---\nJust some content",
+        word_count: 3,
+        checksum: "def456",
+        metadata: JSON.stringify({ title: "Simple Note" }),
+        type: null,
+        status: null,
+        priority: null,
+        project_id: null,
+        feature_id: null,
+        created: null,
+        modified: null,
+      };
+
+      const entry = noteRowToBrainEntry(noteRow);
+
+      expect(entry.id).toBe("xyz99999");
+      expect(entry.path).toBe("global/scratch/xyz99999.md");
+      expect(entry.title).toBe("Simple Note");
+      expect(entry.type).toBe("scratch"); // default when null
+      expect(entry.status).toBe("active"); // default when null
+      expect(entry.content).toBe("Just some content");
+      expect(entry.tags).toEqual([]);
+      expect(entry.priority).toBeUndefined();
+    });
+
+    test("extracts metadata fields from JSON metadata", () => {
+      const noteRow: NoteRow = {
+        id: 3,
+        path: "projects/test/task/meta1111.md",
+        short_id: "meta1111",
+        title: "Metadata Test",
+        lead: "Testing metadata",
+        body: "Content with metadata",
+        raw_content: "---\ntitle: Metadata Test\n---\nContent with metadata",
+        word_count: 3,
+        checksum: "meta123",
+        metadata: JSON.stringify({
+          title: "Metadata Test",
+          type: "task",
+          status: "pending",
+          workdir: "/home/user/project",
+          git_branch: "feature-x",
+          merge_target_branch: "main",
+          merge_policy: "auto_merge",
+          merge_strategy: "squash",
+          user_original_request: "Fix the bug",
+          feature_id: "feat-z",
+          sessions: { "ses_123": { timestamp: "2024-01-01T00:00:00Z" } },
+        }),
+        type: "task",
+        status: "pending",
+        priority: "medium",
+        project_id: "test",
+        feature_id: "feat-z",
+        created: "2024-03-01T00:00:00Z",
+        modified: "2024-03-02T00:00:00Z",
+      };
+
+      const entry = noteRowToBrainEntry(noteRow);
+      expect(entry.workdir).toBe("/home/user/project");
+      expect(entry.git_branch).toBe("feature-x");
+      expect(entry.merge_target_branch).toBe("main");
+      expect(entry.merge_policy).toBe("auto_merge");
+      expect(entry.merge_strategy).toBe("squash");
+      expect(entry.user_original_request).toBe("Fix the bug");
+      expect(entry.sessions).toEqual({ "ses_123": { timestamp: "2024-01-01T00:00:00Z" } });
     });
   });
 
@@ -2174,6 +2320,527 @@ Task content.
       expect(result.newPath).toBe(`projects/${destinationProject}/task/movx0001.md`);
       expect(readDependsOn(sourceCheckoutPath)).toEqual([]);
       expect(readDependsOn(destinationCheckoutPath)).toEqual(["movx0001"]);
+    });
+  });
+});
+
+// =============================================================================
+// Phase 1: StorageLayer-backed recall / generateLink / getPlanSections
+// =============================================================================
+
+describe("BrainService with StorageLayer (Phase 1)", () => {
+  let slService: BrainService;
+  let storage: ReturnType<typeof createStorageLayer>;
+
+  const SL_TEST_DIR = join(tmpdir(), `brain-sl-test-${Date.now()}`);
+  const SL_DB_PATH = join(SL_TEST_DIR, "sl-test.db");
+
+  const slConfig: BrainConfig = {
+    brainDir: SL_TEST_DIR,
+    dbPath: SL_DB_PATH,
+    defaultProject: "test-project",
+  };
+
+  beforeAll(() => {
+    // Create test directory structure
+    mkdirSync(join(SL_TEST_DIR, "projects", "test-project", "task"), { recursive: true });
+    mkdirSync(join(SL_TEST_DIR, "projects", "test-project", "plan"), { recursive: true });
+    mkdirSync(join(SL_TEST_DIR, "projects", "test-project", "scratch"), { recursive: true });
+
+    // Create the StorageLayer
+    storage = createStorageLayer(join(SL_TEST_DIR, "storage.db"));
+
+    // Create test files on disk AND index them in StorageLayer
+    const taskContent = `---
+title: SL Recall Task
+type: task
+status: active
+tags:
+  - task
+  - backend
+id: slrc0001
+---
+
+This is a task body for StorageLayer recall testing.
+`;
+    const taskPath = "projects/test-project/task/slrc0001.md";
+    writeFileSync(join(SL_TEST_DIR, taskPath), taskContent);
+    storage.insertNote({
+      path: taskPath,
+      short_id: "slrc0001",
+      title: "SL Recall Task",
+      lead: "",
+      body: "This is a task body for StorageLayer recall testing.",
+      raw_content: taskContent,
+      word_count: 10,
+      checksum: null,
+      metadata: JSON.stringify({ tags: ["task", "backend"], id: "slrc0001" }),
+      type: "task",
+      status: "active",
+      priority: null,
+      project_id: "test-project",
+      feature_id: null,
+      created: "2025-01-01T00:00:00Z",
+      modified: "2025-01-01T00:00:00Z",
+    });
+
+    // Create a plan file for getPlanSections test
+    const planContent = `---
+title: SL Test Plan
+type: plan
+status: active
+id: slpl0001
+---
+
+## Phase 1: Setup
+
+Setup instructions here.
+
+## Phase 2: Implementation
+
+Implementation details here.
+
+## Phase 3: Testing
+
+Testing instructions here.
+`;
+    const planPath = "projects/test-project/plan/slpl0001.md";
+    writeFileSync(join(SL_TEST_DIR, planPath), planContent);
+    storage.insertNote({
+      path: planPath,
+      short_id: "slpl0001",
+      title: "SL Test Plan",
+      lead: "",
+      body: "## Phase 1: Setup\n\nSetup instructions here.\n\n## Phase 2: Implementation\n\nImplementation details here.\n\n## Phase 3: Testing\n\nTesting instructions here.",
+      raw_content: planContent,
+      word_count: 15,
+      checksum: null,
+      metadata: JSON.stringify({ id: "slpl0001" }),
+      type: "plan",
+      status: "active",
+      priority: null,
+      project_id: "test-project",
+      feature_id: null,
+      created: "2025-01-01T00:00:00Z",
+      modified: "2025-01-01T00:00:00Z",
+    });
+
+    // Create the service with StorageLayer
+    slService = new BrainService(slConfig, "test-project", { storage });
+  });
+
+  afterAll(() => {
+    storage.close();
+    if (existsSync(SL_TEST_DIR)) {
+      rmSync(SL_TEST_DIR, { recursive: true, force: true });
+    }
+  });
+
+  describe("recall with StorageLayer", () => {
+    test("should recall entry by path via StorageLayer", async () => {
+      const result = await slService.recall("projects/test-project/task/slrc0001.md");
+      expect(result).toBeDefined();
+      expect(result.title).toBe("SL Recall Task");
+      expect(result.type).toBe("task");
+      expect(result.status).toBe("active");
+      expect(result.content).toContain("StorageLayer recall testing");
+    });
+
+    test("should recall entry by short ID via StorageLayer", async () => {
+      const result = await slService.recall("slrc0001");
+      expect(result).toBeDefined();
+      expect(result.title).toBe("SL Recall Task");
+      expect(result.id).toBe("slrc0001");
+    });
+
+    test("should recall entry by title via StorageLayer", async () => {
+      const result = await slService.recall(undefined, "SL Recall Task");
+      expect(result).toBeDefined();
+      expect(result.title).toBe("SL Recall Task");
+      expect(result.path).toBe("projects/test-project/task/slrc0001.md");
+    });
+
+    test("should throw for non-existent path via StorageLayer", async () => {
+      await expect(slService.recall("nonexistent/path.md")).rejects.toThrow("No entry found");
+    });
+
+    test("should throw for non-existent title via StorageLayer", async () => {
+      await expect(slService.recall(undefined, "Nonexistent Title")).rejects.toThrow();
+    });
+  });
+
+  describe("generateLink with StorageLayer", () => {
+    test("should generate link by path via StorageLayer", async () => {
+      const result = await slService.generateLink({ path: "projects/test-project/task/slrc0001.md" });
+      expect(result).toBeDefined();
+      expect(result.id).toBe("slrc0001");
+      expect(result.link).toContain("slrc0001");
+      expect(result.title).toBe("SL Recall Task");
+    });
+
+    test("should generate link by short ID via StorageLayer", async () => {
+      const result = await slService.generateLink({ path: "slrc0001" });
+      expect(result).toBeDefined();
+      expect(result.id).toBe("slrc0001");
+      expect(result.link).toContain("slrc0001");
+    });
+
+    test("should generate link by title via StorageLayer", async () => {
+      const result = await slService.generateLink({ title: "SL Recall Task" });
+      expect(result).toBeDefined();
+      expect(result.id).toBe("slrc0001");
+      expect(result.title).toBe("SL Recall Task");
+    });
+  });
+
+  describe("getPlanSections with StorageLayer", () => {
+    test("should get plan sections by path via StorageLayer", async () => {
+      const result = await slService.getPlanSections("projects/test-project/plan/slpl0001.md");
+      expect(result).toBeDefined();
+      expect(result.title).toBe("SL Test Plan");
+      expect(result.sections.length).toBe(3);
+      expect(result.sections[0].title).toBe("Phase 1: Setup");
+      expect(result.sections[1].title).toBe("Phase 2: Implementation");
+      expect(result.sections[2].title).toBe("Phase 3: Testing");
+    });
+
+    test("should get plan sections by title via StorageLayer", async () => {
+      const result = await slService.getPlanSections("SL Test Plan");
+      expect(result).toBeDefined();
+      expect(result.title).toBe("SL Test Plan");
+      expect(result.sections.length).toBe(3);
+    });
+
+    test("should throw for non-existent plan via StorageLayer", async () => {
+      await expect(slService.getPlanSections("Nonexistent Plan")).rejects.toThrow();
+    });
+  });
+
+  describe("search with StorageLayer (Phase 3)", () => {
+    test("should search by query via StorageLayer", async () => {
+      const result = await slService.search({ query: "StorageLayer recall" });
+      expect(result.results.length).toBeGreaterThanOrEqual(1);
+      expect(result.results[0].title).toBe("SL Recall Task");
+    });
+
+    test("should filter search by type via StorageLayer", async () => {
+      const result = await slService.search({ query: "StorageLayer", type: "task" });
+      expect(result.results.length).toBeGreaterThanOrEqual(1);
+      expect(result.results.every((r) => r.type === "task")).toBe(true);
+    });
+
+    test("should return empty for non-matching search via StorageLayer", async () => {
+      const result = await slService.search({ query: "xyznonexistent12345" });
+      expect(result.results.length).toBe(0);
+    });
+  });
+
+  describe("list with StorageLayer (Phase 3)", () => {
+    test("should list entries by type via StorageLayer", async () => {
+      const result = await slService.list({ type: "task" });
+      expect(result.entries.length).toBeGreaterThanOrEqual(1);
+      expect(result.entries.every((e) => e.type === "task")).toBe(true);
+    });
+
+    test("should list entries by status via StorageLayer", async () => {
+      const result = await slService.list({ status: "active" });
+      expect(result.entries.length).toBeGreaterThanOrEqual(1);
+      expect(result.entries.every((e) => e.status === "active")).toBe(true);
+    });
+
+    test("should return total count and respect limit via StorageLayer", async () => {
+      const result = await slService.list({ limit: 1 });
+      expect(result.entries.length).toBeLessThanOrEqual(1);
+      expect(result.limit).toBe(1);
+    });
+  });
+
+  describe("inject with StorageLayer (Phase 3)", () => {
+    test("should inject context by query via StorageLayer", async () => {
+      const result = await slService.inject({ query: "StorageLayer recall" });
+      expect(result.entries.length).toBeGreaterThanOrEqual(1);
+      expect(result.context).toContain("SL Recall Task");
+    });
+
+    test("should return empty context for non-matching query via StorageLayer", async () => {
+      const result = await slService.inject({ query: "xyznonexistent12345" });
+      expect(result.entries.length).toBe(0);
+      expect(result.context).toContain("No relevant brain context found");
+    });
+  });
+
+  describe("graph operations with StorageLayer (Phase 2)", () => {
+    let graphService: BrainService;
+    let graphStorage: ReturnType<typeof createStorageLayer>;
+
+    const GRAPH_DIR = join(tmpdir(), `brain-graph-test-${Date.now()}`);
+
+    beforeAll(() => {
+      mkdirSync(join(GRAPH_DIR, "projects", "test-project", "task"), { recursive: true });
+
+      graphStorage = createStorageLayer(join(GRAPH_DIR, "graph-storage.db"));
+
+      // Create 3 notes: A links to B, B links to C
+      const noteA = {
+        path: "projects/test-project/task/aaaaaaaa.md",
+        short_id: "aaaaaaaa",
+        title: "Note A",
+        lead: "",
+        body: "Links to [[bbbbbbbb]]",
+        raw_content: "---\ntitle: Note A\ntype: task\nstatus: active\nid: aaaaaaaa\n---\n\nLinks to [[bbbbbbbb]]",
+        word_count: 5,
+        checksum: null,
+        metadata: JSON.stringify({ tags: ["task"], id: "aaaaaaaa" }),
+        type: "task",
+        status: "active",
+        priority: null,
+        project_id: "test-project",
+        feature_id: null,
+        created: "2025-01-01T00:00:00Z",
+        modified: "2025-01-01T00:00:00Z",
+      };
+      const noteB = {
+        path: "projects/test-project/task/bbbbbbbb.md",
+        short_id: "bbbbbbbb",
+        title: "Note B",
+        lead: "",
+        body: "Links to [[cccccccc]]",
+        raw_content: "---\ntitle: Note B\ntype: task\nstatus: active\nid: bbbbbbbb\n---\n\nLinks to [[cccccccc]]",
+        word_count: 5,
+        checksum: null,
+        metadata: JSON.stringify({ tags: ["task"], id: "bbbbbbbb" }),
+        type: "task",
+        status: "active",
+        priority: null,
+        project_id: "test-project",
+        feature_id: null,
+        created: "2025-01-01T00:00:00Z",
+        modified: "2025-01-01T00:00:00Z",
+      };
+      const noteC = {
+        path: "projects/test-project/task/cccccccc.md",
+        short_id: "cccccccc",
+        title: "Note C",
+        lead: "",
+        body: "No links",
+        raw_content: "---\ntitle: Note C\ntype: task\nstatus: active\nid: cccccccc\n---\n\nNo links",
+        word_count: 2,
+        checksum: null,
+        metadata: JSON.stringify({ tags: ["task"], id: "cccccccc" }),
+        type: "task",
+        status: "active",
+        priority: null,
+        project_id: "test-project",
+        feature_id: null,
+        created: "2025-01-01T00:00:00Z",
+        modified: "2025-01-01T00:00:00Z",
+      };
+
+      graphStorage.insertNote(noteA);
+      graphStorage.insertNote(noteB);
+      graphStorage.insertNote(noteC);
+
+      // Write files to disk too (for recall fallback)
+      writeFileSync(join(GRAPH_DIR, noteA.path), noteA.raw_content);
+      writeFileSync(join(GRAPH_DIR, noteB.path), noteB.raw_content);
+      writeFileSync(join(GRAPH_DIR, noteC.path), noteC.raw_content);
+
+      // Set up links: A -> B, B -> C
+      graphStorage.setLinks(noteA.path, [
+        { target_path: noteB.path, target_id: null, title: "Note B", href: "bbbbbbbb", type: "wiki", snippet: "" },
+      ]);
+      graphStorage.setLinks(noteB.path, [
+        { target_path: noteC.path, target_id: null, title: "Note C", href: "cccccccc", type: "wiki", snippet: "" },
+      ]);
+
+      graphService = new BrainService(
+        { brainDir: GRAPH_DIR, dbPath: join(GRAPH_DIR, "graph.db"), defaultProject: "test-project" },
+        "test-project",
+        { storage: graphStorage }
+      );
+    });
+
+    afterAll(() => {
+      graphStorage.close();
+      if (existsSync(GRAPH_DIR)) {
+        rmSync(GRAPH_DIR, { recursive: true, force: true });
+      }
+    });
+
+    test("getBacklinks returns notes linking TO a given note via StorageLayer", async () => {
+      // B is linked to by A
+      const backlinks = await graphService.getBacklinks("projects/test-project/task/bbbbbbbb.md");
+      expect(backlinks.length).toBe(1);
+      expect(backlinks[0].title).toBe("Note A");
+    });
+
+    test("getBacklinks returns empty for note with no backlinks via StorageLayer", async () => {
+      // A has no backlinks
+      const backlinks = await graphService.getBacklinks("projects/test-project/task/aaaaaaaa.md");
+      expect(backlinks.length).toBe(0);
+    });
+
+    test("getOutlinks returns notes linked BY a given note via StorageLayer", async () => {
+      // A links to B
+      const outlinks = await graphService.getOutlinks("projects/test-project/task/aaaaaaaa.md");
+      expect(outlinks.length).toBe(1);
+      expect(outlinks[0].title).toBe("Note B");
+    });
+
+    test("getOutlinks returns empty for note with no outlinks via StorageLayer", async () => {
+      // C has no outlinks
+      const outlinks = await graphService.getOutlinks("projects/test-project/task/cccccccc.md");
+      expect(outlinks.length).toBe(0);
+    });
+
+    test("getOrphans returns notes with no incoming links via StorageLayer", async () => {
+      // Note A has no backlinks (nothing links to it)
+      const orphans = await graphService.getOrphans();
+      // A has no incoming links, so it should be an orphan
+      const orphanIds = orphans.map((o) => o.id);
+      expect(orphanIds).toContain("aaaaaaaa");
+    });
+
+    test("getOrphans filters by type via StorageLayer", async () => {
+      const orphans = await graphService.getOrphans("task");
+      expect(orphans.every((o) => o.type === "task")).toBe(true);
+    });
+
+    test("getStats returns counts via StorageLayer", async () => {
+      const stats = await graphService.getStats();
+      expect(stats.totalEntries).toBeGreaterThanOrEqual(3);
+      expect(stats.byType).toBeDefined();
+      expect(typeof stats.orphanCount).toBe("number");
+    });
+
+    test("getStale returns stale entries via StorageLayer", async () => {
+      // getStale uses entry_meta from the separate DB, not StorageLayer directly
+      // But when StorageLayer is available, it should use it for note metadata
+      const stale = await graphService.getStale(30, 10);
+      // Should return an array (may be empty if no stale entries)
+      expect(Array.isArray(stale)).toBe(true);
+    });
+
+    test("getRelated returns notes sharing link targets via StorageLayer", async () => {
+      // A and B both link to targets — A links to B, B links to C
+      // If we add A -> C too, then A and B are related (both link to C)
+      graphStorage.setLinks("projects/test-project/task/aaaaaaaa.md", [
+        { target_path: "projects/test-project/task/bbbbbbbb.md", target_id: null, title: "Note B", href: "bbbbbbbb", type: "wiki", snippet: "" },
+        { target_path: "projects/test-project/task/cccccccc.md", target_id: null, title: "Note C", href: "cccccccc", type: "wiki", snippet: "" },
+      ]);
+
+      // Now A and B both link to C, so they are related
+      const related = await graphService.getRelated("projects/test-project/task/aaaaaaaa.md");
+      expect(related.length).toBe(1);
+      expect(related[0].title).toBe("Note B");
+    });
+  });
+
+  describe("save with StorageLayer (Phase 5)", () => {
+    test("save() creates note on disk and inserts into StorageLayer DB", async () => {
+      const result = await slService.save({
+        type: "scratch",
+        title: "SL Save Test Note",
+        content: "This is a test note created via StorageLayer save path.",
+        tags: ["test-tag"],
+      });
+
+      // Should return proper response
+      expect(result.id).toBeDefined();
+      expect(result.id).toMatch(/^[a-z0-9]{8}$/);
+      expect(result.title).toBe("SL Save Test Note");
+      expect(result.type).toBe("scratch");
+      expect(result.status).toBe("active");
+      expect(result.path).toContain("scratch/");
+      expect(result.link).toContain("SL Save Test Note");
+
+      // Verify note exists in StorageLayer DB
+      const noteInDb = storage.getNoteByShortId(result.id);
+      expect(noteInDb).not.toBeNull();
+      expect(noteInDb!.title).toBe("SL Save Test Note");
+      expect(noteInDb!.type).toBe("scratch");
+      expect(noteInDb!.status).toBe("active");
+      expect(noteInDb!.project_id).toBe("test-project");
+
+      // Verify note exists on disk
+      const fullPath = join(SL_TEST_DIR, result.path);
+      expect(existsSync(fullPath)).toBe(true);
+      const content = readFileSync(fullPath, "utf-8");
+      expect(content).toContain("SL Save Test Note");
+      expect(content).toContain("This is a test note created via StorageLayer save path.");
+    });
+
+    test("save() with relatedEntries resolves links via StorageLayer", async () => {
+      // slrc0001 is already indexed in StorageLayer from beforeAll
+      const result = await slService.save({
+        type: "scratch",
+        title: "SL Note With Related",
+        content: "Note that references another entry.",
+        relatedEntries: ["slrc0001"],
+      });
+
+      expect(result.id).toBeDefined();
+
+      // Read the created file and verify related entries section
+      const fullPath = join(SL_TEST_DIR, result.path);
+      const content = readFileSync(fullPath, "utf-8");
+      expect(content).toContain("## Related Brain Entries");
+      // Should have resolved slrc0001 to a markdown link
+      expect(content).toContain("slrc0001");
+    });
+
+    test("saved note can be recalled via StorageLayer (not disk fallback)", async () => {
+      const saveResult = await slService.save({
+        type: "scratch",
+        title: "SL Recallable Note",
+        content: "This note should be recallable after save.",
+      });
+
+      // Verify note is in StorageLayer DB (prerequisite for StorageLayer recall path)
+      const noteInDb = storage.getNoteByShortId(saveResult.id);
+      expect(noteInDb).not.toBeNull();
+      expect(noteInDb!.title).toBe("SL Recallable Note");
+
+      // Recall by ID via StorageLayer
+      const recalled = await slService.recall(saveResult.id);
+      expect(recalled.title).toBe("SL Recallable Note");
+      expect(recalled.content).toContain("This note should be recallable after save.");
+      expect(recalled.type).toBe("scratch");
+    });
+  });
+
+  describe("moveEntry with StorageLayer (Phase 6)", () => {
+    test("moveEntry updates StorageLayer DB (deletes old, inserts new)", async () => {
+      // Create a note first via save()
+      const saved = await slService.save({
+        type: "scratch",
+        title: "SL Movable Note",
+        content: "This note will be moved to another project.",
+      });
+
+      // Verify it's in StorageLayer DB at old path
+      const oldNote = storage.getNoteByShortId(saved.id);
+      expect(oldNote).not.toBeNull();
+      expect(oldNote!.path).toContain("scratch/");
+
+      // Create target project directory
+      mkdirSync(join(SL_TEST_DIR, "projects", "target-proj", "scratch"), { recursive: true });
+
+      // Move the entry
+      const moveResult = await slService.moveEntry(saved.path, "target-proj");
+      expect(moveResult.newPath).toContain("projects/target-proj/scratch/");
+      expect(moveResult.id).toBe(saved.id);
+
+      // Verify old path is gone from StorageLayer DB
+      const oldNoteAfterMove = storage.getNoteByPath(saved.path);
+      expect(oldNoteAfterMove).toBeNull();
+
+      // Verify new path is in StorageLayer DB
+      const newNote = storage.getNoteByPath(moveResult.newPath);
+      expect(newNote).not.toBeNull();
+      expect(newNote!.title).toBe("SL Movable Note");
+      expect(newNote!.short_id).toBe(saved.id);
+      expect(newNote!.project_id).toBe("target-proj");
     });
   });
 });

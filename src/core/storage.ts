@@ -67,10 +67,13 @@ export interface SearchOptions {
   limit?: number;
   matchStrategy?: "fts" | "exact" | "like";
   path?: string;
+  type?: string;
+  status?: string;
 }
 
 export interface ListOptions {
   tag?: string;
+  tags?: string[];
   type?: string;
   status?: string;
   project?: string;
@@ -197,6 +200,18 @@ export class StorageLayer {
     const row = this.db
       .prepare("SELECT * FROM notes WHERE short_id = ? LIMIT 1")
       .get(shortId) as NoteRow | null;
+    return row ?? null;
+  }
+
+  /**
+   * Get a note by its exact title.
+   * Returns first match if multiple notes share the same title.
+   * Returns null if not found.
+   */
+  getNoteByTitle(title: string): NoteRow | null {
+    const row = this.db
+      .prepare("SELECT * FROM notes WHERE title = ? LIMIT 1")
+      .get(title) as NoteRow | null;
     return row ?? null;
   }
 
@@ -352,6 +367,8 @@ export class StorageLayer {
     const limit = options?.limit ?? 50;
     const strategy = options?.matchStrategy ?? "fts";
     const pathPrefix = options?.path;
+    const type = options?.type;
+    const status = options?.status;
 
     if (!query || query.trim() === "") {
       return [];
@@ -360,11 +377,11 @@ export class StorageLayer {
     try {
       switch (strategy) {
         case "fts":
-          return this.searchFts(query, limit, pathPrefix);
+          return this.searchFts(query, limit, pathPrefix, type, status);
         case "exact":
-          return this.searchExact(query, limit, pathPrefix);
+          return this.searchExact(query, limit, pathPrefix, type, status);
         case "like":
-          return this.searchLike(query, limit, pathPrefix);
+          return this.searchLike(query, limit, pathPrefix, type, status);
         default:
           return [];
       }
@@ -377,7 +394,9 @@ export class StorageLayer {
   private searchFts(
     query: string,
     limit: number,
-    pathPrefix?: string
+    pathPrefix?: string,
+    type?: string,
+    status?: string
   ): NoteRow[] {
     let sql = `
       SELECT n.* FROM notes n
@@ -391,6 +410,16 @@ export class StorageLayer {
       params.push(pathPrefix + "%");
     }
 
+    if (type) {
+      sql += " AND n.type = ?";
+      params.push(type);
+    }
+
+    if (status) {
+      sql += " AND n.status = ?";
+      params.push(status);
+    }
+
     sql += " ORDER BY bm25(notes_fts, 10.0, 1.0, 5.0) LIMIT ?";
     params.push(limit);
 
@@ -400,7 +429,9 @@ export class StorageLayer {
   private searchExact(
     query: string,
     limit: number,
-    pathPrefix?: string
+    pathPrefix?: string,
+    type?: string,
+    status?: string
   ): NoteRow[] {
     let sql = `
       SELECT * FROM notes
@@ -413,6 +444,16 @@ export class StorageLayer {
       params.push(pathPrefix + "%");
     }
 
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
+    }
+
+    if (status) {
+      sql += " AND status = ?";
+      params.push(status);
+    }
+
     sql += " LIMIT ?";
     params.push(limit);
 
@@ -422,7 +463,9 @@ export class StorageLayer {
   private searchLike(
     query: string,
     limit: number,
-    pathPrefix?: string
+    pathPrefix?: string,
+    type?: string,
+    status?: string
   ): NoteRow[] {
     let sql = `
       SELECT * FROM notes
@@ -435,6 +478,16 @@ export class StorageLayer {
     if (pathPrefix) {
       sql += " AND path LIKE ?";
       params.push(pathPrefix + "%");
+    }
+
+    if (type) {
+      sql += " AND type = ?";
+      params.push(type);
+    }
+
+    if (status) {
+      sql += " AND status = ?";
+      params.push(status);
     }
 
     sql += " LIMIT ?";
@@ -486,6 +539,12 @@ export class StorageLayer {
     if (options?.tag) {
       clauses.push("n.id IN (SELECT note_id FROM tags WHERE tag = ?)");
       params.push(options.tag);
+    }
+
+    if (options?.tags && options.tags.length > 0) {
+      const placeholders = options.tags.map(() => "?").join(", ");
+      clauses.push(`n.id IN (SELECT note_id FROM tags WHERE tag IN (${placeholders}))`);
+      params.push(...options.tags);
     }
 
     let sql = "SELECT n.* FROM notes n";

@@ -638,19 +638,29 @@ async function handleVerifyEntry(c: any, id: string) {
 // =============================================================================
 
 /**
- * Create the enhanced health check response.
- * This is fast and should not block on slow operations.
+ * Pure function to compute health status from dependency states.
+ * Testable without mocking module-level imports.
+ *
+ * When StorageLayer is available, ZK is not needed — StorageLayer handles everything.
+ * Legacy mode (no StorageLayer) still checks ZK availability.
  */
-export async function getHealthStatus(): Promise<HealthResponse> {
-  const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-  const dbAvailable = isDatabaseAvailable();
+export function computeHealthStatus(deps: {
+  hasStorageLayer: boolean;
+  dbAvailable: boolean;
+  zkAvailable: boolean;
+}): HealthResponse {
+  const { hasStorageLayer, dbAvailable, zkAvailable } = deps;
 
-  // Determine overall status
   let status: "healthy" | "degraded" | "unhealthy";
-  if (zkAvailable && dbAvailable) {
+
+  if (hasStorageLayer && dbAvailable) {
+    // StorageLayer handles everything, ZK not needed
+    status = "healthy";
+  } else if (!hasStorageLayer && zkAvailable && dbAvailable) {
+    // Legacy path: ZK + DB both available
     status = "healthy";
   } else if (dbAvailable) {
-    // Can still function with DB but no zk
+    // DB works but no StorageLayer and no ZK — degraded
     status = "degraded";
   } else {
     status = "unhealthy";
@@ -660,6 +670,25 @@ export async function getHealthStatus(): Promise<HealthResponse> {
     status,
     zkAvailable,
     dbAvailable,
+    storageLayerAvailable: hasStorageLayer,
     timestamp: new Date().toISOString(),
   };
+}
+
+/**
+ * Create the enhanced health check response.
+ * This is fast and should not block on slow operations.
+ */
+export async function getHealthStatus(): Promise<HealthResponse> {
+  const service = getBrainService();
+  const hasStorageLayer = !!service.getStorageLayer();
+  const dbAvailable = isDatabaseAvailable();
+
+  // Only check ZK when there's no StorageLayer (legacy mode)
+  let zkAvailable = false;
+  if (!hasStorageLayer) {
+    zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+  }
+
+  return computeHealthStatus({ hasStorageLayer, dbAvailable, zkAvailable });
 }

@@ -117,6 +117,7 @@ describe("DoctorService", () => {
       expect(checkNames).toContain("zk-cli-available");
       expect(checkNames).toContain("zk-notebook");
       expect(checkNames).toContain("zk-config");
+      expect(checkNames).toContain("storage-layer");
       expect(checkNames).toContain("database-health");
       expect(checkNames).toContain("directory-permissions");
 
@@ -396,6 +397,94 @@ id-length = 8
         }
         cleanupTempDir(tempHome);
       }
+    });
+  });
+
+  describe("checkStorageLayer()", () => {
+    test("fails when brain.db does not exist", async () => {
+      const doctor = new DoctorService(tempDir);
+      const check = await doctor.checkStorageLayer();
+
+      expect(check.status).toBe("fail");
+      expect(check.fixable).toBe(true);
+      expect(check.message).toContain("brain.db not found");
+    });
+
+    test("passes when brain.db exists and is accessible", async () => {
+      // Create a valid StorageLayer DB
+      const { createStorageLayer } = await import("../../core/storage");
+      const dbPath = join(tempDir, "brain.db");
+      const sl = createStorageLayer(dbPath);
+      sl.close();
+
+      const doctor = new DoctorService(tempDir);
+      const check = await doctor.checkStorageLayer();
+
+      expect(check.status).toBe("pass");
+      expect(check.message).toContain("brain.db");
+      expect(check.details).toContain("total");
+    });
+
+    test("fails when brain.db is corrupted", async () => {
+      // Write garbage to brain.db
+      writeFileSync(join(tempDir, "brain.db"), "not a sqlite database");
+
+      const doctor = new DoctorService(tempDir);
+      const check = await doctor.checkStorageLayer();
+
+      expect(check.status).toBe("fail");
+      expect(check.fixable).toBe(true);
+    });
+  });
+
+  describe("checkZkCliAvailable() with StorageLayer", () => {
+    test("returns warn (not fail) when zk missing but brain.db exists", async () => {
+      // Create a valid StorageLayer DB so brain.db exists
+      const { createStorageLayer } = await import("../../core/storage");
+      const dbPath = join(tempDir, "brain.db");
+      const sl = createStorageLayer(dbPath);
+      sl.close();
+
+      const doctor = new DoctorService(tempDir);
+      const check = await doctor.checkZkCliAvailable();
+
+      // When StorageLayer is available, zk CLI missing should be warn, not fail
+      if (check.status !== "pass") {
+        // zk is not installed on this system
+        expect(check.status).toBe("warn");
+        expect(check.message).toContain("zk CLI not found");
+      }
+      // If zk IS installed, it should still pass — that's fine
+    });
+  });
+
+  describe("diagnose() includes storage-layer check", () => {
+    test("includes storage-layer check in results", async () => {
+      const doctor = createDoctorService(tempDir);
+      const result = await doctor.diagnose();
+
+      const checkNames = result.checks.map((c) => c.name);
+      expect(checkNames).toContain("storage-layer");
+    });
+  });
+
+  describe("fixZkNotebook() without zk CLI", () => {
+    test("creates .zk directory and brain.db without calling zk CLI", async () => {
+      const doctor = new DoctorService(tempDir, { fix: true });
+      await doctor.fixZkNotebook();
+
+      // .zk directory should exist
+      expect(existsSync(join(tempDir, ".zk"))).toBe(true);
+
+      // brain.db should exist
+      expect(existsSync(join(tempDir, "brain.db"))).toBe(true);
+
+      // Verify brain.db is a valid StorageLayer DB
+      const { createStorageLayer } = await import("../../core/storage");
+      const sl = createStorageLayer(join(tempDir, "brain.db"));
+      const stats = sl.getStats();
+      expect(stats.total).toBe(0);
+      sl.close();
     });
   });
 

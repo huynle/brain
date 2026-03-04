@@ -386,6 +386,7 @@ export interface HealthResponse {
   status: "healthy" | "degraded" | "unhealthy";
   zkAvailable: boolean;
   dbAvailable: boolean;
+  storageLayerAvailable: boolean;
   timestamp: string;
 }
 

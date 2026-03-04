@@ -8,8 +8,9 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, accessSync, constan
 import { join, dirname } from "path";
 import { createHash } from "crypto";
 import { homedir } from "os";
-import { isZkAvailable, getZkVersion, execZk } from "../zk-client";
+import { isZkAvailable, getZkVersion } from "../zk-client";
 import { getDb } from "../db";
+import { createStorageLayer } from "../storage";
 import { ENTRY_TYPES, type EntryType } from "../types";
 import type { Check, CheckStatus, DoctorResult, DoctorOptions, VersionCheck } from "./types";
 import { TOOLS, checkToolVersion, type ToolInfo } from "./version-checker";
@@ -62,6 +63,7 @@ export class DoctorService {
       checks.push(await this.checkTemplateContent(type));
     }
 
+    checks.push(await this.checkStorageLayer());
     checks.push(await this.checkDatabaseHealth());
     checks.push(await this.checkDirectoryPermissions());
 
@@ -129,12 +131,18 @@ export class DoctorService {
     const available = await isZkAvailable();
 
     if (!available) {
+      // If StorageLayer DB exists, zk CLI missing is just a warning (not critical)
+      const dbPath = join(this.brainDir, "brain.db");
+      const hasStorageLayer = existsSync(dbPath);
+
       return {
         name: "zk-cli-available",
-        status: "fail",
+        status: hasStorageLayer ? "warn" : "fail",
         message: "zk CLI not found",
         fixable: false,
-        details: "Install zk from https://github.com/zk-org/zk",
+        details: hasStorageLayer
+          ? "Optional: StorageLayer (brain.db) is available. Install zk from https://github.com/zk-org/zk"
+          : "Install zk from https://github.com/zk-org/zk",
       };
     }
 
@@ -229,6 +237,45 @@ export class DoctorService {
         name: "zk-config",
         status: "fail",
         message: "Failed to read config.toml",
+        fixable: true,
+        details: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  /**
+   * Check if the StorageLayer database (brain.db) exists and is accessible.
+   */
+  async checkStorageLayer(): Promise<Check> {
+    const dbPath = join(this.brainDir, "brain.db");
+
+    if (!existsSync(dbPath)) {
+      return {
+        name: "storage-layer",
+        status: "fail",
+        message: "brain.db not found",
+        fixable: true,
+        details: `Expected at: ${dbPath}`,
+      };
+    }
+
+    try {
+      const sl = createStorageLayer(dbPath);
+      const stats = sl.getStats();
+      sl.close();
+
+      return {
+        name: "storage-layer",
+        status: "pass",
+        message: "brain.db is accessible",
+        fixable: false,
+        details: `total: ${stats.total}, types: ${Object.keys(stats.byType).length}`,
+      };
+    } catch (err) {
+      return {
+        name: "storage-layer",
+        status: "fail",
+        message: "brain.db is not accessible",
         fixable: true,
         details: err instanceof Error ? err.message : String(err),
       };
@@ -652,7 +699,7 @@ export class DoctorService {
   }
 
   /**
-   * Initialize zk notebook by running `zk init`.
+   * Initialize zk notebook by creating .zk directory structure and StorageLayer DB.
    */
   async fixZkNotebook(): Promise<void> {
     // Ensure BRAIN_DIR exists
@@ -660,10 +707,17 @@ export class DoctorService {
       mkdirSync(this.brainDir, { recursive: true });
     }
 
-    // Run zk init
-    const result = await execZk(["init", "--no-input", this.brainDir]);
-    if (result.exitCode !== 0) {
-      throw new Error(`zk init failed: ${result.stderr}`);
+    // Create .zk directory
+    const zkDir = join(this.brainDir, ".zk");
+    if (!existsSync(zkDir)) {
+      mkdirSync(zkDir, { recursive: true });
+    }
+
+    // Initialize StorageLayer DB
+    const dbPath = join(this.brainDir, "brain.db");
+    if (!existsSync(dbPath)) {
+      const sl = createStorageLayer(dbPath);
+      sl.close();
     }
 
     // Also copy our reference config

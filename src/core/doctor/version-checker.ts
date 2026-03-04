@@ -80,7 +80,7 @@ export const TOOLS: ToolInfo[] = [
     },
     githubRepo: "zk-org/zk",
     tagParser: (tag) => tag.replace(/^v/, ""),
-    required: true,
+    required: false,
     installUrl: "https://github.com/zk-org/zk",
   },
 ];

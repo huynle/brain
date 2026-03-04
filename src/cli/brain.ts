@@ -675,37 +675,34 @@ async function cmdInit(args: string[]): Promise<void> {
     }
   }
 
-  // 2. Initialize zk notebook if zk is available
-  const { isZkAvailable, execZk } = await import("../core/zk-client");
-  if (await isZkAvailable()) {
-    if (!existsSync(zkDir) || force) {
-      if (dryRun) {
-        console.log(`${COLORS.yellow}\u2713 Would initialize zk notebook${COLORS.reset}`);
-      } else {
-        const result = await execZk(["init", "--no-input", brainDir]);
-        if (result.exitCode === 0) {
-          console.log(`${COLORS.green}\u2713 Initialized zk notebook${COLORS.reset}`);
-        } else {
-          console.log(`${COLORS.yellow}\u26A0 zk init returned non-zero (may already exist)${COLORS.reset}`);
-        }
-      }
+  // 2. Create .zk directory
+  if (!existsSync(zkDir) || force) {
+    if (dryRun) {
+      console.log(`${COLORS.yellow}\u2713 Would create directory: ${zkDir}${COLORS.reset}`);
     } else {
-      console.log(`${COLORS.gray}\u2298 Skipped zk init (.zk directory exists, use --force to reinitialize)${COLORS.reset}`);
+      mkdirSync(zkDir, { recursive: true });
+      console.log(`${COLORS.green}\u2713 Created directory: ${zkDir}${COLORS.reset}`);
     }
   } else {
-    console.log(`${COLORS.yellow}\u26A0 zk CLI not found - skipping zk init (install from https://github.com/zk-org/zk)${COLORS.reset}`);
-    // Ensure .zk directory exists anyway
-    if (!existsSync(zkDir)) {
-      if (dryRun) {
-        console.log(`${COLORS.yellow}\u2713 Would create directory: ${zkDir}${COLORS.reset}`);
-      } else {
-        mkdirSync(zkDir, { recursive: true });
-        console.log(`${COLORS.green}\u2713 Created directory: ${zkDir}${COLORS.reset}`);
-      }
-    }
+    console.log(`${COLORS.gray}\u2298 Skipped .zk directory (already exists, use --force to reinitialize)${COLORS.reset}`);
   }
 
-  // 3. Copy zk config
+  // 3. Initialize StorageLayer database (brain.db)
+  const dbPath = join(brainDir, "brain.db");
+  if (!existsSync(dbPath) || force) {
+    if (dryRun) {
+      console.log(`${COLORS.yellow}\u2713 Would initialize brain.db${COLORS.reset}`);
+    } else {
+      const { createStorageLayer } = await import("../core/storage");
+      const sl = createStorageLayer(dbPath);
+      sl.close();
+      console.log(`${COLORS.green}\u2713 Initialized brain.db${COLORS.reset}`);
+    }
+  } else {
+    console.log(`${COLORS.gray}\u2298 Skipped brain.db (already exists, use --force to reinitialize)${COLORS.reset}`);
+  }
+
+  // 4. Copy zk config
   if (existsSync(referenceConfigPath)) {
     const content = readFileSync(referenceConfigPath, "utf-8");
     writeFile(configPath, content, ".zk/config.toml");
@@ -713,7 +710,7 @@ async function cmdInit(args: string[]): Promise<void> {
     console.log(`${COLORS.red}\u2717 Reference config not found: ${referenceConfigPath}${COLORS.reset}`);
   }
 
-  // 4. Copy all templates
+  // 5. Copy all templates
   const { ENTRY_TYPES } = await import("../core/types");
 
   // Create templates directory

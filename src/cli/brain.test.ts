@@ -1,13 +1,16 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test, beforeEach, afterEach } from "bun:test";
 import { spawnSync } from "child_process";
-import { dirname } from "path";
+import { dirname, join } from "path";
+import { existsSync, mkdirSync, rmSync } from "fs";
+import { tmpdir } from "os";
 
 const repoRoot = dirname(dirname(import.meta.dir));
 
-function runBrainCli(args: string[]) {
+function runBrainCli(args: string[], env?: Record<string, string>) {
 	return spawnSync(process.execPath, ["run", "src/cli/brain.ts", ...args], {
 		cwd: repoRoot,
 		encoding: "utf-8",
+		env: { ...process.env, ...env },
 	});
 }
 
@@ -45,5 +48,61 @@ describe("brain CLI command surface", () => {
 
 		expect(result.status).toBe(1);
 		expect(output).toContain("Unknown command: not-a-real-command");
+	});
+});
+
+describe("brain init command", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `brain-init-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		mkdirSync(tempDir, { recursive: true });
+	});
+
+	afterEach(() => {
+		if (existsSync(tempDir)) {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	test("creates brain.db during init", () => {
+		const result = runBrainCli(["init"], { BRAIN_DIR: tempDir });
+		const output = `${result.stdout}${result.stderr}`;
+
+		// Should succeed
+		expect(result.status).toBe(0);
+
+		// brain.db should be created
+		expect(existsSync(join(tempDir, "brain.db"))).toBe(true);
+
+		// Output should mention brain.db initialization
+		expect(output).toContain("brain.db");
+	});
+
+	test("does not call zk CLI during init", () => {
+		const result = runBrainCli(["init"], { BRAIN_DIR: tempDir });
+		const output = `${result.stdout}${result.stderr}`;
+
+		// Should succeed even without zk CLI
+		expect(result.status).toBe(0);
+
+		// Should NOT mention "zk init" or "zk CLI not found"
+		expect(output).not.toContain("zk CLI not found");
+		expect(output).not.toContain("zk init");
+	});
+
+	test("creates .zk directory during init", () => {
+		const result = runBrainCli(["init"], { BRAIN_DIR: tempDir });
+
+		expect(result.status).toBe(0);
+		expect(existsSync(join(tempDir, ".zk"))).toBe(true);
+	});
+
+	test("dry-run does not create brain.db", () => {
+		const result = runBrainCli(["init", "--dry-run"], { BRAIN_DIR: tempDir });
+
+		expect(result.status).toBe(0);
+		// brain.db should NOT be created in dry-run
+		expect(existsSync(join(tempDir, "brain.db"))).toBe(false);
 	});
 });

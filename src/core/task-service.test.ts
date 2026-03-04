@@ -9,8 +9,10 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir, homedir } from "os";
-import { TaskService, normalizeDependencyRef, findDependents, mapZkNoteToTask } from "./task-service";
+import { TaskService, normalizeDependencyRef, findDependents, mapZkNoteToTask, mapNoteRowToTask } from "./task-service";
 import type { Task, ZkNote } from "./types";
+import type { NoteRow } from "./storage";
+import { createStorageLayer, StorageLayer } from "./storage";
 
 // =============================================================================
 // Test Helpers
@@ -518,6 +520,383 @@ describe("TaskService", () => {
       expect(task.generated_kind).toBeUndefined();
       expect(task.generated_key).toBeUndefined();
       expect(task.generated_by).toBeUndefined();
+    });
+  });
+
+  // ===========================================================================
+  // mapNoteRowToTask() - NoteRow → Task conversion
+  // ===========================================================================
+
+  describe("mapNoteRowToTask()", () => {
+    function makeNoteRow(overrides?: Partial<NoteRow>): NoteRow {
+      return {
+        id: 1,
+        path: "projects/demo/task/abc12def.md",
+        short_id: "abc12def",
+        title: "Test Task",
+        lead: "A test task",
+        body: "Task body content",
+        raw_content: "---\ntitle: Test Task\n---\nTask body content",
+        word_count: 3,
+        checksum: "abc123",
+        metadata: JSON.stringify({
+          status: "pending",
+          priority: "high",
+          depends_on: ["dep-1", "dep-2"],
+          tags: ["task", "urgent"],
+          target_workdir: "/tmp/work",
+          workdir: "projects/demo",
+          git_remote: "origin",
+          git_branch: "feature/test",
+          merge_target_branch: "main",
+          merge_policy: "auto_pr",
+          merge_strategy: "rebase",
+          open_pr_before_merge: true,
+          execution_mode: "current_branch",
+          complete_on_idle: true,
+          user_original_request: "Fix the bug",
+          schedule: "0 2 * * *",
+          schedule_enabled: true,
+          next_run: "2026-01-02T02:00:00Z",
+          max_runs: 5,
+          starts_at: "2026-01-01T00:00:00Z",
+          expires_at: "2026-12-31T23:59:59Z",
+          feature_id: "auth-system",
+          feature_priority: "high",
+          feature_depends_on: ["payment-flow"],
+          direct_prompt: "Run tests",
+          agent: "tdd-dev",
+          model: "anthropic/claude-sonnet-4-20250514",
+          sessions: { "ses_abc": { timestamp: "2026-01-01T00:00:00Z" } },
+          generated: true,
+          generated_kind: "gap_task",
+          generated_key: "feature-checkout:missing-tests",
+          generated_by: "feature-checkout",
+        }),
+        type: "task",
+        status: "pending",
+        priority: "high",
+        project_id: "demo",
+        feature_id: "auth-system",
+        created: "2026-01-01T00:00:00.000Z",
+        modified: "2026-01-02T00:00:00.000Z",
+        ...overrides,
+      };
+    }
+
+    test("maps basic fields from NoteRow to Task", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.id).toBe("abc12def");
+      expect(task.path).toBe("projects/demo/task/abc12def.md");
+      expect(task.title).toBe("Test Task");
+      expect(task.created).toBe("2026-01-01T00:00:00.000Z");
+      expect(task.modified).toBe("2026-01-02T00:00:00.000Z");
+    });
+
+    test("extracts status and priority from metadata JSON", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.status).toBe("pending");
+      expect(task.priority).toBe("high");
+    });
+
+    test("extracts depends_on from metadata JSON", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.depends_on).toEqual(["dep-1", "dep-2"]);
+    });
+
+    test("extracts tags from metadata JSON", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.tags).toEqual(["task", "urgent"]);
+    });
+
+    test("extracts execution fields from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.target_workdir).toBe("/tmp/work");
+      expect(task.workdir).toBe("projects/demo");
+      expect(task.git_remote).toBe("origin");
+      expect(task.git_branch).toBe("feature/test");
+      expect(task.merge_target_branch).toBe("main");
+      expect(task.merge_policy).toBe("auto_pr");
+      expect(task.merge_strategy).toBe("rebase");
+      expect(task.open_pr_before_merge).toBe(true);
+      expect(task.execution_mode).toBe("current_branch");
+      expect(task.complete_on_idle).toBe(true);
+      expect(task.user_original_request).toBe("Fix the bug");
+    });
+
+    test("extracts schedule fields from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.schedule).toBe("0 2 * * *");
+      expect(task.schedule_enabled).toBe(true);
+      expect(task.next_run).toBe("2026-01-02T02:00:00Z");
+      expect(task.max_runs).toBe(5);
+      expect(task.starts_at).toBe("2026-01-01T00:00:00Z");
+      expect(task.expires_at).toBe("2026-12-31T23:59:59Z");
+    });
+
+    test("extracts feature grouping fields from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.feature_id).toBe("auth-system");
+      expect(task.feature_priority).toBe("high");
+      expect(task.feature_depends_on).toEqual(["payment-flow"]);
+    });
+
+    test("extracts OpenCode execution options from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.direct_prompt).toBe("Run tests");
+      expect(task.agent).toBe("tdd-dev");
+      expect(task.model).toBe("anthropic/claude-sonnet-4-20250514");
+    });
+
+    test("extracts session traceability from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.sessions).toEqual({ "ses_abc": { timestamp: "2026-01-01T00:00:00Z" } });
+    });
+
+    test("extracts generated metadata from metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.generated).toBe(true);
+      expect(task.generated_kind).toBe("gap_task");
+      expect(task.generated_key).toBe("feature-checkout:missing-tests");
+      expect(task.generated_by).toBe("feature-checkout");
+    });
+
+    test("derives projectId from file path", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.projectId).toBe("demo");
+    });
+
+    test("preserves raw frontmatter as metadata", () => {
+      const row = makeNoteRow();
+      const task = mapNoteRowToTask(row);
+
+      expect(task.frontmatter).toBeDefined();
+      expect(task.frontmatter?.status).toBe("pending");
+    });
+
+    test("handles minimal metadata with defaults", () => {
+      const row = makeNoteRow({
+        metadata: JSON.stringify({ status: "active" }),
+      });
+      const task = mapNoteRowToTask(row);
+
+      expect(task.status).toBe("active");
+      expect(task.priority).toBe("medium"); // default
+      expect(task.depends_on).toEqual([]); // default
+      expect(task.tags).toEqual([]); // default
+      expect(task.target_workdir).toBeNull();
+      expect(task.workdir).toBeNull();
+      expect(task.direct_prompt).toBeNull();
+      expect(task.agent).toBeNull();
+      expect(task.model).toBeNull();
+      expect(task.worktree).toBeNull();
+    });
+
+    test("handles invalid metadata JSON gracefully", () => {
+      const row = makeNoteRow({
+        metadata: "not valid json",
+      });
+      const task = mapNoteRowToTask(row);
+
+      // Should fall back to defaults
+      expect(task.status).toBe("pending"); // default
+      expect(task.priority).toBe("medium"); // default
+      expect(task.depends_on).toEqual([]);
+      expect(task.tags).toEqual([]);
+    });
+
+    test("uses extractIdFromPath for id (short_id from NoteRow path)", () => {
+      const row = makeNoteRow({
+        path: "projects/myproj/task/xyz99abc.md",
+        short_id: "xyz99abc",
+      });
+      const task = mapNoteRowToTask(row);
+
+      // Should use extractIdFromPath on the path, not the short_id directly
+      expect(task.id).toBe("xyz99abc");
+    });
+  });
+
+  // ===========================================================================
+  // getAllTasks() with StorageLayer
+  // ===========================================================================
+
+  describe("getAllTasks() with StorageLayer", () => {
+    let storage: StorageLayer;
+    let service: TaskService;
+
+    beforeEach(() => {
+      storage = createStorageLayer(":memory:");
+
+      service = new TaskService(
+        {
+          brainDir: "/tmp/test-brain",
+          dbPath: ":memory:",
+          defaultProject: "test-project",
+        },
+        "test-project",
+        { storage }
+      );
+    });
+
+    afterEach(() => {
+      storage.close();
+    });
+
+    test("returns tasks from StorageLayer when available", async () => {
+      // Insert a task note into the storage
+      storage.insertNote({
+        path: "projects/myproj/task/task-001.md",
+        short_id: "task-001",
+        title: "First Task",
+        lead: "A task",
+        body: "Task body",
+        raw_content: "---\ntitle: First Task\n---\nTask body",
+        word_count: 2,
+        checksum: "abc",
+        metadata: JSON.stringify({
+          status: "pending",
+          priority: "high",
+          depends_on: [],
+          tags: ["task"],
+        }),
+        type: "task",
+        status: "pending",
+        priority: "high",
+        project_id: "myproj",
+        feature_id: null,
+        created: "2026-01-01T00:00:00.000Z",
+        modified: "2026-01-02T00:00:00.000Z",
+      });
+
+      const tasks = await service.getAllTasks("myproj");
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].id).toBe("task-001");
+      expect(tasks[0].title).toBe("First Task");
+      expect(tasks[0].status).toBe("pending");
+      expect(tasks[0].priority).toBe("high");
+    });
+
+    test("returns empty array when no tasks exist for project", async () => {
+      const tasks = await service.getAllTasks("nonexistent");
+      expect(tasks).toEqual([]);
+    });
+
+    test("filters tasks by project path prefix", async () => {
+      // Insert tasks for two different projects
+      storage.insertNote({
+        path: "projects/proj-a/task/task-a1.md",
+        short_id: "task-a1",
+        title: "Task A1",
+        lead: "",
+        body: "",
+        raw_content: "",
+        word_count: 0,
+        checksum: "a1",
+        metadata: JSON.stringify({ status: "pending" }),
+        type: "task",
+        status: "pending",
+        priority: "medium",
+        project_id: "proj-a",
+        feature_id: null,
+        created: "2026-01-01T00:00:00.000Z",
+        modified: null,
+      });
+
+      storage.insertNote({
+        path: "projects/proj-b/task/task-b1.md",
+        short_id: "task-b1",
+        title: "Task B1",
+        lead: "",
+        body: "",
+        raw_content: "",
+        word_count: 0,
+        checksum: "b1",
+        metadata: JSON.stringify({ status: "pending" }),
+        type: "task",
+        status: "pending",
+        priority: "medium",
+        project_id: "proj-b",
+        feature_id: null,
+        created: "2026-01-01T00:00:00.000Z",
+        modified: null,
+      });
+
+      const tasksA = await service.getAllTasks("proj-a");
+      expect(tasksA).toHaveLength(1);
+      expect(tasksA[0].id).toBe("task-a1");
+
+      const tasksB = await service.getAllTasks("proj-b");
+      expect(tasksB).toHaveLength(1);
+      expect(tasksB[0].id).toBe("task-b1");
+    });
+
+    test("maps all NoteRow fields to Task correctly via StorageLayer", async () => {
+      storage.insertNote({
+        path: "projects/myproj/task/full-task.md",
+        short_id: "full-task",
+        title: "Full Task",
+        lead: "A complete task",
+        body: "Full body",
+        raw_content: "---\ntitle: Full Task\n---\nFull body",
+        word_count: 2,
+        checksum: "full",
+        metadata: JSON.stringify({
+          status: "in_progress",
+          priority: "low",
+          depends_on: ["other-task"],
+          tags: ["feature"],
+          direct_prompt: "Do the thing",
+          agent: "explore",
+          model: "anthropic/claude-sonnet-4-20250514",
+          git_branch: "feature/full",
+          workdir: "projects/myproj",
+        }),
+        type: "task",
+        status: "in_progress",
+        priority: "low",
+        project_id: "myproj",
+        feature_id: null,
+        created: "2026-01-01T00:00:00.000Z",
+        modified: "2026-01-03T00:00:00.000Z",
+      });
+
+      const tasks = await service.getAllTasks("myproj");
+      expect(tasks).toHaveLength(1);
+
+      const task = tasks[0];
+      expect(task.status).toBe("in_progress");
+      expect(task.priority).toBe("low");
+      expect(task.depends_on).toEqual(["other-task"]);
+      expect(task.tags).toEqual(["feature"]);
+      expect(task.direct_prompt).toBe("Do the thing");
+      expect(task.agent).toBe("explore");
+      expect(task.model).toBe("anthropic/claude-sonnet-4-20250514");
+      expect(task.git_branch).toBe("feature/full");
+      expect(task.projectId).toBe("myproj");
     });
   });
 });

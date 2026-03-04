@@ -96,6 +96,13 @@ describe("version-checker", () => {
       expect(bun?.required).toBe(true);
     });
 
+    test("zk tool is optional (not required)", () => {
+      const zk = getToolInfo("zk");
+      expect(zk).toBeDefined();
+      expect(zk?.name).toBe("zk");
+      expect(zk?.required).toBe(false);
+    });
+
     test("returns undefined for unknown tools", () => {
       expect(getToolInfo("unknown-tool")).toBeUndefined();
     });

@@ -8,7 +8,7 @@ import { describe, test, expect, beforeAll, afterAll } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
 import { join } from "path";
 import { Hono } from "hono";
-import { createHealthRoutes, getHealthStatus } from "./health";
+import { createHealthRoutes, getHealthStatus, computeHealthStatus } from "./health";
 import { getConfig } from "../config";
 
 // =============================================================================
@@ -62,15 +62,98 @@ describe("Health API", () => {
       expect(health).toHaveProperty("zkAvailable");
       expect(health).toHaveProperty("dbAvailable");
       expect(health).toHaveProperty("timestamp");
+      expect(health).toHaveProperty("storageLayerAvailable");
       expect(["healthy", "degraded", "unhealthy"]).toContain(health.status);
       expect(typeof health.zkAvailable).toBe("boolean");
       expect(typeof health.dbAvailable).toBe("boolean");
+      expect(typeof health.storageLayerAvailable).toBe("boolean");
     });
 
     test("should return ISO timestamp", async () => {
       const health = await getHealthStatus();
       const date = new Date(health.timestamp);
       expect(date.toISOString()).toBe(health.timestamp);
+    });
+  });
+
+  describe("computeHealthStatus() - StorageLayer-aware logic", () => {
+    test("should return healthy when StorageLayer + DB available, even without ZK", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: true,
+        dbAvailable: true,
+        zkAvailable: false,
+      });
+      expect(result.status).toBe("healthy");
+      expect(result.storageLayerAvailable).toBe(true);
+      expect(result.dbAvailable).toBe(true);
+      expect(result.zkAvailable).toBe(false);
+    });
+
+    test("should return healthy when StorageLayer + DB + ZK all available", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: true,
+        dbAvailable: true,
+        zkAvailable: true,
+      });
+      expect(result.status).toBe("healthy");
+      expect(result.storageLayerAvailable).toBe(true);
+    });
+
+    test("should return unhealthy when StorageLayer available but DB down", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: true,
+        dbAvailable: false,
+        zkAvailable: false,
+      });
+      expect(result.status).toBe("unhealthy");
+    });
+
+    test("should return healthy in legacy mode when ZK + DB available", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: false,
+        dbAvailable: true,
+        zkAvailable: true,
+      });
+      expect(result.status).toBe("healthy");
+      expect(result.storageLayerAvailable).toBe(false);
+    });
+
+    test("should return degraded in legacy mode when DB available but ZK not", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: false,
+        dbAvailable: true,
+        zkAvailable: false,
+      });
+      expect(result.status).toBe("degraded");
+      expect(result.storageLayerAvailable).toBe(false);
+    });
+
+    test("should return unhealthy in legacy mode when DB down", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: false,
+        dbAvailable: false,
+        zkAvailable: true,
+      });
+      expect(result.status).toBe("unhealthy");
+    });
+
+    test("should return unhealthy when nothing available", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: false,
+        dbAvailable: false,
+        zkAvailable: false,
+      });
+      expect(result.status).toBe("unhealthy");
+    });
+
+    test("should include ISO timestamp", () => {
+      const result = computeHealthStatus({
+        hasStorageLayer: true,
+        dbAvailable: true,
+        zkAvailable: false,
+      });
+      const date = new Date(result.timestamp);
+      expect(date.toISOString()).toBe(result.timestamp);
     });
   });
 

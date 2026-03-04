@@ -22,100 +22,79 @@
 
 import type { Plugin } from "@opencode-ai/plugin"
 import { tool } from "@opencode-ai/plugin"
-import { spawn } from "child_process"
-import { existsSync } from "fs"
-import { join } from "path"
-import { homedir } from "os"
 
-// Brain directory for zk notebook
-const BRAIN_DIR = join(homedir(), ".opencode", "brain")
-const ZK_DIR = join(BRAIN_DIR, ".zk")
+// Brain API URL - same pattern as brain.ts plugin
+const BRAIN_API_URL = process.env.BRAIN_API_URL || "http://localhost:3333"
 
-// Check if zk notebook exists
-const zkNotebookExists = existsSync(ZK_DIR)
-
-interface ExecResult {
-  stdout: string
-  stderr: string
-  exitCode: number
+// Brain API search result shape (from POST /search)
+interface BrainSearchResult {
+  id: string
+  path: string
+  title: string
+  type: string
+  status: string
+  snippet: string
 }
 
-// Execute zk command
-async function execZk(args: string[], timeout = 30000): Promise<ExecResult> {
-  return new Promise((resolve, reject) => {
-    const fullArgs = ["--notebook-dir", BRAIN_DIR, "--no-input", ...args]
-    
-    const proc = spawn("zk", fullArgs, {
-      timeout,
-      env: { ...process.env },
-      cwd: BRAIN_DIR,
-    })
-
-    let stdout = ""
-    let stderr = ""
-
-    proc.stdout.on("data", (data) => { stdout += data.toString() })
-    proc.stderr.on("data", (data) => { stderr += data.toString() })
-    proc.on("error", (error) => reject(new Error(`Failed to spawn zk: ${error.message}`)))
-    proc.on("close", (code) => resolve({ stdout, stderr, exitCode: code ?? 1 }))
-  })
-}
-
-// Check if zk CLI is available
-async function isZkAvailable(): Promise<boolean> {
+/**
+ * Search brain entries via the Brain API REST endpoint.
+ * Replaces direct ZK CLI calls with HTTP fetch to brain-api.
+ *
+ * @param query - Search query string
+ * @param type - Optional entry type filter (e.g., "plan", "exploration")
+ * @param limit - Maximum results to return
+ * @returns Array of search results, empty array on error
+ */
+async function brainApiSearch(
+  query: string,
+  type?: string,
+  limit: number = 10
+): Promise<BrainSearchResult[]> {
   try {
-    const result = await execZk(["--version"])
-    return result.exitCode === 0
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 10000) // 10 second timeout
+
+    const response = await fetch(`${BRAIN_API_URL}/api/v1/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, type, limit }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    if (!response.ok) {
+      return []
+    }
+
+    const data = await response.json()
+    return data.results || []
+  } catch {
+    // Brain API unavailable — return empty results gracefully
+    return []
+  }
+}
+
+/**
+ * Check if the Brain API is reachable.
+ * Replaces isZkAvailable() + zkNotebookExists checks.
+ */
+async function isBrainApiAvailable(): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 5000)
+
+    const response = await fetch(`${BRAIN_API_URL}/api/v1/health`, {
+      signal: controller.signal,
+    })
+    clearTimeout(timeoutId)
+
+    return response.ok
   } catch {
     return false
   }
 }
 
-// Parse zk JSON output
-interface ZkNote {
-  path: string
-  title: string
-  lead?: string
-  body?: string
-  tags?: string[]
-  metadata?: Record<string, unknown>
-  created?: string
-  modified?: string
-}
-
-function parseZkJsonOutput(output: string): ZkNote[] {
-  const trimmed = output.trim()
-  if (!trimmed) return []
-
-  try {
-    const parsed = JSON.parse(trimmed)
-    if (Array.isArray(parsed)) {
-      return parsed.map((raw: any) => ({
-        path: raw.path,
-        title: raw.title,
-        lead: raw.lead || undefined,
-        body: raw.body || undefined,
-        tags: raw.tags || [],
-        metadata: raw.metadata || {},
-        created: raw.created || undefined,
-        modified: raw.modified || undefined,
-      }))
-    }
-    return [parsed]
-  } catch {
-    const lines = trimmed.split("\n").filter(Boolean)
-    const notes: ZkNote[] = []
-    for (const line of lines) {
-      try {
-        const raw = JSON.parse(line)
-        notes.push({ path: raw.path, title: raw.title, tags: raw.tags || [], metadata: raw.metadata || {} })
-      } catch { continue }
-    }
-    return notes
-  }
-}
-
-// Extract ID from zk note path (e.g., "projects/abc/plan/x1y2z3a4.md" -> "x1y2z3a4")
+// Extract ID from note path (e.g., "projects/abc/plan/x1y2z3a4.md" -> "x1y2z3a4")
 function extractIdFromPath(path: string): string {
   const filename = path.split("/").pop() || path
   return filename.replace(/\.md$/, "")
@@ -137,14 +116,7 @@ function formatRelativeTime(dateStr: string | undefined): string {
   return `${Math.floor(diffDays / 365)}y ago`
 }
 
-// Extract status from note tags
-function extractStatus(note: ZkNote): string {
-  const statuses = ["draft", "active", "in_progress", "blocked", "completed", "superseded", "archived"]
-  for (const status of statuses) {
-    if (note.tags?.includes(status)) return status
-  }
-  return "active"
-}
+// Note: extractStatus(note: ZkNote) removed — brain API returns status directly in search results
 
 // =============================================================================
 // TYPES
@@ -1245,29 +1217,25 @@ Call this during INIT phase to load project context.`,
           // 2. BRAIN SEARCH FOR EXISTING PLANS
           // ========================================
 
-          const zkAvailable = zkNotebookExists && await isZkAvailable()
+          const brainAvailable = await isBrainApiAvailable()
 
-          if (zkAvailable) {
-            // If specific planId provided, load it directly
+          if (brainAvailable) {
+            // If specific planId provided, search for it directly
             if (args.planId) {
               try {
-                const zkArgs = ["list", "--format", "json", "--quiet", "--match", args.planId, "--limit", "1"]
-                const result = await execZk(zkArgs)
-                if (result.exitCode === 0 && result.stdout.trim()) {
-                  const notes = parseZkJsonOutput(result.stdout)
-                  for (const note of notes) {
-                    const id = extractIdFromPath(note.path)
-                    if (!seenPlanIds.has(id)) {
-                      results.matchingPlans.push({
-                        index: results.matchingPlans.length + 1,
-                        id,
-                        title: note.title,
-                        status: extractStatus(note),
-                        age: formatRelativeTime(note.modified),
-                        lead: note.lead,
-                      })
-                      seenPlanIds.add(id)
-                    }
+                const searchResults = await brainApiSearch(args.planId, undefined, 1)
+                for (const entry of searchResults) {
+                  const id = extractIdFromPath(entry.path)
+                  if (!seenPlanIds.has(id)) {
+                    results.matchingPlans.push({
+                      index: results.matchingPlans.length + 1,
+                      id,
+                      title: entry.title,
+                      status: entry.status || "active",
+                      age: "unknown", // Brain API search doesn't return modified date
+                      lead: entry.snippet,
+                    })
+                    seenPlanIds.add(id)
                   }
                 }
               } catch { /* ignore */ }
@@ -1278,47 +1246,39 @@ Call this during INIT phase to load project context.`,
             if (searchQuery) {
               try {
                 // Search for plans with matching query
-                const zkArgs = ["list", "--format", "json", "--quiet", "--match", searchQuery, "--tag", "plan", "--limit", "10"]
-                const result = await execZk(zkArgs)
-                if (result.exitCode === 0 && result.stdout.trim()) {
-                  const notes = parseZkJsonOutput(result.stdout)
-                  for (const note of notes) {
-                    const id = extractIdFromPath(note.path)
-                    const status = extractStatus(note)
-                    // Only include non-completed, non-archived plans
-                    if (!seenPlanIds.has(id) && !["completed", "archived", "superseded"].includes(status)) {
-                      results.matchingPlans.push({
-                        index: results.matchingPlans.length + 1,
-                        id,
-                        title: note.title,
-                        status,
-                        age: formatRelativeTime(note.modified),
-                        lead: note.lead,
-                      })
-                      seenPlanIds.add(id)
-                    }
+                const searchResults = await brainApiSearch(searchQuery, "plan", 10)
+                for (const entry of searchResults) {
+                  const id = extractIdFromPath(entry.path)
+                  const status = entry.status || "active"
+                  // Only include non-completed, non-archived plans
+                  if (!seenPlanIds.has(id) && !["completed", "archived", "superseded"].includes(status)) {
+                    results.matchingPlans.push({
+                      index: results.matchingPlans.length + 1,
+                      id,
+                      title: entry.title,
+                      status,
+                      age: "unknown", // Brain API search doesn't return modified date
+                      lead: entry.snippet,
+                    })
+                    seenPlanIds.add(id)
                   }
                 }
               } catch { /* ignore */ }
 
               // Search for related explorations
               try {
-                const zkArgs = ["list", "--format", "json", "--quiet", "--match", searchQuery, "--tag", "exploration", "--limit", "5"]
-                const result = await execZk(zkArgs)
-                if (result.exitCode === 0 && result.stdout.trim()) {
-                  const notes = parseZkJsonOutput(result.stdout)
-                  for (const note of notes) {
-                    const id = extractIdFromPath(note.path)
-                    if (!seenExplorationIds.has(id)) {
-                      results.relatedExplorations.push({
-                        index: results.relatedExplorations.length + 1,
-                        id,
-                        title: note.title,
-                        age: formatRelativeTime(note.modified),
-                        lead: note.lead,
-                      })
-                      seenExplorationIds.add(id)
-                    }
+                const searchResults = await brainApiSearch(searchQuery, "exploration", 5)
+                for (const entry of searchResults) {
+                  const id = extractIdFromPath(entry.path)
+                  if (!seenExplorationIds.has(id)) {
+                    results.relatedExplorations.push({
+                      index: results.relatedExplorations.length + 1,
+                      id,
+                      title: entry.title,
+                      age: "unknown", // Brain API search doesn't return modified date
+                      lead: entry.snippet,
+                    })
+                    seenExplorationIds.add(id)
                   }
                 }
               } catch { /* ignore */ }
@@ -1361,7 +1321,7 @@ Call this during INIT phase to load project context.`,
           const lines: string[] = ["## 📂 Discovery Results", ""]
 
           // Brain plans section
-          if (zkAvailable) {
+          if (brainAvailable) {
             lines.push("### 🧠 Existing Brain Plans")
             lines.push("")
             

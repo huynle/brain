@@ -24,6 +24,105 @@ import {
   getBlockedTasks,
   getNextTask,
 } from "./task-deps";
+import type { StorageLayer, NoteRow } from "./storage";
+
+// =============================================================================
+// TaskService Dependencies (optional)
+// =============================================================================
+
+export interface TaskServiceDeps {
+  storage?: StorageLayer;
+}
+
+// =============================================================================
+// NoteRow → Task Conversion
+// =============================================================================
+
+/**
+ * Convert a StorageLayer NoteRow to the Task format used by the task runner.
+ *
+ * Similar to mapZkNoteToTask but accepts NoteRow (which has metadata as a JSON
+ * string) instead of ZkNote (which has pre-parsed metadata).
+ */
+export function mapNoteRowToTask(noteRow: NoteRow): Task {
+  // Parse the JSON metadata
+  let metadata: Record<string, unknown> = {};
+  try {
+    metadata = noteRow.metadata ? JSON.parse(noteRow.metadata) : {};
+  } catch {
+    metadata = {};
+  }
+
+  // Extract projectId from file path (e.g., "projects/pwa/task/abc.md" -> "pwa")
+  const pathMatch = noteRow.path.match(/^projects\/([^/]+)\//);
+  const derivedProjectId = pathMatch ? pathMatch[1] : undefined;
+
+  // Extract tags from metadata (stored as array in frontmatter)
+  const tags: string[] = Array.isArray(metadata.tags)
+    ? (metadata.tags as string[])
+    : [];
+
+  const sessions =
+    (metadata.sessions as Task["sessions"] | undefined) || {};
+
+  return {
+    id: extractIdFromPath(noteRow.path),
+    path: noteRow.path,
+    title: noteRow.title,
+    priority: (metadata.priority as Task["priority"]) || "medium",
+    status: (metadata.status as Task["status"]) || "pending",
+    depends_on: (metadata.depends_on as string[]) || [],
+    tags,
+    created: noteRow.created || "",
+    modified: noteRow.modified || undefined,
+    target_workdir: (metadata.target_workdir as string) || null,
+    workdir: (metadata.workdir as string) || null,
+    worktree: null, // Deprecated: now derived from git_branch via deriveWorktreePath()
+    git_remote: (metadata.git_remote as string) || null,
+    git_branch: (metadata.git_branch as string) || null,
+    merge_target_branch: (metadata.merge_target_branch as string) || null,
+    merge_policy:
+      (metadata.merge_policy as Task["merge_policy"]) || "auto_merge",
+    merge_strategy:
+      (metadata.merge_strategy as Task["merge_strategy"]) || "squash",
+    open_pr_before_merge:
+      (metadata.open_pr_before_merge as boolean) || false,
+    execution_mode:
+      (metadata.execution_mode as Task["execution_mode"]) || "worktree",
+    complete_on_idle:
+      (metadata.complete_on_idle as boolean) ?? false,
+    user_original_request:
+      (metadata.user_original_request as string) || null,
+    // Schedule fields
+    schedule: (metadata.schedule as string) ?? undefined,
+    schedule_enabled: (metadata.schedule_enabled as boolean) ?? undefined,
+    next_run: (metadata.next_run as string) ?? undefined,
+    max_runs: (metadata.max_runs as number) ?? undefined,
+    starts_at: (metadata.starts_at as string) ?? undefined,
+    expires_at: (metadata.expires_at as string) ?? undefined,
+    runs: (metadata.runs as Task["runs"]) ?? undefined,
+    // Feature grouping fields
+    feature_id: (metadata.feature_id as string) ?? undefined,
+    feature_priority:
+      (metadata.feature_priority as Task["feature_priority"]) ?? undefined,
+    feature_depends_on: (metadata.feature_depends_on as string[]) ?? undefined,
+    // OpenCode execution options
+    direct_prompt: (metadata.direct_prompt as string) || null,
+    agent: (metadata.agent as string) || null,
+    model: (metadata.model as string) || null,
+    // Session traceability
+    sessions,
+    // Generated metadata
+    generated: (metadata.generated as boolean) ?? undefined,
+    generated_kind: (metadata.generated_kind as Task["generated_kind"]) ?? undefined,
+    generated_key: (metadata.generated_key as string) ?? undefined,
+    generated_by: (metadata.generated_by as string) ?? undefined,
+    // Preserve raw frontmatter for downstream UI rendering
+    frontmatter: metadata,
+    // Derived from file path for self-correcting project identity
+    projectId: derivedProjectId,
+  };
+}
 
 // =============================================================================
 // TaskService Class
@@ -99,11 +198,16 @@ export function mapZkNoteToTask(note: ZkNote): Task {
 export class TaskService {
   private config: BrainConfig;
   private projectId: string;
+  private storageLayer: StorageLayer | null = null;
 
-  constructor(config?: BrainConfig, projectId?: string) {
+  constructor(config?: BrainConfig, projectId?: string, deps?: TaskServiceDeps) {
     const fullConfig = getConfig();
     this.config = config || fullConfig.brain;
     this.projectId = projectId || fullConfig.brain.defaultProject;
+
+    if (deps?.storage) {
+      this.storageLayer = deps.storage;
+    }
   }
 
   // ========================================
@@ -147,6 +251,13 @@ export class TaskService {
   async getAllTasks(projectId: string): Promise<Task[]> {
     const projectDir = `projects/${projectId}/task`;
 
+    // StorageLayer path: direct SQLite query, no ZK CLI needed
+    if (this.storageLayer) {
+      const noteRows = this.storageLayer.listNotes({ path: projectDir });
+      return noteRows.map((row) => mapNoteRowToTask(row));
+    }
+
+    // Legacy ZK CLI path
     const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
     if (!zkAvailable) {
       throw new Error(

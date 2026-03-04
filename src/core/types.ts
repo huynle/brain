@@ -414,6 +414,8 @@ export interface ServerConfig {
   /** PIN required on OAuth consent page (set via OAUTH_PIN env var) */
   oauthPin?: string;
   enableTenants: boolean;
+  /** Allowed CORS origin(s). Defaults to "*" for local dev. Set to specific origin for production. */
+  corsOrigin: string;
   tls: TlsConfig;
 }
 
@@ -480,7 +482,7 @@ export interface Task {
   feature_depends_on?: string[]; // Feature IDs this feature depends on
 
   // OpenCode execution options (optional)
-  direct_prompt: string | null; // Direct prompt to execute, bypassing do-work skill workflow
+  direct_prompt: string | null; // Direct prompt to execute, bypassing default skill workflow
   agent: string | null; // Override agent for this task (e.g., "explore", "tdd-dev", "build")
   model: string | null; // Override model for this task (e.g., "anthropic/claude-sonnet-4-20250514")
 

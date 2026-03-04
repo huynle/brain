@@ -52,6 +52,7 @@ export function loadConfig(): Config {
     apiKey: process.env.API_KEY,
     oauthPin: process.env.OAUTH_PIN,
     enableTenants: getEnvBool("ENABLE_TENANTS", false),
+    corsOrigin: getEnv("CORS_ORIGIN", "*"),
     tls,
   };
 

@@ -7,6 +7,7 @@
 import { OpenAPIHono } from "@hono/zod-openapi";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
+import { secureHeaders } from "hono/secure-headers";
 import type { Config } from "./core/types";
 import { createEntriesRoutes } from "./api/entries";
 import { createGraphRoutes } from "./api/graph";
@@ -23,9 +24,41 @@ import { apiAuth } from "./auth";
 export function createApp(config: Config): OpenAPIHono {
   const app = new OpenAPIHono();
 
-  // Middleware
-  app.use("*", cors());
-  app.use("*", logger());
+  // Middleware - Security headers
+  app.use(
+    "*",
+    secureHeaders({
+      xContentTypeOptions: "nosniff",
+      xFrameOptions: "DENY",
+      xXssProtection: "0", // Disabled per modern best practice
+      referrerPolicy: "strict-origin-when-cross-origin",
+      ...(config.server.tls.enabled
+        ? { strictTransportSecurity: "max-age=31536000; includeSubDomains" }
+        : {}),
+    })
+  );
+
+  // Middleware - CORS (configurable via CORS_ORIGIN env var)
+  app.use(
+    "*",
+    cors({
+      origin: config.server.corsOrigin,
+      allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowHeaders: ["Content-Type", "Authorization", "Accept"],
+      exposeHeaders: ["X-Request-Id"],
+      credentials: config.server.corsOrigin !== "*",
+      maxAge: 86400,
+    })
+  );
+
+  // Middleware - Logger with token sanitization
+  app.use(
+    "*",
+    logger((message: string, ...rest: string[]) => {
+      const sanitized = message.replace(/[?&]token=[^&\s]+/g, "token=***");
+      console.log(sanitized, ...rest);
+    })
+  );
 
   // API v1 routes
   const api = new OpenAPIHono();

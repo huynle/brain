@@ -38,6 +38,7 @@ const mockConfig: RunnerConfig = {
   idleDetectionThreshold: 60000,
   maxTotalProcesses: 10,
   memoryThresholdPercent: 10,
+  autoMonitors: false,
 };
 
 // Helper to create a mock fetch function

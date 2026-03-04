@@ -279,6 +279,7 @@ describe("ProcessManager", () => {
         idleDetectionThreshold: 60000,
         maxTotalProcesses: 10,
         memoryThresholdPercent: 10,
+        autoMonitors: false,
       });
 
       customManager.add("task1", task, proc);

@@ -56,6 +56,7 @@ function createTestConfig(stateDir: string): RunnerConfig {
     idleDetectionThreshold: 60000,
     maxTotalProcesses: 10,
     memoryThresholdPercent: 10,
+    autoMonitors: false,
   };
 }
 

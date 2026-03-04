@@ -6,6 +6,7 @@
  * Provides commands for starting, stopping, and monitoring the task runner.
  *
  * Usage:
+ *   brain-runner init
  *   brain-runner start [projectId] [options]
  *   brain-runner stop [projectId]
  *   brain-runner status [projectId]
@@ -20,7 +21,7 @@
 import { spawn } from "child_process";
 import { existsSync, readFileSync, watchFile, unwatchFile } from "fs";
 import { join } from "path";
-import { getRunnerConfig, loadConfig } from "./config";
+import { getRunnerConfig, loadConfig, writeDefaultConfig, findExistingConfigFile } from "./config";
 import { ApiClient, getApiClient, type ApiFeature } from "./api-client";
 import { StateManager } from "./state-manager";
 import { getLogger, type LogLevel } from "./logger";
@@ -68,6 +69,9 @@ interface CLIOptions {
   
   // Features command
   ready: boolean;
+
+  // Auto-monitors
+  autoMonitors: boolean;
 }
 
 // =============================================================================
@@ -81,6 +85,7 @@ Usage:
   brain-runner <command> [projectId] [options]
 
 Commands:
+  init                  Create default config file (~/.config/brain-runner/config.yaml)
   start [projectId]     Start the runner (default: all projects)
   stop [projectId]      Stop running daemon
   status [projectId]    Show runner status
@@ -108,6 +113,7 @@ Options:
   -i, --include PATTERN Include project pattern (repeatable)
   -e, --exclude PATTERN Exclude project pattern (repeatable)
   --no-resume           Skip interrupted tasks
+  --auto-monitors       Auto-enable monitors for new features
   -v, --verbose         Enable verbose logging
   -h, --help            Show this help message
   --ready               Filter to ready features only (features command)
@@ -151,6 +157,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     help: false,
     verbose: false,
     ready: false,
+    autoMonitors: false,
   };
 
   let command = "";
@@ -267,6 +274,13 @@ function parseArgs(argv: string[]): ParsedArgs {
     // Ready flag (for features command)
     if (arg === "--ready") {
       options.ready = true;
+      i++;
+      continue;
+    }
+
+    // Auto-monitors flag
+    if (arg === "--auto-monitors") {
+      options.autoMonitors = true;
       i++;
       continue;
     }
@@ -390,6 +404,8 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
       model: options.model,
     };
   }
+
+  if (options.autoMonitors) configOverrides.autoMonitors = true;
 
   // Create and start TaskRunner
   try {
@@ -786,6 +802,26 @@ function getStatusIcon(status: string): string {
 }
 
 // =============================================================================
+// Init Command
+// =============================================================================
+
+async function handleInit(): Promise<number> {
+  const existing = findExistingConfigFile();
+  if (existing) {
+    console.log(`Config file already exists: ${existing}`);
+    console.log("Not overwriting existing configuration.");
+    return 0;
+  }
+
+  const result = writeDefaultConfig();
+  if (result.created) {
+    console.log(`Created default config: ${result.path}`);
+    console.log("Edit this file to customize your runner settings.");
+  }
+  return 0;
+}
+
+// =============================================================================
 // Main Entry Point
 // =============================================================================
 
@@ -803,8 +839,11 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  // Route to command handler
+   // Route to command handler
   switch (command) {
+    case "init":
+      return handleInit();
+
     case "start":
       return handleStart(projectId, options);
 

@@ -32,6 +32,9 @@ export interface RunnerConfig {
   opencode: OpencodeConfig;
 
   excludeProjects: string[]; // glob patterns
+
+  /** Automatically enable monitor tasks (Task Inspector, Feature Code Review) for new features */
+  autoMonitors: boolean;
 }
 
 export interface OpencodeConfig {

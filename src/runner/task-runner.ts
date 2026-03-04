@@ -126,6 +126,10 @@ export class TaskRunner {
   // When set, model resolution is: task.model > runtime default > config default
   private runtimeDefaultModel: string | undefined;
 
+  // Auto-monitors flag (in-memory, initialized from config)
+  // When enabled, Monitor Task Inspector and Feature Code Review are auto-attached to new feature_ids
+  private autoMonitorsEnabled: boolean;
+
   // Pending resume queue: orphaned in_progress tasks detected on startup when paused
   // These are prioritized when resume/resumeAll is called
   // Map key is taskId, value is RunningTask placeholder
@@ -169,6 +173,7 @@ export class TaskRunner {
     this.mode = options.mode ?? "background";
     this.config = options.config ?? getRunnerConfig();
     this.startPaused = options.startPaused ?? false;
+    this.autoMonitorsEnabled = this.config.autoMonitors ?? false;
 
     // Initialize components
     this.apiClient = getApiClient();
@@ -839,6 +844,23 @@ export class TaskRunner {
    */
   getRuntimeDefaultModel(): string | undefined {
     return this.runtimeDefaultModel;
+  }
+
+  /**
+   * Set auto-monitors flag at runtime.
+   * When enabled, Monitor Task Inspector and Feature Code Review are auto-attached to new feature_ids.
+   */
+  setAutoMonitors(enabled: boolean): void {
+    this.autoMonitorsEnabled = enabled;
+    this.logger.info("Updated auto-monitors", { enabled });
+    this.tuiLog('info', `Auto-monitors: ${enabled ? 'enabled' : 'disabled'}`);
+  }
+
+  /**
+   * Get current auto-monitors flag.
+   */
+  getAutoMonitors(): boolean {
+    return this.autoMonitorsEnabled;
   }
 
   /**
@@ -3442,6 +3464,8 @@ export class TaskRunner {
         setMaxParallel: (value: number) => this.setMaxParallel(value),
         getRuntimeDefaultModel: () => this.getRuntimeDefaultModel(),
         setRuntimeDefaultModel: (model: string | undefined) => this.setRuntimeDefaultModel(model),
+        getAutoMonitors: () => this.getAutoMonitors(),
+        setAutoMonitors: (enabled: boolean) => this.setAutoMonitors(enabled),
         // Feature enable/disable callbacks (whitelist for paused projects)
         onEnableFeature: (featureId) => this.enableFeature(featureId),
         onDisableFeature: (featureId) => this.disableFeature(featureId),

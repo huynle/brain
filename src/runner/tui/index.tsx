@@ -105,6 +105,10 @@ export interface DashboardOptions {
   getRuntimeDefaultModel?: () => string | undefined;
   /** Set in-memory runtime default model override (undefined/empty clears override) */
   setRuntimeDefaultModel?: (model: string | undefined) => void;
+  /** Get current auto-monitors flag */
+  getAutoMonitors?: () => boolean;
+  /** Set auto-monitors flag at runtime (overrides config/env) */
+  setAutoMonitors?: (enabled: boolean) => void;
   /** Enable a feature to run while project is paused (whitelist) */
   onEnableFeature?: (featureId: string) => void;
   /** Disable a feature from whitelist */
@@ -232,6 +236,8 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
       setMaxParallel={options.setMaxParallel}
       getRuntimeDefaultModel={options.getRuntimeDefaultModel}
       setRuntimeDefaultModel={options.setRuntimeDefaultModel}
+      getAutoMonitors={options.getAutoMonitors}
+      setAutoMonitors={options.setAutoMonitors}
       onEnableFeature={options.onEnableFeature}
       onDisableFeature={options.onDisableFeature}
       getEnabledFeatures={options.getEnabledFeatures}

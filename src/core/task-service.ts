@@ -1,7 +1,7 @@
 /**
  * Task Service
  *
- * Handles task queries and dependency resolution for the do-work task queue.
+ * Handles task queries and dependency resolution for the brain-runner task queue.
  * Follows BrainService patterns for consistency.
  */
 

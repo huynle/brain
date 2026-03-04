@@ -508,7 +508,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .string()
             .optional()
             .describe(
-              "Direct prompt to execute, bypassing do-work skill workflow. The prompt is sent verbatim to OpenCode when the task runs. Use for simple, self-contained commands like '/fix-tests src/' or '/lint'."
+              "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim to OpenCode when the task runs. Use for simple, self-contained commands like '/fix-tests src/' or '/lint'."
             ),
           agent: tool.schema
             .string()
@@ -1357,7 +1357,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
           direct_prompt: tool.schema
             .string()
             .optional()
-            .describe("Direct prompt to execute, bypassing do-work skill workflow"),
+            .describe("Direct prompt to execute, bypassing default skill workflow"),
           agent: tool.schema
             .string()
             .optional()

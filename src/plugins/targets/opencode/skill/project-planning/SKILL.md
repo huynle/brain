@@ -236,9 +236,9 @@ IDLE → INIT → UNDERSTAND → DESIGN → APPROVE → (complete)
   - PRD: docs/prd.md → PRD-REQ-{id}
   - Architecture: docs/architecture.md → ARCH-DEC-{id}
 
-  Execute with do-work:
-    do-work graph <project>    # Review task dependencies
-    do-work start <project> --foreground --tui
+  Execute with brain-runner:
+    brain-runner graph <project>    # Review task dependencies
+    brain-runner start <project> --foreground --tui
   ```
 
 - [ ] Step 6: Complete session
@@ -335,11 +335,11 @@ IDLE → INIT → UNDERSTAND → DESIGN → APPROVE → (complete)
 | `plan_phase(action: "status")` | Any | Check current phase |
 | `plan_phase(action: "skip")` | Any | Emergency bypass |
 
-## Integration with do-work
+## Integration with brain-runner
 
 When handing off to execution:
 
 1. **Plan is in brain** - Tasks are created with `brain_save(type: "task", depends_on: [...])`
 2. **Requirements in docs** - Tasks reference `docs/prd.md` for acceptance criteria
 3. **Architecture in docs** - Tasks reference `docs/architecture.md` for pattern compliance
-4. **Parallel execution** - `do-work start <project>` handles dependency resolution and parallel execution
+4. **Parallel execution** - `brain-runner start <project>` handles dependency resolution and parallel execution

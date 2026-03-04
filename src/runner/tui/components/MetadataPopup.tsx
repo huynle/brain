@@ -115,7 +115,7 @@ export interface MetadataPopupProps {
   agentValue: string;
   /** Current model value (LLM model override) */
   modelValue: string;
-  /** Current direct_prompt value (bypasses do-work skill) */
+  /** Current direct_prompt value (bypasses default skill workflow) */
   directPromptValue: string;
   /** Available projects for the dropdown */
   availableProjects: string[];

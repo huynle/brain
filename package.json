@@ -7,8 +7,7 @@
   "bin": {
     "brain": "./src/cli/brain.ts",
     "brain-server": "./src/cli/server.ts",
-    "brain-runner": "./src/runner/index.ts",
-    "do-work": "./src/cli/do-work.ts"
+    "brain-runner": "./src/runner/index.ts"
   },
   "files": [
     "src",

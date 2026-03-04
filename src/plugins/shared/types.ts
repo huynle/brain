@@ -240,7 +240,7 @@ export interface InstallResult {
  * Used for skills, commands, and other related components.
  */
 export interface AdditionalFile {
-  /** Source file path relative to plugin target directory (e.g., "skill/do-work/SKILL.md") */
+  /** Source file path relative to plugin target directory (e.g., "skill/do-work-queue/SKILL.md") */
   sourcePath: string;
   /** Target directory resolver (receives home directory) */
   targetDir: (home: string) => string;

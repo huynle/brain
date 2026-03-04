@@ -476,7 +476,7 @@ export class DoctorService {
    */
   async checkOpenCodeIntegration(): Promise<Check[]> {
     const checks: Check[] = [];
-    const home = homedir();
+    const home = process.env.HOME || homedir();
     const opencodeConfigDir = join(home, ".config/opencode");
 
     // First check if OpenCode is installed at all
@@ -540,7 +540,7 @@ export class DoctorService {
 
     // Check required skills
     const requiredSkills = [
-      { name: "do-work", description: "task queue processing" },
+      { name: "do-work-queue", description: "task queue processing" },
       { name: "brain-planning", description: "plan persistence" },
       { name: "using-brain", description: "knowledge patterns" },
     ];

@@ -5,7 +5,7 @@ subtask: true
 
 # Work Command
 
-Manual task processing - when you want direct control instead of the do-work monitor.
+Manual task processing - when you want direct control instead of the brain-runner monitor.
 
 ## Usage
 
@@ -52,7 +52,7 @@ Next ready: "Fix login crash" (high)
 Commands:
   /work next           Process next task
   /work list           See all tasks
-  /do start <project>  Start automated processing
+  brain-runner start <project>  Start automated processing
 ```
 
 ### List All Tasks
@@ -79,7 +79,7 @@ PENDING TASKS
    brain_list(type: "task", status: "pending", sortBy: "priority", limit: 1)
    ```
 
-2. Load the do-work skill for processing guidance
+2. Load the do-work-queue skill for processing guidance
 
 3. Follow the per-task workflow from the skill:
    - Claim task: `brain_update(path: "...", status: "in_progress")`
@@ -120,14 +120,14 @@ Blocked: "Fix login crash" (abc12def)
 Reason: <reason>
 ```
 
-## Integration with do-work Skill
+## Integration with do-work-queue Skill
 
-When processing tasks (`/work next` or `/work <id>`), this command loads the `do-work` skill which provides:
+When processing tasks (`/work next` or `/work <id>`), this command loads the `do-work-queue` skill which provides:
 
 1. **Triage System** - Route A (simple), B (explore), C (complex)
 2. **Per-Task Workflow** - How to process each task
 3. **Brain Tools Reference** - All brain operations for queue management
-4. **Script Commands** - Reference for do-work bash script
+4. **Script Commands** - Reference for brain-runner
 
 ## Examples
 

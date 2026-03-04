@@ -82,26 +82,30 @@ const HELP_TEXT = `
 Brain Runner CLI - Process tasks from Brain API using OpenCode
 
 Usage:
-  brain-runner <command> [projectId] [options]
+  brain-runner [command] [projectId] [options]
+  brain-runner <projectId>            Start TUI for a project
+  brain-runner                        Start TUI for all projects
 
 Commands:
   init                  Create default config file (~/.config/brain-runner/config.yaml)
-  start [projectId]     Start the runner (default: all projects)
+  start [projectId]     Start the runner with TUI (default: all projects)
   stop [projectId]      Stop running daemon
   status [projectId]    Show runner status
   run-one [projectId]   Execute single task and exit
-  list [projectId]      List all tasks for project
+  list [projectId]      List all tasks for project (no project = list all projects)
   ready [projectId]     List ready tasks
   waiting [projectId]   List waiting tasks
   blocked [projectId]   List blocked tasks
   features [projectId] [featureId]
                         List features or show feature details
   logs                  View runner logs
+  config                Show current configuration
 
 Options:
-  -f, --foreground      Run in foreground (default)
+  -f, --foreground      Run in foreground without TUI
   -b, --background      Run as daemon
-  --tui                 Use interactive OpenCode TUI
+  --tui                 Use interactive TUI (default for start)
+  --no-tui              Disable TUI (run in foreground)
   --dashboard           Create tmux dashboard
   --run                 Start processing immediately (TUI starts paused by default)
   -p, --max-parallel N  Max concurrent tasks (default: 3)
@@ -119,14 +123,16 @@ Options:
   --ready               Filter to ready features only (features command)
 
 Examples:
-  brain-runner start my-project -f
-  brain-runner start all --max-parallel 5
-  brain-runner run-one my-project --dry-run
-  brain-runner ready my-project
-  brain-runner features my-project
-  brain-runner features my-project --ready
-  brain-runner features my-project my-feature-id
-  brain-runner logs -f
+  brain-runner                        Start TUI for all projects
+  brain-runner my-project             Start TUI for my-project
+  brain-runner start my-project       Same as above
+  brain-runner start all -p 5         All projects, 5 concurrent tasks
+  brain-runner start my-project -f    Foreground without TUI
+  brain-runner run-one my-project     Execute single task and exit
+  brain-runner ready my-project       Show ready tasks
+  brain-runner features my-project    Show features
+  brain-runner logs -f                Follow logs
+  brain-runner config                 Show configuration
 `;
 
 const DEFAULT_PROJECT_ID = "all";
@@ -139,7 +145,7 @@ function parseArgs(argv: string[]): ParsedArgs {
   const args = argv.slice(2); // Skip 'bun' and script path
 
   const options: CLIOptions = {
-    foreground: true,
+    foreground: false,
     background: false,
     tui: false,
     dashboard: false,
@@ -199,6 +205,13 @@ function parseArgs(argv: string[]): ParsedArgs {
 
     if (arg === "--tui") {
       options.tui = true;
+      i++;
+      continue;
+    }
+
+    if (arg === "--no-tui") {
+      options.tui = false;
+      options.foreground = true;
       i++;
       continue;
     }
@@ -307,9 +320,10 @@ function parseArgs(argv: string[]): ParsedArgs {
     i++;
   }
 
-  // Default command
+  // Default command: no args → start all with TUI
   if (!command) {
-    command = "help";
+    command = "start";
+    options.tui = true;
   }
 
   return { command, projectId, featureId, options };
@@ -362,11 +376,11 @@ async function handleStart(projectId: string, options: CLIOptions): Promise<numb
   }
 
   // Determine execution mode
-  // Note: --tui implies dashboard creation (like do-work script)
-  let mode: ExecutionMode = "background";
+  let mode: ExecutionMode;
   if (options.tui) mode = "tui";
   else if (options.dashboard) mode = "dashboard";
-  else if (options.foreground) mode = "background"; // foreground still uses background mode internally
+  else if (options.background) mode = "background";
+  else mode = "background"; // foreground mode uses background runner internally
 
   // Suppress console output in TUI mode - logs go to file only
   // This keeps the TUI display clean
@@ -822,6 +836,25 @@ async function handleInit(): Promise<number> {
 }
 
 // =============================================================================
+// Config Command
+// =============================================================================
+
+function handleConfig(): number {
+  const config = getRunnerConfig();
+  const existing = findExistingConfigFile();
+  console.log(`Config file: ${existing || "(none - using defaults)"}`);
+  console.log(`BRAIN_API_URL=${config.brainApiUrl}`);
+  console.log(`Max parallel: ${config.maxParallel}`);
+  console.log(`Poll interval: ${config.pollInterval}s`);
+  console.log(`Work dir: ${config.workDir || "(default)"}`);
+  console.log(`State dir: ${config.stateDir}`);
+  console.log(`Log dir: ${config.logDir}`);
+  if (config.opencode?.agent) console.log(`Agent: ${config.opencode.agent}`);
+  if (config.opencode?.model) console.log(`Model: ${config.opencode.model}`);
+  return 0;
+}
+
+// =============================================================================
 // Main Entry Point
 // =============================================================================
 
@@ -831,6 +864,11 @@ async function main(): Promise<number> {
   // Set log level based on verbose flag
   if (options.verbose) {
     getLogger().setLevel("debug");
+  }
+
+  // Default: start uses TUI unless user explicitly chose another mode
+  if (command === "start" && !options.background && !options.foreground && !options.dashboard) {
+    options.tui = true;
   }
 
   // Handle help
@@ -874,7 +912,17 @@ async function main(): Promise<number> {
     case "logs":
       return handleLogs(options);
 
+    case "config":
+      return handleConfig();
+
     default:
+      // Bare project name → start with TUI
+      // e.g. "brain-runner myproject" → start myproject --tui
+      if (command && !command.startsWith("-")) {
+        // Shift: what was parsed as projectId becomes featureId context (discard),
+        // the "command" is actually the project name
+        return handleStart(command, { ...options, tui: true });
+      }
       console.error(`Unknown command: ${command}`);
       console.log("Run 'brain-runner --help' for usage information");
       return 1;

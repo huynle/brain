@@ -605,7 +605,7 @@ plan_phase(action: "transition", to: "design")
    - Tasks with no dependencies can run in parallel
    - Use task IDs (8-char) from `brain_save` responses for `depends_on`
    - Can also use task titles, but IDs are more reliable
-   - The `do-work` script resolves dependencies automatically
+   - The `brain-runner` resolves dependencies automatically
 
 5. **Provide handoff information:**
    ```
@@ -627,13 +627,13 @@ plan_phase(action: "transition", to: "design")
    **To execute, run:**
    ```bash
    # Review the dependency graph
-   do-work graph {projectId}
-   
-   # Start automated execution
-   do-work start {projectId} --foreground --tui
-   ```
-   
-   The `do-work` script will:
+    brain-runner graph {projectId}
+    
+    # Start automated execution
+    brain-runner start {projectId} --foreground --tui
+    ```
+    
+    The `brain-runner` will:
    - Resolve task dependencies automatically
    - Execute ready tasks in parallel (up to 3 by default)
    - Re-evaluate dependencies after each completion
@@ -659,22 +659,22 @@ After tasks are created in brain, provide clear instructions for execution:
 
 Run this to see the current state:
 ```bash
-do-work graph {projectId}
+brain-runner graph {projectId}
 ```
 
 ## To Start Execution
 
 ```bash
 # Automated execution with TUI dashboard
-do-work start {projectId} --foreground --tui
+brain-runner start {projectId} --foreground --tui
 
 # Or with more parallelism
-do-work start {projectId} --foreground --tui --max-parallel 5
+brain-runner start {projectId} --foreground --tui --max-parallel 5
 ```
 
 ## What Happens Next
 
-The `do-work` script will:
+The `brain-runner` will:
 1. Poll for ready tasks (dependencies met)
 2. Spawn OpenCode agents to process each task
 3. Run tasks in parallel (respecting dependencies)
@@ -685,13 +685,13 @@ The `do-work` script will:
 
 ```bash
 # Check status
-do-work status {projectId}
+brain-runner status {projectId}
 
 # View logs
-do-work logs -f
+brain-runner logs -f
 
 # Stop if needed
-do-work stop {projectId}
+brain-runner stop {projectId}
 ```
 ```
 

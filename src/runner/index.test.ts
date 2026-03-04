@@ -154,9 +154,10 @@ describe("CLI", () => {
       expect(result.options.verbose).toBe(true);
     });
 
-    it("should default to help command when no args", () => {
+    it("should default to start command with TUI when no args", () => {
       const result = parseArgs(argv());
-      expect(result.command).toBe("help");
+      expect(result.command).toBe("start");
+      expect(result.options.tui).toBe(true);
     });
 
     it("should handle all commands", () => {

@@ -4,7 +4,7 @@ description: Issue ticketing - file issues/features, dispatch general agent for 
 
 # /do - Issue Ticketing
 
-File issues and feature requests. Dispatches a general subagent for root cause analysis, then queues findings to brain for `do-work` to process.
+File issues and feature requests. Dispatches a general subagent for root cause analysis, then queues findings to brain for `brain-runner` to process.
 
 **Project:** `$1` (optional - defaults to brain's auto-generated project ID based on working directory)
 
@@ -34,12 +34,12 @@ File issues and feature requests. Dispatches a general subagent for root cause a
 3. **Accepts issue/feature descriptions** from user
 4. **Dispatches general subagent** for root cause analysis
 5. **Auto-queues** findings to brain:
-   - **Simple tasks:** Created directly as `pending` (immediately visible to do-work)
+   - **Simple tasks:** Created directly as `pending` (immediately visible to brain-runner)
    - **Dependent task chains:** Created as `draft`, then batch-promoted to `pending` after last task
 6. **Repeats** until user says `stop`
 
 **Why draft-then-promote for dependent tasks?**
-- Prevents race condition where do-work executes tasks before all dependencies are filed
+- Prevents race condition where brain-runner executes tasks before all dependencies are filed
 - Ensures complex multi-task features have complete dependency graph before execution
 - Simple standalone tasks still go to pending immediately (no delay)
 
@@ -57,7 +57,7 @@ Is this a single standalone task?
 
 **This command does NOT:**
 - Investigate issues itself (dispatches subagent)
-- Implement fixes (do-work handles that)
+- Implement fixes (brain-runner handles that)
 - Read code or logs directly (subagent does)
 
 ## Usage
@@ -79,7 +79,7 @@ Is this a single standalone task?
 1. `/do` creates tasks:
    - Simple tasks → `pending` immediately
    - Dependent task chains → `draft` during creation, then batch-promote to `pending`
-2. `do-work` processes **pending** tasks → **in_progress** → **completed**
+2. `brain-runner` processes **pending** tasks → **in_progress** → **completed**
 3. `/validate` verifies **completed** tasks → **validated**
 
 ## Startup Sequence
@@ -157,7 +157,7 @@ Issue Ticketing Ready
   Directory: $(pwd)
   Project:   $1 (or "(default)" if not provided)
 
-Tip: Run `do-work start` in another terminal to process the queue.
+Tip: Run `brain-runner start` in another terminal to process the queue.
 
 Describe issues or features to file. I'll dispatch an agent to investigate
 and queue the findings.
@@ -242,7 +242,7 @@ Updated approach:
 **Why reset to pending?**
 - The task may have been `completed` or `in_progress`
 - New requirements mean the previous work may be invalid
-- Resetting to `pending` ensures `do-work` picks it up again
+- Resetting to `pending` ensures `brain-runner` picks it up again
 - The appended content documents why requirements changed
 
 **Example:**
@@ -276,7 +276,7 @@ brain_save(
   status: "pending",  # Simple tasks go directly to pending
   priority: "<simple=low, medium=medium, complex=high>",
   project: PROJECT,  # Include only if $1 was provided, otherwise omit
-  tags: ["do-work"],
+  tags: ["brain-runner"],
   user_original_request: "<exact user input>",
   content: @task_content
 )
@@ -305,7 +305,7 @@ When the agent identifies that a task has multiple independent or sequential par
 
 **CRITICAL: Use draft-then-promote for dependent task chains!**
 
-To prevent race conditions where do-work picks up tasks before the full dependency graph is established:
+To prevent race conditions where brain-runner picks up tasks before the full dependency graph is established:
 1. Create ALL tasks in the chain as `status: "draft"` with shared `feature_id`
 2. After the LAST task is created, batch-promote ALL to `status: "pending"`
 
@@ -324,7 +324,7 @@ task1_path = brain_save(
   project: PROJECT,  # Include only if $1 was provided, otherwise omit
   feature_id: FEATURE_ID,  # Groups all related tasks
   feature_priority: "high",  # Priority relative to other features
-  tags: ["do-work", FEATURE_ID],
+  tags: ["brain-runner", FEATURE_ID],
   user_original_request: "<exact user input>",
   content: @task1_content
 )
@@ -338,7 +338,7 @@ task2_path = brain_save(
   project: PROJECT,
   feature_id: FEATURE_ID,
   depends_on: [task1_path],
-  tags: ["do-work", FEATURE_ID],
+  tags: ["brain-runner", FEATURE_ID],
   user_original_request: "<exact user input>",
   content: @task2_content
 )
@@ -352,7 +352,7 @@ task3_path = brain_save(
   project: PROJECT,
   feature_id: FEATURE_ID,
   depends_on: [task2_path],
-  tags: ["do-work", FEATURE_ID],
+  tags: ["brain-runner", FEATURE_ID],
   user_original_request: "<exact user input>",
   content: @task3_content
 )
@@ -368,7 +368,7 @@ IF user_requested_verification OR feature_needs_integration_test:
     project: PROJECT,
     feature_id: FEATURE_ID,
     depends_on: [task1_path, task2_path, task3_path],  # Depends on ALL tasks
-    tags: ["do-work", FEATURE_ID, "checkout"],
+    tags: ["brain-runner", FEATURE_ID, "checkout"],
     user_original_request: "<exact user input>",
     content: @checkout_content,  # Verification checklist
     generated: true,
@@ -383,7 +383,7 @@ IF user_requested_verification OR feature_needs_integration_test:
     direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: ${checkout_path}. Validate implementation coverage against dependency tasks' user_original_request intent. Start now."
   )
 
-# Step 5: BATCH PROMOTE - All tasks created, now make them visible to do-work
+# Step 5: BATCH PROMOTE - All tasks created, now make them visible to brain-runner
 brain_update(path: task1_path, status: "pending")
 brain_update(path: task2_path, status: "pending")
 brain_update(path: task3_path, status: "pending")
@@ -391,7 +391,7 @@ IF checkout_path:
   brain_update(path: checkout_path, status: "pending")
 ```
 
-**Result in do-work dashboard:**
+**Result in brain-runner dashboard:**
 ```
 <project>
 └── Feature: dark-mode
@@ -526,7 +526,7 @@ Examples of clarifying questions for complex features:
 ```
 ✅ Queued: "Fix scanner execution error" 🟡 medium
   Files: src/scanner.ts, src/components/Scanner.tsx
-  Status: pending (visible to do-work)
+  Status: pending (visible to brain-runner)
 
 What else?
 > 
@@ -766,7 +766,7 @@ Display:
 ```
 Task Queue (PROJECT_DISPLAY):
 
-  ⏳ Standalone Pending (3) - ready for do-work:
+  ⏳ Standalone Pending (3) - ready for brain-runner:
     🔴 high   - Fix authentication crash
     🟡 medium - Scanner execution error
     🟢 low    - Add clear button
@@ -787,7 +787,7 @@ Task Queue (PROJECT_DISPLAY):
     🟢 low    - Fix typo in header
     🟢 low    - Update footer links
 
-Tip: Run `do-work start` to process pending tasks.
+Tip: Run `brain-runner start` to process pending tasks.
      Run `/validate` to verify completed tasks.
 ```
 
@@ -802,7 +802,7 @@ Queue summary (PROJECT_DISPLAY):
   Completed: 2
 
 Next steps:
-  - Run `do-work start` to process pending tasks
+  - Run `brain-runner start` to process pending tasks
   - Run `/validate` to verify completed tasks
 ```
 
@@ -818,7 +818,7 @@ Issue Ticketing Ready
   Directory: /Users/dev/myproject
   Project:   myproject
 
-Tip: Run `do-work start` in another terminal to process the queue.
+Tip: Run `brain-runner start` in another terminal to process the queue.
 
 Describe issues or features to file. I'll dispatch an agent to investigate
 and queue the findings.
@@ -833,7 +833,7 @@ Dispatching investigation...
 
 ✅ Queued: "Fix scanner execution error" 🟡 medium
   Files: src/scanner.ts, src/components/Scanner.tsx
-  Status: pending (visible to do-work)
+  Status: pending (visible to brain-runner)
 
 What else?
 > add dark mode to the app
@@ -887,7 +887,7 @@ Dispatching investigation...
 
 ✅ Queued: "Fix navigation tab highlighting" 🟢 low
   Files: src/layouts/AppLayout.tsx
-  Status: pending (visible to do-work)
+  Status: pending (visible to brain-runner)
 
 What else?
 > add user authentication and make sure it all works together
@@ -944,7 +944,7 @@ Task Queue (project: myproject):
     ├── ⏳ Protect routes (waiting on #2, #3)
     └── ✓ Final checkout (waiting on all)
 
-Tip: Run `do-work start` to process pending tasks.
+Tip: Run `brain-runner start` to process pending tasks.
 
 What else?
 > stop
@@ -956,7 +956,7 @@ Queue summary (project: myproject):
   Features: 2 (dark-mode: 3 tasks, auth-system: 5 tasks)
 
 Next steps:
-  - Run `do-work start` to process pending tasks
+  - Run `brain-runner start` to process pending tasks
   - Run `/validate` after tasks complete to verify
 ```
 

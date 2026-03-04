@@ -1,10 +1,10 @@
 ---
-description: Convert implementation plans into dependency-aware task queues for autonomous execution by do-work
+description: Convert implementation plans into dependency-aware task queues for autonomous execution by brain-runner
 ---
 
 # /plan-to-tasks - Plan to Task Queue
 
-Convert a structured implementation plan into executable tasks with proper dependency ordering for do-work to process autonomously.
+Convert a structured implementation plan into executable tasks with proper dependency ordering for brain-runner to process autonomously.
 
 **Project:** `$1` (optional - defaults to brain's auto-generated project ID)
 
@@ -29,15 +29,15 @@ Convert a structured implementation plan into executable tasks with proper depen
 5. **Presents task graph** - Interactive editing before commit
 6. **Creates tasks as drafts** - All tasks created with `status: "draft"` first
 7. **Batch promotes to pending** - After ALL tasks created, promotes them to `status: "pending"`
-8. **Hands off to do-work** - Ready for autonomous execution
+8. **Hands off to brain-runner** - Ready for autonomous execution
 
 **Why draft-then-promote?**
-- Prevents race condition where do-work executes tasks before all dependencies are filed
-- Ensures complete dependency graph exists before any task becomes visible to do-work
+- Prevents race condition where brain-runner executes tasks before all dependencies are filed
+- Ensures complete dependency graph exists before any task becomes visible to brain-runner
 - Atomic: either all tasks become pending together, or none do (on failure)
 
 **This command does NOT:**
-- Implement any code (do-work handles that)
+- Implement any code (brain-runner handles that)
 - Extract plans from vague discussions (requires structured plan)
 - Skip validation (always checks feasibility first)
 - Create parent/container tasks (only creates executable tasks)
@@ -472,7 +472,7 @@ edit>
 
 **CRITICAL: Draft-then-promote pattern!**
 
-To prevent race conditions where do-work picks up tasks before the full dependency graph is established:
+To prevent race conditions where brain-runner picks up tasks before the full dependency graph is established:
 1. Create ALL tasks as `status: "draft"` first
 2. After the LAST task is created, batch-promote ALL to `status: "pending"`
 
@@ -509,26 +509,26 @@ Then promote all to pending in one batch.
 task_paths = []
 
 for each task in sorted_tasks:
-  path = brain_save(
+   path = brain_save(
     type: "task",
     title: "$TASK_TITLE",
-    status: "draft",  # DRAFT first - not visible to do-work yet
+    status: "draft",  # DRAFT first - not visible to brain-runner yet
     priority: "$PRIORITY",
     project: PROJECT,  # omit if null
     depends_on: ["$DEP_TASK_TITLE_1", "$DEP_TASK_TITLE_2"],  # USE THIS FIELD - omit if empty
-    tags: ["do-work", slugify("$PLAN_TITLE")],
+    tags: ["brain-runner", slugify("$PLAN_TITLE")],
     user_original_request: "$PLAN_TITLE: $TASK_DESCRIPTION",
     content: @task_content
   )
   task_paths.append(path)
 
-# Step 2: BATCH PROMOTE - All tasks created, now make them visible to do-work
+# Step 2: BATCH PROMOTE - All tasks created, now make them visible to brain-runner
 for each path in task_paths:
   brain_update(path: path, status: "pending")
 ```
 
 **Why draft-then-promote?**
-- Prevents race condition where do-work executes tasks before all dependencies are filed
+- Prevents race condition where brain-runner executes tasks before all dependencies are filed
 - Ensures the complete dependency graph exists before any task becomes visible
 - Atomic: either all tasks become pending together, or none do (on failure)
 
@@ -548,7 +548,7 @@ All N tasks created as drafts. Promoting to pending...
 ```
 
 ```
-# Promote all tasks to pending (makes them visible to do-work)
+# Promote all tasks to pending (makes them visible to brain-runner)
 for each path in task_paths:
   brain_update(path: path, status: "pending")
 ```
@@ -579,7 +579,7 @@ Execution order:
   5. #6 runs after both #4 and #5 complete
 
 Next steps:
-  - Run `do-work start $PROJECT` to begin autonomous execution
+  - Run `brain-runner start $PROJECT` to begin autonomous execution
   - Run `/do status` to monitor progress
 
 Brain paths:
@@ -617,7 +617,7 @@ Task $N of $TOTAL
 $RELEVANT_NOTES_FROM_VALIDATION
 
 ## Implementation Notes
-_To be filled by do-work during execution_
+_To be filled by brain-runner during execution_
 ```
 
 **Do NOT include a "Dependencies" section in the content.** The `depends_on` field handles this.
@@ -862,7 +862,7 @@ Execution order:
   6. #8 and #9 run in parallel after #7
 
 Next steps:
-  - Run `do-work start myproject` to begin autonomous execution
+  - Run `brain-runner start myproject` to begin autonomous execution
   - Run `/do status` to monitor progress
 
 Brain paths:
@@ -881,8 +881,8 @@ Brain paths:
 |-----------|-------------------|
 | `brain_recall` | Load existing plans from brain |
 | `brain_save` | Create task entries with `depends_on` field |
-| `do-work` skill | Processes the queued tasks |
-| `do-work` script | Handles dependency resolution at runtime |
+| `do-work-queue` skill | Processes the queued tasks |
+| `brain-runner` | Handles dependency resolution at runtime |
 | `/do status` | Monitor queue progress |
 | `explore` agent | Validates plan feasibility |
 

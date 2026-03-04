@@ -61,7 +61,7 @@ export class OpencodeExecutor {
   // ========================================
 
   buildPrompt(task: ResolvedTask, isResume: boolean): string {
-    // If direct_prompt is set, use it verbatim (bypasses do-work skill workflow)
+    // If direct_prompt is set, use it verbatim (bypasses do-work-queue skill workflow)
     if (task.direct_prompt) {
       if (isDebugEnabled()) {
         console.log(`[OpencodeExecutor] Using direct_prompt for task: ${task.id}`);

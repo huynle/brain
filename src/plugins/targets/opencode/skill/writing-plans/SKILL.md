@@ -28,7 +28,7 @@ Assume they are a skilled developer, but know almost nothing about our toolset o
 - [ ] Step 10: For each task: include verification command (Step 4)
 - [ ] Step 11: For each task: include commit command (Step 5)
 - [ ] Step 12: Save plan file
-- [ ] Step 13: Hand off to do-work for execution
+- [ ] Step 13: Hand off to brain-runner for execution
 
 **Save plans to:** `docs/plans/YYYY-MM-DD-<feature-name>.md`
 
@@ -109,11 +109,11 @@ git commit -m "feat: add specific feature"
 
 ## Execution Handoff
 
-After plan is complete, hand off to do-work:
+After plan is complete, hand off to brain-runner:
 
 1. Create tasks with dependencies using brain_save(type: "task", depends_on: [...])
-2. User starts execution: `do-work start <project> --foreground --tui`
-3. The do-work script handles parallel execution and dependency resolution
+2. User starts execution: `brain-runner start <project> --foreground --tui`
+3. The brain-runner handles parallel execution and dependency resolution
 
 **Report to user:**
 
@@ -122,8 +122,8 @@ Plan complete and saved to `docs/plans/<filename>.md`.
 
 Tasks created in brain with dependencies. To execute:
 
-  do-work graph <project>    # Review task dependencies
-  do-work start <project> --foreground --tui
+  brain-runner graph <project>    # Review task dependencies
+  brain-runner start <project> --foreground --tui
 
 Or use `/do` to capture additional tasks and `/work` for manual processing.
 ```

@@ -278,7 +278,7 @@ export const CreateEntryRequestSchema = z.object({
   feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
   // OpenCode execution options (for tasks)
   direct_prompt: z.string().optional().openapi({ 
-    description: "Direct prompt to execute, bypassing do-work skill workflow. The prompt is sent verbatim to OpenCode.",
+    description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim to OpenCode.",
     example: "/fix-tests src/api/entries.ts" 
   }),
   agent: z.string().optional().openapi({ 
@@ -350,7 +350,7 @@ export const UpdateEntryRequestSchema = z.object({
   feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
   // OpenCode execution options (for tasks)
   direct_prompt: z.string().optional().openapi({ 
-    description: "Direct prompt to execute, bypassing do-work skill workflow",
+    description: "Direct prompt to execute, bypassing default skill workflow",
     example: "/fix-tests src/api/entries.ts" 
   }),
   agent: z.string().optional().openapi({ 
@@ -637,7 +637,7 @@ export const TaskSchema = z.object({
   feature_depends_on: z.array(z.string()).optional().openapi({ description: "Feature IDs this feature depends on" }),
   // OpenCode execution options (optional)
   direct_prompt: z.string().nullable().openapi({ 
-    description: "Direct prompt to execute, bypassing do-work skill workflow",
+    description: "Direct prompt to execute, bypassing default skill workflow",
     example: "/fix-tests src/api/entries.ts"
   }),
   agent: z.string().nullable().openapi({ 

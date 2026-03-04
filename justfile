@@ -39,11 +39,7 @@ check: typecheck test
 brain *args:
     bun run src/cli/brain.ts {{args}}
 
-# Test do-work CLI
-do-work *args:
-    bun run src/cli/do-work.ts {{args}}
-
-# Test runner directly
+# Test brain-runner CLI
 runner *args:
     bun run src/runner/index.ts {{args}}
 
@@ -60,20 +56,20 @@ install: build-cli
     mkdir -p ~/.local/bin
     cp dist/brain ~/.local/bin/brain
     cp dist/brain-server ~/.local/bin/brain-server
-    cp dist/do-work ~/.local/bin/do-work
-    chmod +x ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/do-work
-    @echo "Installed brain, brain-server, and do-work to ~/.local/bin"
+    cp dist/brain-runner ~/.local/bin/brain-runner
+    chmod +x ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/brain-runner
+    @echo "Installed brain, brain-server, and brain-runner to ~/.local/bin"
 
 # Build standalone CLI executables
 build-cli:
     bun build src/cli/brain.ts --compile --outfile dist/brain
     bun build src/index.ts --compile --outfile dist/brain-server
-    bun build src/cli/do-work.ts --compile --outfile dist/do-work
+    bun build src/runner/index.ts --compile --outfile dist/brain-runner
 
 # Uninstall CLI tools
 uninstall:
-    rm -f ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/do-work
-    @echo "Removed brain, brain-server, and do-work from ~/.local/bin"
+    rm -f ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/brain-runner
+    @echo "Removed brain, brain-server, and brain-runner from ~/.local/bin"
 
 # =============================================================================
 # Tunnel (FRP)

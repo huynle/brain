@@ -1,7 +1,7 @@
 /**
  * Task Dependency Resolution
  *
- * Ported from do-work bash script jq logic.
+ * Task dependency graph algorithms.
  * Handles: dependency resolution, cycle detection, task classification.
  */
 

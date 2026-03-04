@@ -95,7 +95,6 @@ This installs the following CLI commands:
 - `brain` - Server management and diagnostics
 - `brain-server` - API server (used internally)
 - `brain-runner` - Task runner with TUI
-- `do-work` - Quick task runner wrapper
 
 ### From Source
 
@@ -556,26 +555,6 @@ brain-runner logs [-f]
 | `-w, --workdir DIR` | Working directory |
 | `--dry-run` | Log actions without executing |
 | `-v, --verbose` | Enable verbose logging |
-
-## do-work CLI
-
-The `do-work` command is a convenient wrapper for quick task queue operations:
-
-```bash
-# Process tasks for a project
-do-work start myproject
-
-# With TUI dashboard
-do-work start myproject --tui
-
-# View ready tasks
-do-work ready myproject
-
-# List all tasks
-do-work list myproject
-```
-
-This is an alias for `brain-runner` with commonly used defaults.
 
 ## Environment Variables
 

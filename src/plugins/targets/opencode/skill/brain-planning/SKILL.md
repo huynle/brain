@@ -97,11 +97,11 @@ All planning work should use the brain as the source of truth. This ensures:
   - Tasks: {N} with dependencies configured
   
   To execute:
-    do-work graph {projectId}    # Review dependencies
-    do-work start {projectId} --foreground --tui
+    brain-runner graph {projectId}    # Review dependencies
+    brain-runner start {projectId} --foreground --tui
   ```
-- [ ] Step 3: Explain that do-work handles dependency resolution
-- [ ] Step 4: User runs do-work separately to start execution
+- [ ] Step 3: Explain that brain-runner handles dependency resolution
+- [ ] Step 4: User runs brain-runner separately to start execution
 
 ## Plan Structure Template
 
@@ -159,14 +159,14 @@ Any additional context, decisions made, or caveats.
 - **Skip the checklist** - Leads to inconsistent plan management
 - **Forget to capture task IDs** - Can't build dependency chain
 
-## Integration with do-work
+## Integration with brain-runner
 
 When handing off to execution, the brain-based workflow enables:
 
-1. **Dependency Resolution**: do-work resolves task dependencies automatically
+1. **Dependency Resolution**: brain-runner resolves task dependencies automatically
 2. **Parallel Execution**: Tasks with no dependencies run concurrently
-3. **Progress Tracking**: do-work monitors task status via Brain API
-4. **Interruption Recovery**: do-work resumes interrupted tasks gracefully
+3. **Progress Tracking**: brain-runner monitors task status via Brain API
+4. **Interruption Recovery**: brain-runner resumes interrupted tasks gracefully
 
 ## Tips
 
@@ -176,4 +176,4 @@ When handing off to execution, the brain-based workflow enables:
 4. **Capture task IDs** - Essential for building dependency chains
 5. **Set priorities correctly** - 🔴 high for blocking tasks
 6. **Link related tasks** - Use depends_on for execution order
-7. **Run do-work graph** - Verify dependencies before execution
+7. **Run brain-runner graph** - Verify dependencies before execution

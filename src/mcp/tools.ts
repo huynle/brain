@@ -69,7 +69,7 @@ export function registerBrainTools(server: McpServer): void {
       execution_mode: z.enum(["worktree", "current_branch"]).optional().describe("Task execution mode (default: worktree)"),
 
       complete_on_idle: z.boolean().optional().describe("Mark task as completed when agent becomes idle (default: false)"),
-      direct_prompt: z.string().optional().describe("Direct prompt to execute, bypassing do-work skill workflow"),
+      direct_prompt: z.string().optional().describe("Direct prompt to execute, bypassing default skill workflow"),
       agent: z.string().optional().describe("Override agent for this task (e.g., 'explore', 'tdd-dev')"),
       model: z.string().optional().describe("Override model (format: 'provider/model-id')"),
       schedule: z.string().optional().describe("Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *')"),
@@ -252,7 +252,7 @@ export function registerBrainTools(server: McpServer): void {
       feature_id: z.string().optional().describe("Feature group identifier (e.g., 'auth-system', 'payment-flow')"),
       feature_priority: z.enum(["high", "medium", "low"]).optional().describe("Priority for this feature group"),
       feature_depends_on: z.array(z.string()).optional().describe("Feature IDs this feature depends on"),
-      direct_prompt: z.string().optional().describe("Direct prompt to execute, bypassing do-work skill workflow"),
+      direct_prompt: z.string().optional().describe("Direct prompt to execute, bypassing default skill workflow"),
       agent: z.string().optional().describe("Override agent for this task (e.g., 'explore', 'tdd-dev')"),
       model: z.string().optional().describe("Override model (format: 'provider/model-id')"),
     },

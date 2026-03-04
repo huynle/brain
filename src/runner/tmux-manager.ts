@@ -4,7 +4,7 @@
  * Manages tmux dashboard layout for dashboard mode execution.
  * Provides visual interface showing task status and OpenCode panes.
  *
- * Layout matches do-work script:
+ * Dashboard layout:
  * +------------------+---------------------------+
  * |                  |                           |
  * |   Task List      |    OpenCode/Tasks         |
@@ -446,7 +446,7 @@ while true; do sleep 60; done
   }
 
   /**
-   * Create the dashboard layout matching do-work:
+   * Create the dashboard layout:
    * +------------------+---------------------------+
    * |                  |                           |
    * |   Task List      |    OpenCode/Tasks         |
@@ -529,7 +529,7 @@ while true; do sleep 60; done
 
   /**
    * Add a pane for a task in the dashboard (creates the pane).
-   * Matches do-work's create_task_pane function:
+   * Creates a task pane in the dashboard:
    * - First task: replaces placeholder pane (split above logs, takes 80%)
    * - Additional tasks: split horizontally from last task pane
    * 

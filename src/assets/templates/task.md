@@ -27,7 +27,7 @@ created: {{format-date now}}
 {{/if}}{{#if extra.merge_strategy}}merge_strategy: {{extra.merge_strategy}}
 {{/if}}{{#if extra.remote_branch_policy}}remote_branch_policy: {{extra.remote_branch_policy}}
 {{/if}}{{#if extra.open_pr_before_merge}}open_pr_before_merge: {{extra.open_pr_before_merge}}
-{{/if}}{{#if extra.checkout_enabled}}checkout_enabled: {{extra.checkout_enabled}}
+
 {{/if}}{{#if extra.complete_on_idle}}complete_on_idle: {{extra.complete_on_idle}}
 {{/if}}{{#if extra.generated}}generated: {{extra.generated}}
 {{/if}}{{#if extra.generated_kind}}generated_kind: {{extra.generated_kind}}

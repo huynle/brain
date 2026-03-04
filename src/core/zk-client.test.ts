@@ -150,7 +150,6 @@ describe("generateFrontmatter()", () => {
         merge_strategy: "squash",
         open_pr_before_merge: true,
         execution_mode: "worktree",
-        checkout_enabled: true,
       });
 
       expect(fm).toContain("merge_target_branch: main");
@@ -158,7 +157,6 @@ describe("generateFrontmatter()", () => {
       expect(fm).toContain("merge_strategy: squash");
       expect(fm).toContain("open_pr_before_merge: true");
       expect(fm).toContain("execution_mode: worktree");
-      expect(fm).toContain("checkout_enabled: true");
     });
 
     test("includes all execution context fields together", () => {
@@ -529,7 +527,6 @@ merge_policy: auto_merge
 merge_strategy: squash
 open_pr_before_merge: false
 execution_mode: current_branch
-checkout_enabled: true
 ---
 
 Body`;
@@ -540,7 +537,6 @@ Body`;
     expect(frontmatter.merge_strategy).toBe("squash");
     expect(frontmatter.open_pr_before_merge).toBe(false);
     expect(frontmatter.execution_mode).toBe("current_branch");
-    expect(frontmatter.checkout_enabled).toBe(true);
   });
 
   test("parses explicit generated false", () => {
@@ -994,7 +990,6 @@ describe("serializeFrontmatter()", () => {
       merge_strategy: "squash",
       open_pr_before_merge: false,
       execution_mode: "worktree",
-      checkout_enabled: true,
       user_original_request: "Do the thing",
     };
     const result = serializeFrontmatter(fm);
@@ -1011,7 +1006,6 @@ describe("serializeFrontmatter()", () => {
     expect(result).toContain("merge_strategy: squash");
     expect(result).toContain("open_pr_before_merge: false");
     expect(result).toContain("execution_mode: worktree");
-    expect(result).toContain("checkout_enabled: true");
     expect(result).toContain("user_original_request: Do the thing");
   });
 

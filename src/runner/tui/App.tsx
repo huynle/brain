@@ -139,7 +139,6 @@ const STATUS_LABELS: Record<string, string> = {
 };
 
 const BOOLEAN_METADATA_FIELDS: ReadonlySet<MetadataField> = new Set([
-  'checkout_enabled',
   'complete_on_idle',
   'open_pr_before_merge',
   'schedule_enabled',
@@ -225,7 +224,6 @@ type MetadataPrefillValues = {
   git_branch: string;
   merge_target_branch: string;
   execution_mode: ExecutionMode;
-  checkout_enabled: boolean;
   complete_on_idle: boolean;
   merge_policy: MergePolicy;
   merge_strategy: MergeStrategy;
@@ -246,7 +244,6 @@ const DEFAULT_METADATA_PREFILL: MetadataPrefillValues = {
   git_branch: '',
   merge_target_branch: '',
   execution_mode: 'worktree',
-  checkout_enabled: true,
   complete_on_idle: false,
   merge_policy: 'auto_merge',
   merge_strategy: 'squash',
@@ -313,7 +310,7 @@ export function buildMetadataPrefillFromTasks(
     git_branch: sharedString(tasks, (task) => task.gitBranch),
     merge_target_branch: sharedString(tasks, (task) => task.mergeTargetBranch),
     execution_mode: sharedEnum(tasks, (task) => task.executionMode, 'worktree'),
-    checkout_enabled: sharedBoolean(tasks, (task) => task.checkoutEnabled, true),
+
     complete_on_idle: sharedBoolean(tasks, (task) => task.completeOnIdle, false),
     merge_policy: sharedEnum(tasks, (task) => task.mergePolicy, 'auto_merge'),
     merge_strategy: sharedEnum(tasks, (task) => task.mergeStrategy, 'squash'),
@@ -377,7 +374,7 @@ export function detectMixedFields(
 
   // Boolean fields
   const boolChecks: Array<[MetadataField, (task: TaskDisplay) => boolean | null | undefined, boolean]> = [
-    ['checkout_enabled', (task) => task.checkoutEnabled, true],
+
     ['complete_on_idle', (task) => task.completeOnIdle, false],
     ['open_pr_before_merge', (task) => task.openPrBeforeMerge, false],
     ['schedule_enabled', (task) => task.scheduleEnabled, true],
@@ -878,7 +875,7 @@ export function App({
   const [metadataBranchValue, setMetadataBranchValue] = useState('');
   const [metadataMergeTargetBranchValue, setMetadataMergeTargetBranchValue] = useState('');
   const [metadataExecutionModeValue, setMetadataExecutionModeValue] = useState<ExecutionMode>('worktree');
-  const [metadataCheckoutEnabledValue, setMetadataCheckoutEnabledValue] = useState<boolean>(true);
+
   const [metadataCompleteOnIdleValue, setMetadataCompleteOnIdleValue] = useState<boolean>(false);
   const [metadataMergePolicyValue, setMetadataMergePolicyValue] = useState<MergePolicy>('auto_merge');
   const [metadataMergeStrategyValue, setMetadataMergeStrategyValue] = useState<MergeStrategy>('squash');
@@ -910,7 +907,6 @@ export function App({
     git_branch: string;
     merge_target_branch: string;
     execution_mode: ExecutionMode;
-    checkout_enabled: boolean;
     complete_on_idle: boolean;
     merge_policy: MergePolicy;
     merge_strategy: MergeStrategy;
@@ -929,7 +925,6 @@ export function App({
     git_branch: '',
     merge_target_branch: '',
     execution_mode: 'worktree',
-    checkout_enabled: true,
     complete_on_idle: false,
     merge_policy: 'auto_merge',
     merge_strategy: 'squash',
@@ -1376,7 +1371,6 @@ export function App({
       remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: ExecutionMode;
-      checkout_enabled?: boolean;
       complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;
@@ -1401,9 +1395,7 @@ export function App({
     if (metadataExecutionModeValue !== metadataOriginalValues.execution_mode) {
       changedFields.execution_mode = metadataExecutionModeValue;
     }
-    if (metadataCheckoutEnabledValue !== metadataOriginalValues.checkout_enabled) {
-      changedFields.checkout_enabled = metadataCheckoutEnabledValue;
-    }
+
     if (metadataCompleteOnIdleValue !== metadataOriginalValues.complete_on_idle) {
       changedFields.complete_on_idle = metadataCompleteOnIdleValue;
     }
@@ -1484,7 +1476,7 @@ export function App({
     metadataBranchValue,
     metadataMergeTargetBranchValue,
     metadataExecutionModeValue,
-    metadataCheckoutEnabledValue,
+
     metadataCompleteOnIdleValue,
     metadataMergePolicyValue,
     metadataMergeStrategyValue,
@@ -1518,7 +1510,7 @@ export function App({
     setMetadataBranchValue(task.gitBranch || '');
     setMetadataMergeTargetBranchValue(task.mergeTargetBranch || '');
     setMetadataExecutionModeValue(task.executionMode || 'worktree');
-    setMetadataCheckoutEnabledValue(task.checkoutEnabled ?? true);
+
     setMetadataCompleteOnIdleValue(task.completeOnIdle ?? false);
     setMetadataMergePolicyValue(task.mergePolicy || 'auto_merge');
     setMetadataMergeStrategyValue(task.mergeStrategy || 'squash');
@@ -1538,7 +1530,7 @@ export function App({
       git_branch: task.gitBranch || '',
       merge_target_branch: task.mergeTargetBranch || '',
       execution_mode: task.executionMode || 'worktree',
-      checkout_enabled: task.checkoutEnabled ?? true,
+
       complete_on_idle: task.completeOnIdle ?? false,
       merge_policy: task.mergePolicy || 'auto_merge',
       merge_strategy: task.mergeStrategy || 'squash',
@@ -1791,7 +1783,7 @@ export function App({
             return;
           }
           updates.remote_branch_policy = normalizedValue as RemoteBranchPolicy;
-        } else if (field === 'checkout_enabled' || field === 'open_pr_before_merge' || field === 'schedule_enabled') {
+        } else if (field === 'open_pr_before_merge' || field === 'schedule_enabled') {
           if (typeof normalizedValue !== 'string') {
             return;
           }
@@ -1844,7 +1836,7 @@ export function App({
             ...(field === 'merge_policy' ? { merge_policy: updates.merge_policy as MergePolicy } : {}),
             ...(field === 'merge_strategy' ? { merge_strategy: updates.merge_strategy as MergeStrategy } : {}),
             ...(field === 'remote_branch_policy' ? { remote_branch_policy: updates.remote_branch_policy as RemoteBranchPolicy } : {}),
-            ...(field === 'checkout_enabled' ? { checkout_enabled: updates.checkout_enabled as boolean } : {}),
+
             ...(field === 'complete_on_idle' ? { complete_on_idle: updates.complete_on_idle as boolean } : {}),
             ...(field === 'open_pr_before_merge' ? { open_pr_before_merge: updates.open_pr_before_merge as boolean } : {}),
             ...(field === 'schedule_enabled' ? { schedule_enabled: updates.schedule_enabled as boolean } : {}),
@@ -1852,7 +1844,7 @@ export function App({
             field !== 'merge_policy' &&
             field !== 'merge_strategy' &&
             field !== 'remote_branch_policy' &&
-            field !== 'checkout_enabled' &&
+
             field !== 'complete_on_idle' &&
             field !== 'open_pr_before_merge' &&
             field !== 'schedule_enabled'
@@ -2103,9 +2095,7 @@ export function App({
               case 'execution_mode':
                 currentValue = metadataExecutionModeValue;
                 break;
-              case 'checkout_enabled':
-                currentValue = metadataCheckoutEnabledValue ? 'true' : 'false';
-                break;
+
               case 'complete_on_idle':
                 currentValue = metadataCompleteOnIdleValue ? 'true' : 'false';
                 break;
@@ -2171,11 +2161,7 @@ export function App({
                 setMetadataExecutionModeValue(value as ExecutionMode);
               }
               break;
-            case 'checkout_enabled':
-              if (value === 'true' || value === 'false') {
-                setMetadataCheckoutEnabledValue(value === 'true');
-              }
-              break;
+
             case 'complete_on_idle':
               if (value === 'true' || value === 'false') {
                 setMetadataCompleteOnIdleValue(value === 'true');
@@ -3177,7 +3163,7 @@ export function App({
         setMetadataBranchValue(prefill.git_branch);
         setMetadataMergeTargetBranchValue(prefill.merge_target_branch);
         setMetadataExecutionModeValue(prefill.execution_mode);
-        setMetadataCheckoutEnabledValue(prefill.checkout_enabled);
+
         setMetadataCompleteOnIdleValue(prefill.complete_on_idle);
         setMetadataMergePolicyValue(prefill.merge_policy);
         setMetadataMergeStrategyValue(prefill.merge_strategy);
@@ -3197,7 +3183,7 @@ export function App({
           git_branch: prefill.git_branch,
           merge_target_branch: prefill.merge_target_branch,
           execution_mode: prefill.execution_mode,
-           checkout_enabled: prefill.checkout_enabled,
+
            complete_on_idle: prefill.complete_on_idle,
            merge_policy: prefill.merge_policy,
            merge_strategy: prefill.merge_strategy,
@@ -3952,7 +3938,7 @@ export function App({
           branchValue={metadataBranchValue}
           mergeTargetBranchValue={metadataMergeTargetBranchValue}
           executionModeValue={metadataExecutionModeValue}
-          checkoutEnabledValue={metadataCheckoutEnabledValue}
+
           completeOnIdleValue={metadataCompleteOnIdleValue}
           mergePolicyValue={metadataMergePolicyValue}
           mergeStrategyValue={metadataMergeStrategyValue}

@@ -60,8 +60,7 @@ export function mapZkNoteToTask(note: ZkNote): Task {
       (note.metadata?.open_pr_before_merge as boolean) || false,
     execution_mode:
       (note.metadata?.execution_mode as Task["execution_mode"]) || "worktree",
-    checkout_enabled:
-      (note.metadata?.checkout_enabled as boolean) ?? true,
+
     complete_on_idle:
       (note.metadata?.complete_on_idle as boolean) ?? false,
     user_original_request:

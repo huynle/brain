@@ -163,7 +163,7 @@ export interface BrainEntry {
   remote_branch_policy?: RemoteBranchPolicy; // Remote branch cleanup policy after successful auto-merge
   open_pr_before_merge?: boolean; // Whether to open PR before merge
   execution_mode?: ExecutionMode; // How task executes: worktree or current branch
-  checkout_enabled?: boolean; // Whether dedicated checkout/worktree flow is enabled
+
   complete_on_idle?: boolean; // Mark task completed instead of blocked when agent goes idle
 
   // User intent for validation
@@ -216,7 +216,7 @@ export interface CreateEntryRequest {
   remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
-  checkout_enabled?: boolean;
+
   complete_on_idle?: boolean;
 
   // User intent for validation
@@ -277,7 +277,7 @@ export interface UpdateEntryRequest {
   remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
-  checkout_enabled?: boolean;
+
   complete_on_idle?: boolean;
   // Feature grouping (for task organization)
   feature_id?: string;
@@ -461,7 +461,7 @@ export interface Task {
   remote_branch_policy?: RemoteBranchPolicy;
   open_pr_before_merge?: boolean;
   execution_mode?: ExecutionMode;
-  checkout_enabled?: boolean;
+
   complete_on_idle?: boolean;
   user_original_request: string | null; // Verbatim user request for validation during task completion
 

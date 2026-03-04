@@ -143,7 +143,7 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('3 tasks');
     });
 
-    it('shows all 13 fields in feature mode (merged task + feature settings)', () => {
+    it('shows all 12 fields in feature mode (merged task + feature settings)', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...defaultProps}
@@ -152,7 +152,7 @@ describe('MetadataPopup', () => {
           focusedField="status"
           mergeTargetBranchValue="main"
           executionModeValue="worktree"
-          checkoutEnabledValue={true}
+
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
           remoteBranchPolicyValue="delete"
@@ -172,7 +172,6 @@ describe('MetadataPopup', () => {
       // Git / Branch group
       expect(frame).toContain('Branch:');
       expect(frame).toContain('Workdir:');
-      expect(frame).toContain('Checkout Enabled:');
       // Merge / PR group
       expect(frame).toContain('Merge Target:');
       expect(frame).toContain('Merge Policy:');
@@ -190,7 +189,7 @@ describe('MetadataPopup', () => {
           focusedField="status"
           mergeTargetBranchValue="main"
           executionModeValue="worktree"
-          checkoutEnabledValue={true}
+
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
           remoteBranchPolicyValue="delete"
@@ -223,7 +222,7 @@ describe('MetadataPopup', () => {
           focusedField="execution_mode"
           executionModeValue="worktree"
           mergeTargetBranchValue="main"
-          checkoutEnabledValue={true}
+
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
           remoteBranchPolicyValue="delete"
@@ -273,7 +272,7 @@ describe('MetadataPopup', () => {
           focusedField="execution_mode"
           executionModeValue="worktree"
           mergeTargetBranchValue="main"
-          checkoutEnabledValue={true}
+
           mergePolicyValue="prompt_only"
           mergeStrategyValue="squash"
           remoteBranchPolicyValue="delete"
@@ -590,7 +589,7 @@ describe('MetadataPopup', () => {
       batchCount: 3,
       executionModeValue: 'worktree' as const,
       mergeTargetBranchValue: 'main',
-      checkoutEnabledValue: true,
+
       mergePolicyValue: 'prompt_only' as const,
       mergeStrategyValue: 'squash' as const,
       remoteBranchPolicyValue: 'delete' as const,
@@ -1024,7 +1023,7 @@ describe('MetadataPopup', () => {
           branchValue=""
           executionModeValue="worktree"
           mergeTargetBranchValue=""
-          checkoutEnabledValue={true}
+
           mergePolicyValue="auto_merge"
           mergeStrategyValue="squash"
           remoteBranchPolicyValue="delete"

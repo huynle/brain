@@ -170,7 +170,7 @@ export const BrainEntrySchema = z.object({
   remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge when enabled", default: false }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for task work", default: "worktree" }),
-  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution for this task", default: true }),
+
   user_original_request: z.string().optional().openapi({ 
     description: "Verbatim user request for validation during task completion",
     example: "Add a dark mode toggle to the settings page" 
@@ -267,7 +267,6 @@ export const CreateEntryRequestSchema = z.object({
   remote_branch_policy: RemoteBranchPolicySchema.optional().default("delete").openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", default: "worktree" }),
-  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
   complete_on_idle: z.boolean().optional().openapi({ description: "Mark task completed instead of blocked when agent goes idle", default: false }),
   user_original_request: z.string().optional().openapi({
     description: "Verbatim user request for validation during task completion. Highly recommended for tasks to enable intent verification. Supports multiline content, code blocks, and special characters.",
@@ -343,7 +342,7 @@ export const UpdateEntryRequestSchema = z.object({
   remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge" }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for the task", example: "worktree" }),
-  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution" }),
+
   complete_on_idle: z.boolean().optional().openapi({ description: "Mark task completed instead of blocked when agent goes idle" }),
   // Feature grouping for task organization
   feature_id: z.string().optional().openapi({ description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')" }),
@@ -395,8 +394,8 @@ export const UpdateEntryRequestSchema = z.object({
     example: "manual",
   }),
 }).refine(
-  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.schedule_enabled !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.remote_branch_policy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.checkout_enabled !== undefined || data.complete_on_idle !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
-  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, schedule_enabled, next_run, max_runs, starts_at, expires_at, run_once_at, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
+  (data) => data.status !== undefined || data.title !== undefined || data.content !== undefined || data.append !== undefined || data.note !== undefined || data.depends_on !== undefined || data.tags !== undefined || data.priority !== undefined || data.schedule !== undefined || data.schedule_enabled !== undefined || data.next_run !== undefined || data.max_runs !== undefined || data.starts_at !== undefined || data.expires_at !== undefined || data.run_once_at !== undefined || data.runs !== undefined || data.target_workdir !== undefined || data.git_branch !== undefined || data.merge_target_branch !== undefined || data.merge_policy !== undefined || data.merge_strategy !== undefined || data.remote_branch_policy !== undefined || data.open_pr_before_merge !== undefined || data.execution_mode !== undefined || data.complete_on_idle !== undefined || data.feature_id !== undefined || data.feature_priority !== undefined || data.feature_depends_on !== undefined || data.direct_prompt !== undefined || data.agent !== undefined || data.model !== undefined || data.sessions !== undefined || data.run_finalizations !== undefined || data.generated !== undefined || data.generated_kind !== undefined || data.generated_key !== undefined || data.generated_by !== undefined,
+  { message: "At least one of status, title, content, append, note, depends_on, tags, priority, schedule, schedule_enabled, next_run, max_runs, starts_at, expires_at, run_once_at, runs, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, remote_branch_policy, open_pr_before_merge, execution_mode, complete_on_idle, feature_id, feature_priority, feature_depends_on, direct_prompt, agent, model, sessions, run_finalizations, generated, generated_kind, generated_key, or generated_by must be provided" }
 ).openapi("UpdateEntryRequest");
 
 // =============================================================================
@@ -632,7 +631,6 @@ export const TaskSchema = z.object({
   remote_branch_policy: RemoteBranchPolicySchema.optional().openapi({ description: "Remote branch handling after successful auto-merge", default: "delete" }),
   open_pr_before_merge: z.boolean().optional().openapi({ description: "Open PR before merge", default: false }),
   execution_mode: ExecutionModeSchema.optional().openapi({ description: "Execution mode for this task", default: "worktree" }),
-  checkout_enabled: z.boolean().optional().openapi({ description: "Enable checkout/worktree execution", default: true }),
   // Feature grouping (optional)
   feature_id: z.string().optional().openapi({ description: "Feature group identifier", example: "auth-system" }),
   feature_priority: PrioritySchema.optional().openapi({ description: "Priority for this feature" }),

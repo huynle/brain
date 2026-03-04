@@ -425,7 +425,6 @@ describe("ApiClient", () => {
         remote_branch_policy: "delete",
         open_pr_before_merge: true,
         execution_mode: "current_branch",
-        checkout_enabled: true,
       });
 
       expect(capturedBody).toBe(
@@ -437,7 +436,6 @@ describe("ApiClient", () => {
           remote_branch_policy: "delete",
           open_pr_before_merge: true,
           execution_mode: "current_branch",
-          checkout_enabled: true,
         })
       );
     });

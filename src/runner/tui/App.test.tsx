@@ -387,7 +387,7 @@ describe('metadata field normalization/validation helpers', () => {
   it('normalizes enum and boolean fields for popup text input', () => {
     expect(normalizeMetadataFieldValue('execution_mode', '  WORKTREE ')).toBe('worktree');
     expect(normalizeMetadataFieldValue('merge_policy', ' AUTO ')).toBe('auto');
-    expect(normalizeMetadataFieldValue('checkout_enabled', ' TRUE ')).toBe('true');
+
   });
 
   it('trims branch-like fields without lowercasing', () => {
@@ -400,7 +400,7 @@ describe('metadata field normalization/validation helpers', () => {
     expect(validateMetadataFieldValue('merge_policy', 'prompt_only')).toBeNull();
     expect(validateMetadataFieldValue('merge_strategy', 'squash')).toBeNull();
     expect(validateMetadataFieldValue('remote_branch_policy', 'delete')).toBeNull();
-    expect(validateMetadataFieldValue('checkout_enabled', 'false')).toBeNull();
+
   });
 
   it('returns user-facing errors for invalid feature settings values', () => {
@@ -408,7 +408,7 @@ describe('metadata field normalization/validation helpers', () => {
     expect(validateMetadataFieldValue('merge_policy', 'always')).toContain('Invalid merge policy');
     expect(validateMetadataFieldValue('merge_strategy', 'octopus')).toContain('Invalid merge strategy');
     expect(validateMetadataFieldValue('remote_branch_policy', 'clean')).toContain('Invalid remote branch policy');
-    expect(validateMetadataFieldValue('checkout_enabled', 'yes')).toBe('Invalid checkout_enabled: use true or false');
+
   });
 });
 
@@ -428,7 +428,7 @@ describe('metadata bulk prefill/apply helpers', () => {
     gitBranch: 'feature/a',
     mergeTargetBranch: 'main',
     executionMode: 'worktree',
-    checkoutEnabled: true,
+
     mergePolicy: 'auto_merge',
     mergeStrategy: 'squash',
     remoteBranchPolicy: 'delete',
@@ -1474,7 +1474,7 @@ describe('App - MetadataPopup with onUpdateMetadata callback', () => {
         remote_branch_policy?: RemoteBranchPolicy;
         open_pr_before_merge?: boolean;
         execution_mode?: ExecutionMode;
-        checkout_enabled?: boolean;
+
         target_workdir?: string;
         schedule?: string;
       }

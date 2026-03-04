@@ -67,7 +67,7 @@ export function registerBrainTools(server: McpServer): void {
       remote_branch_policy: z.enum(["keep", "delete"]).optional().describe("Policy for remote branch after merge (default: delete)"),
       open_pr_before_merge: z.boolean().optional().describe("Open PR before merge when enabled (default: false)"),
       execution_mode: z.enum(["worktree", "current_branch"]).optional().describe("Task execution mode (default: worktree)"),
-      checkout_enabled: z.boolean().optional().describe("Enable checkout/worktree flow for this task (default: true)"),
+
       complete_on_idle: z.boolean().optional().describe("Mark task as completed when agent becomes idle (default: false)"),
       direct_prompt: z.string().optional().describe("Direct prompt to execute, bypassing do-work skill workflow"),
       agent: z.string().optional().describe("Override agent for this task (e.g., 'explore', 'tdd-dev')"),
@@ -246,7 +246,7 @@ export function registerBrainTools(server: McpServer): void {
       remote_branch_policy: z.enum(["keep", "delete"]).optional().describe("Policy for remote branch after merge (default: delete)"),
       open_pr_before_merge: z.boolean().optional().describe("Open PR before merge when enabled (default: false)"),
       execution_mode: z.enum(["worktree", "current_branch"]).optional().describe("Task execution mode (default: worktree)"),
-      checkout_enabled: z.boolean().optional().describe("Enable checkout/worktree flow for this task (default: true)"),
+
       complete_on_idle: z.boolean().optional().describe("Mark task as completed when agent becomes idle (default: false)"),
       schedule: z.string().optional().describe("Cron schedule expression (e.g., '*/5 * * * *')"),
       feature_id: z.string().optional().describe("Feature group identifier (e.g., 'auth-system', 'payment-flow')"),

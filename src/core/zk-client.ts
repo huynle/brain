@@ -675,12 +675,6 @@ export function parseFrontmatter(content: string): {
       continue;
     }
 
-    const checkoutEnabledMatch = line.match(/^checkout_enabled:\s*(true|false)\s*$/);
-    if (checkoutEnabledMatch) {
-      frontmatter.checkout_enabled = checkoutEnabledMatch[1] === "true";
-      inTags = false;
-      continue;
-    }
 
     const completeOnIdleMatch = line.match(/^complete_on_idle:\s*(true|false)\s*$/);
     if (completeOnIdleMatch) {
@@ -1339,9 +1333,7 @@ export function serializeFrontmatter(fm: Record<string, unknown>): string {
     lines.push(`open_pr_before_merge: ${fm.open_pr_before_merge}`);
   }
   if (fm.execution_mode) lines.push(`execution_mode: ${fm.execution_mode}`);
-  if (fm.checkout_enabled !== undefined) {
-    lines.push(`checkout_enabled: ${fm.checkout_enabled}`);
-  }
+
   if (fm.complete_on_idle !== undefined) {
     lines.push(`complete_on_idle: ${fm.complete_on_idle}`);
   }
@@ -1438,7 +1430,7 @@ export interface GenerateFrontmatterOptions {
   remote_branch_policy?: "keep" | "delete";
   open_pr_before_merge?: boolean;
   execution_mode?: "worktree" | "current_branch";
-  checkout_enabled?: boolean;
+
   complete_on_idle?: boolean;
   target_workdir?: string;
   // User intent for validation
@@ -1599,9 +1591,7 @@ export function generateFrontmatter(options: GenerateFrontmatterOptions): string
   if (options.execution_mode) {
     lines.push(`execution_mode: ${options.execution_mode}`);
   }
-  if (options.checkout_enabled !== undefined) {
-    lines.push(`checkout_enabled: ${options.checkout_enabled}`);
-  }
+
   if (options.complete_on_idle !== undefined) {
     lines.push(`complete_on_idle: ${options.complete_on_idle}`);
   }

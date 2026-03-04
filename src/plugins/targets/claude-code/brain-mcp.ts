@@ -396,7 +396,7 @@ const tools: Tool[] = [
         remote_branch_policy: { type: "string", enum: ["keep", "delete"], description: "Remote branch cleanup after merge" },
         open_pr_before_merge: { type: "boolean", description: "Require PR before merge" },
         execution_mode: { type: "string", enum: ["worktree", "current_branch"], description: "Task execution mode (default: worktree)" },
-        checkout_enabled: { type: "boolean", description: "Enable checkout/worktree flow for this task (default: true)" },
+
         complete_on_idle: { type: "boolean", description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks." },
         relatedEntries: { type: "array", items: { type: "string" }, description: "Related brain entry paths to link" },
       },
@@ -497,7 +497,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
         remote_branch_policy: { type: "string", enum: ["keep", "delete"], description: "Remote branch cleanup after merge" },
         open_pr_before_merge: { type: "boolean", description: "Require PR before merge" },
         execution_mode: { type: "string", enum: ["worktree", "current_branch"], description: "Task execution mode (default: worktree)" },
-        checkout_enabled: { type: "boolean", description: "Enable checkout/worktree flow for this task" },
+
         complete_on_idle: { type: "boolean", description: "Mark task as completed when agent becomes idle" },
         schedule: { type: "string", description: "Cron schedule expression (e.g., '*/5 * * * *')" },
         schedule_enabled: { type: "boolean", description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling." },
@@ -902,7 +902,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           remote_branch_policy: args.type === "task" ? args.remote_branch_policy : undefined,
           open_pr_before_merge: args.type === "task" ? args.open_pr_before_merge : undefined,
           execution_mode: args.type === "task" ? args.execution_mode : undefined,
-          checkout_enabled: args.type === "task" ? args.checkout_enabled : undefined,
+
           complete_on_idle: args.type === "task" ? args.complete_on_idle : undefined,
           // Only include user_original_request for tasks
           user_original_request:
@@ -1034,7 +1034,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
           remote_branch_policy: args.remote_branch_policy,
           open_pr_before_merge: args.open_pr_before_merge,
           execution_mode: args.execution_mode,
-          checkout_enabled: args.checkout_enabled,
+
           complete_on_idle: args.complete_on_idle,
           schedule: args.schedule,
           schedule_enabled: args.schedule_enabled,
@@ -1062,7 +1062,7 @@ async function handleToolCall(name: string, args: Record<string, unknown>): Prom
         if (args.remote_branch_policy) changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
         if (args.open_pr_before_merge !== undefined) changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
         if (args.execution_mode) changes.push(`Execution Mode: ${args.execution_mode}`);
-        if (args.checkout_enabled !== undefined) changes.push(`Checkout Enabled: ${args.checkout_enabled}`);
+
         if (args.complete_on_idle !== undefined) changes.push(`Complete On Idle: ${args.complete_on_idle}`);
         if (args.schedule) changes.push(`Schedule: ${args.schedule}`);
         if (args.schedule_enabled !== undefined) changes.push(`Schedule Enabled: ${args.schedule_enabled}`);

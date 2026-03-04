@@ -58,7 +58,7 @@ export interface TaskDisplay {
   remoteBranchPolicy?: RemoteBranchPolicy | null; // Remote branch handling after auto-merge
   openPrBeforeMerge?: boolean;       // Whether to require PR before merge
   executionMode?: ExecutionMode;     // worktree or current_branch
-  checkoutEnabled?: boolean;         // Whether checkout automation is enabled
+
   completeOnIdle?: boolean;          // Whether to auto-complete task when runner detects idle
   userOriginalRequest?: string | null; // Original user request for validation
   
@@ -383,7 +383,7 @@ export interface AppProps {
        remote_branch_policy?: RemoteBranchPolicy;
        open_pr_before_merge?: boolean;
        execution_mode?: ExecutionMode;
-       checkout_enabled?: boolean;
+
        complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;

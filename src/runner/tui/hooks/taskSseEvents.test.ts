@@ -45,7 +45,7 @@ describe('taskSseEvents', () => {
             remote_branch_policy: 'keep',
             open_pr_before_merge: true,
             execution_mode: 'in_branch',
-            checkout_enabled: true,
+
           },
           {
             id: 'task-b',
@@ -92,7 +92,7 @@ describe('taskSseEvents', () => {
       remoteBranchPolicy: 'keep',
       openPrBeforeMerge: true,
       executionMode: 'current_branch',
-      checkoutEnabled: true,
+
     });
   });
 

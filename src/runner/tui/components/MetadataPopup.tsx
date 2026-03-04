@@ -49,7 +49,7 @@ export type MetadataField =
   | 'git_branch'
   | 'merge_target_branch'
   | 'execution_mode'
-  | 'checkout_enabled'
+
   | 'complete_on_idle'
   | 'merge_policy'
   | 'merge_strategy'
@@ -92,8 +92,7 @@ export interface MetadataPopupProps {
   mergeTargetBranchValue?: string;
   /** Current execution_mode value */
   executionModeValue?: ExecutionMode;
-  /** Current checkout_enabled value */
-  checkoutEnabledValue?: boolean;
+
   /** Current complete_on_idle value */
   completeOnIdleValue?: boolean;
   /** Current merge_policy value */
@@ -157,7 +156,7 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
 export const FEATURE_FIELD_GROUPS: Array<{ label: string; fields: MetadataField[] }> = [
   { label: 'Task', fields: ['status', 'feature_id', 'project'] },
   { label: 'Execution', fields: ['execution_mode', 'agent', 'model'] },
-  { label: 'Git / Branch', fields: ['git_branch', 'target_workdir', 'checkout_enabled'] },
+  { label: 'Git / Branch', fields: ['git_branch', 'target_workdir'] },
   { label: 'Merge / PR', fields: ['merge_target_branch', 'merge_policy', 'merge_strategy', 'remote_branch_policy', 'open_pr_before_merge'] },
   { label: 'Automated Tasks', fields: [] },
 ];
@@ -176,7 +175,7 @@ const FIELD_LABELS: Record<MetadataField, string> = {
   git_branch: 'Branch',
   merge_target_branch: 'Merge Target',
   execution_mode: 'Execution Mode',
-  checkout_enabled: 'Checkout Enabled',
+
   complete_on_idle: 'Complete on Idle',
   merge_policy: 'Merge Policy',
   merge_strategy: 'Merge Strategy',
@@ -196,7 +195,7 @@ const FIELD_HINTS: Partial<Record<MetadataField, string>> = {
   execution_mode: '(worktree|current_branch)',
   target_workdir: '(worktree/current-branch root path)',
   merge_target_branch: '(target branch for merge)',
-  checkout_enabled: '(true|false)',
+
   complete_on_idle: '(true|false)',
   merge_policy: '(prompt_only|auto_pr|auto_merge)',
   merge_strategy: '(squash|merge|rebase)',
@@ -217,7 +216,7 @@ export function MetadataPopup({
   branchValue,
   mergeTargetBranchValue,
   executionModeValue,
-  checkoutEnabledValue,
+
   completeOnIdleValue,
   mergePolicyValue,
   mergeStrategyValue,
@@ -272,8 +271,7 @@ export function MetadataPopup({
         return mergeTargetBranchValue || '(none)';
       case 'execution_mode':
         return executionModeValue || 'worktree';
-      case 'checkout_enabled':
-        return checkoutEnabledValue ? 'true' : 'false';
+
       case 'complete_on_idle':
         return completeOnIdleValue ? 'true' : 'false';
       case 'merge_policy':

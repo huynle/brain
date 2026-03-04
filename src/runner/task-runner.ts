@@ -3048,7 +3048,7 @@ export class TaskRunner {
       remote_branch_policy?: RemoteBranchPolicy;
       open_pr_before_merge?: boolean;
       execution_mode?: TaskExecutionMode;
-      checkout_enabled?: boolean;
+
       complete_on_idle?: boolean;
       target_workdir?: string;
       schedule?: string;

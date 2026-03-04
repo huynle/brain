@@ -496,10 +496,6 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .enum(["worktree", "current_branch"])
             .optional()
             .describe("Task execution mode (default: worktree)"),
-          checkout_enabled: tool.schema
-            .boolean()
-            .optional()
-            .describe("Enable checkout/worktree flow for this task (default: true)"),
           complete_on_idle: tool.schema
             .boolean()
             .optional()
@@ -576,8 +572,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
                 args.type === "task" ? args.open_pr_before_merge : undefined,
               execution_mode:
                 args.type === "task" ? args.execution_mode : undefined,
-              checkout_enabled:
-                args.type === "task" ? args.checkout_enabled : undefined,
+
               complete_on_idle:
                 args.type === "task" ? args.complete_on_idle : undefined,
               remote_branch_policy:
@@ -1343,10 +1338,6 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .enum(["worktree", "current_branch"])
             .optional()
             .describe("Task execution mode (default: worktree)"),
-          checkout_enabled: tool.schema
-            .boolean()
-            .optional()
-            .describe("Enable checkout/worktree flow for this task (default: true)"),
           complete_on_idle: tool.schema
             .boolean()
             .optional()
@@ -1377,8 +1368,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.checkout_enabled === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, checkout_enabled, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, direct_prompt, agent, model`;
           }
 
           try {
@@ -1405,7 +1396,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               merge_strategy: args.merge_strategy,
               open_pr_before_merge: args.open_pr_before_merge,
               execution_mode: args.execution_mode,
-              checkout_enabled: args.checkout_enabled,
+
               complete_on_idle: args.complete_on_idle,
               remote_branch_policy: args.remote_branch_policy,
               schedule: args.schedule,
@@ -1447,8 +1438,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
             if (args.execution_mode)
               changes.push(`Execution Mode: ${args.execution_mode}`);
-            if (args.checkout_enabled !== undefined)
-              changes.push(`Checkout Enabled: ${args.checkout_enabled}`);
+
             if (args.complete_on_idle !== undefined)
               changes.push(`Complete On Idle: ${args.complete_on_idle}`);
             if (args.remote_branch_policy)
@@ -2255,7 +2245,7 @@ Use this to get detailed information about a specific task including:
 
 Returns structured JSON with:
 - **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote
-- **Merge intent:** merge_target_branch, merge_policy (default auto_merge), merge_strategy (default squash), open_pr_before_merge, execution_mode, checkout_enabled
+- **Merge intent:** merge_target_branch, merge_policy (default auto_merge), merge_strategy (default squash), open_pr_before_merge, execution_mode
 - **Feature grouping:** feature_id, feature_priority, feature_depends_on
 - **Raw dependencies:** depends_on (IDs), resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle
 - **Timestamps:** created, modified
@@ -2307,7 +2297,7 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
               merge_strategy?: "squash" | "merge" | "rebase";
               open_pr_before_merge?: boolean;
               execution_mode?: "worktree" | "current_branch";
-              checkout_enabled?: boolean;
+
               agent: string | null;
               model: string | null;
               direct_prompt: string | null;
@@ -2374,7 +2364,7 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
                 merge_strategy: task.merge_strategy ?? "squash",
                 open_pr_before_merge: task.open_pr_before_merge ?? false,
                 execution_mode: task.execution_mode ?? "worktree",
-                checkout_enabled: task.checkout_enabled ?? true,
+
               },
 
               // Feature grouping

@@ -1656,6 +1656,188 @@ Task content.
         (service as any).updateInternal = originalUpdateInternal;
       }
     });
+
+    test("reconciles feature_review tasks alongside feature_checkout tasks", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalUpdateInternal = (service as any).updateInternal;
+
+      const updateCalls: Array<{
+        path: string;
+        request: Record<string, unknown>;
+        options: Record<string, unknown> | undefined;
+      }> = [];
+
+      TaskService.prototype.getTasksByFeature = async () =>
+        [
+          {
+            id: "task-a",
+            generated: false,
+            feature_id: "feature-review-reconcile",
+            status: "pending",
+          },
+          {
+            id: "task-b",
+            generated: false,
+            feature_id: "feature-review-reconcile",
+            status: "pending",
+          },
+          {
+            id: "chk-pending",
+            path: "projects/test-project/task/chk-pending.md",
+            generated: true,
+            generated_kind: "feature_checkout",
+            generated_by: "feature-checkout",
+            feature_id: "feature-review-reconcile",
+            status: "pending",
+            depends_on: ["task-a"],
+          },
+          {
+            id: "rev-pending",
+            path: "projects/test-project/task/rev-pending.md",
+            generated: true,
+            generated_kind: "feature_review",
+            generated_by: "feature-completion-hook",
+            feature_id: "feature-review-reconcile",
+            status: "pending",
+            depends_on: ["task-a"],
+          },
+        ] as any;
+
+      (service as any).updateInternal = async (
+        path: string,
+        request: Record<string, unknown>,
+        options?: Record<string, unknown>
+      ) => {
+        updateCalls.push({
+          path,
+          request: request as unknown as Record<string, unknown>,
+          options: options as unknown as Record<string, unknown> | undefined,
+        });
+        return {
+          id: path.includes("chk") ? "chk-pending" : "rev-pending",
+          path,
+          title: "Generated task",
+          type: "task",
+          status: "pending",
+          content: "",
+        } as any;
+      };
+
+      try {
+        await (service as any).reconcileFeatureCheckoutDependencies(
+          "test-project",
+          "feature-review-reconcile"
+        );
+
+        expect(updateCalls).toHaveLength(2);
+
+        const checkoutUpdate = updateCalls.find((c) => c.path.includes("chk-pending"));
+        expect(checkoutUpdate).toBeDefined();
+        expect(checkoutUpdate?.request.depends_on).toEqual(["task-a", "task-b"]);
+
+        const reviewUpdate = updateCalls.find((c) => c.path.includes("rev-pending"));
+        expect(reviewUpdate).toBeDefined();
+        expect(reviewUpdate?.request.depends_on).toEqual(["task-a", "task-b"]);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        (service as any).updateInternal = originalUpdateInternal;
+      }
+    });
+
+    test("does not reconcile terminal or in-progress feature_review tasks", async () => {
+      const originalGetTasksByFeature = TaskService.prototype.getTasksByFeature;
+      const originalUpdateInternal = (service as any).updateInternal;
+
+      const updateCalls: Array<{
+        path: string;
+        request: Record<string, unknown>;
+        options: Record<string, unknown> | undefined;
+      }> = [];
+
+      TaskService.prototype.getTasksByFeature = async () =>
+        [
+          {
+            id: "task-a",
+            generated: false,
+            feature_id: "feature-review-skip",
+            status: "pending",
+          },
+          {
+            id: "rev-pending",
+            path: "projects/test-project/task/rev-pending.md",
+            generated: true,
+            generated_kind: "feature_review",
+            generated_by: "feature-completion-hook",
+            feature_id: "feature-review-skip",
+            status: "pending",
+            depends_on: [],
+          },
+          {
+            id: "rev-active",
+            path: "projects/test-project/task/rev-active.md",
+            generated: true,
+            generated_kind: "feature_review",
+            generated_by: "feature-completion-hook",
+            feature_id: "feature-review-skip",
+            status: "in_progress",
+            depends_on: [],
+          },
+          {
+            id: "rev-completed",
+            path: "projects/test-project/task/rev-completed.md",
+            generated: true,
+            generated_kind: "feature_review",
+            generated_by: "feature-completion-hook",
+            feature_id: "feature-review-skip",
+            status: "completed",
+            depends_on: [],
+          },
+          {
+            id: "rev-validated",
+            path: "projects/test-project/task/rev-validated.md",
+            generated: true,
+            generated_kind: "feature_review",
+            generated_by: "feature-completion-hook",
+            feature_id: "feature-review-skip",
+            status: "validated",
+            depends_on: [],
+          },
+        ] as any;
+
+      (service as any).updateInternal = async (
+        path: string,
+        request: Record<string, unknown>,
+        options?: Record<string, unknown>
+      ) => {
+        updateCalls.push({
+          path,
+          request: request as unknown as Record<string, unknown>,
+          options: options as unknown as Record<string, unknown> | undefined,
+        });
+        return {
+          id: "rev-pending",
+          path,
+          title: "Feature review",
+          type: "task",
+          status: "pending",
+          content: "",
+        } as any;
+      };
+
+      try {
+        await (service as any).reconcileFeatureCheckoutDependencies(
+          "test-project",
+          "feature-review-skip"
+        );
+
+        expect(updateCalls).toHaveLength(1);
+        expect(updateCalls[0]?.path).toBe("projects/test-project/task/rev-pending.md");
+        expect(updateCalls[0]?.request.depends_on).toEqual(["task-a"]);
+      } finally {
+        TaskService.prototype.getTasksByFeature = originalGetTasksByFeature;
+        (service as any).updateInternal = originalUpdateInternal;
+      }
+    });
   });
 
   describe("feature checkout reconciliation hooks", () => {
@@ -1765,6 +1947,54 @@ Task content.
       const expected = ["taska001", created.id].sort();
       expect(readDependsOn(pendingCheckoutPath)).toEqual(expected);
       expect(readDependsOn(activeCheckoutPath)).toEqual(["taska001"]);
+    });
+
+    test("save() reconciles feature_review dependencies alongside checkout", async () => {
+      const projectId = `recon-save-review-${Date.now()}`;
+      const featureId = "feature-save-review";
+
+      writeTask({
+        projectId,
+        fileId: "rvta0001",
+        title: "Base feature task",
+        featureId,
+      });
+
+      const pendingReviewPath = writeTask({
+        projectId,
+        fileId: "revp0001",
+        title: "Pending review",
+        featureId,
+        generated: true,
+        generatedKind: "feature_review",
+        generatedBy: "feature-completion-hook",
+        dependsOn: ["rvta0001"],
+      });
+
+      const activeReviewPath = writeTask({
+        projectId,
+        fileId: "reva0001",
+        title: "Active review",
+        featureId,
+        status: "in_progress",
+        generated: true,
+        generatedKind: "feature_review",
+        generatedBy: "feature-completion-hook",
+        dependsOn: ["rvta0001"],
+      });
+
+      const created = await service.save({
+        type: "task",
+        title: "Task created through save hook for review",
+        content: "content",
+        status: "pending",
+        feature_id: featureId,
+        project: projectId,
+      });
+
+      const expected = ["rvta0001", created.id].sort();
+      expect(readDependsOn(pendingReviewPath)).toEqual(expected);
+      expect(readDependsOn(activeReviewPath)).toEqual(["rvta0001"]);
     });
 
     test("save() does not mutate terminal generated checkout tasks", async () => {

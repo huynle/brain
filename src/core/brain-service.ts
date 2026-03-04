@@ -1755,7 +1755,7 @@ export class BrainService {
 
     const featureTasks = await this.getFeatureTasks(sanitizedProjectId, sanitizedFeatureId);
     const desiredDependsOn = this.extractUniqueNonGeneratedTaskIds(featureTasks);
-    const checkoutTasks = this.extractFeatureCheckoutTasks(featureTasks);
+    const checkoutTasks = this.extractGeneratedDependentTasks(featureTasks);
 
     for (const checkoutTask of checkoutTasks) {
       if (checkoutTask.status === "in_progress") {
@@ -1905,12 +1905,12 @@ export class BrainService {
     return Array.from(ids).sort();
   }
 
-  private extractFeatureCheckoutTasks(tasks: Task[]): Task[] {
+  private extractGeneratedDependentTasks(tasks: Task[]): Task[] {
     return tasks.filter(
       (task) =>
         task.generated === true &&
-        task.generated_kind === "feature_checkout" &&
-        task.generated_by === "feature-checkout"
+        (task.generated_kind === "feature_checkout" ||
+          task.generated_kind === "feature_review")
     );
   }
 

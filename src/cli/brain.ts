@@ -23,6 +23,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, openSyn
 import { homedir } from "os";
 import { join, dirname } from "path";
 import { createDoctorService, type Check, type DoctorResult } from "../core/doctor";
+import { execTokenCommand } from "./brain-token";
 
 // =============================================================================
 // Configuration
@@ -152,6 +153,11 @@ Server Commands:
 Setup Commands:
   init        Initialize brain directory with templates and zk config
   doctor      Diagnose and fix brain configuration
+
+Token Commands:
+  token create --name <name>   Create a new API token
+  token list                   List all API tokens
+  token revoke <name>          Revoke an API token
 
 Plugin Commands:
   install <target>     Install brain plugin to an AI coding assistant
@@ -780,6 +786,24 @@ async function cmdDoctor(args: string[]): Promise<void> {
 }
 
 // =============================================================================
+// Token Command
+// =============================================================================
+
+async function cmdToken(args: string[]): Promise<void> {
+  const result = execTokenCommand(args);
+  if (result.output) {
+    if (result.exitCode === 0) {
+      console.log(result.output);
+    } else {
+      console.error(result.output);
+    }
+  }
+  if (result.exitCode !== 0) {
+    process.exit(result.exitCode);
+  }
+}
+
+// =============================================================================
 // Main
 // =============================================================================
 
@@ -823,6 +847,10 @@ async function main() {
       break;
     case "uninstall":
       await cmdUninstall(args.slice(1));
+      break;
+    case "token":
+    case "tokens":
+      await cmdToken(args.slice(1));
       break;
     case "plugin-status":
     case "plugins":

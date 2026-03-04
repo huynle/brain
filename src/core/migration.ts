@@ -6,11 +6,17 @@
  *
  * Phase 1: living-brain.db import (entry_meta + generated_tasks)
  * Phase 2: ZK database import (notes, links, tags)
- * Phase 3: Auto-detection, rebuild, dry-run — future
+ * Phase 3: Auto-detection, rebuild, dry-run
  * Phase 4: CLI command — future
  */
 
-import type { Database } from "bun:sqlite";
+import { Database } from "bun:sqlite";
+import { existsSync } from "fs";
+import { join } from "path";
+import { Glob } from "bun";
+import { Indexer, type IndexResult } from "./indexer";
+import { parseFile } from "./file-parser";
+import { createStorageLayer } from "./storage";
 
 // =============================================================================
 // Types
@@ -25,6 +31,13 @@ export interface MigrationResult {
   generatedTasks: number;
   errors: string[];
   duration: number;
+}
+
+export interface MigrationOptions {
+  /** When true, count what would be migrated without writing to target DB. */
+  dryRun?: boolean;
+  /** When true, always use rebuild-from-disk even if .zk/zk.db exists. */
+  forceRebuild?: boolean;
 }
 
 // =============================================================================
@@ -456,5 +469,240 @@ export class DatabaseMigration {
 
     result.duration = Math.round(performance.now() - start);
     return result;
+  }
+
+  // ===========================================================================
+  // Phase 3: Rebuild from disk
+  // ===========================================================================
+
+  /**
+   * Rebuild the target database by indexing all .md files from disk.
+   *
+   * Creates a StorageLayer for the target DB, uses the Indexer to parse
+   * and insert all markdown files, then closes the storage.
+   *
+   * @param brainDir - Absolute path to the brain root directory
+   * @param targetDbPath - Path to the target brain.db file (will be created)
+   * @returns MigrationResult with strategy "rebuild" and counts
+   */
+  async rebuildFromDisk(brainDir: string, targetDbPath: string): Promise<MigrationResult> {
+    const start = performance.now();
+    const result: MigrationResult = {
+      strategy: "rebuild",
+      notes: 0,
+      links: 0,
+      tags: 0,
+      entryMeta: 0,
+      generatedTasks: 0,
+      errors: [],
+      duration: 0,
+    };
+
+    const storage = createStorageLayer(targetDbPath);
+    try {
+      const indexer = new Indexer(brainDir, storage, parseFile);
+      const indexResult: IndexResult = await indexer.rebuildAll();
+
+      result.notes = indexResult.added;
+      result.errors = indexResult.errors.map((e) => `${e.path}: ${e.error}`);
+    } finally {
+      storage.close();
+    }
+
+    result.duration = Math.round(performance.now() - start);
+    return result;
+  }
+
+  // ===========================================================================
+  // Phase 3: Auto-detection
+  // ===========================================================================
+
+  /**
+   * Auto-detect the best migration strategy and execute it.
+   *
+   * Detection logic:
+   * 1. If .zk/zk.db exists and is valid SQLite → import from ZK
+   * 2. Else → rebuild from disk
+   * 3. Always import living-brain.db metadata if it exists
+   *
+   * Options:
+   * - dryRun: Count what would be migrated without writing
+   * - forceRebuild: Always use rebuild even if .zk/zk.db exists
+   *
+   * @param brainDir - Absolute path to the brain root directory
+   * @param targetDbPath - Path to the target brain.db file
+   * @param options - Migration options
+   * @returns Combined MigrationResult
+   */
+  async autoMigrate(
+    brainDir: string,
+    targetDbPath: string,
+    options?: MigrationOptions
+  ): Promise<MigrationResult> {
+    const start = performance.now();
+    const dryRun = options?.dryRun ?? false;
+    const forceRebuild = options?.forceRebuild ?? false;
+
+    const zkDbPath = join(brainDir, ".zk", "zk.db");
+    const livingBrainDbPath = join(brainDir, "living-brain.db");
+
+    const hasZkDb = existsSync(zkDbPath) && this.isValidSqlite(zkDbPath);
+    const hasLivingBrainDb = existsSync(livingBrainDbPath);
+    const useZkImport = hasZkDb && !forceRebuild;
+
+    const result: MigrationResult = {
+      strategy: useZkImport ? "import" : "rebuild",
+      notes: 0,
+      links: 0,
+      tags: 0,
+      entryMeta: 0,
+      generatedTasks: 0,
+      errors: [],
+      duration: 0,
+    };
+
+    if (dryRun) {
+      // --- Dry-run mode: count without writing ---
+      if (useZkImport) {
+        this.dryRunCountZk(zkDbPath, result);
+      } else {
+        // Count .md files on disk (excluding .zk/)
+        result.notes = this.countMarkdownFiles(brainDir);
+      }
+
+      if (hasLivingBrainDb) {
+        this.dryRunCountLivingBrain(livingBrainDbPath, result);
+      }
+
+      result.duration = Math.round(performance.now() - start);
+      return result;
+    }
+
+    // --- Actual migration ---
+    if (useZkImport) {
+      // Import from ZK database
+      const sourceDb = new Database(zkDbPath, { readonly: true });
+      const targetDb = this.openTargetDb(targetDbPath);
+      try {
+        const zkResult = this.migrateFromZkDb(sourceDb, targetDb);
+        result.notes = zkResult.notes;
+        result.links = zkResult.links;
+        result.tags = zkResult.tags;
+        result.errors.push(...zkResult.errors);
+      } finally {
+        sourceDb.close();
+        targetDb.close();
+      }
+    } else {
+      // Rebuild from disk
+      const rebuildResult = await this.rebuildFromDisk(brainDir, targetDbPath);
+      result.notes = rebuildResult.notes;
+      result.errors.push(...rebuildResult.errors);
+    }
+
+    // Always import living-brain.db metadata if it exists
+    if (hasLivingBrainDb) {
+      const sourceDb = new Database(livingBrainDbPath, { readonly: true });
+      const targetDb = this.openTargetDb(targetDbPath);
+      try {
+        const lbResult = this.migrateFromLivingBrainDb(sourceDb, targetDb);
+        result.entryMeta = lbResult.entryMeta;
+        result.generatedTasks = lbResult.generatedTasks;
+        result.errors.push(...lbResult.errors);
+      } finally {
+        sourceDb.close();
+        targetDb.close();
+      }
+    }
+
+    result.duration = Math.round(performance.now() - start);
+    return result;
+  }
+
+  // ===========================================================================
+  // Private helpers
+  // ===========================================================================
+
+  /**
+   * Check if a file is a valid SQLite database by attempting to open it.
+   */
+  private isValidSqlite(dbPath: string): boolean {
+    try {
+      const db = new Database(dbPath, { readonly: true });
+      db.prepare("SELECT 1").get();
+      db.close();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Open (or create) the target database with schema applied.
+   */
+  private openTargetDb(targetDbPath: string): Database {
+    const storage = createStorageLayer(targetDbPath);
+    return storage.getDb();
+  }
+
+  /**
+   * Count .md files in brainDir, excluding .zk/ directory.
+   */
+  private countMarkdownFiles(brainDir: string): number {
+    const glob = new Glob("**/*.md");
+    let count = 0;
+    for (const file of glob.scanSync({ cwd: brainDir })) {
+      if (!file.startsWith(".zk/")) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Dry-run: count rows in a ZK source database.
+   */
+  private dryRunCountZk(zkDbPath: string, result: MigrationResult): void {
+    const db = new Database(zkDbPath, { readonly: true });
+    try {
+      const noteCount = db.prepare("SELECT COUNT(*) as count FROM notes").get() as { count: number };
+      result.notes = noteCount.count;
+
+      const linkCount = db
+        .prepare("SELECT COUNT(*) as count FROM links WHERE external = 0 OR external IS NULL")
+        .get() as { count: number };
+      result.links = linkCount.count;
+
+      const tagCount = db
+        .prepare(
+          `SELECT COUNT(*) as count FROM notes_collections nc
+           JOIN collections c ON c.id = nc.collection_id
+           WHERE c.kind = 'tag'`
+        )
+        .get() as { count: number };
+      result.tags = tagCount.count;
+    } finally {
+      db.close();
+    }
+  }
+
+  /**
+   * Dry-run: count rows in a living-brain.db source database.
+   */
+  private dryRunCountLivingBrain(lbDbPath: string, result: MigrationResult): void {
+    const db = new Database(lbDbPath, { readonly: true });
+    try {
+      const metaCount = db
+        .prepare("SELECT COUNT(*) as count FROM entries_meta")
+        .get() as { count: number };
+      result.entryMeta = metaCount.count;
+
+      const taskCount = db
+        .prepare("SELECT COUNT(*) as count FROM generated_task_keys WHERE task_path IS NOT NULL")
+        .get() as { count: number };
+      result.generatedTasks = taskCount.count;
+    } finally {
+      db.close();
+    }
   }
 }

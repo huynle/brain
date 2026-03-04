@@ -5,6 +5,7 @@
  */
 
 import { getDb } from "../../core/db";
+import { generateSecureToken } from "../../auth/crypto";
 import type {
   OAuthClient,
   AuthorizationCode,
@@ -12,20 +13,8 @@ import type {
   RefreshToken,
 } from "./types";
 
-// =============================================================================
-// Utility Functions
-// =============================================================================
-
-/**
- * Generate a cryptographically secure random string
- */
-export function generateSecureToken(length: number = 32): string {
-  const array = new Uint8Array(length);
-  crypto.getRandomValues(array);
-  return Array.from(array)
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+// Re-export for existing consumers
+export { generateSecureToken };
 
 /**
  * Generate client ID (shorter, URL-safe)

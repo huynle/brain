@@ -168,6 +168,21 @@ export function initDatabase(): Database {
     "CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires ON oauth_auth_codes(expires_at)"
   );
 
+  // API token table for bearer token authentication
+  db.run(`
+    CREATE TABLE IF NOT EXISTS api_tokens (
+      token TEXT PRIMARY KEY,
+      name TEXT NOT NULL UNIQUE,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      revoked_at INTEGER
+    )
+  `);
+
+  db.run(
+    "CREATE INDEX IF NOT EXISTS idx_api_tokens_name ON api_tokens(name)"
+  );
+
   return db;
 }
 

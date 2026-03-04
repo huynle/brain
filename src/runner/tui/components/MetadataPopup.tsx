@@ -156,10 +156,10 @@ export const METADATA_FIELDS_DEFAULT: MetadataField[] = [
 /** Field groups for feature-mode popup (visual separators between groups) */
 export const FEATURE_FIELD_GROUPS: Array<{ label: string; fields: MetadataField[] }> = [
   { label: 'Task', fields: ['status', 'feature_id', 'project'] },
-  { label: 'Execution', fields: ['execution_mode', 'agent', 'model', 'direct_prompt', 'schedule', 'schedule_enabled', 'complete_on_idle'] },
+  { label: 'Execution', fields: ['execution_mode', 'agent', 'model'] },
   { label: 'Git / Branch', fields: ['git_branch', 'target_workdir', 'checkout_enabled'] },
   { label: 'Merge / PR', fields: ['merge_target_branch', 'merge_policy', 'merge_strategy', 'remote_branch_policy', 'open_pr_before_merge'] },
-  { label: 'Monitoring', fields: [] },
+  { label: 'Automated Tasks', fields: [] },
 ];
 
 /** Flat merged array of all feature fields (for navigation) */
@@ -543,14 +543,14 @@ export function MetadataPopup({
           );
         })}
 
-        {/* Monitoring separator (always shown in feature mode) */}
+        {/* Automated Tasks separator (always shown in feature mode) */}
         {mode === 'feature' && (
           <Box marginTop={1}>
-            <Text dimColor bold>{`── Monitoring ──`}</Text>
+            <Text dimColor bold>{`── Automated Tasks ──`}</Text>
           </Box>
         )}
 
-        {/* Monitoring content (feature mode only, when templates available) */}
+        {/* Automated Tasks content (feature mode only, when templates available) */}
         {mode === 'feature' && monitoringLoading && (
           <Box>
             <Text dimColor>  Loading...</Text>

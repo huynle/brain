@@ -143,7 +143,7 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('3 tasks');
     });
 
-    it('shows all 17 fields in feature mode (merged task + feature settings)', () => {
+    it('shows all 13 fields in feature mode (merged task + feature settings)', () => {
       const { lastFrame } = render(
         <MetadataPopup
           {...defaultProps}
@@ -169,9 +169,6 @@ describe('MetadataPopup', () => {
       expect(frame).toContain('Execution Mode:');
       expect(frame).toContain('Agent:');
       expect(frame).toContain('Model:');
-      expect(frame).toContain('Prompt:');
-      expect(frame).toContain('Schedule:');
-      expect(frame).toContain('Complete on Idle:');
       // Git / Branch group
       expect(frame).toContain('Branch:');
       expect(frame).toContain('Workdir:');
@@ -606,7 +603,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('── Automated Tasks ──');
       expect(frame).not.toContain('Blocked Task Inspector');
       expect(frame).not.toContain('Loading...');
     });
@@ -617,7 +614,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('── Automated Tasks ──');
       expect(frame).not.toContain('Blocked Task Inspector');
     });
 
@@ -631,7 +628,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('── Automated Tasks ──');
       expect(frame).toContain('Loading...');
     });
 
@@ -652,7 +649,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).toContain('── Monitoring ──');
+      expect(frame).toContain('── Automated Tasks ──');
       expect(frame).toContain('Blocked Task Inspector');
       expect(frame).toContain('[enabled]');
       expect(frame).toContain('*/15 * * * *');
@@ -789,7 +786,7 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).not.toContain('── Monitoring ──');
+      expect(frame).not.toContain('── Automated Tasks ──');
       expect(frame).not.toContain('Blocked Task Inspector');
     });
 
@@ -811,14 +808,14 @@ describe('MetadataPopup', () => {
       );
 
       const frame = lastFrame();
-      expect(frame).not.toContain('── Monitoring ──');
+      expect(frame).not.toContain('── Automated Tasks ──');
       expect(frame).not.toContain('Blocked Task Inspector');
     });
 
-    it('should render Monitoring in FEATURE_FIELD_GROUPS', () => {
-      const monitoringGroup = FEATURE_FIELD_GROUPS.find(g => g.label === 'Monitoring');
-      expect(monitoringGroup).toBeDefined();
-      expect(monitoringGroup!.fields).toEqual([]);
+    it('should render Automated Tasks in FEATURE_FIELD_GROUPS', () => {
+      const automatedTasksGroup = FEATURE_FIELD_GROUPS.find(g => g.label === 'Automated Tasks');
+      expect(automatedTasksGroup).toBeDefined();
+      expect(automatedTasksGroup!.fields).toEqual([]);
     });
 
     it('should render multiple templates simultaneously with mixed statuses', () => {

@@ -7,6 +7,7 @@
  */
 
 import { BrainService, getBrainService } from "./brain-service";
+import type { EntryStatus } from "./types";
 import {
   MONITOR_TEMPLATES,
   buildMonitorTitle,
@@ -120,6 +121,7 @@ export class MonitorService {
     templateId: string,
     scope: { type: "feature"; feature_id: string; project: string },
     project: string,
+    options?: { status?: EntryStatus },
   ): Promise<CreateMonitorResult> {
     const template = MONITOR_TEMPLATES[templateId];
     if (!template) {
@@ -161,7 +163,7 @@ export class MonitorService {
       direct_prompt: prompt,
       complete_on_idle: true,
       execution_mode: "current_branch",
-      status: "pending",
+      status: options?.status ?? "pending",
       feature_id: scope.feature_id,
       depends_on: dependsOn,
       generated: true,
@@ -275,13 +277,30 @@ export class MonitorService {
   }
 
   /**
-   * Delete a monitor task.
+   * Delete a monitor task by its 8-char ID.
    */
   async delete(taskId: string): Promise<{ path: string }> {
     // Resolve 8-char ID to path
     const entry = await this.brainService.recall(taskId);
     await this.brainService.delete(entry.path);
     return { path: entry.path };
+  }
+
+  /**
+   * Find and delete a monitor by templateId + scope.
+   * Convenience method that chains find() + delete() so callers
+   * don't need to know the task ID.
+   * Returns null if no matching monitor was found.
+   */
+  async deleteByScope(
+    templateId: string,
+    scope: MonitorScope,
+  ): Promise<{ id: string; path: string } | null> {
+    const existing = await this.find(templateId, scope);
+    if (!existing) return null;
+
+    await this.brainService.delete(existing.path);
+    return { id: existing.id, path: existing.path };
   }
 }
 

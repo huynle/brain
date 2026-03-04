@@ -56,6 +56,10 @@ const CreateMonitorRequestSchema = z.object({
   project: z.string().optional().openapi({
     description: "Project to store the task in (for 'all' scope)",
   }),
+  status: z.string().optional().openapi({
+    description: "Initial status for the created task (defaults to 'pending')",
+    example: "draft",
+  }),
 }).openapi("CreateMonitorRequest");
 
 const CreateMonitorResponseSchema = z.object({
@@ -218,7 +222,7 @@ const deleteMonitorRoute = createRoute({
   method: "delete",
   path: "/{taskId}",
   tags: ["Monitors"],
-  summary: "Delete a monitor",
+  summary: "Delete a monitor by task ID",
   request: {
     params: TaskIdParamSchema,
   },
@@ -232,6 +236,44 @@ const deleteMonitorRoute = createRoute({
     404: {
       content: { "application/json": { schema: NotFoundResponseSchema } },
       description: "Monitor not found",
+    },
+  },
+});
+
+const DeleteByScopeRequestSchema = z.object({
+  templateId: z.string().min(1).openapi({ example: "feature-review" }),
+  scope: MonitorScopeSchema,
+}).openapi("DeleteByScopeRequest");
+
+const DeleteByScopeResponseSchema = z.object({
+  message: z.string(),
+  taskId: z.string(),
+  path: z.string(),
+}).openapi("DeleteByScopeResponse");
+
+const deleteByScopeRoute = createRoute({
+  method: "delete",
+  path: "/by-scope",
+  tags: ["Monitors"],
+  summary: "Delete a monitor by templateId + scope",
+  description: "Convenience endpoint: finds the monitor matching the templateId+scope combo and deletes it in one call. No task ID needed.",
+  request: {
+    body: {
+      content: {
+        "application/json": { schema: DeleteByScopeRequestSchema },
+      },
+    },
+  },
+  responses: {
+    200: {
+      content: {
+        "application/json": { schema: DeleteByScopeResponseSchema },
+      },
+      description: "Monitor found and deleted",
+    },
+    404: {
+      content: { "application/json": { schema: NotFoundResponseSchema } },
+      description: "No monitor found for this templateId+scope",
     },
   },
 });
@@ -338,6 +380,7 @@ export function createMonitorRoutes(options?: MonitorRouteOptions): OpenAPIHono 
           body.templateId,
           body.scope,
           body.scope.project,
+          { status: body.status as import("../core/types").EntryStatus },
         );
       } else {
         result = await service.create(body.templateId, body.scope, {
@@ -414,6 +457,38 @@ export function createMonitorRoutes(options?: MonitorRouteOptions): OpenAPIHono 
       }
       throw error;
     }
+  });
+
+  // DELETE /by-scope — find+delete by templateId+scope (convenience endpoint)
+  monitors.openapi(deleteByScopeRoute, async (c) => {
+    const { templateId, scope } = c.req.valid("json");
+    const service = getMonitorService();
+
+    const result = await service.deleteByScope(templateId, scope);
+    if (!result) {
+      return c.json(
+        {
+          error: "Not Found",
+          message: `No monitor found for template "${templateId}" with scope ${JSON.stringify(scope)}`,
+        },
+        404,
+      );
+    }
+
+    // Publish SSE snapshot so connected TUI clients see the task removed
+    const projectId = extractProjectFromPath(result.path);
+    if (projectId) {
+      await publishTaskSnapshot(realtimeHub, projectId);
+    }
+
+    return c.json(
+      {
+        message: "Monitor deleted successfully",
+        taskId: result.id,
+        path: result.path,
+      },
+      200,
+    );
   });
 
   // DELETE /:taskId

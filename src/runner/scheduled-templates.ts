@@ -412,6 +412,7 @@ export async function createMonitorTask(
   templateId: string,
   scope: TemplateScope,
   apiBase: string,
+  options?: { status?: string },
 ): Promise<{ id: string; path: string }> {
   const response = await fetch(`${apiBase}/api/v1/monitors`, {
     method: "POST",
@@ -419,7 +420,7 @@ export async function createMonitorTask(
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: JSON.stringify({ templateId, scope }),
+    body: JSON.stringify({ templateId, scope, status: options?.status }),
   });
 
   if (!response.ok) {

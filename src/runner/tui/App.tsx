@@ -2001,7 +2001,7 @@ export function App({
                 if (template.status === 'create') {
                   if (isMonitorTemplate) {
                     // One-shot monitor: create via monitor API (routes to createForFeature server-side)
-                    createMonitorTask(template.templateId, scope, config.apiUrl)
+                    createMonitorTask(template.templateId, scope, config.apiUrl, { status: metadataStatusValue })
                       .then((result) => {
                         setMonitoringTemplates(prev => prev.map((t, i) =>
                           i === focusedMonitoringIndex ? { ...t, status: 'enabled' as const, taskPath: result.path } : t

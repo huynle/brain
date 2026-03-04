@@ -75,7 +75,7 @@ export interface TaskDisplay {
   // Execution override fields
   agent?: string | null;             // OpenCode agent override (bypasses config default)
   model?: string | null;             // LLM model override (bypasses config default)
-  direct_prompt?: string | null;     // Direct prompt (bypasses do-work skill)
+  direct_prompt?: string | null;     // Direct prompt (bypasses default skill workflow)
   
   // Session tracking
   sessions?: Record<string, SessionInfo>; // Map of session ID to session metadata
@@ -150,6 +150,7 @@ export interface TUIState {
  */
 export interface TUIConfig {
   apiUrl: string;
+  apiToken?: string;            // API token for authenticated access (appended as ?token= for SSE, Authorization header for fetch)
   project: string;              // Legacy single project (kept for backward compatibility)
   projects?: string[];          // Multiple projects (Phase 2)
   activeProject?: string;       // Currently selected project (or 'all')

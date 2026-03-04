@@ -20,6 +20,7 @@ function isTransientTransportError(error: Error): boolean {
 }
 
 interface UseMultiProjectSseOptions extends UseMultiProjectOptions {
+  apiToken?: string;
   inactivityTimeoutMs?: number;
   reconnectDelayMs?: number;
 }
@@ -193,8 +194,9 @@ export function multiProjectSseReducer(state: MultiProjectSseState, action: Mult
   }
 }
 
-export function buildProjectTaskStreamUrl(apiUrl: string, projectId: string): string {
-  return `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}/stream`;
+export function buildProjectTaskStreamUrl(apiUrl: string, projectId: string, apiToken?: string): string {
+  const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}/stream`;
+  return apiToken ? `${url}?token=${encodeURIComponent(apiToken)}` : url;
 }
 
 function toTaskStats(stats: ProjectStats['stats'], tasks: TaskDisplay[]): TaskStats {
@@ -223,6 +225,7 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
   const {
     projects,
     apiUrl,
+    apiToken,
     inactivityTimeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
     enabled = true,
@@ -306,7 +309,7 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
         }
 
         closeProjectEventSource(projectId);
-        const eventSource = new EventSourceImpl(buildProjectTaskStreamUrl(apiUrl, projectId));
+        const eventSource = new EventSourceImpl(buildProjectTaskStreamUrl(apiUrl, projectId, apiToken));
         runtime.eventSource = eventSource as EventSource;
 
         const onConnected = (messageEvent: MessageEvent<string>) => {
@@ -390,6 +393,7 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
     };
   }, [
     apiUrl,
+    apiToken,
     cleanupProjectRuntime,
     closeProjectEventSource,
     enabled,
@@ -404,7 +408,11 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
       await Promise.all(
         projects.map(async (projectId) => {
           const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}`;
-          const response = await fetch(url, { headers: { Accept: 'application/json' } });
+          const headers: Record<string, string> = { Accept: 'application/json' };
+          if (apiToken) {
+            headers['Authorization'] = `Bearer ${apiToken}`;
+          }
+          const response = await fetch(url, { headers });
           if (!response.ok) return;
           const data = await response.json() as {
             tasks: Record<string, unknown>[];
@@ -431,7 +439,7 @@ export function useMultiProjectSse(options: UseMultiProjectSseOptions): MultiPro
     } catch {
       // Ignore errors — SSE will recover
     }
-  }, [apiUrl, projects, enabled]);
+  }, [apiUrl, apiToken, projects, enabled]);
 
   const aggregateStats = useMemo(
     () => aggregateProjectStats(state.statsByProject),

@@ -1016,6 +1016,7 @@ export function App({
   const singleProjectSse = useTaskSse({
     projectId: config.project,
     apiUrl: config.apiUrl,
+    apiToken: config.apiToken,
     enabled: !isMultiProject,
   });
 
@@ -1025,6 +1026,7 @@ export function App({
   const multiProjectSse = useMultiProjectSse({
     projects,
     apiUrl: config.apiUrl,
+    apiToken: config.apiToken,
     enabled: isMultiProject,
   });
 

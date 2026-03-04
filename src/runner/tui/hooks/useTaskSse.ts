@@ -30,6 +30,7 @@ function debugLog(message: string) {
 export interface UseTaskSseOptions {
   projectId: string;
   apiUrl: string;
+  apiToken?: string;
   inactivityTimeoutMs?: number;
   reconnectDelayMs?: number;
   enabled?: boolean;
@@ -111,10 +112,11 @@ export function taskSseReducer(state: TaskSseState, action: TaskSseAction): Task
   }
 }
 
-export function buildTaskStreamUrl(apiUrl: string, projectId: string): string {
+export function buildTaskStreamUrl(apiUrl: string, projectId: string, apiToken?: string): string {
   const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}/stream`;
+  const fullUrl = apiToken ? `${url}?token=${encodeURIComponent(apiToken)}` : url;
   debugLog(`[buildTaskStreamUrl] Built URL: ${url}`);
-  return url;
+  return fullUrl;
 }
 
 function toTaskStats(stats: ProjectStats['stats'], tasks: TaskDisplay[]): TaskStats {
@@ -148,6 +150,7 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
   const {
     projectId,
     apiUrl,
+    apiToken,
     inactivityTimeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS,
     reconnectDelayMs = DEFAULT_RECONNECT_DELAY_MS,
     enabled = true,
@@ -231,7 +234,7 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
 
       closeEventSource();
 
-      const streamUrl = buildTaskStreamUrl(apiUrl, projectId);
+      const streamUrl = buildTaskStreamUrl(apiUrl, projectId, apiToken);
       debugLog(`[useTaskSse:connectSse] Creating EventSource with URL: ${streamUrl}`);
       const eventSource = new EventSourceImpl(streamUrl);
       eventSourceRef.current = eventSource as EventSource;
@@ -360,6 +363,7 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
     };
   }, [
     apiUrl,
+    apiToken,
     enabled,
     projectId,
     reconnectDelayMs,  // Only include reconnectDelayMs, not the callback itself
@@ -371,7 +375,11 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
     try {
       const url = `${apiUrl}/api/v1/tasks/${encodeURIComponent(projectId)}`;
       debugLog(`[useTaskSse:refetch] Fetching ${url}`);
-      const response = await fetch(url, { headers: { Accept: 'application/json' } });
+      const headers: Record<string, string> = { Accept: 'application/json' };
+      if (apiToken) {
+        headers['Authorization'] = `Bearer ${apiToken}`;
+      }
+      const response = await fetch(url, { headers });
       if (!response.ok) {
         debugLog(`[useTaskSse:refetch] Failed: ${response.status}`);
         return;
@@ -399,7 +407,7 @@ export function useTaskSse(options: UseTaskSseOptions): UseTaskResult {
     } catch (err) {
       debugLog(`[useTaskSse:refetch] Error: ${err}`);
     }
-  }, [apiUrl, projectId, enabled]);
+  }, [apiUrl, apiToken, projectId, enabled]);
 
   return {
     tasks: state.tasks,

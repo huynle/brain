@@ -821,50 +821,52 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
     },
   },
   {
-    name: "brain_monitor_templates",
-    description: "List available monitor templates. Returns template IDs, labels, descriptions, and default schedules. Use with brain_monitor_create to attach a monitor to a feature or project.",
-    inputSchema: {
-      type: "object",
-      properties: {},
-    },
-  },
-  {
-    name: "brain_monitor_create",
-    description: "Create a monitoring task from a template. The server generates the appropriate direct_prompt based on the template and scope. The task runs on schedule with complete_on_idle.",
+    name: "brain_feature_review_enable",
+    description: "Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks in the feature are completed. The review validates that the implementation matches the original requirements.",
     inputSchema: {
       type: "object",
       properties: {
-        templateId: { type: "string", description: "Template ID from brain_monitor_templates" },
-        scope_type: { type: "string", enum: ["all", "project", "feature"], description: "What to monitor" },
-        project: { type: "string", description: "Required for project/feature scope" },
-        feature_id: { type: "string", description: "Required for feature scope" },
-        schedule: { type: "string", description: "Override default cron schedule" },
+        project: { type: "string", description: "Project containing the feature" },
+        feature_id: { type: "string", description: "Feature ID to review" },
       },
-      required: ["templateId", "scope_type"],
+      required: ["project", "feature_id"],
     },
   },
   {
-    name: "brain_monitor_toggle",
-    description: "Enable or disable a monitoring task. When disabled, the schedule stops firing but the task remains for re-enabling later.",
+    name: "brain_feature_review_disable",
+    description: "Disable Feature Code Review for a feature. Permanently removes the review task. Can be re-enabled later with brain_feature_review_enable.",
     inputSchema: {
       type: "object",
       properties: {
-        taskId: { type: "string", description: "Monitor task ID" },
-        enabled: { type: "boolean", description: "true to enable, false to disable" },
+        project: { type: "string", description: "Project containing the feature" },
+        feature_id: { type: "string", description: "Feature ID" },
       },
-      required: ["taskId", "enabled"],
+      required: ["project", "feature_id"],
     },
   },
   {
-    name: "brain_monitor_list",
-    description: "List active monitors, optionally filtered by project, feature, or template. Shows which monitoring tasks are currently enabled/disabled.",
+    name: "brain_blocked_inspector_enable",
+    description: "Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task that periodically checks for blocked tasks and attempts to unblock them by analyzing dependencies, suggesting fixes, or escalating.",
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string", description: "Filter by project" },
-        feature_id: { type: "string", description: "Filter by feature" },
-        template_id: { type: "string", description: "Filter by template type" },
+        project: { type: "string", description: "Project containing the feature" },
+        feature_id: { type: "string", description: "Feature ID to inspect" },
+        schedule: { type: "string", description: "Cron schedule override (default: every 30 minutes)" },
       },
+      required: ["project", "feature_id"],
+    },
+  },
+  {
+    name: "brain_blocked_inspector_disable",
+    description: "Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Can be re-enabled later with brain_blocked_inspector_enable.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project containing the feature" },
+        feature_id: { type: "string", description: "Feature ID" },
+      },
+      required: ["project", "feature_id"],
     },
   },
 ];
@@ -2024,59 +2026,67 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
         return lines.join("\n");
       }
 
-      case "brain_monitor_templates": {
-        const response = await apiRequest<{
-          templates: Array<{
-            id: string;
-            label: string;
-            description: string;
-            defaultSchedule: string;
-            tags: string[];
-          }>;
-          count: number;
-        }>("GET", "/monitors/templates");
+      case "brain_feature_review_enable": {
+        const scope = {
+          type: "feature",
+          project: args.project as string,
+          feature_id: args.feature_id as string,
+        };
 
-        const lines = [
-          `## Monitor Templates (${response.count})`,
-          "",
-        ];
-        for (const t of response.templates) {
-          lines.push(`### ${t.label}`);
-          lines.push(`- **ID:** ${t.id}`);
-          lines.push(`- **Description:** ${t.description}`);
-          lines.push(`- **Default Schedule:** ${t.defaultSchedule}`);
-          lines.push(`- **Tags:** ${t.tags.join(", ")}`);
-          lines.push("");
+        try {
+          const response = await apiRequest<{
+            id: string;
+            path: string;
+            title: string;
+          }>("POST", "/monitors", { templateId: "feature-review", scope });
+
+          return [
+            `Feature Code Review enabled for feature "${args.feature_id}":`,
+            `- **Task ID:** ${response.id}`,
+            `- **Title:** ${response.title}`,
+            `The review will trigger automatically when all feature tasks are completed.`,
+          ].join("\n");
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+            return `Feature Code Review is already enabled for feature "${args.feature_id}". Use brain_feature_review_disable first to reset it.`;
+          }
+          throw error;
         }
-        return lines.join("\n");
       }
 
-      case "brain_monitor_create": {
-        const scopeType = args.scope_type as string;
-        const project = args.project as string | undefined;
-        const featureId = args.feature_id as string | undefined;
+      case "brain_feature_review_disable": {
+        const scope = {
+          type: "feature",
+          project: args.project as string,
+          feature_id: args.feature_id as string,
+        };
 
-        // Validate scope requirements
-        if (scopeType === "project" && !project) {
-          return `Error: 'project' is required when scope_type is "project".`;
-        }
-        if (scopeType === "feature") {
-          if (!project || !featureId) {
-            return `Error: Both 'project' and 'feature_id' are required when scope_type is "feature".`;
+        try {
+          const response = await apiRequest<{
+            message: string;
+            taskId: string;
+            path: string;
+          }>("DELETE", "/monitors/by-scope", { templateId: "feature-review", scope });
+
+          return `Feature Code Review disabled for feature "${args.feature_id}" (task ${response.taskId} deleted).`;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+            return `Feature Code Review is not currently enabled for feature "${args.feature_id}". Nothing to disable.`;
           }
+          throw error;
         }
+      }
 
-        // Build scope object from flat args
-        let scope: Record<string, string>;
-        if (scopeType === "all") {
-          scope = { type: "all" };
-        } else if (scopeType === "project") {
-          scope = { type: "project", project: project! };
-        } else {
-          scope = { type: "feature", project: project!, feature_id: featureId! };
-        }
+      case "brain_blocked_inspector_enable": {
+        const scope = {
+          type: "feature",
+          project: args.project as string,
+          feature_id: args.feature_id as string,
+        };
 
-        const body: Record<string, unknown> = { templateId: args.templateId as string, scope };
+        const body: Record<string, unknown> = { templateId: "blocked-inspector", scope };
         if (args.schedule) body.schedule = args.schedule as string;
 
         try {
@@ -2087,72 +2097,42 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
           }>("POST", "/monitors", body);
 
           return [
-            `Monitor created successfully:`,
-            `- **ID:** ${response.id}`,
-            `- **Path:** ${response.path}`,
+            `Blocked Task Inspector enabled for feature "${args.feature_id}":`,
+            `- **Task ID:** ${response.id}`,
             `- **Title:** ${response.title}`,
+            `The inspector will periodically check for blocked tasks and attempt to unblock them.`,
           ].join("\n");
         } catch (error) {
           const msg = error instanceof Error ? error.message : String(error);
           if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
-            return `Monitor already exists for this template+scope. Use brain_monitor_toggle to enable/disable it.`;
+            return `Blocked Task Inspector is already enabled for feature "${args.feature_id}". Use brain_blocked_inspector_disable first to reset it.`;
           }
           throw error;
         }
       }
 
-      case "brain_monitor_toggle": {
-        const response = await apiRequest<{
-          message: string;
-          taskId: string;
-          enabled: boolean;
-        }>(
-          "PATCH",
-          `/monitors/${encodeURIComponent(args.taskId as string)}/toggle`,
-          { enabled: args.enabled as boolean }
-        );
+      case "brain_blocked_inspector_disable": {
+        const scope = {
+          type: "feature",
+          project: args.project as string,
+          feature_id: args.feature_id as string,
+        };
 
-        return `Monitor ${response.taskId} ${response.enabled ? "enabled" : "disabled"}.`;
-      }
-
-      case "brain_monitor_list": {
-        const queryParams: Record<string, string> = {};
-        if (args.project) queryParams.project = args.project as string;
-        if (args.feature_id) queryParams.feature_id = args.feature_id as string;
-        if (args.template_id) queryParams.template_id = args.template_id as string;
-
-        const response = await apiRequest<{
-          monitors: Array<{
-            id: string;
+        try {
+          const response = await apiRequest<{
+            message: string;
+            taskId: string;
             path: string;
-            templateId: string;
-            scope: Record<string, string>;
-            enabled: boolean;
-            schedule: string;
-            title: string;
-          }>;
-          count: number;
-        }>("GET", "/monitors", undefined, queryParams);
+          }>("DELETE", "/monitors/by-scope", { templateId: "blocked-inspector", scope });
 
-        if (response.monitors.length === 0) {
-          return "No monitors found matching the given filters.";
+          return `Blocked Task Inspector disabled for feature "${args.feature_id}" (task ${response.taskId} deleted).`;
+        } catch (error) {
+          const msg = error instanceof Error ? error.message : String(error);
+          if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+            return `Blocked Task Inspector is not currently enabled for feature "${args.feature_id}". Nothing to disable.`;
+          }
+          throw error;
         }
-
-        const lines = [
-          `## Monitors (${response.count})`,
-          "",
-        ];
-        for (const m of response.monitors) {
-          const status = m.enabled ? "✅ enabled" : "⏸️ disabled";
-          lines.push(`### ${m.title}`);
-          lines.push(`- **ID:** ${m.id}`);
-          lines.push(`- **Template:** ${m.templateId}`);
-          lines.push(`- **Scope:** ${JSON.stringify(m.scope)}`);
-          lines.push(`- **Status:** ${status}`);
-          lines.push(`- **Schedule:** ${m.schedule}`);
-          lines.push("");
-        }
-        return lines.join("\n");
       }
 
       default:

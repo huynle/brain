@@ -9,6 +9,10 @@ import { serve, type TLSOptions } from "bun";
 import { getConfig } from "./config";
 import { TASK_SSE_SAFE_IDLE_TIMEOUT_SECONDS } from "./api/sse-config";
 import { createApp } from "./server";
+import { createStorageLayer } from "./core/storage";
+import { parseFile } from "./core/file-parser";
+import { Indexer } from "./core/indexer";
+import { FileWatcher } from "./core/file-watcher";
 
 function buildTlsOptions(config: ReturnType<typeof getConfig>): TLSOptions | undefined {
   const { tls } = config.server;
@@ -70,3 +74,49 @@ console.log(`  POST /api/v1/search       - Search entries`);
 console.log(`  ...and more`);
 console.log(`  POST /mcp                 - MCP Streamable HTTP transport`);
 console.log();
+
+// =============================================================================
+// File Watcher - Real-time incremental indexing
+// =============================================================================
+
+let fileWatcher: FileWatcher | null = null;
+
+const watchEnabled = (process.env.BRAIN_WATCH ?? "true").toLowerCase() !== "false";
+
+if (watchEnabled) {
+  try {
+    const watcherStorage = createStorageLayer(config.brain.dbPath);
+    const indexer = new Indexer(config.brain.brainDir, watcherStorage, parseFile);
+    fileWatcher = new FileWatcher(config.brain.brainDir, indexer);
+    fileWatcher.start();
+    console.log(`👁️  File watcher started on ${config.brain.brainDir}`);
+  } catch (err) {
+    console.error(
+      "[FileWatcher] Failed to start:",
+      err instanceof Error ? err.message : String(err)
+    );
+  }
+} else {
+  console.log(`👁️  File watcher disabled (BRAIN_WATCH=false)`);
+}
+
+// =============================================================================
+// Graceful Shutdown
+// =============================================================================
+
+function shutdown() {
+  console.log("\n🛑 Shutting down...");
+
+  if (fileWatcher?.isRunning()) {
+    fileWatcher.stop();
+    console.log("  File watcher stopped");
+  }
+
+  server.stop();
+  console.log("  Server stopped");
+
+  process.exit(0);
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);

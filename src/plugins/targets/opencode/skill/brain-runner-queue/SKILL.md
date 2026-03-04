@@ -1,13 +1,13 @@
 ---
-name: do-work-queue
+name: brain-runner-queue
 description: Use when processing queued requests - triages complexity, executes with appropriate depth, commits atomically
 ---
 
-# Do-Work-Queue Skill
+# Brain-Runner-Queue Skill
 
 Process a task from the queue with complexity triage and dependency awareness. Right-size the process to avoid overhead.
 
-**Announce at start:** "I'm using the do-work-queue skill to process this task."
+**Announce at start:** "I'm using the brain-runner-queue skill to process this task."
 
 ## Overview
 

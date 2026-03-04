@@ -124,7 +124,7 @@ describe("OpencodeExecutor", () => {
       const task = createMockTask("task1");
       const prompt = executor.buildPrompt(task, false);
 
-      expect(prompt).toContain("Load the do-work-queue skill");
+      expect(prompt).toContain("Load the brain-runner-queue skill");
       expect(prompt).toContain(task.path);
       expect(prompt).toContain("Mark the task as in_progress");
       expect(prompt).toContain("Capture commit hash");
@@ -141,7 +141,7 @@ describe("OpencodeExecutor", () => {
       const task = createMockTask("task1");
       const prompt = executor.buildPrompt(task, true);
 
-      expect(prompt).toContain("Load the do-work-queue skill");
+      expect(prompt).toContain("Load the brain-runner-queue skill");
       expect(prompt).toContain("RESUME");
       expect(prompt).toContain(task.path);
       expect(prompt).toContain("interrupted");
@@ -174,7 +174,7 @@ describe("OpencodeExecutor", () => {
       const prompt = executor.buildPrompt(task, false);
 
       expect(prompt).toBe("/lint --fix src/");
-      expect(prompt).not.toContain("do-work-queue");
+      expect(prompt).not.toContain("brain-runner-queue");
     });
 
     test("returns direct_prompt verbatim even for resume", () => {
@@ -213,7 +213,7 @@ Step 3: Commit changes`;
 
       const prompt = executor.buildPrompt(task, false);
 
-      expect(prompt).toContain("Load the do-work-queue skill");
+      expect(prompt).toContain("Load the brain-runner-queue skill");
       expect(prompt).toContain(task.path);
     });
   });
@@ -369,7 +369,7 @@ Step 3: Commit changes`;
 
         // Check content
         const content = readFileSync(result.promptFile, "utf-8");
-        expect(content).toContain("Load the do-work-queue skill");
+        expect(content).toContain("Load the brain-runner-queue skill");
         expect(content).toContain(task.path);
       } finally {
         Bun.spawn = originalSpawn;
@@ -622,7 +622,7 @@ Step 3: Commit changes`;
         // Check prompt file contains direct_prompt content
         const content = readFileSync(result.promptFile, "utf-8");
         expect(content).toBe("/lint --fix src/");
-        expect(content).not.toContain("do-work-queue");
+        expect(content).not.toContain("brain-runner-queue");
       } finally {
         Bun.spawn = originalSpawn;
       }

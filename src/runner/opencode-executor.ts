@@ -61,7 +61,7 @@ export class OpencodeExecutor {
   // ========================================
 
   buildPrompt(task: ResolvedTask, isResume: boolean): string {
-    // If direct_prompt is set, use it verbatim (bypasses do-work-queue skill workflow)
+    // If direct_prompt is set, use it verbatim (bypasses brain-runner-queue skill workflow)
     if (task.direct_prompt) {
       if (isDebugEnabled()) {
         console.log(`[OpencodeExecutor] Using direct_prompt for task: ${task.id}`);
@@ -70,7 +70,7 @@ export class OpencodeExecutor {
     }
 
     if (isResume) {
-      return `Load the do-work-queue skill and RESUME the interrupted task at brain path: ${task.path}
+      return `Load the brain-runner-queue skill and RESUME the interrupted task at brain path: ${task.path}
 
 IMPORTANT: This task was previously in_progress but was interrupted.
 
@@ -79,7 +79,7 @@ Use brain_recall to read the task details, then:
 2. Assess what work (if any) was already completed
 3. If work was partially done, continue from where it left off
 4. If unclear what was done, restart the task from the beginning
-5. Follow the do-work-queue skill workflow to completion
+5. Follow the brain-runner-queue skill workflow to completion
 6. Create atomic git commit
 7. Capture commit hash (\`git rev-parse HEAD\`)
 8. Mark as completed with summary and include commit hash (note that this was a resumed task)
@@ -87,9 +87,9 @@ Use brain_recall to read the task details, then:
 Start now.`;
     }
 
-    return `Load the do-work-queue skill and process the task at brain path: ${task.path}
+    return `Load the brain-runner-queue skill and process the task at brain path: ${task.path}
 
-Use brain_recall to read the task details, then follow the do-work-queue skill workflow:
+Use brain_recall to read the task details, then follow the brain-runner-queue skill workflow:
 1. Mark the task as in_progress
 2. Triage complexity (Route A/B/C)
 3. Execute the appropriate route

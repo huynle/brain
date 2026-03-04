@@ -881,7 +881,7 @@ Brain paths:
 |-----------|-------------------|
 | `brain_recall` | Load existing plans from brain |
 | `brain_save` | Create task entries with `depends_on` field |
-| `do-work-queue` skill | Processes the queued tasks |
+| `brain-runner-queue` skill | Processes the queued tasks |
 | `brain-runner` | Handles dependency resolution at runtime |
 | `/do status` | Monitor queue progress |
 | `explore` agent | Validates plan feasibility |

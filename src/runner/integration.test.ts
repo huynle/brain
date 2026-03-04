@@ -379,7 +379,7 @@ const proc = Bun.spawn(["sleep", "0.1"]);
       });
 
       const newPrompt = executor.buildPrompt(task, false);
-      expect(newPrompt).toContain("do-work-queue skill");
+      expect(newPrompt).toContain("brain-runner-queue skill");
       expect(newPrompt).toContain("projects/myproject/task/abc123.md");
       expect(newPrompt).not.toContain("RESUME");
 

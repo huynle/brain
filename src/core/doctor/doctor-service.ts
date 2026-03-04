@@ -540,7 +540,7 @@ export class DoctorService {
 
     // Check required skills
     const requiredSkills = [
-      { name: "do-work-queue", description: "task queue processing" },
+      { name: "brain-runner-queue", description: "task queue processing" },
       { name: "brain-planning", description: "plan persistence" },
       { name: "using-brain", description: "knowledge patterns" },
     ];

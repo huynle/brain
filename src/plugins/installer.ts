@@ -35,7 +35,7 @@ import opencodePlanningPluginPath from "./targets/opencode/brain-planning.ts" wi
 
 // OpenCode skills
 // @ts-ignore - Bun import attribute syntax
-import skillDoWorkPath from "./targets/opencode/skill/do-work-queue/SKILL.md" with { type: "file" };
+import skillBrainRunnerQueuePath from "./targets/opencode/skill/brain-runner-queue/SKILL.md" with { type: "file" };
 // @ts-ignore - Bun import attribute syntax
 import skillBrainPlanningPath from "./targets/opencode/skill/brain-planning/SKILL.md" with { type: "file" };
 // @ts-ignore - Bun import attribute syntax
@@ -74,7 +74,7 @@ const EMBEDDED_PLUGINS: Partial<Record<InstallTarget, string>> = {
 const EMBEDDED_ADDITIONAL_FILES: Partial<Record<InstallTarget, Record<string, string>>> = {
   opencode: {
     "plugin/brain-planning.ts": opencodePlanningPluginPath,
-    "skill/do-work-queue/SKILL.md": skillDoWorkPath,
+    "skill/brain-runner-queue/SKILL.md": skillBrainRunnerQueuePath,
     "skill/brain-planning/SKILL.md": skillBrainPlanningPath,
     "skill/using-brain/SKILL.md": skillUsingBrainPath,
     "skill/project-planning/SKILL.md": skillProjectPlanningPath,
@@ -163,10 +163,10 @@ const TARGETS: Record<InstallTarget, TargetConfig> = {
       },
       // Skills
       {
-        sourcePath: "skill/do-work-queue/SKILL.md",
-        targetDir: (home) => join(home, ".config/opencode/skill/do-work-queue"),
+        sourcePath: "skill/brain-runner-queue/SKILL.md",
+        targetDir: (home) => join(home, ".config/opencode/skill/brain-runner-queue"),
         targetFile: "SKILL.md",
-        description: "do-work-queue skill (task queue processing)",
+        description: "brain-runner-queue skill (task queue processing)",
         componentType: "skill",
       },
       {

@@ -5,5 +5,8 @@ dist/
 .env
 .env.local
 
+# Brain data (bind mount for Docker)
+.brain/
+
 # Local git worktrees
 .worktrees/

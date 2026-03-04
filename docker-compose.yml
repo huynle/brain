@@ -1,0 +1,36 @@
+services:
+  brain-api:
+    build: .
+    container_name: brain-api
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3333}:3333"
+    volumes:
+      - ./.brain:/data/brain
+    env_file:
+      - .env
+    environment:
+      - BRAIN_DIR=/data/brain
+      - PORT=3333
+      - HOST=0.0.0.0
+    # --- Traefik integration (for deployment behind reverse proxy) ---
+    # Uncomment the networks and labels sections when deploying with Traefik.
+    # Set BRAIN_DOMAIN in .env to your domain (e.g. brain.example.com).
+    #
+    # networks:
+    #   - default
+    #   - traefik-public
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.http.routers.brain-api-rtr.entrypoints=https"
+    #   - "traefik.http.routers.brain-api-rtr.rule=Host(`${BRAIN_DOMAIN:-brain.localhost}`)"
+    #   - "traefik.http.routers.brain-api-rtr.tls=true"
+    #   - "traefik.http.routers.brain-api-rtr.tls.certresolver=letsencrypt-do"
+    #   - "traefik.http.routers.brain-api-rtr.middlewares=noauth-chain@file"
+    #   - "traefik.http.routers.brain-api-rtr.service=brain-api-svc"
+    #   - "traefik.http.services.brain-api-svc.loadbalancer.server.port=3333"
+
+# Uncomment when deploying with Traefik:
+# networks:
+#   traefik-public:
+#     external: true

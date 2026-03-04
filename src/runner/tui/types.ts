@@ -301,7 +301,7 @@ export interface TaskTreeVisibleRow {
 /**
  * Settings popup section type
  */
-export type SettingsSection = 'limits' | 'groups' | 'runtime';
+export type SettingsSection = 'limits' | 'groups' | 'runtime' | 'monitors';
 
 /**
  * Props for the main App component

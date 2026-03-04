@@ -43,6 +43,8 @@ export interface SettingsPopupProps {
   runtimeEditMode?: boolean;
   /** Current edit buffer for runtime model */
   runtimeEditBuffer?: string;
+  /** Whether auto-monitors is currently enabled */
+  autoMonitors?: boolean;
 }
 
 export function SettingsPopup({
@@ -55,11 +57,13 @@ export function SettingsPopup({
   runtimeDefaultModel = '',
   runtimeEditMode = false,
   runtimeEditBuffer = '',
+  autoMonitors = false,
 }: SettingsPopupProps): React.ReactElement {
   const hasGlobalRow = globalMaxParallel !== undefined;
   const isLimitsSection = section === 'limits';
   const isGroupsSection = section === 'groups';
   const isRuntimeSection = section === 'runtime';
+  const isMonitorsSection = section === 'monitors';
 
   return (
     <Box
@@ -95,6 +99,14 @@ export function SettingsPopup({
             bold={isRuntimeSection}
           >
             {isRuntimeSection ? '[Runtime]' : ' Runtime '}
+          </Text>
+          <Text> </Text>
+          {/* Monitors tab */}
+          <Text
+            color={isMonitorsSection ? 'cyan' : 'gray'}
+            bold={isMonitorsSection}
+          >
+            {isMonitorsSection ? '[Monitors]' : ' Monitors '}
           </Text>
         </Box>
       </Box>
@@ -269,6 +281,27 @@ export function SettingsPopup({
         </Box>
       )}
 
+      {/* Monitors section content */}
+      {isMonitorsSection && (
+        <Box flexDirection="column">
+          <Text dimColor>Auto-create monitors for new features</Text>
+          <Box marginTop={1} flexDirection="column">
+            <Box>
+              <Text>Auto-create monitors: </Text>
+              <Text color={autoMonitors ? 'green' : 'gray'} bold>
+                {autoMonitors ? '[ON]' : '[OFF]'}
+              </Text>
+            </Box>
+            <Text dimColor>
+              Creates &quot;Blocked Task Inspector&quot; and &quot;Feature Code Review&quot;
+            </Text>
+            <Text dimColor>
+              for every new feature_id detected at runtime.
+            </Text>
+          </Box>
+        </Box>
+      )}
+
       {/* Footer with section-specific shortcuts */}
       <Box marginTop={1} borderStyle="single" borderTop borderBottom={false} borderLeft={false} borderRight={false} borderColor="gray">
         <Text dimColor>
@@ -276,9 +309,11 @@ export function SettingsPopup({
             ? 'Tab: Section  j/k: Nav  +/-: Adjust  0: No limit  Esc: Close'
             : isGroupsSection
               ? 'Tab: Section  j/k: Nav  Space: Toggle  c: Collapse  Esc: Close'
-              : (runtimeEditMode
-                ? 'Tab: Section  Type: Edit model  Enter: Save  Esc: Cancel'
-                : 'Tab: Section  e/Enter: Edit model  0: Config default  Esc: Close')}
+              : isRuntimeSection
+                ? (runtimeEditMode
+                  ? 'Tab: Section  Type: Edit model  Enter: Save  Esc: Cancel'
+                  : 'Tab: Section  e/Enter: Edit model  0: Config default  Esc: Close')
+                : 'Tab: Section  Space/Enter: Toggle  Esc: Close'}
         </Text>
       </Box>
     </Box>

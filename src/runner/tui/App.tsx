@@ -839,6 +839,8 @@ export function App({
   setMaxParallel,
   getRuntimeDefaultModel,
   setRuntimeDefaultModel,
+  getAutoMonitors,
+  setAutoMonitors,
   onEnableFeature,
   onDisableFeature,
   getEnabledFeatures,
@@ -974,6 +976,7 @@ export function App({
   const [runtimeDefaultModelState, setRuntimeDefaultModelState] = useState<string>('');
   const [runtimeModelEditMode, setRuntimeModelEditMode] = useState(false);
   const [runtimeModelEditBuffer, setRuntimeModelEditBuffer] = useState('');
+  const [settingsAutoMonitors, setSettingsAutoMonitors] = useState(false);
   const [activeProject, setActiveProject] = useState<string>(config.activeProject ?? (isMultiProject ? 'all' : projects[0]));
   const [pausedProjects, setPausedProjects] = useState<Set<string>>(new Set());
   const [enabledFeatures, setEnabledFeatures] = useState<Set<string>>(new Set());
@@ -2422,6 +2425,7 @@ export function App({
         setSettingsSection(prev => {
           if (prev === 'limits') return 'groups';
           if (prev === 'groups') return 'runtime';
+          if (prev === 'runtime') return 'monitors';
           return 'limits';
         });
         setSettingsSelectedIndex(0);
@@ -2584,7 +2588,7 @@ export function App({
           }
           return;
         }
-      } else {
+      } else if (settingsSection === 'runtime') {
         // Runtime section (default model override)
         if (runtimeModelEditMode) {
           // Save edited model
@@ -2642,6 +2646,20 @@ export function App({
           addLog({
             level: 'info',
             message: 'Runtime default model reset to config default',
+          });
+          return;
+        }
+      } else if (settingsSection === 'monitors') {
+        // Monitors section: toggle auto-monitors
+        if (input === ' ' || key.return) {
+          const newValue = !settingsAutoMonitors;
+          setSettingsAutoMonitors(newValue);
+          if (setAutoMonitors) {
+            setAutoMonitors(newValue);
+          }
+          addLog({
+            level: 'info',
+            message: `Auto-create monitors: ${newValue ? 'enabled' : 'disabled'}`,
           });
           return;
         }
@@ -3397,6 +3415,7 @@ export function App({
         taskCount: statusCounts[status] || 0,
       }));
       setGroupVisibilityState(groupEntries);
+      setSettingsAutoMonitors(getAutoMonitors?.() ?? false);
       setShowSettingsPopup(true);
       return;
     }
@@ -3981,6 +4000,7 @@ export function App({
           runtimeDefaultModel={runtimeDefaultModelState}
           runtimeEditMode={runtimeModelEditMode}
           runtimeEditBuffer={runtimeModelEditBuffer}
+          autoMonitors={settingsAutoMonitors}
         />
       </Box>
     );

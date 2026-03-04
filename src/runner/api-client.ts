@@ -576,14 +576,19 @@ export class ApiClient {
         console.log(`[API] ${options.method ?? "GET"} ${path}`);
       }
 
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        ...(options.headers as Record<string, string>),
+      };
+      if (this.config.apiToken) {
+        headers["Authorization"] = `Bearer ${this.config.apiToken}`;
+      }
+
       const response = await fetch(url, {
         ...options,
         signal: controller.signal,
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-          ...options.headers,
-        },
+        headers,
       });
 
       return response;

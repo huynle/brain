@@ -54,6 +54,11 @@ const DEFAULT_CONFIG_YAML = `# =================================================
 # Env: BRAIN_API_URL
 # brain_api_url: "http://localhost:3333"
 
+# API token for authenticated access (when ENABLE_AUTH=true)
+# Generate with: brain token create --name runner
+# Env: BRAIN_API_TOKEN
+# api_token: ""
+
 # HTTP request timeout for API calls (milliseconds)
 # Env: RUNNER_API_TIMEOUT
 # api_timeout: 5000
@@ -181,6 +186,7 @@ const KEY_MAP: Record<string, string> = {
   memory_threshold_percent: "memoryThresholdPercent",
   exclude_projects: "excludeProjects",
   auto_monitors: "autoMonitors",
+  api_token: "apiToken",
 };
 
 /**
@@ -338,6 +344,10 @@ export function loadConfig(): RunnerConfig {
     brainApiUrl: getEnv(
       "BRAIN_API_URL",
       fileConfig.brainApiUrl ?? "http://localhost:3333"
+    ),
+    apiToken: getEnv(
+      "BRAIN_API_TOKEN",
+      fileConfig.apiToken ?? ""
     ),
     pollInterval: getEnvInt(
       "RUNNER_POLL_INTERVAL",

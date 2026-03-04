@@ -68,6 +68,7 @@ function createMockTask(
 function createTestConfig(stateDir: string): RunnerConfig {
   return {
     brainApiUrl: "http://localhost:3333",
+    apiToken: "",
     pollInterval: 30,
     taskPollInterval: 5,
     maxParallel: 3,
@@ -205,7 +206,7 @@ Step 3: Commit changes`;
       expect(prompt).toContain("Step 3:");
     });
 
-    test("falls back to do-work prompt when direct_prompt is null", () => {
+    test("falls back to default skill prompt when direct_prompt is null", () => {
       const task = createMockTask("task1", {
         direct_prompt: null,
       });

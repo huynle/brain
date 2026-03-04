@@ -13,6 +13,7 @@ import type { Priority } from "../core/types";
 
 export interface RunnerConfig {
   brainApiUrl: string;
+  apiToken: string; // API token for authenticated requests (when ENABLE_AUTH=true)
   pollInterval: number; // seconds
   taskPollInterval: number; // seconds
   maxParallel: number;

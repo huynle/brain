@@ -21,6 +21,7 @@ import type { RunnerConfig, ApiHealth } from "./types";
 // Mock config for testing
 const mockConfig: RunnerConfig = {
   brainApiUrl: "http://localhost:3333",
+  apiToken: "",
   pollInterval: 30,
   taskPollInterval: 5,
   maxParallel: 3,

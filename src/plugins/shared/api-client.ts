@@ -134,11 +134,17 @@ export async function apiRequest<T>(
     }
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  const apiToken = process.env.BRAIN_API_TOKEN;
+  if (apiToken) {
+    headers["Authorization"] = `Bearer ${apiToken}`;
+  }
+
   const options: RequestInit = {
     method,
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
   };
 
   if (body && (method === "POST" || method === "PATCH" || method === "PUT")) {

@@ -15,6 +15,7 @@
  *   brain dev       - Start in development mode
  *   brain config    - Show configuration
  *   brain doctor    - Diagnose brain configuration
+ *   brain migrate   - Migrate existing data to unified database
  *   brain install   - Install brain plugin to AI coding assistants
  */
 
@@ -24,6 +25,7 @@ import { homedir } from "os";
 import { join, dirname } from "path";
 import { createDoctorService, type Check, type DoctorResult } from "../core/doctor";
 import { execTokenCommand } from "./brain-token";
+import { execMigrateCommand } from "./brain-migrate";
 
 // =============================================================================
 // Configuration
@@ -153,6 +155,7 @@ Server Commands:
 Setup Commands:
   init        Initialize brain directory with templates and zk config
   doctor      Diagnose and fix brain configuration
+  migrate     Migrate existing data to unified database
 
 Token Commands:
   token create --name <name>   Create a new API token
@@ -180,6 +183,11 @@ Init Options:
   brain init                Initialize brain directory (skip existing files)
   brain init --force        Overwrite existing files
   brain init --dry-run      Show what would be created
+
+Migrate Options:
+  brain migrate             Auto-detect and migrate data to brain.db
+  brain migrate --dry-run   Show what would be migrated without writing
+  brain migrate --rebuild   Force rebuild from disk (ignore zk.db)
 
 Doctor Options:
   brain doctor              Run diagnostics (show failures only)
@@ -786,6 +794,24 @@ async function cmdDoctor(args: string[]): Promise<void> {
 }
 
 // =============================================================================
+// Migrate Command
+// =============================================================================
+
+async function cmdMigrate(args: string[]): Promise<void> {
+  const result = await execMigrateCommand(args);
+  if (result.output) {
+    if (result.exitCode === 0) {
+      console.log(result.output);
+    } else {
+      console.error(result.output);
+    }
+  }
+  if (result.exitCode !== 0) {
+    process.exit(result.exitCode);
+  }
+}
+
+// =============================================================================
 // Token Command
 // =============================================================================
 
@@ -841,6 +867,9 @@ async function main() {
       break;
     case "init":
       await cmdInit(args.slice(1));
+      break;
+    case "migrate":
+      await cmdMigrate(args.slice(1));
       break;
     case "install":
       await cmdInstall(args.slice(1));

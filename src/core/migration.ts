@@ -7,7 +7,7 @@
  * Phase 1: living-brain.db import (entry_meta + generated_tasks)
  * Phase 2: ZK database import (notes, links, tags)
  * Phase 3: Auto-detection, rebuild, dry-run
- * Phase 4: CLI command — future
+ * Phase 4: CLI command (src/cli/brain-migrate.ts)
  */
 
 import { Database } from "bun:sqlite";

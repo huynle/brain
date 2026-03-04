@@ -1006,6 +1006,10 @@ export function App({
   // Get stdin control for suspending during editor session
   const { setRawMode } = useStdin();
 
+  // Track seen feature_ids for auto-monitor creation
+  const seenFeatureIdsRef = useRef<Set<string>>(new Set());
+  const initialSnapshotTakenRef = useRef<boolean>(false);
+
 
 
   // Single-project SSE task transport
@@ -1219,6 +1223,73 @@ export function App({
       }
     }
   }, [tasks, activeFeatures, onDisableFeature, addLog]);
+
+  // Auto-create monitors for newly detected feature_ids
+  useEffect(() => {
+    // Wait until we have tasks loaded
+    if (tasks.length === 0) return;
+
+    // Take initial snapshot on first load — don't auto-create for existing features
+    if (!initialSnapshotTakenRef.current) {
+      initialSnapshotTakenRef.current = true;
+      for (const t of tasks) {
+        if (t.feature_id) {
+          seenFeatureIdsRef.current.add(t.feature_id);
+        }
+      }
+      return;
+    }
+
+    // Extract current feature_ids from tasks
+    const currentFeatureIds = new Set<string>();
+    const featureProjectMap = new Map<string, string>();
+    for (const t of tasks) {
+      if (t.feature_id) {
+        currentFeatureIds.add(t.feature_id);
+        if (t.projectId && !featureProjectMap.has(t.feature_id)) {
+          featureProjectMap.set(t.feature_id, t.projectId);
+        }
+      }
+    }
+
+    // Find new feature_ids
+    const newFeatureIds: string[] = [];
+    for (const fid of currentFeatureIds) {
+      if (!seenFeatureIdsRef.current.has(fid)) {
+        newFeatureIds.push(fid);
+      }
+    }
+
+    // Always update seenFeatureIdsRef (even if auto-monitors off — prevents burst on re-enable)
+    for (const fid of currentFeatureIds) {
+      seenFeatureIdsRef.current.add(fid);
+    }
+
+    // Gate on auto-monitors setting
+    const autoMonitorsEnabled = getAutoMonitors?.() ?? false;
+    if (!autoMonitorsEnabled || newFeatureIds.length === 0) return;
+
+    // Auto-create monitors for each new feature_id
+    for (const featureId of newFeatureIds) {
+      const project = featureProjectMap.get(featureId);
+      if (!project) continue;
+
+      const scope: TemplateScope = { type: 'feature', feature_id: featureId, project };
+
+      // Create blocked-inspector (scheduled template)
+      const blockedTemplate = TEMPLATE_LIST.find(t => t.id === 'blocked-inspector');
+      if (blockedTemplate) {
+        createScheduledTask(blockedTemplate, scope, config.apiUrl)
+          .then(() => addLog({ level: 'info', message: `Auto-created blocked-inspector for feature: ${featureId}` }))
+          .catch(() => { /* silently ignore — likely 409 conflict (already exists) */ });
+      }
+
+      // Create feature-review (monitor template)
+      createMonitorTask('feature-review', scope, config.apiUrl)
+        .then(() => addLog({ level: 'info', message: `Auto-created feature-review for feature: ${featureId}` }))
+        .catch(() => { /* silently ignore — likely 409 conflict (already exists) */ });
+    }
+  }, [tasks, getAutoMonitors, config.apiUrl, addLog]);
 
   // Stable callbacks for toggling section collapsed states (avoids new ref on every render)
   const handleToggleCompleted = useCallback(() => {

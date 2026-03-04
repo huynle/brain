@@ -19,7 +19,7 @@ import { homedir } from "os";
 import {
   parseFrontmatter,
   serializeFrontmatter,
-} from "../core/zk-client";
+} from "../core/note-utils";
 
 // =============================================================================
 // Types

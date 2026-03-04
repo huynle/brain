@@ -91,11 +91,11 @@ describe("brain init command", () => {
 		expect(output).not.toContain("zk init");
 	});
 
-	test("creates .zk directory during init", () => {
+	test("does not create .zk directory during init (ZK dependency removed)", () => {
 		const result = runBrainCli(["init"], { BRAIN_DIR: tempDir });
 
 		expect(result.status).toBe(0);
-		expect(existsSync(join(tempDir, ".zk"))).toBe(true);
+		expect(existsSync(join(tempDir, ".zk"))).toBe(false);
 	});
 
 	test("dry-run does not create brain.db", () => {

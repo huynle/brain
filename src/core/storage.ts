@@ -19,7 +19,7 @@ import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { Glob } from "bun";
 import { migrateSchema } from "./schema";
-import { parseFrontmatter, extractIdFromPath } from "./zk-client";
+import { parseFrontmatter, extractIdFromPath } from "./note-utils";
 
 // =============================================================================
 // Row Interfaces (internal to storage layer)

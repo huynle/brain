@@ -32,7 +32,7 @@ bun run src/runner/index.ts list <project>         # List tasks
 - `brain-service.ts` - Main service layer
 - `task-service.ts` - Task management with dependency resolution
 - `task-deps.ts` - Dependency graph algorithms
-- `zk-client.ts` - Zettelkasten CLI wrapper
+- `note-utils.ts` - Note utility functions (ID generation, slugify, frontmatter re-exports)
 
 ### Task Runner (`src/runner/`)
 - `index.ts` - CLI entry point with argument parsing

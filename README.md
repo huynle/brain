@@ -119,14 +119,10 @@ export PATH="$HOME/.local/bin:$PATH"
 ### Requirements
 
 - [Bun](https://bun.sh) >= 1.0.0
-- [zk](https://github.com/mickael-menu/zk) CLI (for Zettelkasten operations)
 
 To verify your installation:
 
 ```bash
-# Check zk is available
-zk --version
-
 # Run diagnostics
 brain doctor -v
 ```
@@ -493,30 +489,11 @@ brain doctor --fix --dry-run
 
 | Category | Checks |
 |----------|--------|
-| **ZK CLI** | CLI available, correct version |
-| **ZK Notebook** | `.zk` directory exists |
-| **ZK Config** | `id-length = 8`, `id-charset = alphanum` |
-| **Directory Structure** | `projects/`, `global/` directories |
-| **Templates** | All 12 entry type templates present and valid |
-
-#### Entry Templates
-
-Doctor validates these templates in `.zk/templates/`:
-
-| Template | Entry Type |
-|----------|------------|
-| `summary.md` | Session summaries, key decisions |
-| `report.md` | Analysis reports, code reviews |
-| `walkthrough.md` | Code explanations, architecture overviews |
-| `plan.md` | Implementation plans, designs |
-| `pattern.md` | Reusable patterns (supports `global: true`) |
-| `learning.md` | Best practices (supports `global: true`) |
-| `idea.md` | Ideas for future exploration |
-| `scratch.md` | Temporary working notes |
-| `decision.md` | Architectural decisions, ADRs |
-| `exploration.md` | Investigation notes, research |
-| `execution.md` | Execution tracking |
-| `task.md` | Task entries with dependencies |
+| **Storage Layer** | SQLite database accessible and healthy |
+| **Database Health** | Tables exist, migrations applied |
+| **Directory Permissions** | Brain directory readable and writable |
+| **Tool Versions** | Bun, OpenCode versions (optional, skippable) |
+| **OpenCode Integration** | Plugin installed and configured |
 
 ### Runner Commands
 
@@ -589,8 +566,8 @@ brain-runner logs [-f]
                     ┌───────────────────┼───────────────────┐
                     ▼                   ▼                   ▼
            ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-           │  zk CLI      │   │  Markdown    │   │  SSE Stream  │
-           │  (CRUD)      │   │  ~/docs/brain│   │  (real-time) │
+           │  SQLite DB   │   │  Markdown    │   │  SSE Stream  │
+           │  (storage)   │   │  ~/docs/brain│   │  (real-time) │
            └──────────────┘   └──────────────┘   └──────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐

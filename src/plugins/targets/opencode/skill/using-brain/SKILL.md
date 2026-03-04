@@ -5,7 +5,7 @@ description: "Use when you need to persist knowledge across sessions, recall pre
 
 # Using the Brain
 
-The Brain is a persistent knowledge store powered by zk (Zettelkasten CLI) that survives across sessions. Use it to save valuable insights, recall previous work, link related knowledge, and build up project-specific and global knowledge over time.
+The Brain is a persistent knowledge store that survives across sessions. Use it to save valuable insights, recall previous work, link related knowledge, and build up project-specific and global knowledge over time.
 
 ## Checklist
 

@@ -59,12 +59,10 @@ describe("Health API", () => {
       const health = await getHealthStatus();
 
       expect(health).toHaveProperty("status");
-      expect(health).toHaveProperty("zkAvailable");
       expect(health).toHaveProperty("dbAvailable");
       expect(health).toHaveProperty("timestamp");
       expect(health).toHaveProperty("storageLayerAvailable");
       expect(["healthy", "degraded", "unhealthy"]).toContain(health.status);
-      expect(typeof health.zkAvailable).toBe("boolean");
       expect(typeof health.dbAvailable).toBe("boolean");
       expect(typeof health.storageLayerAvailable).toBe("boolean");
     });
@@ -77,71 +75,37 @@ describe("Health API", () => {
   });
 
   describe("computeHealthStatus() - StorageLayer-aware logic", () => {
-    test("should return healthy when StorageLayer + DB available, even without ZK", () => {
+    test("should return healthy when StorageLayer + DB available", () => {
       const result = computeHealthStatus({
         hasStorageLayer: true,
         dbAvailable: true,
-        zkAvailable: false,
       });
       expect(result.status).toBe("healthy");
       expect(result.storageLayerAvailable).toBe(true);
       expect(result.dbAvailable).toBe(true);
-      expect(result.zkAvailable).toBe(false);
-    });
-
-    test("should return healthy when StorageLayer + DB + ZK all available", () => {
-      const result = computeHealthStatus({
-        hasStorageLayer: true,
-        dbAvailable: true,
-        zkAvailable: true,
-      });
-      expect(result.status).toBe("healthy");
-      expect(result.storageLayerAvailable).toBe(true);
     });
 
     test("should return unhealthy when StorageLayer available but DB down", () => {
       const result = computeHealthStatus({
         hasStorageLayer: true,
         dbAvailable: false,
-        zkAvailable: false,
       });
       expect(result.status).toBe("unhealthy");
     });
 
-    test("should return healthy in legacy mode when ZK + DB available", () => {
+    test("should return degraded when DB available but no StorageLayer", () => {
       const result = computeHealthStatus({
         hasStorageLayer: false,
         dbAvailable: true,
-        zkAvailable: true,
-      });
-      expect(result.status).toBe("healthy");
-      expect(result.storageLayerAvailable).toBe(false);
-    });
-
-    test("should return degraded in legacy mode when DB available but ZK not", () => {
-      const result = computeHealthStatus({
-        hasStorageLayer: false,
-        dbAvailable: true,
-        zkAvailable: false,
       });
       expect(result.status).toBe("degraded");
       expect(result.storageLayerAvailable).toBe(false);
-    });
-
-    test("should return unhealthy in legacy mode when DB down", () => {
-      const result = computeHealthStatus({
-        hasStorageLayer: false,
-        dbAvailable: false,
-        zkAvailable: true,
-      });
-      expect(result.status).toBe("unhealthy");
     });
 
     test("should return unhealthy when nothing available", () => {
       const result = computeHealthStatus({
         hasStorageLayer: false,
         dbAvailable: false,
-        zkAvailable: false,
       });
       expect(result.status).toBe("unhealthy");
     });
@@ -150,7 +114,6 @@ describe("Health API", () => {
       const result = computeHealthStatus({
         hasStorageLayer: true,
         dbAvailable: true,
-        zkAvailable: false,
       });
       const date = new Date(result.timestamp);
       expect(date.toISOString()).toBe(result.timestamp);
@@ -164,7 +127,6 @@ describe("Health API", () => {
       // May be 200 or 503 depending on zk availability
       if (res.status === 200) {
         const json = await res.json();
-        expect(json).toHaveProperty("zkAvailable");
         expect(json).toHaveProperty("brainDir");
         expect(json).toHaveProperty("dbPath");
         expect(json).toHaveProperty("totalEntries");

@@ -127,8 +127,8 @@ export function unixMillisToIso(ms: number | null): string | null {
  * Extract the short ID from a note path.
  * e.g., "projects/test/plan/abc12def.md" → "abc12def"
  *
- * Same logic as extractIdFromPath in zk-client.ts, inlined here
- * to avoid importing the full zk-client module (which has runtime deps).
+  * Same logic as extractIdFromPath in note-utils.ts, inlined here
+  * to avoid importing the full note-utils module.
  */
 function extractShortId(path: string): string {
   const filename = path.split("/").pop() || path;

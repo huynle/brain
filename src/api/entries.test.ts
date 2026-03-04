@@ -14,7 +14,7 @@ import { join } from "path";
 import { Hono } from "hono";
 import { createEntriesRoutes } from "./entries";
 import { getConfig } from "../config";
-import { parseFrontmatter } from "../core/zk-client";
+import { parseFrontmatter } from "../core/note-utils";
 import { createProjectRealtimeHub } from "../core/realtime-hub";
 
 // =============================================================================

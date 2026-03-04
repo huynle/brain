@@ -153,7 +153,7 @@ Server Commands:
   config      Show current configuration
 
 Setup Commands:
-  init        Initialize brain directory with templates and zk config
+  init        Initialize brain directory and database
   doctor      Diagnose and fix brain configuration
   migrate     Migrate existing data to unified database
 
@@ -180,14 +180,14 @@ Install Options:
   brain install --api-url <url>       Use custom API URL
 
 Init Options:
-  brain init                Initialize brain directory (skip existing files)
+  brain init                Initialize brain directory and database
   brain init --force        Overwrite existing files
   brain init --dry-run      Show what would be created
 
 Migrate Options:
   brain migrate             Auto-detect and migrate data to brain.db
   brain migrate --dry-run   Show what would be migrated without writing
-  brain migrate --rebuild   Force rebuild from disk (ignore zk.db)
+  brain migrate --rebuild   Force rebuild from disk
 
 Doctor Options:
   brain doctor              Run diagnostics (show failures only)
@@ -429,25 +429,19 @@ function printResult(result: DoctorResult, verbose: boolean): void {
 
   // Group checks by category
   const categories: Record<string, Check[]> = {
-    "ZK CLI": [],
-    "ZK Configuration": [],
-    "Templates": [],
     "Database": [],
     "Permissions": [],
     "Tool Versions": [],
+    "OpenCode Integration": [],
   };
 
   for (const check of result.checks) {
-    if (check.name.startsWith("zk-cli")) {
-      categories["ZK CLI"].push(check);
-    } else if (check.name.startsWith("zk-")) {
-      categories["ZK Configuration"].push(check);
-    } else if (check.name.startsWith("template-")) {
-      categories["Templates"].push(check);
-    } else if (check.name.startsWith("database-")) {
+    if (check.name.startsWith("storage-") || check.name.startsWith("database-")) {
       categories["Database"].push(check);
     } else if (check.name.startsWith("version-")) {
       categories["Tool Versions"].push(check);
+    } else if (check.name.startsWith("opencode-")) {
+      categories["OpenCode Integration"].push(check);
     } else {
       categories["Permissions"].push(check);
     }
@@ -619,51 +613,11 @@ async function cmdInit(args: string[]): Promise<void> {
   const config = getConfig();
   const brainDir = config.brain.brainDir;
 
-  // Assets paths
-  // import.meta.dir is /path/to/src/cli
-  // We need /path/to/src/assets
-  const assetsDir = join(dirname(import.meta.dir), "assets");
-  const referenceConfigPath = join(assetsDir, "zk-config.toml");
-  const referenceTemplatesDir = join(assetsDir, "templates");
-
-  // Target paths
-  const zkDir = join(brainDir, ".zk");
-  const templatesDir = join(zkDir, "templates");
-  const configPath = join(zkDir, "config.toml");
-
   console.log(`${COLORS.bold}Initializing brain at ${brainDir}...${COLORS.reset}\n`);
 
   if (dryRun) {
     console.log(`${COLORS.yellow}Dry run mode - no changes will be made${COLORS.reset}\n`);
   }
-
-  let created = 0;
-  let skipped = 0;
-
-  // Helper to write file with skip/force logic
-  const writeFile = (targetPath: string, content: string, label: string): void => {
-    if (existsSync(targetPath) && !force) {
-      console.log(`${COLORS.gray}\u2298 Skipped ${label} (already exists, use --force to overwrite)${COLORS.reset}`);
-      skipped++;
-      return;
-    }
-
-    if (dryRun) {
-      console.log(`${COLORS.yellow}\u2713 Would write ${label}${COLORS.reset}`);
-      created++;
-      return;
-    }
-
-    // Ensure parent directory exists
-    const parentDir = dirname(targetPath);
-    if (!existsSync(parentDir)) {
-      mkdirSync(parentDir, { recursive: true });
-    }
-
-    writeFileSync(targetPath, content, "utf-8");
-    console.log(`${COLORS.green}\u2713 Wrote ${label}${COLORS.reset}`);
-    created++;
-  };
 
   // 1. Create brain directory
   if (!existsSync(brainDir)) {
@@ -675,19 +629,7 @@ async function cmdInit(args: string[]): Promise<void> {
     }
   }
 
-  // 2. Create .zk directory
-  if (!existsSync(zkDir) || force) {
-    if (dryRun) {
-      console.log(`${COLORS.yellow}\u2713 Would create directory: ${zkDir}${COLORS.reset}`);
-    } else {
-      mkdirSync(zkDir, { recursive: true });
-      console.log(`${COLORS.green}\u2713 Created directory: ${zkDir}${COLORS.reset}`);
-    }
-  } else {
-    console.log(`${COLORS.gray}\u2298 Skipped .zk directory (already exists, use --force to reinitialize)${COLORS.reset}`);
-  }
-
-  // 3. Initialize StorageLayer database (brain.db)
+  // 2. Initialize StorageLayer database (brain.db)
   const dbPath = join(brainDir, "brain.db");
   if (!existsSync(dbPath) || force) {
     if (dryRun) {
@@ -702,52 +644,13 @@ async function cmdInit(args: string[]): Promise<void> {
     console.log(`${COLORS.gray}\u2298 Skipped brain.db (already exists, use --force to reinitialize)${COLORS.reset}`);
   }
 
-  // 4. Copy zk config
-  if (existsSync(referenceConfigPath)) {
-    const content = readFileSync(referenceConfigPath, "utf-8");
-    writeFile(configPath, content, ".zk/config.toml");
-  } else {
-    console.log(`${COLORS.red}\u2717 Reference config not found: ${referenceConfigPath}${COLORS.reset}`);
-  }
-
-  // 5. Copy all templates
-  const { ENTRY_TYPES } = await import("../core/types");
-
-  // Create templates directory
-  if (!existsSync(templatesDir) && !dryRun) {
-    mkdirSync(templatesDir, { recursive: true });
-  }
-
-  // Copy entry type templates
-  for (const type of ENTRY_TYPES) {
-    const srcPath = join(referenceTemplatesDir, `${type}.md`);
-    const destPath = join(templatesDir, `${type}.md`);
-
-    if (existsSync(srcPath)) {
-      const content = readFileSync(srcPath, "utf-8");
-      writeFile(destPath, content, `.zk/templates/${type}.md`);
-    } else {
-      console.log(`${COLORS.yellow}\u26A0 Template not found: ${srcPath}${COLORS.reset}`);
-    }
-  }
-
-  // Copy default.md template (used by zk when no --template is specified)
-  const defaultSrcPath = join(referenceTemplatesDir, "default.md");
-  const defaultDestPath = join(templatesDir, "default.md");
-  if (existsSync(defaultSrcPath)) {
-    const content = readFileSync(defaultSrcPath, "utf-8");
-    writeFile(defaultDestPath, content, ".zk/templates/default.md");
-  }
-
   // Summary
   console.log();
   if (dryRun) {
-    console.log(`${COLORS.bold}Would create ${created} file(s), skip ${skipped} file(s).${COLORS.reset}`);
+    console.log(`${COLORS.bold}Initialization complete (dry run).${COLORS.reset}`);
   } else {
-    console.log(`${COLORS.bold}Created ${created} file(s), skipped ${skipped} file(s).${COLORS.reset}`);
-    if (created > 0) {
-      console.log(`\nRun ${COLORS.green}brain start${COLORS.reset} to start the API server.`);
-    }
+    console.log(`${COLORS.bold}Initialization complete.${COLORS.reset}`);
+    console.log(`\nRun ${COLORS.green}brain start${COLORS.reset} to start the API server.`);
   }
 }
 

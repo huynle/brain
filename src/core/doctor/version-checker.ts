@@ -69,20 +69,6 @@ export const TOOLS: ToolInfo[] = [
     required: true,
     installUrl: "https://bun.sh",
   },
-  {
-    name: "zk",
-    command: "zk",
-    versionArgs: ["--version"],
-    versionParser: (output) => {
-      // "zk 0.15.2" -> "0.15.2"
-      const match = output.match(/zk\s+([\d.]+)/);
-      return match ? match[1] : null;
-    },
-    githubRepo: "zk-org/zk",
-    tagParser: (tag) => tag.replace(/^v/, ""),
-    required: false,
-    installUrl: "https://github.com/zk-org/zk",
-  },
 ];
 
 // =============================================================================

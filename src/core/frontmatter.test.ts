@@ -1,9 +1,7 @@
 /**
  * Frontmatter Module - Unit Tests
  *
- * Tests for frontmatter functions extracted from zk-client.ts.
- * These verify the module exports work correctly and functions
- * maintain identical behavior after extraction.
+ * Tests for frontmatter parsing, serialization, and generation functions.
  */
 
 import { describe, test, expect } from "bun:test";

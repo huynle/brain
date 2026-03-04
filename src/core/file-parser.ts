@@ -8,7 +8,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parseFrontmatter } from "./frontmatter";
-import { extractIdFromPath } from "./zk-client";
+import { extractIdFromPath } from "./note-utils";
 
 // =============================================================================
 // Types

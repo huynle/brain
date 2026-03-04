@@ -499,16 +499,12 @@ export const InjectResponseSchema = z.object({
 
 export const HealthResponseSchema = z.object({
   status: z.enum(["healthy", "degraded", "unhealthy"]),
-  zkAvailable: z.boolean(),
   dbAvailable: z.boolean(),
   timestamp: z.string(),
   version: z.string().openapi({ example: "0.1.0" }),
 }).openapi("HealthResponse");
 
 export const StatsResponseSchema = z.object({
-  zkAvailable: z.boolean(),
-  zkVersion: z.string().nullable(),
-  notebookExists: z.boolean(),
   brainDir: z.string(),
   dbPath: z.string(),
   totalEntries: z.number(),

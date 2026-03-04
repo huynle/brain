@@ -5,18 +5,12 @@
  * Follows BrainService patterns for consistency.
  */
 
-import { existsSync, readdirSync } from "fs";
+import { existsSync, readdirSync, readFileSync } from "fs";
 import { join } from "path";
 import { homedir } from "os";
 import { getConfig } from "../config";
 import type { BrainConfig, Task, ResolvedTask, DependencyResult, ZkNote } from "./types";
-import {
-  execZk,
-  parseZkJsonOutput,
-  extractIdFromPath,
-  isZkNotebookExists,
-  isZkAvailable,
-} from "./zk-client";
+import { extractIdFromPath, parseFrontmatter } from "./note-utils";
 import {
   resolveDependencies,
   getReadyTasks,
@@ -24,7 +18,7 @@ import {
   getBlockedTasks,
   getNextTask,
 } from "./task-deps";
-import type { StorageLayer, NoteRow } from "./storage";
+import { createStorageLayer, type StorageLayer, type NoteRow } from "./storage";
 
 // =============================================================================
 // TaskService Dependencies (optional)
@@ -40,9 +34,6 @@ export interface TaskServiceDeps {
 
 /**
  * Convert a StorageLayer NoteRow to the Task format used by the task runner.
- *
- * Similar to mapZkNoteToTask but accepts NoteRow (which has metadata as a JSON
- * string) instead of ZkNote (which has pre-parsed metadata).
  */
 export function mapNoteRowToTask(noteRow: NoteRow): Task {
   // Parse the JSON metadata
@@ -251,43 +242,49 @@ export class TaskService {
   async getAllTasks(projectId: string): Promise<Task[]> {
     const projectDir = `projects/${projectId}/task`;
 
-    // StorageLayer path: direct SQLite query, no ZK CLI needed
+    // Try StorageLayer first
     if (this.storageLayer) {
       const noteRows = this.storageLayer.listNotes({ path: projectDir });
-      return noteRows.map((row) => mapNoteRowToTask(row));
+      if (noteRows.length > 0) {
+        return noteRows.map((row) => mapNoteRowToTask(row));
+      }
     }
 
-    // Legacy ZK CLI path
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    if (!zkAvailable) {
-      throw new Error(
-        "zk CLI not available. Install from https://github.com/zk-org/zk"
-      );
-    }
+    // Fall back to file-based scan for files not yet indexed
+    // (e.g., created directly on disk, or StorageLayer not available)
+    return this.scanTasksFromDisk(projectDir);
+  }
 
-    // NOTE: Removed zk index --quiet from here for performance.
-    // zk index is called once at startup via BrainService.
-    // Calling it on every task fetch added significant latency.
-
-    // Query for task entries (directory path is sufficient, no tag filter needed)
-    const result = await execZk([
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      projectDir,
-    ]);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
+  /**
+   * Scan task files directly from disk (fallback when StorageLayer has no data)
+   */
+  private scanTasksFromDisk(projectDir: string): Task[] {
+    const fullDir = join(this.config.brainDir, projectDir);
+    if (!existsSync(fullDir)) {
       return [];
     }
 
-    const notes = parseZkJsonOutput(result.stdout);
-
-    // Transform to Task interface
-    return notes
-      .filter((note) => note.path.includes(`projects/${projectId}/`))
-      .map((note) => mapZkNoteToTask(note));
+    const tasks: Task[] = [];
+    const files = readdirSync(fullDir).filter((f) => f.endsWith(".md"));
+    for (const file of files) {
+      try {
+        const filePath = join(fullDir, file);
+        const content = readFileSync(filePath, "utf-8");
+        const { frontmatter } = parseFrontmatter(content);
+        const relativePath = `${projectDir}/${file}`;
+        const note: ZkNote = {
+          path: relativePath,
+          title: (frontmatter.title as string) || file,
+          tags: Array.isArray(frontmatter.tags) ? (frontmatter.tags as string[]) : [],
+          metadata: frontmatter,
+          rawContent: content,
+        };
+        tasks.push(mapZkNoteToTask(note));
+      } catch {
+        // Skip files that can't be parsed
+      }
+    }
+    return tasks;
   }
 
   /**
@@ -656,7 +653,9 @@ let taskServiceInstance: TaskService | null = null;
 
 export function getTaskService(): TaskService {
   if (!taskServiceInstance) {
-    taskServiceInstance = new TaskService();
+    const config = getConfig();
+    const storage = createStorageLayer(config.brain.dbPath);
+    taskServiceInstance = new TaskService(undefined, undefined, { storage });
   }
   return taskServiceInstance;
 }

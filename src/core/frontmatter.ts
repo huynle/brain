@@ -2,7 +2,7 @@
  * Brain API - Frontmatter Functions
  *
  * Pure functions for parsing, serializing, and generating YAML frontmatter
- * for brain entries. Extracted from zk-client.ts for reuse.
+ * for brain entries.
  */
 
 import type {
@@ -327,6 +327,19 @@ export function unescapeYamlValue(value: string): string {
 // =============================================================================
 
 /**
+ * Parse a raw YAML scalar value into its appropriate JS type.
+ * Handles booleans, null, integers, floats, and strings.
+ */
+function parseUnknownYamlValue(raw: string): unknown {
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  if (raw === "null" || raw === "~") return null;
+  if (/^-?\d+$/.test(raw)) return Number.parseInt(raw, 10);
+  if (/^-?\d+\.\d+$/.test(raw)) return Number.parseFloat(raw);
+  return parseYamlStringValue(raw);
+}
+
+/**
  * Parse YAML frontmatter from markdown content.
  * Returns the frontmatter object and the body content.
  */
@@ -363,6 +376,7 @@ export function parseFrontmatter(content: string): {
   let currentRun: CronRun | null = null;
   let inRunFinalizations = false;
   let currentRunFinalizationId: string | null = null;
+  let inUnknownMap: string | null = null;
 
   for (const line of yaml.split("\n")) {
     // Title: may contain special characters, quotes, etc.
@@ -924,6 +938,44 @@ export function parseFrontmatter(content: string): {
         }
         inRuns = false;
       }
+    }
+
+    // Catch-all: preserve unknown top-level key-value pairs and simple maps
+    // Only match non-indented lines with a key: value pattern
+    if (!line.startsWith(" ") && !line.startsWith("\t")) {
+      // Simple key: value
+      const unknownScalarMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s+(.+)$/);
+      if (unknownScalarMatch) {
+        const key = unknownScalarMatch[1];
+        if (!(key in frontmatter)) {
+          frontmatter[key] = parseUnknownYamlValue(unknownScalarMatch[2].trim());
+        }
+        inUnknownMap = null;
+        continue;
+      }
+      // Map header: key: (with nothing after colon, or just whitespace)
+      const unknownMapMatch = line.match(/^([a-zA-Z_][a-zA-Z0-9_]*):\s*$/);
+      if (unknownMapMatch) {
+        const key = unknownMapMatch[1];
+        if (!(key in frontmatter)) {
+          inUnknownMap = key;
+          frontmatter[key] = {};
+        } else {
+          inUnknownMap = null;
+        }
+        continue;
+      }
+    }
+
+    // Collect children of unknown map
+    if (inUnknownMap && line.match(/^\s+/)) {
+      const childMatch = line.match(/^\s+([a-zA-Z_][a-zA-Z0-9_]*):\s+(.+)$/);
+      if (childMatch) {
+        (frontmatter[inUnknownMap] as Record<string, unknown>)[childMatch[1]] =
+          parseUnknownYamlValue(childMatch[2].trim());
+      }
+    } else if (inUnknownMap && !line.match(/^\s/)) {
+      inUnknownMap = null;
     }
   }
 

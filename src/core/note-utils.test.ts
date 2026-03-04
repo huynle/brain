@@ -1,7 +1,7 @@
 /**
- * ZK Client - Unit Tests
+ * Note Utilities - Unit Tests
  *
- * Tests for zk-client utility functions, particularly frontmatter generation.
+ * Tests for note-utils utility functions, particularly frontmatter generation.
  */
 
 import { describe, test, expect } from "bun:test";
@@ -20,7 +20,7 @@ import {
   sanitizeSimpleValue,
   sanitizeDependsOnEntry,
   serializeFrontmatter,
-} from "./zk-client";
+} from "./note-utils";
 
 // =============================================================================
 // Tests for generateFrontmatter - Execution Context Fields

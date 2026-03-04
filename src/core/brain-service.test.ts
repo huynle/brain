@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
 import { BrainService, noteRowToBrainEntry } from "./brain-service";
-import { parseFrontmatter } from "./zk-client";
+import { parseFrontmatter } from "./note-utils";
 import type { BrainConfig } from "./types";
 import { initDatabase, acquireGeneratedTaskLease, completeGeneratedTaskLease } from "./db";
 import { TaskService } from "./task-service";
@@ -530,7 +530,10 @@ Content for verification.
 
   describe("getStats", () => {
     test("should return stats object", async () => {
-      const stats = await service.getStats();
+      // getStats requires a StorageLayer — create a service with one
+      const storage = createStorageLayer(":memory:");
+      const svcWithStorage = new BrainService(testConfig, "test-project", { storage });
+      const stats = await svcWithStorage.getStats();
 
       expect(stats).toBeDefined();
       expect(stats.brainDir).toBe(TEST_DIR);

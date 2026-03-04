@@ -15,7 +15,7 @@ import {
 } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { parseFrontmatter } from "../core/zk-client";
+import { parseFrontmatter } from "../core/note-utils";
 import { migrateCronsToTasks } from "./migrate-crons-to-tasks";
 
 // =============================================================================

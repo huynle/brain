@@ -3,11 +3,10 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
-import { join, dirname } from "path";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
 import { tmpdir } from "os";
 import { DoctorService, createDoctorService } from "./doctor-service";
-import type { DoctorResult, Check } from "./types";
 
 // =============================================================================
 // Test Helpers
@@ -23,56 +22,6 @@ function cleanupTempDir(dir: string): void {
   if (existsSync(dir)) {
     rmSync(dir, { recursive: true, force: true });
   }
-}
-
-function setupZkNotebook(brainDir: string): void {
-  const zkDir = join(brainDir, ".zk");
-  const templatesDir = join(zkDir, "templates");
-  mkdirSync(templatesDir, { recursive: true });
-
-  // Create valid config
-  writeFileSync(
-    join(zkDir, "config.toml"),
-    `[notebook]
-dir = "."
-
-[note]
-id-charset = "alphanum"
-id-length = 8
-id-case = "lower"
-default-title = "untitled"
-filename = "{{id}}"
-extension = "md"
-template = "default.md"
-
-[format.markdown]
-link-format = "markdown"
-link-drop-extension = true
-`
-  );
-}
-
-// Path to reference templates (mirrors REFERENCE_TEMPLATES_DIR in doctor-service.ts)
-// import.meta.dir is /path/to/src/core/doctor, we need /path/to/src/assets/templates
-const ASSETS_TEMPLATES_DIR = join(dirname(dirname(import.meta.dir)), "assets", "templates");
-
-function createTemplate(brainDir: string, type: string, content?: string): void {
-  const templatesDir = join(brainDir, ".zk", "templates");
-  if (!existsSync(templatesDir)) {
-    mkdirSync(templatesDir, { recursive: true });
-  }
-  // Use the actual reference template content by default so hash comparison passes
-  let templateContent = content;
-  if (!templateContent) {
-    const referencePath = join(ASSETS_TEMPLATES_DIR, `${type}.md`);
-    if (existsSync(referencePath)) {
-      templateContent = readFileSync(referencePath, "utf-8");
-    } else {
-      // Fallback if reference template doesn't exist
-      templateContent = `---\ntitle: {{title}}\ntype: ${type}\n---\n`;
-    }
-  }
-  writeFileSync(join(templatesDir, `${type}.md`), templateContent);
 }
 
 // =============================================================================
@@ -114,26 +63,14 @@ describe("DoctorService", () => {
       const checkNames = result.checks.map((c) => c.name);
 
       // Core checks
-      expect(checkNames).toContain("zk-cli-available");
-      expect(checkNames).toContain("zk-notebook");
-      expect(checkNames).toContain("zk-config");
       expect(checkNames).toContain("storage-layer");
       expect(checkNames).toContain("database-health");
       expect(checkNames).toContain("directory-permissions");
 
-      // Template existence checks (12 types)
-      expect(checkNames).toContain("template-exists-summary");
-      expect(checkNames).toContain("template-exists-report");
-      expect(checkNames).toContain("template-exists-walkthrough");
-      expect(checkNames).toContain("template-exists-plan");
-      expect(checkNames).toContain("template-exists-pattern");
-      expect(checkNames).toContain("template-exists-learning");
-      expect(checkNames).toContain("template-exists-idea");
-      expect(checkNames).toContain("template-exists-scratch");
-      expect(checkNames).toContain("template-exists-decision");
-      expect(checkNames).toContain("template-exists-exploration");
-      expect(checkNames).toContain("template-exists-execution");
-      expect(checkNames).toContain("template-exists-task");
+      // ZK checks should NOT be present (removed)
+      expect(checkNames).not.toContain("zk-cli-available");
+      expect(checkNames).not.toContain("zk-notebook");
+      expect(checkNames).not.toContain("zk-config");
     });
 
     test("calculates summary correctly", async () => {
@@ -156,136 +93,6 @@ describe("DoctorService", () => {
     });
   });
 
-  describe("checkZkNotebook()", () => {
-    test("fails when .zk directory does not exist", async () => {
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkNotebook();
-
-      expect(check.status).toBe("fail");
-      expect(check.fixable).toBe(true);
-      expect(check.message).toContain(".zk directory not found");
-    });
-
-    test("passes when .zk directory exists", async () => {
-      mkdirSync(join(tempDir, ".zk"), { recursive: true });
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkNotebook();
-
-      expect(check.status).toBe("pass");
-    });
-  });
-
-  describe("checkZkConfig()", () => {
-    test("fails when config.toml does not exist", async () => {
-      mkdirSync(join(tempDir, ".zk"), { recursive: true });
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkConfig();
-
-      expect(check.status).toBe("fail");
-      expect(check.fixable).toBe(true);
-    });
-
-    test("fails with invalid id-length", async () => {
-      mkdirSync(join(tempDir, ".zk"), { recursive: true });
-      writeFileSync(
-        join(tempDir, ".zk", "config.toml"),
-        `[note]
-id-charset = "alphanum"
-id-length = 6
-`
-      );
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkConfig();
-
-      expect(check.status).toBe("fail");
-      expect(check.details).toContain("id-length is 6, expected 8");
-    });
-
-    test("fails with invalid id-charset", async () => {
-      mkdirSync(join(tempDir, ".zk"), { recursive: true });
-      writeFileSync(
-        join(tempDir, ".zk", "config.toml"),
-        `[note]
-id-charset = "hex"
-id-length = 8
-`
-      );
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkConfig();
-
-      expect(check.status).toBe("fail");
-      expect(check.details).toContain('id-charset is "hex", expected "alphanum"');
-    });
-
-    test("passes with valid config", async () => {
-      setupZkNotebook(tempDir);
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkConfig();
-
-      expect(check.status).toBe("pass");
-    });
-  });
-
-  describe("checkTemplateExists()", () => {
-    test("fails when template does not exist", async () => {
-      setupZkNotebook(tempDir);
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkTemplateExists("plan");
-
-      expect(check.status).toBe("fail");
-      expect(check.fixable).toBe(true);
-    });
-
-    test("passes when template exists", async () => {
-      setupZkNotebook(tempDir);
-      createTemplate(tempDir, "plan");
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkTemplateExists("plan");
-
-      expect(check.status).toBe("pass");
-    });
-  });
-
-  describe("checkTemplateContent()", () => {
-    test("skips when template does not exist", async () => {
-      setupZkNotebook(tempDir);
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkTemplateContent("plan");
-
-      expect(check.status).toBe("skip");
-    });
-
-    test("passes when template matches reference", async () => {
-      setupZkNotebook(tempDir);
-      createTemplate(tempDir, "plan");
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkTemplateContent("plan");
-
-      expect(check.status).toBe("pass");
-    });
-
-    test("warns when template differs from reference", async () => {
-      setupZkNotebook(tempDir);
-      // Create a template with custom content that differs from reference
-      createTemplate(tempDir, "plan", "custom content that differs from reference");
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkTemplateContent("plan");
-
-      expect(check.status).toBe("warn");
-      expect(check.fixable).toBe(true);
-    });
-  });
-
   describe("checkDirectoryPermissions()", () => {
     test("fails when directory does not exist", async () => {
       const nonExistent = join(tempDir, "nonexistent");
@@ -305,19 +112,18 @@ id-length = 8
   });
 
   describe("fix()", () => {
-    test("creates .zk directory when missing", async () => {
+    test("diagnoses failures in empty directory", async () => {
       const doctor = createDoctorService(tempDir, { fix: true });
 
-      // First diagnose - should have failures
+      // First diagnose - should have failures (no brain.db)
       const before = await doctor.diagnose();
       expect(before.healthy).toBe(false);
 
       // Run fix (will attempt to fix what it can)
-      // Note: This may fail if zk CLI is not available, but the directory structure should be created
       try {
         await doctor.fix();
       } catch {
-        // zk init may fail if zk is not installed, but we can still test directory creation
+        // Some fixes may fail in test environment
       }
     });
 
@@ -325,8 +131,8 @@ id-length = 8
       const doctor = createDoctorService(tempDir, { fix: true, dryRun: true });
 
       // In dry-run mode, nothing should be changed
-      const zkDir = join(tempDir, ".zk");
-      const existsBefore = existsSync(zkDir);
+      const dbPath = join(tempDir, "brain.db");
+      const existsBefore = existsSync(dbPath);
 
       try {
         await doctor.fix();
@@ -334,37 +140,8 @@ id-length = 8
         // Ignore errors
       }
 
-      const existsAfter = existsSync(zkDir);
+      const existsAfter = existsSync(dbPath);
       expect(existsAfter).toBe(existsBefore);
-    });
-
-    test("copies reference config when missing", async () => {
-      // Create .zk directory but not config
-      mkdirSync(join(tempDir, ".zk"), { recursive: true });
-
-      const doctor = new DoctorService(tempDir, { fix: true });
-      await doctor.fixZkConfig();
-
-      const configPath = join(tempDir, ".zk", "config.toml");
-      expect(existsSync(configPath)).toBe(true);
-
-      const content = readFileSync(configPath, "utf-8");
-      expect(content).toContain('id-charset = "alphanum"');
-      expect(content).toContain("id-length = 8");
-    });
-
-    test("copies reference template when missing", async () => {
-      setupZkNotebook(tempDir);
-
-      const doctor = new DoctorService(tempDir, { fix: true });
-      await doctor.fixTemplate("plan");
-
-      const templatePath = join(tempDir, ".zk", "templates", "plan.md");
-      expect(existsSync(templatePath)).toBe(true);
-
-      const content = readFileSync(templatePath, "utf-8");
-      expect(content).toContain("type: {{extra.type}}");
-      expect(content).toContain("{{title}}");
     });
   });
 
@@ -437,27 +214,6 @@ id-length = 8
     });
   });
 
-  describe("checkZkCliAvailable() with StorageLayer", () => {
-    test("returns warn (not fail) when zk missing but brain.db exists", async () => {
-      // Create a valid StorageLayer DB so brain.db exists
-      const { createStorageLayer } = await import("../../core/storage");
-      const dbPath = join(tempDir, "brain.db");
-      const sl = createStorageLayer(dbPath);
-      sl.close();
-
-      const doctor = new DoctorService(tempDir);
-      const check = await doctor.checkZkCliAvailable();
-
-      // When StorageLayer is available, zk CLI missing should be warn, not fail
-      if (check.status !== "pass") {
-        // zk is not installed on this system
-        expect(check.status).toBe("warn");
-        expect(check.message).toContain("zk CLI not found");
-      }
-      // If zk IS installed, it should still pass — that's fine
-    });
-  });
-
   describe("diagnose() includes storage-layer check", () => {
     test("includes storage-layer check in results", async () => {
       const doctor = createDoctorService(tempDir);
@@ -465,26 +221,6 @@ id-length = 8
 
       const checkNames = result.checks.map((c) => c.name);
       expect(checkNames).toContain("storage-layer");
-    });
-  });
-
-  describe("fixZkNotebook() without zk CLI", () => {
-    test("creates .zk directory and brain.db without calling zk CLI", async () => {
-      const doctor = new DoctorService(tempDir, { fix: true });
-      await doctor.fixZkNotebook();
-
-      // .zk directory should exist
-      expect(existsSync(join(tempDir, ".zk"))).toBe(true);
-
-      // brain.db should exist
-      expect(existsSync(join(tempDir, "brain.db"))).toBe(true);
-
-      // Verify brain.db is a valid StorageLayer DB
-      const { createStorageLayer } = await import("../../core/storage");
-      const sl = createStorageLayer(join(tempDir, "brain.db"));
-      const stats = sl.getStats();
-      expect(stats.total).toBe(0);
-      sl.close();
     });
   });
 

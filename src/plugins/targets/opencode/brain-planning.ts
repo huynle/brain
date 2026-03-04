@@ -76,7 +76,7 @@ async function brainApiSearch(
 
 /**
  * Check if the Brain API is reachable.
- * Replaces isZkAvailable() + zkNotebookExists checks.
+ * Checks if the Brain API server is running and responsive.
  */
 async function isBrainApiAvailable(): Promise<boolean> {
   try {

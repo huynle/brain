@@ -9,7 +9,7 @@ import { describe, test, expect, beforeEach, afterEach } from "bun:test";
 import { existsSync, mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import { parseFrontmatter } from "./zk-client";
+import { parseFrontmatter } from "./note-utils";
 import { computeNewDepRef, rewriteDependentFiles } from "./brain-service";
 import type { DependentInfo } from "./task-service";
 

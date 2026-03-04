@@ -71,7 +71,11 @@ describe("version-checker", () => {
       expect(toolNames).toContain("opencode");
       expect(toolNames).toContain("claude");
       expect(toolNames).toContain("bun");
-      expect(toolNames).toContain("zk");
+    });
+
+    test("does not contain removed zk tool", () => {
+      const toolNames = TOOLS.map((t) => t.name);
+      expect(toolNames).not.toContain("zk");
     });
 
     test("all tools have required properties", () => {
@@ -94,13 +98,6 @@ describe("version-checker", () => {
       expect(bun).toBeDefined();
       expect(bun?.name).toBe("bun");
       expect(bun?.required).toBe(true);
-    });
-
-    test("zk tool is optional (not required)", () => {
-      const zk = getToolInfo("zk");
-      expect(zk).toBeDefined();
-      expect(zk?.name).toBe("zk");
-      expect(zk?.required).toBe(false);
     });
 
     test("returns undefined for unknown tools", () => {
@@ -127,11 +124,6 @@ describe("version-checker", () => {
       expect(tool.versionParser("1.0.0")).toBe("1.0.0");
     });
 
-    test("zk parser extracts version from format", () => {
-      const tool = getToolInfo("zk")!;
-      expect(tool.versionParser("zk 0.15.2")).toBe("0.15.2");
-      expect(tool.versionParser("zk 1.0.0\n")).toBe("1.0.0");
-    });
   });
 
   describe("tag parsers", () => {
@@ -152,10 +144,6 @@ describe("version-checker", () => {
       expect(tool.tagParser("v1.0.0")).toBe("1.0.0");
     });
 
-    test("zk tag parser strips v prefix", () => {
-      const tool = getToolInfo("zk")!;
-      expect(tool.tagParser("v0.15.2")).toBe("0.15.2");
-    });
   });
 
   describe("getInstalledVersion", () => {

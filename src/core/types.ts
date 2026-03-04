@@ -368,9 +368,6 @@ export interface LinkResponse {
 }
 
 export interface StatsResponse {
-  zkAvailable: boolean;
-  zkVersion: string | null;
-  notebookExists: boolean;
   brainDir: string;
   dbPath: string;
   totalEntries: number;
@@ -384,7 +381,6 @@ export interface StatsResponse {
 
 export interface HealthResponse {
   status: "healthy" | "degraded" | "unhealthy";
-  zkAvailable: boolean;
   dbAvailable: boolean;
   storageLayerAvailable: boolean;
   timestamp: string;

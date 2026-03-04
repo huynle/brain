@@ -7,7 +7,6 @@
 import { OpenAPIHono, createRoute, z } from "@hono/zod-openapi";
 import { getBrainService } from "../core/brain-service";
 import { getDb } from "../core/db";
-import { isZkAvailable, isZkNotebookExists } from "../core/zk-client";
 import type { HealthResponse } from "../core/types";
 import {
   StatsResponseSchema,
@@ -334,23 +333,10 @@ export function createHealthRoutes(): OpenAPIHono {
     const query = c.req.valid("query");
     const global = query.global === "true";
 
-    try {
-      const service = getBrainService();
-      const stats = await service.getStats(global);
+    const service = getBrainService();
+    const stats = await service.getStats(global);
 
-      return c.json(stats, 200);
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("zk CLI not available")) {
-        return c.json(
-          {
-            error: "Service Unavailable",
-            message: "zk CLI is required for stats",
-          },
-          503
-        );
-      }
-      throw error;
-    }
+    return c.json(stats, 200);
   });
 
   // GET /orphans - Entries with no backlinks
@@ -370,40 +356,27 @@ export function createHealthRoutes(): OpenAPIHono {
       );
     }
 
-    try {
-      const service = getBrainService();
-      const entries = await service.getOrphans(type, limit);
+    const service = getBrainService();
+    const entries = await service.getOrphans(type, limit);
 
-      return c.json(
-        {
-          entries: entries.map((e) => ({
-            id: e.id,
-            path: e.path,
-            title: e.title,
-            type: e.type,
-            status: e.status,
-            created: e.created,
-          })),
-          total: entries.length,
-          message:
-            entries.length > 0
-              ? "Consider linking these notes to improve knowledge graph connectivity"
-              : "No orphan entries found",
-        },
-        200
-      );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("zk CLI not available")) {
-        return c.json(
-          {
-            error: "Service Unavailable",
-            message: "zk CLI is required for orphan detection",
-          },
-          503
-        );
-      }
-      throw error;
-    }
+    return c.json(
+      {
+        entries: entries.map((e) => ({
+          id: e.id,
+          path: e.path,
+          title: e.title,
+          type: e.type,
+          status: e.status,
+          created: e.created,
+        })),
+        total: entries.length,
+        message:
+          entries.length > 0
+            ? "Consider linking these notes to improve knowledge graph connectivity"
+            : "No orphan entries found",
+      },
+      200
+    );
   });
 
   // GET /stale - Entries not verified recently
@@ -435,55 +408,42 @@ export function createHealthRoutes(): OpenAPIHono {
       );
     }
 
-    try {
-      const service = getBrainService();
-      let entries = await service.getStale(days, limit);
+    const service = getBrainService();
+    let entries = await service.getStale(days, limit);
 
-      // Filter by type if provided
-      if (type) {
-        entries = entries.filter((e) => e.type === type);
-      }
-
-      // Calculate days since verified for each entry
-      const now = Date.now();
-      const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-      return c.json(
-        {
-          entries: entries.map((e) => {
-            const lastVerified = e.last_verified
-              ? new Date(e.last_verified).getTime()
-              : null;
-            const daysSinceVerified = lastVerified
-              ? Math.floor((now - lastVerified) / MS_PER_DAY)
-              : null;
-
-            return {
-              id: e.id,
-              path: e.path,
-              title: e.title,
-              type: e.type,
-              status: e.status,
-              daysSinceVerified,
-              lastVerified: e.last_verified || null,
-            };
-          }),
-          total: entries.length,
-        },
-        200
-      );
-    } catch (error) {
-      if (error instanceof Error && error.message.includes("zk CLI not available")) {
-        return c.json(
-          {
-            error: "Service Unavailable",
-            message: "zk CLI is required for stale detection",
-          },
-          503
-        );
-      }
-      throw error;
+    // Filter by type if provided
+    if (type) {
+      entries = entries.filter((e) => e.type === type);
     }
+
+    // Calculate days since verified for each entry
+    const now = Date.now();
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+    return c.json(
+      {
+        entries: entries.map((e) => {
+          const lastVerified = e.last_verified
+            ? new Date(e.last_verified).getTime()
+            : null;
+          const daysSinceVerified = lastVerified
+            ? Math.floor((now - lastVerified) / MS_PER_DAY)
+            : null;
+
+          return {
+            id: e.id,
+            path: e.path,
+            title: e.title,
+            type: e.type,
+            status: e.status,
+            daysSinceVerified,
+            lastVerified: e.last_verified || null,
+          };
+        }),
+        total: entries.length,
+      },
+      200
+    );
   });
 
   // POST /entries/:id/verify - Mark entry as verified
@@ -540,15 +500,6 @@ export function createHealthRoutes(): OpenAPIHono {
               message: error.message,
             },
             404
-          );
-        }
-        if (error.message.includes("zk CLI not available")) {
-          return c.json(
-            {
-              error: "Service Unavailable",
-              message: "zk CLI is required to resolve title to path",
-            },
-            503
           );
         }
       }
@@ -641,26 +592,21 @@ async function handleVerifyEntry(c: any, id: string) {
  * Pure function to compute health status from dependency states.
  * Testable without mocking module-level imports.
  *
- * When StorageLayer is available, ZK is not needed — StorageLayer handles everything.
- * Legacy mode (no StorageLayer) still checks ZK availability.
+ * StorageLayer handles all note operations. Without it, the service is degraded.
  */
 export function computeHealthStatus(deps: {
   hasStorageLayer: boolean;
   dbAvailable: boolean;
-  zkAvailable: boolean;
 }): HealthResponse {
-  const { hasStorageLayer, dbAvailable, zkAvailable } = deps;
+  const { hasStorageLayer, dbAvailable } = deps;
 
   let status: "healthy" | "degraded" | "unhealthy";
 
   if (hasStorageLayer && dbAvailable) {
-    // StorageLayer handles everything, ZK not needed
-    status = "healthy";
-  } else if (!hasStorageLayer && zkAvailable && dbAvailable) {
-    // Legacy path: ZK + DB both available
+    // StorageLayer handles everything
     status = "healthy";
   } else if (dbAvailable) {
-    // DB works but no StorageLayer and no ZK — degraded
+    // DB works but no StorageLayer — degraded
     status = "degraded";
   } else {
     status = "unhealthy";
@@ -668,7 +614,6 @@ export function computeHealthStatus(deps: {
 
   return {
     status,
-    zkAvailable,
     dbAvailable,
     storageLayerAvailable: hasStorageLayer,
     timestamp: new Date().toISOString(),
@@ -684,11 +629,5 @@ export async function getHealthStatus(): Promise<HealthResponse> {
   const hasStorageLayer = !!service.getStorageLayer();
   const dbAvailable = isDatabaseAvailable();
 
-  // Only check ZK when there's no StorageLayer (legacy mode)
-  let zkAvailable = false;
-  if (!hasStorageLayer) {
-    zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-  }
-
-  return computeHealthStatus({ hasStorageLayer, dbAvailable, zkAvailable });
+  return computeHealthStatus({ hasStorageLayer, dbAvailable });
 }

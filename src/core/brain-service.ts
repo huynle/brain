@@ -23,16 +23,11 @@ import {
   completeGeneratedTaskLease,
   getGeneratedTaskKey,
 } from "./db";
+
 import {
-  execZk,
-  execZkNew,
   extractIdFromPath,
   generateMarkdownLink,
   generateShortId,
-  isZkAvailable,
-  getZkVersion,
-  parseZkJsonOutput,
-  isZkNotebookExists,
   extractType,
   extractStatus,
   extractPriority,
@@ -48,7 +43,7 @@ import {
   sanitizeSimpleValue,
   sanitizeDependsOnEntry,
   serializeFrontmatter,
-} from "./zk-client";
+} from "./note-utils";
 import type {
   BrainConfig,
   BrainEntry,
@@ -73,7 +68,7 @@ import type {
   FeatureCheckoutRequest,
 } from "./types";
 import { ENTRY_STATUSES } from "./types";
-import type { StorageLayer, NoteRow } from "./storage";
+import { createStorageLayer, type StorageLayer, type NoteRow } from "./storage";
 import type { Indexer } from "./indexer";
 import { TaskService, normalizeDependencyRef, findDependents } from "./task-service";
 import type { DependencyValidationResult, DependentInfo } from "./task-service";
@@ -439,7 +434,6 @@ export class BrainService {
       const resolvedLinks: string[] = [];
       const unresolvedEntries: string[] = [];
 
-      // --- StorageLayer path for related entry resolution ---
       if (this.storageLayer) {
         for (const entry of request.relatedEntries) {
           const isPath = entry.includes("/") || entry.endsWith(".md");
@@ -478,104 +472,9 @@ export class BrainService {
           }
         }
       } else {
-        // --- Legacy execZk / disk fallback path ---
-        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
+        // No StorageLayer — mark all as unresolved
         for (const entry of request.relatedEntries) {
-          const isPath = entry.includes("/") || entry.endsWith(".md");
-          const isId = /^[a-z0-9]{8}$/.test(entry);
-
-          if (isPath || isId) {
-            const entryPath = isId
-              ? entry
-              : entry.endsWith(".md")
-                ? entry
-                : `${entry}.md`;
-
-            if (zkAvailable) {
-              try {
-                const result = await execZk([
-                  "list",
-                  "--format",
-                  "json",
-                  "--quiet",
-                  entryPath,
-                ]);
-                if (result.exitCode === 0) {
-                  const notes = parseZkJsonOutput(result.stdout);
-                  if (notes.length > 0) {
-                    const note = notes[0];
-                    const id = extractIdFromPath(note.path);
-                    resolvedLinks.push(`- ${generateMarkdownLink(id, note.title)}`);
-                  } else {
-                    unresolvedEntries.push(entry);
-                  }
-                } else {
-                  unresolvedEntries.push(entry);
-                }
-              } catch {
-                unresolvedEntries.push(entry);
-              }
-            } else {
-              const fullEntryPath = join(
-                this.config.brainDir,
-                entryPath.endsWith(".md") ? entryPath : `${entryPath}.md`
-              );
-              if (existsSync(fullEntryPath)) {
-                let entryTitle = entry;
-                try {
-                  const entryContent = readFileSync(fullEntryPath, "utf-8");
-                  const { frontmatter: entryFm } = parseFrontmatter(entryContent);
-                  entryTitle = (entryFm.title as string) || entry;
-                } catch {
-                  /* use entry as title */
-                }
-                const id = extractIdFromPath(entryPath);
-                resolvedLinks.push(`- ${generateMarkdownLink(id, entryTitle)}`);
-              } else {
-                unresolvedEntries.push(entry);
-              }
-            }
-          } else if (zkAvailable) {
-            try {
-              const result = await execZk([
-                "list",
-                "--format",
-                "json",
-                "--quiet",
-                "--match",
-                entry,
-                "--match-strategy",
-                "exact",
-              ]);
-
-              if (result.exitCode === 0) {
-                const notes = parseZkJsonOutput(result.stdout);
-                const exactMatch = notes.find((n) => n.title === entry);
-
-                if (exactMatch) {
-                  const id = extractIdFromPath(exactMatch.path);
-                  resolvedLinks.push(
-                    `- ${generateMarkdownLink(id, exactMatch.title)}`
-                  );
-                } else if (notes.length > 0) {
-                  const firstMatch = notes[0];
-                  const id = extractIdFromPath(firstMatch.path);
-                  resolvedLinks.push(
-                    `- ${generateMarkdownLink(id, firstMatch.title)}`
-                  );
-                } else {
-                  unresolvedEntries.push(entry);
-                }
-              } else {
-                unresolvedEntries.push(entry);
-              }
-            } catch {
-              unresolvedEntries.push(entry);
-            }
-          } else {
-            unresolvedEntries.push(entry);
-          }
+          unresolvedEntries.push(entry);
         }
       }
 
@@ -596,227 +495,11 @@ export class BrainService {
       }
     }
 
-    // When StorageLayer is available, always use manual file creation path
-    // (skip execZkNew entirely — we'll insert into StorageLayer DB after)
-    // Check if zk is available
-    const hasNotebookInConfiguredDir = existsSync(join(this.config.brainDir, ".zk"));
-    let zkAvailable = !this.storageLayer && hasNotebookInConfiguredDir && (await isZkAvailable());
-
-    // Tasks with schedules require schedule/next_run frontmatter fields
-    // that are not guaranteed by zk templates in user notebooks. Force manual creation
-    // for deterministic metadata.
-    if (entryType === "task" && request.schedule) {
-      zkAvailable = false;
-    }
-
-    // Check if user_original_request contains characters that break zk CLI's --extra parser
-    // The zk CLI fails when values contain quotes, equals signs, newlines, or other special chars
-    // because it expects simple "key=value" format. When detected, force manual file creation.
-    if (zkAvailable && request.user_original_request) {
-      const hasNewlines = request.user_original_request.includes("\n");
-      const hasSpecialChars =
-        /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%\=]|^\s|\s$|^---|^\.\.\./.test(
-          request.user_original_request
-        );
-      if (hasNewlines || hasSpecialChars) {
-        // Force manual file creation path which handles escaping correctly via generateFrontmatter()
-        zkAvailable = false;
-      }
-    }
-
-    // Check if direct_prompt contains characters that break zk CLI's --extra parser
-    // Same handling as user_original_request - force manual file creation for complex values
-    if (zkAvailable && request.direct_prompt) {
-      const hasNewlines = request.direct_prompt.includes("\n");
-      const hasSpecialChars =
-        /[:\#\[\]\{\}\|\>\<\!\&\*\?\`\'\"\,\@\%\=]|^\s|\s$|^---|^\.\.\./.test(
-          request.direct_prompt
-        );
-      if (hasNewlines || hasSpecialChars) {
-        // Force manual file creation path which handles escaping correctly via generateFrontmatter()
-        zkAvailable = false;
-      }
-    }
-
-    // run_finalizations is a nested map and cannot be represented safely via zk --extra.
-    // Force manual file creation so metadata is preserved.
-    if (zkAvailable && request.run_finalizations) {
-      zkAvailable = false;
-    }
-
     let relativePath: string;
     let noteId: string;
 
-    if (zkAvailable) {
-      const groupName = isGlobal ? `global/${entryType}` : null;
-
-      const zkArgs: string[] = [
-        "--title",
-        sanitizedTitle,
-        "--extra",
-        `type=${entryType}`,
-        "--extra",
-        `status=${entryStatus}`,
-      ];
-
-      if (groupName) {
-        zkArgs.push("--group", groupName);
-      } else {
-        zkArgs.push("--template", `${entryType}.md`);
-      }
-
-      if (request.tags && request.tags.length > 0) {
-        const formattedTags = request.tags.map((t) => `\n  - ${t}`).join("");
-        zkArgs.push("--extra", `tags=${formattedTags}`);
-      }
-
-      if (request.priority) {
-        zkArgs.push("--extra", `priority=${request.priority}`);
-      }
-
-      if (request.depends_on && request.depends_on.length > 0) {
-        const formattedDeps = request.depends_on
-          .map((d) => `\n  - "${d.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
-          .join("");
-        zkArgs.push("--extra", `depends_on=${formattedDeps}`);
-      }
-
-      // Execution context for tasks
-      if (request.workdir) {
-        zkArgs.push("--extra", `workdir=${request.workdir}`);
-      }
-      if (request.git_remote) {
-        zkArgs.push("--extra", `git_remote=${request.git_remote}`);
-      }
-      if (request.git_branch) {
-        zkArgs.push("--extra", `git_branch=${request.git_branch}`);
-      }
-      if (request.merge_target_branch) {
-        zkArgs.push("--extra", `merge_target_branch=${request.merge_target_branch}`);
-      }
-      if (request.merge_policy) {
-        zkArgs.push("--extra", `merge_policy=${request.merge_policy}`);
-      }
-      if (request.merge_strategy) {
-        zkArgs.push("--extra", `merge_strategy=${request.merge_strategy}`);
-      }
-      if (request.remote_branch_policy) {
-        zkArgs.push("--extra", `remote_branch_policy=${request.remote_branch_policy}`);
-      }
-      if (request.open_pr_before_merge !== undefined) {
-        zkArgs.push("--extra", `open_pr_before_merge=${request.open_pr_before_merge}`);
-      }
-      if (request.execution_mode) {
-        zkArgs.push("--extra", `execution_mode=${request.execution_mode}`);
-      }
-
-      if (request.complete_on_idle !== undefined) {
-        zkArgs.push("--extra", `complete_on_idle=${request.complete_on_idle}`);
-      }
-
-      // User original request for validation
-      // Note: Complex values (newlines, special chars) are handled above by forcing
-      // the manual file creation path. If we reach here, the value is safe for zk CLI.
-      if (request.user_original_request) {
-        zkArgs.push(
-          "--extra",
-          `user_original_request=${request.user_original_request}`
-        );
-      }
-
-      // OpenCode execution options
-      // Note: Complex direct_prompt values (newlines, special chars) are handled above
-      // by forcing the manual file creation path. If we reach here, the value is safe.
-      if (request.direct_prompt) {
-        zkArgs.push("--extra", `direct_prompt=${request.direct_prompt}`);
-      }
-      if (request.agent) {
-        zkArgs.push("--extra", `agent=${request.agent}`);
-      }
-      if (request.model) {
-        zkArgs.push("--extra", `model=${request.model}`);
-      }
-
-      if (request.generated !== undefined) {
-        zkArgs.push("--extra", `generated=${request.generated}`);
-      }
-      if (request.generated_kind) {
-        zkArgs.push("--extra", `generated_kind=${request.generated_kind}`);
-      }
-      if (request.generated_key) {
-        zkArgs.push("--extra", `generated_key=${request.generated_key}`);
-      }
-      if (request.generated_by) {
-        zkArgs.push("--extra", `generated_by=${request.generated_by}`);
-      }
-
-      // Target workdir for task execution
-      if (request.target_workdir) {
-        zkArgs.push("--extra", `target_workdir=${request.target_workdir}`);
-      }
-
-      // Feature grouping for tasks
-      if (request.feature_id) {
-        zkArgs.push("--extra", `feature_id=${request.feature_id}`);
-      }
-      if (request.feature_priority) {
-        zkArgs.push("--extra", `feature_priority=${request.feature_priority}`);
-      }
-      if (request.feature_depends_on && request.feature_depends_on.length > 0) {
-        const formattedFeatureDeps = request.feature_depends_on
-          .map((d) => `\n  - "${d.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`)
-          .join("");
-        zkArgs.push("--extra", `feature_depends_on=${formattedFeatureDeps}`);
-      }
-
-      if (request.schedule) {
-        zkArgs.push("--extra", `schedule=${request.schedule}`);
-      }
-
-      if (request.schedule_enabled !== undefined) {
-        zkArgs.push("--extra", `schedule_enabled=${request.schedule_enabled}`);
-      }
-
-      if (request.next_run) {
-        zkArgs.push("--extra", `next_run=${request.next_run}`);
-      }
-
-      if (request.max_runs !== undefined) {
-        zkArgs.push("--extra", `max_runs=${request.max_runs}`);
-      }
-
-      if (request.starts_at) {
-        zkArgs.push("--extra", `starts_at=${request.starts_at}`);
-      }
-
-      if (request.expires_at) {
-        zkArgs.push("--extra", `expires_at=${request.expires_at}`);
-      }
-
-      if (!isGlobal) {
-        zkArgs.push("--extra", `projectId=${effectiveProjectId}`);
-      }
-
-      zkArgs.push(dir);
-
-      const result = await execZkNew(zkArgs, finalContent);
-
-      if (result.exitCode !== 0) {
-        throw new Error(
-          `Failed to create entry via zk: ${result.stderr || "Unknown error"}`
-        );
-      }
-
-      relativePath = result.stdout
-        .trim()
-        .replace(this.config.brainDir + "/", "")
-        .replace(this.config.brainDir, "");
-      if (relativePath.startsWith("/")) {
-        relativePath = relativePath.slice(1);
-      }
-      noteId = extractIdFromPath(relativePath);
-    } else {
-      // Fallback: manual file creation with 8-char ID (matching zk format)
+    {
+      // Manual file creation with 8-char ID
       const shortId = generateShortId();
       const filename = `${shortId}.md`;
       relativePath = `${dir}/${filename}`;
@@ -871,7 +554,7 @@ export class BrainService {
         max_runs: request.max_runs,
         starts_at: request.starts_at,
         expires_at: request.expires_at,
-        runs: request.runs as unknown as import("./zk-client").CronRun[] | undefined,
+        runs: request.runs as unknown as import("./note-utils").CronRun[] | undefined,
       });
 
       const fileContent = `---\n${frontmatter}---\n\n${finalContent}\n`;
@@ -1055,102 +738,7 @@ export class BrainService {
         if (error instanceof Error && error.message.includes("No exact match")) {
           throw error;
         }
-        // Fall through to execZk / direct file read
-      }
-    }
-
-    // --- Legacy execZk path (fallback when StorageLayer not available or didn't find note) ---
-    if (!note) {
-      const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-      if (zkAvailable) {
-        try {
-          if (pathOrId) {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              pathOrId,
-            ]);
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              if (notes.length > 0) {
-                note = isId
-                  ? notes[0]
-                  : notes.find((n) => n.path === pathOrId) || notes[0];
-                if (note) notePath = note.path;
-              }
-            }
-          }
-
-          if (!note && (title || (isId && !notePath))) {
-            const searchTerm = title || pathOrId;
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--match",
-              searchTerm!,
-              "--match-strategy",
-              "exact",
-            ]);
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              note = notes.find((n) => n.title === searchTerm) || null;
-              if (note) {
-                notePath = note.path;
-              } else if (notes.length > 0) {
-                const suggestions = notes.slice(0, 5).map((n) => ({
-                  title: n.title,
-                  id: extractIdFromPath(n.path),
-                  path: n.path,
-                }));
-                throw new Error(
-                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
-                );
-              }
-            }
-
-            // Search execution entries by name field
-            if (!note && searchTerm) {
-              const execResult = await execZk([
-                "list",
-                "--format",
-                "json",
-                "--quiet",
-                "--tag",
-                "execution",
-              ]);
-              if (execResult.exitCode === 0) {
-                const execNotes = parseZkJsonOutput(execResult.stdout);
-                for (const execNote of execNotes) {
-                  const execPath = join(this.config.brainDir, execNote.path);
-                  if (existsSync(execPath)) {
-                    const execContent = readFileSync(execPath, "utf-8");
-                    const { frontmatter: execFm } = parseFrontmatter(execContent);
-
-                    if (execFm.name === searchTerm) {
-                      note = {
-                        ...execNote,
-                        rawContent: execContent,
-                        metadata: execFm,
-                      };
-                      notePath = execNote.path;
-                      break;
-                    }
-                  }
-                }
-              }
-            }
-          }
-        } catch (error) {
-          if (error instanceof Error && error.message.includes("No exact match")) {
-            throw error;
-          }
-          // Fall through to direct file read
-        }
+        // Fall through to direct file read
       }
     }
 
@@ -1574,6 +1162,28 @@ export class BrainService {
     const newContent = `---\n${newFrontmatter}---\n\n${newBody}\n`;
     writeFileSync(fullPath, newContent, "utf-8");
 
+    // Sync StorageLayer DB so recall() reads fresh metadata
+    if (this.storageLayer) {
+      try {
+        const words = newBody.split(/\s+/).filter(Boolean);
+        this.storageLayer.updateNote(path, {
+          title: (updatedFrontmatter.title as string) || path,
+          lead: newBody.slice(0, 200),
+          body: newBody,
+          raw_content: newContent,
+          word_count: words.length,
+          metadata: JSON.stringify(updatedFrontmatter),
+          type: entryType || null,
+          status: newStatus || (updatedFrontmatter.status as string) || null,
+          priority: (updatedFrontmatter.priority as string) || null,
+          feature_id: (updatedFrontmatter.feature_id as string) || null,
+          modified: new Date().toISOString(),
+        });
+      } catch {
+        // StorageLayer update is best-effort; file is already on disk
+      }
+    }
+
     // Record access
     recordAccess(path);
 
@@ -1620,6 +1230,15 @@ export class BrainService {
 
     // Remove from database
     deleteEntryMeta(path);
+
+    // Remove from StorageLayer DB
+    if (this.storageLayer) {
+      try {
+        this.storageLayer.deleteNote(path);
+      } catch {
+        // Best-effort; file is already deleted
+      }
+    }
 
     if (isTask && featureId) {
       await this.reconcileFeatureCheckoutDependencies(projectId, featureId);
@@ -1749,43 +1368,6 @@ export class BrainService {
         });
       } catch {
         // StorageLayer update is best-effort; file move already completed
-      }
-    }
-    
-    // Run zk index to update zk's internal index (with retry on failure)
-    // Uses incremental index (no --force) to avoid full reindex of entire brain.
-    // Retries handle transient SQLite locks from concurrent access.
-    const zkAvailable = !this.storageLayer && isZkNotebookExists() && (await isZkAvailable());
-    if (zkAvailable) {
-      const MAX_INDEX_RETRIES = 3;
-      const RETRY_BASE_DELAY_MS = 150;
-      let indexSuccess = false;
-      for (let i = 0; i < MAX_INDEX_RETRIES; i++) {
-        try {
-          const result = await execZk(["index", "--quiet"], 10000);
-          if (result.exitCode === 0) {
-            indexSuccess = true;
-            break;
-          }
-          // Non-zero exit code — retry after delay
-          if (i < MAX_INDEX_RETRIES - 1) {
-            await new Promise((r) =>
-              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
-            );
-          }
-        } catch {
-          // Spawn failure — retry after delay
-          if (i < MAX_INDEX_RETRIES - 1) {
-            await new Promise((r) =>
-              setTimeout(r, RETRY_BASE_DELAY_MS * (i + 1))
-            );
-          }
-        }
-      }
-      if (!indexSuccess) {
-        console.warn(
-          `[brain-service] zk index failed after ${MAX_INDEX_RETRIES} attempts after move: ${path} -> ${newPath}`
-        );
       }
     }
     
@@ -2319,80 +1901,8 @@ export class BrainService {
       return { results, total: results.length };
     }
 
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-    if (!zkAvailable) {
-      throw new Error(
-        "zk CLI not available. Install from https://github.com/zk-org/zk"
-      );
-    }
-
-    const needsCodeFiltering = request.status || request.feature_id || request.tags;
-    const fetchLimit = needsCodeFiltering ? limit * 5 : limit;
-    const zkArgs = [
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--match",
-      request.query,
-      "--limit",
-      String(fetchLimit),
-    ];
-
-    if (request.type) {
-      zkArgs.push("--tag", request.type);
-    }
-
-    if (request.global) {
-      zkArgs.push("global");
-    }
-
-    const result = await execZk(zkArgs);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return { results: [], total: 0 };
-    }
-
-    let notes = parseZkJsonOutput(result.stdout);
-
-    if (request.status) {
-      notes = notes.filter((note) => extractStatus(note) === request.status);
-    }
-
-    // Feature ID filtering (in code since zk doesn't support frontmatter filtering)
-    if (request.feature_id) {
-      notes = notes.filter((note) => {
-        const fm = note.metadata || {};
-        return fm.feature_id === request.feature_id;
-      });
-    }
-
-    // Tag filtering (OR logic - matches entries with any of the specified tags)
-    if (request.tags && request.tags.length > 0) {
-      notes = notes.filter((note) => {
-        const noteTags = note.tags || [];
-        return request.tags!.some(tag => noteTags.includes(tag));
-      });
-    }
-
-    notes = notes.slice(0, limit);
-
-    const results: BrainEntry[] = notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: note.lead || note.body?.slice(0, 150) || "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-    }));
-
-    return { results, total: results.length };
+    // No StorageLayer available
+    throw new Error("StorageLayer not available. Cannot search.");
   }
 
   /**
@@ -2444,105 +1954,8 @@ export class BrainService {
       return { entries, total, limit, offset };
     }
 
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-    if (!zkAvailable) {
-      throw new Error(
-        "zk CLI not available. Install from https://github.com/zk-org/zk"
-      );
-    }
-
-    const needsCodeFiltering = request.status || request.filename || request.feature_id;
-    // Tags can be passed to zk directly via --tag, so they don't need code filtering
-    const hasTagsForZk = request.tags && request.tags.length > 0;
-    const fetchLimit = needsCodeFiltering ? Math.max(limit * 10, 500) : limit + offset;
-    const zkArgs = [
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--limit",
-      String(fetchLimit),
-    ];
-
-    if (request.type) {
-      zkArgs.push("--tag", request.type);
-    }
-
-    // Pass requested tags directly to zk for native filtering
-    if (hasTagsForZk) {
-      for (const tag of request.tags!) {
-        zkArgs.push("--tag", tag);
-      }
-    }
-
-    if (request.global) {
-      zkArgs.push("global");
-    }
-
-    const result = await execZk(zkArgs);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return { entries: [], total: 0, limit, offset };
-    }
-
-    let notes = parseZkJsonOutput(result.stdout);
-
-    if (request.status) {
-      notes = notes.filter((note) => extractStatus(note) === request.status);
-    }
-
-    if (request.filename) {
-      notes = notes.filter((note) => {
-        const noteFilename = extractIdFromPath(note.path);
-        return matchesFilenamePattern(noteFilename, request.filename!);
-      });
-    }
-
-    // Feature ID filtering (in code since zk doesn't support frontmatter filtering)
-    if (request.feature_id) {
-      notes = notes.filter((note) => {
-        const fm = note.metadata || {};
-        return fm.feature_id === request.feature_id;
-      });
-    }
-
-    // Tag filtering (OR logic - matches entries with any of the specified tags)
-    if (request.tags && request.tags.length > 0) {
-      notes = notes.filter((note) => {
-        const noteTags = note.tags || [];
-        return request.tags!.some(tag => noteTags.includes(tag));
-      });
-    }
-
-    if (request.sortBy === "priority") {
-      notes.sort((a, b) => {
-        const aPriority = getPrioritySortValue(extractPriority(a));
-        const bPriority = getPrioritySortValue(extractPriority(b));
-        if (aPriority !== bPriority) return aPriority - bPriority;
-        return (a.created || "").localeCompare(b.created || "");
-      });
-    }
-
-    const total = notes.length;
-    notes = notes.slice(offset, offset + limit);
-
-    const entries: BrainEntry[] = notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-      access_count: getEntryMeta(note.path)?.access_count ?? 0,
-    }));
-
-    return { entries, total, limit, offset };
+    // No StorageLayer available
+    throw new Error("StorageLayer not available. Cannot list entries.");
   }
 
   /**
@@ -2614,103 +2027,8 @@ export class BrainService {
       };
     }
 
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-    if (!zkAvailable) {
-      return {
-        context: `No relevant brain context found for "${request.query}" (zk not available)`,
-        entries: [],
-      };
-    }
-
-    const zkArgs = [
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--match",
-      request.query,
-      "--limit",
-      String(limit),
-    ];
-
-    if (request.type) {
-      zkArgs.push("--tag", request.type);
-    }
-
-    const result = await execZk(zkArgs);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return {
-        context: `No relevant brain context found for "${request.query}"`,
-        entries: [],
-      };
-    }
-
-    const notes = parseZkJsonOutput(result.stdout);
-
-    if (notes.length === 0) {
-      return {
-        context: `No relevant brain context found for "${request.query}"`,
-        entries: [],
-      };
-    }
-
-    // Record access for all returned entries
-    for (const note of notes) {
-      recordAccess(note.path);
-    }
-
-    const lines = [
-      `## Relevant Brain Context`,
-      "",
-      `Found ${notes.length} relevant entries for: "${request.query}"`,
-      "",
-      "---",
-      "",
-    ];
-
-    const entries: BrainEntry[] = [];
-
-    for (const note of notes) {
-      const fullPath = join(this.config.brainDir, note.path);
-      let content = "";
-      if (existsSync(fullPath)) {
-        const raw = readFileSync(fullPath, "utf-8");
-        const { body } = parseFrontmatter(raw);
-        content = body;
-      }
-
-      const type = extractType(note);
-      const globalBadge = note.path.startsWith("global/") ? " (global)" : "";
-
-      lines.push(`### ${note.title}${globalBadge}`);
-      lines.push(`*Type: ${type} | Tags: ${note.tags?.join(", ") || "none"}*`);
-      lines.push("");
-      lines.push(content || note.body || note.lead || "(no content)");
-      lines.push("");
-      lines.push("---");
-      lines.push("");
-
-      entries.push({
-        id: extractIdFromPath(note.path),
-        path: note.path,
-        title: note.title,
-        type,
-        status: extractStatus(note),
-        content,
-        tags: note.tags || [],
-        priority: extractPriority(note),
-        created: note.created,
-        modified: note.modified,
-      });
-    }
-
-    return {
-      context: lines.join("\n"),
-      entries,
-    };
+    // No StorageLayer available
+    throw new Error("StorageLayer not available for inject operation");
   }
 
   // ========================================
@@ -2721,137 +2039,33 @@ export class BrainService {
    * Find entries that link TO a given entry (brain_backlinks)
    */
   async getBacklinks(path: string): Promise<BrainEntry[]> {
-    // --- StorageLayer path ---
-    if (this.storageLayer) {
-      const noteRows = this.storageLayer.getBacklinks(path);
-      return noteRows.map((row) => noteRowToBrainEntry(row));
+    if (!this.storageLayer) {
+      throw new Error("StorageLayer not available for backlink detection");
     }
-
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    if (!zkAvailable) {
-      throw new Error("zk CLI not available for backlink detection");
-    }
-
-    const result = await execZk([
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--link-to",
-      path,
-    ]);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return [];
-    }
-
-    const notes = parseZkJsonOutput(result.stdout);
-
-    return notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-    }));
+    const noteRows = this.storageLayer.getBacklinks(path);
+    return noteRows.map((row) => noteRowToBrainEntry(row));
   }
 
   /**
    * Find entries that a given entry links TO (brain_outlinks)
    */
   async getOutlinks(path: string): Promise<BrainEntry[]> {
-    // --- StorageLayer path ---
-    if (this.storageLayer) {
-      const noteRows = this.storageLayer.getOutlinks(path);
-      return noteRows.map((row) => noteRowToBrainEntry(row));
+    if (!this.storageLayer) {
+      throw new Error("StorageLayer not available for outlink detection");
     }
-
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    if (!zkAvailable) {
-      throw new Error("zk CLI not available for outlink detection");
-    }
-
-    const result = await execZk([
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--linked-by",
-      path,
-    ]);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return [];
-    }
-
-    const notes = parseZkJsonOutput(result.stdout);
-
-    return notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-    }));
+    const noteRows = this.storageLayer.getOutlinks(path);
+    return noteRows.map((row) => noteRowToBrainEntry(row));
   }
 
   /**
    * Find entries that share linked notes with a given entry (brain_related)
    */
   async getRelated(path: string, limit = 10): Promise<BrainEntry[]> {
-    // --- StorageLayer path ---
-    if (this.storageLayer) {
-      const noteRows = this.storageLayer.getRelated(path, limit);
-      return noteRows.map((row) => noteRowToBrainEntry(row));
+    if (!this.storageLayer) {
+      throw new Error("StorageLayer not available for related note detection");
     }
-
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    if (!zkAvailable) {
-      throw new Error("zk CLI not available for related note detection");
-    }
-
-    const result = await execZk([
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--related",
-      path,
-      "--limit",
-      String(limit),
-    ]);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return [];
-    }
-
-    const notes = parseZkJsonOutput(result.stdout);
-
-    return notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-    }));
+    const noteRows = this.storageLayer.getRelated(path, limit);
+    return noteRows.map((row) => noteRowToBrainEntry(row));
   }
 
   // ========================================
@@ -2862,55 +2076,11 @@ export class BrainService {
    * Find entries with no incoming links (brain_orphans)
    */
   async getOrphans(type?: EntryType, limit = 20): Promise<BrainEntry[]> {
-    // --- StorageLayer path ---
-    if (this.storageLayer) {
-      const noteRows = this.storageLayer.getOrphans({ type, limit });
-      return noteRows.map((row) => noteRowToBrainEntry(row));
+    if (!this.storageLayer) {
+      throw new Error("StorageLayer not available for orphan detection");
     }
-
-    // --- Legacy execZk path ---
-    const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-    if (!zkAvailable) {
-      throw new Error("zk CLI not available for orphan detection");
-    }
-
-    const zkArgs = [
-      "list",
-      "--format",
-      "json",
-      "--quiet",
-      "--orphan",
-      "--limit",
-      String(limit),
-    ];
-    if (type) {
-      zkArgs.push(`global/${type}`);
-    }
-
-    const result = await execZk(zkArgs);
-
-    if (result.exitCode !== 0 || !result.stdout.trim()) {
-      return [];
-    }
-
-    let notes = parseZkJsonOutput(result.stdout);
-
-    if (type) {
-      notes = notes.filter((n) => extractType(n) === type);
-    }
-
-    return notes.map((note) => ({
-      id: extractIdFromPath(note.path),
-      path: note.path,
-      title: note.title,
-      type: extractType(note),
-      status: extractStatus(note),
-      content: "",
-      tags: note.tags || [],
-      priority: extractPriority(note),
-      created: note.created,
-      modified: note.modified,
-    }));
+    const noteRows = this.storageLayer.getOrphans({ type, limit });
+    return noteRows.map((row) => noteRowToBrainEntry(row));
   }
 
   /**
@@ -2934,37 +2104,12 @@ export class BrainService {
       let type: EntryType = "scratch";
       let status: EntryStatus = "active";
 
-      // --- StorageLayer path ---
       if (this.storageLayer) {
         const noteRow = this.storageLayer.getNoteByPath(path);
         if (noteRow) {
           title = noteRow.title;
           type = (noteRow.type as EntryType) || "scratch";
           status = (noteRow.status as EntryStatus) || "active";
-        }
-      } else {
-        // --- Legacy execZk path ---
-        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-        if (zkAvailable) {
-          try {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              path,
-            ]);
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              if (notes[0]) {
-                title = notes[0].title;
-                type = extractType(notes[0]);
-                status = extractStatus(notes[0]);
-              }
-            }
-          } catch {
-            /* use defaults */
-          }
         }
       }
 
@@ -3002,78 +2147,32 @@ export class BrainService {
    * Get brain statistics (brain_stats)
    */
   async getStats(global?: boolean): Promise<StatsResponse> {
-    let totalEntries = 0;
+    if (!this.storageLayer) {
+      throw new Error("StorageLayer not available for stats");
+    }
+
+    const stats = this.storageLayer.getStats();
     let globalEntries = 0;
     let projectEntries = 0;
-    let byType: Record<string, number> = {};
-    let orphanCount = 0;
-    let zkAvailable = false;
-    let zkVersion: string | null = null;
 
-    // --- StorageLayer path ---
-    if (this.storageLayer) {
-      const stats = this.storageLayer.getStats();
-      totalEntries = stats.total;
-      byType = stats.byType;
-      orphanCount = stats.orphanCount;
-
-      // Count global vs project entries
-      const allNotes = this.storageLayer.listNotes({ limit: 100000 });
-      for (const note of allNotes) {
-        if (note.path.startsWith("global/")) globalEntries++;
-        else projectEntries++;
-      }
-    } else {
-      // --- Legacy execZk path ---
-      zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-      zkVersion = zkAvailable ? await getZkVersion() : null;
-
-      if (zkAvailable) {
-        try {
-          const result = await execZk(["list", "--format", "json", "--quiet"]);
-          if (result.exitCode === 0) {
-            const notes = parseZkJsonOutput(result.stdout);
-            totalEntries = notes.length;
-
-            for (const note of notes) {
-              const type = extractType(note);
-              byType[type] = (byType[type] || 0) + 1;
-              if (note.path.startsWith("global/")) globalEntries++;
-              else projectEntries++;
-            }
-
-            const orphanResult = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--orphan",
-            ]);
-            if (orphanResult.exitCode === 0) {
-              const orphans = parseZkJsonOutput(orphanResult.stdout);
-              orphanCount = orphans.length;
-            }
-          }
-        } catch {
-          /* ignore */
-        }
-      }
+    // Count global vs project entries
+    const allNotes = this.storageLayer.listNotes({ limit: 100000 });
+    for (const note of allNotes) {
+      if (note.path.startsWith("global/")) globalEntries++;
+      else projectEntries++;
     }
 
     const trackedEntries = getTrackedEntryCount();
     const staleCount = getStaleEntries(30).length;
 
     return {
-      zkAvailable: zkAvailable || !!this.storageLayer,
-      zkVersion,
-      notebookExists: isZkNotebookExists(),
       brainDir: this.config.brainDir,
       dbPath: this.config.dbPath,
-      totalEntries,
+      totalEntries: stats.total,
       globalEntries,
       projectEntries,
-      byType,
-      orphanCount,
+      byType: stats.byType,
+      orphanCount: stats.orphanCount,
       trackedEntries,
       staleCount,
     };
@@ -3155,108 +2254,28 @@ export class BrainService {
       }
     }
 
-    // --- Legacy execZk + file fallback (when StorageLayer not available or didn't resolve) ---
-    if (!resolvedPath) {
-      if (request.path) {
-        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
+    // --- File fallback (when StorageLayer didn't resolve) ---
+    if (!resolvedPath && request.path) {
+      const pathToCheck = isId
+        ? request.path
+        : request.path.endsWith(".md")
+          ? request.path
+          : `${request.path}.md`;
+      const fullPath = join(this.config.brainDir, pathToCheck);
 
-        if (zkAvailable) {
-          try {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              request.path,
-            ]);
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              if (notes.length > 0) {
-                const note = notes[0];
-                resolvedPath = note.path;
-                resolvedTitle = note.title;
-                resolvedId = extractIdFromPath(note.path);
-              }
-            }
-          } catch {
-            /* fall through */
-          }
+      if (existsSync(fullPath)) {
+        resolvedPath = pathToCheck;
+        resolvedId = extractIdFromPath(pathToCheck);
+
+        try {
+          const content = readFileSync(fullPath, "utf-8");
+          const { frontmatter } = parseFrontmatter(content);
+          resolvedTitle = (frontmatter.title as string) || request.path;
+        } catch {
+          resolvedTitle = request.path;
         }
-
-        if (!resolvedPath) {
-          const pathToCheck = isId
-            ? request.path
-            : request.path.endsWith(".md")
-              ? request.path
-              : `${request.path}.md`;
-          const fullPath = join(this.config.brainDir, pathToCheck);
-
-          if (existsSync(fullPath)) {
-            resolvedPath = pathToCheck;
-            resolvedId = extractIdFromPath(pathToCheck);
-
-            try {
-              const content = readFileSync(fullPath, "utf-8");
-              const { frontmatter } = parseFrontmatter(content);
-              resolvedTitle = (frontmatter.title as string) || request.path;
-            } catch {
-              resolvedTitle = request.path;
-            }
-          } else if (!isId) {
-            throw new Error(`Entry not found at path: ${request.path}`);
-          }
-        }
-      }
-
-      if (!resolvedPath && (request.title || (isId && !resolvedPath))) {
-        const searchTerm = request.title || request.path;
-        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-
-        if (!zkAvailable && !this.storageLayer) {
-          throw new Error("zk CLI not available. Cannot resolve title to path.");
-        }
-
-        if (zkAvailable) {
-          try {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--match",
-              searchTerm!,
-              "--match-strategy",
-              "exact",
-            ]);
-
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              const exactMatch = notes.find((n) => n.title === searchTerm);
-
-              if (exactMatch) {
-                resolvedPath = exactMatch.path;
-                resolvedTitle = exactMatch.title;
-                resolvedId = extractIdFromPath(exactMatch.path);
-              } else if (notes.length > 0) {
-                const suggestions = notes.slice(0, 5).map((n) => ({
-                  title: n.title,
-                  path: n.path,
-                  id: extractIdFromPath(n.path),
-                }));
-                throw new Error(
-                  `No exact match for: "${searchTerm}". Suggestions: ${JSON.stringify(suggestions)}`
-                );
-              } else {
-                throw new Error(`No entry found matching: "${searchTerm}"`);
-              }
-            } else {
-              throw new Error(`zk search failed: ${result.stderr || "Unknown error"}`);
-            }
-          } catch (error) {
-            if (error instanceof Error) throw error;
-            throw new Error(`Failed to search: ${String(error)}`);
-          }
-        }
+      } else if (!isId) {
+        throw new Error(`Entry not found at path: ${request.path}`);
       }
     }
 
@@ -3291,15 +2310,12 @@ export class BrainService {
 
     // Find by title if needed
     if (!existsSync(join(this.config.brainDir, notePath))) {
-      let resolved = false;
-
-      // --- StorageLayer path (preferred when available) ---
+      // --- StorageLayer path ---
       if (this.storageLayer) {
         try {
           const noteRow = this.storageLayer.getNoteByTitle(pathOrTitle);
           if (noteRow) {
             notePath = noteRow.path;
-            resolved = true;
           } else {
             // Search for suggestions
             const searchResults = this.storageLayer.searchNotes(pathOrTitle, {
@@ -3318,38 +2334,7 @@ export class BrainService {
         }
       }
 
-      // --- Legacy execZk path (fallback) ---
-      if (!resolved) {
-        const zkAvailable = isZkNotebookExists() && (await isZkAvailable());
-        if (zkAvailable) {
-          try {
-            const result = await execZk([
-              "list",
-              "--format",
-              "json",
-              "--quiet",
-              "--match",
-              pathOrTitle,
-              "--match-strategy",
-              "exact",
-            ]);
-            if (result.exitCode === 0) {
-              const notes = parseZkJsonOutput(result.stdout);
-              const exactMatch = notes.find((n) => n.title === pathOrTitle);
-              if (exactMatch) {
-                notePath = exactMatch.path;
-              } else if (notes.length > 0) {
-                const suggestions = notes.slice(0, 5).map((n) => n.title);
-                throw new Error(
-                  `No exact match for title: "${pathOrTitle}". Suggestions: ${suggestions.join(", ")}`
-                );
-              }
-            }
-          } catch (error) {
-            if (error instanceof Error) throw error;
-          }
-        }
-      }
+      // If StorageLayer didn't resolve, the file existence check below will catch unresolved paths
     }
 
     const fullPath = join(this.config.brainDir, notePath);
@@ -3498,7 +2483,9 @@ let brainServiceInstance: BrainService | null = null;
 
 export function getBrainService(): BrainService {
   if (!brainServiceInstance) {
-    brainServiceInstance = new BrainService();
+    const config = getConfig();
+    const storage = createStorageLayer(config.brain.dbPath);
+    brainServiceInstance = new BrainService(undefined, undefined, { storage });
   }
   return brainServiceInstance;
 }

@@ -166,8 +166,9 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseInitCommand(cmdArgs)
 	case "doctor":
 		return parseDoctorCommand(cmdArgs)
+	case "config":
+		return parseConfigCommand(cmdArgs)
 	case "mcp":
-		return parseMCPCommand(cmdArgs)
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
@@ -561,6 +562,16 @@ func parseDoctorCommand(args []string) (Command, error) {
 	return &commands.DoctorCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsDoctorFlags(flags),
+		Out:    nil, // Will use os.Stdout in Execute if nil
+	}, nil
+}
+
+// parseConfigCommand creates a ConfigCommand from args.
+func parseConfigCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+
+	return &commands.ConfigCommand{
+		Config: convertToCommandsConfig(cfg),
 		Out:    nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"testing"
+
+	"github.com/huynle/brain-api/cmd/brain/commands"
 )
 
 // ---------------------------------------------------------------------------
@@ -77,6 +79,27 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 				t.Errorf("Type() = %q, want %q", cmdType, builtin)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: Config command routes to ConfigCommand
+// ---------------------------------------------------------------------------
+
+func TestRoute_ConfigCommand_ReturnsConfigCommand(t *testing.T) {
+	args := []string{"config"}
+	cmd, err := route(args)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cmd.Type() != "config" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "config")
+	}
+
+	// Verify it's actually a ConfigCommand, not a stub
+	_, ok := cmd.(*commands.ConfigCommand)
+	if !ok {
+		t.Errorf("expected *commands.ConfigCommand, got %T", cmd)
 	}
 }
 

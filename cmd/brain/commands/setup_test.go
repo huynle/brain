@@ -295,3 +295,125 @@ func TestInitCommand_Execute_DisplaysSummary(t *testing.T) {
 		t.Errorf("Expected mention of templates or config in summary, got: %s", output)
 	}
 }
+
+// ConfigCommand tests
+func TestConfigCommand_Type(t *testing.T) {
+	cmd := &ConfigCommand{}
+	if got := cmd.Type(); got != "config" {
+		t.Errorf("Type() = %q, want %q", got, "config")
+	}
+}
+
+func TestConfigCommand_Execute_DefaultConfig(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Port = 3333
+	cfg.Server.Host = "localhost"
+	cfg.Server.BrainDir = "~/brain"
+	cfg.Server.LogLevel = "info"
+	cfg.Runner.MaxParallel = 3
+	cfg.Runner.PollInterval = 5000
+	cfg.MCP.APIURL = "http://localhost:3333"
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Config: cfg,
+		Out:    &out,
+	}
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+
+	// Check for server section
+	if !strings.Contains(output, "Server") {
+		t.Errorf("Expected 'Server' section in output")
+	}
+	if !strings.Contains(output, "3333") {
+		t.Errorf("Expected port '3333' in output")
+	}
+	if !strings.Contains(output, "localhost") {
+		t.Errorf("Expected host 'localhost' in output")
+	}
+
+	// Check for runner section
+	if !strings.Contains(output, "Runner") {
+		t.Errorf("Expected 'Runner' section in output")
+	}
+	if !strings.Contains(output, "3") || !strings.Contains(output, "MaxParallel") {
+		t.Errorf("Expected 'MaxParallel: 3' in output")
+	}
+
+	// Check for MCP section
+	if !strings.Contains(output, "MCP") {
+		t.Errorf("Expected 'MCP' section in output")
+	}
+}
+
+func TestConfigCommand_Execute_ShowsConfigPath(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Port = 3333
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Config: cfg,
+		Out:    &out,
+	}
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+
+	// Should show config file location
+	if !strings.Contains(output, "Config") && !strings.Contains(output, "config") {
+		t.Errorf("Expected config file path mention in output")
+	}
+}
+
+func TestConfigCommand_Execute_CustomValues(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	cfg.Server.Port = 8080
+	cfg.Server.Host = "0.0.0.0"
+	cfg.Server.BrainDir = "/custom/path"
+	cfg.Server.EnableAuth = true
+	cfg.Server.LogLevel = "debug"
+	cfg.Runner.MaxParallel = 10
+	cfg.Runner.PollInterval = 3000
+	cfg.Runner.WorkDir = "/custom/work"
+	cfg.Runner.ExcludeProjects = []string{"test-*", "temp-*"}
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Config: cfg,
+		Out:    &out,
+	}
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+
+	// Verify custom values appear
+	if !strings.Contains(output, "8080") {
+		t.Errorf("Expected custom port '8080' in output")
+	}
+	if !strings.Contains(output, "0.0.0.0") {
+		t.Errorf("Expected custom host '0.0.0.0' in output")
+	}
+	if !strings.Contains(output, "/custom/path") {
+		t.Errorf("Expected custom brain dir in output")
+	}
+	if !strings.Contains(output, "debug") {
+		t.Errorf("Expected custom log level 'debug' in output")
+	}
+	if !strings.Contains(output, "10") || !strings.Contains(output, "MaxParallel") {
+		t.Errorf("Expected custom MaxParallel '10' in output")
+	}
+}

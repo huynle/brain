@@ -7,11 +7,16 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/service"
+	"github.com/huynle/brain-api/internal/storage"
 )
 
 func main() {
@@ -34,10 +39,60 @@ func main() {
 		Level: logLevel,
 	})))
 
-	// Create router
-	router := api.NewRouter(cfg)
+	// ─── Storage Layer ──────────────────────────────────────────────
+	dbPath := filepath.Join(cfg.BrainDir, ".zk", "brain.db")
 
-	// Create HTTP server
+	// Ensure the .zk directory exists
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		slog.Error("failed to create database directory", "error", err)
+		os.Exit(1)
+	}
+
+	store, err := storage.New(dbPath)
+	if err != nil {
+		slog.Error("failed to open database", "error", err, "path", dbPath)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	// ─── Indexer ────────────────────────────────────────────────────
+	idx := indexer.NewIndexer(cfg.BrainDir, store)
+
+	// Run incremental index on startup (fast for unchanged files)
+	slog.Info("indexing brain directory", "dir", cfg.BrainDir)
+	result, err := idx.IndexChanged()
+	if err != nil {
+		slog.Warn("indexing failed, continuing with stale index", "error", err)
+	} else {
+		slog.Info("indexing complete",
+			"added", result.Added,
+			"updated", result.Updated,
+			"deleted", result.Deleted,
+			"skipped", result.Skipped,
+			"errors", len(result.Errors),
+			"duration", result.Duration,
+		)
+	}
+
+	// ─── Services ───────────────────────────────────────────────────
+	brainSvc := service.NewBrainService(&cfg, store, idx)
+	taskSvc := service.NewTaskService(&cfg, store)
+	runnerSvc := service.NewRunnerService()
+
+	// ─── Realtime Hub ───────────────────────────────────────────────
+	hub := realtime.NewHub()
+
+	// ─── API Handler & Router ───────────────────────────────────────
+	handler := api.NewHandler(
+		brainSvc,
+		api.WithTaskService(taskSvc),
+		api.WithRunnerService(runnerSvc),
+		api.WithHub(hub),
+	)
+
+	router := api.NewRouter(cfg, api.WithHandler(handler))
+
+	// ─── HTTP Server ────────────────────────────────────────────────
 	srv := &http.Server{
 		Addr:         cfg.Addr(),
 		Handler:      router,
@@ -51,6 +106,7 @@ func main() {
 		slog.Info("starting brain-api",
 			"addr", cfg.Addr(),
 			"brain_dir", cfg.BrainDir,
+			"db_path", dbPath,
 			"auth_enabled", cfg.EnableAuth,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {

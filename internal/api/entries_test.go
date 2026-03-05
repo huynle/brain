@@ -175,10 +175,11 @@ func newTestRouter(mock *mockBrainService) *chi.Mux {
 	r.Route("/entries", func(r chi.Router) {
 		r.Post("/", h.HandleCreateEntry)
 		r.Get("/", h.HandleListEntries)
-		r.Get("/{id}", h.HandleGetEntry)
-		r.Patch("/{id}", h.HandleUpdateEntry)
-		r.Delete("/{id}", h.HandleDeleteEntry)
 		r.Post("/{id}/move", h.HandleMoveEntry)
+		// Wildcard routes must be last to allow specific routes to match first
+		r.Get("/*", h.HandleGetEntry)
+		r.Patch("/*", h.HandleUpdateEntry)
+		r.Delete("/*", h.HandleDeleteEntry)
 	})
 	return r
 }
@@ -486,6 +487,34 @@ func TestHandleGetEntry(t *testing.T) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "success by full path",
+			id:   "projects/govpu/task/1bg4bj9y.md",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				if pathOrID != "projects/govpu/task/1bg4bj9y.md" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				return &types.BrainEntry{
+					ID:      "1bg4bj9y",
+					Path:    "projects/govpu/task/1bg4bj9y.md",
+					Title:   "Test Task",
+					Type:    "task",
+					Status:  "active",
+					Content: "Task content",
+					Tags:    []string{"test"},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BrainEntry](t, resp)
+				if body.ID != "1bg4bj9y" {
+					t.Errorf("id = %q, want %q", body.ID, "1bg4bj9y")
+				}
+				if body.Path != "projects/govpu/task/1bg4bj9y.md" {
+					t.Errorf("path = %q, want %q", body.Path, "projects/govpu/task/1bg4bj9y.md")
+				}
+			},
 		},
 	}
 

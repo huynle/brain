@@ -103,15 +103,16 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 					r.Post("/{id}/move", notImplemented)
 				}
 
-				// Entry CRUD by ID (wildcard — must be last)
+				// Entry CRUD by ID or path (wildcard — must be last)
+				// Uses /* to capture paths with slashes (e.g., projects/govpu/task/1bg4bj9y.md)
 				if o.handler != nil {
-					r.Get("/{id}", o.handler.HandleGetEntry)
-					r.Patch("/{id}", o.handler.HandleUpdateEntry)
-					r.Delete("/{id}", o.handler.HandleDeleteEntry)
+					r.Get("/*", o.handler.HandleGetEntry)
+					r.Patch("/*", o.handler.HandleUpdateEntry)
+					r.Delete("/*", o.handler.HandleDeleteEntry)
 				} else {
-					r.Get("/{id}", notImplemented)
-					r.Patch("/{id}", notImplemented)
-					r.Delete("/{id}", notImplemented)
+					r.Get("/*", notImplemented)
+					r.Patch("/*", notImplemented)
+					r.Delete("/*", notImplemented)
 				}
 			})
 

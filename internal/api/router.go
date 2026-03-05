@@ -7,7 +7,14 @@ import (
 )
 
 // NewRouter creates the chi router with all routes and middleware.
-func NewRouter(cfg config.Config) *chi.Mux {
+// An optional Handler can be provided to wire implemented endpoints;
+// nil means all entry/task routes return 501 Not Implemented.
+func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
+	var o routerOptions
+	for _, fn := range opts {
+		fn(&o)
+	}
+
 	r := chi.NewRouter()
 
 	// Global middleware (applied to ALL routes)
@@ -42,14 +49,19 @@ func NewRouter(cfg config.Config) *chi.Mux {
 
 			// ─── Entries CRUD ─────────────────────────────────────
 			r.Route("/entries", func(r chi.Router) {
-				r.Post("/", notImplemented)   // Create entry
-				r.Get("/", notImplemented)     // List entries
+				if o.handler != nil {
+					r.Post("/", o.handler.HandleCreateEntry)
+					r.Get("/", o.handler.HandleListEntries)
+				} else {
+					r.Post("/", notImplemented)
+					r.Get("/", notImplemented)
+				}
 
-				// Section routes (must be before wildcard /:id)
+				// Section routes (must be before wildcard /{id})
 				r.Get("/{id}/sections", notImplemented)
 				r.Get("/{id}/sections/{title}", notImplemented)
 
-				// Graph routes (must be before wildcard /:id)
+				// Graph routes (must be before wildcard /{id})
 				r.Get("/{id}/backlinks", notImplemented)
 				r.Get("/{id}/outlinks", notImplemented)
 				r.Get("/{id}/related", notImplemented)
@@ -58,12 +70,22 @@ func NewRouter(cfg config.Config) *chi.Mux {
 				r.Post("/{id}/verify", notImplemented)
 
 				// Move route
-				r.Post("/{id}/move", notImplemented)
+				if o.handler != nil {
+					r.Post("/{id}/move", o.handler.HandleMoveEntry)
+				} else {
+					r.Post("/{id}/move", notImplemented)
+				}
 
 				// Entry CRUD by ID (wildcard — must be last)
-				r.Get("/{id}", notImplemented)     // Get entry
-				r.Patch("/{id}", notImplemented)   // Update entry
-				r.Delete("/{id}", notImplemented)  // Delete entry
+				if o.handler != nil {
+					r.Get("/{id}", o.handler.HandleGetEntry)
+					r.Patch("/{id}", o.handler.HandleUpdateEntry)
+					r.Delete("/{id}", o.handler.HandleDeleteEntry)
+				} else {
+					r.Get("/{id}", notImplemented)
+					r.Patch("/{id}", notImplemented)
+					r.Delete("/{id}", notImplemented)
+				}
 			})
 
 			// ─── Tasks ───────────────────────────────────────────
@@ -71,7 +93,7 @@ func NewRouter(cfg config.Config) *chi.Mux {
 				r.Get("/", notImplemented) // List projects
 
 				r.Route("/{projectId}", func(r chi.Router) {
-					r.Get("/", notImplemented)       // List tasks
+					r.Get("/", notImplemented)        // List tasks
 					r.Get("/ready", notImplemented)   // Ready tasks
 					r.Get("/waiting", notImplemented) // Waiting tasks
 					r.Get("/blocked", notImplemented) // Blocked tasks
@@ -107,4 +129,16 @@ func NewRouter(cfg config.Config) *chi.Mux {
 	})
 
 	return r
+}
+
+// routerOptions holds optional dependencies for the router.
+type routerOptions struct {
+	handler *Handler
+}
+
+// WithHandler returns a router option that wires the given Handler.
+func WithHandler(h *Handler) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.handler = h
+	}
 }

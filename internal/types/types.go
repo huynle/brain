@@ -177,8 +177,8 @@ type BrainEntry struct {
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
 	// Session tracking
-	Sessions         map[string]SessionInfo    `json:"sessions,omitempty"`
-	Runs             []CronRun                 `json:"runs,omitempty"`
+	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
+	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
 	// Backlinks (populated on GET)
@@ -259,10 +259,10 @@ type CreateEntryRequest struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
 
-	UserOriginalRequest string `json:"user_original_request,omitempty"`
-	TargetWorkdir       string `json:"target_workdir,omitempty"`
-	FeatureID           string `json:"feature_id,omitempty"`
-	FeaturePriority     string `json:"feature_priority,omitempty"`
+	UserOriginalRequest string   `json:"user_original_request,omitempty"`
+	TargetWorkdir       string   `json:"target_workdir,omitempty"`
+	FeatureID           string   `json:"feature_id,omitempty"`
+	FeaturePriority     string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn    []string `json:"feature_depends_on,omitempty"`
 
 	DirectPrompt string `json:"direct_prompt,omitempty"`
@@ -274,7 +274,7 @@ type CreateEntryRequest struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
-	Runs             []CronRun                 `json:"runs,omitempty"`
+	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 }
 
@@ -326,8 +326,8 @@ type UpdateEntryRequest struct {
 	Agent        *string `json:"agent,omitempty"`
 	Model        *string `json:"model,omitempty"`
 
-	Sessions         map[string]SessionInfo    `json:"sessions,omitempty"`
-	Runs             []CronRun                 `json:"runs,omitempty"`
+	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
+	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
 	Generated     *bool   `json:"generated,omitempty"`
@@ -355,6 +355,18 @@ type ListEntriesResponse struct {
 	Total   int          `json:"total"`
 	Limit   int          `json:"limit"`
 	Offset  int          `json:"offset"`
+}
+
+// MoveResult is the response for POST /entries/:id/move.
+type MoveResult struct {
+	Success bool   `json:"success"`
+	From    string `json:"from"`
+	To      string `json:"to"`
+}
+
+// MoveEntryRequest is the request body for POST /entries/:id/move.
+type MoveEntryRequest struct {
+	Project string `json:"project"`
 }
 
 // SearchRequest is the request body for POST /search.
@@ -390,23 +402,23 @@ type SearchResponse struct {
 
 // ResolvedTask is a task with dependency resolution info.
 type ResolvedTask struct {
-	ID       string   `json:"id"`
-	Path     string   `json:"path"`
-	Title    string   `json:"title"`
-	Priority string   `json:"priority"`
-	Status   string   `json:"status"`
+	ID        string   `json:"id"`
+	Path      string   `json:"path"`
+	Title     string   `json:"title"`
+	Priority  string   `json:"priority"`
+	Status    string   `json:"status"`
 	DependsOn []string `json:"depends_on"`
-	Created  string   `json:"created"`
+	Created   string   `json:"created"`
 
-	Workdir           string `json:"workdir"`
-	GitRemote         string `json:"git_remote"`
-	GitBranch         string `json:"git_branch"`
-	MergeTargetBranch string `json:"merge_target_branch,omitempty"`
-	MergePolicy       string `json:"merge_policy,omitempty"`
-	MergeStrategy     string `json:"merge_strategy,omitempty"`
+	Workdir            string `json:"workdir"`
+	GitRemote          string `json:"git_remote"`
+	GitBranch          string `json:"git_branch"`
+	MergeTargetBranch  string `json:"merge_target_branch,omitempty"`
+	MergePolicy        string `json:"merge_policy,omitempty"`
+	MergeStrategy      string `json:"merge_strategy,omitempty"`
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"`
-	OpenPRBeforeMerge *bool  `json:"open_pr_before_merge,omitempty"`
-	ExecutionMode     string `json:"execution_mode,omitempty"`
+	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      string `json:"execution_mode,omitempty"`
 
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`

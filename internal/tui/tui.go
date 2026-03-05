@@ -1,11 +1,17 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/huynle/brain-api/internal/types"
 )
+
+// DefaultReconnectDelay is the default delay before reconnecting after disconnect.
+const DefaultReconnectDelay = 3 * time.Second
 
 // Model is the root Bubble Tea model for the TUI dashboard.
 type Model struct {
@@ -16,6 +22,10 @@ type Model struct {
 	statusBar StatusBar
 	helpBar   HelpBar
 
+	// SSE client
+	sseClient *SSEClient
+	ctx       context.Context
+
 	// State
 	activePanel   Panel
 	connected     bool
@@ -25,7 +35,8 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
-	// Task data (placeholder for Phase 2)
+	// Task data
+	tasks []types.ResolvedTask
 	stats TaskStats
 }
 
@@ -37,12 +48,22 @@ func NewModel(cfg Config) Model {
 		statusBar:   NewStatusBar(cfg.Project),
 		helpBar:     NewHelpBar(),
 		activePanel: PanelTasks,
+		sseClient:   NewSSEClient(cfg.APIURL, cfg.Project),
+		ctx:         context.Background(),
 	}
 }
 
-// Init implements tea.Model. Returns nil in Phase 1 (no initial commands).
+// NewModelWithContext creates a new TUI model with a custom context.
+// Use this when you need to control the SSE connection lifecycle.
+func NewModelWithContext(cfg Config, ctx context.Context) Model {
+	m := NewModel(cfg)
+	m.ctx = ctx
+	return m
+}
+
+// Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
-	return nil
+	return m.sseClient.Connect(m.ctx)
 }
 
 // Update implements tea.Model. Handles messages and returns updated model.
@@ -57,21 +78,35 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TasksUpdatedMsg:
+		m.tasks = msg.Tasks
 		if msg.Stats != nil {
 			m.stats = TaskStatsFromAPI(msg.Stats)
 			m.statusBar.Stats = m.stats
 		}
-		return m, nil
+		// Continue listening for next SSE message
+		return m, m.sseClient.WaitForNextMsg()
 
 	case SSEConnectedMsg:
 		m.connected = true
 		m.statusBar.Connected = true
-		return m, nil
+		// Continue listening for next SSE message
+		return m, m.sseClient.WaitForNextMsg()
 
 	case SSEDisconnectedMsg:
 		m.connected = false
 		m.statusBar.Connected = false
-		return m, nil
+		// Schedule reconnect
+		return m, m.sseClient.Reconnect(DefaultReconnectDelay)
+
+	case SSEErrorMsg:
+		// Log error, stay connected, continue listening
+		return m, m.sseClient.WaitForNextMsg()
+
+	case reconnectMsg:
+		// Stop old client and create a new one for reconnection
+		m.sseClient.Stop()
+		m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+		return m, m.sseClient.Connect(m.ctx)
 	}
 
 	return m, nil
@@ -81,6 +116,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyCtrlC:
+		m.sseClient.Stop()
 		return m, tea.Quit
 
 	case tea.KeyTab:
@@ -91,10 +127,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "q":
+			m.sseClient.Stop()
 			return m, tea.Quit
 		case "r":
-			// Refresh - will be implemented in Phase 2
-			return m, nil
+			// Refresh: reconnect SSE to get fresh snapshot
+			m.sseClient.Stop()
+			m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+			return m, m.sseClient.Connect(m.ctx)
 		}
 	}
 

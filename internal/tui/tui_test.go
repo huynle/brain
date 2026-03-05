@@ -5,13 +5,14 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
 // Init Tests
 // =============================================================================
 
-func TestNewModel_Init(t *testing.T) {
+func TestNewModel_Init_ReturnsSSEConnectCmd(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
@@ -19,8 +20,8 @@ func TestNewModel_Init(t *testing.T) {
 	m := NewModel(cfg)
 
 	cmd := m.Init()
-	if cmd != nil {
-		t.Error("Init() should return nil (no initial commands in Phase 1)")
+	if cmd == nil {
+		t.Error("Init() should return a non-nil command (SSE connect)")
 	}
 }
 
@@ -40,6 +41,9 @@ func TestNewModel_DefaultState(t *testing.T) {
 	}
 	if m.width != 0 || m.height != 0 {
 		t.Errorf("expected initial dimensions 0x0, got %dx%d", m.width, m.height)
+	}
+	if m.sseClient == nil {
+		t.Error("expected sseClient to be initialized")
 	}
 }
 
@@ -139,6 +143,162 @@ func TestUpdate_TabSwitchesPanel(t *testing.T) {
 }
 
 // =============================================================================
+// Update Tests - SSE Messages
+// =============================================================================
+
+func TestUpdate_SSEConnected_SetsConnectedTrue(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	if m.connected {
+		t.Fatal("expected connected to be false initially")
+	}
+
+	updated, cmd := m.Update(SSEConnectedMsg{})
+	model := updated.(Model)
+
+	if !model.connected {
+		t.Error("expected connected to be true after SSEConnectedMsg")
+	}
+	if !model.statusBar.Connected {
+		t.Error("expected statusBar.Connected to be true")
+	}
+	// Should return a continuation command to wait for next message
+	if cmd == nil {
+		t.Error("expected non-nil command (wait for next SSE message)")
+	}
+}
+
+func TestUpdate_SSEDisconnected_SetsConnectedFalse(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.connected = true
+	m.statusBar.Connected = true
+
+	updated, cmd := m.Update(SSEDisconnectedMsg{})
+	model := updated.(Model)
+
+	if model.connected {
+		t.Error("expected connected to be false after SSEDisconnectedMsg")
+	}
+	if model.statusBar.Connected {
+		t.Error("expected statusBar.Connected to be false")
+	}
+	// Should return a reconnect command
+	if cmd == nil {
+		t.Error("expected non-nil command (reconnect)")
+	}
+}
+
+func TestUpdate_TasksUpdated_StoresTasksAndStats(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready"},
+		{ID: "t2", Title: "Task 2", Classification: "waiting"},
+	}
+	stats := &types.TaskStats{
+		Total:      2,
+		Ready:      1,
+		Waiting:    1,
+		Blocked:    0,
+		NotPending: 0,
+	}
+
+	updated, cmd := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: stats})
+	model := updated.(Model)
+
+	if len(model.tasks) != 2 {
+		t.Errorf("expected 2 tasks, got %d", len(model.tasks))
+	}
+	if model.tasks[0].ID != "t1" {
+		t.Errorf("expected first task ID 't1', got '%s'", model.tasks[0].ID)
+	}
+	if model.stats.Ready != 1 {
+		t.Errorf("expected 1 ready, got %d", model.stats.Ready)
+	}
+	if model.stats.Waiting != 1 {
+		t.Errorf("expected 1 waiting, got %d", model.stats.Waiting)
+	}
+	if model.statusBar.Stats.Ready != 1 {
+		t.Errorf("expected statusBar stats ready=1, got %d", model.statusBar.Stats.Ready)
+	}
+	// Should return a continuation command
+	if cmd == nil {
+		t.Error("expected non-nil command (wait for next SSE message)")
+	}
+}
+
+func TestUpdate_SSEError_ReturnsContinuationCmd(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(SSEErrorMsg{Err: nil})
+	_ = updated.(Model)
+
+	// Should continue listening despite error
+	if cmd == nil {
+		t.Error("expected non-nil command (continue listening after error)")
+	}
+}
+
+func TestUpdate_ReconnectMsg_CreatesNewSSEClient(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	originalClient := m.sseClient
+
+	updated, cmd := m.Update(reconnectMsg{})
+	model := updated.(Model)
+
+	// Should have a new SSE client (not the same pointer)
+	if model.sseClient == originalClient {
+		t.Error("expected new SSE client after reconnect")
+	}
+	// Should return a connect command
+	if cmd == nil {
+		t.Error("expected non-nil command (SSE connect)")
+	}
+}
+
+func TestUpdate_RefreshKey_ReconnectsSSE(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	originalClient := m.sseClient
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'r'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should have a new SSE client
+	if model.sseClient == originalClient {
+		t.Error("expected new SSE client after refresh")
+	}
+	// Should return a connect command
+	if cmd == nil {
+		t.Error("expected non-nil command (SSE connect after refresh)")
+	}
+}
+
+// =============================================================================
 // View Tests
 // =============================================================================
 
@@ -210,9 +370,33 @@ func TestView_ContainsConnectionStatus(t *testing.T) {
 
 	// Connected state
 	m.connected = true
+	m.statusBar.Connected = true
 	view = m.View()
 	if !strings.Contains(view, "●") {
 		t.Errorf("expected connected indicator '●' in view, got:\n%s", view)
+	}
+}
+
+func TestView_ShowsTaskStats(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+
+	// Simulate receiving tasks
+	m.stats = TaskStats{Ready: 3, Waiting: 2, InProgress: 1, Completed: 5}
+	m.statusBar.Stats = m.stats
+
+	view := m.View()
+
+	if !strings.Contains(view, "3 ready") {
+		t.Errorf("expected '3 ready' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2 waiting") {
+		t.Errorf("expected '2 waiting' in view, got:\n%s", view)
 	}
 }
 

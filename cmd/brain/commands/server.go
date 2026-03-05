@@ -3,8 +3,11 @@ package commands
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/lifecycle"
 )
 
 // UnifiedConfig represents the unified configuration structure.
@@ -23,6 +26,8 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
+		PIDFile string
+		LogFile string
 	}
 	Runner struct {
 		MaxParallel     int
@@ -88,7 +93,22 @@ func (c *ServerCommand) Execute() error {
 
 	// If daemon mode, handle daemonization
 	if c.Flags.Daemon {
-		return daemonizeServer(ctx, opts)
+		pidFile := c.Config.Server.PIDFile
+		if pidFile == "" {
+			homeDir, _ := os.UserHomeDir()
+			pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		}
+
+		logFile := c.Flags.LogFile
+		if logFile == "" {
+			logFile = c.Config.Server.LogFile
+		}
+		if logFile == "" {
+			homeDir, _ := os.UserHomeDir()
+			logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+		}
+
+		return daemonizeServer(ctx, opts, pidFile, logFile)
 	}
 
 	// Otherwise run in foreground
@@ -97,7 +117,30 @@ func (c *ServerCommand) Execute() error {
 }
 
 // daemonizeServer handles daemon mode for the server.
-// This will call internal/lifecycle package in Phase 3.
-func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions) error {
-	return fmt.Errorf("daemon mode not yet implemented (Phase 3)")
+// In daemon mode, we write the PID file when the server starts.
+// The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
+func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string) error {
+	// Check if already running
+	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
+		if lifecycle.IsProcessRunning(pid) {
+			return fmt.Errorf("server already running (PID %d)", pid)
+		}
+		// Clean up stale PID
+		lifecycle.ClearPID(pidFile)
+	}
+
+	// Write PID file
+	if err := lifecycle.WritePID(pidFile, os.Getpid()); err != nil {
+		return fmt.Errorf("failed to write PID file: %w", err)
+	}
+
+	// Setup cleanup on exit
+	defer lifecycle.ClearPID(pidFile)
+
+	fmt.Printf("Starting Brain API server on %s:%d (PID %d)\n", opts.Host, opts.Port, os.Getpid())
+	fmt.Printf("Logs: %s\n", logFile)
+	fmt.Printf("PID file: %s\n", pidFile)
+
+	// Run server
+	return apiserver.RunServer(ctx, opts)
 }

@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"github.com/huynle/brain-api/cmd/brain/commands"
 )
 
 // GlobalFlags contains flags applicable to all commands
@@ -41,6 +43,11 @@ type RunnerFlags struct {
 // MCPFlags for MCP command
 type MCPFlags struct {
 	APIURL string
+}
+
+// TokenFlags for token command
+type TokenFlags struct {
+	Name string
 }
 
 // ParseGlobalFlags parses global flags from args
@@ -140,6 +147,20 @@ func ParseMCPFlags(args []string) (*MCPFlags, error) {
 	return flags, nil
 }
 
+// ParseTokenFlags parses token-specific flags
+func ParseTokenFlags(args []string) (*TokenFlags, error) {
+	flags := &TokenFlags{}
+	fs := flag.NewFlagSet("token", flag.ExitOnError)
+
+	fs.StringVar(&flags.Name, "name", "", "Token name")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	return flags, nil
+}
+
 // UnifiedConfig is a placeholder for the future unified config system
 // This will be implemented in Phase 1.3
 type UnifiedConfig struct {
@@ -155,6 +176,8 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
+		PIDFile string
+		LogFile string
 	}
 	Runner struct {
 		MaxParallel     int
@@ -213,5 +236,62 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 		if len(flags.Exclude) > 0 {
 			cfg.Runner.ExcludeProjects = append(cfg.Runner.ExcludeProjects, flags.Exclude...)
 		}
+	}
+}
+
+// LifecycleFlags holds flags for lifecycle commands (start, stop, restart).
+type LifecycleFlags struct {
+	PIDFile string
+	LogFile string
+	Timeout int
+	Force   bool
+	DryRun  bool
+}
+
+// ParseLifecycleFlags parses lifecycle command flags from args.
+func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
+	flags := &LifecycleFlags{
+		Timeout: 10, // Default 10 second timeout
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--pid-file":
+			if i+1 < len(args) {
+				flags.PIDFile = args[i+1]
+				i++
+			}
+		case "--log-file":
+			if i+1 < len(args) {
+				flags.LogFile = args[i+1]
+				i++
+			}
+		case "--timeout":
+			if i+1 < len(args) {
+				timeout := 0
+				if _, err := fmt.Sscanf(args[i+1], "%d", &timeout); err == nil {
+					flags.Timeout = timeout
+				}
+				i++
+			}
+		case "--force", "-f":
+			flags.Force = true
+		case "--dry-run":
+			flags.DryRun = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsLifecycleFlags converts main.LifecycleFlags to commands.LifecycleFlags.
+func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleFlags {
+	return &commands.LifecycleFlags{
+		PIDFile: flags.PIDFile,
+		LogFile: flags.LogFile,
+		Timeout: flags.Timeout,
+		Force:   flags.Force,
+		DryRun:  flags.DryRun,
 	}
 }

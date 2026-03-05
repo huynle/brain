@@ -3,6 +3,8 @@ package main
 
 import (
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	"os"
+	"path/filepath"
 )
 
 // =============================================================================
@@ -147,8 +149,16 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	switch cmdName {
 	case "server":
 		return parseServerCommand(cmdArgs)
+	case "start":
+		return parseStartCommand(cmdArgs)
+	case "stop":
+		return parseStopCommand(cmdArgs)
+	case "restart":
+		return parseRestartCommand(cmdArgs)
 	case "mcp":
 		return parseMCPCommand(cmdArgs)
+	case "token":
+		return parseTokenCommand(cmdArgs)
 	case "run":
 		// Handle "brain run <subcommand>" pattern
 		if len(cmdArgs) > 0 {
@@ -278,6 +288,10 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.BrainDir = "~/brain" // Will be expanded
 	cfg.Server.LogLevel = "info"
 
+	homeDir, _ := os.UserHomeDir()
+	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+	cfg.Server.LogFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+
 	// Runner defaults
 	cfg.Runner.MaxParallel = 3
 	cfg.Runner.PollInterval = 10
@@ -294,16 +308,18 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg := &commands.UnifiedConfig{}
 
 	// Server
+	// Server
 	cmdCfg.Server.Port = cfg.Server.Port
 	cmdCfg.Server.Host = cfg.Server.Host
 	cmdCfg.Server.BrainDir = cfg.Server.BrainDir
 	cmdCfg.Server.EnableAuth = cfg.Server.EnableAuth
 	cmdCfg.Server.APIKey = cfg.Server.APIKey
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
+	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
+	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
-
 	// Runner
 	cmdCfg.Runner.MaxParallel = cfg.Runner.MaxParallel
 	cmdCfg.Runner.PollInterval = cfg.Runner.PollInterval
@@ -356,4 +372,46 @@ func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
 	return &commands.MCPFlags{
 		APIURL: flags.APIURL,
 	}
+}
+
+// parseStartCommand creates a StartCommand from args.
+func parseStartCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseLifecycleFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.StartCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsLifecycleFlags(flags),
+	}, nil
+}
+
+// parseStopCommand creates a StopCommand from args.
+func parseStopCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseLifecycleFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.StopCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsLifecycleFlags(flags),
+	}, nil
+}
+
+// parseRestartCommand creates a RestartCommand from args.
+func parseRestartCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseLifecycleFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.RestartCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsLifecycleFlags(flags),
+	}, nil
 }

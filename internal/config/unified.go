@@ -82,6 +82,8 @@ type ServerConfig struct {
 	LogLevel   string `yaml:"log_level"`
 	TLSCert    string `yaml:"tls_cert"`
 	TLSKey     string `yaml:"tls_key"`
+	PIDFile    string `yaml:"pid_file"`
+	LogFile    string `yaml:"log_file"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -131,6 +133,8 @@ func defaultConfig() UnifiedConfig {
 			Host:       "localhost",
 			BrainDir:   filepath.Join(homeDir, ".brain"),
 			LogLevel:   "info",
+			PIDFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid"),
+			LogFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log"),
 			EnableAuth: false,
 			CORSOrigin: "*",
 		},

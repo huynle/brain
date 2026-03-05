@@ -126,10 +126,9 @@ func getUnifiedConfigPath() string {
 }
 
 // getLegacyRunnerConfigPath returns the legacy runner config path
-// at ~/.config/brain-runner/config.yaml for migration purposes.
+// at ~/.config/brain-runner/config.yaml (or $XDG_CONFIG_HOME/brain-runner/config.yaml).
 func getLegacyRunnerConfigPath() string {
-	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".config", "brain-runner", "config.yaml")
+	return filepath.Join(getConfigHome(), "brain-runner", "config.yaml")
 }
 
 // fileExists checks if a file or directory exists at the given path.
@@ -140,16 +139,29 @@ func fileExists(path string) bool {
 
 // LoadConfig loads the unified configuration from the standard location.
 // Returns default config if no file exists. Returns error if file exists but cannot be parsed.
+// Auto-migrates legacy runner config if found.
 func LoadConfig() (UnifiedConfig, error) {
 	cfg := defaultConfig()
 
-	configPath := getUnifiedConfigPath()
-	if !fileExists(configPath) {
+	unifiedPath := getUnifiedConfigPath()
+
+	// If unified config exists, load it and return
+	if fileExists(unifiedPath) {
+		if err := loadConfigFile(unifiedPath, &cfg); err != nil {
+			return UnifiedConfig{}, err
+		}
 		return cfg, nil
 	}
 
-	if err := loadConfigFile(configPath, &cfg); err != nil {
-		return UnifiedConfig{}, err
+	// Check for legacy runner config
+	legacyPath := getLegacyRunnerConfigPath()
+	if fileExists(legacyPath) {
+		// Migrate legacy config to unified format
+		if err := migrateConfig(legacyPath, unifiedPath, &cfg); err != nil {
+			return UnifiedConfig{}, err
+		}
+		// Migration successful - config already populated
+		return cfg, nil
 	}
 
 	return cfg, nil
@@ -181,4 +193,95 @@ func writeConfig(path string, cfg *UnifiedConfig) error {
 
 	// Write to file
 	return os.WriteFile(path, data, 0644)
+}
+
+// migrateConfig migrates a legacy runner config to the unified config format.
+// It reads the legacy config, maps fields to cfg.Runner, writes unified config, and creates backup.
+func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
+	// Read legacy config file
+	data, err := os.ReadFile(legacyPath)
+	if err != nil {
+		return err
+	}
+
+	// Parse as generic map to handle legacy format
+	var legacyData map[string]interface{}
+	if err := yaml.Unmarshal(data, &legacyData); err != nil {
+		return err
+	}
+
+	// Map legacy fields to unified config Runner section
+	if v, ok := legacyData["max_parallel"].(int); ok {
+		cfg.Runner.MaxParallel = v
+	}
+	if v, ok := legacyData["poll_interval"].(int); ok {
+		cfg.Runner.PollInterval = v
+	}
+	if v, ok := legacyData["task_poll_interval"].(int); ok {
+		cfg.Runner.TaskPollInterval = v
+	}
+	if v, ok := legacyData["work_dir"].(string); ok {
+		cfg.Runner.WorkDir = v
+	}
+	if v, ok := legacyData["state_dir"].(string); ok {
+		cfg.Runner.StateDir = v
+	}
+	if v, ok := legacyData["log_dir"].(string); ok {
+		cfg.Runner.LogDir = v
+	}
+	if v, ok := legacyData["api_timeout"].(int); ok {
+		cfg.Runner.APITimeout = v
+	}
+	if v, ok := legacyData["task_timeout"].(int); ok {
+		cfg.Runner.TaskTimeout = v
+	}
+	if v, ok := legacyData["idle_detection_threshold"].(int); ok {
+		cfg.Runner.IdleDetectionThreshold = v
+	}
+	if v, ok := legacyData["max_total_processes"].(int); ok {
+		cfg.Runner.MaxTotalProcesses = v
+	}
+	if v, ok := legacyData["memory_threshold_percent"].(int); ok {
+		cfg.Runner.MemoryThresholdPercent = v
+	}
+	if v, ok := legacyData["auto_monitors"].(bool); ok {
+		cfg.Runner.AutoMonitors = v
+	}
+
+	// Map nested opencode config
+	if opencodeData, ok := legacyData["opencode"].(map[string]interface{}); ok {
+		if v, ok := opencodeData["bin"].(string); ok {
+			cfg.Runner.Opencode.Bin = v
+		}
+		if v, ok := opencodeData["agent"].(string); ok {
+			cfg.Runner.Opencode.Agent = v
+		}
+		if v, ok := opencodeData["model"].(string); ok {
+			cfg.Runner.Opencode.Model = v
+		}
+	}
+
+	// Map array fields
+	if excludeData, ok := legacyData["exclude_projects"].([]interface{}); ok {
+		excludeProjects := make([]string, 0, len(excludeData))
+		for _, item := range excludeData {
+			if str, ok := item.(string); ok {
+				excludeProjects = append(excludeProjects, str)
+			}
+		}
+		cfg.Runner.ExcludeProjects = excludeProjects
+	}
+
+	// Write unified config
+	if err := writeConfig(unifiedPath, cfg); err != nil {
+		return err
+	}
+
+	// Create backup of legacy config
+	backupPath := legacyPath + ".backup"
+	if err := os.Rename(legacyPath, backupPath); err != nil {
+		return err
+	}
+
+	return nil
 }

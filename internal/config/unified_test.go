@@ -430,3 +430,290 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 		t.Errorf("Round-trip MCP.APIURL = %q, want %q", loaded.MCP.APIURL, original.MCP.APIURL)
 	}
 }
+
+// =============================================================================
+// Migration Tests
+// =============================================================================
+
+// TestMigrateConfigBasicFields verifies migration of basic scalar fields from legacy config.
+func TestMigrateConfigBasicFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacyPath := filepath.Join(tmpDir, "legacy-config.yaml")
+	unifiedPath := filepath.Join(tmpDir, "unified-config.yaml")
+
+	// Create a legacy runner config with basic fields
+	legacyYAML := `max_parallel: 5
+poll_interval: 10
+task_poll_interval: 3
+work_dir: "/home/user/work"
+state_dir: "/home/user/.state"
+log_dir: "/home/user/.logs"
+api_timeout: 3000
+task_timeout: 120000
+idle_detection_threshold: 30000
+max_total_processes: 8
+memory_threshold_percent: 15
+auto_monitors: false
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyYAML), 0644); err != nil {
+		t.Fatalf("failed to create legacy config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	err := migrateConfig(legacyPath, unifiedPath, &cfg)
+	if err != nil {
+		t.Fatalf("migrateConfig() error = %v", err)
+	}
+
+	// Verify basic fields were migrated
+	if cfg.Runner.MaxParallel != 5 {
+		t.Errorf("Runner.MaxParallel = %d, want 5", cfg.Runner.MaxParallel)
+	}
+	if cfg.Runner.PollInterval != 10 {
+		t.Errorf("Runner.PollInterval = %d, want 10", cfg.Runner.PollInterval)
+	}
+	if cfg.Runner.TaskPollInterval != 3 {
+		t.Errorf("Runner.TaskPollInterval = %d, want 3", cfg.Runner.TaskPollInterval)
+	}
+	if cfg.Runner.WorkDir != "/home/user/work" {
+		t.Errorf("Runner.WorkDir = %q, want %q", cfg.Runner.WorkDir, "/home/user/work")
+	}
+	if cfg.Runner.StateDir != "/home/user/.state" {
+		t.Errorf("Runner.StateDir = %q, want %q", cfg.Runner.StateDir, "/home/user/.state")
+	}
+	if cfg.Runner.LogDir != "/home/user/.logs" {
+		t.Errorf("Runner.LogDir = %q, want %q", cfg.Runner.LogDir, "/home/user/.logs")
+	}
+	if cfg.Runner.APITimeout != 3000 {
+		t.Errorf("Runner.APITimeout = %d, want 3000", cfg.Runner.APITimeout)
+	}
+	if cfg.Runner.TaskTimeout != 120000 {
+		t.Errorf("Runner.TaskTimeout = %d, want 120000", cfg.Runner.TaskTimeout)
+	}
+	if cfg.Runner.IdleDetectionThreshold != 30000 {
+		t.Errorf("Runner.IdleDetectionThreshold = %d, want 30000", cfg.Runner.IdleDetectionThreshold)
+	}
+	if cfg.Runner.MaxTotalProcesses != 8 {
+		t.Errorf("Runner.MaxTotalProcesses = %d, want 8", cfg.Runner.MaxTotalProcesses)
+	}
+	if cfg.Runner.MemoryThresholdPercent != 15 {
+		t.Errorf("Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
+	}
+	if cfg.Runner.AutoMonitors != false {
+		t.Errorf("Runner.AutoMonitors = %v, want false", cfg.Runner.AutoMonitors)
+	}
+
+	// Verify unified config file was written
+	if !fileExists(unifiedPath) {
+		t.Errorf("migrateConfig() did not create unified config at %q", unifiedPath)
+	}
+
+	// Verify backup was created
+	backupPath := legacyPath + ".backup"
+	if !fileExists(backupPath) {
+		t.Errorf("migrateConfig() did not create backup at %q", backupPath)
+	}
+}
+
+// TestMigrateConfigComplexFields verifies migration of nested and array fields.
+func TestMigrateConfigComplexFields(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacyPath := filepath.Join(tmpDir, "legacy-config.yaml")
+	unifiedPath := filepath.Join(tmpDir, "unified-config.yaml")
+
+	// Create legacy config with nested opencode config and array fields
+	legacyYAML := `max_parallel: 2
+poll_interval: 5
+opencode:
+  bin: "/usr/local/bin/opencode"
+  agent: "dev"
+  model: "claude-sonnet-4"
+exclude_projects:
+  - "test-project"
+  - "legacy-project"
+  - "archived-*"
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyYAML), 0644); err != nil {
+		t.Fatalf("failed to create legacy config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	err := migrateConfig(legacyPath, unifiedPath, &cfg)
+	if err != nil {
+		t.Fatalf("migrateConfig() error = %v", err)
+	}
+
+	// Verify nested opencode config
+	if cfg.Runner.Opencode.Bin != "/usr/local/bin/opencode" {
+		t.Errorf("Runner.Opencode.Bin = %q, want %q", cfg.Runner.Opencode.Bin, "/usr/local/bin/opencode")
+	}
+	if cfg.Runner.Opencode.Agent != "dev" {
+		t.Errorf("Runner.Opencode.Agent = %q, want %q", cfg.Runner.Opencode.Agent, "dev")
+	}
+	if cfg.Runner.Opencode.Model != "claude-sonnet-4" {
+		t.Errorf("Runner.Opencode.Model = %q, want %q", cfg.Runner.Opencode.Model, "claude-sonnet-4")
+	}
+
+	// Verify array fields
+	if len(cfg.Runner.ExcludeProjects) != 3 {
+		t.Fatalf("Runner.ExcludeProjects length = %d, want 3", len(cfg.Runner.ExcludeProjects))
+	}
+	if cfg.Runner.ExcludeProjects[0] != "test-project" {
+		t.Errorf("Runner.ExcludeProjects[0] = %q, want %q", cfg.Runner.ExcludeProjects[0], "test-project")
+	}
+	if cfg.Runner.ExcludeProjects[1] != "legacy-project" {
+		t.Errorf("Runner.ExcludeProjects[1] = %q, want %q", cfg.Runner.ExcludeProjects[1], "legacy-project")
+	}
+	if cfg.Runner.ExcludeProjects[2] != "archived-*" {
+		t.Errorf("Runner.ExcludeProjects[2] = %q, want %q", cfg.Runner.ExcludeProjects[2], "archived-*")
+	}
+}
+
+// TestMigrateConfigInvalidYAML verifies migration handles invalid YAML gracefully.
+func TestMigrateConfigInvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	legacyPath := filepath.Join(tmpDir, "legacy-config.yaml")
+	unifiedPath := filepath.Join(tmpDir, "unified-config.yaml")
+
+	// Create invalid YAML
+	invalidYAML := `max_parallel: not_a_number
+poll_interval: [unclosed
+`
+	if err := os.WriteFile(legacyPath, []byte(invalidYAML), 0644); err != nil {
+		t.Fatalf("failed to create invalid config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	err := migrateConfig(legacyPath, unifiedPath, &cfg)
+	if err == nil {
+		t.Fatal("migrateConfig() with invalid YAML should return error, got nil")
+	}
+
+	// Verify unified config was NOT created (migration failed)
+	if fileExists(unifiedPath) {
+		t.Errorf("migrateConfig() created unified config despite error")
+	}
+
+	// Verify backup was NOT created (migration failed)
+	backupPath := legacyPath + ".backup"
+	if fileExists(backupPath) {
+		t.Errorf("migrateConfig() created backup despite error")
+	}
+
+	// Verify original file still exists
+	if !fileExists(legacyPath) {
+		t.Errorf("migrateConfig() removed legacy file despite error")
+	}
+}
+
+// TestLoadConfigTriggersAutoMigration verifies LoadConfig auto-migrates legacy config.
+func TestLoadConfigTriggersAutoMigration(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create legacy config directory and file
+	legacyDir := filepath.Join(tmpDir, "brain-runner")
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatalf("failed to create legacy dir: %v", err)
+	}
+	legacyPath := filepath.Join(legacyDir, "config.yaml")
+	legacyYAML := `max_parallel: 7
+poll_interval: 15
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyYAML), 0644); err != nil {
+		t.Fatalf("failed to create legacy config: %v", err)
+	}
+
+	// LoadConfig should detect and migrate
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with legacy config error = %v", err)
+	}
+
+	// Verify migrated values
+	if cfg.Runner.MaxParallel != 7 {
+		t.Errorf("LoadConfig() Runner.MaxParallel = %d, want 7", cfg.Runner.MaxParallel)
+	}
+	if cfg.Runner.PollInterval != 15 {
+		t.Errorf("LoadConfig() Runner.PollInterval = %d, want 15", cfg.Runner.PollInterval)
+	}
+
+	// Verify unified config was created
+	unifiedPath := filepath.Join(tmpDir, "brain", "config.yaml")
+	if !fileExists(unifiedPath) {
+		t.Errorf("LoadConfig() did not create unified config at %q", unifiedPath)
+	}
+
+	// Verify backup was created
+	backupPath := legacyPath + ".backup"
+	if !fileExists(backupPath) {
+		t.Errorf("LoadConfig() did not create backup at %q", backupPath)
+	}
+
+	// Verify original legacy config no longer exists
+	if fileExists(legacyPath) {
+		t.Errorf("LoadConfig() did not rename legacy config")
+	}
+}
+
+// TestLoadConfigPreferUnified verifies unified config takes precedence over legacy.
+func TestLoadConfigPreferUnified(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create both legacy and unified configs with different values
+	legacyDir := filepath.Join(tmpDir, "brain-runner")
+	if err := os.MkdirAll(legacyDir, 0755); err != nil {
+		t.Fatalf("failed to create legacy dir: %v", err)
+	}
+	legacyPath := filepath.Join(legacyDir, "config.yaml")
+	legacyYAML := `max_parallel: 99
+poll_interval: 99
+`
+	if err := os.WriteFile(legacyPath, []byte(legacyYAML), 0644); err != nil {
+		t.Fatalf("failed to create legacy config: %v", err)
+	}
+
+	unifiedDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(unifiedDir, 0755); err != nil {
+		t.Fatalf("failed to create unified dir: %v", err)
+	}
+	unifiedPath := filepath.Join(unifiedDir, "config.yaml")
+	unifiedYAML := `server:
+  port: 8080
+runner:
+  max_parallel: 4
+  poll_interval: 8
+`
+	if err := os.WriteFile(unifiedPath, []byte(unifiedYAML), 0644); err != nil {
+		t.Fatalf("failed to create unified config: %v", err)
+	}
+
+	// LoadConfig should use unified, not migrate legacy
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	// Verify unified values, not legacy
+	if cfg.Runner.MaxParallel != 4 {
+		t.Errorf("LoadConfig() Runner.MaxParallel = %d, want 4 (from unified, not 99 from legacy)", cfg.Runner.MaxParallel)
+	}
+	if cfg.Runner.PollInterval != 8 {
+		t.Errorf("LoadConfig() Runner.PollInterval = %d, want 8 (from unified, not 99 from legacy)", cfg.Runner.PollInterval)
+	}
+	if cfg.Server.Port != 8080 {
+		t.Errorf("LoadConfig() Server.Port = %d, want 8080", cfg.Server.Port)
+	}
+
+	// Verify legacy config still exists (no migration should occur)
+	if !fileExists(legacyPath) {
+		t.Errorf("LoadConfig() removed legacy config when unified exists")
+	}
+
+	// Verify no backup was created
+	backupPath := legacyPath + ".backup"
+	if fileExists(backupPath) {
+		t.Errorf("LoadConfig() created backup when unified config exists")
+	}
+}

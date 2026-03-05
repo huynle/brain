@@ -3420,6 +3420,7 @@ export class TaskRunner {
         projects: this.projects,       // Pass all projects for multi-project mode
         projectId: this.projectId,     // Legacy single project (backward compat)
         apiUrl: this.config.brainApiUrl,
+        apiToken: this.config.apiToken,
         pollInterval: this.config.pollInterval * 1000, // Convert to ms
         maxLogs: 100,
         logDir: this.config.logDir,    // Enable log persistence across TUI restarts

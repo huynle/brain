@@ -108,7 +108,7 @@ export class ApiClient {
     }
 
     try {
-      const response = await this.fetch("/health");
+      const response = await this.fetch("/api/v1/health");
       const health = (await response.json()) as ApiHealth;
 
       this.healthCache = { status: health, timestamp: now };

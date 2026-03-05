@@ -790,7 +790,7 @@ async function cmdDoctor(args: string[]): Promise<void> {
 // =============================================================================
 
 async function cmdToken(args: string[]): Promise<void> {
-  const result = execTokenCommand(args);
+  const result = await execTokenCommand(args);
   if (result.output) {
     if (result.exitCode === 0) {
       console.log(result.output);

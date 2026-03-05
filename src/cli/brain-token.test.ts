@@ -18,6 +18,8 @@ const TEST_DIR = join(tmpdir(), `brain-token-cli-test-${Date.now()}`);
 describe("brain token CLI", () => {
   beforeAll(() => {
     process.env.BRAIN_DIR = TEST_DIR;
+    // Force direct DB mode so tests don't hit a running server
+    process.env.BRAIN_TOKEN_DIRECT_DB = "1";
     closeDatabase();
   });
 
@@ -38,27 +40,27 @@ describe("brain token CLI", () => {
   // =========================================================================
 
   describe("create", () => {
-    test("creates token with --name flag", () => {
-      const result = execTokenCommand(["create", "--name", "my-token"]);
+    test("creates token with --name flag", async () => {
+      const result = await execTokenCommand(["create", "--name", "my-token"]);
 
       expect(result.exitCode).toBe(0);
-      expect(result.output).toContain("API Token created:");
+      expect(result.output).toContain("API Token created");
       expect(result.output).toContain("Name:  my-token");
       expect(result.output).toContain("Token:");
       expect(result.output).toContain("Save this token");
       expect(result.output).toContain("BRAIN_API_TOKEN=");
     });
 
-    test("creates token with positional name", () => {
-      const result = execTokenCommand(["create", "pos-token"]);
+    test("creates token with positional name", async () => {
+      const result = await execTokenCommand(["create", "pos-token"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Name:  pos-token");
       expect(result.output).toContain("Token:");
     });
 
-    test("returns full 64-char token in output", () => {
-      const result = execTokenCommand(["create", "--name", "full-token"]);
+    test("returns full 64-char token in output", async () => {
+      const result = await execTokenCommand(["create", "--name", "full-token"]);
 
       expect(result.exitCode).toBe(0);
       // Extract token from output - it's a 64-char hex string
@@ -67,16 +69,16 @@ describe("brain token CLI", () => {
       expect(tokenMatch![1].length).toBe(64);
     });
 
-    test("fails without name", () => {
-      const result = execTokenCommand(["create"]);
+    test("fails without name", async () => {
+      const result = await execTokenCommand(["create"]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("name is required");
     });
 
-    test("fails on duplicate name", () => {
-      execTokenCommand(["create", "--name", "dup-name"]);
-      const result = execTokenCommand(["create", "--name", "dup-name"]);
+    test("fails on duplicate name", async () => {
+      await execTokenCommand(["create", "--name", "dup-name"]);
+      const result = await execTokenCommand(["create", "--name", "dup-name"]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output.toLowerCase()).toContain("error");
@@ -88,18 +90,18 @@ describe("brain token CLI", () => {
   // =========================================================================
 
   describe("list", () => {
-    test("shows empty message when no tokens", () => {
-      const result = execTokenCommand(["list"]);
+    test("shows empty message when no tokens", async () => {
+      const result = await execTokenCommand(["list"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("No API tokens found.");
     });
 
-    test("lists tokens with name and prefix", () => {
+    test("lists tokens with name and prefix", async () => {
       createApiToken("list-token-a");
       createApiToken("list-token-b");
 
-      const result = execTokenCommand(["list"]);
+      const result = await execTokenCommand(["list"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("list-token-a");
@@ -108,12 +110,12 @@ describe("brain token CLI", () => {
       expect(result.output).toContain("2 tokens");
     });
 
-    test("shows revoked status for revoked tokens", () => {
+    test("shows revoked status for revoked tokens", async () => {
       createApiToken("active-tok");
       createApiToken("revoked-tok");
       revokeApiToken("revoked-tok");
 
-      const result = execTokenCommand(["list"]);
+      const result = await execTokenCommand(["list"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("active");
@@ -122,11 +124,11 @@ describe("brain token CLI", () => {
       expect(result.output).toContain("1 revoked");
     });
 
-    test("shows token prefix with ellipsis", () => {
+    test("shows token prefix with ellipsis", async () => {
       const token = createApiToken("prefix-tok");
       const prefix = token.token.slice(0, 8);
 
-      const result = execTokenCommand(["list"]);
+      const result = await execTokenCommand(["list"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain(`${prefix}...`);
@@ -138,26 +140,26 @@ describe("brain token CLI", () => {
   // =========================================================================
 
   describe("revoke", () => {
-    test("revokes token by name", () => {
+    test("revokes token by name", async () => {
       createApiToken("to-revoke");
 
-      const result = execTokenCommand(["revoke", "to-revoke"]);
+      const result = await execTokenCommand(["revoke", "to-revoke"]);
 
       expect(result.exitCode).toBe(0);
       expect(result.output).toContain("Revoked");
       expect(result.output).toContain("to-revoke");
     });
 
-    test("fails for unknown token", () => {
-      const result = execTokenCommand(["revoke", "nonexistent"]);
+    test("fails for unknown token", async () => {
+      const result = await execTokenCommand(["revoke", "nonexistent"]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("Token not found");
       expect(result.output).toContain("nonexistent");
     });
 
-    test("fails without name argument", () => {
-      const result = execTokenCommand(["revoke"]);
+    test("fails without name argument", async () => {
+      const result = await execTokenCommand(["revoke"]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("name is required");
@@ -169,8 +171,8 @@ describe("brain token CLI", () => {
   // =========================================================================
 
   describe("help", () => {
-    test("shows help for unknown subcommand", () => {
-      const result = execTokenCommand(["unknown"]);
+    test("shows help for unknown subcommand", async () => {
+      const result = await execTokenCommand(["unknown"]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("token create");
@@ -178,8 +180,8 @@ describe("brain token CLI", () => {
       expect(result.output).toContain("token revoke");
     });
 
-    test("shows help when no subcommand given", () => {
-      const result = execTokenCommand([]);
+    test("shows help when no subcommand given", async () => {
+      const result = await execTokenCommand([]);
 
       expect(result.exitCode).toBe(1);
       expect(result.output).toContain("token create");

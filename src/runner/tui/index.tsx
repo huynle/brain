@@ -41,6 +41,8 @@ export interface DashboardOptions {
   projects?: string[];
   /** Brain API URL (default: http://localhost:3000) */
   apiUrl?: string;
+  /** API token for authenticated access (from config.yaml or BRAIN_API_TOKEN env) */
+  apiToken?: string;
   /** Polling interval in ms (default: 5000) */
   pollInterval?: number;
   /** Maximum log entries to keep (default: 100) */
@@ -196,6 +198,7 @@ export function startDashboard(options: DashboardOptions): DashboardHandle {
   
   const config: TUIConfig = {
     apiUrl: options.apiUrl ?? 'http://localhost:3000',
+    apiToken: options.apiToken,
     project: projects[0], // Legacy single project (first project for backward compatibility)
     projects: projects,   // Full project list
     activeProject: isMultiProject ? 'all' : projects[0], // Default to 'all' in multi-project mode

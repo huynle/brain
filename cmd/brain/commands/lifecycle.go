@@ -1,6 +1,8 @@
 package commands
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,9 +17,9 @@ import (
 type LifecycleFlags struct {
 	PIDFile string
 	LogFile string
-	Timeout int    // Timeout in seconds for stop operations
-	Force   bool   // Force kill if graceful shutdown fails
-	DryRun  bool   // Dry-run mode (don't actually execute)
+	Timeout int  // Timeout in seconds for stop operations
+	Force   bool // Force kill if graceful shutdown fails
+	DryRun  bool // Dry-run mode (don't actually execute)
 }
 
 // StartCommand starts the server in daemon mode.
@@ -230,4 +232,112 @@ func (c *RestartCommand) Execute() error {
 		Flags:  c.Flags,
 	}
 	return startCmd.Execute()
+}
+
+// StatusFlags holds flags for the status command.
+type StatusFlags struct {
+	JSON bool
+}
+
+// StatusCommand checks the server status.
+type StatusCommand struct {
+	Config *UnifiedConfig
+	Flags  *StatusFlags
+	Out    *bytes.Buffer
+}
+
+func (c *StatusCommand) Type() string {
+	return "status"
+}
+
+func (c *StatusCommand) Execute() error {
+	// Determine PID file path
+	pidFile := c.Config.Server.PIDFile
+	if pidFile == "" {
+		homeDir, _ := os.UserHomeDir()
+		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+	}
+
+	// Get port
+	port := c.Config.Server.Port
+	if port == 0 {
+		port = 3333 // Default port
+	}
+
+	// Get server status
+	state, err := lifecycle.GetServerStatus(pidFile, port)
+	if err != nil {
+		return fmt.Errorf("failed to get server status: %w", err)
+	}
+
+	// Format output
+	if c.Flags.JSON {
+		return c.writeJSON(state)
+	}
+	return c.writeText(state)
+}
+
+func (c *StatusCommand) writeJSON(state lifecycle.ServerState) error {
+	data := map[string]interface{}{
+		"status": string(state.Status),
+		"pid":    state.PID,
+		"port":   state.Port,
+	}
+	if state.Status == lifecycle.ServerStatusRunning {
+		data["uptime"] = state.Uptime.String()
+		data["started_at"] = state.StartedAt.Format(time.RFC3339)
+	}
+
+	enc := json.NewEncoder(c.Out)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(data); err != nil {
+		return fmt.Errorf("failed to encode JSON: %w", err)
+	}
+
+	// Exit code based on status
+	if state.Status != lifecycle.ServerStatusRunning {
+		return fmt.Errorf("server not running")
+	}
+	return nil
+}
+
+func (c *StatusCommand) writeText(state lifecycle.ServerState) error {
+	switch state.Status {
+	case lifecycle.ServerStatusRunning:
+		fmt.Fprintf(c.Out, "Status: running\n")
+		fmt.Fprintf(c.Out, "PID: %d\n", state.PID)
+		fmt.Fprintf(c.Out, "Port: %d\n", state.Port)
+		if state.Uptime > 0 {
+			fmt.Fprintf(c.Out, "Uptime: %s\n", formatUptime(state.Uptime))
+		}
+		return nil
+
+	case lifecycle.ServerStatusStopped:
+		fmt.Fprintf(c.Out, "Status: stopped\n")
+		return fmt.Errorf("server not running")
+
+	case lifecycle.ServerStatusCrashed:
+		fmt.Fprintf(c.Out, "Status: crashed (PID %d no longer exists)\n", state.PID)
+		return fmt.Errorf("server crashed")
+
+	default:
+		fmt.Fprintf(c.Out, "Status: unknown\n")
+		return fmt.Errorf("unknown status")
+	}
+}
+
+// formatUptime formats a duration in human-readable form.
+func formatUptime(d time.Duration) string {
+	if d < time.Minute {
+		return fmt.Sprintf("%ds", int(d.Seconds()))
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm %ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	if d < 24*time.Hour {
+		return fmt.Sprintf("%dh %dm", int(d.Hours()), int(d.Minutes())%60)
+	}
+	days := int(d.Hours()) / 24
+	hours := int(d.Hours()) % 24
+	return fmt.Sprintf("%dd %dh", days, hours)
 }

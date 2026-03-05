@@ -168,3 +168,265 @@ func TestUnifiedConfigYAMLMarshaling(t *testing.T) {
 		t.Errorf("After round-trip: MCP.APIURL = %q, want %q", decoded.MCP.APIURL, cfg.MCP.APIURL)
 	}
 }
+
+// TestLoadConfigNoFile verifies that LoadConfig returns defaults when no config file exists.
+func TestLoadConfigNoFile(t *testing.T) {
+	// Set XDG_CONFIG_HOME to a non-existent temp directory
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with no file should not error, got: %v", err)
+	}
+
+	// Should return default values
+	if cfg.Server.Port != 3333 {
+		t.Errorf("LoadConfig() Server.Port = %d, want 3333", cfg.Server.Port)
+	}
+	if cfg.Server.Host != "localhost" {
+		t.Errorf("LoadConfig() Server.Host = %q, want %q", cfg.Server.Host, "localhost")
+	}
+	if cfg.Runner.MaxParallel != 3 {
+		t.Errorf("LoadConfig() Runner.MaxParallel = %d, want 3", cfg.Runner.MaxParallel)
+	}
+}
+
+// TestLoadConfigWithValidFile verifies that LoadConfig loads from an existing unified config.
+func TestLoadConfigWithValidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	// Write a custom config file
+	configPath := filepath.Join(configDir, "config.yaml")
+	customConfig := `server:
+  port: 8080
+  host: "0.0.0.0"
+  log_level: "debug"
+runner:
+  max_parallel: 5
+  poll_interval: 10
+mcp:
+  api_url: "http://custom:9999"
+`
+	if err := os.WriteFile(configPath, []byte(customConfig), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() with valid file error = %v", err)
+	}
+
+	// Verify custom values were loaded
+	if cfg.Server.Port != 8080 {
+		t.Errorf("LoadConfig() Server.Port = %d, want 8080", cfg.Server.Port)
+	}
+	if cfg.Server.Host != "0.0.0.0" {
+		t.Errorf("LoadConfig() Server.Host = %q, want %q", cfg.Server.Host, "0.0.0.0")
+	}
+	if cfg.Server.LogLevel != "debug" {
+		t.Errorf("LoadConfig() Server.LogLevel = %q, want %q", cfg.Server.LogLevel, "debug")
+	}
+	if cfg.Runner.MaxParallel != 5 {
+		t.Errorf("LoadConfig() Runner.MaxParallel = %d, want 5", cfg.Runner.MaxParallel)
+	}
+	if cfg.MCP.APIURL != "http://custom:9999" {
+		t.Errorf("LoadConfig() MCP.APIURL = %q, want %q", cfg.MCP.APIURL, "http://custom:9999")
+	}
+}
+
+// TestLoadConfigWithInvalidYAML verifies that LoadConfig returns an error for invalid YAML.
+func TestLoadConfigWithInvalidYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	// Write invalid YAML
+	configPath := filepath.Join(configDir, "config.yaml")
+	invalidYAML := `server:
+  port: not_a_number
+  host: [unclosed bracket
+`
+	if err := os.WriteFile(configPath, []byte(invalidYAML), 0644); err != nil {
+		t.Fatalf("failed to write invalid config: %v", err)
+	}
+
+	_, err := LoadConfig()
+	if err == nil {
+		t.Fatal("LoadConfig() with invalid YAML should return error, got nil")
+	}
+}
+
+// TestLoadConfigFileValid verifies loadConfigFile parses valid YAML correctly.
+func TestLoadConfigFileValid(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	yamlContent := `server:
+  port: 4444
+  host: "custom-host"
+runner:
+  max_parallel: 7
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write test config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	err := loadConfigFile(configPath, &cfg)
+	if err != nil {
+		t.Fatalf("loadConfigFile() error = %v", err)
+	}
+
+	if cfg.Server.Port != 4444 {
+		t.Errorf("loadConfigFile() Server.Port = %d, want 4444", cfg.Server.Port)
+	}
+	if cfg.Server.Host != "custom-host" {
+		t.Errorf("loadConfigFile() Server.Host = %q, want %q", cfg.Server.Host, "custom-host")
+	}
+	if cfg.Runner.MaxParallel != 7 {
+		t.Errorf("loadConfigFile() Runner.MaxParallel = %d, want 7", cfg.Runner.MaxParallel)
+	}
+}
+
+// TestLoadConfigFileInvalid verifies loadConfigFile returns error for invalid YAML.
+func TestLoadConfigFileInvalid(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	invalidYAML := `{bad yaml structure`
+	if err := os.WriteFile(configPath, []byte(invalidYAML), 0644); err != nil {
+		t.Fatalf("failed to write invalid config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	err := loadConfigFile(configPath, &cfg)
+	if err == nil {
+		t.Fatal("loadConfigFile() with invalid YAML should return error, got nil")
+	}
+}
+
+// TestLoadConfigFileNonExistent verifies loadConfigFile returns error for missing file.
+func TestLoadConfigFileNonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+	nonExistentPath := filepath.Join(tmpDir, "does-not-exist.yaml")
+
+	cfg := defaultConfig()
+	err := loadConfigFile(nonExistentPath, &cfg)
+	if err == nil {
+		t.Fatal("loadConfigFile() with non-existent file should return error, got nil")
+	}
+}
+
+// TestWriteConfig verifies writeConfig creates directory and writes valid YAML.
+func TestWriteConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "brain", "config.yaml")
+
+	cfg := defaultConfig()
+	cfg.Server.Port = 9999
+	cfg.Server.Host = "test-host"
+
+	err := writeConfig(configPath, &cfg)
+	if err != nil {
+		t.Fatalf("writeConfig() error = %v", err)
+	}
+
+	// Verify directory was created
+	configDir := filepath.Join(tmpDir, "brain")
+	if !fileExists(configDir) {
+		t.Errorf("writeConfig() did not create directory %q", configDir)
+	}
+
+	// Verify file was created
+	if !fileExists(configPath) {
+		t.Errorf("writeConfig() did not create file %q", configPath)
+	}
+
+	// Verify file is readable and contains valid YAML
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("failed to read written config: %v", err)
+	}
+
+	var loaded UnifiedConfig
+	if err := yaml.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("written config is not valid YAML: %v", err)
+	}
+
+	if loaded.Server.Port != 9999 {
+		t.Errorf("written config Server.Port = %d, want 9999", loaded.Server.Port)
+	}
+	if loaded.Server.Host != "test-host" {
+		t.Errorf("written config Server.Host = %q, want %q", loaded.Server.Host, "test-host")
+	}
+}
+
+// TestWriteConfigInvalidPath verifies writeConfig returns error for invalid paths.
+func TestWriteConfigInvalidPath(t *testing.T) {
+	cfg := defaultConfig()
+	invalidPath := "/root/cannot-write-here/config.yaml"
+
+	err := writeConfig(invalidPath, &cfg)
+	if err == nil {
+		t.Error("writeConfig() with invalid path should return error, got nil")
+	}
+}
+
+// TestWriteLoadRoundTrip verifies write → load → verify equality.
+func TestWriteLoadRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Create a custom config
+	original := defaultConfig()
+	original.Server.Port = 7777
+	original.Server.Host = "roundtrip-host"
+	original.Server.LogLevel = "trace"
+	original.Runner.MaxParallel = 9
+	original.Runner.PollInterval = 15
+	original.MCP.APIURL = "http://roundtrip:8888"
+
+	// Write it
+	if err := writeConfig(configPath, &original); err != nil {
+		t.Fatalf("writeConfig() error = %v", err)
+	}
+
+	// Load it back
+	loaded := defaultConfig()
+	if err := loadConfigFile(configPath, &loaded); err != nil {
+		t.Fatalf("loadConfigFile() error = %v", err)
+	}
+
+	// Verify equality of key fields
+	if loaded.Server.Port != original.Server.Port {
+		t.Errorf("Round-trip Server.Port = %d, want %d", loaded.Server.Port, original.Server.Port)
+	}
+	if loaded.Server.Host != original.Server.Host {
+		t.Errorf("Round-trip Server.Host = %q, want %q", loaded.Server.Host, original.Server.Host)
+	}
+	if loaded.Server.LogLevel != original.Server.LogLevel {
+		t.Errorf("Round-trip Server.LogLevel = %q, want %q", loaded.Server.LogLevel, original.Server.LogLevel)
+	}
+	if loaded.Runner.MaxParallel != original.Runner.MaxParallel {
+		t.Errorf("Round-trip Runner.MaxParallel = %d, want %d", loaded.Runner.MaxParallel, original.Runner.MaxParallel)
+	}
+	if loaded.Runner.PollInterval != original.Runner.PollInterval {
+		t.Errorf("Round-trip Runner.PollInterval = %d, want %d", loaded.Runner.PollInterval, original.Runner.PollInterval)
+	}
+	if loaded.MCP.APIURL != original.MCP.APIURL {
+		t.Errorf("Round-trip MCP.APIURL = %q, want %q", loaded.MCP.APIURL, original.MCP.APIURL)
+	}
+}

@@ -4,6 +4,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+
+	"gopkg.in/yaml.v3"
 )
 
 // UnifiedConfig is the merged configuration for all Brain subsystems.
@@ -134,4 +136,49 @@ func getLegacyRunnerConfigPath() string {
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// LoadConfig loads the unified configuration from the standard location.
+// Returns default config if no file exists. Returns error if file exists but cannot be parsed.
+func LoadConfig() (UnifiedConfig, error) {
+	cfg := defaultConfig()
+
+	configPath := getUnifiedConfigPath()
+	if !fileExists(configPath) {
+		return cfg, nil
+	}
+
+	if err := loadConfigFile(configPath, &cfg); err != nil {
+		return UnifiedConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+// loadConfigFile reads and parses a YAML config file, merging it with the provided config.
+func loadConfigFile(path string, cfg *UnifiedConfig) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+
+	return yaml.Unmarshal(data, cfg)
+}
+
+// writeConfig writes the config to a YAML file, creating parent directories if needed.
+func writeConfig(path string, cfg *UnifiedConfig) error {
+	// Create parent directory if needed
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+
+	// Marshal config to YAML
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+
+	// Write to file
+	return os.WriteFile(path, data, 0644)
 }

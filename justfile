@@ -5,6 +5,50 @@ default:
     @just --list
 
 # =============================================================================
+# Go Development
+# =============================================================================
+
+# Build all Go binaries
+go-build:
+    make build
+
+# Run Go tests
+go-test:
+    make test
+
+# Run Go tests with coverage
+go-cover:
+    make test-cover
+
+# Run Go linter (golangci-lint)
+go-lint:
+    make lint
+
+# Run go vet (static analysis)
+go-vet:
+    make typecheck
+
+# Run all Go checks (vet + test + lint)
+go-check:
+    make check
+
+# Format Go code
+go-fmt:
+    make fmt
+
+# Tidy Go dependencies
+go-tidy:
+    make tidy
+
+# Clean Go build artifacts
+go-clean:
+    make clean
+
+# Run brain-api server (Go)
+go-dev:
+    go run ./cmd/brain-api
+
+# =============================================================================
 # Development
 # =============================================================================
 

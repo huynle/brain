@@ -7,3 +7,17 @@ dist/
 
 # Local git worktrees
 .worktrees/
+
+# Go build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+__debug_bin*
+vendor/

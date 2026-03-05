@@ -8,6 +8,13 @@ import (
 	"strings"
 )
 
+// Build-time variables set via -ldflags.
+var (
+	Version   = "dev"
+	Commit    = "unknown"
+	BuildTime = "unknown"
+)
+
 // Config holds all Brain API configuration.
 type Config struct {
 	BrainDir   string

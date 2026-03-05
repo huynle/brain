@@ -18,12 +18,24 @@ import (
 // =============================================================================
 
 type mockBrainService struct {
-	saveFunc   func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
-	recallFunc func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
-	updateFunc func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
-	deleteFunc func(ctx context.Context, pathOrID string) error
-	listFunc   func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
-	moveFunc   func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
+	saveFunc         func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
+	recallFunc       func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	updateFunc       func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
+	deleteFunc       func(ctx context.Context, pathOrID string) error
+	listFunc         func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
+	moveFunc         func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
+	searchFunc       func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
+	injectFunc       func(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error)
+	getBacklinksFunc func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getOutlinksFunc  func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getRelatedFunc   func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
+	getSectionsFunc  func(ctx context.Context, path string) (*types.SectionsResponse, error)
+	getSectionFunc   func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
+	getStatsFunc     func(ctx context.Context, global bool) (*types.StatsResponse, error)
+	getOrphansFunc   func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
+	getStaleFunc     func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+	verifyFunc       func(ctx context.Context, path string) (*types.VerifyResponse, error)
+	generateLinkFunc func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
@@ -66,6 +78,90 @@ func (m *mockBrainService) Move(ctx context.Context, pathOrID string, targetProj
 		return m.moveFunc(ctx, pathOrID, targetProject)
 	}
 	return nil, fmt.Errorf("moveFunc not set")
+}
+
+func (m *mockBrainService) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
+	if m.searchFunc != nil {
+		return m.searchFunc(ctx, req)
+	}
+	return nil, fmt.Errorf("searchFunc not set")
+}
+
+func (m *mockBrainService) Inject(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error) {
+	if m.injectFunc != nil {
+		return m.injectFunc(ctx, req)
+	}
+	return nil, fmt.Errorf("injectFunc not set")
+}
+
+func (m *mockBrainService) GetBacklinks(ctx context.Context, path string) ([]types.BrainEntry, error) {
+	if m.getBacklinksFunc != nil {
+		return m.getBacklinksFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("getBacklinksFunc not set")
+}
+
+func (m *mockBrainService) GetOutlinks(ctx context.Context, path string) ([]types.BrainEntry, error) {
+	if m.getOutlinksFunc != nil {
+		return m.getOutlinksFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("getOutlinksFunc not set")
+}
+
+func (m *mockBrainService) GetRelated(ctx context.Context, path string, limit int) ([]types.BrainEntry, error) {
+	if m.getRelatedFunc != nil {
+		return m.getRelatedFunc(ctx, path, limit)
+	}
+	return nil, fmt.Errorf("getRelatedFunc not set")
+}
+
+func (m *mockBrainService) GetSections(ctx context.Context, path string) (*types.SectionsResponse, error) {
+	if m.getSectionsFunc != nil {
+		return m.getSectionsFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("getSectionsFunc not set")
+}
+
+func (m *mockBrainService) GetSection(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error) {
+	if m.getSectionFunc != nil {
+		return m.getSectionFunc(ctx, path, title, includeSubsections)
+	}
+	return nil, fmt.Errorf("getSectionFunc not set")
+}
+
+func (m *mockBrainService) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
+	if m.getStatsFunc != nil {
+		return m.getStatsFunc(ctx, global)
+	}
+	return nil, fmt.Errorf("getStatsFunc not set")
+}
+
+func (m *mockBrainService) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+	if m.getOrphansFunc != nil {
+		return m.getOrphansFunc(ctx, entryType, limit)
+	}
+	return nil, fmt.Errorf("getOrphansFunc not set")
+}
+
+func (m *mockBrainService) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+	if m.getStaleFunc != nil {
+		return m.getStaleFunc(ctx, days, entryType, limit)
+	}
+	return nil, fmt.Errorf("getStaleFunc not set")
+}
+
+func (m *mockBrainService) Verify(ctx context.Context, path string) (*types.VerifyResponse, error) {
+	if m.verifyFunc != nil {
+		return m.verifyFunc(ctx, path)
+	}
+	return nil, fmt.Errorf("verifyFunc not set")
+}
+
+func (m *mockBrainService) GenerateLink(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error) {
+	if m.generateLinkFunc != nil {
+		return m.generateLinkFunc(ctx, req)
+	}
+	return nil, fmt.Errorf("generateLinkFunc not set")
 }
 
 // =============================================================================

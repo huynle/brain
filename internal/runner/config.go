@@ -14,6 +14,12 @@ import (
 // Config File Locations
 // =============================================================================
 
+// DefaultConfigPath returns the primary config file path.
+func DefaultConfigPath() string {
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".config", "brain-runner", "config.yaml")
+}
+
 // configFiles returns the list of config file paths to check, in priority order.
 func configFiles() []string {
 	homeDir, _ := os.UserHomeDir()

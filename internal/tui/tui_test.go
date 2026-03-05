@@ -319,7 +319,7 @@ func TestView_ContainsProjectName(t *testing.T) {
 	}
 }
 
-func TestView_ContainsPanelLabels(t *testing.T) {
+func TestView_ContainsTaskPanel(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
@@ -330,9 +330,9 @@ func TestView_ContainsPanelLabels(t *testing.T) {
 
 	view := m.View()
 
-	// Should contain the tasks panel label
-	if !strings.Contains(view, "Tasks") {
-		t.Errorf("expected view to contain 'Tasks' panel label, got:\n%s", view)
+	// Empty task tree should show "No tasks" placeholder
+	if !strings.Contains(view, "No tasks") {
+		t.Errorf("expected view to contain 'No tasks' placeholder, got:\n%s", view)
 	}
 }
 
@@ -546,6 +546,132 @@ func TestHelpBarView_MultiProjectShowsTabShortcuts(t *testing.T) {
 
 	if !strings.Contains(view, "h/l") {
 		t.Errorf("expected multi-project help to contain 'h/l' for tab switching, got:\n%s", view)
+	}
+}
+
+// =============================================================================
+// Update Tests - Task Navigation (j/k/g/G)
+// =============================================================================
+
+func TestUpdate_JKey_MovesDownInTaskTree(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 80
+	m.height = 24
+
+	// Simulate receiving tasks
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// First task should be selected
+	if m.taskTree.SelectedID != "t1" {
+		t.Fatalf("expected initial selection 't1', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press j to move down
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t2" {
+		t.Errorf("after 'j', expected selection 't2', got '%s'", m.taskTree.SelectedID)
+	}
+}
+
+func TestUpdate_KKey_MovesUpInTaskTree(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// Move down first
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Press k to move up
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t1" {
+		t.Errorf("after 'k', expected selection 't1', got '%s'", m.taskTree.SelectedID)
+	}
+}
+
+func TestUpdate_GKey_MovesToTop(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium"},
+		{ID: "t3", Title: "Task 3", Classification: "ready", Priority: "low"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 3}})
+	m = updated.(Model)
+
+	// Move to bottom first
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t3" {
+		t.Fatalf("after 'G', expected 't3', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press g to go to top
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t1" {
+		t.Errorf("after 'g', expected 't1', got '%s'", m.taskTree.SelectedID)
+	}
+}
+
+func TestUpdate_TasksUpdated_UpdatesTaskTree(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 80
+	m.height = 24
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Task tree should have the task
+	if m.taskTree.SelectedID != "t1" {
+		t.Errorf("expected task tree to select 't1', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// View should contain the task title
+	view := m.View()
+	if !strings.Contains(view, "Task 1") {
+		t.Errorf("expected view to contain 'Task 1', got:\n%s", view)
 	}
 }
 

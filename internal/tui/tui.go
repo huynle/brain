@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,6 +20,7 @@ type Model struct {
 	// Sub-models
 	statusBar StatusBar
 	helpBar   HelpBar
+	taskTree  TaskTree
 
 	// SSE client
 	sseClient *SSEClient
@@ -47,6 +47,7 @@ func NewModel(cfg Config) Model {
 		keymap:      DefaultKeyMap(),
 		statusBar:   NewStatusBar(cfg.Project),
 		helpBar:     NewHelpBar(),
+		taskTree:    NewTaskTree(),
 		activePanel: PanelTasks,
 		sseClient:   NewSSEClient(cfg.APIURL, cfg.Project),
 		ctx:         context.Background(),
@@ -83,6 +84,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.stats = TaskStatsFromAPI(msg.Stats)
 			m.statusBar.Stats = m.stats
 		}
+		// Update task tree with new data
+		m.taskTree.SetTasks(msg.Tasks)
 		// Continue listening for next SSE message
 		return m, m.sseClient.WaitForNextMsg()
 
@@ -134,7 +137,39 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sseClient.Stop()
 			m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
 			return m, m.sseClient.Connect(m.ctx)
+		case "j":
+			if m.activePanel == PanelTasks {
+				m.taskTree.MoveDown()
+			}
+			return m, nil
+		case "k":
+			if m.activePanel == PanelTasks {
+				m.taskTree.MoveUp()
+			}
+			return m, nil
+		case "g":
+			if m.activePanel == PanelTasks {
+				m.taskTree.MoveToTop()
+			}
+			return m, nil
+		case "G":
+			if m.activePanel == PanelTasks {
+				m.taskTree.MoveToBottom()
+			}
+			return m, nil
 		}
+
+	case tea.KeyUp:
+		if m.activePanel == PanelTasks {
+			m.taskTree.MoveUp()
+		}
+		return m, nil
+
+	case tea.KeyDown:
+		if m.activePanel == PanelTasks {
+			m.taskTree.MoveDown()
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -156,15 +191,23 @@ func (m Model) View() string {
 		mainHeight = 3
 	}
 
-	// Main content area: task tree placeholder (full width)
+	// Main content area: task tree (full width)
 	taskPanelStyle := InactiveBorder
 	if m.activePanel == PanelTasks {
 		taskPanelStyle = ActiveBorder
 	}
 
-	taskContent := fmt.Sprintf(" Tasks (%d ready, %d total)",
-		m.stats.Ready,
-		m.stats.Ready+m.stats.Waiting+m.stats.InProgress+m.stats.Completed+m.stats.Blocked)
+	// Render task tree content
+	innerWidth := m.width - 4     // account for border + padding
+	innerHeight := mainHeight - 2 // account for border
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	taskContent := m.taskTree.View(innerWidth, innerHeight)
 
 	taskPanel := taskPanelStyle.
 		Width(m.width - 2).

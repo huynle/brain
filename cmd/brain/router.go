@@ -162,7 +162,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseHealthCommand(cmdArgs)
 	case "logs":
 		return parseLogsCommand(cmdArgs)
-		return parseRestartCommand(cmdArgs)
+	case "init":
+		return parseInitCommand(cmdArgs)
 	case "mcp":
 		return parseMCPCommand(cmdArgs)
 	case "token":
@@ -462,7 +463,7 @@ func parseRestartCommand(args []string) (Command, error) {
 // parseStatusCommand creates a StatusCommand from args.
 func parseStatusCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
-	
+
 	// Parse --json flag
 	jsonFlag := false
 	for _, arg := range args {
@@ -481,7 +482,7 @@ func parseStatusCommand(args []string) (Command, error) {
 // parseHealthCommand creates a HealthCommand from args.
 func parseHealthCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
-	
+
 	// Parse flags
 	waitFlag := false
 	timeout := 30
@@ -505,7 +506,7 @@ func parseHealthCommand(args []string) (Command, error) {
 // parseLogsCommand creates a LogsCommand from args.
 func parseLogsCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
-	
+
 	// Parse flags
 	followFlag := false
 	lines := 100
@@ -521,6 +522,21 @@ func parseLogsCommand(args []string) (Command, error) {
 	return &commands.LogsCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  &commands.LogsFlags{Follow: followFlag, Lines: lines},
+		Out:    nil, // Will use os.Stdout in Execute if nil
+	}, nil
+}
+
+// parseInitCommand creates an InitCommand from args.
+func parseInitCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseInitFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.InitCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsInitFlags(flags),
 		Out:    nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }

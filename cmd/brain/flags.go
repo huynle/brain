@@ -50,6 +50,12 @@ type TokenFlags struct {
 	Name string
 }
 
+// InitFlags for init command
+type InitFlags struct {
+	Force  bool
+	DryRun bool
+}
+
 // ParseGlobalFlags parses global flags from args
 func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 	flags := &GlobalFlags{}
@@ -293,5 +299,29 @@ func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleF
 		Timeout: flags.Timeout,
 		Force:   flags.Force,
 		DryRun:  flags.DryRun,
+	}
+}
+
+// ParseInitFlags parses init command flags from args.
+func ParseInitFlags(args []string) (*InitFlags, error) {
+	flags := &InitFlags{}
+
+	for _, arg := range args {
+		switch arg {
+		case "--force", "-f":
+			flags.Force = true
+		case "--dry-run":
+			flags.DryRun = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsInitFlags converts main.InitFlags to commands.InitFlags.
+func convertToCommandsInitFlags(flags *InitFlags) *commands.InitFlags {
+	return &commands.InitFlags{
+		Force:  flags.Force,
+		DryRun: flags.DryRun,
 	}
 }

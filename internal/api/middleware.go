@@ -73,6 +73,14 @@ func (sw *statusWriter) Write(b []byte) (int, error) {
 	return sw.ResponseWriter.Write(b)
 }
 
+// Flush implements http.Flusher by delegating to the underlying ResponseWriter.
+// This is required for SSE (Server-Sent Events) to work through the Logger middleware.
+func (sw *statusWriter) Flush() {
+	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // CORS returns middleware that sets CORS headers based on config.
 func CORS(cfg config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {

@@ -77,6 +77,14 @@ CREATE TABLE IF NOT EXISTS schema_version (
   applied_at TEXT DEFAULT (datetime('now'))
 );`
 
+const createAPITokensTable = `
+CREATE TABLE IF NOT EXISTS api_tokens (
+  name TEXT PRIMARY KEY,
+  token TEXT UNIQUE NOT NULL,
+  created_at TEXT DEFAULT (datetime('now')),
+  last_used TEXT
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -140,6 +148,7 @@ func InitSchema(db *sql.DB) error {
 		createEntryMetaTable,
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
+		createAPITokensTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

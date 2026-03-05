@@ -1,7 +1,62 @@
-// Package config provides unified configuration for the Brain system.
+// Package config provides unified configuration management for the Brain system.
+//
+// # Unified Config System
+//
+// This package implements a unified configuration system that consolidates settings
+// for all Brain subsystems (Server, Runner, MCP, Plugins) into a single config file
+// at ~/.config/brain/config.yaml (respects XDG_CONFIG_HOME).
+//
+// # Auto-Migration
+//
+// The system automatically migrates legacy runner configs from the old location
+// (~/.config/brain-runner/config.yaml) to the unified config on first LoadConfig()
+// call. Migration behavior:
+//   - Detects legacy config if unified config doesn't exist
+//   - Migrates all legacy runner fields to unified config's Runner section
+//   - Creates backup of legacy config at ~/.config/brain-runner/config.yaml.backup
+//   - Logs migration events for observability
+//   - Subsequent loads use unified config (no re-migration)
+//
+// # Configuration Precedence
+//
+// Config loading follows this precedence order:
+//   1. Unified config (~/.config/brain/config.yaml) - highest priority
+//   2. Legacy runner config (~/.config/brain-runner/config.yaml) - auto-migrated if found
+//   3. Default values - used if no config files exist
+//
+// # Usage Example
+//
+//	cfg, err := config.LoadConfig()
+//	if err != nil {
+//	    log.Fatalf("Failed to load config: %v", err)
+//	}
+//	// Use cfg.Server, cfg.Runner, cfg.MCP, cfg.Plugins
+//
+// # Migration Fields Mapping
+//
+// Legacy runner config fields map to unified config as follows:
+//   - max_parallel → Runner.MaxParallel
+//   - poll_interval → Runner.PollInterval
+//   - task_poll_interval → Runner.TaskPollInterval
+//   - work_dir → Runner.WorkDir
+//   - state_dir → Runner.StateDir
+//   - log_dir → Runner.LogDir
+//   - api_timeout → Runner.APITimeout
+//   - task_timeout → Runner.TaskTimeout
+//   - idle_detection_threshold → Runner.IdleDetectionThreshold
+//   - max_total_processes → Runner.MaxTotalProcesses
+//   - memory_threshold_percent → Runner.MemoryThresholdPercent
+//   - auto_monitors → Runner.AutoMonitors
+//   - opencode.bin → Runner.Opencode.Bin
+//   - opencode.agent → Runner.Opencode.Agent
+//   - opencode.model → Runner.Opencode.Model
+//   - exclude_projects[] → Runner.ExcludeProjects[]
+//
+// All other subsystems (Server, MCP, Plugins) use default values if not present in unified config.
 package config
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 
@@ -156,10 +211,12 @@ func LoadConfig() (UnifiedConfig, error) {
 	// Check for legacy runner config
 	legacyPath := getLegacyRunnerConfigPath()
 	if fileExists(legacyPath) {
+		log.Printf("Migrating config from %s to %s", legacyPath, unifiedPath)
 		// Migrate legacy config to unified format
 		if err := migrateConfig(legacyPath, unifiedPath, &cfg); err != nil {
 			return UnifiedConfig{}, err
 		}
+		log.Printf("Migration complete. Backup saved: %s.backup", legacyPath)
 		// Migration successful - config already populated
 		return cfg, nil
 	}

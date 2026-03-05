@@ -717,3 +717,433 @@ runner:
 		t.Errorf("LoadConfig() created backup when unified config exists")
 	}
 }
+
+// =============================================================================
+// End-to-End Integration Tests
+// =============================================================================
+
+// TestUnifiedConfigIntegration performs comprehensive end-to-end integration testing
+// of the unified config system, validating the complete lifecycle from no config
+// through migration to normal operation.
+func TestUnifiedConfigIntegration(t *testing.T) {
+	// Create isolated temp home directory for clean test environment
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	unifiedPath := filepath.Join(tmpDir, "brain", "config.yaml")
+	legacyPath := filepath.Join(tmpDir, "brain-runner", "config.yaml")
+	backupPath := legacyPath + ".backup"
+
+	// =============================================================================
+	// Phase 1: No config exists → LoadConfig returns defaults
+	// =============================================================================
+	t.Run("Phase1_NoConfig_ReturnsDefaults", func(t *testing.T) {
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() with no files error = %v", err)
+		}
+
+		// Verify defaults for all subsystems
+		if cfg.Server.Port != 3333 {
+			t.Errorf("Default Server.Port = %d, want 3333", cfg.Server.Port)
+		}
+		if cfg.Server.Host != "localhost" {
+			t.Errorf("Default Server.Host = %q, want localhost", cfg.Server.Host)
+		}
+		if cfg.Server.LogLevel != "info" {
+			t.Errorf("Default Server.LogLevel = %q, want info", cfg.Server.LogLevel)
+		}
+		if cfg.Runner.MaxParallel != 3 {
+			t.Errorf("Default Runner.MaxParallel = %d, want 3", cfg.Runner.MaxParallel)
+		}
+		if cfg.Runner.PollInterval != 5 {
+			t.Errorf("Default Runner.PollInterval = %d, want 5", cfg.Runner.PollInterval)
+		}
+		if cfg.Runner.AutoMonitors != true {
+			t.Errorf("Default Runner.AutoMonitors = %v, want true", cfg.Runner.AutoMonitors)
+		}
+		if cfg.MCP.APIURL != "http://localhost:3333" {
+			t.Errorf("Default MCP.APIURL = %q, want http://localhost:3333", cfg.MCP.APIURL)
+		}
+		if cfg.Plugins.OpencodePath != "opencode" {
+			t.Errorf("Default Plugins.OpencodePath = %q, want opencode", cfg.Plugins.OpencodePath)
+		}
+
+		// Verify no files created yet
+		if fileExists(unifiedPath) {
+			t.Errorf("Unified config should not exist yet: %q", unifiedPath)
+		}
+		if fileExists(legacyPath) {
+			t.Errorf("Legacy config should not exist yet: %q", legacyPath)
+		}
+	})
+
+	// =============================================================================
+	// Phase 2: Create legacy runner config → LoadConfig auto-migrates
+	// =============================================================================
+	t.Run("Phase2_LegacyConfig_AutoMigrates", func(t *testing.T) {
+		// Create legacy config directory
+		legacyDir := filepath.Dir(legacyPath)
+		if err := os.MkdirAll(legacyDir, 0755); err != nil {
+			t.Fatalf("failed to create legacy dir: %v", err)
+		}
+
+		// Write comprehensive legacy config with all field types
+		legacyYAML := `max_parallel: 5
+poll_interval: 10
+task_poll_interval: 3
+work_dir: "/custom/work"
+state_dir: "/custom/state"
+log_dir: "/custom/logs"
+api_timeout: 3000
+task_timeout: 120000
+idle_detection_threshold: 30000
+max_total_processes: 8
+memory_threshold_percent: 15
+auto_monitors: false
+opencode:
+  bin: "/usr/local/bin/opencode"
+  agent: "dev"
+  model: "claude-sonnet-4"
+exclude_projects:
+  - "test-project"
+  - "legacy-project"
+  - "archived-*"
+`
+		if err := os.WriteFile(legacyPath, []byte(legacyYAML), 0644); err != nil {
+			t.Fatalf("failed to create legacy config: %v", err)
+		}
+
+		// LoadConfig should detect and migrate
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() with legacy config error = %v", err)
+		}
+
+		// Verify all scalar fields migrated
+		if cfg.Runner.MaxParallel != 5 {
+			t.Errorf("Migrated Runner.MaxParallel = %d, want 5", cfg.Runner.MaxParallel)
+		}
+		if cfg.Runner.PollInterval != 10 {
+			t.Errorf("Migrated Runner.PollInterval = %d, want 10", cfg.Runner.PollInterval)
+		}
+		if cfg.Runner.TaskPollInterval != 3 {
+			t.Errorf("Migrated Runner.TaskPollInterval = %d, want 3", cfg.Runner.TaskPollInterval)
+		}
+		if cfg.Runner.WorkDir != "/custom/work" {
+			t.Errorf("Migrated Runner.WorkDir = %q, want /custom/work", cfg.Runner.WorkDir)
+		}
+		if cfg.Runner.StateDir != "/custom/state" {
+			t.Errorf("Migrated Runner.StateDir = %q, want /custom/state", cfg.Runner.StateDir)
+		}
+		if cfg.Runner.LogDir != "/custom/logs" {
+			t.Errorf("Migrated Runner.LogDir = %q, want /custom/logs", cfg.Runner.LogDir)
+		}
+		if cfg.Runner.APITimeout != 3000 {
+			t.Errorf("Migrated Runner.APITimeout = %d, want 3000", cfg.Runner.APITimeout)
+		}
+		if cfg.Runner.TaskTimeout != 120000 {
+			t.Errorf("Migrated Runner.TaskTimeout = %d, want 120000", cfg.Runner.TaskTimeout)
+		}
+		if cfg.Runner.IdleDetectionThreshold != 30000 {
+			t.Errorf("Migrated Runner.IdleDetectionThreshold = %d, want 30000", cfg.Runner.IdleDetectionThreshold)
+		}
+		if cfg.Runner.MaxTotalProcesses != 8 {
+			t.Errorf("Migrated Runner.MaxTotalProcesses = %d, want 8", cfg.Runner.MaxTotalProcesses)
+		}
+		if cfg.Runner.MemoryThresholdPercent != 15 {
+			t.Errorf("Migrated Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
+		}
+		if cfg.Runner.AutoMonitors != false {
+			t.Errorf("Migrated Runner.AutoMonitors = %v, want false", cfg.Runner.AutoMonitors)
+		}
+
+		// Verify nested opencode config migrated
+		if cfg.Runner.Opencode.Bin != "/usr/local/bin/opencode" {
+			t.Errorf("Migrated Runner.Opencode.Bin = %q, want /usr/local/bin/opencode", cfg.Runner.Opencode.Bin)
+		}
+		if cfg.Runner.Opencode.Agent != "dev" {
+			t.Errorf("Migrated Runner.Opencode.Agent = %q, want dev", cfg.Runner.Opencode.Agent)
+		}
+		if cfg.Runner.Opencode.Model != "claude-sonnet-4" {
+			t.Errorf("Migrated Runner.Opencode.Model = %q, want claude-sonnet-4", cfg.Runner.Opencode.Model)
+		}
+
+		// Verify array fields migrated
+		if len(cfg.Runner.ExcludeProjects) != 3 {
+			t.Fatalf("Migrated Runner.ExcludeProjects length = %d, want 3", len(cfg.Runner.ExcludeProjects))
+		}
+		if cfg.Runner.ExcludeProjects[0] != "test-project" {
+			t.Errorf("Migrated Runner.ExcludeProjects[0] = %q, want test-project", cfg.Runner.ExcludeProjects[0])
+		}
+		if cfg.Runner.ExcludeProjects[1] != "legacy-project" {
+			t.Errorf("Migrated Runner.ExcludeProjects[1] = %q, want legacy-project", cfg.Runner.ExcludeProjects[1])
+		}
+		if cfg.Runner.ExcludeProjects[2] != "archived-*" {
+			t.Errorf("Migrated Runner.ExcludeProjects[2] = %q, want archived-*", cfg.Runner.ExcludeProjects[2])
+		}
+
+		// Verify Server defaults preserved (not in legacy config)
+		if cfg.Server.Port != 3333 {
+			t.Errorf("Server.Port = %d, want 3333 (default preserved)", cfg.Server.Port)
+		}
+		if cfg.Server.Host != "localhost" {
+			t.Errorf("Server.Host = %q, want localhost (default preserved)", cfg.Server.Host)
+		}
+	})
+
+	// =============================================================================
+	// Phase 3: Verify unified config file created
+	// =============================================================================
+	t.Run("Phase3_UnifiedConfigFileCreated", func(t *testing.T) {
+		if !fileExists(unifiedPath) {
+			t.Fatalf("Unified config file should exist after migration: %q", unifiedPath)
+		}
+
+		// Verify file is readable and valid YAML
+		data, err := os.ReadFile(unifiedPath)
+		if err != nil {
+			t.Fatalf("failed to read unified config: %v", err)
+		}
+
+		var loaded UnifiedConfig
+		if err := yaml.Unmarshal(data, &loaded); err != nil {
+			t.Fatalf("unified config is not valid YAML: %v", err)
+		}
+
+		// Verify migrated values persisted to file
+		if loaded.Runner.MaxParallel != 5 {
+			t.Errorf("Persisted Runner.MaxParallel = %d, want 5", loaded.Runner.MaxParallel)
+		}
+		if loaded.Runner.Opencode.Agent != "dev" {
+			t.Errorf("Persisted Runner.Opencode.Agent = %q, want dev", loaded.Runner.Opencode.Agent)
+		}
+		if len(loaded.Runner.ExcludeProjects) != 3 {
+			t.Errorf("Persisted Runner.ExcludeProjects length = %d, want 3", len(loaded.Runner.ExcludeProjects))
+		}
+	})
+
+	// =============================================================================
+	// Phase 4: Verify backup file created
+	// =============================================================================
+	t.Run("Phase4_BackupFileCreated", func(t *testing.T) {
+		if !fileExists(backupPath) {
+			t.Fatalf("Backup file should exist after migration: %q", backupPath)
+		}
+
+		// Verify original legacy config no longer exists (renamed to backup)
+		if fileExists(legacyPath) {
+			t.Errorf("Legacy config should not exist after migration (renamed to backup): %q", legacyPath)
+		}
+
+		// Verify backup contains original legacy config data
+		data, err := os.ReadFile(backupPath)
+		if err != nil {
+			t.Fatalf("failed to read backup file: %v", err)
+		}
+
+		var legacyData map[string]interface{}
+		if err := yaml.Unmarshal(data, &legacyData); err != nil {
+			t.Fatalf("backup file is not valid YAML: %v", err)
+		}
+
+		// Verify backup has legacy values
+		if v, ok := legacyData["max_parallel"].(int); !ok || v != 5 {
+			t.Errorf("Backup max_parallel = %v, want 5", legacyData["max_parallel"])
+		}
+	})
+
+	// =============================================================================
+	// Phase 5: LoadConfig again → loads from unified (no re-migration)
+	// =============================================================================
+	t.Run("Phase5_SecondLoad_NoReMigration", func(t *testing.T) {
+		// Record current state
+		unifiedStat, err := os.Stat(unifiedPath)
+		if err != nil {
+			t.Fatalf("failed to stat unified config: %v", err)
+		}
+		originalModTime := unifiedStat.ModTime()
+
+		// Load config again
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() second load error = %v", err)
+		}
+
+		// Verify values still match (loaded from unified)
+		if cfg.Runner.MaxParallel != 5 {
+			t.Errorf("Second load Runner.MaxParallel = %d, want 5", cfg.Runner.MaxParallel)
+		}
+		if cfg.Runner.Opencode.Agent != "dev" {
+			t.Errorf("Second load Runner.Opencode.Agent = %q, want dev", cfg.Runner.Opencode.Agent)
+		}
+
+		// Verify unified config file not modified (no re-migration)
+		unifiedStat2, err := os.Stat(unifiedPath)
+		if err != nil {
+			t.Fatalf("failed to stat unified config after second load: %v", err)
+		}
+		if !unifiedStat2.ModTime().Equal(originalModTime) {
+			t.Errorf("Unified config was modified on second load (re-migration occurred)")
+		}
+
+		// Verify backup still exists (only one backup, no duplicates)
+		if !fileExists(backupPath) {
+			t.Errorf("Backup file should still exist after second load")
+		}
+		backupBackupPath := backupPath + ".backup"
+		if fileExists(backupBackupPath) {
+			t.Errorf("Duplicate backup should not exist: %q", backupBackupPath)
+		}
+	})
+
+	// =============================================================================
+	// Phase 6: Modify unified config → LoadConfig loads modified values
+	// =============================================================================
+	t.Run("Phase6_ModifyUnified_LoadsNewValues", func(t *testing.T) {
+		// Modify unified config with new values
+		modifiedYAML := `server:
+  port: 9999
+  host: "custom-host"
+  log_level: "debug"
+  enable_auth: true
+  api_key: "secret123"
+  cors_origin: "https://example.com"
+  tls_cert: "/path/to/cert"
+  tls_key: "/path/to/key"
+runner:
+  max_parallel: 10
+  poll_interval: 20
+  task_poll_interval: 7
+  work_dir: "/modified/work"
+  state_dir: "/modified/state"
+  log_dir: "/modified/logs"
+  api_timeout: 5000
+  task_timeout: 180000
+  idle_detection_threshold: 45000
+  max_total_processes: 15
+  memory_threshold_percent: 20
+  auto_monitors: true
+  opencode:
+    bin: "/opt/opencode"
+    agent: "tdd-dev"
+    model: "claude-opus-4"
+  exclude_projects:
+    - "exclude-1"
+    - "exclude-2"
+mcp:
+  api_url: "http://modified:7777"
+plugins:
+  opencode_path: "/custom/opencode"
+  claude_code_path: "/custom/claude"
+`
+		if err := os.WriteFile(unifiedPath, []byte(modifiedYAML), 0644); err != nil {
+			t.Fatalf("failed to modify unified config: %v", err)
+		}
+
+		// Load config again
+		cfg, err := LoadConfig()
+		if err != nil {
+			t.Fatalf("LoadConfig() after modification error = %v", err)
+		}
+
+		// Verify all modified Server values
+		if cfg.Server.Port != 9999 {
+			t.Errorf("Modified Server.Port = %d, want 9999", cfg.Server.Port)
+		}
+		if cfg.Server.Host != "custom-host" {
+			t.Errorf("Modified Server.Host = %q, want custom-host", cfg.Server.Host)
+		}
+		if cfg.Server.LogLevel != "debug" {
+			t.Errorf("Modified Server.LogLevel = %q, want debug", cfg.Server.LogLevel)
+		}
+		if cfg.Server.EnableAuth != true {
+			t.Errorf("Modified Server.EnableAuth = %v, want true", cfg.Server.EnableAuth)
+		}
+		if cfg.Server.APIKey != "secret123" {
+			t.Errorf("Modified Server.APIKey = %q, want secret123", cfg.Server.APIKey)
+		}
+		if cfg.Server.CORSOrigin != "https://example.com" {
+			t.Errorf("Modified Server.CORSOrigin = %q, want https://example.com", cfg.Server.CORSOrigin)
+		}
+		if cfg.Server.TLSCert != "/path/to/cert" {
+			t.Errorf("Modified Server.TLSCert = %q, want /path/to/cert", cfg.Server.TLSCert)
+		}
+		if cfg.Server.TLSKey != "/path/to/key" {
+			t.Errorf("Modified Server.TLSKey = %q, want /path/to/key", cfg.Server.TLSKey)
+		}
+
+		// Verify all modified Runner values
+		if cfg.Runner.MaxParallel != 10 {
+			t.Errorf("Modified Runner.MaxParallel = %d, want 10", cfg.Runner.MaxParallel)
+		}
+		if cfg.Runner.PollInterval != 20 {
+			t.Errorf("Modified Runner.PollInterval = %d, want 20", cfg.Runner.PollInterval)
+		}
+		if cfg.Runner.TaskPollInterval != 7 {
+			t.Errorf("Modified Runner.TaskPollInterval = %d, want 7", cfg.Runner.TaskPollInterval)
+		}
+		if cfg.Runner.WorkDir != "/modified/work" {
+			t.Errorf("Modified Runner.WorkDir = %q, want /modified/work", cfg.Runner.WorkDir)
+		}
+		if cfg.Runner.StateDir != "/modified/state" {
+			t.Errorf("Modified Runner.StateDir = %q, want /modified/state", cfg.Runner.StateDir)
+		}
+		if cfg.Runner.LogDir != "/modified/logs" {
+			t.Errorf("Modified Runner.LogDir = %q, want /modified/logs", cfg.Runner.LogDir)
+		}
+		if cfg.Runner.APITimeout != 5000 {
+			t.Errorf("Modified Runner.APITimeout = %d, want 5000", cfg.Runner.APITimeout)
+		}
+		if cfg.Runner.TaskTimeout != 180000 {
+			t.Errorf("Modified Runner.TaskTimeout = %d, want 180000", cfg.Runner.TaskTimeout)
+		}
+		if cfg.Runner.IdleDetectionThreshold != 45000 {
+			t.Errorf("Modified Runner.IdleDetectionThreshold = %d, want 45000", cfg.Runner.IdleDetectionThreshold)
+		}
+		if cfg.Runner.MaxTotalProcesses != 15 {
+			t.Errorf("Modified Runner.MaxTotalProcesses = %d, want 15", cfg.Runner.MaxTotalProcesses)
+		}
+		if cfg.Runner.MemoryThresholdPercent != 20 {
+			t.Errorf("Modified Runner.MemoryThresholdPercent = %d, want 20", cfg.Runner.MemoryThresholdPercent)
+		}
+		if cfg.Runner.AutoMonitors != true {
+			t.Errorf("Modified Runner.AutoMonitors = %v, want true", cfg.Runner.AutoMonitors)
+		}
+
+		// Verify modified nested opencode config
+		if cfg.Runner.Opencode.Bin != "/opt/opencode" {
+			t.Errorf("Modified Runner.Opencode.Bin = %q, want /opt/opencode", cfg.Runner.Opencode.Bin)
+		}
+		if cfg.Runner.Opencode.Agent != "tdd-dev" {
+			t.Errorf("Modified Runner.Opencode.Agent = %q, want tdd-dev", cfg.Runner.Opencode.Agent)
+		}
+		if cfg.Runner.Opencode.Model != "claude-opus-4" {
+			t.Errorf("Modified Runner.Opencode.Model = %q, want claude-opus-4", cfg.Runner.Opencode.Model)
+		}
+
+		// Verify modified array fields
+		if len(cfg.Runner.ExcludeProjects) != 2 {
+			t.Fatalf("Modified Runner.ExcludeProjects length = %d, want 2", len(cfg.Runner.ExcludeProjects))
+		}
+		if cfg.Runner.ExcludeProjects[0] != "exclude-1" {
+			t.Errorf("Modified Runner.ExcludeProjects[0] = %q, want exclude-1", cfg.Runner.ExcludeProjects[0])
+		}
+		if cfg.Runner.ExcludeProjects[1] != "exclude-2" {
+			t.Errorf("Modified Runner.ExcludeProjects[1] = %q, want exclude-2", cfg.Runner.ExcludeProjects[1])
+		}
+
+		// Verify modified MCP values
+		if cfg.MCP.APIURL != "http://modified:7777" {
+			t.Errorf("Modified MCP.APIURL = %q, want http://modified:7777", cfg.MCP.APIURL)
+		}
+
+		// Verify modified Plugins values
+		if cfg.Plugins.OpencodePath != "/custom/opencode" {
+			t.Errorf("Modified Plugins.OpencodePath = %q, want /custom/opencode", cfg.Plugins.OpencodePath)
+		}
+		if cfg.Plugins.ClaudeCodePath != "/custom/claude" {
+			t.Errorf("Modified Plugins.ClaudeCodePath = %q, want /custom/claude", cfg.Plugins.ClaudeCodePath)
+		}
+	})
+}

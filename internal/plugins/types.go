@@ -26,6 +26,7 @@ type Target interface {
 
 // GetAvailableTargets returns all available installation targets
 func GetAvailableTargets() []Target {
-	// Phase 3 will populate this with actual targets
-	return []Target{}
+	return []Target{
+		NewOpenCodeTarget(),
+	}
 }

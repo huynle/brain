@@ -14,6 +14,7 @@ import (
 
 //go:embed templates/*.md
 //go:embed config.toml
+//go:embed plugins/**/*
 var embeddedFS embed.FS
 
 // GetTemplate returns the content of a template by name
@@ -53,5 +54,37 @@ func ListTemplates() []string {
 
 // GetTemplatesFS returns the embedded filesystem for direct access
 func GetTemplatesFS() fs.FS {
+	return embeddedFS
+}
+
+// GetPluginFile returns the content of a plugin file by target and path
+func GetPluginFile(target, path string) ([]byte, error) {
+	fullPath := filepath.Join("plugins", target, path)
+	content, err := embeddedFS.ReadFile(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("plugin file %q not found for target %q: %w", path, target, err)
+	}
+	return content, nil
+}
+
+// ListPluginFiles returns all plugin files for a given target
+func ListPluginFiles(target string) ([]string, error) {
+	pluginDir := filepath.Join("plugins", target)
+	entries, err := fs.ReadDir(embeddedFS, pluginDir)
+	if err != nil {
+		return nil, fmt.Errorf("target %q not found: %w", target, err)
+	}
+
+	files := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			files = append(files, entry.Name())
+		}
+	}
+	return files, nil
+}
+
+// GetPluginsFS returns the embedded filesystem for raw plugin access
+func GetPluginsFS() fs.FS {
 	return embeddedFS
 }

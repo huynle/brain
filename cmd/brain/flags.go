@@ -325,3 +325,45 @@ func convertToCommandsInitFlags(flags *InitFlags) *commands.InitFlags {
 		DryRun: flags.DryRun,
 	}
 }
+
+// DoctorFlags for doctor command
+type DoctorFlags struct {
+	Fix              bool
+	Force            bool
+	DryRun           bool
+	Verbose          bool
+	SkipVersionCheck bool
+}
+
+// ParseDoctorFlags parses doctor command flags from args.
+func ParseDoctorFlags(args []string) (*DoctorFlags, error) {
+	flags := &DoctorFlags{}
+
+	for _, arg := range args {
+		switch arg {
+		case "--fix":
+			flags.Fix = true
+		case "--force", "-f":
+			flags.Force = true
+		case "--dry-run":
+			flags.DryRun = true
+		case "--verbose", "-v":
+			flags.Verbose = true
+		case "--skip-version-check":
+			flags.SkipVersionCheck = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsDoctorFlags converts main.DoctorFlags to commands.DoctorFlags.
+func convertToCommandsDoctorFlags(flags *DoctorFlags) *commands.DoctorFlags {
+	return &commands.DoctorFlags{
+		Fix:              flags.Fix,
+		Force:            flags.Force,
+		DryRun:           flags.DryRun,
+		Verbose:          flags.Verbose,
+		SkipVersionCheck: flags.SkipVersionCheck,
+	}
+}

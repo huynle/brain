@@ -186,11 +186,19 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 
 			// ─── Monitors ────────────────────────────────────────
 			r.Route("/monitors", func(r chi.Router) {
-				r.Get("/templates", notImplemented)
-				r.Get("/", notImplemented)
-				r.Post("/", notImplemented)
-				r.Patch("/{taskId}/toggle", notImplemented)
-				r.Delete("/{taskId}", notImplemented)
+				if o.handler != nil && o.handler.monitor != nil {
+					r.Get("/templates", o.handler.HandleListMonitorTemplates)
+					r.Get("/", o.handler.HandleListMonitors)
+					r.Post("/", o.handler.HandleCreateMonitor)
+					r.Patch("/{taskId}/toggle", o.handler.HandleToggleMonitor)
+					r.Delete("/{taskId}", o.handler.HandleDeleteMonitor)
+				} else {
+					r.Get("/templates", notImplemented)
+					r.Get("/", notImplemented)
+					r.Post("/", notImplemented)
+					r.Patch("/{taskId}/toggle", notImplemented)
+					r.Delete("/{taskId}", notImplemented)
+				}
 			})
 		})
 	})

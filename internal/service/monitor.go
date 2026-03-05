@@ -9,73 +9,24 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// MonitorScope defines the scope for a monitor (all, project, or feature).
-type MonitorScope struct {
-	Type      string // "all", "project", or "feature"
-	Project   string
-	FeatureID string
-}
-
-// MonitorTagResult holds the parsed result of a monitor tag.
-type MonitorTagResult struct {
-	TemplateID string
-	Scope      MonitorScope
-}
-
-// MonitorInfo holds information about an active monitor.
-type MonitorInfo struct {
-	ID         string
-	Path       string
-	TemplateID string
-	Scope      MonitorScope
-	Enabled    bool
-	Schedule   string
-	Title      string
-}
-
-// CreateMonitorResult holds the result of creating a monitor.
-type CreateMonitorResult struct {
-	ID    string
-	Path  string
-	Title string
-}
-
-// CreateMonitorOptions holds optional parameters for creating a monitor.
-type CreateMonitorOptions struct {
-	Schedule string
-	Project  string
-}
-
-// MonitorListFilter holds optional filters for listing monitors.
-type MonitorListFilter struct {
-	Project    string
-	FeatureID  string
-	TemplateID string
-}
-
-// MonitorFindResult holds the result of finding a monitor.
-type MonitorFindResult struct {
-	ID       string
-	Path     string
-	Enabled  bool
-	Schedule string
-}
+// Type aliases for backward compatibility within the service package.
+type (
+	MonitorScope         = types.MonitorScope
+	MonitorTagResult     = types.MonitorTagResult
+	MonitorInfo          = types.MonitorInfo
+	CreateMonitorResult  = types.CreateMonitorResult
+	CreateMonitorOptions = types.CreateMonitorOptions
+	MonitorListFilter    = types.MonitorListFilter
+	MonitorFindResult    = types.MonitorFindResult
+	MonitorTemplate      = types.MonitorTemplate
+)
 
 // =============================================================================
 // Monitor Templates
 // =============================================================================
 
-// MonitorTemplate defines a reusable template for recurring monitoring tasks.
-type MonitorTemplate struct {
-	ID              string
-	Label           string
-	Description     string
-	DefaultSchedule string
-	Tags            []string
-}
-
 // monitorTemplates is the registry of known monitor templates.
-var monitorTemplates = map[string]MonitorTemplate{
+var monitorTemplates = map[string]types.MonitorTemplate{
 	"blocked-inspector": {
 		ID:              "blocked-inspector",
 		Label:           "Blocked Task Inspector",
@@ -97,7 +48,7 @@ var monitorTemplates = map[string]MonitorTemplate{
 // =============================================================================
 
 // describeScopeShort returns a short description of the scope.
-func describeScopeShort(scope MonitorScope) string {
+func describeScopeShort(scope types.MonitorScope) string {
 	switch scope.Type {
 	case "all":
 		return "all projects"
@@ -112,7 +63,7 @@ func describeScopeShort(scope MonitorScope) string {
 
 // BuildMonitorTag generates a deterministic tag for monitor lookup.
 // e.g., "monitor:blocked-inspector:project:brain-api"
-func BuildMonitorTag(templateID string, scope MonitorScope) string {
+func BuildMonitorTag(templateID string, scope types.MonitorScope) string {
 	switch scope.Type {
 	case "all":
 		return "monitor:" + templateID + ":all"
@@ -127,7 +78,7 @@ func BuildMonitorTag(templateID string, scope MonitorScope) string {
 
 // ParseMonitorTag parses a monitor tag back into templateId + scope.
 // Returns nil if the tag doesn't match the expected format.
-func ParseMonitorTag(tag string) *MonitorTagResult {
+func ParseMonitorTag(tag string) *types.MonitorTagResult {
 	const prefix = "monitor:"
 	if !strings.HasPrefix(tag, prefix) {
 		return nil
@@ -141,9 +92,9 @@ func ParseMonitorTag(tag string) *MonitorTagResult {
 		if templateID == "" {
 			return nil
 		}
-		return &MonitorTagResult{
+		return &types.MonitorTagResult{
 			TemplateID: templateID,
-			Scope:      MonitorScope{Type: "all"},
+			Scope:      types.MonitorScope{Type: "all"},
 		}
 	}
 
@@ -161,9 +112,9 @@ func ParseMonitorTag(tag string) *MonitorTagResult {
 		if featureID == "" || project == "" {
 			return nil
 		}
-		return &MonitorTagResult{
+		return &types.MonitorTagResult{
 			TemplateID: templateID,
-			Scope:      MonitorScope{Type: "feature", FeatureID: featureID, Project: project},
+			Scope:      types.MonitorScope{Type: "feature", FeatureID: featureID, Project: project},
 		}
 	}
 
@@ -174,9 +125,9 @@ func ParseMonitorTag(tag string) *MonitorTagResult {
 		if project == "" {
 			return nil
 		}
-		return &MonitorTagResult{
+		return &types.MonitorTagResult{
 			TemplateID: templateID,
-			Scope:      MonitorScope{Type: "project", Project: project},
+			Scope:      types.MonitorScope{Type: "project", Project: project},
 		}
 	}
 
@@ -185,7 +136,7 @@ func ParseMonitorTag(tag string) *MonitorTagResult {
 
 // BuildMonitorTitle generates a deterministic title for a monitor task.
 // e.g., "Monitor: Blocked Task Inspector (project brain-api)"
-func BuildMonitorTitle(label string, scope MonitorScope) string {
+func BuildMonitorTitle(label string, scope types.MonitorScope) string {
 	scopeLabel := describeScopeShort(scope)
 	return fmt.Sprintf("Monitor: %s (%s)", label, scopeLabel)
 }
@@ -204,8 +155,17 @@ func NewMonitorService(brain api.BrainService) *MonitorServiceImpl {
 	return &MonitorServiceImpl{brain: brain}
 }
 
+// ListTemplates returns all available monitor templates.
+func (s *MonitorServiceImpl) ListTemplates() []types.MonitorTemplate {
+	templates := make([]types.MonitorTemplate, 0, len(monitorTemplates))
+	for _, t := range monitorTemplates {
+		templates = append(templates, t)
+	}
+	return templates
+}
+
 // Create creates a new monitor task from a template.
-func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scope MonitorScope, opts *CreateMonitorOptions) (*CreateMonitorResult, error) {
+func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error) {
 	template, ok := monitorTemplates[templateID]
 	if !ok {
 		return nil, fmt.Errorf("unknown monitor template: %s", templateID)
@@ -263,7 +223,7 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		return nil, fmt.Errorf("save monitor entry: %w", err)
 	}
 
-	return &CreateMonitorResult{
+	return &types.CreateMonitorResult{
 		ID:    result.ID,
 		Path:  result.Path,
 		Title: title,
@@ -271,7 +231,7 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 }
 
 // Find finds an existing monitor for a template+scope combo (by tag lookup).
-func (s *MonitorServiceImpl) Find(ctx context.Context, templateID string, scope MonitorScope) (*MonitorFindResult, error) {
+func (s *MonitorServiceImpl) Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
 	tag := BuildMonitorTag(templateID, scope)
 	result, err := s.brain.List(ctx, types.ListEntriesRequest{
 		Type: "task",
@@ -287,7 +247,7 @@ func (s *MonitorServiceImpl) Find(ctx context.Context, templateID string, scope 
 
 	entry := result.Entries[0]
 	enabled := entry.ScheduleEnabled == nil || *entry.ScheduleEnabled
-	return &MonitorFindResult{
+	return &types.MonitorFindResult{
 		ID:       entry.ID,
 		Path:     entry.Path,
 		Enabled:  enabled,
@@ -296,7 +256,7 @@ func (s *MonitorServiceImpl) Find(ctx context.Context, templateID string, scope 
 }
 
 // List lists all active monitors, optionally filtered.
-func (s *MonitorServiceImpl) List(ctx context.Context, filter *MonitorListFilter) ([]MonitorInfo, error) {
+func (s *MonitorServiceImpl) List(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error) {
 	result, err := s.brain.List(ctx, types.ListEntriesRequest{
 		Type: "task",
 		Tags: "monitor",
@@ -305,7 +265,7 @@ func (s *MonitorServiceImpl) List(ctx context.Context, filter *MonitorListFilter
 		return nil, fmt.Errorf("list monitors: %w", err)
 	}
 
-	var monitors []MonitorInfo
+	var monitors []types.MonitorInfo
 	for _, entry := range result.Entries {
 		// Find the monitor tag in the entry's tags
 		var monitorTag string
@@ -351,7 +311,7 @@ func (s *MonitorServiceImpl) List(ctx context.Context, filter *MonitorListFilter
 		}
 
 		enabled := entry.ScheduleEnabled == nil || *entry.ScheduleEnabled
-		monitors = append(monitors, MonitorInfo{
+		monitors = append(monitors, types.MonitorInfo{
 			ID:         entry.ID,
 			Path:       entry.Path,
 			TemplateID: parsed.TemplateID,

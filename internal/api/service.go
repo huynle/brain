@@ -136,3 +136,21 @@ type RunnerService interface {
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
+
+// MonitorService defines the interface for monitor operations.
+type MonitorService interface {
+	// ListTemplates returns all available monitor templates.
+	ListTemplates() []types.MonitorTemplate
+
+	// List returns monitors matching the given filter.
+	List(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error)
+
+	// Create creates a new monitor from a template.
+	Create(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
+
+	// Toggle enables or disables a monitor by task ID.
+	Toggle(ctx context.Context, taskID string, enabled bool) (string, error)
+
+	// Delete removes a monitor by task ID.
+	Delete(ctx context.Context, taskID string) (string, error)
+}

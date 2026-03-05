@@ -78,6 +78,7 @@ func main() {
 	brainSvc := service.NewBrainService(&cfg, store, idx)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
+	monitorSvc := service.NewMonitorService(brainSvc)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
@@ -87,6 +88,7 @@ func main() {
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
+		api.WithMonitorService(monitorSvc),
 		api.WithHub(hub),
 	)
 

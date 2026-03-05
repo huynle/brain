@@ -171,6 +171,12 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
+	case "install":
+		return parseInstallCommand(cmdArgs)
+	case "uninstall":
+		return parseUninstallCommand(cmdArgs)
+	case "plugin-status":
+		return parsePluginStatusCommand(cmdArgs)
 	case "run":
 		// Handle "brain run <subcommand>" pattern
 		if len(cmdArgs) > 0 {
@@ -556,5 +562,69 @@ func parseDoctorCommand(args []string) (Command, error) {
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsDoctorFlags(flags),
 		Out:    nil, // Will use os.Stdout in Execute if nil
+	}, nil
+}
+
+// parseInstallCommand creates a PluginCommand for install subcommand.
+func parseInstallCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		// Return stub for testing/help
+		return &stubCommand{cmdType: "install"}, nil
+	}
+
+	target := args[0]
+	flagArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParsePluginFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.PluginCommand{
+		Subcommand: "install",
+		Target:     target,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parseUninstallCommand creates a PluginCommand for uninstall subcommand.
+func parseUninstallCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		// Return stub for testing/help
+		return &stubCommand{cmdType: "uninstall"}, nil
+	}
+
+	target := args[0]
+	flagArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParsePluginFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.PluginCommand{
+		Subcommand: "uninstall",
+		Target:     target,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parsePluginStatusCommand creates a PluginCommand for status subcommand.
+func parsePluginStatusCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParsePluginFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.PluginCommand{
+		Subcommand: "status",
+		Target:     "",
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsPluginFlags(flags),
 	}, nil
 }

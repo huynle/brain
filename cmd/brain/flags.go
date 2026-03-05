@@ -50,6 +50,13 @@ type TokenFlags struct {
 	Name string
 }
 
+// PluginFlags for plugin commands (install, uninstall, plugin-status)
+type PluginFlags struct {
+	Force  bool
+	DryRun bool
+	APIURL string
+}
+
 // InitFlags for init command
 type InitFlags struct {
 	Force  bool
@@ -162,6 +169,28 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+
+	return flags, nil
+}
+
+// ParsePluginFlags parses plugin-specific flags
+func ParsePluginFlags(args []string) (*PluginFlags, error) {
+	flags := &PluginFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--force", "-f":
+			flags.Force = true
+		case "--dry-run":
+			flags.DryRun = true
+		case "--api-url":
+			if i+1 < len(args) {
+				flags.APIURL = args[i+1]
+				i++
+			}
+		}
 	}
 
 	return flags, nil
@@ -365,5 +394,14 @@ func convertToCommandsDoctorFlags(flags *DoctorFlags) *commands.DoctorFlags {
 		DryRun:           flags.DryRun,
 		Verbose:          flags.Verbose,
 		SkipVersionCheck: flags.SkipVersionCheck,
+	}
+}
+
+// convertToCommandsPluginFlags converts main.PluginFlags to commands.PluginFlags.
+func convertToCommandsPluginFlags(flags *PluginFlags) *commands.PluginFlags {
+	return &commands.PluginFlags{
+		Force:  flags.Force,
+		DryRun: flags.DryRun,
+		APIURL: flags.APIURL,
 	}
 }

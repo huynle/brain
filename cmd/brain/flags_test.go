@@ -314,3 +314,57 @@ func TestApplyFlagsToConfig(t *testing.T) {
 		assert.Equal(t, "/etc/ssl/key.pem", cfg.Server.TLS.KeyPath)
 	})
 }
+
+func TestParsePluginFlags(t *testing.T) {
+	t.Run("default values", func(t *testing.T) {
+		args := []string{}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.False(t, flags.Force)
+		assert.False(t, flags.DryRun)
+		assert.Empty(t, flags.APIURL)
+	})
+
+	t.Run("force flag", func(t *testing.T) {
+		args := []string{"--force"}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Force)
+	})
+
+	t.Run("force flag short", func(t *testing.T) {
+		args := []string{"-f"}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Force)
+	})
+
+	t.Run("dry-run flag", func(t *testing.T) {
+		args := []string{"--dry-run"}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.DryRun)
+	})
+
+	t.Run("api-url flag", func(t *testing.T) {
+		args := []string{"--api-url", "http://localhost:4000"}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "http://localhost:4000", flags.APIURL)
+	})
+
+	t.Run("all flags combined", func(t *testing.T) {
+		args := []string{"--force", "--dry-run", "--api-url", "http://example.com:3000"}
+		flags, err := ParsePluginFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Force)
+		assert.True(t, flags.DryRun)
+		assert.Equal(t, "http://example.com:3000", flags.APIURL)
+	})
+}

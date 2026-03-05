@@ -2,6 +2,7 @@
 package main
 
 import (
+	"fmt"
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	"os"
 	"path/filepath"
@@ -154,6 +155,13 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	case "stop":
 		return parseStopCommand(cmdArgs)
 	case "restart":
+		return parseRestartCommand(cmdArgs)
+	case "status":
+		return parseStatusCommand(cmdArgs)
+	case "health":
+		return parseHealthCommand(cmdArgs)
+	case "logs":
+		return parseLogsCommand(cmdArgs)
 		return parseRestartCommand(cmdArgs)
 	case "mcp":
 		return parseMCPCommand(cmdArgs)
@@ -448,5 +456,71 @@ func parseRestartCommand(args []string) (Command, error) {
 	return &commands.RestartCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsLifecycleFlags(flags),
+	}, nil
+}
+
+// parseStatusCommand creates a StatusCommand from args.
+func parseStatusCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	
+	// Parse --json flag
+	jsonFlag := false
+	for _, arg := range args {
+		if arg == "--json" {
+			jsonFlag = true
+		}
+	}
+
+	return &commands.StatusCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  &commands.StatusFlags{JSON: jsonFlag},
+		Out:    nil, // Will use os.Stdout in Execute if nil
+	}, nil
+}
+
+// parseHealthCommand creates a HealthCommand from args.
+func parseHealthCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	
+	// Parse flags
+	waitFlag := false
+	timeout := 30
+	for i, arg := range args {
+		if arg == "--wait" {
+			waitFlag = true
+		}
+		if arg == "--timeout" && i+1 < len(args) {
+			// Parse timeout (simplified)
+			fmt.Sscanf(args[i+1], "%d", &timeout)
+		}
+	}
+
+	return &commands.HealthCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  &commands.HealthFlags{Wait: waitFlag, Timeout: timeout},
+		Out:    nil, // Will use os.Stdout in Execute if nil
+	}, nil
+}
+
+// parseLogsCommand creates a LogsCommand from args.
+func parseLogsCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	
+	// Parse flags
+	followFlag := false
+	lines := 100
+	for i, arg := range args {
+		if arg == "-f" || arg == "--follow" {
+			followFlag = true
+		}
+		if (arg == "-n" || arg == "--lines") && i+1 < len(args) {
+			fmt.Sscanf(args[i+1], "%d", &lines)
+		}
+	}
+
+	return &commands.LogsCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  &commands.LogsFlags{Follow: followFlag, Lines: lines},
+		Out:    nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }

@@ -1,8 +1,8 @@
 package commands
 
 import (
-	"bytes"
 	"encoding/json"
+	"io"
 	"fmt"
 	"os"
 	"os/exec"
@@ -243,7 +243,7 @@ type StatusFlags struct {
 type StatusCommand struct {
 	Config *UnifiedConfig
 	Flags  *StatusFlags
-	Out    *bytes.Buffer
+	Out    io.Writer
 }
 
 func (c *StatusCommand) Type() string {
@@ -251,6 +251,7 @@ func (c *StatusCommand) Type() string {
 }
 
 func (c *StatusCommand) Execute() error {
+	c.Out = getWriter(c.Out)
 	// Determine PID file path
 	pidFile := c.Config.Server.PIDFile
 	if pidFile == "" {
@@ -340,4 +341,12 @@ func formatUptime(d time.Duration) string {
 	days := int(d.Hours()) / 24
 	hours := int(d.Hours()) % 24
 	return fmt.Sprintf("%dd %dh", days, hours)
+}
+
+// getWriter returns the writer to use, defaulting to os.Stdout if nil.
+func getWriter(w io.Writer) io.Writer {
+	if w == nil {
+		return os.Stdout
+	}
+	return w
 }

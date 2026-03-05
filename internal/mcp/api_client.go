@@ -58,7 +58,7 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 
 	// Build request body
 	var bodyReader io.Reader
-	if body != nil && (method == "POST" || method == "PATCH" || method == "PUT") {
+	if body != nil && (method == "POST" || method == "PATCH" || method == "PUT" || method == "DELETE") {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return fmt.Errorf("marshal body: %w", err)

@@ -1,12 +1,44 @@
 package api
 
+import "github.com/huynle/brain-api/internal/realtime"
+
 // Handler holds service dependencies for HTTP handlers.
-// Designed to accept additional services (search, tasks, etc.) in later phases.
 type Handler struct {
-	brain BrainService
+	brain  BrainService
+	tasks  TaskService
+	runner RunnerService
+	hub    *realtime.Hub
 }
 
-// NewHandler creates a Handler with the given BrainService.
-func NewHandler(brain BrainService) *Handler {
-	return &Handler{brain: brain}
+// HandlerOption configures a Handler.
+type HandlerOption func(*Handler)
+
+// NewHandler creates a Handler with the given BrainService and optional services.
+func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
+	h := &Handler{brain: brain}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// WithTaskService sets the TaskService on the Handler.
+func WithTaskService(ts TaskService) HandlerOption {
+	return func(h *Handler) {
+		h.tasks = ts
+	}
+}
+
+// WithRunnerService sets the RunnerService on the Handler.
+func WithRunnerService(rs RunnerService) HandlerOption {
+	return func(h *Handler) {
+		h.runner = rs
+	}
+}
+
+// WithHub sets the realtime Hub on the Handler.
+func WithHub(hub *realtime.Hub) HandlerOption {
+	return func(h *Handler) {
+		h.hub = hub
+	}
 }

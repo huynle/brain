@@ -396,6 +396,67 @@ type SearchResponse struct {
 	Total   int            `json:"total"`
 }
 
+// InjectRequest is the request body for POST /inject.
+type InjectRequest struct {
+	Query      string `json:"query"`
+	Type       string `json:"type,omitempty"`
+	MaxEntries *int   `json:"maxEntries,omitempty"`
+}
+
+// InjectEntry is a minimal entry reference in inject responses.
+type InjectEntry struct {
+	ID    string `json:"id"`
+	Path  string `json:"path"`
+	Title string `json:"title"`
+	Type  string `json:"type"`
+}
+
+// InjectResponse is the response for POST /inject.
+type InjectResponse struct {
+	Context string        `json:"context"`
+	Entries []InjectEntry `json:"entries"`
+	Total   int           `json:"total"`
+}
+
+// SectionHeader describes a section heading in a brain entry.
+type SectionHeader struct {
+	Title string `json:"title"`
+	Level int    `json:"level"`
+}
+
+// SectionsResponse is the response for GET /entries/{id}/sections.
+type SectionsResponse struct {
+	Sections []SectionHeader `json:"sections"`
+	Path     string          `json:"path"`
+}
+
+// SectionContentResponse is the response for GET /entries/{id}/sections/{title}.
+type SectionContentResponse struct {
+	Title              string `json:"title"`
+	Content            string `json:"content"`
+	Path               string `json:"path"`
+	IncludeSubsections bool   `json:"includeSubsections"`
+}
+
+// VerifyResponse is the response for POST /entries/{id}/verify.
+type VerifyResponse struct {
+	Success    bool   `json:"success"`
+	Path       string `json:"path"`
+	VerifiedAt string `json:"verified_at"`
+}
+
+// LinkRequest is the request body for POST /link.
+type LinkRequest struct {
+	Path      string `json:"path"`
+	Title     string `json:"title,omitempty"`
+	WithTitle *bool  `json:"withTitle,omitempty"`
+}
+
+// LinkResponse is the response for POST /link.
+type LinkResponse struct {
+	Link string `json:"link"`
+}
+
 // =============================================================================
 // Task Types
 // =============================================================================
@@ -467,6 +528,82 @@ type TaskClaim struct {
 	ClaimedAt int64  `json:"claimedAt"` // Unix millis
 }
 
+// ProjectListResponse is the response for GET /tasks.
+type ProjectListResponse struct {
+	Projects []string `json:"projects"`
+}
+
+// ClaimRequest is the request body for POST /tasks/:projectId/:taskId/claim.
+type ClaimRequest struct {
+	RunnerID string `json:"runnerId"`
+}
+
+// ClaimResponse is the response for POST /tasks/:projectId/:taskId/claim.
+type ClaimResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	ClaimedAt string `json:"claimedAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
+	ClaimedBy string `json:"claimedBy,omitempty"`
+	IsStale   *bool  `json:"isStale,omitempty"`
+}
+
+// ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
+type ClaimStatusResponse struct {
+	TaskID    string `json:"taskId"`
+	Claimed   bool   `json:"claimed"`
+	RunnerID  string `json:"runnerId,omitempty"`
+	ClaimedAt string `json:"claimedAt,omitempty"`
+	IsStale   bool   `json:"isStale"`
+}
+
+// MultiTaskStatusRequest is the request body for POST /tasks/:projectId/status.
+type MultiTaskStatusRequest struct {
+	TaskIDs []string `json:"taskIds"`
+	WaitFor string   `json:"waitFor,omitempty"`
+	Timeout int      `json:"timeout,omitempty"`
+}
+
+// MultiTaskStatusResponse is the response for POST /tasks/:projectId/status.
+type MultiTaskStatusResponse struct {
+	Tasks        []ResolvedTask `json:"tasks"`
+	AllCompleted bool           `json:"allCompleted"`
+}
+
+// Feature represents a computed feature grouping of tasks.
+type Feature struct {
+	FeatureID string         `json:"featureId"`
+	Tasks     []ResolvedTask `json:"tasks"`
+	Ready     bool           `json:"ready"`
+	Stats     *TaskStats     `json:"stats,omitempty"`
+}
+
+// FeatureListResponse is the response for GET /tasks/:projectId/features.
+type FeatureListResponse struct {
+	Features []Feature `json:"features"`
+}
+
+// FeatureResponse is the response for GET /tasks/:projectId/features/:featureId.
+type FeatureResponse struct {
+	Feature
+}
+
+// TriggerResponse is the response for POST /tasks/:projectId/:taskId/trigger.
+type TriggerResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	Triggered bool   `json:"triggered"`
+}
+
+// RunnerStatusResponse is the response for GET /tasks/runner/status.
+type RunnerStatusResponse struct {
+	Running        bool     `json:"running"`
+	Paused         bool     `json:"paused"`
+	PausedProjects []string `json:"pausedProjects"`
+}
+
 // =============================================================================
 // Health / Stats Types
 // =============================================================================
@@ -511,17 +648,49 @@ type ValidationDetail struct {
 // SSE Event Types
 // =============================================================================
 
-// SSEEventType enumerates Server-Sent Event types.
+// SSEEventType enumerates Server-Sent Event types for the task stream.
 type SSEEventType string
 
 const (
-	SSEEventTaskCreated  SSEEventType = "task.created"
-	SSEEventTaskUpdated  SSEEventType = "task.updated"
-	SSEEventTaskDeleted  SSEEventType = "task.deleted"
-	SSEEventTaskClaimed  SSEEventType = "task.claimed"
-	SSEEventTaskReleased SSEEventType = "task.released"
-	SSEEventHeartbeat    SSEEventType = "heartbeat"
+	SSEEventConnected     SSEEventType = "connected"
+	SSEEventTasksSnapshot SSEEventType = "tasks_snapshot"
+	SSEEventProjectDirty  SSEEventType = "project_dirty"
+	SSEEventHeartbeat     SSEEventType = "heartbeat"
+	SSEEventError         SSEEventType = "error"
 )
+
+// SSEEventData is the base data structure for SSE events.
+type SSEEventData struct {
+	Type      SSEEventType `json:"type"`
+	Transport string       `json:"transport"`
+	Timestamp string       `json:"timestamp"`
+	ProjectID string       `json:"projectId"`
+}
+
+// SSEConnectedData is the data for a "connected" SSE event.
+type SSEConnectedData struct {
+	SSEEventData
+}
+
+// SSETasksSnapshotData is the data for a "tasks_snapshot" SSE event.
+type SSETasksSnapshotData struct {
+	SSEEventData
+	Tasks  []ResolvedTask `json:"tasks"`
+	Count  int            `json:"count"`
+	Stats  *TaskStats     `json:"stats,omitempty"`
+	Cycles [][]string     `json:"cycles,omitempty"`
+}
+
+// SSEProjectDirtyData is the data for a "project_dirty" SSE event.
+type SSEProjectDirtyData struct {
+	SSEEventData
+}
+
+// SSEErrorData is the data for an "error" SSE event.
+type SSEErrorData struct {
+	SSEEventData
+	Message string `json:"message"`
+}
 
 // =============================================================================
 // Helpers

@@ -1,6 +1,10 @@
 // Package main provides command routing for the unified brain binary.
 package main
 
+import (
+	"github.com/huynle/brain-api/cmd/brain/commands"
+)
+
 // =============================================================================
 // Command Interface
 // =============================================================================
@@ -71,7 +75,7 @@ var builtinCommands = map[string]bool{
 func route(args []string) (Command, error) {
 	// Zero args → runner TUI for all projects
 	if len(args) == 0 {
-		return newRunnerTUICommand(), nil
+		return newRunnerTUICommand("all", []string{})
 	}
 
 	firstArg := args[0]
@@ -83,7 +87,7 @@ func route(args []string) (Command, error) {
 
 	// "all" keyword → runner TUI for all projects
 	if firstArg == "all" {
-		return newRunnerTUICommand(), nil
+		return newRunnerTUICommand("all", args[1:])
 	}
 
 	// Flags without a command → help
@@ -93,7 +97,7 @@ func route(args []string) (Command, error) {
 
 	// Check if it looks like a valid project name
 	if looksLikeProjectName(firstArg) {
-		return newRunnerTUICommand(), nil
+		return newRunnerTUICommand(firstArg, args[1:])
 	}
 
 	// Unknown → help
@@ -104,8 +108,18 @@ func route(args []string) (Command, error) {
 // Command Constructors
 // =============================================================================
 
-func newRunnerTUICommand() Command {
-	return &stubCommand{cmdType: "runner_tui"}
+func newRunnerTUICommand(project string, args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseRunnerFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.RunnerTUICommand{
+		Project: project,
+		Config:  convertToCommandsConfig(cfg),
+		Flags:   convertToCommandsRunnerFlags(flags),
+	}, nil
 }
 
 func newHelpCommand() Command {
@@ -122,13 +136,94 @@ func isBuiltinCommand(cmd string) bool {
 }
 
 // parseBuiltinCommand parses and creates a built-in command.
-// Returns a stub command for now; will be replaced with actual implementations.
 func parseBuiltinCommand(args []string) (Command, error) {
 	if len(args) == 0 {
 		return newHelpCommand(), nil
 	}
-	// Return a stub command with the same type as the command name
-	return &stubCommand{cmdType: args[0]}, nil
+
+	cmdName := args[0]
+	cmdArgs := args[1:]
+
+	switch cmdName {
+	case "server":
+		return parseServerCommand(cmdArgs)
+	case "mcp":
+		return parseMCPCommand(cmdArgs)
+	case "run":
+		// Handle "brain run <subcommand>" pattern
+		if len(cmdArgs) > 0 {
+			return parseRunCommand(cmdArgs)
+		}
+		// "brain run" without subcommand returns stub
+		return &stubCommand{cmdType: "run"}, nil
+	case "help":
+		return newHelpCommand(), nil
+	default:
+		// For other built-in commands, return stub for now
+		return &stubCommand{cmdType: cmdName}, nil
+	}
+}
+
+// parseServerCommand creates a ServerCommand from args.
+func parseServerCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseServerFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.ServerCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsServerFlags(flags),
+	}, nil
+}
+
+// parseMCPCommand creates an MCPCommand from args.
+func parseMCPCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseMCPFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.MCPCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsMCPFlags(flags),
+	}, nil
+}
+
+// parseRunCommand creates a RunCommand from args.
+func parseRunCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		return newHelpCommand(), nil
+	}
+
+	subcommand := args[0]
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseRunnerFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine project from subArgs or default to "all"
+	project := "all"
+	if len(subArgs) > 0 && !isFlag(subArgs[0]) {
+		project = subArgs[0]
+	}
+
+	return &commands.RunCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsRunnerFlags(flags),
+	}, nil
+}
+
+// isFlag checks if a string looks like a flag.
+func isFlag(s string) bool {
+	return len(s) > 0 && s[0] == '-'
 }
 
 // =============================================================================
@@ -166,4 +261,99 @@ func looksLikeProjectName(s string) bool {
 	}
 
 	return true
+}
+
+// =============================================================================
+// Config and Conversion Helpers
+// =============================================================================
+
+// defaultConfig returns a default UnifiedConfig.
+// In future phases, this will load from config files.
+func defaultConfig() *UnifiedConfig {
+	cfg := &UnifiedConfig{}
+
+	// Server defaults
+	cfg.Server.Port = 3333
+	cfg.Server.Host = "localhost"
+	cfg.Server.BrainDir = "~/brain" // Will be expanded
+	cfg.Server.LogLevel = "info"
+
+	// Runner defaults
+	cfg.Runner.MaxParallel = 3
+	cfg.Runner.PollInterval = 10
+	cfg.Runner.WorkDir = ""
+
+	// MCP defaults
+	cfg.MCP.APIURL = "http://localhost:3333"
+
+	return cfg
+}
+
+// convertToCommandsConfig converts main.UnifiedConfig to commands.UnifiedConfig.
+func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
+	cmdCfg := &commands.UnifiedConfig{}
+
+	// Server
+	cmdCfg.Server.Port = cfg.Server.Port
+	cmdCfg.Server.Host = cfg.Server.Host
+	cmdCfg.Server.BrainDir = cfg.Server.BrainDir
+	cmdCfg.Server.EnableAuth = cfg.Server.EnableAuth
+	cmdCfg.Server.APIKey = cfg.Server.APIKey
+	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
+	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
+	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
+	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
+
+	// Runner
+	cmdCfg.Runner.MaxParallel = cfg.Runner.MaxParallel
+	cmdCfg.Runner.PollInterval = cfg.Runner.PollInterval
+	cmdCfg.Runner.WorkDir = cfg.Runner.WorkDir
+	cmdCfg.Runner.StateDir = cfg.Runner.StateDir
+	cmdCfg.Runner.LogDir = cfg.Runner.LogDir
+	cmdCfg.Runner.ExcludeProjects = cfg.Runner.ExcludeProjects
+	cmdCfg.Runner.OpenCode.Agent = cfg.Runner.OpenCode.Agent
+	cmdCfg.Runner.OpenCode.Model = cfg.Runner.OpenCode.Model
+
+	// MCP
+	cmdCfg.MCP.APIURL = cfg.MCP.APIURL
+
+	return cmdCfg
+}
+
+// convertToCommandsServerFlags converts main.ServerFlags to commands.ServerFlags.
+func convertToCommandsServerFlags(flags *ServerFlags) *commands.ServerFlags {
+	return &commands.ServerFlags{
+		Port:    flags.Port,
+		Host:    flags.Host,
+		Daemon:  flags.Daemon,
+		LogFile: flags.LogFile,
+		TLS:     flags.TLS,
+		TLSCert: flags.TLSCert,
+		TLSKey:  flags.TLSKey,
+	}
+}
+
+// convertToCommandsRunnerFlags converts main.RunnerFlags to commands.RunnerFlags.
+func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
+	return &commands.RunnerFlags{
+		TUI:          flags.TUI,
+		Foreground:   flags.Foreground,
+		Background:   flags.Background,
+		Dashboard:    flags.Dashboard,
+		MaxParallel:  flags.MaxParallel,
+		PollInterval: flags.PollInterval,
+		Workdir:      flags.Workdir,
+		Agent:        flags.Agent,
+		Model:        flags.Model,
+		Include:      flags.Include,
+		Exclude:      flags.Exclude,
+		Follow:       flags.Follow,
+	}
+}
+
+// convertToCommandsMCPFlags converts main.MCPFlags to commands.MCPFlags.
+func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
+	return &commands.MCPFlags{
+		APIURL: flags.APIURL,
+	}
 }

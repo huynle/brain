@@ -38,6 +38,11 @@ type RunnerFlags struct {
 	Follow       bool
 }
 
+// MCPFlags for MCP command
+type MCPFlags struct {
+	APIURL string
+}
+
 // ParseGlobalFlags parses global flags from args
 func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 	flags := &GlobalFlags{}
@@ -121,13 +126,31 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	return flags, nil
 }
 
+// ParseMCPFlags parses MCP-specific flags
+func ParseMCPFlags(args []string) (*MCPFlags, error) {
+	flags := &MCPFlags{}
+	fs := flag.NewFlagSet("mcp", flag.ExitOnError)
+
+	fs.StringVar(&flags.APIURL, "api-url", "", "Brain API URL")
+
+	if err := fs.Parse(args); err != nil {
+		return nil, err
+	}
+
+	return flags, nil
+}
+
 // UnifiedConfig is a placeholder for the future unified config system
 // This will be implemented in Phase 1.3
 type UnifiedConfig struct {
 	Server struct {
-		Port int
-		Host string
-		TLS  struct {
+		Port       int
+		Host       string
+		BrainDir   string
+		EnableAuth bool
+		APIKey     string
+		LogLevel   string
+		TLS        struct {
 			Enabled  bool
 			CertPath string
 			KeyPath  string
@@ -137,11 +160,16 @@ type UnifiedConfig struct {
 		MaxParallel     int
 		PollInterval    int
 		WorkDir         string
+		StateDir        string
+		LogDir          string
 		ExcludeProjects []string
 		OpenCode        struct {
 			Agent string
 			Model string
 		}
+	}
+	MCP struct {
+		APIURL string
 	}
 }
 

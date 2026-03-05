@@ -13,7 +13,9 @@ import (
 	"syscall"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/tui"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -352,6 +354,38 @@ func cmdStart(args parsedArgs) int {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}()
+
+	// TUI mode: launch Bubble Tea program
+	if mode == runner.ExecutionModeTUI {
+		tuiCfg := tui.Config{
+			APIURL:   cfg.BrainAPIURL,
+			Project:  primaryProject,
+			Projects: projects,
+		}
+		model := tui.NewModel(tuiCfg)
+		p := tea.NewProgram(model, tea.WithAltScreen())
+
+		// Start the runner in background
+		go func() {
+			if startErr := tr.Start(ctx); startErr != nil {
+				slog.Error("runner failed", "error", startErr)
+			}
+		}()
+
+		// Run TUI (blocks until quit)
+		if _, err := p.Run(); err != nil {
+			slog.Error("TUI failed", "error", err)
+			cancel()
+			return 1
+		}
+
+		// TUI exited, stop the runner
+		cancel()
+		if stopErr := tr.Stop(); stopErr != nil {
+			slog.Error("error stopping runner after TUI exit", "error", stopErr)
+		}
+		return 0
+	}
 
 	if err := tr.Start(ctx); err != nil {
 		slog.Error("runner failed", "error", err)

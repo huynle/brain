@@ -21,3 +21,16 @@ coverage.out
 coverage.html
 __debug_bin*
 vendor/
+
+# Compiled binaries at repo root (from go build without -o)
+/brain-api
+/brain-runner
+/brain-mcp
+/brain
+
+# GoReleaser output
+dist/
+
+# Benchmark and profiling
+*.prof
+*.bench

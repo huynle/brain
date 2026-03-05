@@ -2,7 +2,7 @@
 # Produces a minimal image with just the brain-api binary.
 
 # Stage 1: Build
-FROM golang:1.23-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates
 
@@ -30,6 +30,10 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
     -o /bin/brain ./cmd/brain
 
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
+    -o /bin/brain-mcp ./cmd/brain-mcp
+
 # Stage 2: Runtime
 FROM alpine:3.20
 
@@ -44,6 +48,7 @@ WORKDIR /app
 COPY --from=builder /bin/brain-api /usr/local/bin/brain-api
 COPY --from=builder /bin/brain-runner /usr/local/bin/brain-runner
 COPY --from=builder /bin/brain /usr/local/bin/brain
+COPY --from=builder /bin/brain-mcp /usr/local/bin/brain-mcp
 
 # Default brain directory
 RUN mkdir -p /data/brain && chown -R brain:brain /data/brain

@@ -14,7 +14,7 @@ GOBIN := $(shell go env GOPATH)/bin
 GOLANGCI_LINT_VERSION := v1.62.2
 
 # Binaries to build
-CMDS := brain-api brain-runner brain
+CMDS := brain-api brain-runner brain brain-mcp
 
 .PHONY: all build test lint typecheck clean release docker help
 

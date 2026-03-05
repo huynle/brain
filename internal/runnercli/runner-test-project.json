@@ -1,0 +1,34 @@
+{
+  "projectId": "test-project",
+  "status": "stopped",
+  "startedAt": "2026-03-05T16:12:06.610375-07:00",
+  "updatedAt": "2026-03-05T16:12:06.611551-07:00",
+  "runningTasks": null,
+  "stats": {
+    "completed": 0,
+    "failed": 0,
+    "totalRuntime": 0
+  },
+  "config": {
+    "brain_api_url": "",
+    "api_token": "",
+    "poll_interval": 0,
+    "task_poll_interval": 0,
+    "max_parallel": 0,
+    "state_dir": "",
+    "log_dir": "",
+    "work_dir": "",
+    "api_timeout": 0,
+    "task_timeout": 0,
+    "idle_detection_threshold": 0,
+    "max_total_processes": 0,
+    "memory_threshold_percent": 0,
+    "opencode": {
+      "bin": "",
+      "agent": "",
+      "model": ""
+    },
+    "exclude_projects": null,
+    "auto_monitors": false
+  }
+}

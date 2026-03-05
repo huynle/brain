@@ -350,3 +350,35 @@ func getWriter(w io.Writer) io.Writer {
 	}
 	return w
 }
+
+// DevCommand runs the server in foreground with debug logging.
+type DevCommand struct {
+	Config *UnifiedConfig
+}
+
+func (c *DevCommand) Type() string {
+	return "dev"
+}
+
+func (c *DevCommand) Execute() error {
+	// Set debug log level
+	if c.Config.Server.LogLevel == "" {
+		c.Config.Server.LogLevel = "debug"
+	}
+
+	// Create a server command with foreground mode (no daemon)
+	serverCmd := &ServerCommand{
+		Config: c.Config,
+		Flags: &ServerFlags{
+			Port:   c.Config.Server.Port,
+			Host:   c.Config.Server.Host,
+			Daemon: false, // Always foreground
+		},
+	}
+
+	fmt.Println("Starting server in development mode (debug logging, foreground)")
+	fmt.Println("Press Ctrl+C to stop")
+	fmt.Println()
+
+	return serverCmd.Execute()
+}

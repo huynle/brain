@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -28,6 +29,9 @@ type UnifiedConfig struct {
 		}
 		PIDFile string
 		LogFile string
+		LogMaxSize     int // MB
+		LogMaxBackups  int
+		LogMaxAge      int // days
 	}
 	Runner struct {
 		MaxParallel     int
@@ -108,7 +112,7 @@ func (c *ServerCommand) Execute() error {
 			logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
 		}
 
-		return daemonizeServer(ctx, opts, pidFile, logFile)
+		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config)
 	}
 
 	// Otherwise run in foreground
@@ -116,10 +120,10 @@ func (c *ServerCommand) Execute() error {
 	return apiserver.RunServer(ctx, opts)
 }
 
-// daemonizeServer handles daemon mode for the server.
-// In daemon mode, we write the PID file when the server starts.
+// daemonizeServer handles daemon mode for the server with SIGHUP log rotation.
+// In daemon mode, we write the PID file when the server starts and setup signal handlers.
 // The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
-func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string) error {
+func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig) error {
 	// Check if already running
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
 		if lifecycle.IsProcessRunning(pid) {
@@ -136,6 +140,37 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile,
 
 	// Setup cleanup on exit
 	defer lifecycle.ClearPID(pidFile)
+
+	// Create context for shutdown
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// Get log rotation config
+	maxSizeMB := cfg.Server.LogMaxSize
+	if maxSizeMB == 0 {
+		maxSizeMB = 100 // Default 100MB
+	}
+	maxBackups := cfg.Server.LogMaxBackups
+	if maxBackups == 0 {
+		maxBackups = 5 // Default 5 backups
+	}
+
+	// Setup signal handlers with log rotation on SIGHUP
+	_ = lifecycle.SetupSignalHandler(ctx, lifecycle.SignalHandlerOptions{
+		OnShutdown: func() {
+			slog.Info("received shutdown signal")
+			cancel()
+		},
+		OnReload: func() {
+			slog.Info("received SIGHUP, rotating logs")
+			// Rotate logs
+			if err := lifecycle.RotateLogs(logFile, int64(maxSizeMB), maxBackups); err != nil {
+				slog.Error("failed to rotate logs", "error", err)
+			} else {
+				slog.Info("log rotation complete")
+			}
+		},
+	})
 
 	fmt.Printf("Starting Brain API server on %s:%d (PID %d)\n", opts.Host, opts.Port, os.Getpid())
 	fmt.Printf("Logs: %s\n", logFile)

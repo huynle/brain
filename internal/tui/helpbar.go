@@ -33,6 +33,8 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 	shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 	shortcuts += fmt.Sprintf("%s Top/Bottom  ", bold("g/G"))
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
+	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 	shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))
 

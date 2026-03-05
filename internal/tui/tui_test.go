@@ -699,3 +699,319 @@ func TestConfig_IsMultiProject(t *testing.T) {
 		})
 	}
 }
+
+// =============================================================================
+// Panel Toggle Tests - 'L' toggles logs, 'T' toggles detail
+// =============================================================================
+
+func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	if m.logsVisible {
+		t.Fatal("expected logsVisible to be false initially")
+	}
+
+	// Press 'L' to toggle logs on
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.logsVisible {
+		t.Error("expected logsVisible to be true after 'L' press")
+	}
+
+	// Press 'L' again to toggle logs off
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	if model.logsVisible {
+		t.Error("expected logsVisible to be false after second 'L' press")
+	}
+}
+
+func TestUpdate_TKey_TogglesDetailVisibility(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	if m.detailVisible {
+		t.Fatal("expected detailVisible to be false initially")
+	}
+
+	// Press 'T' to toggle detail on
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.detailVisible {
+		t.Error("expected detailVisible to be true after 'T' press")
+	}
+
+	// Press 'T' again to toggle detail off
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	if model.detailVisible {
+		t.Error("expected detailVisible to be false after second 'T' press")
+	}
+}
+
+// =============================================================================
+// Panel Focus Cycling with Visible Panels
+// =============================================================================
+
+func TestUpdate_TabCyclesWithDetailVisible(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.detailVisible = true
+
+	if m.activePanel != PanelTasks {
+		t.Fatalf("expected initial panel PanelTasks, got %v", m.activePanel)
+	}
+
+	// Tab: tasks -> detail
+	msg := tea.KeyMsg{Type: tea.KeyTab}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if model.activePanel != PanelDetails {
+		t.Errorf("expected PanelDetails after Tab, got %v", model.activePanel)
+	}
+
+	// Tab: detail -> tasks
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+
+	if model.activePanel != PanelTasks {
+		t.Errorf("expected PanelTasks after second Tab, got %v", model.activePanel)
+	}
+}
+
+func TestUpdate_TabCyclesWithBothPanelsVisible(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.detailVisible = true
+	m.logsVisible = true
+
+	// Tab: tasks -> detail -> logs -> tasks
+	msg := tea.KeyMsg{Type: tea.KeyTab}
+
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+	if model.activePanel != PanelDetails {
+		t.Errorf("expected PanelDetails, got %v", model.activePanel)
+	}
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	if model.activePanel != PanelLogs {
+		t.Errorf("expected PanelLogs, got %v", model.activePanel)
+	}
+
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	if model.activePanel != PanelTasks {
+		t.Errorf("expected PanelTasks, got %v", model.activePanel)
+	}
+}
+
+// =============================================================================
+// Task Selection Updates Detail Panel
+// =============================================================================
+
+func TestUpdate_TaskSelectionUpdatesDetail(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+	m.detailVisible = true
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "First Task", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Second Task", Classification: "waiting", Priority: "medium"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1, Waiting: 1}})
+	m = updated.(Model)
+
+	// First task should be selected and detail should show it
+	if m.taskDetail.task == nil {
+		t.Fatal("expected taskDetail to have a task after TasksUpdatedMsg")
+	}
+	if m.taskDetail.task.ID != "t1" {
+		t.Errorf("expected taskDetail task ID 't1', got '%s'", m.taskDetail.task.ID)
+	}
+
+	// Move down to second task
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskDetail.task == nil {
+		t.Fatal("expected taskDetail to have a task after navigation")
+	}
+	if m.taskDetail.task.ID != "t2" {
+		t.Errorf("expected taskDetail task ID 't2', got '%s'", m.taskDetail.task.ID)
+	}
+}
+
+// =============================================================================
+// Window Resize Propagates to All Panels
+// =============================================================================
+
+func TestUpdate_WindowResize_PropagatesToPanels(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.detailVisible = true
+	m.logsVisible = true
+
+	msg := tea.WindowSizeMsg{Width: 160, Height: 50}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if model.width != 160 {
+		t.Errorf("expected width 160, got %d", model.width)
+	}
+	if model.height != 50 {
+		t.Errorf("expected height 50, got %d", model.height)
+	}
+
+	// TaskDetail and LogViewer should have non-zero dimensions
+	if model.taskDetail.width == 0 {
+		t.Error("expected taskDetail width to be set after resize")
+	}
+	if model.taskDetail.height == 0 {
+		t.Error("expected taskDetail height to be set after resize")
+	}
+	if model.logViewer.width == 0 {
+		t.Error("expected logViewer width to be set after resize")
+	}
+	if model.logViewer.height == 0 {
+		t.Error("expected logViewer height to be set after resize")
+	}
+}
+
+// =============================================================================
+// View Contains All Visible Panels
+// =============================================================================
+
+func TestView_WithDetailVisible_ContainsDetailPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+	m.detailVisible = true
+
+	view := m.View()
+
+	if !strings.Contains(view, "Task Detail") {
+		t.Errorf("expected 'Task Detail' in view when detail visible, got:\n%s", view)
+	}
+}
+
+func TestView_WithLogsVisible_ContainsLogPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+	m.logsVisible = true
+
+	view := m.View()
+
+	if !strings.Contains(view, "Logs") {
+		t.Errorf("expected 'Logs' in view when logs visible, got:\n%s", view)
+	}
+}
+
+func TestView_WithBothPanelsVisible_ContainsBoth(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+
+	view := m.View()
+
+	if !strings.Contains(view, "Task Detail") {
+		t.Errorf("expected 'Task Detail' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Logs") {
+		t.Errorf("expected 'Logs' in view, got:\n%s", view)
+	}
+}
+
+func TestView_NoPanelsVisible_NoDetailOrLogs(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+	// Both panels hidden by default
+
+	view := m.View()
+
+	if strings.Contains(view, "Task Detail") {
+		t.Errorf("expected no 'Task Detail' when detail not visible, got:\n%s", view)
+	}
+}
+
+// =============================================================================
+// Navigation Keys Forward to Active Panel
+// =============================================================================
+
+func TestUpdate_JKKeysOnlyWorkInTasksPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.detailVisible = true
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// Switch to detail panel
+	m.activePanel = PanelDetails
+
+	// Press j - should NOT move task selection since we're in detail panel
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t1" {
+		t.Errorf("expected selection to stay at 't1' when not in tasks panel, got '%s'", m.taskTree.SelectedID)
+	}
+}

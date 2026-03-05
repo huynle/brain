@@ -297,6 +297,19 @@ func (tt *TaskTree) MoveToBottom() {
 	tt.SelectedID = tt.order[tt.Cursor]
 }
 
+// SelectedTask returns the currently selected task, or nil if none.
+func (tt *TaskTree) SelectedTask() *types.ResolvedTask {
+	if tt.SelectedID == "" || len(tt.tasks) == 0 {
+		return nil
+	}
+	for i := range tt.tasks {
+		if tt.tasks[i].ID == tt.SelectedID {
+			return &tt.tasks[i]
+		}
+	}
+	return nil
+}
+
 // statusIndicator returns the status icon for a task classification.
 func statusIndicator(classification string) string {
 	switch classification {

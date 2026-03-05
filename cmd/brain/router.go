@@ -202,6 +202,35 @@ func parseMCPCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// parseTokenCommand creates a TokenCommand from args.
+func parseTokenCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		return newHelpCommand(), nil
+	}
+
+	subcommand := args[0]
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseTokenFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get name from remaining args if not from flags
+	name := flags.Name
+	if name == "" && len(subArgs) > 0 && !isFlag(subArgs[0]) {
+		name = subArgs[0]
+	}
+
+	return &commands.TokenCommand{
+		Subcommand: subcommand,
+		Name:       name,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsTokenFlags(flags),
+	}, nil
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -371,6 +400,12 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
 	return &commands.MCPFlags{
 		APIURL: flags.APIURL,
+	}
+}
+
+func convertToCommandsTokenFlags(flags *TokenFlags) *commands.TokenFlags {
+	return &commands.TokenFlags{
+		Name: flags.Name,
 	}
 }
 

@@ -485,9 +485,10 @@ type ResolvedTask struct {
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
 
-	DirectPrompt string `json:"direct_prompt"`
-	Agent        string `json:"agent"`
-	Model        string `json:"model"`
+	DirectPrompt  string `json:"direct_prompt"`
+	Agent         string `json:"agent"`
+	Model         string `json:"model"`
+	TargetWorkdir string `json:"target_workdir,omitempty"`
 
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`

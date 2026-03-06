@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -95,5 +96,22 @@ func (s StatusBar) View(width int) string {
 		rightStyle.Render(rightContent),
 	)
 
-	return barStyle.Render(row)
+	rendered := barStyle.Render(row)
+
+	// CRITICAL: Ensure exactly 3 lines (1 content + 2 border lines)
+	// This matches the TypeScript TUI behavior
+	lineCount := strings.Count(rendered, "\n") + 1
+	if lineCount != 3 {
+		// Pad or truncate to exactly 3 lines
+		lines := strings.Split(rendered, "\n")
+		for len(lines) < 3 {
+			lines = append(lines, "") // Pad with blank lines
+		}
+		if len(lines) > 3 {
+			lines = lines[:3] // Truncate
+		}
+		rendered = strings.Join(lines, "\n")
+	}
+
+	return rendered
 }

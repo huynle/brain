@@ -406,7 +406,7 @@ func (m Model) View() string {
 		innerHeight = 1
 	}
 
-	taskContent := m.taskTree.View(innerWidth, innerHeight)
+	taskContent := m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks)
 	taskPanel := taskPanelStyle.
 		Width(leftWidth - 2).
 		Height(mainHeight).

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 // SettingsTab represents the active tab in the settings modal
@@ -93,9 +94,31 @@ func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	return m, nil
 }
 
+// saveSettingsCmd returns a tea.Cmd that saves settings asynchronously
+func (m *SettingsModal) saveSettingsCmd() tea.Cmd {
+	settings := m.settings // Capture current state
+	return func() tea.Msg {
+		err := SaveSettings(settings)
+		return settingsSavedMsg{err: err}
+	}
+}
+
 // View implements Modal
 func (m *SettingsModal) View() string {
 	var s strings.Builder
+
+	// Show success/error at top (like MetadataModal)
+	if m.saveSuccess {
+		successStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
+		s.WriteString(successStyle.Render("✓ Settings saved"))
+		s.WriteString("\n\n")
+		m.saveSuccess = false // Clear after displaying
+	}
+	if m.saveError != nil {
+		errorStyle := lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true)
+		s.WriteString(errorStyle.Render(fmt.Sprintf("✗ Error: %v", m.saveError)))
+		s.WriteString("\n\n")
+	}
 
 	// Render tab header
 	s.WriteString(m.renderTabHeader())
@@ -293,8 +316,7 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 			// Save the edited model
 			m.settings.DefaultModel = m.editBuffer
 			m.editMode = false
-			_ = SaveSettings(m.settings) // Persist settings
-			return true, nil
+			return true, m.saveSettingsCmd()
 		case "esc":
 			// Cancel editing
 			m.editMode = false
@@ -350,19 +372,16 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		}
 		if m.currentTab == TabRuntime && m.selectedIndex == 2 {
 			// Cycle log level when on log level field
-			m.cycleLogLevel()
-			return true, nil
+			return true, m.cycleLogLevel()
 		}
 		return false, nil
 
 	case " ":
 		if m.currentTab == TabGroups {
-			m.toggleGroupVisibility()
-			return true, nil
+			return true, m.toggleGroupVisibility()
 		}
 		if m.currentTab == TabRuntime && m.selectedIndex == 1 {
-			m.toggleTextWrap()
-			return true, nil
+			return true, m.toggleTextWrap()
 		}
 		return false, nil
 
@@ -405,14 +424,14 @@ func (m *SettingsModal) switchTab() {
 	m.editMode = false  // Exit edit mode when switching tabs
 }
 
-// toggleTextWrap toggles the text wrapping setting
-func (m *SettingsModal) toggleTextWrap() {
+// toggleTextWrap toggles the text wrapping setting and returns a save command
+func (m *SettingsModal) toggleTextWrap() tea.Cmd {
 	m.settings.TextWrap = !m.settings.TextWrap
-	_ = SaveSettings(m.settings) // Persist settings immediately
+	return m.saveSettingsCmd()
 }
 
 // cycleLogLevel cycles through log levels: error -> info -> debug -> error
-func (m *SettingsModal) cycleLogLevel() {
+func (m *SettingsModal) cycleLogLevel() tea.Cmd {
 	switch m.settings.LogLevel {
 	case "error":
 		m.settings.LogLevel = "info"
@@ -423,21 +442,20 @@ func (m *SettingsModal) cycleLogLevel() {
 	default:
 		m.settings.LogLevel = "info"
 	}
-	_ = SaveSettings(m.settings) // Persist settings immediately
+	return m.saveSettingsCmd()
 }
 
-// toggleGroupVisibility toggles the visibility of the selected group
-func (m *SettingsModal) toggleGroupVisibility() {
+// toggleGroupVisibility toggles the visibility of the selected group and returns a save command
+func (m *SettingsModal) toggleGroupVisibility() tea.Cmd {
 	if m.selectedIndex < 0 || m.selectedIndex >= len(StatusGroups) {
-		return
+		return nil
 	}
 
 	group := StatusGroups[m.selectedIndex]
 	// Toggle visibility: flip the GroupVisible value
 	m.settings.GroupVisible[group] = !m.settings.GroupVisible[group]
 
-	// Persist settings immediately
-	_ = SaveSettings(m.settings) // Ignore errors (non-critical)
+	return m.saveSettingsCmd()
 }
 
 // moveDown moves selection down one item

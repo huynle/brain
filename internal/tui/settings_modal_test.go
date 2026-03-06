@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -307,5 +308,105 @@ func TestSettingsModal_Update_HandlesSaveMessage(t *testing.T) {
 	}
 	if cmd2 != nil {
 		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_SaveSettingsCmdHelper(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 5,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Call the saveSettingsCmd() helper
+	cmd := modal.saveSettingsCmd()
+	if cmd == nil {
+		t.Fatal("Expected saveSettingsCmd() to return a command, got nil")
+	}
+
+	// Execute the command to get the message
+	msg := cmd()
+
+	// Should return a settingsSavedMsg
+	savedMsg, ok := msg.(settingsSavedMsg)
+	if !ok {
+		t.Fatalf("Expected settingsSavedMsg, got %T", msg)
+	}
+
+	// Since SaveSettings should succeed with valid settings, error should be nil
+	if savedMsg.err != nil {
+		t.Errorf("Expected no error from saveSettingsCmd, got %v", savedMsg.err)
+	}
+}
+
+func TestSettingsModal_ViewShowsSaveSuccess(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Set saveSuccess to true
+	modal.saveSuccess = true
+
+	// Render view
+	view := modal.View()
+
+	// Should contain success message
+	if !strings.Contains(view, "✓ Settings saved") {
+		t.Error("Expected view to contain success message")
+	}
+
+	// After rendering once, saveSuccess should be cleared (displayed and cleared)
+	if modal.saveSuccess {
+		t.Error("Expected saveSuccess to be cleared after View() displays it")
+	}
+
+	// Second render should NOT show success message
+	view2 := modal.View()
+	if strings.Contains(view2, "✓ Settings saved") {
+		t.Error("Expected view to NOT contain success message after clearing")
+	}
+}
+
+func TestSettingsModal_ViewShowsSaveError(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Set saveError
+	testErr := fmt.Errorf("failed to save settings")
+	modal.saveError = testErr
+
+	// Render view
+	view := modal.View()
+
+	// Should contain error message
+	if !strings.Contains(view, "✗ Error: failed to save settings") {
+		t.Error("Expected view to contain error message")
+	}
+
+	// Error should persist (not cleared after display like success is)
+	if modal.saveError == nil {
+		t.Error("Expected saveError to persist after View() displays it")
+	}
+
+	// Second render should still show error message
+	view2 := modal.View()
+	if !strings.Contains(view2, "✗ Error: failed to save settings") {
+		t.Error("Expected view to still contain error message on second render")
 	}
 }

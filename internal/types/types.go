@@ -469,6 +469,7 @@ type ResolvedTask struct {
 	Title     string   `json:"title"`
 	Priority  string   `json:"priority"`
 	Status    string   `json:"status"`
+	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on"`
 	Created   string   `json:"created"`
 

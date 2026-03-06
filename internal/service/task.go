@@ -374,6 +374,11 @@ func NoteRowToBrainEntry(row *storage.NoteRow) types.BrainEntry {
 // parseMetadataIntoEntry extracts known fields from the metadata JSON map
 // into the BrainEntry struct fields.
 func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}) {
+	// parent_id: hierarchical parent reference
+	if v, ok := metaString(meta, "parent_id"); ok {
+		entry.ParentID = v
+	}
+
 	// depends_on: can be string or []string in JSON
 	if v, ok := metaStringSlice(meta, "depends_on"); ok {
 		entry.DependsOn = v

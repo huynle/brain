@@ -138,7 +138,7 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 }
 
 // Helper function to check if a string contains a substring
-func containsString(s, substr string) bool {
+func containsSubstring(s, substr string) bool {
 	return len(s) > 0 && len(substr) > 0 && indexOfString(s, substr) >= 0
 }
 

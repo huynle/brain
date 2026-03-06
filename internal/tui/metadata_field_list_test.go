@@ -56,7 +56,7 @@ func TestBuildFieldList_FeatureMode(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 
-	modal := NewMetadataModalFeature("feat-auth-123", apiClient)
+	modal := NewMetadataModalFeature("feat-auth-123", "test-project", apiClient)
 	fields := modal.buildFieldList()
 
 	// Should include new feature fields
@@ -94,7 +94,7 @@ func TestBuildFieldList_FeatureMode_ExcludesDirectPrompt(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 
-	modal := NewMetadataModalFeature("feat-auth-123", apiClient)
+	modal := NewMetadataModalFeature("feat-auth-123", "test-project", apiClient)
 	fields := modal.buildFieldList()
 
 	// Should NOT include task-specific field
@@ -108,7 +108,7 @@ func TestBuildFieldList_FeatureMode_ExcludesFeatureID(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 
-	modal := NewMetadataModalFeature("feat-auth-123", apiClient)
+	modal := NewMetadataModalFeature("feat-auth-123", "test-project", apiClient)
 	fields := modal.buildFieldList()
 
 	// Should NOT include FieldFeatureID (already grouped by feature)
@@ -122,7 +122,7 @@ func TestBuildFieldList_FeatureMode_IncludesFeaturePriority(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 
-	modal := NewMetadataModalFeature("feat-auth-123", apiClient)
+	modal := NewMetadataModalFeature("feat-auth-123", "test-project", apiClient)
 	fields := modal.buildFieldList()
 
 	// Should include new feature-level field

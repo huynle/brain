@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -151,12 +152,12 @@ func TestViewWithSelection_ShowsCheckboxes(t *testing.T) {
 	view := model.taskTree.ViewWithSelection(80, 10, model.selectedTasks)
 
 	// Check that selected task shows [x]
-	if !contains(view, "[x]") {
+	if !strings.Contains(view, "[x]") {
 		t.Error("Expected view to contain [x] for selected task")
 	}
 
 	// Check that unselected task shows [ ]
-	if !contains(view, "[ ]") {
+	if !strings.Contains(view, "[ ]") {
 		t.Error("Expected view to contain [ ] for unselected task")
 	}
 }
@@ -176,7 +177,7 @@ func TestStatusBar_ShowsSelectionCount(t *testing.T) {
 	view := statusBar.View(80)
 
 	// Should contain "2 selected"
-	if !contains(view, "2 selected") {
+	if !strings.Contains(view, "2 selected") {
 		t.Error("Expected status bar to show selection count")
 	}
 }
@@ -206,7 +207,7 @@ func TestIsOnGroupHeader(t *testing.T) {
 }
 
 // Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
+func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))
 }
 

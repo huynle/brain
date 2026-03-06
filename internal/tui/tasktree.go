@@ -823,10 +823,9 @@ func (tt *TaskTree) ToggleCollapse() {
 		}
 
 		// Persist feature collapsed state to settings
-		settings := Settings{
-			GroupCollapsed:   tt.groupCollapsed,
-			FeatureCollapsed: tt.featureCollapsed,
-		}
+		settings, _ := LoadSettings()
+		settings.GroupCollapsed = tt.groupCollapsed
+		settings.FeatureCollapsed = tt.featureCollapsed
 		_ = SaveSettings(settings) // Ignore errors (non-critical)
 		return
 	}
@@ -847,10 +846,9 @@ func (tt *TaskTree) ToggleCollapse() {
 	tt.groupCollapsed[groupName] = tt.groups[tt.selectedGroupIdx].Collapsed
 
 	// Persist to settings (both group and feature states)
-	settings := Settings{
-		GroupCollapsed:   tt.groupCollapsed,
-		FeatureCollapsed: tt.featureCollapsed,
-	}
+	settings, _ := LoadSettings()
+	settings.GroupCollapsed = tt.groupCollapsed
+	settings.FeatureCollapsed = tt.featureCollapsed
 	_ = SaveSettings(settings) // Ignore errors (non-critical)
 }
 

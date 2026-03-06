@@ -250,8 +250,9 @@ func NewTaskTree() TaskTree {
 	// Load collapsed state from settings
 	settings, _ := LoadSettings()
 	return TaskTree{
-		useGroupedView: true, // Enable grouped view by default
-		groupCollapsed: settings.GroupCollapsed,
+		useGroupedView:   true, // Enable grouped view by default
+		groupCollapsed:   settings.GroupCollapsed,
+		featureCollapsed: settings.FeatureCollapsed,
 	}
 }
 
@@ -636,7 +637,12 @@ func (tt *TaskTree) ToggleCollapse() {
 			tt.featureCollapsed[featureID] = tt.featureGroups.Features[tt.selectedFeatureIdx].Collapsed
 		}
 
-		// Note: Feature collapsed state is not persisted to settings (only classification groups are)
+		// Persist feature collapsed state to settings
+		settings := Settings{
+			GroupCollapsed:   tt.groupCollapsed,
+			FeatureCollapsed: tt.featureCollapsed,
+		}
+		_ = SaveSettings(settings) // Ignore errors (non-critical)
 		return
 	}
 
@@ -655,8 +661,11 @@ func (tt *TaskTree) ToggleCollapse() {
 	tt.groups[tt.selectedGroupIdx].Collapsed = !tt.groups[tt.selectedGroupIdx].Collapsed
 	tt.groupCollapsed[groupName] = tt.groups[tt.selectedGroupIdx].Collapsed
 
-	// Persist to settings
-	settings := Settings{GroupCollapsed: tt.groupCollapsed}
+	// Persist to settings (both group and feature states)
+	settings := Settings{
+		GroupCollapsed:   tt.groupCollapsed,
+		FeatureCollapsed: tt.featureCollapsed,
+	}
 	_ = SaveSettings(settings) // Ignore errors (non-critical)
 }
 

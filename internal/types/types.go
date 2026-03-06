@@ -130,6 +130,7 @@ type BrainEntry struct {
 	Tags     []string `json:"tags"`
 	Priority string   `json:"priority,omitempty"`
 
+	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	ProjectID string   `json:"project_id,omitempty"`
 	FeatureID string   `json:"feature_id,omitempty"`

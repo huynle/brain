@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/internal/runner"
 )
 
 // DefaultReconnectDelay is the default delay before reconnecting after disconnect.
@@ -210,6 +211,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			modal := NewSettingsModal(m.settings)
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
+		case "s":
+			// Open metadata modal for selected task
+			if m.activePanel == PanelTasks {
+				selectedTask := m.taskTree.SelectedTask()
+				if selectedTask != nil {
+					// Create API client for modal
+					apiClient := runner.NewAPIClient(runner.RunnerConfig{
+						BrainAPIURL: m.config.APIURL,
+						APITimeout:  5000, // 5 second timeout
+					})
+					modal := NewMetadataModal(selectedTask.ID, apiClient)
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+			}
+			return m, nil
 		case "/":
 			// Activate filter mode
 			if m.activePanel == PanelTasks {

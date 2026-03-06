@@ -45,13 +45,13 @@ const (
 	treeEmpty      = "  "
 )
 
-
-// BuildTree builds a tree structure from a flat task list using DependsOn relationships.
-// It detects cycles and handles diamond dependencies (each task rendered once).
-// Tasks are sorted by priority (high > medium > low) then by status.
+// BuildTree builds a tree structure from a flat task list using both parent_id
+// and depends_on relationships. It detects cycles and handles diamond dependencies
+// (each task rendered once). Tasks are sorted by priority (high > medium > low)
+// then by status.
 //
-// Phase 3: Added allTasks parameter for parent_id chain walking (used in Phase 4+).
-// Currently builds parent relationship maps but uses depends_on for tree structure.
+// Phase 3: Added allTasks parameter for parent_id chain walking.
+// Phase 4: Merged parent_id and depends_on relationships (parent_id takes precedence).
 func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []TreeNode {
 	if len(tasks) == 0 {
 		return nil
@@ -93,7 +93,6 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 
 	// Step 2b: Build reverse dependency map: parent -> children (existing)
 	// If B depends on A, then A is parent of B
-	// TODO Phase 4: Merge parentChildren with children into mergedChildren
 	children := make(map[string][]string)
 	hasParent := make(map[string]bool)
 
@@ -106,7 +105,29 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 		}
 	}
 
-	// Detect cycles using DFS
+	// Step 3: Merge children - UNION of parent_id and depends_on
+	// Priority: parent_id takes precedence for placement
+	mergedChildren := make(map[string][]string)
+
+	// Start with parent_id children (these take priority)
+	for parentID, childIDs := range parentChildren {
+		mergedChildren[parentID] = append([]string{}, childIDs...)
+	}
+
+	// Add depends_on children, but ONLY if child doesn't have parent_id
+	for depID, dependentIDs := range children {
+		if _, exists := mergedChildren[depID]; !exists {
+			mergedChildren[depID] = []string{}
+		}
+		for _, dependentID := range dependentIDs {
+			// Only add if this task doesn't have active parent_id elsewhere
+			if !hasParentInTree[dependentID] {
+				mergedChildren[depID] = append(mergedChildren[depID], dependentID)
+			}
+		}
+	}
+
+	// Detect cycles using DFS (now using mergedChildren)
 	inCycle := make(map[string]bool)
 	visited := make(map[string]bool)
 	recStack := make(map[string]bool)
@@ -116,7 +137,7 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 		visited[id] = true
 		recStack[id] = true
 
-		for _, childID := range children[id] {
+		for _, childID := range mergedChildren[id] {
 			if !visited[childID] {
 				if detectCycles(childID) {
 					inCycle[id] = true
@@ -156,7 +177,7 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 	// Track rendered tasks for diamond dedup
 	rendered := make(map[string]bool)
 
-	// Build tree recursively
+	// Build tree recursively (using mergedChildren)
 	var buildNode func(id string) *TreeNode
 	buildNode = func(id string) *TreeNode {
 		task, exists := taskMap[id]
@@ -168,7 +189,7 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 		}
 		rendered[id] = true
 
-		childIDs := children[id]
+		childIDs := mergedChildren[id]
 		sortIDs(childIDs)
 
 		var childNodes []TreeNode
@@ -202,10 +223,11 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 		return statusOrder[sorted[i].Status] < statusOrder[sorted[j].Status]
 	})
 
-	// Collect roots (tasks with no parent in the tree)
+	// Collect roots (tasks with no parent in the tree - checks BOTH relationships)
 	var roots []TreeNode
 	for _, t := range sorted {
-		if !hasParent[t.ID] {
+		// A task is a root if it has neither depends_on parent NOR parent_id parent
+		if !hasParent[t.ID] && !hasParentInTree[t.ID] {
 			node := buildNode(t.ID)
 			if node != nil {
 				roots = append(roots, *node)

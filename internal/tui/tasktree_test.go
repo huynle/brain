@@ -709,10 +709,10 @@ func TestBuildTree_WithAllTasksParameter_BackwardCompat(t *testing.T) {
 		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", Status: "pending"},
 		{ID: "t2", Title: "Task 2", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"t1"}},
 	}
-	
+
 	// Call with empty allTasks - should behave like before
 	nodes := BuildTree(tasks, []types.ResolvedTask{})
-	
+
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root node, got %d", len(nodes))
 	}
@@ -732,13 +732,168 @@ func TestBuildTree_WithAllTasksParameter_ExplicitAllTasks(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", Status: "pending"},
 	}
-	
+
 	nodes := BuildTree(tasks, tasks) // allTasks same as tasks
-	
+
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root node, got %d", len(nodes))
 	}
 	if nodes[0].Task.ID != "t1" {
 		t.Errorf("expected root 't1', got '%s'", nodes[0].Task.ID)
+	}
+}
+
+// =============================================================================
+// Phase 4: Merge Parent and Dependency Relationships Tests
+// =============================================================================
+
+// Test 1: Task with BOTH parent_id and depends_on → parent_id wins placement
+func TestBuildTree_Phase4_ParentIDTakesPrecedence(t *testing.T) {
+	// Task D has both parent_id=C and depends_on=[B]
+	// D should appear under C (parent_id wins), NOT under B
+	tasks := []types.ResolvedTask{
+		{ID: "a", Title: "Task A", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "b", Title: "Task B", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}},
+		{ID: "d", Title: "Task D", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "c", DependsOn: []string{"b"}},
+	}
+
+	nodes := BuildTree(tasks, tasks)
+
+	// Find node A (root)
+	var nodeA *TreeNode
+	for i := range nodes {
+		if nodes[i].Task.ID == "a" {
+			nodeA = &nodes[i]
+			break
+		}
+	}
+	if nodeA == nil {
+		t.Fatal("expected to find root node A")
+	}
+
+	// A should have children B and C
+	if len(nodeA.Children) != 2 {
+		t.Fatalf("expected A to have 2 children (B and C), got %d", len(nodeA.Children))
+	}
+
+	// Find C among A's children
+	var nodeC *TreeNode
+	for i := range nodeA.Children {
+		if nodeA.Children[i].Task.ID == "c" {
+			nodeC = &nodeA.Children[i]
+			break
+		}
+	}
+	if nodeC == nil {
+		t.Fatal("expected C to be a child of A")
+	}
+
+	// C should have D as a child (parent_id wins over depends_on)
+	if len(nodeC.Children) != 1 {
+		t.Fatalf("expected C to have 1 child (D), got %d", len(nodeC.Children))
+	}
+	if nodeC.Children[0].Task.ID != "d" {
+		t.Errorf("expected D to be child of C, got '%s'", nodeC.Children[0].Task.ID)
+	}
+
+	// B should NOT have D as a child
+	var nodeB *TreeNode
+	for i := range nodeA.Children {
+		if nodeA.Children[i].Task.ID == "b" {
+			nodeB = &nodeA.Children[i]
+			break
+		}
+	}
+	if nodeB == nil {
+		t.Fatal("expected B to be a child of A")
+	}
+	if len(nodeB.Children) != 0 {
+		t.Errorf("expected B to have 0 children (D blocked by parent_id), got %d", len(nodeB.Children))
+	}
+}
+
+// Test 2: Task with depends_on only → appears under dependency parent
+func TestBuildTree_Phase4_DependsOnOnlyAppears(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"parent"}},
+	}
+
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "parent" {
+		t.Errorf("expected root 'parent', got '%s'", nodes[0].Task.ID)
+	}
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("expected parent to have 1 child, got %d", len(nodes[0].Children))
+	}
+	if nodes[0].Children[0].Task.ID != "child" {
+		t.Errorf("expected child 'child', got '%s'", nodes[0].Children[0].Task.ID)
+	}
+}
+
+// Test 3: Task with parent_id only → appears under parent_id parent
+func TestBuildTree_Phase4_ParentIDOnlyAppears(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent"},
+	}
+
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "parent" {
+		t.Errorf("expected root 'parent', got '%s'", nodes[0].Task.ID)
+	}
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("expected parent to have 1 child, got %d", len(nodes[0].Children))
+	}
+	if nodes[0].Children[0].Task.ID != "child" {
+		t.Errorf("expected child 'child', got '%s'", nodes[0].Children[0].Task.ID)
+	}
+}
+
+// Test 4: Multiple tasks with mixed relationships
+func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "dep_child", Title: "Dep Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"root"}},
+		{ID: "parent_child", Title: "Parent Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
+		{ID: "both_child", Title: "Both Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"dep_child"}},
+	}
+
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+
+	root := nodes[0]
+	if root.Task.ID != "root" {
+		t.Errorf("expected root 'root', got '%s'", root.Task.ID)
+	}
+
+	// Root should have 3 children: dep_child (from depends_on), parent_child (from parent_id), both_child (from parent_id)
+	if len(root.Children) != 3 {
+		t.Fatalf("expected root to have 3 children, got %d", len(root.Children))
+	}
+
+	// Verify all three children are present
+	childIDs := make(map[string]bool)
+	for _, child := range root.Children {
+		childIDs[child.Task.ID] = true
+	}
+
+	expectedChildren := []string{"dep_child", "parent_child", "both_child"}
+	for _, expectedID := range expectedChildren {
+		if !childIDs[expectedID] {
+			t.Errorf("expected child '%s' to be under root", expectedID)
+		}
 	}
 }

@@ -58,6 +58,7 @@ const (
 // MetadataModal is a modal for editing task metadata fields.
 type MetadataModal struct {
 	taskIDs         []string
+	featureID       string // Feature ID for ModeFeature
 	mode            MetadataMode
 	apiClient       *runner.APIClient
 	interactionMode MetadataInteractionMode
@@ -91,6 +92,44 @@ func NewMetadataModal(taskID string, apiClient *runner.APIClient) *MetadataModal
 // NewMetadataModalBatch creates a new metadata editing modal for multiple tasks.
 func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *MetadataModal {
 	return newMetadataModal(taskIDs, ModeBatch, apiClient)
+}
+
+// NewMetadataModalFeature creates a new metadata editing modal for a feature.
+// The taskIDs will be populated in Init() when fetching tasks by feature_id.
+func NewMetadataModalFeature(featureID string, apiClient *runner.APIClient) *MetadataModal {
+	// Initialize field list in proper order
+	fieldList := []MetadataField{
+		FieldStatus,
+		FieldPriority,
+		FieldFeatureID,
+		FieldGitBranch,
+		FieldMergeTargetBranch,
+		FieldMergePolicy,
+		FieldMergeStrategy,
+		FieldExecutionMode,
+		FieldDirectPrompt,
+		FieldAgent,
+		FieldModel,
+		FieldTargetWorkdir,
+		FieldCompleteOnIdle,
+		FieldOpenPRBeforeMerge,
+		FieldSchedule,
+	}
+
+	return &MetadataModal{
+		featureID:       featureID,
+		mode:            ModeFeature,
+		apiClient:       apiClient,
+		taskIDs:         []string{}, // Will be populated in Init
+		values:          make(map[MetadataField]string),
+		boolValues:      make(map[MetadataField]bool),
+		mixedFields:     make(map[MetadataField]bool),
+		interactionMode: ModeNavigate,
+		focusedIndex:    0,
+		fieldList:       fieldList,
+		width:           60,
+		height:          20,
+	}
 }
 
 // newMetadataModal is the internal constructor.
@@ -674,7 +713,7 @@ func (m *MetadataModal) Title() string {
 	case ModeBatch:
 		return fmt.Sprintf("Update Metadata - %d tasks selected", len(m.taskIDs))
 	case ModeFeature:
-		return "Update Feature Metadata"
+		return fmt.Sprintf("Update Feature Metadata - %s (%d tasks)", m.featureID, len(m.taskIDs))
 	default:
 		return "Update Metadata"
 	}

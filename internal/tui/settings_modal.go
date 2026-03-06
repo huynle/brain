@@ -22,8 +22,12 @@ var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "C
 // SettingsModal allows editing project limits, global max parallel, and group visibility.
 // Navigation: j/k to move up/down, tab to switch sections
 // Adjustment: +/- to increase/decrease limits (Limits tab)
-// Toggle: Space to toggle group visibility (Groups tab)
+// Toggle: Space to toggle group visibility - controls whether groups are shown in the task list (Groups tab)
 // Direct navigation: 1 for Limits, 2 for Groups
+//
+// Note: Group visibility (GroupVisible) is separate from collapse state (GroupCollapsed).
+// Visibility controls filtering (whether the group appears at all).
+// Collapse controls UI folding (whether an visible group is expanded or collapsed).
 type SettingsModal struct {
 	settings      Settings
 	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab)
@@ -119,13 +123,14 @@ func (m *SettingsModal) renderLimitsTab() string {
 func (m *SettingsModal) renderGroupsTab() string {
 	var s strings.Builder
 
-	s.WriteString("Status Groups:\n")
+	s.WriteString("Status Groups (☑ = visible, ☐ = hidden):\n")
 
 	for i, group := range StatusGroups {
 		cursor := m.getCursor(i)
 
-		// Check if group is visible (not in GroupCollapsed or explicitly false)
-		visible := !m.settings.GroupCollapsed[group]
+		// Check if group is visible using GroupVisible map
+		// Default to true if not explicitly set to false
+		visible := m.settings.GroupVisible[group]
 		checkbox := "☑"
 		if !visible {
 			checkbox = "☐"
@@ -133,6 +138,8 @@ func (m *SettingsModal) renderGroupsTab() string {
 
 		s.WriteString(fmt.Sprintf("%s %s %s\n", cursor, checkbox, group))
 	}
+
+	s.WriteString("\nPress Space to toggle visibility, j/k to navigate")
 
 	return s.String()
 }
@@ -252,15 +259,8 @@ func (m *SettingsModal) toggleGroupVisibility() {
 	}
 
 	group := StatusGroups[m.selectedIndex]
-	// Toggle: if currently visible (not in map or false), hide it (set to true)
-	// if currently hidden (true), show it (set to false or remove)
-	if m.settings.GroupCollapsed[group] {
-		// Currently hidden, show it
-		m.settings.GroupCollapsed[group] = false
-	} else {
-		// Currently visible, hide it
-		m.settings.GroupCollapsed[group] = true
-	}
+	// Toggle visibility: flip the GroupVisible value
+	m.settings.GroupVisible[group] = !m.settings.GroupVisible[group]
 
 	// Persist settings immediately
 	_ = SaveSettings(m.settings) // Ignore errors (non-critical)
@@ -355,8 +355,8 @@ func (m *SettingsModal) Height() int {
 		// Global (1) + blank line (1) + header (1) + projects
 		return 3 + len(m.projects)
 	case TabGroups:
-		// Header (1) + groups
-		return 1 + len(StatusGroups)
+		// Header (1) + groups + blank line (1) + help text (1)
+		return 3 + len(StatusGroups)
 	default:
 		return 3
 	}

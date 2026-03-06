@@ -8,6 +8,7 @@ import (
 func TestSettingsModal_TabSwitching(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      make(map[string]bool),
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     map[string]int{"project-a": 2},
 		GlobalMaxParallel: 4,
@@ -58,7 +59,8 @@ func TestSettingsModal_TabSwitching(t *testing.T) {
 // TestSettingsModal_GroupsTabRendering tests that the Groups tab displays group visibility settings
 func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	settings := Settings{
-		GroupCollapsed:    map[string]bool{"Completed": true}, // Completed is hidden
+		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      map[string]bool{"Ready": true, "Waiting": true, "Active": true, "Blocked": true, "Completed": false, "Draft": false}, // Completed is hidden
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
@@ -86,12 +88,23 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	if !containsString(view, "☑") || !containsString(view, "☐") {
 		t.Error("Expected view to contain checkbox symbols (☑ or ☐)")
 	}
+
+	// Verify specific checkbox states based on GroupVisible (not GroupCollapsed!)
+	// Ready should show ☑ (visible=true)
+	if !containsString(view, "☑ Ready") {
+		t.Error("Expected 'Ready' to show checked box (☑) when GroupVisible=true")
+	}
+	// Completed should show ☐ (visible=false)
+	if !containsString(view, "☐ Completed") {
+		t.Error("Expected 'Completed' to show unchecked box (☐) when GroupVisible=false")
+	}
 }
 
 // TestSettingsModal_GroupVisibilityToggle tests toggling group visibility with Space key
 func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      map[string]bool{"Ready": true}, // Ready starts visible
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
@@ -101,9 +114,9 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 	modal.currentTab = TabGroups
 	modal.selectedIndex = 0 // Select first group (Ready)
 
-	// Initially, all groups should be visible (not in GroupCollapsed map)
-	if modal.settings.GroupCollapsed["Ready"] {
-		t.Error("Expected 'Ready' group to be visible initially")
+	// Initially, Ready should be visible (GroupVisible["Ready"] = true)
+	if !modal.settings.GroupVisible["Ready"] {
+		t.Error("Expected 'Ready' group to be visible initially (GroupVisible=true)")
 	}
 
 	// Press Space to hide the group
@@ -112,15 +125,15 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 		t.Error("Expected space key to be handled in Groups tab")
 	}
 
-	// Now Ready should be hidden (GroupCollapsed["Ready"] = true)
-	if !modal.settings.GroupCollapsed["Ready"] {
-		t.Error("Expected 'Ready' group to be hidden after space toggle")
+	// Now Ready should be hidden (GroupVisible["Ready"] = false)
+	if modal.settings.GroupVisible["Ready"] {
+		t.Error("Expected 'Ready' group to be hidden after space toggle (GroupVisible=false)")
 	}
 
 	// Press Space again to show it
 	modal.HandleKey(" ")
-	if modal.settings.GroupCollapsed["Ready"] {
-		t.Error("Expected 'Ready' group to be visible after second space toggle")
+	if !modal.settings.GroupVisible["Ready"] {
+		t.Error("Expected 'Ready' group to be visible after second space toggle (GroupVisible=true)")
 	}
 }
 

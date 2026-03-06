@@ -410,3 +410,40 @@ func TestSettingsModal_ViewShowsSaveError(t *testing.T) {
 		t.Error("Expected view to still contain error message on second render")
 	}
 }
+
+func TestSettingsModal_GetMaxIndex(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+			"project-b": 3,
+			"project-c": 0,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Test Limits tab: should return len(projects) = 3
+	modal.currentTab = TabLimits
+	maxIndex := modal.getMaxIndex()
+	if maxIndex != 3 {
+		t.Errorf("Limits tab: expected maxIndex 3, got %d", maxIndex)
+	}
+
+	// Test Groups tab: should return len(StatusGroups) - 1 = 9
+	modal.currentTab = TabGroups
+	maxIndex = modal.getMaxIndex()
+	expected := len(StatusGroups) - 1
+	if maxIndex != expected {
+		t.Errorf("Groups tab: expected maxIndex %d, got %d", expected, maxIndex)
+	}
+
+	// Test Runtime tab: should return 2 (model, wrap, log)
+	modal.currentTab = TabRuntime
+	maxIndex = modal.getMaxIndex()
+	if maxIndex != 2 {
+		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
+	}
+}

@@ -103,6 +103,19 @@ func (m *SettingsModal) saveSettingsCmd() tea.Cmd {
 	}
 }
 
+// getMaxIndex returns the maximum valid index for the current tab
+func (m *SettingsModal) getMaxIndex() int {
+	switch m.currentTab {
+	case TabLimits:
+		return len(m.projects) // 0=global, 1..N=projects
+	case TabGroups:
+		return len(StatusGroups) - 1
+	case TabRuntime:
+		return 2 // 0=model, 1=wrap, 2=log
+	}
+	return 0
+}
+
 // View implements Modal
 func (m *SettingsModal) View() string {
 	var s strings.Builder
@@ -422,6 +435,12 @@ func (m *SettingsModal) switchTab() {
 	}
 	m.selectedIndex = 0 // Reset selection when switching tabs
 	m.editMode = false  // Exit edit mode when switching tabs
+
+	// Ensure selectedIndex is valid for the new tab
+	maxIndex := m.getMaxIndex()
+	if m.selectedIndex > maxIndex {
+		m.selectedIndex = 0
+	}
 }
 
 // toggleTextWrap toggles the text wrapping setting and returns a save command
@@ -460,17 +479,7 @@ func (m *SettingsModal) toggleGroupVisibility() tea.Cmd {
 
 // moveDown moves selection down one item
 func (m *SettingsModal) moveDown() {
-	var maxIndex int
-
-	switch m.currentTab {
-	case TabLimits:
-		maxIndex = len(m.projects) // 0 for global, 1..N for projects
-	case TabGroups:
-		maxIndex = len(StatusGroups) - 1
-	case TabRuntime:
-		maxIndex = 2 // 0 = model, 1 = text wrap, 2 = log level
-	}
-
+	maxIndex := m.getMaxIndex()
 	if m.selectedIndex < maxIndex {
 		m.selectedIndex++
 	}

@@ -148,8 +148,8 @@ func TestViewWithSelection_ShowsCheckboxes(t *testing.T) {
 	// Select task1
 	model.selectedTasks["task1"] = true
 
-	// Render with selection
-	view := model.taskTree.ViewWithSelection(80, 10, model.selectedTasks)
+	// Render with selection (single project mode - no activeProjectID needed)
+	view := model.taskTree.ViewWithSelection(80, 10, model.selectedTasks, "")
 
 	// Check that selected task shows [x]
 	if !strings.Contains(view, "[x]") {

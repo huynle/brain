@@ -916,7 +916,22 @@ func statusIndicator(classification string) string {
 }
 
 // View renders the task tree as a string within the given dimensions.
+// This is the legacy method without project label support. Use ViewWithProject instead.
 func (tt *TaskTree) View(width, height int) string {
+	return tt.ViewWithProject(width, height, "")
+}
+
+// ViewWithSelection renders the task tree with multi-select checkboxes and project labels.
+// When activeProjectID == "all", shows [project-name] prefix for each task.
+func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[string]bool, activeProjectID string) string {
+	// Store selection for rendering
+	tt.selectedTasks = selectedTasks
+	return tt.ViewWithProject(width, height, activeProjectID)
+}
+
+// ViewWithProject renders the task tree with optional project labels.
+// When activeProjectID == "all", shows [project-name] prefix for each task.
+func (tt *TaskTree) ViewWithProject(width, height int, activeProjectID string) string {
 	// Check lane view first (takes precedence over grouped view)
 	if tt.useLaneView {
 		return tt.viewLaneTree(width, height)
@@ -924,19 +939,12 @@ func (tt *TaskTree) View(width, height int) string {
 
 	if tt.useGroupedView {
 		if tt.useFeatureView {
-			return tt.viewFeatureGrouped(width, height)
+			return tt.viewFeatureGrouped(width, height, activeProjectID)
 		}
-		return tt.viewGrouped(width, height)
+		return tt.viewGrouped(width, height, activeProjectID)
 	}
 
 	return tt.viewLegacy(width, height)
-}
-
-// ViewWithSelection renders the task tree with multi-select checkboxes.
-func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[string]bool) string {
-	// Store selection for rendering
-	tt.selectedTasks = selectedTasks
-	return tt.View(width, height)
 }
 
 // viewLegacy is the original tree-based rendering.
@@ -966,7 +974,7 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 }
 
 // viewGrouped renders tasks in grouped view with collapsible headers.
-func (tt *TaskTree) viewGrouped(width, height int) string {
+func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) string {
 	if len(tt.groups) == 0 {
 		return DimStyle.Render("  No tasks")
 	}
@@ -1003,7 +1011,7 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 		if !group.Collapsed {
 			for tIdx, task := range group.Tasks {
 				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
-				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -1061,7 +1069,7 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 }
 
 // viewFeatureGrouped renders tasks in feature-grouped view.
-func (tt *TaskTree) viewFeatureGrouped(width, height int) string {
+func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string) string {
 	if len(tt.featureGroups.Features) == 0 && tt.featureGroups.Ungrouped == nil {
 		return DimStyle.Render("  No tasks")
 	}
@@ -1097,7 +1105,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int) string {
 		if !feature.Collapsed {
 			for tIdx, task := range feature.Tasks {
 				isTaskSelected := (fIdx == tt.selectedFeatureIdx && tIdx == tt.selectedFeatureTaskIdx && !tt.isOnUngrouped)
-				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -1128,7 +1136,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int) string {
 		if !ungrouped.Collapsed {
 			for tIdx, task := range ungrouped.Tasks {
 				isTaskSelected := (tt.isOnUngrouped && tIdx == tt.selectedFeatureTaskIdx)
-				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
 				lines = append(lines, taskLine)
 			}
 		}

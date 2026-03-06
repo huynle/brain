@@ -61,8 +61,8 @@ type Model struct {
 	// Multi-project state
 	projectTabs     ProjectTabs
 	activeProjectID string
-	tasksByProject map[string][]types.ResolvedTask
-	sseClients     map[string]*SSEClient
+	tasksByProject  map[string][]types.ResolvedTask
+	sseClients      map[string]*SSEClient
 
 	// Multi-select state
 	selectedTasks map[string]bool
@@ -366,6 +366,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		switch string(msg.Runes) {
+		case "?":
+			// Open help modal
+			modal := NewHelpModal(m.config.IsMultiProject())
+			cmd := m.modalManager.Open(modal)
+			return m, cmd
 		case "S":
 			// Open settings modal
 			modal := NewSettingsModal(m.settings)
@@ -826,7 +831,7 @@ func (m Model) renderBaseView() string {
 		innerHeight = 1
 	}
 
-	taskContent := m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks)
+	taskContent := m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
 	taskPanel := taskPanelStyle.
 		Width(leftWidth - 2).
 		Height(mainHeight).

@@ -92,13 +92,22 @@ func TestMetadataModal_Interface(t *testing.T) {
 		t.Error("View() returned empty string")
 	}
 
-	// Test HandleKey (stub should return false for now)
+	// Test HandleKey - now implemented, should handle navigation keys
 	handled, cmd := modal.HandleKey("j")
-	if handled {
-		t.Error("HandleKey() returned true for stub")
+	if !handled {
+		t.Error("HandleKey('j') should return true (handled)")
 	}
 	if cmd != nil {
-		t.Error("HandleKey() returned non-nil cmd for stub")
+		t.Error("HandleKey() should return nil cmd")
+	}
+
+	// Test unhandled key returns false
+	handled, cmd = modal.HandleKey("x")
+	if handled {
+		t.Error("HandleKey('x') should return false (not handled)")
+	}
+	if cmd != nil {
+		t.Error("HandleKey('x') should return nil cmd")
 	}
 }
 

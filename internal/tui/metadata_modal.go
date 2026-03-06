@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
 )
 
@@ -74,27 +78,173 @@ func NewMetadataModal(taskID string, apiClient *runner.APIClient) *MetadataModal
 }
 
 // ============================================================================
-// Modal Interface Implementation (Stubs)
+// Navigation Methods
 // ============================================================================
 
-// Init initializes the modal (stub).
+// moveDown moves focus to the next field (wraps to top).
+func (m *MetadataModal) moveDown() {
+	m.focusedIndex++
+	if m.focusedIndex >= len(m.fieldList) {
+		m.focusedIndex = 0
+	}
+	m.focusedField = m.fieldList[m.focusedIndex]
+}
+
+// moveUp moves focus to the previous field (wraps to bottom).
+func (m *MetadataModal) moveUp() {
+	m.focusedIndex--
+	if m.focusedIndex < 0 {
+		m.focusedIndex = len(m.fieldList) - 1
+	}
+	m.focusedField = m.fieldList[m.focusedIndex]
+}
+
+// moveToTop moves focus to the first field.
+func (m *MetadataModal) moveToTop() {
+	m.focusedIndex = 0
+	m.focusedField = m.fieldList[m.focusedIndex]
+}
+
+// moveToBottom moves focus to the last field.
+func (m *MetadataModal) moveToBottom() {
+	m.focusedIndex = len(m.fieldList) - 1
+	m.focusedField = m.fieldList[m.focusedIndex]
+}
+
+// enterEditMode transitions to edit mode based on field type.
+func (m *MetadataModal) enterEditMode() {
+	fieldType := getFieldType(m.focusedField)
+	
+	switch fieldType {
+	case FieldTypeText:
+		m.interactionMode = ModeEditText
+		// Initialize editBuffer with current value
+		if val, ok := m.values[m.focusedField]; ok {
+			m.editBuffer = val
+		} else {
+			m.editBuffer = ""
+		}
+	case FieldTypeDropdown, FieldTypeBoolean:
+		m.interactionMode = ModeEditDropdown
+		m.dropdownIndex = 0
+		m.dropdownOptions = getEnumOptions(m.focusedField)
+		// For booleans, create options if needed
+		if fieldType == FieldTypeBoolean {
+			m.dropdownOptions = []string{"true", "false"}
+		}
+	}
+}
+
+// ============================================================================
+// Modal Interface Implementation
+// ============================================================================
+
+// Init initializes the modal.
 func (m *MetadataModal) Init() tea.Cmd {
 	return nil
 }
 
-// Update handles messages (stub).
+// Update handles messages.
 func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	return m, nil
 }
 
-// View renders the modal content (stub).
+// View renders the modal content.
 func (m *MetadataModal) View() string {
-	return "Metadata Modal (stub)"
+	var b strings.Builder
+
+	// Render field list
+	for i, field := range m.fieldList {
+		// Determine indicator and styling based on focus
+		var indicator, line string
+		isFocused := i == m.focusedIndex
+
+		if isFocused {
+			indicator = "→"
+		} else {
+			indicator = " "
+		}
+
+		// Get field label and value
+		label := getFieldLabel(field)
+		value := m.getFieldDisplayValue(field)
+
+		// Format line
+		line = fmt.Sprintf("%s %s: %s", indicator, label, value)
+
+		// Apply styling
+		if isFocused {
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+			line = style.Render(line)
+		} else {
+			style := lipgloss.NewStyle().Foreground(ColorDim)
+			line = style.Render(line)
+		}
+
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+
+	// Add footer help text
+	b.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	helpText := "j/k: navigate  Enter: edit  Esc: close"
+	b.WriteString(helpStyle.Render(helpText))
+
+	return b.String()
 }
 
-// HandleKey handles a key press (stub).
+// getFieldDisplayValue returns the display value for a field.
+func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
+	fieldType := getFieldType(field)
+
+	switch fieldType {
+	case FieldTypeBoolean:
+		if val, ok := m.boolValues[field]; ok {
+			if val {
+				return "true"
+			}
+			return "false"
+		}
+		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+
+	case FieldTypeText, FieldTypeDropdown:
+		if val, ok := m.values[field]; ok && val != "" {
+			return val
+		}
+		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+
+	default:
+		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+	}
+}
+
+// HandleKey handles a key press.
 func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
-	return false, nil
+	// Only handle navigation keys in Navigate mode
+	if m.interactionMode != ModeNavigate {
+		return false, nil
+	}
+
+	switch key {
+	case "j", "down":
+		m.moveDown()
+		return true, nil
+	case "k", "up":
+		m.moveUp()
+		return true, nil
+	case "g":
+		m.moveToTop()
+		return true, nil
+	case "G":
+		m.moveToBottom()
+		return true, nil
+	case "enter":
+		m.enterEditMode()
+		return true, nil
+	default:
+		return false, nil
+	}
 }
 
 // Title returns the modal title.

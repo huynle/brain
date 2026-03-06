@@ -193,6 +193,62 @@ func BuildTree(tasks []types.ResolvedTask) []TreeNode {
 	return roots
 }
 
+// findActiveAncestor walks up parent_id chain to find nearest active ancestor.
+// Handles cases where parent_id points to completed/filtered tasks.
+// Returns "" if no active ancestor found or if a cycle is detected.
+// Uses visited set to prevent infinite loops from parent_id cycles.
+func findActiveAncestor(
+	parentID string,
+	activeTaskMap map[string]types.ResolvedTask,
+	allTaskMap map[string]types.ResolvedTask,
+) string {
+	// First pass: detect cycles by walking the chain
+	visited := make(map[string]bool)
+	currentID := parentID
+
+	for currentID != "" {
+		// Check if we've seen this ID before (cycle detection)
+		if visited[currentID] {
+			return "" // Cycle detected - entire chain is unsafe
+		}
+		visited[currentID] = true
+
+		// Look up task in allTaskMap
+		task, exists := allTaskMap[currentID]
+		if !exists {
+			break // Stop at non-existent task
+		}
+
+		// Move to parent
+		currentID = task.ParentID
+	}
+
+	// Second pass: now that we know there's no cycle, find the first active ancestor
+	currentID = parentID
+	for currentID != "" {
+		// Check if current ID is in activeTaskMap (found active ancestor)
+		if _, exists := activeTaskMap[currentID]; exists {
+			return currentID
+		}
+
+		// Look up task in allTaskMap
+		task, exists := allTaskMap[currentID]
+		if !exists {
+			return "" // Task not found
+		}
+
+		// No parent? Stop here
+		if task.ParentID == "" {
+			return ""
+		}
+
+		// Move to parent
+		currentID = task.ParentID
+	}
+
+	return ""
+}
+
 // FlattenTreeOrder flattens the tree into a list of task IDs in visual/navigation order.
 // Parent appears before children, depth-first traversal.
 func FlattenTreeOrder(tasks []types.ResolvedTask) []string {

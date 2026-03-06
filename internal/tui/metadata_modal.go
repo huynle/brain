@@ -59,6 +59,7 @@ const (
 type MetadataModal struct {
 	taskIDs         []string
 	featureID       string // Feature ID for ModeFeature
+	projectID       string // Project ID for ModeFeature (needed for API calls)
 	mode            MetadataMode
 	apiClient       *runner.APIClient
 	interactionMode MetadataInteractionMode
@@ -96,9 +97,10 @@ func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *Metad
 
 // NewMetadataModalFeature creates a new metadata editing modal for a feature.
 // The taskIDs will be populated in Init() when fetching tasks by feature_id.
-func NewMetadataModalFeature(featureID string, apiClient *runner.APIClient) *MetadataModal {
+func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIClient) *MetadataModal {
 	m := &MetadataModal{
 		featureID:       featureID,
+		projectID:       projectID,
 		mode:            ModeFeature,
 		apiClient:       apiClient,
 		taskIDs:         []string{}, // Will be populated in Init
@@ -442,12 +444,30 @@ func (m *MetadataModal) Init() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Fetch all entries in parallel
-		entries := make([]*types.BrainEntry, len(m.taskIDs))
-		errors := make([]error, len(m.taskIDs))
+		// Step 1: If ModeFeature, fetch feature to get task IDs
+		taskIDs := m.taskIDs
+		if m.mode == ModeFeature && m.featureID != "" {
+			feature, err := m.apiClient.GetFeature(ctx, m.projectID, m.featureID)
+			if err != nil {
+				return metadataFetchedMsg{entries: nil, err: fmt.Errorf("fetch feature: %w", err)}
+			}
+
+			// Extract task IDs from feature
+			taskIDs = make([]string, len(feature.Tasks))
+			for i, task := range feature.Tasks {
+				taskIDs[i] = task.ID
+			}
+
+			// Store for later use
+			m.taskIDs = taskIDs
+		}
+
+		// Step 2: Fetch all task entries in parallel
+		entries := make([]*types.BrainEntry, len(taskIDs))
+		errors := make([]error, len(taskIDs))
 
 		var wg sync.WaitGroup
-		for i, taskID := range m.taskIDs {
+		for i, taskID := range taskIDs {
 			wg.Add(1)
 			go func(idx int, id string) {
 				defer wg.Done()

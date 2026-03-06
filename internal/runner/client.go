@@ -340,6 +340,30 @@ func (c *APIClient) DeleteEntry(ctx context.Context, entryPath string) error {
 	return nil
 }
 
+// GetFeature fetches a feature and its tasks by project ID and feature ID.
+func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string) (*types.FeatureResponse, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features/%s", projectID, featureID)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, apiPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get feature: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Feature *types.FeatureResponse `json:"feature"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode feature: %w", err)
+	}
+
+	return data.Feature, nil
+}
+
 // =============================================================================
 // Internal Helpers
 // =============================================================================

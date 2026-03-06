@@ -59,6 +59,7 @@ type Model struct {
 	stats TaskStats
 
 	// Multi-project state
+	activeProjectID string
 	tasksByProject map[string][]types.ResolvedTask
 	sseClients     map[string]*SSEClient
 
@@ -109,6 +110,10 @@ func NewModel(cfg Config) Model {
 	}
 
 	// Create SSE clients for multi-project mode
+	// Initialize activeProjectID for multi-project mode
+	if cfg.IsMultiProject() {
+		m.activeProjectID = "all"
+	}
 	if cfg.IsMultiProject() {
 		for _, projectID := range cfg.Projects {
 			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, projectID)
@@ -157,16 +162,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Store tasks by project if ProjectID is set (multi-project mode)
 		if msg.ProjectID != "" {
 			m.tasksByProject[msg.ProjectID] = msg.Tasks
+		} else {
+			// Single-project mode: update legacy tasks field directly
+			m.tasks = msg.Tasks
 		}
 
-		// Update legacy tasks field (for single-project or aggregate view)
-		m.tasks = msg.Tasks
+		// Update stats if provided
 		if msg.Stats != nil {
 			m.stats = TaskStatsFromAPI(msg.Stats)
 			m.statusBar.Stats = m.stats
 		}
-		// Update task tree with new data
-		m.taskTree.SetTasks(msg.Tasks)
+
+		// Sync active project view (handles aggregate vs project-specific view)
+		// In single-project mode, this is a no-op
+		m.syncActiveProjectView()
+
+		// Update taskTree
+		m.taskTree.SetTasks(m.tasks)
+
 		// Sync task detail with current selection
 		m.syncTaskDetail()
 
@@ -344,7 +357,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.taskTree.useFeatureView {
 					featureID := m.taskTree.GetSelectedFeatureID()
 					if featureID != "" {
-						modal = NewMetadataModalFeature(featureID, apiClient)
+						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient)
 						if modal != nil {
 							cmd := m.modalManager.Open(modal)
 							return m, cmd
@@ -994,6 +1007,55 @@ func (m *Model) filteredTasks() []types.ResolvedTask {
 		return m.tasks
 	}
 	return FilterTasks(m.tasks, m.filterQuery)
+}
+
+// syncActiveProjectView switches between aggregate view (all projects) and project-specific view.
+// In aggregate view (activeProjectID="all"), merges tasks from all projects.
+// In project-specific view, shows only that project's tasks.
+func (m *Model) syncActiveProjectView() {
+	// Single-project mode: no-op
+	if !m.config.IsMultiProject() {
+		return
+	}
+
+	// Determine which tasks to show
+	if m.activeProjectID == "all" {
+		// Aggregate view: merge all tasks
+		m.tasks = m.getAllTasks()
+		// TODO: Calculate aggregate stats (Phase 3 will integrate with ProjectTabs)
+	} else {
+		// Project-specific view: show only that project's tasks
+		if tasks, ok := m.tasksByProject[m.activeProjectID]; ok {
+			m.tasks = tasks
+		} else {
+			m.tasks = []types.ResolvedTask{}
+		}
+		// TODO: Set project-specific stats (Phase 3 will integrate with ProjectTabs)
+	}
+
+	// Update taskTree with the selected tasks
+	if m.filterActive {
+		// If filter is active, apply it
+		m.applyFilter()
+	} else {
+		// No filter, just set tasks directly
+		m.taskTree.SetTasks(m.tasks)
+	}
+}
+
+// getAllTasks merges all tasks from all projects into a single slice.
+// Returns an empty slice if tasksByProject is empty.
+func (m *Model) getAllTasks() []types.ResolvedTask {
+	if len(m.tasksByProject) == 0 {
+		return []types.ResolvedTask{}
+	}
+
+	var allTasks []types.ResolvedTask
+	for _, tasks := range m.tasksByProject {
+		allTasks = append(allTasks, tasks...)
+	}
+
+	return allTasks
 }
 
 // setStatusMessage sets a status message to be displayed to the user.

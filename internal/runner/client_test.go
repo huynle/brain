@@ -649,3 +649,127 @@ func TestAPIError_Error(t *testing.T) {
 		t.Errorf("Error() = %q, want %q", got, want)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// GetFeature
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetFeature_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/brain-api/features/dark-mode" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"feature": map[string]interface{}{
+				"featureId": "dark-mode",
+				"tasks": []map[string]interface{}{
+					{
+						"id":         "abc123",
+						"title":      "Add dark mode toggle",
+						"status":     "active",
+						"priority":   "high",
+						"featureId":  "dark-mode",
+						"dependsOn":  []string{},
+						"dependents": []string{},
+					},
+					{
+						"id":         "def456",
+						"title":      "Update theme colors",
+						"status":     "pending",
+						"priority":   "medium",
+						"featureId":  "dark-mode",
+						"dependsOn":  []string{"abc123"},
+						"dependents": []string{},
+					},
+				},
+				"ready": true,
+				"stats": map[string]int{
+					"ready":     1,
+					"waiting":   0,
+					"blocked":   0,
+					"completed": 0,
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	feature, err := client.GetFeature(context.Background(), "brain-api", "dark-mode")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if feature == nil {
+		t.Fatal("expected feature, got nil")
+	}
+
+	if feature.FeatureID != "dark-mode" {
+		t.Errorf("FeatureID = %q, want %q", feature.FeatureID, "dark-mode")
+	}
+
+	if len(feature.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(feature.Tasks))
+	}
+
+	if feature.Tasks[0].ID != "abc123" {
+		t.Errorf("Tasks[0].ID = %q, want %q", feature.Tasks[0].ID, "abc123")
+	}
+
+	if feature.Tasks[1].ID != "def456" {
+		t.Errorf("Tasks[1].ID = %q, want %q", feature.Tasks[1].ID, "def456")
+	}
+
+	if !feature.Ready {
+		t.Error("expected Ready to be true")
+	}
+
+	if feature.Stats == nil {
+		t.Fatal("expected Stats, got nil")
+	}
+
+	if feature.Stats.Ready != 1 {
+		t.Errorf("Stats.Ready = %d, want 1", feature.Stats.Ready)
+	}
+}
+
+func TestAPIClient_GetFeature_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"feature not found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetFeature(context.Background(), "brain-api", "nonexistent")
+
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected APIError, got %T", err)
+	}
+
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestAPIClient_GetFeature_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetFeature(context.Background(), "brain-api", "dark-mode")
+
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}

@@ -396,6 +396,40 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 func (m *MetadataModal) View() string {
 	var b strings.Builder
 
+	// Show loading state
+	if m.loading {
+		loadingStyle := lipgloss.NewStyle().Foreground(ColorCyan).Italic(true)
+		b.WriteString(loadingStyle.Render("Loading metadata..."))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Show fetch error
+	if m.fetchError != nil {
+		errorStyle := lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true)
+		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.fetchError)))
+		b.WriteString("\n")
+		helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+		b.WriteString(helpStyle.Render("Press Esc to close"))
+		b.WriteString("\n")
+		return b.String()
+	}
+
+	// Show save success message
+	if m.saveSuccess {
+		successStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
+		b.WriteString(successStyle.Render(fmt.Sprintf("✓ Saved %s", getFieldLabel(m.lastSavedField))))
+		b.WriteString("\n\n")
+		m.saveSuccess = false // Clear after displaying
+	}
+
+	// Show save error
+	if m.saveError != nil {
+		errorStyle := lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true)
+		b.WriteString(errorStyle.Render(fmt.Sprintf("✗ Error: %v", m.saveError)))
+		b.WriteString("\n\n")
+	}
+
 	// Render field list
 	for i, field := range m.fieldList {
 		// Determine indicator and styling based on focus
@@ -412,16 +446,34 @@ func (m *MetadataModal) View() string {
 		label := getFieldLabel(field)
 		value := m.getFieldDisplayValue(field)
 
-		// Format line
-		line = fmt.Sprintf("%s %s: %s", indicator, label, value)
-
-		// Apply styling
-		if isFocused {
+		// If in edit mode for this field, show edit UI
+		if isFocused && m.interactionMode == ModeEditText {
+			// Show edit buffer with cursor
+			line = fmt.Sprintf("%s %s: %s_", indicator, label, m.editBuffer)
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			line = style.Render(line)
+		} else if isFocused && m.interactionMode == ModeEditDropdown {
+			// Show dropdown popup
+			line = fmt.Sprintf("%s %s: %s", indicator, label, value)
 			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
-			line = style.Render(line)
+			b.WriteString(style.Render(line))
+			b.WriteString("\n\n")
+			// Render dropdown options
+			b.WriteString(m.renderDropdown())
+			b.WriteString("\n")
+			continue
 		} else {
-			style := lipgloss.NewStyle().Foreground(ColorDim)
-			line = style.Render(line)
+			// Format line normally
+			line = fmt.Sprintf("%s %s: %s", indicator, label, value)
+
+			// Apply styling
+			if isFocused {
+				style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+				line = style.Render(line)
+			} else {
+				style := lipgloss.NewStyle().Foreground(ColorDim)
+				line = style.Render(line)
+			}
 		}
 
 		b.WriteString(line)
@@ -431,10 +483,39 @@ func (m *MetadataModal) View() string {
 	// Add footer help text
 	b.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
-	helpText := "j/k: navigate  Enter: edit  Esc: close"
+	var helpText string
+	switch m.interactionMode {
+	case ModeEditText:
+		helpText = "Enter: save  Ctrl-U: clear  Esc: cancel"
+	case ModeEditDropdown:
+		helpText = "j/k: select  Enter: save  Esc: cancel"
+	default:
+		helpText = "j/k: navigate  Enter: edit  Esc: close"
+	}
 	b.WriteString(helpStyle.Render(helpText))
 
 	return b.String()
+}
+
+// renderDropdown renders dropdown options with selection indicator.
+func (m *MetadataModal) renderDropdown() string {
+	var lines []string
+	for i, option := range m.dropdownOptions {
+		indicator := " "
+		if i == m.dropdownIndex {
+			indicator = "→"
+		}
+		line := fmt.Sprintf("  %s %s", indicator, option)
+		if i == m.dropdownIndex {
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			lines = append(lines, style.Render(line))
+		} else {
+			style := lipgloss.NewStyle().Foreground(ColorDim)
+			lines = append(lines, style.Render(line))
+		}
+	}
+	
+	return strings.Join(lines, "\n")
 }
 
 // getFieldDisplayValue returns the display value for a field.

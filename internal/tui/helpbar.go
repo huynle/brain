@@ -36,6 +36,14 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
 	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+
+	// Task panel specific shortcuts
+	if h.ActivePanel == PanelTasks {
+		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
+		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
+		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+	}
+
 	shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))
 
 	// Focus indicator on the right

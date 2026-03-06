@@ -58,6 +58,10 @@ type Model struct {
 	tasks []types.ResolvedTask
 	stats TaskStats
 
+	// Multi-project state
+	tasksByProject map[string][]types.ResolvedTask
+	sseClients     map[string]*SSEClient
+
 	// Multi-select state
 	selectedTasks map[string]bool
 
@@ -85,7 +89,7 @@ func NewModel(cfg Config) Model {
 		}
 	}
 
-	return Model{
+	m := Model{
 		config:           cfg,
 		keymap:           DefaultKeyMap(),
 		statusBar:        NewStatusBar(cfg.Project),
@@ -99,8 +103,19 @@ func NewModel(cfg Config) Model {
 		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
+		tasksByProject:   make(map[string][]types.ResolvedTask),
+		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
 	}
+
+	// Create SSE clients for multi-project mode
+	if cfg.IsMultiProject() {
+		for _, projectID := range cfg.Projects {
+			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, projectID)
+		}
+	}
+
+	return m
 }
 
 // NewModelWithContext creates a new TUI model with a custom context.
@@ -139,6 +154,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TasksUpdatedMsg:
+		// Store tasks by project if ProjectID is set (multi-project mode)
+		if msg.ProjectID != "" {
+			m.tasksByProject[msg.ProjectID] = msg.Tasks
+		}
+
+		// Update legacy tasks field (for single-project or aggregate view)
 		m.tasks = msg.Tasks
 		if msg.Stats != nil {
 			m.stats = TaskStatsFromAPI(msg.Stats)
@@ -148,8 +169,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.taskTree.SetTasks(msg.Tasks)
 		// Sync task detail with current selection
 		m.syncTaskDetail()
+
 		// Continue listening for next SSE message
-		return m, m.sseClient.WaitForNextMsg()
+		// In multi-project mode, use the project-specific client
+		var nextCmd tea.Cmd
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			nextCmd = m.sseClients[msg.ProjectID].WaitForNextMsg()
+		} else {
+			nextCmd = m.sseClient.WaitForNextMsg()
+		}
+		return m, nextCmd
 
 	case SSEConnectedMsg:
 		m.connected = true

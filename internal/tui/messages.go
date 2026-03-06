@@ -11,6 +11,7 @@ import (
 // TasksUpdatedMsg is sent when the task list is refreshed (via SSE or polling).
 type TasksUpdatedMsg struct {
 	Tasks []types.ResolvedTask
+	ProjectID string
 	Stats *types.TaskStats
 }
 

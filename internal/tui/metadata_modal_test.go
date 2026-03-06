@@ -307,3 +307,391 @@ func TestMetadataModal_handleEditTextMode(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// Phase 3: Dropdown Navigation Tests
+// ============================================================================
+
+func TestMetadataModal_moveDropdownDown(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	tests := []struct {
+		name          string
+		options       []string
+		initialIndex  int
+		expectedIndex int
+	}{
+		{
+			name:          "Move from 0 to 1",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  0,
+			expectedIndex: 1,
+		},
+		{
+			name:          "Move from 1 to 2",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  1,
+			expectedIndex: 2,
+		},
+		{
+			name:          "Wrap from last to first",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  2,
+			expectedIndex: 0,
+		},
+		{
+			name:          "Single option wraps to itself",
+			options:       []string{"a"},
+			initialIndex:  0,
+			expectedIndex: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modal.dropdownOptions = tt.options
+			modal.dropdownIndex = tt.initialIndex
+
+			modal.moveDropdownDown()
+
+			if modal.dropdownIndex != tt.expectedIndex {
+				t.Errorf("dropdownIndex = %d, want %d", modal.dropdownIndex, tt.expectedIndex)
+			}
+		})
+	}
+}
+
+func TestMetadataModal_moveDropdownUp(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	tests := []struct {
+		name          string
+		options       []string
+		initialIndex  int
+		expectedIndex int
+	}{
+		{
+			name:          "Move from 2 to 1",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  2,
+			expectedIndex: 1,
+		},
+		{
+			name:          "Move from 1 to 0",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  1,
+			expectedIndex: 0,
+		},
+		{
+			name:          "Wrap from first to last",
+			options:       []string{"a", "b", "c"},
+			initialIndex:  0,
+			expectedIndex: 2,
+		},
+		{
+			name:          "Single option wraps to itself",
+			options:       []string{"a"},
+			initialIndex:  0,
+			expectedIndex: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			modal.dropdownOptions = tt.options
+			modal.dropdownIndex = tt.initialIndex
+
+			modal.moveDropdownUp()
+
+			if modal.dropdownIndex != tt.expectedIndex {
+				t.Errorf("dropdownIndex = %d, want %d", modal.dropdownIndex, tt.expectedIndex)
+			}
+		})
+	}
+}
+
+func TestMetadataModal_handleEditDropdownMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Setup: focus on Status field and enter dropdown edit mode
+	modal.focusedField = FieldStatus
+	modal.focusedIndex = 0
+	modal.enterEditMode()
+
+	tests := []struct {
+		name          string
+		key           string
+		initialIndex  int
+		expectedIndex int
+		expectHandled bool
+		expectMode    MetadataInteractionMode
+		expectSaved   bool
+	}{
+		{
+			name:          "j moves down",
+			key:           "j",
+			initialIndex:  0,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeEditDropdown,
+			expectSaved:   false,
+		},
+		{
+			name:          "down moves down",
+			key:           "down",
+			initialIndex:  0,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeEditDropdown,
+			expectSaved:   false,
+		},
+		{
+			name:          "k moves up",
+			key:           "k",
+			initialIndex:  2,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeEditDropdown,
+			expectSaved:   false,
+		},
+		{
+			name:          "up moves up",
+			key:           "up",
+			initialIndex:  2,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeEditDropdown,
+			expectSaved:   false,
+		},
+		{
+			name:          "enter saves and exits to Navigate",
+			key:           "enter",
+			initialIndex:  1,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeNavigate,
+			expectSaved:   true,
+		},
+		{
+			name:          "esc cancels and exits to Navigate",
+			key:           "esc",
+			initialIndex:  2,
+			expectedIndex: 2,
+			expectHandled: true,
+			expectMode:    ModeNavigate,
+			expectSaved:   false,
+		},
+		{
+			name:          "other keys are consumed but ignored",
+			key:           "x",
+			initialIndex:  1,
+			expectedIndex: 1,
+			expectHandled: true,
+			expectMode:    ModeEditDropdown,
+			expectSaved:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Reset state
+			modal.interactionMode = ModeEditDropdown
+			modal.focusedField = FieldStatus
+			modal.dropdownOptions = []string{"draft", "pending", "active", "in_progress"}
+			modal.dropdownIndex = tt.initialIndex
+			delete(modal.values, FieldStatus) // Clear any previous value
+
+			// Call handleEditDropdownMode
+			handled, _ := modal.handleEditDropdownMode(tt.key)
+
+			if handled != tt.expectHandled {
+				t.Errorf("handleEditDropdownMode(%q) handled = %v, want %v", tt.key, handled, tt.expectHandled)
+			}
+
+			if modal.dropdownIndex != tt.expectedIndex {
+				t.Errorf("dropdownIndex = %d, want %d", modal.dropdownIndex, tt.expectedIndex)
+			}
+
+			if modal.interactionMode != tt.expectMode {
+				t.Errorf("interactionMode = %v, want %v", modal.interactionMode, tt.expectMode)
+			}
+
+			// Check if value was saved when expected
+			if tt.expectSaved {
+				expectedValue := modal.dropdownOptions[tt.initialIndex]
+				if modal.values[FieldStatus] != expectedValue {
+					t.Errorf("values[FieldStatus] = %q, want %q", modal.values[FieldStatus], expectedValue)
+				}
+			} else if tt.key != "x" { // Don't check for "other keys" test
+				if _, ok := modal.values[FieldStatus]; ok && tt.key == "esc" {
+					t.Error("esc should not save value")
+				}
+			}
+		})
+	}
+}
+
+func TestMetadataModal_HandleKey_RoutesByMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Test Navigate mode
+	t.Run("Navigate mode handles j key", func(t *testing.T) {
+		modal.interactionMode = ModeNavigate
+		modal.focusedIndex = 0
+
+		handled, _ := modal.HandleKey("j")
+
+		if !handled {
+			t.Error("HandleKey should handle 'j' in Navigate mode")
+		}
+		if modal.focusedIndex != 1 {
+			t.Errorf("focusedIndex = %d, want 1", modal.focusedIndex)
+		}
+	})
+
+	// Test EditText mode
+	t.Run("EditText mode handles character input", func(t *testing.T) {
+		modal.interactionMode = ModeEditText
+		modal.editBuffer = ""
+		modal.focusedField = FieldFeatureID
+
+		handled, _ := modal.HandleKey("a")
+
+		if !handled {
+			t.Error("HandleKey should handle 'a' in EditText mode")
+		}
+		if modal.editBuffer != "a" {
+			t.Errorf("editBuffer = %q, want 'a'", modal.editBuffer)
+		}
+	})
+
+	// Test EditDropdown mode
+	t.Run("EditDropdown mode handles j key", func(t *testing.T) {
+		modal.interactionMode = ModeEditDropdown
+		modal.dropdownOptions = []string{"opt1", "opt2", "opt3"}
+		modal.dropdownIndex = 0
+
+		handled, _ := modal.HandleKey("j")
+
+		if !handled {
+			t.Error("HandleKey should handle 'j' in EditDropdown mode")
+		}
+		if modal.dropdownIndex != 1 {
+			t.Errorf("dropdownIndex = %d, want 1", modal.dropdownIndex)
+		}
+	})
+
+	// Test that j in Navigate mode doesn't affect EditText buffer
+	t.Run("j in Navigate mode doesn't affect edit buffer", func(t *testing.T) {
+		modal.interactionMode = ModeNavigate
+		modal.editBuffer = "test"
+
+		modal.HandleKey("j")
+
+		if modal.editBuffer != "test" {
+			t.Error("Navigate mode j should not affect editBuffer")
+		}
+	})
+}
+
+func TestMetadataModal_enterEditMode_InitializesDropdownIndex(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	tests := []struct {
+		name          string
+		field         MetadataField
+		currentValue  string
+		expectedIndex int
+		expectedMode  MetadataInteractionMode
+	}{
+		{
+			name:          "Status field with existing value 'active'",
+			field:         FieldStatus,
+			currentValue:  "active",
+			expectedIndex: 2, // "active" is at index 2 in status options
+			expectedMode:  ModeEditDropdown,
+		},
+		{
+			name:          "Priority field with value 'high'",
+			field:         FieldPriority,
+			currentValue:  "high",
+			expectedIndex: 0, // "high" is at index 0 in priority options
+			expectedMode:  ModeEditDropdown,
+		},
+		{
+			name:          "Status field with no current value defaults to 0",
+			field:         FieldStatus,
+			currentValue:  "",
+			expectedIndex: 0,
+			expectedMode:  ModeEditDropdown,
+		},
+		{
+			name:          "Status field with unknown value defaults to 0",
+			field:         FieldStatus,
+			currentValue:  "nonexistent",
+			expectedIndex: 0,
+			expectedMode:  ModeEditDropdown,
+		},
+		{
+			name:          "Boolean field with true value",
+			field:         FieldCompleteOnIdle,
+			currentValue:  "true",
+			expectedIndex: 0, // "true" is at index 0 in boolean options
+			expectedMode:  ModeEditDropdown,
+		},
+		{
+			name:          "Boolean field with false value",
+			field:         FieldOpenPRBeforeMerge,
+			currentValue:  "false",
+			expectedIndex: 1, // "false" is at index 1 in boolean options
+			expectedMode:  ModeEditDropdown,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Setup
+			modal.focusedField = tt.field
+			if tt.currentValue != "" {
+				if getFieldType(tt.field) == FieldTypeBoolean {
+					modal.boolValues[tt.field] = tt.currentValue == "true"
+				} else {
+					modal.values[tt.field] = tt.currentValue
+				}
+			} else {
+				// Clear any existing value
+				delete(modal.values, tt.field)
+				delete(modal.boolValues, tt.field)
+			}
+
+			// Call enterEditMode
+			modal.enterEditMode()
+
+			// Verify mode
+			if modal.interactionMode != tt.expectedMode {
+				t.Errorf("interactionMode = %v, want %v", modal.interactionMode, tt.expectedMode)
+			}
+
+			// Verify dropdown index
+			if modal.dropdownIndex != tt.expectedIndex {
+				t.Errorf("dropdownIndex = %d, want %d (options: %v, value: %q)",
+					modal.dropdownIndex, tt.expectedIndex, modal.dropdownOptions, tt.currentValue)
+			}
+
+			// Verify dropdown options were set
+			if len(modal.dropdownOptions) == 0 {
+				t.Error("dropdownOptions should be populated")
+			}
+		})
+	}
+}

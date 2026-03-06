@@ -111,6 +111,22 @@ func (m *MetadataModal) moveToBottom() {
 	m.focusedField = m.fieldList[m.focusedIndex]
 }
 
+// moveDropdownDown moves dropdown selection down (wraps to top).
+func (m *MetadataModal) moveDropdownDown() {
+	m.dropdownIndex++
+	if m.dropdownIndex >= len(m.dropdownOptions) {
+		m.dropdownIndex = 0
+	}
+}
+
+// moveDropdownUp moves dropdown selection up (wraps to bottom).
+func (m *MetadataModal) moveDropdownUp() {
+	m.dropdownIndex--
+	if m.dropdownIndex < 0 {
+		m.dropdownIndex = len(m.dropdownOptions) - 1
+	}
+}
+
 // enterEditMode transitions to edit mode based on field type.
 func (m *MetadataModal) enterEditMode() {
 	fieldType := getFieldType(m.focusedField)
@@ -126,11 +142,41 @@ func (m *MetadataModal) enterEditMode() {
 		}
 	case FieldTypeDropdown, FieldTypeBoolean:
 		m.interactionMode = ModeEditDropdown
-		m.dropdownIndex = 0
 		m.dropdownOptions = getEnumOptions(m.focusedField)
+
 		// For booleans, create options if needed
 		if fieldType == FieldTypeBoolean {
 			m.dropdownOptions = []string{"true", "false"}
+		}
+
+		// Find current value in dropdown options and set index
+		m.dropdownIndex = 0 // Default to 0
+		var currentValue string
+
+		if fieldType == FieldTypeBoolean {
+			// Get boolean value and convert to string
+			if val, ok := m.boolValues[m.focusedField]; ok {
+				if val {
+					currentValue = "true"
+				} else {
+					currentValue = "false"
+				}
+			}
+		} else {
+			// Get string value
+			if val, ok := m.values[m.focusedField]; ok {
+				currentValue = val
+			}
+		}
+
+		// Find index of current value in options
+		if currentValue != "" {
+			for i, option := range m.dropdownOptions {
+				if option == currentValue {
+					m.dropdownIndex = i
+					break
+				}
+			}
 		}
 	}
 }
@@ -186,6 +232,29 @@ func (m *MetadataModal) handleEditTextMode(key string) (bool, tea.Cmd) {
 			return true, nil
 		}
 		return false, nil
+	}
+}
+
+// handleEditDropdownMode handles key presses in dropdown editing mode.
+func (m *MetadataModal) handleEditDropdownMode(key string) (bool, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		m.moveDropdownDown()
+		return true, nil
+	case "k", "up":
+		m.moveDropdownUp()
+		return true, nil
+	case "enter":
+		cmd := m.saveField()
+		m.interactionMode = ModeNavigate
+		return true, cmd
+	case "esc":
+		// Discard changes
+		m.interactionMode = ModeNavigate
+		return true, nil
+	default:
+		// Consume but ignore all other keys
+		return true, nil
 	}
 }
 
@@ -300,11 +369,20 @@ func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
 
 // HandleKey handles a key press.
 func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
-	// Only handle navigation keys in Navigate mode
-	if m.interactionMode != ModeNavigate {
+	switch m.interactionMode {
+	case ModeNavigate:
+		return m.handleNavigateMode(key)
+	case ModeEditText:
+		return m.handleEditTextMode(key)
+	case ModeEditDropdown:
+		return m.handleEditDropdownMode(key)
+	default:
 		return false, nil
 	}
+}
 
+// handleNavigateMode handles key presses in navigation mode.
+func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 	switch key {
 	case "j", "down":
 		m.moveDown()

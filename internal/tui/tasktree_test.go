@@ -11,6 +11,13 @@ import (
 // Helper: make a minimal ResolvedTask
 // =============================================================================
 
+func makeTaskTree() TaskTree {
+	tt := NewTaskTree()
+	// Use legacy tree view for most tests (backward compatibility)
+	tt.SetViewMode(false)
+	return tt
+}
+
 func makeTask(id, title, classification, priority string, dependsOn []string) types.ResolvedTask {
 	return types.ResolvedTask{
 		ID:             id,
@@ -318,7 +325,7 @@ func TestFlattenTreeOrder_DeepHierarchy(t *testing.T) {
 // =============================================================================
 
 func TestNewTaskTree_DefaultState(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 
 	if tt.SelectedID != "" {
 		t.Errorf("expected empty SelectedID, got '%s'", tt.SelectedID)
@@ -329,10 +336,13 @@ func TestNewTaskTree_DefaultState(t *testing.T) {
 	if len(tt.nodes) != 0 {
 		t.Errorf("expected 0 nodes, got %d", len(tt.nodes))
 	}
+	if len(tt.order) != 0 {
+		t.Errorf("expected 0 order items, got %d", len(tt.order))
+	}
 }
 
 func TestTaskTree_SetTasks_BuildsTree(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "waiting", "medium", []string{"t1"}),
@@ -353,7 +363,7 @@ func TestTaskTree_SetTasks_BuildsTree(t *testing.T) {
 }
 
 func TestTaskTree_SetTasks_PreservesSelection(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "ready", "medium", nil),
@@ -372,7 +382,7 @@ func TestTaskTree_SetTasks_PreservesSelection(t *testing.T) {
 }
 
 func TestTaskTree_MoveDown(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "ready", "medium", nil),
@@ -401,7 +411,7 @@ func TestTaskTree_MoveDown(t *testing.T) {
 }
 
 func TestTaskTree_MoveUp(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "ready", "medium", nil),
@@ -427,7 +437,7 @@ func TestTaskTree_MoveUp(t *testing.T) {
 }
 
 func TestTaskTree_MoveToTop(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "ready", "medium", nil),
@@ -447,7 +457,7 @@ func TestTaskTree_MoveToTop(t *testing.T) {
 }
 
 func TestTaskTree_MoveToBottom(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "high", nil),
 		makeTask("t2", "Task 2", "ready", "medium", nil),
@@ -465,7 +475,7 @@ func TestTaskTree_MoveToBottom(t *testing.T) {
 }
 
 func TestTaskTree_NavigationOnEmpty(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 
 	// Should not panic on empty tree
 	tt.MoveDown()
@@ -483,7 +493,7 @@ func TestTaskTree_NavigationOnEmpty(t *testing.T) {
 // =============================================================================
 
 func TestTaskTree_View_ShowsTaskTitles(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Build the widget", "ready", "medium", nil),
 		makeTask("t2", "Test the widget", "waiting", "medium", []string{"t1"}),
@@ -501,7 +511,7 @@ func TestTaskTree_View_ShowsTaskTitles(t *testing.T) {
 }
 
 func TestTaskTree_View_ShowsStatusIndicators(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Ready Task", "ready", "medium", nil),
 		makeTask("t2", "Waiting Task", "waiting", "medium", nil),
@@ -524,7 +534,7 @@ func TestTaskTree_View_ShowsStatusIndicators(t *testing.T) {
 }
 
 func TestTaskTree_View_ShowsCycleIndicator(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTaskInCycle("t1", "Cyclic Task", "blocked", "medium", []string{"t2"}),
 		makeTaskInCycle("t2", "Cyclic Task 2", "blocked", "medium", []string{"t1"}),
@@ -539,7 +549,7 @@ func TestTaskTree_View_ShowsCycleIndicator(t *testing.T) {
 }
 
 func TestTaskTree_View_ShowsHighPriorityIndicator(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Urgent Task", "ready", "high", nil),
 	}
@@ -553,7 +563,7 @@ func TestTaskTree_View_ShowsHighPriorityIndicator(t *testing.T) {
 }
 
 func TestTaskTree_View_ShowsTreeConnectors(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("root", "Root", "ready", "high", nil),
 		makeTask("child1", "Child 1", "waiting", "medium", []string{"root"}),
@@ -570,7 +580,7 @@ func TestTaskTree_View_ShowsTreeConnectors(t *testing.T) {
 }
 
 func TestTaskTree_View_EmptyShowsPlaceholder(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	view := tt.View(60, 20)
 
 	if !strings.Contains(view, "No tasks") {
@@ -579,7 +589,7 @@ func TestTaskTree_View_EmptyShowsPlaceholder(t *testing.T) {
 }
 
 func TestTaskTree_View_SelectedTaskHighlighted(t *testing.T) {
-	tt := NewTaskTree()
+	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "First Task", "ready", "medium", nil),
 		makeTask("t2", "Second Task", "ready", "medium", nil),

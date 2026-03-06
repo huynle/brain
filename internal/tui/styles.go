@@ -70,6 +70,11 @@ var DimStyle = lipgloss.NewStyle().
 // BoldStyle is used for keyboard shortcut keys in help bar.
 var BoldStyle = lipgloss.NewStyle().Bold(true)
 
+// GroupHeaderStyle is used for collapsible group headers.
+var GroupHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(ColorCyan)
+
 // =============================================================================
 // Status Styles
 // =============================================================================

@@ -187,6 +187,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.syncTaskDetail()
 			}
 			return m, nil
+		case " ":
+			// Space toggles group collapse when on group header
+			if m.activePanel == PanelTasks {
+				m.taskTree.ToggleCollapse()
+			}
+			return m, nil
 		}
 
 	case tea.KeyUp:

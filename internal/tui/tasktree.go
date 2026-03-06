@@ -221,44 +221,144 @@ type TaskTree struct {
 	SelectedID string
 	Cursor     int
 
+	// Legacy tree mode (will be removed)
 	nodes []TreeNode
 	order []string // flattened navigation order (task IDs)
 	tasks []types.ResolvedTask
+
+	// New grouped mode
+	groups           []TaskGroup
+	groupCollapsed   map[string]bool // persistent collapsed state
+	selectedGroupIdx int             // index into groups
+	selectedTaskIdx  int             // index into group.Tasks, or -1 for group header
+	useGroupedView   bool            // if true, use grouped view; if false, use tree view
 }
 
 // NewTaskTree creates a new empty TaskTree component.
 func NewTaskTree() TaskTree {
-	return TaskTree{}
+	// Load collapsed state from settings
+	settings, _ := LoadSettings()
+	return TaskTree{
+		useGroupedView: true, // Enable grouped view by default
+		groupCollapsed: settings.GroupCollapsed,
+	}
+}
+
+// SetViewMode sets the view mode (for testing purposes).
+// If useGrouped is true, uses grouped view; otherwise uses legacy tree view.
+func (tt *TaskTree) SetViewMode(useGrouped bool) {
+	tt.useGroupedView = useGrouped
 }
 
 // SetTasks updates the task list, rebuilds the tree, and preserves selection if possible.
 func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 	tt.tasks = tasks
-	tt.nodes = BuildTree(tasks)
-	tt.order = FlattenTreeOrder(tasks)
 
-	// Preserve selection if the selected task still exists
-	if tt.SelectedID != "" {
-		for i, id := range tt.order {
-			if id == tt.SelectedID {
-				tt.Cursor = i
-				return
+	if tt.useGroupedView {
+		// Build groups
+		tt.groups = GroupTasks(tasks)
+
+		// Restore collapsed state for each group
+		for i := range tt.groups {
+			groupName := tt.groups[i].Name
+			if collapsed, ok := tt.groupCollapsed[groupName]; ok {
+				tt.groups[i].Collapsed = collapsed
 			}
+		}
+
+		// Preserve selection if possible
+		if tt.SelectedID != "" {
+			found := false
+			for gIdx, group := range tt.groups {
+				for tIdx, task := range group.Tasks {
+					if task.ID == tt.SelectedID {
+						tt.selectedGroupIdx = gIdx
+						tt.selectedTaskIdx = tIdx
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			if !found {
+				// Selection lost, default to first task
+				tt.selectFirstTask()
+			}
+		} else {
+			// Auto-select first task
+			tt.selectFirstTask()
+		}
+	} else {
+		// Legacy tree view
+		tt.nodes = BuildTree(tasks)
+		tt.order = FlattenTreeOrder(tasks)
+
+		// Preserve selection if the selected task still exists
+		if tt.SelectedID != "" {
+			for i, id := range tt.order {
+				if id == tt.SelectedID {
+					tt.Cursor = i
+					return
+				}
+			}
+		}
+
+		// Auto-select first task if no selection or selection lost
+		if len(tt.order) > 0 {
+			tt.SelectedID = tt.order[0]
+			tt.Cursor = 0
+		} else {
+			tt.SelectedID = ""
+			tt.Cursor = 0
+		}
+	}
+}
+
+// selectFirstTask selects the first task in the grouped view.
+func (tt *TaskTree) selectFirstTask() {
+	if len(tt.groups) == 0 {
+		tt.SelectedID = ""
+		tt.selectedGroupIdx = 0
+		tt.selectedTaskIdx = -1
+		return
+	}
+
+	// Find first non-empty, non-collapsed group
+	for i, group := range tt.groups {
+		if len(group.Tasks) > 0 {
+			tt.selectedGroupIdx = i
+			if group.Collapsed {
+				// Start on group header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Start on first task
+				tt.selectedTaskIdx = 0
+				tt.SelectedID = group.Tasks[0].ID
+			}
+			return
 		}
 	}
 
-	// Auto-select first task if no selection or selection lost
-	if len(tt.order) > 0 {
-		tt.SelectedID = tt.order[0]
-		tt.Cursor = 0
-	} else {
-		tt.SelectedID = ""
-		tt.Cursor = 0
-	}
+	// No tasks available
+	tt.SelectedID = ""
+	tt.selectedGroupIdx = 0
+	tt.selectedTaskIdx = -1
 }
 
 // MoveDown moves the cursor down one position.
 func (tt *TaskTree) MoveDown() {
+	if tt.useGroupedView {
+		tt.moveDownGrouped()
+	} else {
+		tt.moveDownLegacy()
+	}
+}
+
+// moveDownLegacy is the original tree-based navigation.
+func (tt *TaskTree) moveDownLegacy() {
 	if len(tt.order) == 0 {
 		return
 	}
@@ -268,8 +368,67 @@ func (tt *TaskTree) MoveDown() {
 	}
 }
 
+// moveDownGrouped navigates down in grouped view.
+func (tt *TaskTree) moveDownGrouped() {
+	if len(tt.groups) == 0 {
+		return
+	}
+
+	group := tt.groups[tt.selectedGroupIdx]
+
+	if tt.selectedTaskIdx == -1 {
+		// On group header
+		if group.Collapsed {
+			// Jump to next group header
+			if tt.selectedGroupIdx < len(tt.groups)-1 {
+				tt.selectedGroupIdx++
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			}
+		} else {
+			// Enter group (move to first task)
+			if len(group.Tasks) > 0 {
+				tt.selectedTaskIdx = 0
+				tt.SelectedID = group.Tasks[0].ID
+			}
+		}
+	} else {
+		// Within group
+		if tt.selectedTaskIdx < len(group.Tasks)-1 {
+			// Move to next task in group
+			tt.selectedTaskIdx++
+			tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
+		} else {
+			// End of group, move to next group
+			if tt.selectedGroupIdx < len(tt.groups)-1 {
+				tt.selectedGroupIdx++
+				nextGroup := tt.groups[tt.selectedGroupIdx]
+
+				// Skip group header and go directly to first task if group is not collapsed
+				if !nextGroup.Collapsed && len(nextGroup.Tasks) > 0 {
+					tt.selectedTaskIdx = 0
+					tt.SelectedID = nextGroup.Tasks[0].ID
+				} else {
+					// Group is collapsed or empty, stay on header
+					tt.selectedTaskIdx = -1
+					tt.SelectedID = ""
+				}
+			}
+		}
+	}
+}
+
 // MoveUp moves the cursor up one position.
 func (tt *TaskTree) MoveUp() {
+	if tt.useGroupedView {
+		tt.moveUpGrouped()
+	} else {
+		tt.moveUpLegacy()
+	}
+}
+
+// moveUpLegacy is the original tree-based navigation.
+func (tt *TaskTree) moveUpLegacy() {
 	if len(tt.order) == 0 {
 		return
 	}
@@ -279,8 +438,52 @@ func (tt *TaskTree) MoveUp() {
 	}
 }
 
+// moveUpGrouped navigates up in grouped view.
+func (tt *TaskTree) moveUpGrouped() {
+	if len(tt.groups) == 0 {
+		return
+	}
+
+	if tt.selectedTaskIdx == -1 {
+		// On group header, move to previous group
+		if tt.selectedGroupIdx > 0 {
+			tt.selectedGroupIdx--
+			prevGroup := tt.groups[tt.selectedGroupIdx]
+			// Land on last task of previous group if expanded
+			if !prevGroup.Collapsed && len(prevGroup.Tasks) > 0 {
+				tt.selectedTaskIdx = len(prevGroup.Tasks) - 1
+				tt.SelectedID = prevGroup.Tasks[tt.selectedTaskIdx].ID
+			} else {
+				// Stay on group header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			}
+		}
+	} else {
+		// Within group
+		if tt.selectedTaskIdx > 0 {
+			// Move to previous task
+			tt.selectedTaskIdx--
+			tt.SelectedID = tt.groups[tt.selectedGroupIdx].Tasks[tt.selectedTaskIdx].ID
+		} else {
+			// At top of group, move to group header
+			tt.selectedTaskIdx = -1
+			tt.SelectedID = ""
+		}
+	}
+}
+
 // MoveToTop moves the cursor to the first task.
 func (tt *TaskTree) MoveToTop() {
+	if tt.useGroupedView {
+		tt.moveToTopGrouped()
+	} else {
+		tt.moveToTopLegacy()
+	}
+}
+
+// moveToTopLegacy is the original tree-based navigation.
+func (tt *TaskTree) moveToTopLegacy() {
 	if len(tt.order) == 0 {
 		return
 	}
@@ -288,13 +491,93 @@ func (tt *TaskTree) MoveToTop() {
 	tt.SelectedID = tt.order[0]
 }
 
+// moveToTopGrouped moves to the first task in grouped view.
+func (tt *TaskTree) moveToTopGrouped() {
+	if len(tt.groups) == 0 {
+		return
+	}
+
+	// Find first non-empty group
+	for i, group := range tt.groups {
+		if len(group.Tasks) > 0 {
+			tt.selectedGroupIdx = i
+			if group.Collapsed {
+				// Start on group header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Start on first task
+				tt.selectedTaskIdx = 0
+				tt.SelectedID = group.Tasks[0].ID
+			}
+			return
+		}
+	}
+}
+
 // MoveToBottom moves the cursor to the last task.
 func (tt *TaskTree) MoveToBottom() {
+	if tt.useGroupedView {
+		tt.moveToBottomGrouped()
+	} else {
+		tt.moveToBottomLegacy()
+	}
+}
+
+// moveToBottomLegacy is the original tree-based navigation.
+func (tt *TaskTree) moveToBottomLegacy() {
 	if len(tt.order) == 0 {
 		return
 	}
 	tt.Cursor = len(tt.order) - 1
 	tt.SelectedID = tt.order[tt.Cursor]
+}
+
+// moveToBottomGrouped moves to the last task in grouped view.
+func (tt *TaskTree) moveToBottomGrouped() {
+	if len(tt.groups) == 0 {
+		return
+	}
+
+	// Find last non-empty group
+	for i := len(tt.groups) - 1; i >= 0; i-- {
+		group := tt.groups[i]
+		if len(group.Tasks) > 0 {
+			tt.selectedGroupIdx = i
+			if group.Collapsed {
+				// Stay on group header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Move to last task in group
+				tt.selectedTaskIdx = len(group.Tasks) - 1
+				tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
+			}
+			return
+		}
+	}
+}
+
+// ToggleCollapse toggles the collapsed state of the currently selected group.
+// Only works if the cursor is on a group header. Persists state to settings.
+func (tt *TaskTree) ToggleCollapse() {
+	if !tt.useGroupedView || len(tt.groups) == 0 {
+		return
+	}
+
+	// Only toggle if on group header
+	if tt.selectedTaskIdx != -1 {
+		return
+	}
+
+	// Toggle collapsed state
+	groupName := tt.groups[tt.selectedGroupIdx].Name
+	tt.groups[tt.selectedGroupIdx].Collapsed = !tt.groups[tt.selectedGroupIdx].Collapsed
+	tt.groupCollapsed[groupName] = tt.groups[tt.selectedGroupIdx].Collapsed
+
+	// Persist to settings
+	settings := Settings{GroupCollapsed: tt.groupCollapsed}
+	_ = SaveSettings(settings) // Ignore errors (non-critical)
 }
 
 // SelectedTask returns the currently selected task, or nil if none.
@@ -326,6 +609,14 @@ func statusIndicator(classification string) string {
 
 // View renders the task tree as a string within the given dimensions.
 func (tt *TaskTree) View(width, height int) string {
+	if tt.useGroupedView {
+		return tt.viewGrouped(width, height)
+	}
+	return tt.viewLegacy(width, height)
+}
+
+// viewLegacy is the original tree-based rendering.
+func (tt *TaskTree) viewLegacy(width, height int) string {
 	if len(tt.nodes) == 0 {
 		return DimStyle.Render("  No tasks")
 	}
@@ -348,6 +639,83 @@ func (tt *TaskTree) View(width, height int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// viewGrouped renders tasks in grouped view with collapsible headers.
+func (tt *TaskTree) viewGrouped(width, height int) string {
+	if len(tt.groups) == 0 {
+		return DimStyle.Render("  No tasks")
+	}
+
+	var lines []string
+
+	for gIdx, group := range tt.groups {
+		// Render group header
+		isGroupSelected := (gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx == -1)
+
+		indicator := "▸" // collapsed
+		if !group.Collapsed {
+			indicator = "▾" // expanded
+		}
+
+		groupHeader := fmt.Sprintf("%s %s (%d)", indicator, group.Name, group.Count)
+
+		if isGroupSelected {
+			groupHeader = GroupHeaderStyle.Render(groupHeader)
+			groupHeader = fmt.Sprintf("▸ %s", groupHeader) // selection marker
+		} else {
+			groupHeader = GroupHeaderStyle.Render(groupHeader)
+			groupHeader = fmt.Sprintf("  %s", groupHeader) // no selection marker
+		}
+
+		lines = append(lines, groupHeader)
+
+		// Render tasks if not collapsed
+		if !group.Collapsed {
+			for tIdx, task := range group.Tasks {
+				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
+				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected)
+				lines = append(lines, taskLine)
+			}
+		}
+	}
+
+	// Truncate to height (simple approach - can be improved with smart scrolling)
+	if height > 0 && len(lines) > height {
+		// For now, just truncate from the start
+		if len(lines) > height {
+			lines = lines[:height]
+		}
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderGroupedTaskLine renders a single task line in grouped view.
+func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool) string {
+	// Status indicator with color
+	indicator := statusIndicator(task.Classification)
+	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+
+	// Title
+	title := task.Title
+	if isSelected {
+		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
+	}
+
+	// Priority suffix
+	prioritySuffix := ""
+	if task.Priority == "high" {
+		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+	}
+
+	// Selection marker
+	selMarker := "  "
+	if isSelected {
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+	}
+
+	return fmt.Sprintf("%s  %s %s%s", selMarker, indicatorStyled, title, prioritySuffix)
 }
 
 // renderNodes recursively renders tree nodes into lines.

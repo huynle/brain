@@ -140,6 +140,7 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 // Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
+		tea.EnableMouseAllMotion,
 		m.sseClient.Connect(m.ctx),
 		tickCmd(),
 	)
@@ -157,6 +158,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
+
+	case tea.MouseMsg:
+		return m.handleMouseMsg(msg)
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -682,6 +686,299 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+// handleMouseMsg processes mouse input.
+func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// If modal is open, don't handle mouse events in the main UI
+	if m.modalManager.IsOpen() {
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.MouseLeft:
+		return m.handleMouseClick(msg)
+	case tea.MouseWheelUp:
+		return m.handleMouseWheelUp(msg)
+	case tea.MouseWheelDown:
+		return m.handleMouseWheelDown(msg)
+	case tea.MouseRight:
+		return m.handleRightClick(msg)
+	}
+
+	return m, nil
+}
+
+// handleMouseClick handles left mouse button clicks.
+func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	x, y := msg.X, msg.Y
+
+	// Detect which panel was clicked
+	// Status bar is at top (lines 0-2)
+	// Project tabs (if multi-project) is next line
+	// Main content starts after that
+	// Help bar is at bottom
+
+	statusBarHeight := 3
+	projectTabsHeight := 0
+	if m.config.IsMultiProject() {
+		projectTabsHeight = 1
+	}
+	mainContentStartY := statusBarHeight + projectTabsHeight
+
+	// Click in main content area
+	if y >= mainContentStartY && y < m.height-1 {
+		// Determine if click is in task panel or right panels
+		hasRightPanel := m.detailVisible || m.logsVisible
+		var leftWidth, rightWidth int
+		if hasRightPanel {
+			rightWidth = m.width * 40 / 100
+			if rightWidth < 20 {
+				rightWidth = 20
+			}
+			leftWidth = m.width - rightWidth
+		} else {
+			leftWidth = m.width
+		}
+
+		if x < leftWidth {
+			// Click in task panel
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+
+			// Detect task/group clicked
+			lineInPanel := y - mainContentStartY
+			return m.handleTaskPanelClick(lineInPanel, x)
+		} else {
+			// Click in right panel
+			mainHeight := m.height - 4
+			if m.detailVisible && m.logsVisible {
+				halfHeight := mainHeight / 2
+				if y < mainContentStartY+halfHeight {
+					// Click in detail panel
+					m.activePanel = PanelDetails
+				} else {
+					// Click in logs panel
+					m.activePanel = PanelLogs
+				}
+			} else if m.detailVisible {
+				m.activePanel = PanelDetails
+			} else if m.logsVisible {
+				m.activePanel = PanelLogs
+			}
+			m.helpBar.ActivePanel = m.activePanel
+		}
+	}
+
+	return m, nil
+}
+
+// handleTaskPanelClick handles clicks within the task panel.
+func (m Model) handleTaskPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	if m.taskTree.useGroupedView {
+		return m.handleGroupedViewClick(lineInPanel, x)
+	}
+	// Legacy tree view - simple task selection by line
+	if lineInPanel >= 0 && lineInPanel < len(m.taskTree.order) {
+		m.taskTree.Cursor = lineInPanel
+		m.taskTree.SelectedID = m.taskTree.order[lineInPanel]
+		m.syncTaskDetail()
+	}
+	return m, nil
+}
+
+// handleGroupedViewClick handles clicks in grouped view mode.
+func (m Model) handleGroupedViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	if m.taskTree.useFeatureView {
+		return m.handleFeatureViewClick(lineInPanel, x)
+	}
+
+	// Classification-based grouping
+	currentLine := 0
+	showCheckboxes := len(m.selectedTasks) > 0
+
+	for gIdx, group := range m.taskTree.groups {
+		// Group header line
+		if currentLine == lineInPanel {
+			// Click on group header
+			if x >= 0 && x <= 2 {
+				// Click on collapse indicator (▸/▾)
+				m.taskTree.selectedGroupIdx = gIdx
+				m.taskTree.selectedTaskIdx = -1
+				m.taskTree.SelectedID = ""
+				m.taskTree.ToggleCollapse()
+			} else {
+				// Click anywhere else on header - select header
+				m.taskTree.selectedGroupIdx = gIdx
+				m.taskTree.selectedTaskIdx = -1
+				m.taskTree.SelectedID = ""
+				m.syncTaskDetail()
+			}
+			return m, nil
+		}
+		currentLine++
+
+		// Task lines (if not collapsed)
+		if !group.Collapsed {
+			for tIdx, task := range group.Tasks {
+				if currentLine == lineInPanel {
+					// Click on task
+					if showCheckboxes && x >= 2 && x <= 4 {
+						// Click on checkbox
+						m.taskTree.selectedGroupIdx = gIdx
+						m.taskTree.selectedTaskIdx = tIdx
+						m.taskTree.SelectedID = task.ID
+						m.toggleTaskSelection()
+					} else {
+						// Click on task (select it)
+						m.taskTree.selectedGroupIdx = gIdx
+						m.taskTree.selectedTaskIdx = tIdx
+						m.taskTree.SelectedID = task.ID
+						m.syncTaskDetail()
+					}
+					return m, nil
+				}
+				currentLine++
+			}
+		}
+	}
+
+	return m, nil
+}
+
+// handleFeatureViewClick handles clicks in feature view mode.
+func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	currentLine := 0
+	showCheckboxes := len(m.selectedTasks) > 0
+
+	// Check features
+	for fIdx, feature := range m.taskTree.featureGroups.Features {
+		// Feature header line
+		if currentLine == lineInPanel {
+			if x >= 0 && x <= 2 {
+				// Click on collapse indicator
+				m.taskTree.selectedFeatureIdx = fIdx
+				m.taskTree.selectedFeatureTaskIdx = -1
+				m.taskTree.isOnUngrouped = false
+				m.taskTree.SelectedID = ""
+				m.taskTree.ToggleCollapse()
+			} else {
+				// Select feature header
+				m.taskTree.selectedFeatureIdx = fIdx
+				m.taskTree.selectedFeatureTaskIdx = -1
+				m.taskTree.isOnUngrouped = false
+				m.taskTree.SelectedID = ""
+				m.syncTaskDetail()
+			}
+			return m, nil
+		}
+		currentLine++
+
+		// Task lines (if not collapsed)
+		if !feature.Collapsed {
+			for tIdx, task := range feature.Tasks {
+				if currentLine == lineInPanel {
+					if showCheckboxes && x >= 2 && x <= 4 {
+						// Click on checkbox
+						m.taskTree.selectedFeatureIdx = fIdx
+						m.taskTree.selectedFeatureTaskIdx = tIdx
+						m.taskTree.isOnUngrouped = false
+						m.taskTree.SelectedID = task.ID
+						m.toggleTaskSelection()
+					} else {
+						// Select task
+						m.taskTree.selectedFeatureIdx = fIdx
+						m.taskTree.selectedFeatureTaskIdx = tIdx
+						m.taskTree.isOnUngrouped = false
+						m.taskTree.SelectedID = task.ID
+						m.syncTaskDetail()
+					}
+					return m, nil
+				}
+				currentLine++
+			}
+		}
+	}
+
+	// Check ungrouped
+	if m.taskTree.featureGroups.Ungrouped != nil {
+		ungrouped := m.taskTree.featureGroups.Ungrouped
+
+		// Ungrouped header line
+		if currentLine == lineInPanel {
+			if x >= 0 && x <= 2 {
+				// Click on collapse indicator
+				m.taskTree.selectedFeatureIdx = -1
+				m.taskTree.selectedFeatureTaskIdx = -1
+				m.taskTree.isOnUngrouped = true
+				m.taskTree.SelectedID = ""
+				m.taskTree.ToggleCollapse()
+			} else {
+				// Select ungrouped header
+				m.taskTree.selectedFeatureIdx = -1
+				m.taskTree.selectedFeatureTaskIdx = -1
+				m.taskTree.isOnUngrouped = true
+				m.taskTree.SelectedID = ""
+				m.syncTaskDetail()
+			}
+			return m, nil
+		}
+		currentLine++
+
+		// Ungrouped task lines (if not collapsed)
+		if !ungrouped.Collapsed {
+			for tIdx, task := range ungrouped.Tasks {
+				if currentLine == lineInPanel {
+					if showCheckboxes && x >= 2 && x <= 4 {
+						// Click on checkbox
+						m.taskTree.selectedFeatureIdx = -1
+						m.taskTree.selectedFeatureTaskIdx = tIdx
+						m.taskTree.isOnUngrouped = true
+						m.taskTree.SelectedID = task.ID
+						m.toggleTaskSelection()
+					} else {
+						// Select task
+						m.taskTree.selectedFeatureIdx = -1
+						m.taskTree.selectedFeatureTaskIdx = tIdx
+						m.taskTree.isOnUngrouped = true
+						m.taskTree.SelectedID = task.ID
+						m.syncTaskDetail()
+					}
+					return m, nil
+				}
+				currentLine++
+			}
+		}
+	}
+
+	return m, nil
+}
+
+// handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
+func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activePanel == PanelTasks {
+		m.taskTree.MoveUp()
+		m.syncTaskDetail()
+	}
+	// TODO: Add scrolling for logs and detail panels
+	return m, nil
+}
+
+// handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
+func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activePanel == PanelTasks {
+		m.taskTree.MoveDown()
+		m.syncTaskDetail()
+	}
+	// TODO: Add scrolling for logs and detail panels
+	return m, nil
+}
+
+// handleRightClick handles right mouse button clicks (context menu).
+func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	// TODO: Implement context menu
+	// For now, treat right-click same as left-click (select task)
+	return m.handleMouseClick(msg)
 }
 
 // syncTaskDetail updates the task detail panel with the currently selected task.

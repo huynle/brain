@@ -59,6 +59,7 @@ type Model struct {
 	stats TaskStats
 
 	// Multi-project state
+	projectTabs     ProjectTabs
 	activeProjectID string
 	tasksByProject map[string][]types.ResolvedTask
 	sseClients     map[string]*SSEClient
@@ -110,6 +111,11 @@ func NewModel(cfg Config) Model {
 	}
 
 	// Create SSE clients for multi-project mode
+	// Initialize ProjectTabs for multi-project mode
+	if cfg.IsMultiProject() {
+		m.projectTabs = NewProjectTabs(cfg.Projects)
+	}
+
 	// Initialize activeProjectID for multi-project mode
 	if cfg.IsMultiProject() {
 		m.activeProjectID = "all"
@@ -336,6 +342,29 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
+		// Multi-project tab navigation
+		if m.config.IsMultiProject() {
+			switch string(msg.Runes) {
+			case "h", "[":
+				m.projectTabs.PrevTab()
+				m.activeProjectID = m.projectTabs.ActiveProject()
+				m.syncActiveProjectView()
+				return m, nil
+			case "l", "]":
+				m.projectTabs.NextTab()
+				m.activeProjectID = m.projectTabs.ActiveProject()
+				m.syncActiveProjectView()
+				return m, nil
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				tabNum := int(msg.Runes[0] - '0')
+				if m.projectTabs.JumpToTab(tabNum) {
+					m.activeProjectID = m.projectTabs.ActiveProject()
+					m.syncActiveProjectView()
+					return m, nil
+				}
+			}
+		}
+
 		switch string(msg.Runes) {
 		case "S":
 			// Open settings modal
@@ -751,6 +780,12 @@ func (m Model) renderBaseView() string {
 	// Update status bar with selection count and metrics
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics
+	// Render ProjectTabs if multi-project mode
+	var projectTabsView string
+	if m.config.IsMultiProject() {
+		projectTabsView = m.projectTabs.View(m.width)
+	}
+
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
@@ -848,6 +883,7 @@ func (m Model) renderBaseView() string {
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		statusBarView,
+		projectTabsView,
 		mainContent,
 		lipgloss.JoinVertical(lipgloss.Left, bottomPanels...),
 	)
@@ -967,6 +1003,29 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
+		// Multi-project tab navigation
+		if m.config.IsMultiProject() {
+			switch string(msg.Runes) {
+			case "h", "[":
+				m.projectTabs.PrevTab()
+				m.activeProjectID = m.projectTabs.ActiveProject()
+				m.syncActiveProjectView()
+				return m, nil
+			case "l", "]":
+				m.projectTabs.NextTab()
+				m.activeProjectID = m.projectTabs.ActiveProject()
+				m.syncActiveProjectView()
+				return m, nil
+			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
+				tabNum := int(msg.Runes[0] - '0')
+				if m.projectTabs.JumpToTab(tabNum) {
+					m.activeProjectID = m.projectTabs.ActiveProject()
+					m.syncActiveProjectView()
+					return m, nil
+				}
+			}
+		}
+
 		// Append character to filter
 		m.filterQuery += string(msg.Runes)
 		// Real-time filtering
@@ -1016,6 +1075,16 @@ func (m *Model) syncActiveProjectView() {
 	// Single-project mode: no-op
 	if !m.config.IsMultiProject() {
 		return
+	}
+
+	// Note: activeProjectID may be set either:
+	// 1. From projectTabs (via tab navigation)
+	// 2. Manually (in tests or other code paths)
+	// We don't override it here - it's set by the caller.
+
+	// Update statusBar.Project to reflect current activeProjectID
+	if m.activeProjectID != "" {
+		m.statusBar.Project = m.activeProjectID
 	}
 
 	// Determine which tasks to show

@@ -45,22 +45,55 @@ const (
 	treeEmpty      = "  "
 )
 
+
 // BuildTree builds a tree structure from a flat task list using DependsOn relationships.
 // It detects cycles and handles diamond dependencies (each task rendered once).
 // Tasks are sorted by priority (high > medium > low) then by status.
-func BuildTree(tasks []types.ResolvedTask) []TreeNode {
+//
+// Phase 3: Added allTasks parameter for parent_id chain walking (used in Phase 4+).
+// Currently builds parent relationship maps but uses depends_on for tree structure.
+func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []TreeNode {
 	if len(tasks) == 0 {
 		return nil
 	}
 
-	// Build lookup map
+	// Step 1: Create lookup maps
 	taskMap := make(map[string]types.ResolvedTask, len(tasks))
 	for _, t := range tasks {
 		taskMap[t.ID] = t
 	}
 
-	// Build reverse dependency map: parent -> children
+	allTaskMap := make(map[string]types.ResolvedTask)
+	if len(allTasks) > 0 {
+		for _, t := range allTasks {
+			allTaskMap[t.ID] = t
+		}
+	} else {
+		// If no allTasks provided, use tasks (backward compatibility)
+		allTaskMap = taskMap
+	}
+
+	// Step 2a: Build parent_id relationships (Phase 3)
+	parentChildren := make(map[string][]string)
+	hasParentInTree := make(map[string]bool)
+
+	for _, task := range tasks {
+		if task.ParentID != "" {
+			// Walk up parent chain to find nearest active ancestor
+			activeAncestorID := findActiveAncestor(task.ParentID, taskMap, allTaskMap)
+			if activeAncestorID != "" {
+				hasParentInTree[task.ID] = true
+				parentChildren[activeAncestorID] = append(
+					parentChildren[activeAncestorID],
+					task.ID,
+				)
+			}
+		}
+	}
+
+	// Step 2b: Build reverse dependency map: parent -> children (existing)
 	// If B depends on A, then A is parent of B
+	// TODO Phase 4: Merge parentChildren with children into mergedChildren
 	children := make(map[string][]string)
 	hasParent := make(map[string]bool)
 
@@ -256,7 +289,7 @@ func FlattenTreeOrder(tasks []types.ResolvedTask) []string {
 		return nil
 	}
 
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 	var result []string
 
 	var traverse func(ns []TreeNode)
@@ -391,7 +424,7 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 		}
 	} else {
 		// Legacy tree view
-		tt.nodes = BuildTree(tasks)
+		tt.nodes = BuildTree(tasks, []types.ResolvedTask{})
 		tt.order = FlattenTreeOrder(tasks)
 
 		// Preserve selection if the selected task still exists

@@ -52,12 +52,12 @@ func makeTaskInCycle(id, title, classification, priority string, dependsOn []str
 // =============================================================================
 
 func TestBuildTree_EmptyTasks(t *testing.T) {
-	nodes := BuildTree(nil)
+	nodes := BuildTree(nil, []types.ResolvedTask{})
 	if len(nodes) != 0 {
 		t.Errorf("expected 0 nodes for nil tasks, got %d", len(nodes))
 	}
 
-	nodes = BuildTree([]types.ResolvedTask{})
+	nodes = BuildTree([]types.ResolvedTask{}, []types.ResolvedTask{})
 	if len(nodes) != 0 {
 		t.Errorf("expected 0 nodes for empty tasks, got %d", len(nodes))
 	}
@@ -67,7 +67,7 @@ func TestBuildTree_SingleTask(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		makeTask("t1", "Task 1", "ready", "medium", nil),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root node, got %d", len(nodes))
@@ -85,7 +85,7 @@ func TestBuildTree_ParentChild(t *testing.T) {
 		makeTask("parent", "Parent Task", "ready", "high", nil),
 		makeTask("child", "Child Task", "waiting", "medium", []string{"parent"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root node, got %d", len(nodes))
@@ -107,7 +107,7 @@ func TestBuildTree_MultipleRoots(t *testing.T) {
 		makeTask("b", "Task B", "ready", "medium", nil),
 		makeTask("c", "Task C", "ready", "low", nil),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 3 {
 		t.Fatalf("expected 3 root nodes, got %d", len(nodes))
@@ -130,7 +130,7 @@ func TestBuildTree_DeepHierarchy(t *testing.T) {
 		makeTask("mid", "Middle", "waiting", "medium", []string{"root"}),
 		makeTask("leaf", "Leaf", "waiting", "low", []string{"mid"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(nodes))
@@ -156,7 +156,7 @@ func TestBuildTree_CycleDetection(t *testing.T) {
 		makeTask("a", "Task A", "ready", "medium", []string{"b"}),
 		makeTask("b", "Task B", "ready", "medium", []string{"a"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	// Both should be marked as in cycle
 	foundA, foundB := false, false
@@ -191,7 +191,7 @@ func TestBuildTree_DiamondDependency(t *testing.T) {
 		makeTask("b", "B", "waiting", "medium", []string{"root"}),
 		makeTask("leaf", "Leaf", "waiting", "low", []string{"a", "b"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	// Count total nodes in tree
 	count := 0
@@ -215,7 +215,7 @@ func TestBuildTree_UnresolvedDependency(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		makeTask("orphan", "Orphan", "ready", "medium", []string{"nonexistent"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root (orphan with unresolved dep), got %d", len(nodes))
@@ -232,7 +232,7 @@ func TestBuildTree_SiblingsSortedByPriority(t *testing.T) {
 		makeTask("high", "High Child", "waiting", "high", []string{"root"}),
 		makeTask("med", "Med Child", "waiting", "medium", []string{"root"}),
 	}
-	nodes := BuildTree(tasks)
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
 
 	if len(nodes) != 1 {
 		t.Fatalf("expected 1 root, got %d", len(nodes))
@@ -696,5 +696,49 @@ func TestTaskTree_FeatureView_CollapsibleFeatures(t *testing.T) {
 	}
 	if !strings.Contains(view, "▸") {
 		t.Errorf("Expected collapsed indicator ▸, got:\n%s", view)
+	}
+}
+
+// =============================================================================
+// Phase 3: BuildTree Signature Tests (allTasks parameter)
+// =============================================================================
+
+func TestBuildTree_WithAllTasksParameter_BackwardCompat(t *testing.T) {
+	// Test that BuildTree works with new signature, empty allTasks (backward compat)
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "t2", Title: "Task 2", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"t1"}},
+	}
+	
+	// Call with empty allTasks - should behave like before
+	nodes := BuildTree(tasks, []types.ResolvedTask{})
+	
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "t1" {
+		t.Errorf("expected root 't1', got '%s'", nodes[0].Task.ID)
+	}
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("expected 1 child, got %d", len(nodes[0].Children))
+	}
+	if nodes[0].Children[0].Task.ID != "t2" {
+		t.Errorf("expected child 't2', got '%s'", nodes[0].Children[0].Task.ID)
+	}
+}
+
+func TestBuildTree_WithAllTasksParameter_ExplicitAllTasks(t *testing.T) {
+	// Test that BuildTree works when allTasks is explicitly provided (same as tasks)
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", Status: "pending"},
+	}
+	
+	nodes := BuildTree(tasks, tasks) // allTasks same as tasks
+	
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "t1" {
+		t.Errorf("expected root 't1', got '%s'", nodes[0].Task.ID)
 	}
 }

@@ -64,7 +64,7 @@ func (c *SSEClient) waitForSSEMsg() tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-c.msgCh
 		if !ok {
-			return SSEDisconnectedMsg{}
+			return SSEDisconnectedMsg{ProjectID: c.projectID}
 		}
 		return msg
 	}
@@ -100,7 +100,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
 	if err != nil {
 		select {
-		case msgCh <- SSEDisconnectedMsg{}:
+		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 		case <-ctx.Done():
 		}
 		return
@@ -113,7 +113,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	if err != nil {
 		// Connection refused, timeout, etc.
 		select {
-		case msgCh <- SSEDisconnectedMsg{}:
+		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 		case <-ctx.Done():
 		}
 		return
@@ -166,7 +166,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	}
 
 	select {
-	case msgCh <- SSEDisconnectedMsg{}:
+	case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 	case <-ctx.Done():
 	}
 }
@@ -199,7 +199,7 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
 			return nil, fmt.Errorf("parse connected event: %w", err)
 		}
-		return SSEConnectedMsg{}, nil
+		return SSEConnectedMsg{ProjectID: data.ProjectID}, nil
 
 	case "tasks_snapshot":
 		var data types.SSETasksSnapshotData
@@ -207,8 +207,9 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 			return nil, fmt.Errorf("parse tasks_snapshot event: %w", err)
 		}
 		return TasksUpdatedMsg{
-			Tasks: data.Tasks,
-			Stats: data.Stats,
+			Tasks:     data.Tasks,
+			Stats:     data.Stats,
+			ProjectID: data.ProjectID,
 		}, nil
 
 	case "heartbeat":
@@ -220,7 +221,7 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
 			return nil, fmt.Errorf("parse error event: %w", err)
 		}
-		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message)}, nil
+		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message), ProjectID: data.ProjectID}, nil
 
 	default:
 		// Unknown event type - ignore

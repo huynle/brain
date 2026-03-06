@@ -139,6 +139,19 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 
 // Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
+	if m.config.IsMultiProject() {
+		// Multi-project mode: connect each per-project SSE client
+		cmds := []tea.Cmd{
+			tea.EnableMouseAllMotion,
+			tickCmd(),
+		}
+		for _, client := range m.sseClients {
+			cmds = append(cmds, client.Connect(m.ctx))
+		}
+		return tea.Batch(cmds...)
+	}
+
+	// Single-project mode: connect legacy single client
 	return tea.Batch(
 		tea.EnableMouseAllMotion,
 		m.sseClient.Connect(m.ctx),
@@ -179,8 +192,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Update stats if provided
 		if msg.Stats != nil {
-			m.stats = TaskStatsFromAPI(msg.Stats)
-			m.statusBar.Stats = m.stats
+			tuiStats := TaskStatsFromAPI(msg.Stats)
+
+			// Gap 2: In multi-project mode, update ProjectTabs stats
+			if msg.ProjectID != "" && m.config.IsMultiProject() {
+				m.projectTabs.UpdateStats(msg.ProjectID, tuiStats)
+				// Set m.stats from ProjectTabs (respects active tab)
+				m.stats = m.projectTabs.CurrentStats()
+				m.statusBar.Stats = m.stats
+			} else {
+				// Single-project mode: set stats directly
+				m.stats = tuiStats
+				m.statusBar.Stats = m.stats
+			}
 		}
 
 		// Sync active project view (handles aggregate vs project-specific view)
@@ -207,16 +231,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connected = true
 		m.statusBar.Connected = true
 		// Continue listening for next SSE message
+		// Gap 4c: Route to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].WaitForNextMsg()
+		}
 		return m, m.sseClient.WaitForNextMsg()
 
 	case SSEDisconnectedMsg:
 		m.connected = false
 		m.statusBar.Connected = false
-		// Schedule reconnect
+		// Gap 4c: Route reconnect to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].Reconnect(DefaultReconnectDelay)
+		}
+		// Schedule reconnect for legacy single client
 		return m, m.sseClient.Reconnect(DefaultReconnectDelay)
 
 	case SSEErrorMsg:
 		// Log error, stay connected, continue listening
+		// Gap 4c: Route to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].WaitForNextMsg()
+		}
 		return m, m.sseClient.WaitForNextMsg()
 
 	case reconnectMsg:
@@ -224,6 +260,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sseClient.Stop()
 		m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
 		return m, m.sseClient.Connect(m.ctx)
+
+	case reconnectProjectMsg:
+		// Stop old per-project client and create a new one for reconnection
+		if client, ok := m.sseClients[msg.ProjectID]; ok {
+			client.Stop()
+		}
+		m.sseClients[msg.ProjectID] = NewSSEClient(m.config.APIURL, msg.ProjectID)
+		return m, m.sseClients[msg.ProjectID].Connect(m.ctx)
 
 	case TickMsg:
 		// Collect resource metrics
@@ -1403,7 +1447,9 @@ func (m *Model) syncActiveProjectView() {
 	if m.activeProjectID == "all" {
 		// Aggregate view: merge all tasks
 		m.tasks = m.getAllTasks()
-		// TODO: Calculate aggregate stats (Phase 3 will integrate with ProjectTabs)
+		// Gap 3: Set aggregate stats from ProjectTabs
+		m.stats = m.projectTabs.AggregateStats
+		m.statusBar.Stats = m.stats
 	} else {
 		// Project-specific view: show only that project's tasks
 		if tasks, ok := m.tasksByProject[m.activeProjectID]; ok {
@@ -1411,7 +1457,13 @@ func (m *Model) syncActiveProjectView() {
 		} else {
 			m.tasks = []types.ResolvedTask{}
 		}
-		// TODO: Set project-specific stats (Phase 3 will integrate with ProjectTabs)
+		// Gap 3: Set project-specific stats from ProjectTabs
+		if stats, ok := m.projectTabs.StatsByProject[m.activeProjectID]; ok {
+			m.stats = stats
+		} else {
+			m.stats = TaskStats{}
+		}
+		m.statusBar.Stats = m.stats
 	}
 
 	// Update taskTree with the selected tasks

@@ -10,20 +10,30 @@ import (
 
 // TasksUpdatedMsg is sent when the task list is refreshed (via SSE or polling).
 type TasksUpdatedMsg struct {
-	Tasks []types.ResolvedTask
+	Tasks     []types.ResolvedTask
 	ProjectID string
-	Stats *types.TaskStats
+	Stats     *types.TaskStats
 }
 
 // SSEConnectedMsg is sent when the SSE connection is established.
-type SSEConnectedMsg struct{}
+type SSEConnectedMsg struct {
+	ProjectID string
+}
 
 // SSEDisconnectedMsg is sent when the SSE connection is lost.
-type SSEDisconnectedMsg struct{}
+type SSEDisconnectedMsg struct {
+	ProjectID string
+}
 
 // SSEErrorMsg is sent when an SSE error occurs.
 type SSEErrorMsg struct {
-	Err error
+	Err       error
+	ProjectID string
+}
+
+// reconnectProjectMsg is sent internally to trigger SSE reconnection for a specific project.
+type reconnectProjectMsg struct {
+	ProjectID string
 }
 
 // TickMsg is sent on periodic timer ticks (for animations, status refresh).

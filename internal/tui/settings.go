@@ -111,7 +111,7 @@ func LoadSettings() (Settings, error) {
 	if settings.GroupCollapsed == nil {
 		settings.GroupCollapsed = make(map[string]bool)
 	}
-	if settings.GroupVisible == nil {
+	if settings.GroupVisible == nil || len(settings.GroupVisible) == 0 {
 		settings.GroupVisible = getDefaultGroupVisible()
 	} else {
 		// Merge with defaults to ensure all groups have a visibility setting

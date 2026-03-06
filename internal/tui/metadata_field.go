@@ -7,11 +7,13 @@ package tui
 // MetadataField represents a specific metadata field that can be edited.
 type MetadataField string
 
-// Field constants - all 15 editable metadata fields
+// Field constants - all 17 editable metadata fields
 const (
 	FieldStatus            MetadataField = "status"
 	FieldPriority          MetadataField = "priority"
 	FieldFeatureID         MetadataField = "feature_id"
+	FieldFeaturePriority   MetadataField = "feature_priority"
+	FieldFeatureDependsOn  MetadataField = "feature_depends_on"
 	FieldGitBranch         MetadataField = "git_branch"
 	FieldMergeTargetBranch MetadataField = "merge_target_branch"
 	FieldMergePolicy       MetadataField = "merge_policy"
@@ -68,6 +70,17 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 	FieldFeatureID: {
 		Label: "Feature ID",
 		Hint:  "Feature grouping identifier",
+		Type:  FieldTypeText,
+	},
+	FieldFeaturePriority: {
+		Label:       "Feature Priority",
+		Hint:        "Priority for entire feature group (high/medium/low)",
+		Type:        FieldTypeDropdown,
+		EnumOptions: []string{"high", "medium", "low"},
+	},
+	FieldFeatureDependsOn: {
+		Label: "Feature Dependencies",
+		Hint:  "Comma-separated list of feature IDs this feature depends on",
 		Type:  FieldTypeText,
 	},
 	FieldGitBranch: {

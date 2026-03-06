@@ -97,26 +97,7 @@ func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *Metad
 // NewMetadataModalFeature creates a new metadata editing modal for a feature.
 // The taskIDs will be populated in Init() when fetching tasks by feature_id.
 func NewMetadataModalFeature(featureID string, apiClient *runner.APIClient) *MetadataModal {
-	// Initialize field list in proper order
-	fieldList := []MetadataField{
-		FieldStatus,
-		FieldPriority,
-		FieldFeatureID,
-		FieldGitBranch,
-		FieldMergeTargetBranch,
-		FieldMergePolicy,
-		FieldMergeStrategy,
-		FieldExecutionMode,
-		FieldDirectPrompt,
-		FieldAgent,
-		FieldModel,
-		FieldTargetWorkdir,
-		FieldCompleteOnIdle,
-		FieldOpenPRBeforeMerge,
-		FieldSchedule,
-	}
-
-	return &MetadataModal{
+	m := &MetadataModal{
 		featureID:       featureID,
 		mode:            ModeFeature,
 		apiClient:       apiClient,
@@ -126,16 +107,64 @@ func NewMetadataModalFeature(featureID string, apiClient *runner.APIClient) *Met
 		mixedFields:     make(map[MetadataField]bool),
 		interactionMode: ModeNavigate,
 		focusedIndex:    0,
-		fieldList:       fieldList,
 		width:           60,
 		height:          20,
 	}
+	// Set field list based on mode
+	m.fieldList = m.buildFieldList()
+	return m
 }
 
 // newMetadataModal is the internal constructor.
 func newMetadataModal(taskIDs []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
-	// Initialize field list in proper order
-	fieldList := []MetadataField{
+	m := &MetadataModal{
+		taskIDs:         taskIDs,
+		mode:            mode,
+		apiClient:       apiClient,
+		interactionMode: ModeNavigate,
+		focusedIndex:    0,
+		values:          make(map[MetadataField]string),
+		boolValues:      make(map[MetadataField]bool),
+		mixedFields:     make(map[MetadataField]bool),
+		width:           60,
+		height:          25,
+	}
+	// Set field list based on mode
+	m.fieldList = m.buildFieldList()
+	return m
+}
+
+// ============================================================================
+// Field Management Methods
+// ============================================================================
+
+// buildFieldList returns the list of fields to display based on mode.
+func (m *MetadataModal) buildFieldList() []MetadataField {
+	if m.mode == ModeFeature {
+		// Feature mode: show feature-level and shared fields only
+		return []MetadataField{
+			FieldFeaturePriority,  // New: applies to all tasks in feature
+			FieldFeatureDependsOn, // New: feature-level dependencies
+			FieldStatus,           // Shared: can update all tasks
+			FieldPriority,         // Shared: can update all tasks
+			FieldGitBranch,        // Shared: git settings
+			FieldMergeTargetBranch,
+			FieldMergePolicy,
+			FieldMergeStrategy,
+			FieldExecutionMode,
+			FieldAgent,
+			FieldModel,
+			FieldTargetWorkdir,
+			FieldCompleteOnIdle,
+			FieldOpenPRBeforeMerge,
+			FieldSchedule,
+			// Excluded: direct_prompt (task-specific)
+			// Excluded: feature_id (already grouped by feature)
+		}
+	}
+
+	// Single and batch modes: all fields
+	return []MetadataField{
 		FieldStatus,
 		FieldPriority,
 		FieldFeatureID,
@@ -151,20 +180,6 @@ func newMetadataModal(taskIDs []string, mode MetadataMode, apiClient *runner.API
 		FieldCompleteOnIdle,
 		FieldOpenPRBeforeMerge,
 		FieldSchedule,
-	}
-
-	return &MetadataModal{
-		taskIDs:         taskIDs,
-		mode:            mode,
-		apiClient:       apiClient,
-		interactionMode: ModeNavigate,
-		focusedIndex:    0,
-		values:          make(map[MetadataField]string),
-		boolValues:      make(map[MetadataField]bool),
-		mixedFields:     make(map[MetadataField]bool),
-		fieldList:       fieldList,
-		width:           60,
-		height:          25,
 	}
 }
 

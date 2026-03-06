@@ -667,6 +667,9 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 
 	var lines []string
 
+	// Compute whether to show checkboxes (only when multi-select is active)
+	showCheckboxes := len(tt.selectedTasks) > 0
+
 	for gIdx, group := range tt.groups {
 		// Render group header
 		isGroupSelected := (gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx == -1)
@@ -692,7 +695,7 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 		if !group.Collapsed {
 			for tIdx, task := range group.Tasks {
 				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
-				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks)
+				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -710,11 +713,21 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 }
 
 // renderGroupedTaskLine renders a single task line in grouped view.
-func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool) string {
-	// Checkbox indicator
-	checkbox := "[ ]"
-	if selectedTasks[task.ID] {
-		checkbox = "[x]"
+func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool, showCheckboxes bool) string {
+	// Selection marker
+	selMarker := "  "
+	if isSelected {
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+	}
+
+	// Checkbox indicator (ONLY when multi-select active)
+	checkboxPart := ""
+	if showCheckboxes {
+		checkbox := "[ ]"
+		if selectedTasks[task.ID] {
+			checkbox = "[x]"
+		}
+		checkboxPart = checkbox + " "
 	}
 
 	// Status indicator with color
@@ -736,13 +749,7 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
 	}
 
-	// Selection marker
-	selMarker := "  "
-	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
-	}
-
-	return fmt.Sprintf("%s%s %s %s%s", selMarker, checkbox, indicatorStyled, title, prioritySuffix)
+	return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
 }
 
 // renderNodes recursively renders tree nodes into lines.

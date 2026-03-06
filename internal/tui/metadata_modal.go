@@ -114,7 +114,7 @@ func (m *MetadataModal) moveToBottom() {
 // enterEditMode transitions to edit mode based on field type.
 func (m *MetadataModal) enterEditMode() {
 	fieldType := getFieldType(m.focusedField)
-	
+
 	switch fieldType {
 	case FieldTypeText:
 		m.interactionMode = ModeEditText
@@ -133,6 +133,85 @@ func (m *MetadataModal) enterEditMode() {
 			m.dropdownOptions = []string{"true", "false"}
 		}
 	}
+}
+
+// ============================================================================
+// Text Editing Methods
+// ============================================================================
+
+// appendChar appends a rune to the edit buffer.
+func (m *MetadataModal) appendChar(r rune) {
+	m.editBuffer += string(r)
+}
+
+// deleteChar removes the last rune from the edit buffer.
+func (m *MetadataModal) deleteChar() {
+	if len(m.editBuffer) == 0 {
+		return
+	}
+	// Convert to runes to handle multi-byte characters correctly
+	runes := []rune(m.editBuffer)
+	if len(runes) > 0 {
+		m.editBuffer = string(runes[:len(runes)-1])
+	}
+}
+
+// clearBuffer clears the edit buffer.
+func (m *MetadataModal) clearBuffer() {
+	m.editBuffer = ""
+}
+
+// handleEditTextMode handles key presses in text editing mode.
+func (m *MetadataModal) handleEditTextMode(key string) (bool, tea.Cmd) {
+	switch key {
+	case "backspace":
+		m.deleteChar()
+		return true, nil
+	case "ctrl+u":
+		m.clearBuffer()
+		return true, nil
+	case "enter":
+		cmd := m.saveField()
+		m.interactionMode = ModeNavigate
+		return true, cmd
+	case "esc":
+		// Discard changes
+		m.editBuffer = ""
+		m.interactionMode = ModeNavigate
+		return true, nil
+	default:
+		// Check if it's a single printable character
+		if len(key) == 1 {
+			m.appendChar(rune(key[0]))
+			return true, nil
+		}
+		return false, nil
+	}
+}
+
+// saveField saves the current edit to the values map.
+func (m *MetadataModal) saveField() tea.Cmd {
+	fieldType := getFieldType(m.focusedField)
+
+	switch fieldType {
+	case FieldTypeText:
+		m.values[m.focusedField] = m.editBuffer
+	case FieldTypeDropdown:
+		if m.dropdownIndex >= 0 && m.dropdownIndex < len(m.dropdownOptions) {
+			m.values[m.focusedField] = m.dropdownOptions[m.dropdownIndex]
+		}
+	case FieldTypeBoolean:
+		// For booleans in dropdown mode
+		if m.dropdownIndex >= 0 && m.dropdownIndex < len(m.dropdownOptions) {
+			m.boolValues[m.focusedField] = m.dropdownOptions[m.dropdownIndex] == "true"
+		}
+	}
+
+	// Clear edit buffer
+	m.editBuffer = ""
+
+	// Phase 4 will add API call here
+	return nil
 }
 
 // ============================================================================

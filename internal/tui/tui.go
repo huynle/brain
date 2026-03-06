@@ -52,22 +52,27 @@ type Model struct {
 
 	// Multi-select state
 	selectedTasks map[string]bool
+
+	// Resource metrics
+	metricsCollector *MetricsCollector
+	resourceMetrics  ResourceMetrics
 }
 
 // NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg Config) Model {
 	return Model{
-		config:        cfg,
-		keymap:        DefaultKeyMap(),
-		statusBar:     NewStatusBar(cfg.Project),
-		helpBar:       NewHelpBar(),
-		taskTree:      NewTaskTree(),
-		taskDetail:    NewTaskDetail(),
-		logViewer:     NewLogViewer(DefaultMaxLogEntries),
-		activePanel:   PanelTasks,
-		sseClient:     NewSSEClient(cfg.APIURL, cfg.Project),
-		ctx:           context.Background(),
-		selectedTasks: make(map[string]bool),
+		config:           cfg,
+		keymap:           DefaultKeyMap(),
+		statusBar:        NewStatusBar(cfg.Project),
+		helpBar:          NewHelpBar(),
+		taskTree:         NewTaskTree(),
+		taskDetail:       NewTaskDetail(),
+		logViewer:        NewLogViewer(DefaultMaxLogEntries),
+		activePanel:      PanelTasks,
+		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
+		ctx:              context.Background(),
+		selectedTasks:    make(map[string]bool),
+		metricsCollector: NewMetricsCollector(),
 	}
 }
 
@@ -81,7 +86,17 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 
 // Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
-	return m.sseClient.Connect(m.ctx)
+	return tea.Batch(
+		m.sseClient.Connect(m.ctx),
+		tickCmd(),
+	)
+}
+
+// tickCmd returns a command that sends a TickMsg every 2 seconds.
+func tickCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
+		return TickMsg{}
+	})
 }
 
 // Update implements tea.Model. Handles messages and returns updated model.
@@ -130,6 +145,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sseClient.Stop()
 		m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
 		return m, m.sseClient.Connect(m.ctx)
+
+	case TickMsg:
+		// Collect resource metrics
+		m.resourceMetrics = m.metricsCollector.Collect()
+		// Schedule next tick
+		return m, tickCmd()
 	}
 
 	return m, nil
@@ -342,8 +363,9 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
-	// Update status bar with selection count
+	// Update status bar with selection count and metrics
 	m.statusBar.SelectedCount = len(m.selectedTasks)
+	m.statusBar.Metrics = &m.resourceMetrics
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 

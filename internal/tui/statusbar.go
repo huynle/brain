@@ -12,6 +12,7 @@ type StatusBar struct {
 	Connected     bool
 	Stats         TaskStats
 	SelectedCount int
+	Metrics       *ResourceMetrics
 }
 
 // NewStatusBar creates a new StatusBar for the given project.
@@ -60,9 +61,17 @@ func (s StatusBar) View(width int) string {
 		connDot = lipgloss.NewStyle().Foreground(ColorReady).Render(IndicatorConnected)
 	}
 
+	// Right side: metrics + connection indicator
+	rightContent := ""
+	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
+		rightContent = lipgloss.NewStyle().
+			Foreground(ColorReady).
+			Render(s.Metrics.Format()) + "  "
+	}
+	rightContent += connDot
+
 	// Compose the status bar
 	leftContent := projectName + "  " + stats
-	rightContent := connDot
 
 	// Use a border style for the status bar
 	barStyle := lipgloss.NewStyle().

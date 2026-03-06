@@ -160,16 +160,37 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 		}
 	}
 
-	// Sort children by priority then status
+	// Sort children by dependency relationships first, then priority, then status.
+	// Phase 6: Enhanced sibling sorting - siblings with inter-dependencies are
+	// sorted topologically so that dependencies come before dependents.
+	// Example: if sibling B depends on sibling A, A will be sorted before B.
 	sortIDs := func(ids []string) {
 		sort.Slice(ids, func(i, j int) bool {
 			a := taskMap[ids[i]]
 			b := taskMap[ids[j]]
+
+			// Check if B depends on A (A should come first)
+			for _, depID := range b.DependsOn {
+				if depID == ids[i] {
+					return true
+				}
+			}
+
+			// Check if A depends on B (B should come first)
+			for _, depID := range a.DependsOn {
+				if depID == ids[j] {
+					return false
+				}
+			}
+
+			// Fall back to priority
 			pa := priorityOrder[a.Priority]
 			pb := priorityOrder[b.Priority]
 			if pa != pb {
 				return pa < pb
 			}
+
+			// Fall back to status
 			return statusOrder[a.Status] < statusOrder[b.Status]
 		})
 	}

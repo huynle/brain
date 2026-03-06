@@ -47,6 +47,12 @@ func makeTaskInCycle(id, title, classification, priority string, dependsOn []str
 	return t
 }
 
+func makeTaskWithParentAndDeps(id, title, classification, priority, parentID string, dependsOn []string) types.ResolvedTask {
+	t := makeTask(id, title, classification, priority, dependsOn)
+	t.ParentID = parentID
+	return t
+}
+
 // =============================================================================
 // BuildTree Tests
 // =============================================================================
@@ -740,6 +746,209 @@ func TestBuildTree_WithAllTasksParameter_ExplicitAllTasks(t *testing.T) {
 	}
 	if nodes[0].Task.ID != "t1" {
 		t.Errorf("expected root 't1', got '%s'", nodes[0].Task.ID)
+	}
+}
+
+// =============================================================================
+// Phase 6: Enhanced Sibling Sorting Tests
+// =============================================================================
+
+// Test 1: Siblings with no inter-dependencies → sorted by priority (existing behavior)
+func TestBuildTree_Phase6_SiblingsNoDependencies_SortByPriority(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+		makeTaskWithParentAndDeps("low", "Low Child", "waiting", "low", "parent", nil),
+		makeTaskWithParentAndDeps("high", "High Child", "waiting", "high", "parent", nil),
+		makeTaskWithParentAndDeps("med", "Med Child", "waiting", "medium", "parent", nil),
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 3 {
+		t.Fatalf("expected 3 children, got %d", len(children))
+	}
+	// Should be sorted by priority: high, medium, low
+	if children[0].Task.ID != "high" {
+		t.Errorf("expected first child 'high', got '%s'", children[0].Task.ID)
+	}
+	if children[1].Task.ID != "med" {
+		t.Errorf("expected second child 'med', got '%s'", children[1].Task.ID)
+	}
+	if children[2].Task.ID != "low" {
+		t.Errorf("expected third child 'low', got '%s'", children[2].Task.ID)
+	}
+}
+
+// Test 2: Sibling A in B's depends_on → A comes first
+func TestBuildTree_Phase6_SiblingAInBDependsOn(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+		// Both A and B are siblings under parent (via parent_id)
+		// B also depends on A (sorting hint)
+		makeTaskWithParentAndDeps("a", "Task A", "waiting", "medium", "parent", nil),
+		makeTaskWithParentAndDeps("b", "Task B", "waiting", "medium", "parent", []string{"a"}),
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(children))
+	}
+	// A should come before B because B depends on A
+	if children[0].Task.ID != "a" {
+		t.Errorf("expected first child 'a', got '%s'", children[0].Task.ID)
+	}
+	if children[1].Task.ID != "b" {
+		t.Errorf("expected second child 'b', got '%s'", children[1].Task.ID)
+	}
+}
+
+// Test 3: Sibling B in A's depends_on → B comes first
+func TestBuildTree_Phase6_SiblingBInADependsOn(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+		// Both A and B are siblings under parent (via parent_id)
+		// A depends on B (sorting hint)
+		makeTaskWithParentAndDeps("a", "Task A", "waiting", "medium", "parent", []string{"b"}),
+		makeTaskWithParentAndDeps("b", "Task B", "waiting", "medium", "parent", nil),
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 2 {
+		t.Fatalf("expected 2 children, got %d", len(children))
+	}
+	// B should come before A because A depends on B
+	if children[0].Task.ID != "b" {
+		t.Errorf("expected first child 'b', got '%s'", children[0].Task.ID)
+	}
+	if children[1].Task.ID != "a" {
+		t.Errorf("expected second child 'a', got '%s'", children[1].Task.ID)
+	}
+}
+
+// Test 4: Sibling chain: A → B → C (A in B's deps, B in C's deps) → sorted as [A, B, C]
+func TestBuildTree_Phase6_SiblingChain(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+		// All siblings under parent (via parent_id)
+		// Chain: C depends on B, B depends on A
+		makeTaskWithParentAndDeps("a", "Task A", "waiting", "medium", "parent", nil),
+		makeTaskWithParentAndDeps("b", "Task B", "waiting", "medium", "parent", []string{"a"}),
+		makeTaskWithParentAndDeps("c", "Task C", "waiting", "medium", "parent", []string{"b"}),
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 3 {
+		t.Fatalf("expected 3 children, got %d", len(children))
+	}
+	// Should be sorted as A, B, C (dependency chain order)
+	if children[0].Task.ID != "a" {
+		t.Errorf("expected first child 'a', got '%s'", children[0].Task.ID)
+	}
+	if children[1].Task.ID != "b" {
+		t.Errorf("expected second child 'b', got '%s'", children[1].Task.ID)
+	}
+	if children[2].Task.ID != "c" {
+		t.Errorf("expected third child 'c', got '%s'", children[2].Task.ID)
+	}
+}
+
+// Test 5: Siblings with same priority, no deps → sorted by status
+func TestBuildTree_Phase6_SiblingsSamePriorityNoDeps_SortByStatus(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+	}
+	// Add children with different statuses using makeTaskWithParent
+	completed := makeTaskWithParentAndDeps("completed", "Completed Child", "ready", "medium", "parent", nil)
+	completed.Status = "completed"
+	tasks = append(tasks, completed)
+
+	inProgress := makeTaskWithParentAndDeps("in_progress", "In Progress Child", "ready", "medium", "parent", nil)
+	inProgress.Status = "in_progress"
+	tasks = append(tasks, inProgress)
+
+	pending := makeTaskWithParentAndDeps("pending", "Pending Child", "ready", "medium", "parent", nil)
+	pending.Status = "pending"
+	tasks = append(tasks, pending)
+
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 3 {
+		t.Fatalf("expected 3 children, got %d", len(children))
+	}
+	// Should be sorted by status order: in_progress (0), pending (1), completed (4)
+	if children[0].Task.ID != "in_progress" {
+		t.Errorf("expected first child 'in_progress', got '%s'", children[0].Task.ID)
+	}
+	if children[1].Task.ID != "pending" {
+		t.Errorf("expected second child 'pending', got '%s'", children[1].Task.ID)
+	}
+	if children[2].Task.ID != "completed" {
+		t.Errorf("expected third child 'completed', got '%s'", children[2].Task.ID)
+	}
+}
+
+// Test 6: Mix of dependencies and priorities → dependencies take precedence
+func TestBuildTree_Phase6_MixDependenciesAndPriorities(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("parent", "Parent", "ready", "high", nil),
+		// All siblings under parent (via parent_id)
+		// B (low priority) depends on A (medium priority)
+		// C (high priority) has no deps
+		makeTaskWithParentAndDeps("a", "Task A", "waiting", "medium", "parent", nil),
+		makeTaskWithParentAndDeps("b", "Task B", "waiting", "low", "parent", []string{"a"}),
+		makeTaskWithParentAndDeps("c", "Task C", "waiting", "high", "parent", nil),
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	children := nodes[0].Children
+	if len(children) != 3 {
+		t.Fatalf("expected 3 children, got %d", len(children))
+	}
+	// A must come before B (dependency)
+	// C has high priority but no dependency relationship with A or B
+	// Expected order: C (high priority first), then A, then B (A before B due to dependency)
+	// Verify A comes before B
+	aIndex := -1
+	bIndex := -1
+	for i, child := range children {
+		if child.Task.ID == "a" {
+			aIndex = i
+		}
+		if child.Task.ID == "b" {
+			bIndex = i
+		}
+	}
+	if aIndex == -1 || bIndex == -1 {
+		t.Fatal("expected both A and B to be children")
+	}
+	if aIndex >= bIndex {
+		t.Errorf("expected A (index %d) to come before B (index %d)", aIndex, bIndex)
+	}
+	// C should be first due to high priority (since no dependency conflict)
+	if children[0].Task.ID != "c" {
+		t.Errorf("expected first child 'c' (high priority), got '%s'", children[0].Task.ID)
 	}
 }
 

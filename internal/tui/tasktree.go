@@ -375,6 +375,11 @@ type TaskTree struct {
 
 	// Multi-select state (passed in during View rendering)
 	selectedTasks map[string]bool
+
+	// Lane-based rendering (Phase 4)
+	useLaneView     bool
+	laneAssignments []LaneAssignment
+	laneTasks       []types.ResolvedTask // topo-sorted
 }
 
 // NewTaskTree creates a new empty TaskTree component.
@@ -406,6 +411,46 @@ func (tt *TaskTree) SetFeatureViewMode(enabled bool) {
 // SetTasks updates the task list, rebuilds the tree, and preserves selection if possible.
 func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 	tt.tasks = tasks
+
+	if tt.useLaneView {
+		// Lane-based visualization
+		tt.laneTasks = TopoSort(tasks)
+		tt.laneAssignments = AssignLanes(tt.laneTasks)
+
+		// Preserve selection by task ID
+		if tt.SelectedID != "" {
+			found := false
+			for i, task := range tt.laneTasks {
+				if task.ID == tt.SelectedID {
+					tt.Cursor = i
+					found = true
+					break
+				}
+			}
+			if !found {
+				// Selection lost, default to first task
+				if len(tt.laneTasks) > 0 {
+					tt.SelectedID = tt.laneTasks[0].ID
+					tt.Cursor = 0
+				} else {
+					tt.SelectedID = ""
+					tt.Cursor = 0
+				}
+			}
+		} else {
+			// Auto-select first task
+			if len(tt.laneTasks) > 0 {
+				tt.SelectedID = tt.laneTasks[0].ID
+				tt.Cursor = 0
+			} else {
+				tt.SelectedID = ""
+				tt.Cursor = 0
+			}
+		}
+
+		return
+	}
+
 
 	if tt.useGroupedView {
 		if tt.useFeatureView {
@@ -546,7 +591,9 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 
 // MoveDown moves the cursor down one position.
 func (tt *TaskTree) MoveDown() {
-	if tt.useGroupedView {
+	if tt.useLaneView {
+		tt.moveDownLane()
+	} else if tt.useGroupedView {
 		tt.moveDownGrouped()
 	} else {
 		tt.moveDownLegacy()
@@ -615,7 +662,9 @@ func (tt *TaskTree) moveDownGrouped() {
 
 // MoveUp moves the cursor up one position.
 func (tt *TaskTree) MoveUp() {
-	if tt.useGroupedView {
+	if tt.useLaneView {
+		tt.moveUpLane()
+	} else if tt.useGroupedView {
 		tt.moveUpGrouped()
 	} else {
 		tt.moveUpLegacy()
@@ -670,7 +719,9 @@ func (tt *TaskTree) moveUpGrouped() {
 
 // MoveToTop moves the cursor to the first task.
 func (tt *TaskTree) MoveToTop() {
-	if tt.useGroupedView {
+	if tt.useLaneView {
+		tt.moveToTopLane()
+	} else if tt.useGroupedView {
 		tt.moveToTopGrouped()
 	} else {
 		tt.moveToTopLegacy()
@@ -705,7 +756,9 @@ func (tt *TaskTree) moveToTopGrouped() {
 
 // MoveToBottom moves the cursor to the last task.
 func (tt *TaskTree) MoveToBottom() {
-	if tt.useGroupedView {
+	if tt.useLaneView {
+		tt.moveToBottomLane()
+	} else if tt.useGroupedView {
 		tt.moveToBottomGrouped()
 	} else {
 		tt.moveToBottomLegacy()
@@ -839,14 +892,21 @@ func statusIndicator(classification string) string {
 
 // View renders the task tree as a string within the given dimensions.
 func (tt *TaskTree) View(width, height int) string {
+	// Check lane view first (takes precedence over grouped view)
+	if tt.useLaneView {
+		return tt.viewLaneTree(width, height)
+	}
+
 	if tt.useGroupedView {
 		if tt.useFeatureView {
 			return tt.viewFeatureGrouped(width, height)
 		}
 		return tt.viewGrouped(width, height)
 	}
+
 	return tt.viewLegacy(width, height)
 }
+
 
 // ViewWithSelection renders the task tree with multi-select checkboxes.
 func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[string]bool) string {
@@ -1137,4 +1197,127 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool) st
 	}
 
 	return fmt.Sprintf("%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, indicatorStyled, title, prioritySuffix, cycleSuffix)
+}
+
+// SetLaneViewMode enables or disables lane-based git-graph rendering.
+// When enabled, tasks are displayed in a git-style graph with lanes showing dependencies.
+func (tt *TaskTree) SetLaneViewMode(enabled bool) {
+	tt.useLaneView = enabled
+}
+
+// viewLaneTree renders tasks in lane-based git-graph view with box-drawing connectors.
+func (tt *TaskTree) viewLaneTree(width, height int) string {
+	if len(tt.laneTasks) == 0 {
+		return DimStyle.Render("  No tasks")
+	}
+
+	var lines []string
+
+	for i, assignment := range tt.laneAssignments {
+		task := tt.laneTasks[i]
+		isSelected := task.ID == tt.SelectedID
+		line := tt.renderLaneTaskLine(task, assignment, i, isSelected)
+		lines = append(lines, line)
+	}
+
+	// Handle viewport scrolling (ensure selected task visible)
+	if height > 0 && len(lines) > height {
+		// Find selected task index
+		selectedIdx := 0
+		for i, task := range tt.laneTasks {
+			if task.ID == tt.SelectedID {
+				selectedIdx = i
+				break
+			}
+		}
+
+		// Calculate viewport start to keep selected task visible
+		start := 0
+		if selectedIdx >= height {
+			start = selectedIdx - height + 1
+		}
+		end := start + height
+		if end > len(lines) {
+			end = len(lines)
+		}
+		lines = lines[start:end]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// renderLaneTaskLine renders a single task line with lane prefix + task info.
+func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneAssignment, index int, isSelected bool) string {
+	// Generate lane prefix
+	prefix := GeneratePrefix(assignment, index, tt.laneAssignments, nil)
+
+	// Status indicator with color
+	indicator := statusIndicator(task.Classification)
+	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+
+	// Title with selection
+	title := task.Title
+	if isSelected {
+		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
+	}
+
+	// Priority suffix
+	prioritySuffix := ""
+	if task.Priority == "high" {
+		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+	}
+
+	// Cycle indicator
+	cycleSuffix := ""
+	if task.InCycle {
+		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(" ↺")
+	}
+
+	// Selection marker
+	selMarker := " "
+	if isSelected {
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸")
+	}
+
+	return fmt.Sprintf("%s%s %s %s%s%s", selMarker, prefix, indicatorStyled, title, prioritySuffix, cycleSuffix)
+}
+
+// moveDownLane navigates down in lane view.
+func (tt *TaskTree) moveDownLane() {
+	if len(tt.laneTasks) == 0 {
+		return
+	}
+	if tt.Cursor < len(tt.laneTasks)-1 {
+		tt.Cursor++
+		tt.SelectedID = tt.laneTasks[tt.Cursor].ID
+	}
+}
+
+// moveUpLane navigates up in lane view.
+func (tt *TaskTree) moveUpLane() {
+	if len(tt.laneTasks) == 0 {
+		return
+	}
+	if tt.Cursor > 0 {
+		tt.Cursor--
+		tt.SelectedID = tt.laneTasks[tt.Cursor].ID
+	}
+}
+
+// moveToTopLane moves to the first task in lane view.
+func (tt *TaskTree) moveToTopLane() {
+	if len(tt.laneTasks) == 0 {
+		return
+	}
+	tt.Cursor = 0
+	tt.SelectedID = tt.laneTasks[0].ID
+}
+
+// moveToBottomLane moves to the last task in lane view.
+func (tt *TaskTree) moveToBottomLane() {
+	if len(tt.laneTasks) == 0 {
+		return
+	}
+	tt.Cursor = len(tt.laneTasks) - 1
+	tt.SelectedID = tt.laneTasks[tt.Cursor].ID
 }

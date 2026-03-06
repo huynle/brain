@@ -197,7 +197,7 @@ func TestGroupTasks_TerminalStatesInSeparateGroups(t *testing.T) {
 		{ID: "t6", Title: "Archived task", Status: "archived", Priority: "medium", Classification: ""},
 	}
 
-	groups := GroupTasks(tasks)
+	groups := GroupTasks(tasks, nil)
 
 	// Should have 6 groups: Draft, Cancelled, Completed, Validated, Superseded, Archived
 	if len(groups) != 6 {
@@ -230,7 +230,7 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 		{ID: "t10", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
 	}
 
-	groups := GroupTasks(tasks)
+	groups := GroupTasks(tasks, nil)
 
 	// Should have 10 groups in this specific order
 	expectedOrder := []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
@@ -243,5 +243,75 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 		if groups[i].Name != expected {
 			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
 		}
+	}
+}
+
+// Phase 3: New visibility filtering tests
+
+func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
+		{ID: "t3", Title: "Completed", Status: "completed", Priority: "high", Classification: ""},
+		{ID: "t4", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
+	}
+
+	// Hide Draft and Archived
+	groups := GroupTasks(tasks, nil)
+
+	// Should have all 4 groups (grouping no longer filters by visibility)
+	if len(groups) != 4 {
+		t.Fatalf("expected 4 groups, got %d", len(groups))
+	}
+
+	// Verify expected order: Ready, Draft, Completed, Archived
+	expectedOrder := []string{"Ready", "Draft", "Completed", "Archived"}
+	for i, expected := range expectedOrder {
+		if groups[i].Name != expected {
+			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
+		}
+	}
+}
+
+func TestGroupTasks_WithVisibility_NilMapShowsAll(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
+		{ID: "t3", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
+	}
+
+	groups := GroupTasks(tasks, nil)
+
+	// Should have all 3 groups
+	if len(groups) != 3 {
+		t.Fatalf("expected 3 groups, got %d", len(groups))
+	}
+}
+
+func TestGroupTasks_WithVisibility_EmptyMapShowsAll(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
+	}
+
+	groups := GroupTasks(tasks, nil)
+
+	// Should have all 2 groups
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+}
+
+func TestGroupTasks_WithVisibility_OnlyHiddenGroups(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
+		{ID: "t2", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
+	}
+
+	groups := GroupTasks(tasks, nil)
+
+	// Should have all 2 groups (grouping no longer filters)
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
 	}
 }

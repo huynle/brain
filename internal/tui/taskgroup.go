@@ -14,9 +14,10 @@ type TaskGroup struct {
 	Count     int                  // Total tasks in group
 }
 
-// GroupTasks organizes tasks into groups by classification.
+// GroupTasks organizes tasks into groups by classification with optional visibility filtering.
 // Returns groups in priority order: Ready, Waiting, Active, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
-func GroupTasks(tasks []types.ResolvedTask) []TaskGroup {
+// If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
+func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []TaskGroup {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -41,17 +42,28 @@ func GroupTasks(tasks []types.ResolvedTask) []TaskGroup {
 		})
 	}
 
-	// Return in display order: Ready, Waiting, Active, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived
+	// Return in display order with visibility filtering
 	result := []TaskGroup{}
 	for _, groupName := range []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
-		if taskList, ok := groups[groupName]; ok && len(taskList) > 0 {
-			result = append(result, TaskGroup{
-				Name:      groupName,
-				Tasks:     taskList,
-				Collapsed: false, // default expanded
-				Count:     len(taskList),
-			})
+		taskList, ok := groups[groupName]
+		if !ok || len(taskList) == 0 {
+			continue // Skip groups with no tasks
 		}
+
+		// Check visibility: if visibleGroups is nil/empty, show all groups
+		// If visibleGroups exists and group is explicitly false, skip it
+		if len(visibleGroups) > 0 {
+			if visible, hasKey := visibleGroups[groupName]; hasKey && !visible {
+				continue // Skip invisible groups
+			}
+		}
+
+		result = append(result, TaskGroup{
+			Name:      groupName,
+			Tasks:     taskList,
+			Collapsed: false, // default expanded
+			Count:     len(taskList),
+		})
 	}
 
 	return result

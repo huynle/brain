@@ -430,7 +430,8 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 		} else {
 			// Classification-based grouping
 			// Build groups
-			tt.groups = GroupTasks(tasks)
+			settings, _ := LoadSettings()
+			tt.groups = GroupTasks(tasks, settings.GroupVisible)
 
 			// Restore collapsed state for each group
 			for i := range tt.groups {

@@ -33,7 +33,7 @@ func openMemoryDB(t *testing.T) *sql.DB {
 func TestSchemaCreation_TablesExist(t *testing.T) {
 	s := newTestStorage(t)
 
-	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version"}
+	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string

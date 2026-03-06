@@ -130,6 +130,7 @@ type BrainEntry struct {
 	Tags     []string `json:"tags"`
 	Priority string   `json:"priority,omitempty"`
 
+	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	ProjectID string   `json:"project_id,omitempty"`
 	FeatureID string   `json:"feature_id,omitempty"`
@@ -468,8 +469,10 @@ type ResolvedTask struct {
 	Title     string   `json:"title"`
 	Priority  string   `json:"priority"`
 	Status    string   `json:"status"`
+	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on"`
 	Created   string   `json:"created"`
+	ProjectID  string   `json:"project_id,omitempty"`
 
 	Workdir            string `json:"workdir"`
 	GitRemote          string `json:"git_remote"`

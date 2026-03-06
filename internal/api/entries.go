@@ -95,9 +95,14 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, resp)
 }
 
-// HandleGetEntry handles GET /entries/{id}.
+// HandleGetEntry handles GET /entries/{id} or GET /entries/path/to/entry.md.
 func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
+	id := chi.URLParam(r, "*")
+	// Fallback to "id" parameter for backward compatibility (if route uses /{id})
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 
 	entry, err := h.brain.Recall(r.Context(), id)
 	if err != nil {
@@ -175,9 +180,14 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
-// HandleUpdateEntry handles PATCH /entries/{id}.
+// HandleUpdateEntry handles PATCH /entries/{id} or PATCH /entries/path/to/entry.md.
 func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
+	id := chi.URLParam(r, "*")
+	// Fallback to "id" parameter for backward compatibility (if route uses /{id})
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 
 	var req types.UpdateEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -248,9 +258,14 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, entry)
 }
 
-// HandleDeleteEntry handles DELETE /entries/{id}.
+// HandleDeleteEntry handles DELETE /entries/{id} or DELETE /entries/path/to/entry.md.
 func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
+	id := chi.URLParam(r, "*")
+	// Fallback to "id" parameter for backward compatibility (if route uses /{id})
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
 
 	confirm := r.URL.Query().Get("confirm")
 	if confirm != "true" {

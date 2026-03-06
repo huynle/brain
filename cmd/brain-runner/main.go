@@ -357,10 +357,18 @@ func cmdStart(args parsedArgs) int {
 
 	// TUI mode: launch Bubble Tea program
 	if mode == runner.ExecutionModeTUI {
+		// Get BrainDir from environment or use default
+		brainDir := os.Getenv("BRAIN_DIR")
+		if brainDir == "" {
+			homeDir, _ := os.UserHomeDir()
+			brainDir = homeDir + "/.brain"
+		}
+
 		tuiCfg := tui.Config{
 			APIURL:   cfg.BrainAPIURL,
 			Project:  primaryProject,
 			Projects: projects,
+			BrainDir: brainDir,
 		}
 		model := tui.NewModel(tuiCfg)
 		p := tea.NewProgram(model, tea.WithAltScreen())

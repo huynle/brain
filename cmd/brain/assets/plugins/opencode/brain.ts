@@ -1,0 +1,2814 @@
+// @ts-nocheck - This file is installed to OpenCode, not compiled by brain-api
+/**
+ * Brain API Client Plugin for OpenCode
+ *
+ * A thin API client that calls the Brain API instead of using direct zk CLI
+ * and SQLite access. This is a drop-in replacement for the original brain.ts
+ * plugin with identical tool interfaces.
+ *
+ * Configuration:
+ * - BRAIN_API_URL: Base URL for the Brain API (default: http://localhost:3333)
+ *
+ * ============================================================================
+ * AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
+ * ============================================================================
+ * This file was installed by: brain install opencode
+ * To update: brain install opencode
+ * To check status: brain doctor
+ * Source: https://github.com/huynle/brain-api
+ * Generated: {{GENERATED_DATE}}
+ */
+
+import type { Plugin } from "@opencode-ai/plugin";
+import { tool } from "@opencode-ai/plugin";
+import { execSync } from "child_process";
+import { homedir } from "os";
+
+// ============================================================================
+// Types
+// ============================================================================
+
+type BrainEntryType =
+  | "summary"
+  | "report"
+  | "walkthrough"
+  | "plan"
+  | "pattern"
+  | "learning"
+  | "idea"
+  | "scratch"
+  | "decision"
+  | "exploration"
+  | "execution"
+  | "task";
+
+type BrainEntryStatus =
+  | "draft"
+  | "pending"
+  | "active"
+  | "in_progress"
+  | "blocked"
+  | "completed"
+  | "validated"
+  | "superseded"
+  | "archived";
+
+type TaskPriority = "high" | "medium" | "low";
+
+// ============================================================================
+// Constants
+// ============================================================================
+
+const BRAIN_API_URL = process.env.BRAIN_API_URL || "http://localhost:3333";
+
+// ============================================================================
+// Health Check & Connection State
+// ============================================================================
+
+interface BrainConnectionState {
+  available: boolean;
+  lastCheck: number;
+  lastError?: string;
+  version?: string;
+}
+
+// Connection state - checked on first tool use and cached
+let connectionState: BrainConnectionState = {
+  available: false,
+  lastCheck: 0,
+};
+
+const HEALTH_CHECK_INTERVAL_MS = 30_000; // Re-check every 30 seconds when healthy
+const HEALTH_CHECK_RETRY_MS = 5_000; // Re-check every 5 seconds when unhealthy (faster reconnect)
+
+async function checkBrainHealth(): Promise<BrainConnectionState> {
+  const now = Date.now();
+  
+  // Use shorter retry interval when unhealthy for faster reconnect
+  const cacheInterval = connectionState.available 
+    ? HEALTH_CHECK_INTERVAL_MS 
+    : HEALTH_CHECK_RETRY_MS;
+  
+  // Return cached state if checked recently
+  if (now - connectionState.lastCheck < cacheInterval) {
+    return connectionState;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    
+    const response = await fetch(`${BRAIN_API_URL}/api/v1/health`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      connectionState = {
+        available: true,
+        lastCheck: now,
+        version: data.version,
+      };
+    } else {
+      connectionState = {
+        available: false,
+        lastCheck: now,
+        lastError: `Server returned ${response.status}: ${response.statusText}`,
+      };
+    }
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isConnectionRefused = errorMessage.includes("ECONNREFUSED") || 
+                                 errorMessage.includes("fetch failed") ||
+                                 errorMessage.includes("aborted");
+    
+    connectionState = {
+      available: false,
+      lastCheck: now,
+      lastError: isConnectionRefused 
+        ? `Cannot connect to Brain API at ${BRAIN_API_URL}. Is the server running? Start it with: brain start`
+        : `Health check failed: ${errorMessage}`,
+    };
+  }
+
+  return connectionState;
+}
+
+function formatUnavailableMessage(state: BrainConnectionState): string {
+  return `**BRAIN API UNAVAILABLE**
+
+The Brain API server is not reachable at ${BRAIN_API_URL}.
+
+**Error:** ${state.lastError || "Unknown error"}
+
+**What this means:**
+- Brain tools (save, recall, search, etc.) will not work
+- Your knowledge and notes are not accessible right now
+
+**To fix this:**
+1. Start the Brain API server: \`brain start\`
+2. Or check if it's running: \`brain status\`
+3. Or check the logs: \`brain logs\`
+
+**Alternative:** If you don't need brain functionality for this task, you can proceed without it.
+The brain tools will automatically reconnect when the server becomes available.`;
+}
+
+// ============================================================================
+// Execution Context
+// ============================================================================
+
+interface ExecutionContext {
+  projectId: string; // Short project name (last path segment)
+  workdir: string; // $HOME-relative path to main repo
+  gitRemote?: string; // Git remote URL
+  gitBranch?: string; // Current branch (worktree derived from this)
+}
+
+/**
+ * Extract a short project name from a $HOME-relative path.
+ * e.g. "projects/brain-api" → "brain-api", "brain-api" → "brain-api"
+ * The task API validates project IDs with /^[a-zA-Z0-9_-]+$/ (no slashes).
+ */
+function resolveProjectName(homeRelativePath: string): string {
+  const segments = homeRelativePath.split("/").filter(Boolean);
+  return segments[segments.length - 1] || homeRelativePath;
+}
+
+function getExecutionContext(directory: string): ExecutionContext {
+  const home = homedir();
+
+  // Get main repo path (resolves worktrees to their main repo)
+  let mainRepoPath = directory;
+  let gitRemote: string | undefined;
+  let gitBranch: string | undefined;
+
+  try {
+    // Check if we're in a worktree and get the main repo path
+    const worktreeList = execSync("git worktree list --porcelain", {
+      cwd: directory,
+      encoding: "utf-8",
+    }).trim();
+
+    const lines = worktreeList.split("\n");
+    const firstWorktreeLine = lines.find((l) => l.startsWith("worktree "));
+    if (firstWorktreeLine) {
+      mainRepoPath = firstWorktreeLine.replace("worktree ", "");
+    }
+
+    // Get git remote
+    gitRemote = execSync("git remote get-url origin", {
+      cwd: directory,
+      encoding: "utf-8",
+    }).trim();
+
+    // Get current branch (used to derive worktree path later)
+    gitBranch = execSync("git branch --show-current", {
+      cwd: directory,
+      encoding: "utf-8",
+    }).trim();
+  } catch {
+    // Not a git repo or git not available
+  }
+
+  // Make paths relative to $HOME
+  const makeHomeRelative = (path: string): string => {
+    if (path.startsWith(home)) {
+      return path.slice(home.length + 1); // +1 for the slash
+    }
+    return path;
+  };
+
+  // projectId = short name (last path segment), used by task API which validates
+  // with ProjectIdSchema (alphanumeric, hyphens, underscores only — no slashes)
+  const homePath = makeHomeRelative(mainRepoPath);
+  const projectId = resolveProjectName(homePath);
+  const workdir = homePath;
+
+  return {
+    projectId,
+    workdir,
+    gitRemote,
+    gitBranch,
+  };
+}
+
+const ENTRY_TYPES: BrainEntryType[] = [
+  "summary",
+  "report",
+  "walkthrough",
+  "plan",
+  "pattern",
+  "learning",
+  "idea",
+  "scratch",
+  "decision",
+  "exploration",
+  "execution",
+  "task",
+];
+
+const ENTRY_STATUSES: BrainEntryStatus[] = [
+  "draft",
+  "pending",
+  "active",
+  "in_progress",
+  "blocked",
+  "completed",
+  "validated",
+  "superseded",
+  "archived",
+];
+
+type BrainPriority = "high" | "medium" | "low";
+
+const PRIORITIES: BrainPriority[] = ["high", "medium", "low"];
+
+// ============================================================================
+// API Client
+// ============================================================================
+
+interface ApiError {
+  error: string;
+  message: string;
+  details?: unknown;
+}
+
+class BrainUnavailableError extends Error {
+  constructor(state: BrainConnectionState) {
+    super(formatUnavailableMessage(state));
+    this.name = "BrainUnavailableError";
+  }
+}
+
+async function apiRequest<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+  queryParams?: Record<string, string | number | boolean | undefined>
+): Promise<T> {
+  // Check health before making request
+  const health = await checkBrainHealth();
+  if (!health.available) {
+    throw new BrainUnavailableError(health);
+  }
+
+  let url = `${BRAIN_API_URL}/api/v1${path}`;
+
+  // Add query parameters
+  if (queryParams) {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(queryParams)) {
+      if (value !== undefined) {
+        params.append(key, String(value));
+      }
+    }
+    const queryString = params.toString();
+    if (queryString) {
+      url += `?${queryString}`;
+    }
+  }
+
+  const options: RequestInit = {
+    method,
+    headers: {
+      "Content-Type": "application/json",
+    },
+  };
+
+  if (body && (method === "POST" || method === "PATCH" || method === "PUT")) {
+    options.body = JSON.stringify(body);
+  }
+
+  try {
+    const response = await fetch(url, options);
+
+    if (!response.ok) {
+      let errorData: ApiError;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = {
+          error: "API Error",
+          message: `HTTP ${response.status}: ${response.statusText}`,
+        };
+      }
+      throw new Error(errorData.message || `API error: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    // If fetch itself fails (connection error), mark as unavailable and throw helpful message
+    if (error instanceof BrainUnavailableError) {
+      throw error;
+    }
+    
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isConnectionError = errorMessage.includes("ECONNREFUSED") || 
+                              errorMessage.includes("fetch failed") ||
+                              errorMessage.includes("network");
+    
+    if (isConnectionError) {
+      // Mark as unavailable for future requests
+      connectionState = {
+        available: false,
+        lastCheck: Date.now(),
+        lastError: `Connection lost: ${errorMessage}`,
+      };
+      throw new BrainUnavailableError(connectionState);
+    }
+    
+    throw error;
+  }
+}
+
+
+
+// ============================================================================
+// Plugin
+// ============================================================================
+
+export const BrainPlugin: Plugin = async ({ project, directory }) => {
+  const context = getExecutionContext(directory);
+  const projectId = project?.id || context.projectId || "unknown";
+
+  return {
+    tool: {
+      // ========================================
+      // brain_save
+      // ========================================
+      brain_save: tool({
+        description: `Save content to the brain for future reference. Use this to persist:
+- summaries: Session summaries, key decisions made
+- reports: Analysis reports, code reviews, investigations
+- walkthroughs: Code explanations, architecture overviews
+- plans: Implementation plans, designs, roadmaps
+- patterns: Reusable patterns discovered (use global:true for cross-project)
+- learnings: General learnings, best practices (use global:true for cross-project)
+- ideas: Ideas for future exploration
+- scratch: Temporary working notes
+- decision: Architectural decisions, ADRs
+- exploration: Investigation notes, research findings`,
+        args: {
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .describe("Type of content being saved"),
+          title: tool.schema
+            .string()
+            .describe("Short descriptive title for the entry"),
+          content: tool.schema
+            .string()
+            .describe("The content to save (markdown supported)"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Tags for categorization and search"),
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe(
+              "Initial status. Tasks default to 'draft' (user reviews before promoting to 'pending'). Other entry types default to 'active'."
+            ),
+          priority: tool.schema
+            .enum(["high", "medium", "low"])
+            .optional()
+            .describe(
+              "Priority level for tasks. High = urgent/blocking, Medium = normal, Low = nice-to-have."
+            ),
+          depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe(
+              "Task dependencies - list of task IDs or titles that must be completed before this task. Validated on save. Use format: 'task-id' for same project, 'project:task-id' for cross-project. Common mistakes (full paths, .md extension) are auto-normalized."
+            ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."
+            ),
+          feature_priority: tool.schema
+            .enum(["high", "medium", "low"])
+            .optional()
+            .describe(
+              "Priority level for the feature group. Determines execution order relative to other features."
+            ),
+          feature_depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe(
+              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."
+            ),
+          global: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Save to global brain (cross-project). Recommended for patterns and learnings."
+            ),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Explicit project ID/name for task organization. If not provided, uses current git repo hash or 'global'."
+            ),
+          relatedEntries: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe(
+              "Titles or paths of related brain entries to link to. Auto-generates markdown links."
+            ),
+          user_original_request: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion by comparing implementation against original intent. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task."
+            ),
+          target_workdir: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Explicit working directory override for task execution (absolute path). PRIMARY USE CASE: Filing tasks across project boundaries - when an issue is detected in a dependent project, use target_workdir to file the task directly in the parent/target project so it executes there. The task runner will try this directory first before falling back to workdir resolution."
+            ),
+          git_branch: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Execution branch override for this task. If not provided, defaults to the current git branch of the working directory."
+            ),
+          merge_target_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Branch to merge completed work into"),
+          merge_policy: tool.schema
+            .enum(["prompt_only", "auto_pr", "auto_merge"])
+            .optional()
+            .describe("Merge behavior at completion (default: auto_merge)"),
+          merge_strategy: tool.schema
+            .enum(["squash", "merge", "rebase"])
+            .optional()
+            .describe("Merge strategy for auto-merge (default: squash)"),
+          open_pr_before_merge: tool.schema
+            .boolean()
+            .optional()
+            .describe("Open PR before merge when enabled (default: false)"),
+          execution_mode: tool.schema
+            .enum(["worktree", "current_branch"])
+            .optional()
+            .describe("Task execution mode (default: worktree)"),
+          complete_on_idle: tool.schema
+            .boolean()
+            .optional()
+            .describe("Mark task as completed when the agent becomes idle (default: false). Useful for fire-and-forget tasks where idle means done."),
+          remote_branch_policy: tool.schema
+            .enum(["keep", "delete"])
+            .optional()
+            .describe("Policy for remote branch after merge. 'keep' preserves the branch, 'delete' removes it (default: delete)."),
+          direct_prompt: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim to OpenCode when the task runs. Use for simple, self-contained commands like '/fix-tests src/' or '/lint'."
+            ),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Override the default agent for this task (e.g., 'explore', 'tdd-dev', 'build', or custom agent names)"
+            ),
+          model: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Override the default model for this task (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"
+            ),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps (create task + create cron + link) to 1 step."
+            ),
+          schedule_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe(
+              "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."
+            ),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              link: string;
+            }>("POST", "/entries", {
+              type: args.type,
+              title: args.title,
+              content: args.content,
+              tags: args.tags,
+              status: args.status,
+              priority: args.priority,
+              depends_on: args.depends_on,
+              global: args.global,
+              project: args.project || projectId,
+              relatedEntries: args.relatedEntries,
+              // Execution context for tasks
+              target_workdir: args.type === "task" ? args.target_workdir : undefined,
+              workdir: args.type === "task" ? context.workdir : undefined,
+              git_remote: args.type === "task" ? context.gitRemote : undefined,
+              git_branch:
+                args.type === "task"
+                  ? args.git_branch ?? context.gitBranch
+                  : undefined,
+              merge_target_branch:
+                args.type === "task" ? args.merge_target_branch : undefined,
+              merge_policy: args.type === "task" ? args.merge_policy : undefined,
+              merge_strategy:
+                args.type === "task" ? args.merge_strategy : undefined,
+              open_pr_before_merge:
+                args.type === "task" ? args.open_pr_before_merge : undefined,
+              execution_mode:
+                args.type === "task" ? args.execution_mode : undefined,
+
+              complete_on_idle:
+                args.type === "task" ? args.complete_on_idle : undefined,
+              remote_branch_policy:
+                args.type === "task" ? args.remote_branch_policy : undefined,
+              // User intent for validation
+              user_original_request:
+                args.type === "task" ? args.user_original_request : undefined,
+              // Feature grouping for tasks
+              feature_id: args.type === "task" ? args.feature_id : undefined,
+              feature_priority: args.type === "task" ? args.feature_priority : undefined,
+              feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
+              // OpenCode execution options for tasks
+              direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
+              agent: args.type === "task" ? args.agent : undefined,
+              model: args.type === "task" ? args.model : undefined,
+              // Cron scheduling for tasks
+              schedule: args.type === "task" ? args.schedule : undefined,
+              schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
+            });
+
+            const location = args.global ? "global brain" : "project brain";
+
+            return `Saved to ${location}
+
+**Path:** \`${response.path}\`
+**ID:** \`${response.id}\`
+**Link:** \`${response.link}\`
+**Title:** ${response.title}
+**Type:** ${response.type}
+**Status:** ${response.status}
+**Tags:** ${args.tags?.length ? args.tags.join(", ") : "none"}
+
+Use \`brain_recall\` with the path, ID, or title to retrieve it later.
+Use the link \`${response.link}\` to reference this entry from other notes.
+Use \`brain_update\` to change status (e.g., mark as completed).
+Use \`brain_link\` to generate links to this entry from other notes.`;
+          } catch (error) {
+            return `Failed to save: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_recall
+      // ========================================
+      brain_recall: tool({
+        description:
+          "Retrieve a specific entry from the brain by path, ID, or title. Updates access statistics.",
+        args: {
+          path: tool.schema
+            .string()
+            .optional()
+            .describe("Path or ID (8-char alphanumeric) to the note"),
+          title: tool.schema
+            .string()
+            .optional()
+            .describe("Title to search for (exact match)"),
+        },
+        async execute(args) {
+          if (!args.path && !args.title) {
+            return "Please provide a path, ID, or title to recall";
+          }
+
+          try {
+            // If title provided, search first
+            let entryPath = args.path;
+            if (!entryPath && args.title) {
+              const searchResult = await apiRequest<{
+                results: Array<{ path: string; title: string }>;
+              }>("POST", "/search", {
+                query: args.title,
+                limit: 5,
+              });
+
+              const exactMatch = searchResult.results.find(
+                (r) => r.title === args.title
+              );
+              if (exactMatch) {
+                entryPath = exactMatch.path;
+              } else if (searchResult.results.length > 0) {
+                const suggestions = searchResult.results
+                  .slice(0, 5)
+                  .map((r) => `- "${r.title}" (Path: \`${r.path}\`)`)
+                  .join("\n");
+                return `No exact match for: "${args.title}"\n\n**Did you mean:**\n${suggestions}\n\nUse \`brain_recall\` with the exact path to retrieve a specific entry.`;
+              } else {
+                return `No entry found matching title: "${args.title}"`;
+              }
+            }
+
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              content: string;
+              tags: string[];
+              access_count?: number;
+              backlinks?: Array<{ id: string; title: string; path: string }>;
+              user_original_request?: string;
+            }>("GET", `/entries/${entryPath}`);
+
+            const backlinkLinks =
+              response.backlinks && response.backlinks.length > 0
+                ? response.backlinks.map((b) => `[${b.title}](${b.id})`)
+                : [];
+
+            return `## ${response.title}
+
+**Path:** \`${response.path}\`
+**ID:** \`${response.id}\`
+**Link:** \`[${response.title}](${response.id})\`
+**Type:** ${response.type}
+**Status:** ${response.status}
+**Tags:** ${response.tags?.join(", ") || "none"}
+**Access Count:** ${response.access_count ?? 1}
+${backlinkLinks.length > 0 ? `**Backlinks:** ${backlinkLinks.join(", ")}` : ""}
+${response.user_original_request ? `**User Original Request:** ${response.user_original_request}` : ""}
+
+---
+
+${response.content}`;
+          } catch (error) {
+            const identifier = args.path || args.title;
+            return `No entry found${args.path ? ` at path: ${args.path}` : ` matching title: "${args.title}"`}: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_search
+      // ========================================
+      brain_search: tool({
+        description:
+          "Search the brain using full-text search. Finds entries matching your query.",
+        args: {
+          query: tool.schema.string().describe("Search query"),
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .optional()
+            .describe("Filter by entry type"),
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe(
+              "Filter by status (e.g., 'active', 'completed', 'in_progress')"
+            ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Filter by tags (OR logic - matches entries with any of the specified tags)"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results (default: 10)"),
+          global: tool.schema
+            .boolean()
+            .optional()
+            .describe("Search only global entries"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              results: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+                status: string;
+                snippet: string;
+              }>;
+              total: number;
+            }>("POST", "/search", {
+              query: args.query,
+              type: args.type,
+              status: args.status,
+              feature_id: args.feature_id,
+              limit: args.limit ?? 10,
+              global: args.global,
+            });
+
+            if (response.results.length === 0) {
+              return `No entries found matching "${args.query}"`;
+            }
+
+            const lines = [
+              `## Search Results for "${args.query}"`,
+              "",
+              `Found ${response.total} entries:`,
+              "",
+            ];
+
+            for (const result of response.results) {
+              lines.push(`### ${result.title}`);
+              lines.push(`\`${result.path}\` | ${result.type} | ${result.status}`);
+              if (result.snippet) lines.push(`> ${result.snippet}...`);
+              lines.push("");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Search failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_list
+      // ========================================
+      brain_list: tool({
+        description: `List entries in the brain with optional filtering by type, status, and filename.
+
+Filename filtering supports:
+- Exact match: "abc12def" finds entry with that exact ID
+- Wildcard patterns: "abc*" (prefix), "*def" (suffix), "abc*def" (contains)`,
+        args: {
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .optional()
+            .describe("Filter by entry type"),
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe(
+              "Filter by status (e.g., 'active', 'completed', 'in_progress')"
+            ),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Filter by tags (OR logic - matches entries with any of the specified tags)"),
+          filename: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter by filename/ID. Supports exact match or wildcard patterns with '*'"
+            ),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum entries to return (default: 20)"),
+          global: tool.schema
+            .boolean()
+            .optional()
+            .describe("List only global entries"),
+          sortBy: tool.schema
+            .enum(["created", "modified", "priority"])
+            .optional()
+            .describe(
+              "Sort order: 'created' (default), 'modified', or 'priority' (high first)"
+            ),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+                status: string;
+                priority?: string;
+                access_count?: number;
+              }>;
+              total: number;
+            }>(
+              "GET",
+              "/entries",
+              undefined,
+              {
+                type: args.type,
+                status: args.status,
+                feature_id: args.feature_id,
+                tags: args.tags?.join(","),
+                filename: args.filename,
+                limit: args.limit ?? 20,
+                global: args.global,
+                sortBy: args.sortBy,
+              }
+            );
+
+            const filterParts = [
+              args.type,
+              args.status,
+              args.filename ? `filename:${args.filename}` : null,
+              args.tags?.length ? `tags:${args.tags.join(",")}` : null,
+            ].filter(Boolean);
+            const filterDesc = filterParts.join(", ");
+
+            if (response.entries.length === 0) {
+              return `No entries found${filterDesc ? ` matching: ${filterDesc}` : ""}`;
+            }
+
+            const lines = [
+              `## Brain Entries${filterDesc ? ` (${filterDesc})` : ""}`,
+              "",
+              `Found ${response.total} entries:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              const globalBadge = entry.path.startsWith("global/") ? " [global]" : "";
+              const priorityBadge = entry.priority
+                ? entry.priority === "high"
+                  ? " [HIGH]"
+                  : entry.priority === "medium"
+                    ? " [MED]"
+                    : " [LOW]"
+                : "";
+
+              lines.push(`- **${entry.title}**${globalBadge}${priorityBadge}`);
+              const priorityInfo = entry.priority ? ` | ${entry.priority}` : "";
+              lines.push(
+                `  \`${entry.path}\` (ID: \`${entry.id}\`) | ${entry.type} | ${entry.status}${priorityInfo} | ${entry.access_count ?? 0} accesses`
+              );
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `List failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_inject
+      // ========================================
+      brain_inject: tool({
+        description:
+          "Search the brain and return relevant context. Use this to recall knowledge before starting a task.",
+        args: {
+          query: tool.schema
+            .string()
+            .describe("What context are you looking for?"),
+          maxEntries: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum entries to include (default: 5)"),
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .optional()
+            .describe("Filter by entry type"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              context: string;
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+              }>;
+            }>("POST", "/inject", {
+              query: args.query,
+              maxEntries: args.maxEntries ?? 5,
+              type: args.type,
+            });
+
+            if (!response.context || response.entries.length === 0) {
+              return `No relevant brain context found for "${args.query}"`;
+            }
+
+            return response.context;
+          } catch (error) {
+            return `Failed to inject context: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_backlinks
+      // ========================================
+      brain_backlinks: tool({
+        description: "Find entries that link TO a given entry (backlinks).",
+        args: {
+          path: tool.schema.string().describe("Path to the target note"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+              }>;
+              total: number;
+            }>("GET", `/entries/${args.path}/backlinks`);
+
+            if (response.entries.length === 0) {
+              return `No backlinks found for: ${args.path}`;
+            }
+
+            const lines = [
+              `## Backlinks to: ${args.path}`,
+              "",
+              `Found ${response.total} entries linking to this note:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              lines.push(
+                `- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`
+              );
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_outlinks
+      // ========================================
+      brain_outlinks: tool({
+        description: "Find entries that a given entry links TO (outlinks).",
+        args: {
+          path: tool.schema.string().describe("Path to the source note"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+              }>;
+              total: number;
+            }>("GET", `/entries/${args.path}/outlinks`);
+
+            if (response.entries.length === 0) {
+              return `No outlinks found from: ${args.path}`;
+            }
+
+            const lines = [
+              `## Outlinks from: ${args.path}`,
+              "",
+              `Found ${response.total} entries linked from this note:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              lines.push(
+                `- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`
+              );
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_related
+      // ========================================
+      brain_related: tool({
+        description:
+          "Find entries that share linked notes with a given entry.",
+        args: {
+          path: tool.schema
+            .string()
+            .describe("Path to the note to find related entries for"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results (default: 10)"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+              }>;
+              total: number;
+            }>("GET", `/entries/${args.path}/related`, undefined, {
+              limit: args.limit ?? 10,
+            });
+
+            if (response.entries.length === 0) {
+              return `No related entries found for: ${args.path}`;
+            }
+
+            const lines = [
+              `## Related to: ${args.path}`,
+              "",
+              `Found ${response.total} entries sharing links:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              lines.push(
+                `- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`
+              );
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_orphans
+      // ========================================
+      brain_orphans: tool({
+        description:
+          "Find entries with no incoming links (orphans). Useful for knowledge graph health.",
+        args: {
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .optional()
+            .describe("Filter by entry type"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results (default: 20)"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+              }>;
+              total: number;
+              message: string;
+            }>("GET", "/orphans", undefined, {
+              type: args.type,
+              limit: args.limit ?? 20,
+            });
+
+            if (response.entries.length === 0) {
+              return `No orphan entries found${args.type ? ` of type "${args.type}"` : ""}`;
+            }
+
+            const lines = [
+              `## Orphan Entries${args.type ? ` (${args.type})` : ""}`,
+              "",
+              `Found ${response.total} entries with no incoming links:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              lines.push(
+                `- **${entry.title}** (\`${entry.path}\`) - ${entry.type}`
+              );
+            }
+
+            lines.push("");
+            lines.push(
+              "*Consider linking these notes from related entries to improve knowledge graph connectivity.*"
+            );
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_stale
+      // ========================================
+      brain_stale: tool({
+        description:
+          "Find entries that may need verification (not verified in N days).",
+        args: {
+          days: tool.schema
+            .number()
+            .optional()
+            .describe("Days threshold (default: 30)"),
+          type: tool.schema
+            .enum(ENTRY_TYPES)
+            .optional()
+            .describe("Filter by entry type"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results (default: 20)"),
+        },
+        async execute(args) {
+          const days = args.days ?? 30;
+
+          try {
+            const response = await apiRequest<{
+              entries: Array<{
+                id: string;
+                path: string;
+                title: string;
+                type: string;
+                daysSinceVerified: number | null;
+              }>;
+              total: number;
+            }>("GET", "/stale", undefined, {
+              days,
+              type: args.type,
+              limit: args.limit ?? 20,
+            });
+
+            if (response.entries.length === 0) {
+              return `No stale entries found (all verified within ${days} days)`;
+            }
+
+            const lines = [
+              `## Stale Entries (not verified in ${days} days)`,
+              "",
+              `Found ${response.total} entries needing verification:`,
+              "",
+            ];
+
+            for (const entry of response.entries) {
+              const daysSince =
+                entry.daysSinceVerified !== null
+                  ? `${entry.daysSinceVerified} days ago`
+                  : "never";
+              lines.push(`- **${entry.title}**`);
+              lines.push(
+                `  \`${entry.path}\` | Last verified: ${daysSince}`
+              );
+            }
+
+            lines.push("");
+            lines.push(
+              "*Use `brain_verify` to mark entries as still accurate.*"
+            );
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_verify
+      // ========================================
+      brain_verify: tool({
+        description:
+          "Mark an entry as verified (still accurate). Updates the last_verified timestamp.",
+        args: {
+          path: tool.schema.string().describe("Path to the note to verify"),
+        },
+        async execute(args) {
+          try {
+            await apiRequest<{ message: string; path: string }>(
+              "POST",
+              `/entries/${args.path}/verify`
+            );
+
+            return `Verified: ${args.path}
+
+Entry marked as still accurate. It will not appear in stale entry lists for 30 days.`;
+          } catch (error) {
+            return `Entry not found: ${args.path}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_update
+      // ========================================
+      brain_update: tool({
+        description: `Update an existing brain entry's status, title, dependencies, or append content.
+
+Use cases:
+- Mark a plan as completed: brain_update(path: "...", status: "completed")
+- Mark as in-progress: brain_update(path: "...", status: "in_progress")  
+- Block with reason: brain_update(path: "...", status: "blocked", note: "Waiting on API design")
+- Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
+- Update title: brain_update(path: "...", title: "New Title")
+- Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
+- Update priority: brain_update(path: "...", priority: "high")
+
+Statuses: draft, active, in_progress, blocked, completed, validated, superseded, archived`,
+        args: {
+          path: tool.schema.string().describe("Path to the entry to update"),
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe("New status for the entry"),
+          title: tool.schema
+            .string()
+            .optional()
+            .describe("New title for the entry"),
+          append: tool.schema
+            .string()
+            .optional()
+            .describe("Content to append to the entry body"),
+          note: tool.schema
+            .string()
+            .optional()
+            .describe("Short note to add (e.g., reason for status change)"),
+          depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Task dependencies - list of task IDs or titles. Validated on update. Use format: 'task-id' for same project, 'project:task-id' for cross-project."),
+          tags: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Replace tags array (overwrites existing tags)"),
+          priority: tool.schema
+            .enum(PRIORITIES)
+            .optional()
+            .describe("Update task priority"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Feature group identifier (e.g., 'auth-system', 'payment-flow')"),
+          feature_priority: tool.schema
+            .enum(PRIORITIES)
+            .optional()
+            .describe("Priority for this feature group"),
+          feature_depends_on: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Feature IDs this feature depends on"),
+          target_workdir: tool.schema
+            .string()
+            .optional()
+            .describe("Update task execution directory (absolute path). PRIMARY USE CASE: Cross-project task filing - ensures task executes in the correct project. Task runner will try this first before fallback."),
+          git_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Git branch to execute this task on"),
+          merge_target_branch: tool.schema
+            .string()
+            .optional()
+            .describe("Branch to merge completed work into"),
+          merge_policy: tool.schema
+            .enum(["prompt_only", "auto_pr", "auto_merge"])
+            .optional()
+            .describe("Merge behavior at completion (default: auto_merge)"),
+          merge_strategy: tool.schema
+            .enum(["squash", "merge", "rebase"])
+            .optional()
+            .describe("Merge strategy for auto-merge (default: squash)"),
+          open_pr_before_merge: tool.schema
+            .boolean()
+            .optional()
+            .describe("Open PR before merge when enabled (default: false)"),
+          execution_mode: tool.schema
+            .enum(["worktree", "current_branch"])
+            .optional()
+            .describe("Task execution mode (default: worktree)"),
+          complete_on_idle: tool.schema
+            .boolean()
+            .optional()
+            .describe("Mark task as completed when agent becomes idle (default: false)"),
+          remote_branch_policy: tool.schema
+            .enum(["keep", "delete"])
+            .optional()
+            .describe("Policy for remote branch after merge ('keep' or 'delete', default: delete)"),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When set, creates/updates linked cron entry."),
+          schedule_enabled: tool.schema
+            .boolean()
+            .optional()
+            .describe("Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."),
+          direct_prompt: tool.schema
+            .string()
+            .optional()
+            .describe("Direct prompt to execute, bypassing default skill workflow"),
+          agent: tool.schema
+            .string()
+            .optional()
+            .describe("Override agent for this task (e.g., 'explore', 'tdd-dev')"),
+          model: tool.schema
+            .string()
+            .optional()
+            .describe("Override model (format: 'provider/model-id')"),
+        },
+        async execute(args) {
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, direct_prompt, agent, model`;
+          }
+
+          try {
+            const response = await apiRequest<{
+              path: string;
+              title: string;
+              status: string;
+              changes: string[];
+            }>("PATCH", `/entries/${args.path}`, {
+              status: args.status,
+              title: args.title,
+              append: args.append,
+              note: args.note,
+              depends_on: args.depends_on,
+              tags: args.tags,
+              priority: args.priority,
+              feature_id: args.feature_id,
+              feature_priority: args.feature_priority,
+              feature_depends_on: args.feature_depends_on,
+              target_workdir: args.target_workdir,
+              git_branch: args.git_branch,
+              merge_target_branch: args.merge_target_branch,
+              merge_policy: args.merge_policy,
+              merge_strategy: args.merge_strategy,
+              open_pr_before_merge: args.open_pr_before_merge,
+              execution_mode: args.execution_mode,
+
+              complete_on_idle: args.complete_on_idle,
+              remote_branch_policy: args.remote_branch_policy,
+              schedule: args.schedule,
+              schedule_enabled: args.schedule_enabled,
+              direct_prompt: args.direct_prompt,
+              agent: args.agent,
+              model: args.model,
+            });
+
+            const changes: string[] = [];
+            if (args.status) changes.push(`Status: -> ${args.status}`);
+            if (args.title) changes.push(`Title: -> "${args.title}"`);
+            if (args.note) changes.push(`Note: "${args.note}"`);
+            if (args.append)
+              changes.push(`Appended ${args.append.length} characters`);
+            if (args.depends_on)
+              changes.push(`Dependencies: ${args.depends_on.length} task(s)`);
+            if (args.tags !== undefined)
+              changes.push(`Tags: ${args.tags.length > 0 ? args.tags.join(", ") : "(cleared)"}`);
+            if (args.priority)
+              changes.push(`Priority: ${args.priority}`);
+            if (args.feature_id)
+              changes.push(`Feature ID: ${args.feature_id}`);
+            if (args.feature_priority)
+              changes.push(`Feature Priority: ${args.feature_priority}`);
+            if (args.feature_depends_on)
+              changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
+            if (args.target_workdir)
+              changes.push(`Target Workdir: ${args.target_workdir}`);
+            if (args.git_branch)
+              changes.push(`Git Branch: ${args.git_branch}`);
+            if (args.merge_target_branch)
+              changes.push(`Merge Target Branch: ${args.merge_target_branch}`);
+            if (args.merge_policy)
+              changes.push(`Merge Policy: ${args.merge_policy}`);
+            if (args.merge_strategy)
+              changes.push(`Merge Strategy: ${args.merge_strategy}`);
+            if (args.open_pr_before_merge !== undefined)
+              changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
+            if (args.execution_mode)
+              changes.push(`Execution Mode: ${args.execution_mode}`);
+
+            if (args.complete_on_idle !== undefined)
+              changes.push(`Complete On Idle: ${args.complete_on_idle}`);
+            if (args.remote_branch_policy)
+              changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
+            if (args.schedule)
+              changes.push(`Schedule: ${args.schedule}`);
+            if (args.schedule_enabled !== undefined)
+              changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
+            if (args.direct_prompt)
+              changes.push(`Direct Prompt: set`);
+            if (args.agent)
+              changes.push(`Agent: ${args.agent}`);
+            if (args.model)
+              changes.push(`Model: ${args.model}`);
+
+            return `Updated: ${args.path}
+
+**Changes:**
+${changes.map((c) => `- ${c}`).join("\n")}
+
+**Current Status:** ${response.status}
+**Title:** ${response.title}
+
+Use \`brain_recall\` to view the full entry.`;
+          } catch (error) {
+            return `Failed to update: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_move
+      // ========================================
+      brain_move: tool({
+        description: `Move a brain entry to a different project.
+
+IMPORTANT LIMITATIONS:
+- ✅ Works for: tasks, summaries, reports, plans, and other note types
+- ❌ Cannot move entries currently in 'in_progress' status
+
+Use cases:
+- Bulk reassign tasks to a different project
+- Move a task filed in the wrong project
+- Reorganize project structure
+
+Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
+        args: {
+          path: tool.schema
+            .string()
+            .describe("Path to the entry to move (e.g., 'projects/old/task/abc12def.md')"),
+          project: tool.schema
+            .string()
+            .describe("Target project ID to move the entry to (e.g., 'my-other-project')"),
+        },
+        async execute(args) {
+          if (!args.path || !args.project) {
+            return "Please provide both path and target project";
+          }
+
+          try {
+            const response = await apiRequest<{
+              oldPath: string;
+              newPath: string;
+              project: string;
+              id: string;
+              title: string;
+            }>("POST", `/entries/${args.path}/move`, {
+              project: args.project,
+            });
+
+            return `Moved entry to project: ${response.project}
+
+**Title:** ${response.title}
+**ID:** \`${response.id}\`
+**Old Path:** \`${response.oldPath}\`
+**New Path:** \`${response.newPath}\`
+
+Use \`brain_recall\` with the new path to verify.`;
+          } catch (error) {
+            return `Failed to move: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_stats
+      // ========================================
+      brain_stats: tool({
+        description: "Get statistics about the brain storage.",
+        args: {
+          global: tool.schema
+            .boolean()
+            .optional()
+            .describe("Show only global entries stats"),
+        },
+        async execute(args) {
+          try {
+            const response = await apiRequest<{
+              zkAvailable: boolean;
+              zkVersion: string | null;
+              notebookExists: boolean;
+              brainDir: string;
+              dbPath: string;
+              totalEntries: number;
+              globalEntries: number;
+              projectEntries: number;
+              byType: Record<string, number>;
+              orphanCount: number;
+              trackedEntries: number;
+              staleCount: number;
+            }>("GET", "/stats", undefined, {
+              global: args.global,
+            });
+
+            const lines = [
+              "## Brain Statistics",
+              "",
+              "### System",
+              `- **zk CLI:** ${response.zkAvailable ? `v${response.zkVersion}` : "Not available"}`,
+              `- **Notebook:** ${response.notebookExists ? `${response.brainDir}` : "Not initialized"}`,
+              `- **Database:** ${response.dbPath}`,
+              "",
+              "### Entries",
+              `- **Total:** ${response.totalEntries}`,
+              `- **Global:** ${response.globalEntries}`,
+              `- **Project:** ${response.projectEntries}`,
+              "",
+              "### By Type",
+            ];
+
+            const sortedTypes = Object.entries(response.byType).sort(
+              (a, b) => b[1] - a[1]
+            );
+            for (const [type, count] of sortedTypes) {
+              lines.push(`- ${type}: ${count}`);
+            }
+
+            lines.push("");
+            lines.push("### Health");
+            lines.push(`- **Orphan Notes:** ${response.orphanCount}`);
+            lines.push("");
+            lines.push("### Access Tracking");
+            lines.push(`- **Tracked Entries:** ${response.trackedEntries}`);
+            lines.push(`- **Stale (>30 days):** ${response.staleCount}`);
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get stats: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_delete
+      // ========================================
+      brain_delete: tool({
+        description:
+          "Delete a specific entry from the brain by path. Use with caution.",
+        args: {
+          path: tool.schema.string().describe("Path to the entry to delete"),
+          confirm: tool.schema
+            .boolean()
+            .describe("Must be true to confirm deletion"),
+        },
+        async execute(args) {
+          if (!args.confirm) {
+            return "Please set `confirm: true` to delete the entry";
+          }
+
+          try {
+            await apiRequest<{ message: string; path: string }>(
+              "DELETE",
+              `/entries/${args.path}`,
+              undefined,
+              { confirm: "true" }
+            );
+
+            return `Deleted: ${args.path}`;
+          } catch (error) {
+            return `Entry not found: ${args.path}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_link
+      // ========================================
+      brain_link: tool({
+        description:
+          "Generate a markdown link to a brain entry. Use this when referencing other brain entries to ensure proper link resolution with mkdnflow.",
+        args: {
+          title: tool.schema.string().optional().describe("Title to search for"),
+          path: tool.schema
+            .string()
+            .optional()
+            .describe("Direct path or ID (8-char alphanumeric) to the entry"),
+          withTitle: tool.schema
+            .boolean()
+            .optional()
+            .describe("Include title in link (default: true)"),
+        },
+        async execute(args) {
+          if (!args.path && !args.title) {
+            return JSON.stringify({
+              error: "Please provide either a path, ID, or title to generate a link",
+            });
+          }
+
+          try {
+            const response = await apiRequest<{
+              link: string;
+              id: string;
+              path: string;
+              title: string;
+            }>("POST", "/link", {
+              title: args.title,
+              path: args.path,
+              withTitle: args.withTitle,
+            });
+
+            return JSON.stringify(response);
+          } catch (error) {
+            return JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_section
+      // ========================================
+      brain_section: tool({
+        description: `Retrieve a specific section's FULL CONTENT from a brain plan by section title.
+
+Use this when you need the detailed implementation spec for your assigned task.
+Returns the exact section content including all subsections, code examples, and acceptance criteria.
+
+Example: brain_section({ planId: "projects/abc/plan/auth.md", sectionTitle: "JWT Middleware" })
+
+This is more precise than brain_inject (which uses fuzzy search) - it extracts the exact section you need.`,
+        args: {
+          planId: tool.schema
+            .string()
+            .describe(
+              "Brain plan path (from orchestration context or brain_plan_sections)"
+            ),
+          sectionTitle: tool.schema
+            .string()
+            .describe("Section title to retrieve (can be partial match)"),
+          includeSubsections: tool.schema
+            .boolean()
+            .optional()
+            .describe("Include nested subsections (default: true)"),
+        },
+        async execute(args) {
+          try {
+            const encodedTitle = encodeURIComponent(args.sectionTitle);
+            const response = await apiRequest<{
+              title: string;
+              content: string;
+              level: number;
+              line: number;
+            }>(
+              "GET",
+              `/entries/${args.planId}/sections/${encodedTitle}`,
+              undefined,
+              {
+                includeSubsections:
+                  args.includeSubsections !== false ? "true" : "false",
+              }
+            );
+
+            return JSON.stringify(
+              {
+                planId: args.planId,
+                sectionTitle: response.title,
+                content: response.content,
+                lineRange: { start: response.line },
+                contentLength: response.content.length,
+              },
+              null,
+              2
+            );
+          } catch (error) {
+            return JSON.stringify(
+              {
+                error: `Section "${args.sectionTitle}" not found in plan`,
+                hint: "Use brain_plan_sections to list available sections",
+              },
+              null,
+              2
+            );
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_check_connection
+      // ========================================
+      brain_check_connection: tool({
+        description: `Check if the Brain API server is running and accessible.
+
+Use this tool FIRST if you're unsure whether brain tools will work.
+Returns connection status, server version, and helpful troubleshooting info if unavailable.
+
+This is useful to:
+- Verify the brain is available before starting a task that needs it
+- Diagnose why other brain tools are failing
+- Get instructions for starting the brain server`,
+        args: {},
+        async execute() {
+          // Force a fresh health check
+          connectionState.lastCheck = 0;
+          const health = await checkBrainHealth();
+
+          if (health.available) {
+            return `**Brain API Status: CONNECTED**
+
+- **Server URL:** ${BRAIN_API_URL}
+- **Version:** ${health.version || "unknown"}
+- **Status:** Ready to use
+
+All brain tools (save, recall, search, inject, etc.) are available.`;
+          } else {
+            return `**Brain API Status: UNAVAILABLE**
+
+- **Server URL:** ${BRAIN_API_URL}
+- **Error:** ${health.lastError || "Unknown error"}
+
+**To start the Brain API server:**
+\`\`\`bash
+brain start
+\`\`\`
+
+**To check server status:**
+\`\`\`bash
+brain status
+\`\`\`
+
+**To view logs:**
+\`\`\`bash
+brain logs
+\`\`\`
+
+Brain tools will not work until the server is running.
+You can proceed with tasks that don't require brain functionality.`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_tasks
+      // ========================================
+      brain_tasks: tool({
+        description: `List all tasks for current project with dependency status (ready/waiting/blocked), stats, and cycles detected.
+
+Use this to see:
+- Which tasks are ready to work on (dependencies met)
+- Which tasks are waiting (dependencies incomplete)
+- Which tasks are blocked (circular deps or blocked deps)
+- Overall task queue stats`,
+        args: {
+          status: tool.schema
+            .enum(ENTRY_STATUSES)
+            .optional()
+            .describe("Filter by task status (pending, in_progress, completed, etc.)"),
+          classification: tool.schema
+            .enum(["ready", "waiting", "blocked"])
+            .optional()
+            .describe("Filter by dependency classification"),
+          feature_id: tool.schema
+            .string()
+            .optional()
+            .describe("Filter tasks by feature group ID (e.g., 'auth-system', 'dark-mode')"),
+          limit: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum results to return (default: 50)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          try {
+            const proj = args.project || projectId;
+            
+            interface TaskWithDeps {
+              id: string;
+              title: string;
+              status: string;
+              priority?: string;
+              feature_id?: string;
+              classification: string;
+              dependsOn?: Array<{ id: string; title: string; status: string }>;
+              blockedBy?: string;
+            }
+            
+            interface TaskListResponse {
+              tasks: TaskWithDeps[];
+              count: number;
+              stats?: {
+                ready: number;
+                waiting: number;
+                blocked: number;
+                completed: number;
+                total: number;
+              };
+              cycles?: Array<{ taskId: string; cycle: string[] }>;
+            }
+            
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            // Apply filters
+            let filteredTasks = response.tasks;
+            
+            if (args.status) {
+              filteredTasks = filteredTasks.filter(t => t.status === args.status);
+            }
+            
+            if (args.classification) {
+              filteredTasks = filteredTasks.filter(t => t.classification === args.classification);
+            }
+            
+            if (args.feature_id) {
+              filteredTasks = filteredTasks.filter(t => t.feature_id === args.feature_id);
+            }
+            
+            const limit = args.limit ?? 50;
+            filteredTasks = filteredTasks.slice(0, limit);
+
+            // Group by classification
+            const ready = filteredTasks.filter(t => t.classification === "ready");
+            const waiting = filteredTasks.filter(t => t.classification === "waiting");
+            const blocked = filteredTasks.filter(t => t.classification === "blocked");
+
+            const lines: string[] = [];
+            lines.push(`## Tasks for project: ${proj}`);
+            lines.push("");
+
+            // Stats summary
+            if (response.stats) {
+              const s = response.stats;
+              lines.push(`**Stats:** ${s.ready} ready | ${s.waiting} waiting | ${s.blocked} blocked | ${s.completed} completed`);
+              lines.push("");
+            }
+
+            // Ready tasks
+            if (ready.length > 0) {
+              lines.push("### Ready (can start now)");
+              for (const task of ready) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                if (task.dependsOn && task.dependsOn.length > 0) {
+                  const deps = task.dependsOn.map(d => `${d.title} (${d.status})`).join(", ");
+                  lines.push(`  Dependencies: ${deps}`);
+                } else {
+                  lines.push("  Dependencies: none");
+                }
+              }
+              lines.push("");
+            }
+
+            // Waiting tasks
+            if (waiting.length > 0) {
+              lines.push("### Waiting (deps incomplete)");
+              for (const task of waiting) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                if (task.dependsOn && task.dependsOn.length > 0) {
+                  const incomplete = task.dependsOn.filter(d => d.status !== "completed");
+                  const deps = incomplete.map(d => `${d.title} (${d.status})`).join(", ");
+                  lines.push(`  Waiting on: ${deps}`);
+                }
+              }
+              lines.push("");
+            }
+
+            // Blocked tasks
+            if (blocked.length > 0) {
+              lines.push("### Blocked");
+              for (const task of blocked) {
+                const priority = task.priority === "high" ? "[HIGH]" : task.priority === "medium" ? "[MED]" : "[LOW]";
+                lines.push(`- **${priority} ${task.title}** (\`${task.id}\`) - ${task.status}`);
+                lines.push(`  Blocked by: ${task.blockedBy || "circular dependency or blocked deps"}`);
+              }
+              lines.push("");
+            }
+
+            // Cycles warning
+            if (response.cycles && response.cycles.length > 0) {
+              lines.push("### Circular Dependencies Detected");
+              for (const cycle of response.cycles) {
+                lines.push(`- Cycle: ${cycle.cycle.join(" -> ")}`);
+              }
+              lines.push("");
+            }
+
+            if (filteredTasks.length === 0) {
+              lines.push("*No tasks found matching criteria.*");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to list tasks: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_next
+      // ========================================
+      brain_task_next: tool({
+        description: `Get the next actionable task (highest priority ready task) with full content.
+
+Use this to quickly find what to work on next. Returns the complete task including:
+- Full markdown content for implementation
+- User's original request for validation
+- Dependency information
+
+If no ready tasks, shows current queue state.`,
+        args: {
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          try {
+            const proj = args.project || projectId;
+            
+            // Get next ready task from API
+            interface TaskNextResponse {
+              task: {
+                id: string;
+                path: string;
+                title: string;
+                status: string;
+                priority?: string;
+                classification: string;
+                resolved_deps: string[];
+                waiting_on: string[];
+                blocked_by: string[];
+                user_original_request?: string;
+              } | null;
+              message?: string;
+            }
+            
+            const response = await apiRequest<TaskNextResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}/next`
+            );
+
+            // No ready task available
+            if (!response.task) {
+              // Get stats for context
+              interface TaskListResponse {
+                tasks: Array<{ classification: string; status: string }>;
+                stats?: {
+                  ready: number;
+                  waiting: number;
+                  blocked: number;
+                  completed: number;
+                  total: number;
+                };
+              }
+              
+              const statsResponse = await apiRequest<TaskListResponse>(
+                "GET",
+                `/tasks/${encodeURIComponent(proj)}`
+              );
+              
+              const stats = statsResponse.stats || {
+                ready: 0,
+                waiting: statsResponse.tasks.filter(t => t.classification === "waiting").length,
+                blocked: statsResponse.tasks.filter(t => t.classification === "blocked").length,
+                completed: statsResponse.tasks.filter(t => t.status === "completed").length,
+                total: statsResponse.tasks.length,
+              };
+
+              return `No ready tasks available.
+
+Current state:
+- ${stats.waiting} tasks waiting on dependencies
+- ${stats.blocked} tasks blocked
+- ${stats.completed} tasks completed
+
+Use \`brain_tasks\` to see the full task list and dependency status.`;
+            }
+
+            const task = response.task;
+            
+            // Get full entry content
+            const entry = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              content: string;
+              tags: string[];
+              user_original_request?: string;
+            }>("GET", `/entries/${task.path}`);
+
+            const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
+            const depsCount = task.resolved_deps?.length || 0;
+            
+            // Count tasks that depend on this one (reverse lookup not available, show resolved deps)
+            const lines: string[] = [];
+            lines.push(`## Next Task: ${entry.title}`);
+            lines.push("");
+            lines.push(`**ID:** \`${entry.id}\``);
+            lines.push(`**Path:** \`${entry.path}\``);
+            lines.push(`**Priority:** ${priority}`);
+            lines.push(`**Status:** ${entry.status}`);
+            lines.push("");
+            
+            // User's original request for validation
+            if (entry.user_original_request) {
+              lines.push("### User Original Request");
+              lines.push(`> ${entry.user_original_request.split('\n').join('\n> ')}`);
+              lines.push("");
+            }
+            
+            lines.push("### Quick Context");
+            if (depsCount > 0) {
+              lines.push(`- ${depsCount} dependencies (all satisfied)`);
+            } else {
+              lines.push("- No dependencies");
+            }
+            lines.push("");
+            lines.push("---");
+            lines.push("");
+            lines.push(entry.content);
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get next task: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_get
+      // ========================================
+      brain_task_get: tool({
+        description: `Get a specific task by ID with full dependency info, dependents list, and content.
+
+Use this to get detailed information about a specific task including:
+- Full markdown content for implementation
+- User's original request for validation  
+- Dependencies (what this task needs)
+- Dependents (what needs this task)
+- Classification (ready/waiting/blocked)`,
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric) or title"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          if (!args.taskId) {
+            return "Please provide a task ID or title";
+          }
+
+          try {
+            const proj = args.project || projectId;
+            
+            // Get all tasks to find the specific task and calculate dependents
+            interface TaskWithDeps {
+              id: string;
+              title: string;
+              path: string;
+              status: string;
+              priority?: string;
+              classification: string;
+              resolved_deps: string[];
+              waiting_on: string[];
+              blocked_by: string[];
+              dependsOn?: Array<{ id: string; title: string; status: string }>;
+            }
+            
+            interface TaskListResponse {
+              tasks: TaskWithDeps[];
+              count: number;
+            }
+            
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            // Find the task by ID or title
+            const taskId = args.taskId.toLowerCase();
+            const task = response.tasks.find(
+              t => t.id.toLowerCase() === taskId || 
+                   t.title.toLowerCase() === taskId.toLowerCase()
+            );
+
+            if (!task) {
+              // Try searching for partial match
+              const partialMatches = response.tasks.filter(
+                t => t.title.toLowerCase().includes(taskId) ||
+                     t.id.toLowerCase().includes(taskId)
+              );
+              
+              if (partialMatches.length > 0) {
+                const suggestions = partialMatches.slice(0, 5).map(
+                  t => `- ${t.title} (ID: ${t.id})`
+                ).join("\n");
+                return `Task not found: "${args.taskId}"\n\n**Did you mean:**\n${suggestions}`;
+              }
+              
+              return `Task not found: "${args.taskId}"\n\nUse \`brain_tasks\` to list all tasks.`;
+            }
+
+            // Calculate dependents - tasks that have this task in their resolved_deps
+            const dependents = response.tasks.filter(
+              t => t.resolved_deps?.includes(task.id)
+            ).map(t => ({
+              id: t.id,
+              title: t.title,
+              status: t.status,
+            }));
+
+            // Get full entry content
+            const entry = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+              type: string;
+              status: string;
+              content: string;
+              tags: string[];
+              user_original_request?: string;
+            }>("GET", `/entries/${task.path}`);
+
+            const priority = task.priority === "high" ? "HIGH" : task.priority === "medium" ? "MEDIUM" : "LOW";
+            
+            const lines: string[] = [];
+            lines.push(`## ${entry.title}`);
+            lines.push("");
+            lines.push(`**ID:** \`${entry.id}\``);
+            lines.push(`**Path:** \`${entry.path}\``);
+            lines.push(`**Priority:** ${priority}`);
+            lines.push(`**Status:** ${entry.status}`);
+            lines.push(`**Classification:** ${task.classification}`);
+            lines.push("");
+            
+            // Dependencies section
+            lines.push("### Dependencies (what this task needs)");
+            if (task.dependsOn && task.dependsOn.length > 0) {
+              for (const dep of task.dependsOn) {
+                const statusEmoji = dep.status === "completed" ? "✓" : dep.status === "in_progress" ? "⋯" : "○";
+                lines.push(`- ${statusEmoji} **${dep.title}** (\`${dep.id}\`) - ${dep.status}`);
+              }
+            } else {
+              lines.push("*No dependencies*");
+            }
+            lines.push("");
+            
+            // Dependents section
+            lines.push("### Dependents (what needs this task)");
+            if (dependents.length > 0) {
+              for (const dep of dependents) {
+                const statusEmoji = dep.status === "completed" ? "✓" : dep.status === "in_progress" ? "⋯" : "○";
+                lines.push(`- ${statusEmoji} **${dep.title}** (\`${dep.id}\`) - ${dep.status}`);
+              }
+            } else {
+              lines.push("*No tasks depend on this one*");
+            }
+            lines.push("");
+            
+            // User's original request
+            if (entry.user_original_request) {
+              lines.push("### User Original Request");
+              lines.push(`> ${entry.user_original_request.split('\n').join('\n> ')}`);
+              lines.push("");
+            }
+            
+            lines.push("---");
+            lines.push("");
+            lines.push(entry.content);
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get task: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_metadata
+      // ========================================
+      brain_task_metadata: tool({
+        description: `Get execution metadata for a task — fields NOT included in brain_task_get.
+
+Returns structured JSON with:
+- **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote
+- **Merge intent:** merge_target_branch, merge_policy (default auto_merge), merge_strategy (default squash), open_pr_before_merge, execution_mode
+- **Feature grouping:** feature_id, feature_priority, feature_depends_on
+- **Raw dependencies:** depends_on (IDs), resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle
+- **Timestamps:** created, modified
+- **Tags and sessions:** tags[], session_ids[]
+
+Use this when you need to know HOW a task should be executed (which agent, model, workdir, prompt)
+or to inspect its dependency graph details. Complements brain_task_get which returns content and high-level status.`,
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric) or title"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          if (!args.taskId) {
+            return "Please provide a task ID or title";
+          }
+
+          try {
+            const proj = args.project || projectId;
+
+            interface FullTask {
+              id: string;
+              title: string;
+              path: string;
+              status: string;
+              priority: string;
+              classification: string;
+              depends_on: string[];
+              resolved_deps: string[];
+              unresolved_deps: string[];
+              blocked_by: string[];
+              blocked_by_reason?: string;
+              waiting_on: string[];
+              in_cycle: boolean;
+              tags: string[];
+              created: string;
+              modified?: string;
+              target_workdir: string | null;
+              workdir: string | null;
+              resolved_workdir: string | null;
+              git_branch: string | null;
+              git_remote: string | null;
+              merge_target_branch?: string | null;
+              merge_policy?: "prompt_only" | "auto_pr" | "auto_merge";
+              merge_strategy?: "squash" | "merge" | "rebase";
+              open_pr_before_merge?: boolean;
+              execution_mode?: "worktree" | "current_branch";
+
+              agent: string | null;
+              model: string | null;
+              direct_prompt: string | null;
+              feature_id?: string;
+              feature_priority?: string;
+              feature_depends_on?: string[];
+              session_ids: string[];
+              user_original_request: string | null;
+            }
+
+            interface TaskListResponse {
+              tasks: FullTask[];
+              count: number;
+            }
+
+            const response = await apiRequest<TaskListResponse>(
+              "GET",
+              `/tasks/${encodeURIComponent(proj)}`
+            );
+
+            const taskId = args.taskId.toLowerCase();
+            const task = response.tasks.find(
+              t => t.id.toLowerCase() === taskId ||
+                   t.title.toLowerCase() === taskId
+            );
+
+            if (!task) {
+              const partialMatches = response.tasks.filter(
+                t => t.title.toLowerCase().includes(taskId) ||
+                     t.id.toLowerCase().includes(taskId)
+              );
+
+              if (partialMatches.length > 0) {
+                const suggestions = partialMatches.slice(0, 5).map(
+                  t => `- ${t.title} (ID: ${t.id})`
+                ).join("\n");
+                return `Task not found: "${args.taskId}"\n\n**Did you mean:**\n${suggestions}`;
+              }
+
+              return `Task not found: "${args.taskId}"\n\nUse \`brain_tasks\` to list all tasks.`;
+            }
+
+            // Build metadata-only response (no content body)
+            const metadata: Record<string, unknown> = {
+              id: task.id,
+              title: task.title,
+              path: task.path,
+              status: task.status,
+              priority: task.priority,
+              classification: task.classification,
+
+              // Execution config
+              execution: {
+                agent: task.agent,
+                model: task.model,
+                direct_prompt: task.direct_prompt,
+                target_workdir: task.target_workdir,
+                workdir: task.workdir,
+                resolved_workdir: task.resolved_workdir,
+                git_branch: task.git_branch,
+                git_remote: task.git_remote,
+                merge_target_branch: task.merge_target_branch ?? null,
+                merge_policy: task.merge_policy ?? "auto_merge",
+                merge_strategy: task.merge_strategy ?? "squash",
+                open_pr_before_merge: task.open_pr_before_merge ?? false,
+                execution_mode: task.execution_mode ?? "worktree",
+
+              },
+
+              // Feature grouping
+              feature: task.feature_id ? {
+                id: task.feature_id,
+                priority: task.feature_priority || null,
+                depends_on: task.feature_depends_on || [],
+              } : null,
+
+              // Dependencies (raw IDs)
+              dependencies: {
+                depends_on: task.depends_on || [],
+                resolved_deps: task.resolved_deps || [],
+                unresolved_deps: task.unresolved_deps || [],
+                blocked_by: task.blocked_by || [],
+                blocked_by_reason: task.blocked_by_reason || null,
+                waiting_on: task.waiting_on || [],
+                in_cycle: task.in_cycle || false,
+              },
+
+              // Metadata
+              tags: task.tags || [],
+              created: task.created,
+              modified: task.modified || null,
+              session_ids: task.session_ids || [],
+              user_original_request: task.user_original_request,
+            };
+
+            return JSON.stringify(metadata, null, 2);
+          } catch (error) {
+            return `Failed to get task metadata: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_tasks_status
+      // ========================================
+      brain_tasks_status: tool({
+        description: `Get status of multiple tasks by ID, with optional blocking wait.
+
+Use cases:
+- Check if spawned subtasks are complete before continuing
+- Wait for dependent tasks to finish before starting next phase
+- Monitor multiple tasks from an orchestrator agent
+
+Parameters:
+- taskIds: Array of task IDs (8-char alphanumeric) to check
+- waitFor: Optional. "completed" (default) waits until all tasks completed/validated.
+           "any" returns as soon as any task status changes.
+           Omit for immediate response without waiting.
+- timeout: Max wait time in milliseconds (default: 60000, max: 300000)
+- project: Override auto-detected project
+
+Example - immediate check:
+  brain_tasks_status({ taskIds: ["abc12def", "xyz98765"] })
+
+Example - wait for completion:
+  brain_tasks_status({ taskIds: ["abc12def"], waitFor: "completed", timeout: 120000 })`,
+        args: {
+          taskIds: tool.schema
+            .array(tool.schema.string())
+            .describe("Task IDs (8-char alphanumeric) to check"),
+          waitFor: tool.schema
+            .enum(["completed", "any"])
+            .optional()
+            .describe("Wait mode: 'completed' (all done) or 'any' (first change). Omit for immediate."),
+          timeout: tool.schema
+            .number()
+            .optional()
+            .describe("Max wait time in ms (default: 60000, max: 300000)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          if (!args.taskIds || args.taskIds.length === 0) {
+            return "Please provide at least one task ID";
+          }
+
+          try {
+            const proj = args.project || projectId;
+
+            const response = await apiRequest<{
+              tasks: Array<{
+                id: string;
+                title: string;
+                status: string;
+                classification: string;
+                priority?: string;
+              }>;
+              notFound: string[];
+              changed: boolean;
+              timedOut: boolean;
+            }>("POST", `/tasks/${encodeURIComponent(proj)}/status`, {
+              taskIds: args.taskIds,
+              waitFor: args.waitFor,
+              timeout: args.timeout,
+            });
+
+            const lines: string[] = [];
+
+            // Summary line
+            if (args.waitFor) {
+              if (response.timedOut) {
+                lines.push(`## Task Status (TIMED OUT after ${(args.timeout || 60000) / 1000}s)`);
+              } else if (response.changed) {
+                lines.push(`## Task Status (condition met: ${args.waitFor})`);
+              } else {
+                lines.push("## Task Status");
+              }
+            } else {
+              lines.push("## Task Status");
+            }
+            lines.push("");
+
+            // Task statuses
+            for (const task of response.tasks) {
+              const priority = task.priority === "high" ? "[HIGH]" :
+                               task.priority === "medium" ? "[MED]" : "[LOW]";
+              const statusIcon = task.status === "completed" ? "✓" :
+                                 task.status === "in_progress" ? "⋯" : "○";
+              lines.push(`${statusIcon} **${task.title}** (${task.id}) ${priority}`);
+              lines.push(`   Status: ${task.status} | Classification: ${task.classification}`);
+            }
+
+            // Not found IDs
+            if (response.notFound.length > 0) {
+              lines.push("");
+              lines.push(`**Not found:** ${response.notFound.join(", ")}`);
+            }
+
+            // Meta info
+            lines.push("");
+            if (response.timedOut) {
+              lines.push("*Request timed out - tasks may still be running*");
+            } else if (args.waitFor && response.changed) {
+              lines.push("*Condition met - returning current state*");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to get task status: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_task_trigger
+      // ========================================
+      brain_task_trigger: tool({
+        description:
+          "Manually trigger a scheduled task and its downstream dependents.",
+        args: {
+          taskId: tool.schema
+            .string()
+            .describe("Task ID (8-char alphanumeric)"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Override auto-detected project"),
+        },
+        async execute(args) {
+          const proj = args.project || projectId;
+          try {
+            const response = await apiRequest<{
+              taskId: string;
+              run: unknown;
+              pipeline: unknown[];
+              pipelineCount: number;
+              message: string;
+            }>(
+              "POST",
+              `/tasks/${encodeURIComponent(proj)}/${encodeURIComponent(args.taskId)}/trigger`
+            );
+            return JSON.stringify({ operation: "task_trigger", project: proj, data: response }, null, 2);
+          } catch (error) {
+            return JSON.stringify({ operation: "task_trigger", project: proj, error: error instanceof Error ? error.message : String(error) }, null, 2);
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_plan_sections
+      // ========================================
+      brain_plan_sections: tool({
+        description:
+          "Extract section headers from a plan entry for orchestration mapping.",
+        args: {
+          path: tool.schema
+            .string()
+            .optional()
+            .describe("Path to the plan entry"),
+          title: tool.schema
+            .string()
+            .optional()
+            .describe("Title to search for"),
+        },
+        async execute(args) {
+          if (!args.path && !args.title) {
+            return JSON.stringify({ error: "Please provide either a path or title" });
+          }
+
+          try {
+            // If title provided, search first
+            let entryPath = args.path;
+            if (!entryPath && args.title) {
+              const searchResult = await apiRequest<{
+                results: Array<{ path: string; title: string }>;
+              }>("POST", "/search", {
+                query: args.title,
+                limit: 5,
+              });
+
+              const exactMatch = searchResult.results.find(
+                (r) => r.title === args.title
+              );
+              if (exactMatch) {
+                entryPath = exactMatch.path;
+              } else if (searchResult.results.length > 0) {
+                const suggestions = searchResult.results
+                  .slice(0, 5)
+                  .map((r) => r.title);
+                return JSON.stringify({
+                  error: `No exact match for title: "${args.title}"`,
+                  suggestions,
+                  hint: "Use brain_plan_sections with the exact path instead",
+                });
+              } else {
+                return JSON.stringify({
+                  error: `No entry found matching title: "${args.title}"`,
+                });
+              }
+            }
+
+            const response = await apiRequest<{
+              sections: Array<{
+                title: string;
+                level: number;
+                line: number;
+              }>;
+              total: number;
+            }>("GET", `/entries/${entryPath}/sections`);
+
+            // Get entry details for title
+            const entry = await apiRequest<{
+              title: string;
+              type: string;
+            }>("GET", `/entries/${entryPath}`);
+
+            return JSON.stringify(
+              {
+                path: entryPath,
+                title: entry.title,
+                type: entry.type,
+                sections: response.sections,
+                sectionTitles: response.sections.map((s) => s.title),
+              },
+              null,
+              2
+            );
+          } catch (error) {
+            return JSON.stringify({
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_feature_review_enable
+      // ========================================
+      brain_feature_review_enable: tool({
+        description:
+          "Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks in the feature are completed. The review validates that the implementation matches the original requirements.",
+        args: {
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID to review"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          try {
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+            }>("POST", "/monitors", { templateId: "feature-review", scope });
+
+            return [
+              `Feature Code Review enabled for feature "${args.feature_id}":`,
+              `- **Task ID:** ${response.id}`,
+              `- **Title:** ${response.title}`,
+              `The review will trigger automatically when all feature tasks are completed.`,
+            ].join("\n");
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+              return `Feature Code Review is already enabled for feature "${args.feature_id}". Use brain_feature_review_disable first to reset it.`;
+            }
+            return `Failed to enable Feature Code Review: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_feature_review_disable
+      // ========================================
+      brain_feature_review_disable: tool({
+        description:
+          "Disable Feature Code Review for a feature. Permanently removes the review task. Can be re-enabled later with brain_feature_review_enable.",
+        args: {
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          try {
+            const response = await apiRequest<{
+              message: string;
+              taskId: string;
+              path: string;
+            }>("DELETE", "/monitors/by-scope", { templateId: "feature-review", scope });
+
+            return `Feature Code Review disabled for feature "${args.feature_id}" (task ${response.taskId} deleted).`;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+              return `Feature Code Review is not currently enabled for feature "${args.feature_id}". Nothing to disable.`;
+            }
+            return `Failed to disable Feature Code Review: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_blocked_inspector_enable
+      // ========================================
+      brain_blocked_inspector_enable: tool({
+        description:
+          "Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task that periodically checks for blocked tasks and attempts to unblock them by analyzing dependencies, suggesting fixes, or escalating.",
+        args: {
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID to inspect"),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Cron schedule override (default: every 30 minutes)"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          const body: Record<string, unknown> = { templateId: "blocked-inspector", scope };
+          if (args.schedule) body.schedule = args.schedule;
+
+          try {
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+            }>("POST", "/monitors", body);
+
+            return [
+              `Blocked Task Inspector enabled for feature "${args.feature_id}":`,
+              `- **Task ID:** ${response.id}`,
+              `- **Title:** ${response.title}`,
+              `The inspector will periodically check for blocked tasks and attempt to unblock them.`,
+            ].join("\n");
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+              return `Blocked Task Inspector is already enabled for feature "${args.feature_id}". Use brain_blocked_inspector_disable first to reset it.`;
+            }
+            return `Failed to enable Blocked Task Inspector: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_blocked_inspector_disable
+      // ========================================
+      brain_blocked_inspector_disable: tool({
+        description:
+          "Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Can be re-enabled later with brain_blocked_inspector_enable.",
+        args: {
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          try {
+            const response = await apiRequest<{
+              message: string;
+              taskId: string;
+              path: string;
+            }>("DELETE", "/monitors/by-scope", { templateId: "blocked-inspector", scope });
+
+            return `Blocked Task Inspector disabled for feature "${args.feature_id}" (task ${response.taskId} deleted).`;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+              return `Blocked Task Inspector is not currently enabled for feature "${args.feature_id}". Nothing to disable.`;
+            }
+            return `Failed to disable Blocked Task Inspector: ${msg}`;
+          }
+        },
+      }),
+    },
+  };
+};
+
+export default BrainPlugin;

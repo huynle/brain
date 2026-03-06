@@ -863,3 +863,77 @@ func TestResolveDependencies_DepOnCycleParticipant(t *testing.T) {
 		t.Errorf("c classification = %q, want 'blocked' (dep on cycle participant)", taskMap["c"].Classification)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ParentID propagation
+// ---------------------------------------------------------------------------
+
+func TestBrainEntryToResolvedTask_ParentIDPropagation(t *testing.T) {
+	// Test that ParentID flows from BrainEntry to ResolvedTask
+	entry := types.BrainEntry{
+		ID:        "task123",
+		Title:     "Child Task",
+		Status:    "pending",
+		Priority:  "high",
+		ParentID:  "parent456",
+		DependsOn: []string{},
+		Created:   "2025-01-01T00:00:00Z",
+	}
+
+	resolved := brainEntryToResolvedTask(&entry)
+
+	if resolved.ParentID != "parent456" {
+		t.Errorf("ParentID = %q, want %q", resolved.ParentID, "parent456")
+	}
+}
+
+func TestResolveDependencies_ParentIDPreserved(t *testing.T) {
+	// Test that ParentID is preserved through full dependency resolution
+	tasks := []types.BrainEntry{
+		{
+			ID:       "parent",
+			Title:    "Parent Task",
+			Status:   "completed",
+			Priority: "high",
+			Created:  "2025-01-01T00:00:00Z",
+		},
+		{
+			ID:        "child1",
+			Title:     "Child Task 1",
+			Status:    "pending",
+			Priority:  "medium",
+			ParentID:  "parent",
+			DependsOn: []string{},
+			Created:   "2025-01-01T01:00:00Z",
+		},
+		{
+			ID:        "child2",
+			Title:     "Child Task 2",
+			Status:    "pending",
+			Priority:  "low",
+			ParentID:  "parent",
+			DependsOn: []string{"child1"},
+			Created:   "2025-01-01T02:00:00Z",
+		},
+	}
+
+	result := ResolveDependencies(tasks)
+
+	taskMap := make(map[string]types.ResolvedTask)
+	for _, rt := range result.Tasks {
+		taskMap[rt.ID] = rt
+	}
+
+	// Parent should have no ParentID
+	if taskMap["parent"].ParentID != "" {
+		t.Errorf("parent.ParentID = %q, want empty", taskMap["parent"].ParentID)
+	}
+
+	// Children should have ParentID
+	if taskMap["child1"].ParentID != "parent" {
+		t.Errorf("child1.ParentID = %q, want %q", taskMap["child1"].ParentID, "parent")
+	}
+	if taskMap["child2"].ParentID != "parent" {
+		t.Errorf("child2.ParentID = %q, want %q", taskMap["child2"].ParentID, "parent")
+	}
+}

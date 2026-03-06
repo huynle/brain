@@ -34,3 +34,6 @@ dist/
 # Benchmark and profiling
 *.prof
 *.bench
+runner-*.json
+runner-*.pid
+running-*.json

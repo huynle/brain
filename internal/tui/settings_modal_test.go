@@ -1,0 +1,844 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+func TestSettingsModal_Creation(t *testing.T) {
+	// Create settings with some initial data
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+			"project-b": 0, // unlimited
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	// Create modal
+	modal := NewSettingsModal(settings)
+
+	// Verify modal implements Modal interface
+	var _ Modal = modal
+
+	// Verify title
+	if modal.Title() != "Settings" {
+		t.Errorf("Expected title 'Settings', got '%s'", modal.Title())
+	}
+
+	// Verify dimensions
+	if modal.Width() <= 0 {
+		t.Errorf("Expected positive width, got %d", modal.Width())
+	}
+	if modal.Height() <= 0 {
+		t.Errorf("Expected positive height, got %d", modal.Height())
+	}
+}
+
+func TestSettingsModal_Navigation(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+			"project-b": 3,
+			"project-c": 0,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Initial selected index should be 0 (global max-parallel)
+	if modal.selectedIndex != 0 {
+		t.Errorf("Expected initial selectedIndex 0, got %d", modal.selectedIndex)
+	}
+
+	// Navigate down with 'j'
+	handled, _ := modal.HandleKey("j")
+	if !handled {
+		t.Error("Expected 'j' key to be handled")
+	}
+	if modal.selectedIndex != 1 {
+		t.Errorf("After 'j', expected selectedIndex 1, got %d", modal.selectedIndex)
+	}
+
+	// Navigate down again
+	modal.HandleKey("j")
+	if modal.selectedIndex != 2 {
+		t.Errorf("After second 'j', expected selectedIndex 2, got %d", modal.selectedIndex)
+	}
+
+	// Navigate up with 'k'
+	handled, _ = modal.HandleKey("k")
+	if !handled {
+		t.Error("Expected 'k' key to be handled")
+	}
+	if modal.selectedIndex != 1 {
+		t.Errorf("After 'k', expected selectedIndex 1, got %d", modal.selectedIndex)
+	}
+
+	// Navigate to top
+	modal.HandleKey("k")
+	if modal.selectedIndex != 0 {
+		t.Errorf("Expected selectedIndex 0, got %d", modal.selectedIndex)
+	}
+
+	// 'k' at top should stay at top
+	modal.HandleKey("k")
+	if modal.selectedIndex != 0 {
+		t.Errorf("Expected selectedIndex to stay at 0, got %d", modal.selectedIndex)
+	}
+}
+
+func TestSettingsModal_AdjustLimits(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Increase global max-parallel with '+'
+	handled, _ := modal.HandleKey("+")
+	if !handled {
+		t.Error("Expected '+' key to be handled")
+	}
+	if modal.settings.GlobalMaxParallel != 5 {
+		t.Errorf("Expected GlobalMaxParallel 5, got %d", modal.settings.GlobalMaxParallel)
+	}
+
+	// Decrease with '-'
+	handled, _ = modal.HandleKey("-")
+	if !handled {
+		t.Error("Expected '-' key to be handled")
+	}
+	if modal.settings.GlobalMaxParallel != 4 {
+		t.Errorf("Expected GlobalMaxParallel 4, got %d", modal.settings.GlobalMaxParallel)
+	}
+
+	// Cannot decrease below 1
+	modal.HandleKey("-")
+	modal.HandleKey("-")
+	modal.HandleKey("-")
+	modal.HandleKey("-")
+	if modal.settings.GlobalMaxParallel < 1 {
+		t.Errorf("Expected GlobalMaxParallel >= 1, got %d", modal.settings.GlobalMaxParallel)
+	}
+
+	// Navigate to project and adjust
+	modal.HandleKey("j") // Move to project-a
+	initialLimit := modal.settings.ProjectLimits["project-a"]
+
+	modal.HandleKey("+")
+	if modal.settings.ProjectLimits["project-a"] != initialLimit+1 {
+		t.Errorf("Expected project-a limit %d, got %d", initialLimit+1, modal.settings.ProjectLimits["project-a"])
+	}
+
+	modal.HandleKey("-")
+	if modal.settings.ProjectLimits["project-a"] != initialLimit {
+		t.Errorf("Expected project-a limit %d, got %d", initialLimit, modal.settings.ProjectLimits["project-a"])
+	}
+}
+
+func TestSettingsModal_UnlimitedToggle(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Navigate to project
+	modal.HandleKey("j")
+
+	// Press '0' to set unlimited
+	handled, _ := modal.HandleKey("0")
+	if !handled {
+		t.Error("Expected '0' key to be handled")
+	}
+	if modal.settings.ProjectLimits["project-a"] != 0 {
+		t.Errorf("Expected project-a limit 0 (unlimited), got %d", modal.settings.ProjectLimits["project-a"])
+	}
+
+	// Press '0' again should keep it at 0
+	modal.HandleKey("0")
+	if modal.settings.ProjectLimits["project-a"] != 0 {
+		t.Errorf("Expected project-a limit to stay at 0, got %d", modal.settings.ProjectLimits["project-a"])
+	}
+
+	// Pressing '+' should set to 1 (from unlimited)
+	modal.HandleKey("+")
+	if modal.settings.ProjectLimits["project-a"] != 1 {
+		t.Errorf("Expected project-a limit 1, got %d", modal.settings.ProjectLimits["project-a"])
+	}
+}
+
+func TestSettingsModal_Init(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	cmd := modal.Init()
+
+	// Init should return nil command for this modal
+	if cmd != nil {
+		t.Error("Expected Init to return nil command")
+	}
+}
+
+func TestSettingsModal_Update(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Update with a message
+	newModal, cmd := modal.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+
+	// Should return the same type
+	if _, ok := newModal.(*SettingsModal); !ok {
+		t.Error("Expected Update to return *SettingsModal")
+	}
+
+	// Command should be nil for this modal
+	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_Update_RoutesKeyMsg(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	initialIndex := modal.selectedIndex
+
+	// Send 'j' key via Update() - should route to HandleKey() and move selection down
+	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	newModal, cmd := modal.Update(keyMsg)
+
+	// Should return same modal type
+	if _, ok := newModal.(*SettingsModal); !ok {
+		t.Error("Expected Update to return *SettingsModal")
+	}
+
+	// Should route to HandleKey and update selectedIndex
+	updatedModal := newModal.(*SettingsModal)
+	if updatedModal.selectedIndex == initialIndex {
+		t.Errorf("Expected selectedIndex to change from %d after 'j' key, but it stayed the same", initialIndex)
+	}
+	if updatedModal.selectedIndex != initialIndex+1 {
+		t.Errorf("Expected selectedIndex to be %d after 'j' key, got %d", initialIndex+1, updatedModal.selectedIndex)
+	}
+
+	// Command should be nil
+	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_Update_HandlesSaveMessage(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Simulate a successful save
+	successMsg := settingsSavedMsg{err: nil}
+	newModal, cmd := modal.Update(successMsg)
+
+	updatedModal := newModal.(*SettingsModal)
+	if !updatedModal.saveSuccess {
+		t.Error("Expected saveSuccess to be true after successful save message")
+	}
+	if updatedModal.saveError != nil {
+		t.Error("Expected saveError to be nil after successful save message")
+	}
+	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+
+	// Simulate a failed save
+	modal2 := NewSettingsModal(settings)
+	testErr := fmt.Errorf("save failed")
+	failMsg := settingsSavedMsg{err: testErr}
+	newModal2, cmd2 := modal2.Update(failMsg)
+
+	updatedModal2 := newModal2.(*SettingsModal)
+	if updatedModal2.saveSuccess {
+		t.Error("Expected saveSuccess to be false after failed save message")
+	}
+	if updatedModal2.saveError == nil {
+		t.Error("Expected saveError to be set after failed save message")
+	}
+	if updatedModal2.saveError != testErr {
+		t.Errorf("Expected saveError to be %v, got %v", testErr, updatedModal2.saveError)
+	}
+	if cmd2 != nil {
+		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_SaveSettingsCmdHelper(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 5,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Call the saveSettingsCmd() helper
+	cmd := modal.saveSettingsCmd()
+	if cmd == nil {
+		t.Fatal("Expected saveSettingsCmd() to return a command, got nil")
+	}
+
+	// Execute the command to get the message
+	msg := cmd()
+
+	// Should return a settingsSavedMsg
+	savedMsg, ok := msg.(settingsSavedMsg)
+	if !ok {
+		t.Fatalf("Expected settingsSavedMsg, got %T", msg)
+	}
+
+	// Since SaveSettings should succeed with valid settings, error should be nil
+	if savedMsg.err != nil {
+		t.Errorf("Expected no error from saveSettingsCmd, got %v", savedMsg.err)
+	}
+}
+
+func TestSettingsModal_ViewShowsSaveSuccess(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Set saveSuccess to true
+	modal.saveSuccess = true
+
+	// Render view
+	view := modal.View()
+
+	// Should contain success message
+	if !strings.Contains(view, "✓ Settings saved") {
+		t.Error("Expected view to contain success message")
+	}
+
+	// After rendering once, saveSuccess should be cleared (displayed and cleared)
+	if modal.saveSuccess {
+		t.Error("Expected saveSuccess to be cleared after View() displays it")
+	}
+
+	// Second render should NOT show success message
+	view2 := modal.View()
+	if strings.Contains(view2, "✓ Settings saved") {
+		t.Error("Expected view to NOT contain success message after clearing")
+	}
+}
+
+func TestSettingsModal_ViewShowsSaveError(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Set saveError
+	testErr := fmt.Errorf("failed to save settings")
+	modal.saveError = testErr
+
+	// Render view
+	view := modal.View()
+
+	// Should contain error message
+	if !strings.Contains(view, "✗ Error: failed to save settings") {
+		t.Error("Expected view to contain error message")
+	}
+
+	// Error should persist (not cleared after display like success is)
+	if modal.saveError == nil {
+		t.Error("Expected saveError to persist after View() displays it")
+	}
+
+	// Second render should still show error message
+	view2 := modal.View()
+	if !strings.Contains(view2, "✗ Error: failed to save settings") {
+		t.Error("Expected view to still contain error message on second render")
+	}
+}
+
+func TestSettingsModal_GetMaxIndex(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+			"project-b": 3,
+			"project-c": 0,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Test Limits tab: should return len(projects) = 3
+	modal.currentTab = TabLimits
+	maxIndex := modal.getMaxIndex()
+	if maxIndex != 3 {
+		t.Errorf("Limits tab: expected maxIndex 3, got %d", maxIndex)
+	}
+
+	// Test Groups tab: should return len(StatusGroups) - 1 = 9
+	modal.currentTab = TabGroups
+	maxIndex = modal.getMaxIndex()
+	expected := len(StatusGroups) - 1
+	if maxIndex != expected {
+		t.Errorf("Groups tab: expected maxIndex %d, got %d", expected, maxIndex)
+	}
+
+	// Test Runtime tab: should return 2 (model, wrap, log)
+	modal.currentTab = TabRuntime
+	maxIndex = modal.getMaxIndex()
+	if maxIndex != 2 {
+		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
+	}
+}
+
+func TestSettingsModal_EditMode_CtrlU(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Navigate to Runtime tab and Default Model field
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Start edit mode with Enter
+	handled, _ := modal.HandleKey("enter")
+	if !handled || !modal.editMode {
+		t.Fatal("Expected to enter edit mode")
+	}
+
+	// Verify edit buffer starts with current model
+	if modal.editBuffer != "gpt-4" {
+		t.Errorf("Expected initial edit buffer 'gpt-4', got '%s'", modal.editBuffer)
+	}
+
+	// Type some characters
+	modal.HandleKey("a")
+	modal.HandleKey("b")
+	modal.HandleKey("c")
+
+	// Verify buffer has content
+	if modal.editBuffer != "gpt-4abc" {
+		t.Errorf("Expected buffer 'gpt-4abc', got '%s'", modal.editBuffer)
+	}
+
+	// Press Ctrl-U to clear entire line
+	handled, _ = modal.HandleKey("ctrl+u")
+	if !handled {
+		t.Error("Expected ctrl+u to be handled in edit mode")
+	}
+
+	// Verify buffer is now empty
+	if modal.editBuffer != "" {
+		t.Errorf("Expected empty buffer after ctrl+u, got '%s'", modal.editBuffer)
+	}
+
+	// Should still be in edit mode
+	if !modal.editMode {
+		t.Error("Expected to still be in edit mode after ctrl+u")
+	}
+}
+
+func TestSettingsModal_EditMode_CursorIndicator(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Navigate to Runtime tab and Default Model field
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Before edit mode: should NOT show cursor
+	view := modal.View()
+	if strings.Contains(view, "█") {
+		t.Error("Expected NO cursor indicator before edit mode")
+	}
+	if !strings.Contains(view, "gpt-4") {
+		t.Error("Expected to show model name 'gpt-4'")
+	}
+
+	// Start edit mode with Enter
+	modal.HandleKey("enter")
+
+	// During edit mode: should show cursor at end of buffer
+	view = modal.View()
+	if !strings.Contains(view, "gpt-4█") {
+		t.Error("Expected cursor indicator '█' at end of buffer during edit mode")
+	}
+
+	// Type some characters
+	modal.HandleKey("a")
+	modal.HandleKey("b")
+
+	// Cursor should be at new end
+	view = modal.View()
+	if !strings.Contains(view, "gpt-4ab█") {
+		t.Error("Expected cursor indicator at end after typing")
+	}
+
+	// Clear with Ctrl-U
+	modal.HandleKey("ctrl+u")
+
+	// Cursor should be at empty position
+	view = modal.View()
+	if !strings.Contains(view, "█") {
+		t.Error("Expected cursor indicator after clearing buffer")
+	}
+	if strings.Contains(view, "gpt-4") {
+		t.Error("Expected buffer to be cleared")
+	}
+
+	// Exit edit mode
+	modal.HandleKey("esc")
+
+	// After exit: NO cursor, back to default model
+	view = modal.View()
+	if strings.Contains(view, "█") {
+		t.Error("Expected NO cursor indicator after exiting edit mode")
+	}
+	if !strings.Contains(view, "gpt-4") {
+		t.Error("Expected to show original model name after canceling edit")
+	}
+}
+
+func TestSettingsModal_EditMode_ComplexNames(t *testing.T) {
+	complexNames := []string{
+		"gpt-4-turbo-preview",
+		"claude-3-5-sonnet-20250514",
+		"anthropic/claude-sonnet-4-20250514",
+		"openai/gpt-4-1106-preview",
+		"meta-llama/Llama-3.1-405B",
+	}
+
+	for _, modelName := range complexNames {
+		t.Run(modelName, func(t *testing.T) {
+			settings := Settings{
+				GroupCollapsed:    make(map[string]bool),
+				FeatureCollapsed:  make(map[string]bool),
+				GroupVisible:      getDefaultGroupVisible(),
+				ProjectLimits:     map[string]int{},
+				GlobalMaxParallel: 4,
+				DefaultModel:      "",
+			}
+
+			modal := NewSettingsModal(settings)
+
+			// Navigate to Runtime tab and Default Model field
+			modal.currentTab = TabRuntime
+			modal.selectedIndex = 0
+
+			// Start edit mode
+			modal.HandleKey("enter")
+			if !modal.editMode {
+				t.Fatal("Expected to enter edit mode")
+			}
+
+			// Type the complex model name character by character
+			for _, char := range modelName {
+				modal.HandleKey(string(char))
+			}
+
+			// Verify buffer contains the full model name
+			if modal.editBuffer != modelName {
+				t.Errorf("Expected buffer '%s', got '%s'", modelName, modal.editBuffer)
+			}
+
+			// Verify view shows cursor at end
+			view := modal.View()
+			expectedDisplay := modelName + "█"
+			if !strings.Contains(view, expectedDisplay) {
+				t.Errorf("Expected view to contain '%s'", expectedDisplay)
+			}
+
+			// Save the model
+			modal.HandleKey("enter")
+
+			// Verify edit mode exited
+			if modal.editMode {
+				t.Error("Expected to exit edit mode after Enter")
+			}
+
+			// Verify model was saved
+			if modal.settings.DefaultModel != modelName {
+				t.Errorf("Expected DefaultModel '%s', got '%s'", modelName, modal.settings.DefaultModel)
+			}
+
+			// Verify view shows saved model (no cursor)
+			view = modal.View()
+			if strings.Contains(view, "█") {
+				t.Error("Expected NO cursor after saving")
+			}
+			if !strings.Contains(view, modelName) {
+				t.Errorf("Expected view to contain saved model '%s'", modelName)
+			}
+
+			// Test Ctrl-U clears complex name
+			modal.HandleKey("enter") // Re-enter edit mode
+			modal.HandleKey("ctrl+u")
+			if modal.editBuffer != "" {
+				t.Errorf("Expected empty buffer after ctrl+u, got '%s'", modal.editBuffer)
+			}
+
+			// Verify can type again after clear
+			modal.HandleKey("n")
+			modal.HandleKey("e")
+			modal.HandleKey("w")
+			if modal.editBuffer != "new" {
+				t.Errorf("Expected buffer 'new' after typing post-clear, got '%s'", modal.editBuffer)
+			}
+		})
+	}
+}
+
+func TestSettingsModal_TabIndicators(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Test Limits tab active (initial state)
+	modal.currentTab = TabLimits
+	view := modal.View()
+
+	// Active tab should be highlighted with [brackets]
+	if !strings.Contains(view, "[Limits]") {
+		t.Error("Expected active Limits tab to be highlighted with [brackets]")
+	}
+	// Inactive tabs should not have brackets
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
+
+	// Test Groups tab active
+	modal.currentTab = TabGroups
+	view = modal.View()
+
+	if !strings.Contains(view, "[Groups]") {
+		t.Error("Expected active Groups tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
+
+	// Test Runtime tab active
+	modal.currentTab = TabRuntime
+	view = modal.View()
+
+	if !strings.Contains(view, "[Runtime]") {
+		t.Error("Expected active Runtime tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+}
+
+func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{"proj-a": 2},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabLimits
+
+	view := modal.View()
+
+	// Verify help text contains key navigation hints
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "+/=:") || !strings.Contains(view, "increase") {
+		t.Error("Expected help text to contain '+/=: increase'")
+	}
+	if !strings.Contains(view, "-:") || !strings.Contains(view, "decrease") {
+		t.Error("Expected help text to contain '-: decrease'")
+	}
+	if !strings.Contains(view, "0:") || !strings.Contains(view, "unlimited") {
+		t.Error("Expected help text to contain '0: unlimited'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_GroupsTab(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabGroups
+
+	view := modal.View()
+
+	// Verify help text contains key actions for Groups tab
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
+		t.Error("Expected help text to contain 'space: toggle visibility'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_RuntimeTab_Normal(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+	modal.editMode = false // Normal mode (not editing)
+
+	view := modal.View()
+
+	// Verify help text for normal mode
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "enter:") || !strings.Contains(view, "edit model") {
+		t.Error("Expected help text to contain 'enter: edit model'")
+	}
+	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
+		t.Error("Expected help text to contain 'space: toggle'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_RuntimeTab_EditMode(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Enter edit mode
+	modal.HandleKey("enter")
+	if !modal.editMode {
+		t.Fatal("Expected to be in edit mode")
+	}
+
+	view := modal.View()
+
+	// Verify help text changes for edit mode
+	if !strings.Contains(view, "enter:") || !strings.Contains(view, "save") {
+		t.Error("Expected help text to contain 'enter: save'")
+	}
+	if !strings.Contains(view, "esc:") || !strings.Contains(view, "cancel") {
+		t.Error("Expected help text to contain 'esc: cancel'")
+	}
+	if !strings.Contains(view, "backspace:") || !strings.Contains(view, "delete") {
+		t.Error("Expected help text to contain 'backspace: delete'")
+	}
+	if !strings.Contains(view, "ctrl+u:") || !strings.Contains(view, "clear") {
+		t.Error("Expected help text to contain 'ctrl+u: clear'")
+	}
+}

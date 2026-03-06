@@ -570,18 +570,27 @@ func TestUpdate_JKey_MovesDownInTaskTree(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
 	m = updated.(Model)
 
-	// First task should be selected
-	if m.taskTree.SelectedID != "t1" {
-		t.Fatalf("expected initial selection 't1', got '%s'", m.taskTree.SelectedID)
+	// Should start on group header (new behavior)
+	if m.taskTree.SelectedID != "" {
+		t.Fatalf("expected initial selection on header (empty), got '%s'", m.taskTree.SelectedID)
 	}
 
-	// Press j to move down
+	// Press j to enter group and select first task
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
+	if m.taskTree.SelectedID != "t1" {
+		t.Errorf("after first 'j', expected selection 't1', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press j again to move to second task
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
 	if m.taskTree.SelectedID != "t2" {
-		t.Errorf("after 'j', expected selection 't2', got '%s'", m.taskTree.SelectedID)
+		t.Errorf("after second 'j', expected selection 't2', got '%s'", m.taskTree.SelectedID)
 	}
 }
 
@@ -599,18 +608,45 @@ func TestUpdate_KKey_MovesUpInTaskTree(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
 	m = updated.(Model)
 
-	// Move down first
+	// Should start on group header
+	if m.taskTree.SelectedID != "" {
+		t.Fatalf("expected initial selection on header (empty), got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press j to enter group (first task)
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
-	// Press k to move up
+	if m.taskTree.SelectedID != "t1" {
+		t.Fatalf("after 'j', expected 't1', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Move down to second task
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "t2" {
+		t.Fatalf("after second 'j', expected 't2', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press k to move up to first task
 	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
 	if m.taskTree.SelectedID != "t1" {
 		t.Errorf("after 'k', expected selection 't1', got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Press k again to return to group header
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedID != "" {
+		t.Errorf("after second 'k', expected header (empty), got '%s'", m.taskTree.SelectedID)
 	}
 }
 
@@ -629,7 +665,12 @@ func TestUpdate_GKey_MovesToTop(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 3}})
 	m = updated.(Model)
 
-	// Move to bottom first
+	// Should start on group header
+	if m.taskTree.SelectedID != "" {
+		t.Fatalf("expected initial selection on header (empty), got '%s'", m.taskTree.SelectedID)
+	}
+
+	// Move to bottom first (will land on last task if group is expanded)
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
@@ -638,13 +679,13 @@ func TestUpdate_GKey_MovesToTop(t *testing.T) {
 		t.Fatalf("after 'G', expected 't3', got '%s'", m.taskTree.SelectedID)
 	}
 
-	// Press g to go to top
+	// Press g to go to top (should return to group header)
 	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
-	if m.taskTree.SelectedID != "t1" {
-		t.Errorf("after 'g', expected 't1', got '%s'", m.taskTree.SelectedID)
+	if m.taskTree.SelectedID != "" {
+		t.Errorf("after 'g', expected header (empty), got '%s'", m.taskTree.SelectedID)
 	}
 }
 
@@ -663,9 +704,9 @@ func TestUpdate_TasksUpdated_UpdatesTaskTree(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
 	m = updated.(Model)
 
-	// Task tree should have the task
-	if m.taskTree.SelectedID != "t1" {
-		t.Errorf("expected task tree to select 't1', got '%s'", m.taskTree.SelectedID)
+	// Task tree should start on group header (new behavior)
+	if m.taskTree.SelectedID != "" {
+		t.Errorf("expected task tree to start on header (empty), got '%s'", m.taskTree.SelectedID)
 	}
 
 	// View should contain the task title
@@ -848,16 +889,36 @@ func TestUpdate_TaskSelectionUpdatesDetail(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1, Waiting: 1}})
 	m = updated.(Model)
 
-	// First task should be selected and detail should show it
+	// Should start on group header (no task selected)
+	if m.taskDetail.task != nil {
+		t.Fatal("expected taskDetail to have NO task when on group header")
+	}
+
+	// Move down to enter group and select first task
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Now first task should be selected
 	if m.taskDetail.task == nil {
-		t.Fatal("expected taskDetail to have a task after TasksUpdatedMsg")
+		t.Fatal("expected taskDetail to have a task after entering group")
 	}
 	if m.taskDetail.task.ID != "t1" {
 		t.Errorf("expected taskDetail task ID 't1', got '%s'", m.taskDetail.task.ID)
 	}
 
-	// Move down to second task
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	// Move down to second task (different group - need to go through header)
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should be on Waiting group header now (t2 is in a different group)
+	if m.taskDetail.task != nil {
+		t.Errorf("expected no task when on Waiting group header, got '%v'", m.taskDetail.task)
+	}
+
+	// Move down once more to enter Waiting group
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
@@ -1003,6 +1064,11 @@ func TestUpdate_JKKeysOnlyWorkInTasksPanel(t *testing.T) {
 	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
 	m = updated.(Model)
 
+	// Should start on group header
+	if m.taskTree.SelectedID != "" {
+		t.Fatalf("expected initial selection on header (empty), got '%s'", m.taskTree.SelectedID)
+	}
+
 	// Switch to detail panel
 	m.activePanel = PanelDetails
 
@@ -1011,7 +1077,141 @@ func TestUpdate_JKKeysOnlyWorkInTasksPanel(t *testing.T) {
 	updated, _ = m.Update(msg)
 	m = updated.(Model)
 
-	if m.taskTree.SelectedID != "t1" {
-		t.Errorf("expected selection to stay at 't1' when not in tasks panel, got '%s'", m.taskTree.SelectedID)
+	if m.taskTree.SelectedID != "" {
+		t.Errorf("expected selection to stay at header (empty) when not in tasks panel, got '%s'", m.taskTree.SelectedID)
+	}
+}
+
+// =============================================================================
+// Settings Modal Integration Tests
+// =============================================================================
+
+func TestUpdate_SKey_OpensSettingsModal(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	if m.modalManager.IsOpen() {
+		t.Fatal("expected no modal to be open initially")
+	}
+
+	// Press 'S' to open settings
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.modalManager.IsOpen() {
+		t.Error("expected settings modal to be open after 'S' key")
+	}
+}
+
+func TestUpdate_EscKey_ClosesSettingsModal(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected modal to be open after 'S'")
+	}
+
+	// Press Esc to close
+	msg = tea.KeyMsg{Type: tea.KeyEsc}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.modalManager.IsOpen() {
+		t.Error("expected modal to be closed after Esc")
+	}
+}
+
+func TestUpdate_ModalRoutesKeysCorrectly(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected modal to be open")
+	}
+
+	// Send 'j' key - should be handled by modal, not task tree
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Modal should still be open (j is navigation in modal)
+	if !m.modalManager.IsOpen() {
+		t.Error("expected modal to still be open after 'j'")
+	}
+}
+
+func TestView_WithSettingsModal_ShowsOverlay(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	view := m.View()
+
+	// View should contain modal title
+	if !strings.Contains(view, "Settings") {
+		t.Errorf("expected view to contain 'Settings' modal title, got:\n%s", view)
+	}
+
+	// View should contain global max parallel
+	if !strings.Contains(view, "Global Max Parallel") {
+		t.Errorf("expected view to contain 'Global Max Parallel', got:\n%s", view)
+	}
+}
+
+func TestNewModel_InitializesModalManager(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Modal manager should be initialized
+	if m.modalManager.IsOpen() {
+		t.Error("expected modal manager to have no modal open initially")
+	}
+}
+
+func TestNewModel_LoadsSettings(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Settings should be loaded with defaults
+	if m.settings.GlobalMaxParallel == 0 {
+		t.Error("expected settings.GlobalMaxParallel to be initialized")
+	}
+	if m.settings.ProjectLimits == nil {
+		t.Error("expected settings.ProjectLimits to be initialized")
 	}
 }

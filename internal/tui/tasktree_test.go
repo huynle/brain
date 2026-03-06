@@ -605,3 +605,96 @@ func TestTaskTree_View_SelectedTaskHighlighted(t *testing.T) {
 		t.Errorf("expected selected task 'First Task' in view, got:\n%s", view)
 	}
 }
+
+// =============================================================================
+// Feature View Mode Tests
+// =============================================================================
+
+func TestTaskTree_FeatureView_GroupsByFeatureID(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)        // Enable grouped view
+	tt.SetFeatureViewMode(true) // Enable feature grouping
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task 1", "ready", "high", "auth-system", nil),
+		makeTaskWithFeature("t2", "Auth Task 2", "ready", "low", "auth-system", nil),
+		makeTaskWithFeature("t3", "Dashboard Task", "ready", "medium", "dashboard", nil),
+		makeTask("t4", "Ungrouped Task", "ready", "medium", nil),
+	}
+	tt.SetTasks(tasks)
+
+	view := tt.View(80, 30)
+
+	// Should show feature headers
+	if !strings.Contains(view, "auth-system") {
+		t.Errorf("Expected feature header 'auth-system' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "dashboard") {
+		t.Errorf("Expected feature header 'dashboard' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "[Ungrouped]") {
+		t.Errorf("Expected [Ungrouped] header in view, got:\n%s", view)
+	}
+
+	// Should show task counts
+	if !strings.Contains(view, "(2)") {
+		t.Errorf("Expected task count (2) for auth-system in view, got:\n%s", view)
+	}
+}
+
+func TestTaskTree_FeatureView_ShowsStatsInHeader(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", FeatureID: "feature-a", Status: "completed", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", FeatureID: "feature-a", Status: "pending", Classification: "ready", Priority: "high"},
+		{ID: "t3", Title: "Task 3", FeatureID: "feature-a", Status: "in_progress", Classification: "ready", Priority: "high"},
+	}
+	tt.SetTasks(tasks)
+
+	view := tt.View(80, 30)
+
+	// Should show stats in feature header: [completed/total]
+	if !strings.Contains(view, "feature-a") {
+		t.Errorf("Expected feature header with stats in view, got:\n%s", view)
+	}
+	// Check for stats format
+	if !strings.Contains(view, "[1/3]") {
+		t.Errorf("Expected stats [1/3] (1 completed out of 3 total) in view, got:\n%s", view)
+	}
+}
+
+func TestTaskTree_FeatureView_CollapsibleFeatures(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task 1", "ready", "high", "auth-system", nil),
+		makeTaskWithFeature("t2", "Auth Task 2", "ready", "low", "auth-system", nil),
+	}
+	tt.SetTasks(tasks)
+
+	// Initially expanded - should show tasks
+	view := tt.View(80, 30)
+	if !strings.Contains(view, "Auth Task 1") {
+		t.Errorf("Expected expanded feature to show tasks, got:\n%s", view)
+	}
+	if !strings.Contains(view, "▾") {
+		t.Errorf("Expected expanded indicator ▾, got:\n%s", view)
+	}
+
+	// Toggle collapse
+	tt.ToggleCollapse()
+
+	// Now collapsed - should NOT show tasks
+	view = tt.View(80, 30)
+	if strings.Contains(view, "Auth Task 1") {
+		t.Errorf("Expected collapsed feature to hide tasks, got:\n%s", view)
+	}
+	if !strings.Contains(view, "▸") {
+		t.Errorf("Expected collapsed indicator ▸, got:\n%s", view)
+	}
+}

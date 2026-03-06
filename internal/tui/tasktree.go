@@ -233,6 +233,14 @@ type TaskTree struct {
 	selectedTaskIdx  int             // index into group.Tasks, or -1 for group header
 	useGroupedView   bool            // if true, use grouped view; if false, use tree view
 
+	// Feature view mode
+	useFeatureView         bool               // if true, group by feature_id instead of classification
+	featureGroups          FeatureGroupResult // feature-grouped tasks
+	featureCollapsed       map[string]bool    // feature ID -> collapsed state
+	selectedFeatureIdx     int                // index into featureGroups.Features or -1 for ungrouped
+	selectedFeatureTaskIdx int                // index into feature.Tasks, or -1 for feature header
+	isOnUngrouped          bool               // true if selected feature is the ungrouped group
+
 	// Multi-select state (passed in during View rendering)
 	selectedTasks map[string]bool
 }
@@ -253,45 +261,76 @@ func (tt *TaskTree) SetViewMode(useGrouped bool) {
 	tt.useGroupedView = useGrouped
 }
 
+// SetFeatureViewMode enables or disables feature-based grouping.
+// When enabled, tasks are grouped by feature_id instead of classification.
+func (tt *TaskTree) SetFeatureViewMode(enabled bool) {
+	tt.useFeatureView = enabled
+	if enabled && tt.featureCollapsed == nil {
+		tt.featureCollapsed = make(map[string]bool)
+	}
+}
+
 // SetTasks updates the task list, rebuilds the tree, and preserves selection if possible.
 func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 	tt.tasks = tasks
 
 	if tt.useGroupedView {
-		// Build groups
-		tt.groups = GroupTasks(tasks)
+		if tt.useFeatureView {
+			// Feature-based grouping
+			tt.featureGroups = GroupTasksByFeature(tasks)
 
-		// Restore collapsed state for each group
-		for i := range tt.groups {
-			groupName := tt.groups[i].Name
-			if collapsed, ok := tt.groupCollapsed[groupName]; ok {
-				tt.groups[i].Collapsed = collapsed
+			// Restore collapsed state for each feature
+			for i := range tt.featureGroups.Features {
+				featureID := tt.featureGroups.Features[i].ID
+				if collapsed, ok := tt.featureCollapsed[featureID]; ok {
+					tt.featureGroups.Features[i].Collapsed = collapsed
+				}
 			}
-		}
+			if tt.featureGroups.Ungrouped != nil {
+				if collapsed, ok := tt.featureCollapsed["[Ungrouped]"]; ok {
+					tt.featureGroups.Ungrouped.Collapsed = collapsed
+				}
+			}
 
-		// Preserve selection if possible
-		if tt.SelectedID != "" {
-			found := false
-			for gIdx, group := range tt.groups {
-				for tIdx, task := range group.Tasks {
-					if task.ID == tt.SelectedID {
-						tt.selectedGroupIdx = gIdx
-						tt.selectedTaskIdx = tIdx
-						found = true
+			// Preserve selection or auto-select first
+			tt.selectFirstFeatureTask()
+		} else {
+			// Classification-based grouping
+			// Build groups
+			tt.groups = GroupTasks(tasks)
+
+			// Restore collapsed state for each group
+			for i := range tt.groups {
+				groupName := tt.groups[i].Name
+				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
+					tt.groups[i].Collapsed = collapsed
+				}
+			}
+
+			// Preserve selection if possible
+			if tt.SelectedID != "" {
+				found := false
+				for gIdx, group := range tt.groups {
+					for tIdx, task := range group.Tasks {
+						if task.ID == tt.SelectedID {
+							tt.selectedGroupIdx = gIdx
+							tt.selectedTaskIdx = tIdx
+							found = true
+							break
+						}
+					}
+					if found {
 						break
 					}
 				}
-				if found {
-					break
+				if !found {
+					// Selection lost, default to first task
+					tt.selectFirstTask()
 				}
-			}
-			if !found {
-				// Selection lost, default to first task
+			} else {
+				// Auto-select first task
 				tt.selectFirstTask()
 			}
-		} else {
-			// Auto-select first task
-			tt.selectFirstTask()
 		}
 	} else {
 		// Legacy tree view
@@ -344,6 +383,33 @@ func (tt *TaskTree) selectFirstTask() {
 	tt.selectedTaskIdx = -1
 }
 
+// selectFirstFeatureTask selects the first task in feature view mode.
+func (tt *TaskTree) selectFirstFeatureTask() {
+	// Try features first
+	if len(tt.featureGroups.Features) > 0 {
+		tt.selectedFeatureIdx = 0
+		tt.selectedFeatureTaskIdx = -1 // Start on header
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
+		return
+	}
+
+	// Fall back to ungrouped if no features
+	if tt.featureGroups.Ungrouped != nil && len(tt.featureGroups.Ungrouped.Tasks) > 0 {
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1 // Start on header
+		tt.isOnUngrouped = true
+		tt.SelectedID = ""
+		return
+	}
+
+	// No tasks available
+	tt.SelectedID = ""
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnUngrouped = false
+}
+
 // MoveDown moves the cursor down one position.
 func (tt *TaskTree) MoveDown() {
 	if tt.useGroupedView {
@@ -380,6 +446,14 @@ func (tt *TaskTree) moveDownGrouped() {
 				tt.selectedGroupIdx++
 				tt.selectedTaskIdx = -1
 				tt.SelectedID = ""
+			} else {
+				// No next group - expand current group and enter it
+				if len(group.Tasks) > 0 {
+					tt.groups[tt.selectedGroupIdx].Collapsed = false
+					tt.groupCollapsed[group.Name] = false
+					tt.selectedTaskIdx = 0
+					tt.SelectedID = group.Tasks[0].ID
+				}
 			}
 		} else {
 			// Group is expanded, enter group (move to first task)
@@ -541,7 +615,33 @@ func (tt *TaskTree) moveToBottomGrouped() {
 // ToggleCollapse toggles the collapsed state of the currently selected group.
 // Only works if the cursor is on a group header. Persists state to settings.
 func (tt *TaskTree) ToggleCollapse() {
-	if !tt.useGroupedView || len(tt.groups) == 0 {
+	if !tt.useGroupedView {
+		return
+	}
+
+	if tt.useFeatureView {
+		// Feature view mode
+		if tt.selectedFeatureTaskIdx != -1 {
+			return // Only toggle on headers
+		}
+
+		if tt.isOnUngrouped && tt.featureGroups.Ungrouped != nil {
+			// Toggle ungrouped
+			tt.featureGroups.Ungrouped.Collapsed = !tt.featureGroups.Ungrouped.Collapsed
+			tt.featureCollapsed["[Ungrouped]"] = tt.featureGroups.Ungrouped.Collapsed
+		} else if tt.selectedFeatureIdx >= 0 && tt.selectedFeatureIdx < len(tt.featureGroups.Features) {
+			// Toggle feature
+			featureID := tt.featureGroups.Features[tt.selectedFeatureIdx].ID
+			tt.featureGroups.Features[tt.selectedFeatureIdx].Collapsed = !tt.featureGroups.Features[tt.selectedFeatureIdx].Collapsed
+			tt.featureCollapsed[featureID] = tt.featureGroups.Features[tt.selectedFeatureIdx].Collapsed
+		}
+
+		// Note: Feature collapsed state is not persisted to settings (only classification groups are)
+		return
+	}
+
+	// Classification group mode
+	if len(tt.groups) == 0 {
 		return
 	}
 
@@ -598,6 +698,9 @@ func statusIndicator(classification string) string {
 // View renders the task tree as a string within the given dimensions.
 func (tt *TaskTree) View(width, height int) string {
 	if tt.useGroupedView {
+		if tt.useFeatureView {
+			return tt.viewFeatureGrouped(width, height)
+		}
 		return tt.viewGrouped(width, height)
 	}
 	return tt.viewLegacy(width, height)
@@ -729,6 +832,88 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 	}
 
 	return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
+}
+
+// viewFeatureGrouped renders tasks in feature-grouped view.
+func (tt *TaskTree) viewFeatureGrouped(width, height int) string {
+	if len(tt.featureGroups.Features) == 0 && tt.featureGroups.Ungrouped == nil {
+		return DimStyle.Render("  No tasks")
+	}
+
+	var lines []string
+	showCheckboxes := len(tt.selectedTasks) > 0
+
+	// Render features
+	for fIdx, feature := range tt.featureGroups.Features {
+		isFeatureSelected := (fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped)
+
+		// Collapse indicator
+		collapseIndicator := "▸"
+		if !feature.Collapsed {
+			collapseIndicator = "▾"
+		}
+
+		// Feature header with count and stats
+		featureHeader := fmt.Sprintf("%s %s (%d) [%d/%d]", collapseIndicator, feature.Name, feature.Stats.Total, feature.Stats.Completed, feature.Stats.Total)
+
+		// Selection marker
+		if isFeatureSelected {
+			featureHeader = GroupHeaderStyle.Render(featureHeader)
+			featureHeader = fmt.Sprintf("→ %s", featureHeader)
+		} else {
+			featureHeader = GroupHeaderStyle.Render(featureHeader)
+			featureHeader = fmt.Sprintf("  %s", featureHeader)
+		}
+
+		lines = append(lines, featureHeader)
+
+		// Render tasks if not collapsed
+		if !feature.Collapsed {
+			for tIdx, task := range feature.Tasks {
+				isTaskSelected := (fIdx == tt.selectedFeatureIdx && tIdx == tt.selectedFeatureTaskIdx && !tt.isOnUngrouped)
+				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
+				lines = append(lines, taskLine)
+			}
+		}
+	}
+
+	// Render ungrouped if present
+	if tt.featureGroups.Ungrouped != nil {
+		ungrouped := tt.featureGroups.Ungrouped
+		isUngroupedSelected := (tt.isOnUngrouped && tt.selectedFeatureTaskIdx == -1)
+
+		collapseIndicator := "▸"
+		if !ungrouped.Collapsed {
+			collapseIndicator = "▾"
+		}
+
+		ungroupedHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, ungrouped.Name, len(ungrouped.Tasks))
+
+		if isUngroupedSelected {
+			ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
+			ungroupedHeader = fmt.Sprintf("→ %s", ungroupedHeader)
+		} else {
+			ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
+			ungroupedHeader = fmt.Sprintf("  %s", ungroupedHeader)
+		}
+
+		lines = append(lines, ungroupedHeader)
+
+		if !ungrouped.Collapsed {
+			for tIdx, task := range ungrouped.Tasks {
+				isTaskSelected := (tt.isOnUngrouped && tIdx == tt.selectedFeatureTaskIdx)
+				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks, showCheckboxes)
+				lines = append(lines, taskLine)
+			}
+		}
+	}
+
+	// Truncate to height
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // renderNodes recursively renders tree nodes into lines.

@@ -659,3 +659,186 @@ func TestSettingsModal_EditMode_ComplexNames(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsModal_TabIndicators(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Test Limits tab active (initial state)
+	modal.currentTab = TabLimits
+	view := modal.View()
+
+	// Active tab should be highlighted with [brackets]
+	if !strings.Contains(view, "[Limits]") {
+		t.Error("Expected active Limits tab to be highlighted with [brackets]")
+	}
+	// Inactive tabs should not have brackets
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
+
+	// Test Groups tab active
+	modal.currentTab = TabGroups
+	view = modal.View()
+
+	if !strings.Contains(view, "[Groups]") {
+		t.Error("Expected active Groups tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
+
+	// Test Runtime tab active
+	modal.currentTab = TabRuntime
+	view = modal.View()
+
+	if !strings.Contains(view, "[Runtime]") {
+		t.Error("Expected active Runtime tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+}
+
+func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{"proj-a": 2},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabLimits
+
+	view := modal.View()
+
+	// Verify help text contains key navigation hints
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "+/=:") || !strings.Contains(view, "increase") {
+		t.Error("Expected help text to contain '+/=: increase'")
+	}
+	if !strings.Contains(view, "-:") || !strings.Contains(view, "decrease") {
+		t.Error("Expected help text to contain '-: decrease'")
+	}
+	if !strings.Contains(view, "0:") || !strings.Contains(view, "unlimited") {
+		t.Error("Expected help text to contain '0: unlimited'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_GroupsTab(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabGroups
+
+	view := modal.View()
+
+	// Verify help text contains key actions for Groups tab
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
+		t.Error("Expected help text to contain 'space: toggle visibility'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_RuntimeTab_Normal(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+	modal.editMode = false // Normal mode (not editing)
+
+	view := modal.View()
+
+	// Verify help text for normal mode
+	if !strings.Contains(view, "j/k:") || !strings.Contains(view, "navigate") {
+		t.Error("Expected help text to contain 'j/k: navigate'")
+	}
+	if !strings.Contains(view, "enter:") || !strings.Contains(view, "edit model") {
+		t.Error("Expected help text to contain 'enter: edit model'")
+	}
+	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
+		t.Error("Expected help text to contain 'space: toggle'")
+	}
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
+		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	}
+}
+
+func TestSettingsModal_HelpText_RuntimeTab_EditMode(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Enter edit mode
+	modal.HandleKey("enter")
+	if !modal.editMode {
+		t.Fatal("Expected to be in edit mode")
+	}
+
+	view := modal.View()
+
+	// Verify help text changes for edit mode
+	if !strings.Contains(view, "enter:") || !strings.Contains(view, "save") {
+		t.Error("Expected help text to contain 'enter: save'")
+	}
+	if !strings.Contains(view, "esc:") || !strings.Contains(view, "cancel") {
+		t.Error("Expected help text to contain 'esc: cancel'")
+	}
+	if !strings.Contains(view, "backspace:") || !strings.Contains(view, "delete") {
+		t.Error("Expected help text to contain 'backspace: delete'")
+	}
+	if !strings.Contains(view, "ctrl+u:") || !strings.Contains(view, "clear") {
+		t.Error("Expected help text to contain 'ctrl+u: clear'")
+	}
+}

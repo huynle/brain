@@ -133,7 +133,12 @@ func (m *SettingsModal) View() string {
 		s.WriteString("\n\n")
 	}
 
-	// Render tab header
+	// Header with title
+	headerStyle := lipgloss.NewStyle().Bold(true)
+	s.WriteString(headerStyle.Render("Settings"))
+	s.WriteString("\n\n")
+
+	// Render tab header with indicators
 	s.WriteString(m.renderTabHeader())
 	s.WriteString("\n\n")
 
@@ -150,34 +155,22 @@ func (m *SettingsModal) View() string {
 	return s.String()
 }
 
-// renderTabHeader renders the tab selection header
+// renderTabHeader renders the tab selection header with visual styling
 func (m *SettingsModal) renderTabHeader() string {
-	var s strings.Builder
+	var tabs []string
+	activeStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+	inactiveStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	// Limits tab
-	if m.currentTab == TabLimits {
-		s.WriteString("[Limits]")
-	} else {
-		s.WriteString(" Limits ")
-	}
-	s.WriteString("  ")
-
-	// Groups tab
-	if m.currentTab == TabGroups {
-		s.WriteString("[Groups]")
-	} else {
-		s.WriteString(" Groups ")
-	}
-	s.WriteString("  ")
-
-	// Runtime tab
-	if m.currentTab == TabRuntime {
-		s.WriteString("[Runtime]")
-	} else {
-		s.WriteString(" Runtime ")
+	tabNames := []string{"Limits", "Groups", "Runtime"}
+	for i, name := range tabNames {
+		if SettingsTab(i) == m.currentTab {
+			tabs = append(tabs, activeStyle.Render(fmt.Sprintf("[%s]", name)))
+		} else {
+			tabs = append(tabs, inactiveStyle.Render(name))
+		}
 	}
 
-	return s.String()
+	return strings.Join(tabs, "  ")
 }
 
 // renderLimitsTab renders the Limits tab content
@@ -191,6 +184,11 @@ func (m *SettingsModal) renderLimitsTab() string {
 	// Project limits section
 	s.WriteString("Project Limits:\n")
 	s.WriteString(m.renderProjectLimits())
+
+	// Help text at bottom
+	s.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	s.WriteString(helpStyle.Render("  j/k: navigate  +/=: increase  -: decrease  0: unlimited  tab/1-3: switch tabs"))
 
 	return s.String()
 }
@@ -215,7 +213,9 @@ func (m *SettingsModal) renderGroupsTab() string {
 		s.WriteString(fmt.Sprintf("%s %s %s\n", cursor, checkbox, group))
 	}
 
-	s.WriteString("\nPress Space to toggle visibility, j/k to navigate")
+	s.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  tab/1-3: switch tabs"))
 
 	return s.String()
 }
@@ -261,12 +261,16 @@ func (m *SettingsModal) renderRuntimeTab() string {
 		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
 	}
 
+	// Mode-aware help text
 	s.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	var helpText string
 	if m.editMode {
-		s.WriteString("Type model name, Enter to save, Esc to cancel")
+		helpText = "  enter: save  esc: cancel  backspace: delete  ctrl+u: clear"
 	} else {
-		s.WriteString("Enter: Edit model  Space: Toggle wrap  j/k: Navigate")
+		helpText = "  j/k: navigate  enter: edit model  space: toggle  tab/1-3: switch tabs"
 	}
+	s.WriteString(helpStyle.Render(helpText))
 
 	return s.String()
 }
@@ -288,26 +292,29 @@ func (m *SettingsModal) renderProjectLimits() string {
 	return s.String()
 }
 
-// getCursor returns ">" if index is selected, " " otherwise
+// getCursor returns styled ">" if index is selected, " " otherwise
 func (m *SettingsModal) getCursor(index int) string {
 	if m.selectedIndex == index {
-		return ">"
+		cursorStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+		return cursorStyle.Render(">")
 	}
 	return " "
 }
 
-// getCursorForLimitsTab returns cursor for Limits tab (only shows when on Limits tab)
+// getCursorForLimitsTab returns styled cursor for Limits tab (only shows when on Limits tab)
 func (m *SettingsModal) getCursorForLimitsTab(index int) string {
 	if m.currentTab == TabLimits && m.selectedIndex == index {
-		return ">"
+		cursorStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+		return cursorStyle.Render(">")
 	}
 	return " "
 }
 
-// getCursorForRuntimeTab returns cursor for Runtime tab (only shows when on Runtime tab)
+// getCursorForRuntimeTab returns styled cursor for Runtime tab (only shows when on Runtime tab)
 func (m *SettingsModal) getCursorForRuntimeTab(index int) string {
 	if m.currentTab == TabRuntime && m.selectedIndex == index {
-		return ">"
+		cursorStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+		return cursorStyle.Render(">")
 	}
 	return " "
 }

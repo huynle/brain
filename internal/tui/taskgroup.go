@@ -8,14 +8,14 @@ import (
 
 // TaskGroup represents a collapsible group of tasks organized by classification.
 type TaskGroup struct {
-	Name      string               // "Ready", "Waiting", "Active", "Blocked", "Completed"
+	Name      string               // "Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
 	Tasks     []types.ResolvedTask // Tasks in this group
 	Collapsed bool                 // Is the group collapsed?
 	Count     int                  // Total tasks in group
 }
 
 // GroupTasks organizes tasks into groups by classification.
-// Returns groups in priority order: Ready, Waiting, Active, Blocked, Completed.
+// Returns groups in priority order: Ready, Waiting, Active, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
 func GroupTasks(tasks []types.ResolvedTask) []TaskGroup {
 	if len(tasks) == 0 {
 		return nil
@@ -41,9 +41,9 @@ func GroupTasks(tasks []types.ResolvedTask) []TaskGroup {
 		})
 	}
 
-	// Return in display order
+	// Return in display order: Ready, Waiting, Active, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived
 	result := []TaskGroup{}
-	for _, groupName := range []string{"Ready", "Waiting", "Active", "Blocked", "Completed"} {
+	for _, groupName := range []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
 		if taskList, ok := groups[groupName]; ok && len(taskList) > 0 {
 			result = append(result, TaskGroup{
 				Name:      groupName,
@@ -73,8 +73,18 @@ func normalizeClassification(classification, status string) string {
 	switch status {
 	case "in_progress", "active":
 		return "Active"
-	case "completed", "validated":
+	case "draft":
+		return "Draft"
+	case "cancelled":
+		return "Cancelled"
+	case "completed":
 		return "Completed"
+	case "validated":
+		return "Validated"
+	case "superseded":
+		return "Superseded"
+	case "archived":
+		return "Archived"
 	case "pending":
 		return "Ready"
 	case "waiting":
@@ -82,7 +92,7 @@ func normalizeClassification(classification, status string) string {
 	case "blocked":
 		return "Blocked"
 	default:
-		// Default: group under Completed for archived/superseded/etc
+		// Default: unknown statuses go to Completed
 		return "Completed"
 	}
 }

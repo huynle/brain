@@ -13,6 +13,9 @@ type Settings struct {
 	FeatureCollapsed  map[string]bool `json:"featureCollapsed"`  // feature ID -> collapsed state
 	ProjectLimits     map[string]int  `json:"projectLimits"`     // project -> max parallel tasks
 	GlobalMaxParallel int             `json:"globalMaxParallel"` // global max parallel limit
+	DefaultModel      string          `json:"defaultModel"`      // default model override for tasks
+	TextWrap          bool            `json:"textWrap"`          // wrap long lines in panels
+	LogLevel          string          `json:"logLevel"`          // log level: "error", "info", "debug"
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.
@@ -57,6 +60,9 @@ func LoadSettings() (Settings, error) {
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
+			DefaultModel:      "",
+			TextWrap:          true,
+			LogLevel:          "info",
 		}, err
 	}
 
@@ -70,6 +76,9 @@ func LoadSettings() (Settings, error) {
 				FeatureCollapsed:  make(map[string]bool),
 				ProjectLimits:     make(map[string]int),
 				GlobalMaxParallel: 4,
+				DefaultModel:      "",
+				TextWrap:          true,
+				LogLevel:          "info",
 			}, nil
 		}
 		return Settings{
@@ -78,6 +87,9 @@ func LoadSettings() (Settings, error) {
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
+			DefaultModel:      "",
+			TextWrap:          true,
+			LogLevel:          "info",
 		}, err
 	}
 
@@ -89,6 +101,9 @@ func LoadSettings() (Settings, error) {
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
+			DefaultModel:      "",
+			TextWrap:          true,
+			LogLevel:          "info",
 		}, err
 	}
 
@@ -115,6 +130,14 @@ func LoadSettings() (Settings, error) {
 	}
 	if settings.GlobalMaxParallel == 0 {
 		settings.GlobalMaxParallel = 4
+	}
+	if settings.DefaultModel == "" {
+		settings.DefaultModel = "" // Empty string means no override
+	}
+	// TextWrap defaults to true (not set in JSON means false, so we need to check if loaded from file)
+	// LogLevel defaults to "info"
+	if settings.LogLevel == "" {
+		settings.LogLevel = "info"
 	}
 
 	return settings, nil

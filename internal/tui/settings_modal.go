@@ -14,25 +14,29 @@ type SettingsTab int
 const (
 	TabLimits SettingsTab = iota
 	TabGroups
+	TabRuntime
 )
 
 // StatusGroups represents the status groups available in the TUI
 var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
-// SettingsModal allows editing project limits, global max parallel, and group visibility.
+// SettingsModal allows editing project limits, global max parallel, group visibility, and runtime settings.
 // Navigation: j/k to move up/down, tab to switch sections
 // Adjustment: +/- to increase/decrease limits (Limits tab)
 // Toggle: Space to toggle group visibility - controls whether groups are shown in the task list (Groups tab)
-// Direct navigation: 1 for Limits, 2 for Groups
+// Toggle: Space to toggle text wrap (Runtime tab)
+// Direct navigation: 1 for Limits, 2 for Groups, 3 for Runtime
 //
 // Note: Group visibility (GroupVisible) is separate from collapse state (GroupCollapsed).
 // Visibility controls filtering (whether the group appears at all).
 // Collapse controls UI folding (whether an visible group is expanded or collapsed).
 type SettingsModal struct {
 	settings      Settings
-	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab)
+	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab)
 	projects      []string    // sorted project list
 	currentTab    SettingsTab // active tab
+	editMode      bool        // true when editing the default model field
+	editBuffer    string      // buffer for editing the default model
 }
 
 // NewSettingsModal creates a new settings modal with the given settings.
@@ -77,6 +81,8 @@ func (m *SettingsModal) View() string {
 		s.WriteString(m.renderLimitsTab())
 	case TabGroups:
 		s.WriteString(m.renderGroupsTab())
+	case TabRuntime:
+		s.WriteString(m.renderRuntimeTab())
 	}
 
 	return s.String()
@@ -99,6 +105,14 @@ func (m *SettingsModal) renderTabHeader() string {
 		s.WriteString("[Groups]")
 	} else {
 		s.WriteString(" Groups ")
+	}
+	s.WriteString("  ")
+
+	// Runtime tab
+	if m.currentTab == TabRuntime {
+		s.WriteString("[Runtime]")
+	} else {
+		s.WriteString(" Runtime ")
 	}
 
 	return s.String()
@@ -144,6 +158,57 @@ func (m *SettingsModal) renderGroupsTab() string {
 	return s.String()
 }
 
+// renderRuntimeTab renders the Runtime tab content
+func (m *SettingsModal) renderRuntimeTab() string {
+	var s strings.Builder
+
+	// Default Model setting (index 0)
+	cursor0 := m.getCursorForRuntimeTab(0)
+	modelDisplay := m.settings.DefaultModel
+	if modelDisplay == "" {
+		modelDisplay = "(none - uses task default)"
+	}
+	if m.editMode && m.selectedIndex == 0 {
+		modelDisplay = m.editBuffer + "█" // Show cursor when editing
+	}
+	s.WriteString(fmt.Sprintf("%s Default Model: %s\n", cursor0, modelDisplay))
+
+	// Text Wrapping setting (index 1)
+	cursor1 := m.getCursorForRuntimeTab(1)
+	wrapCheckbox := "☑"
+	if !m.settings.TextWrap {
+		wrapCheckbox = "☐"
+	}
+	s.WriteString(fmt.Sprintf("%s %s Text Wrapping\n", cursor1, wrapCheckbox))
+
+	// Log Level setting (index 2)
+	cursor2 := m.getCursorForRuntimeTab(2)
+	s.WriteString(fmt.Sprintf("%s Log Level:\n", cursor2))
+
+	// Log level radio buttons
+	logLevels := []string{"error", "info", "debug"}
+	for _, level := range logLevels {
+		prefix := "   "
+		if m.selectedIndex == 2 {
+			prefix = "   " // Indent for radio buttons
+		}
+		radio := "○"
+		if m.settings.LogLevel == level {
+			radio = "●"
+		}
+		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
+	}
+
+	s.WriteString("\n")
+	if m.editMode {
+		s.WriteString("Type model name, Enter to save, Esc to cancel")
+	} else {
+		s.WriteString("Enter: Edit model  Space: Toggle wrap  j/k: Navigate")
+	}
+
+	return s.String()
+}
+
 // renderGlobalLimit renders the global max parallel setting line
 func (m *SettingsModal) renderGlobalLimit() string {
 	cursor := m.getCursorForLimitsTab(0)
@@ -177,6 +242,14 @@ func (m *SettingsModal) getCursorForLimitsTab(index int) string {
 	return " "
 }
 
+// getCursorForRuntimeTab returns cursor for Runtime tab (only shows when on Runtime tab)
+func (m *SettingsModal) getCursorForRuntimeTab(index int) string {
+	if m.currentTab == TabRuntime && m.selectedIndex == index {
+		return ">"
+	}
+	return " "
+}
+
 // formatLimit formats a limit value (0 = ∞, otherwise number)
 func (m *SettingsModal) formatLimit(limit int) string {
 	if limit == 0 {
@@ -187,6 +260,33 @@ func (m *SettingsModal) formatLimit(limit int) string {
 
 // HandleKey implements Modal
 func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
+	// If in edit mode, handle text input differently
+	if m.editMode {
+		switch key {
+		case "enter":
+			// Save the edited model
+			m.settings.DefaultModel = m.editBuffer
+			m.editMode = false
+			_ = SaveSettings(m.settings) // Persist settings
+			return true, nil
+		case "esc":
+			// Cancel editing
+			m.editMode = false
+			return true, nil
+		case "backspace":
+			if len(m.editBuffer) > 0 {
+				m.editBuffer = m.editBuffer[:len(m.editBuffer)-1]
+			}
+			return true, nil
+		default:
+			// Append character to buffer (only printable characters)
+			if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {
+				m.editBuffer += key
+			}
+			return true, nil
+		}
+	}
+
 	switch key {
 	case "tab":
 		m.switchTab()
@@ -202,6 +302,11 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		m.selectedIndex = 0
 		return true, nil
 
+	case "3":
+		m.currentTab = TabRuntime
+		m.selectedIndex = 0
+		return true, nil
+
 	case "j":
 		m.moveDown()
 		return true, nil
@@ -210,9 +315,27 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		m.moveUp()
 		return true, nil
 
+	case "enter":
+		if m.currentTab == TabRuntime && m.selectedIndex == 0 {
+			// Start editing the model field
+			m.editMode = true
+			m.editBuffer = m.settings.DefaultModel
+			return true, nil
+		}
+		if m.currentTab == TabRuntime && m.selectedIndex == 2 {
+			// Cycle log level when on log level field
+			m.cycleLogLevel()
+			return true, nil
+		}
+		return false, nil
+
 	case " ":
 		if m.currentTab == TabGroups {
 			m.toggleGroupVisibility()
+			return true, nil
+		}
+		if m.currentTab == TabRuntime && m.selectedIndex == 1 {
+			m.toggleTextWrap()
 			return true, nil
 		}
 		return false, nil
@@ -244,12 +367,37 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 
 // switchTab cycles to the next tab
 func (m *SettingsModal) switchTab() {
-	if m.currentTab == TabLimits {
+	switch m.currentTab {
+	case TabLimits:
 		m.currentTab = TabGroups
-	} else {
+	case TabGroups:
+		m.currentTab = TabRuntime
+	case TabRuntime:
 		m.currentTab = TabLimits
 	}
 	m.selectedIndex = 0 // Reset selection when switching tabs
+	m.editMode = false  // Exit edit mode when switching tabs
+}
+
+// toggleTextWrap toggles the text wrapping setting
+func (m *SettingsModal) toggleTextWrap() {
+	m.settings.TextWrap = !m.settings.TextWrap
+	_ = SaveSettings(m.settings) // Persist settings immediately
+}
+
+// cycleLogLevel cycles through log levels: error -> info -> debug -> error
+func (m *SettingsModal) cycleLogLevel() {
+	switch m.settings.LogLevel {
+	case "error":
+		m.settings.LogLevel = "info"
+	case "info":
+		m.settings.LogLevel = "debug"
+	case "debug":
+		m.settings.LogLevel = "error"
+	default:
+		m.settings.LogLevel = "info"
+	}
+	_ = SaveSettings(m.settings) // Persist settings immediately
 }
 
 // toggleGroupVisibility toggles the visibility of the selected group
@@ -275,6 +423,8 @@ func (m *SettingsModal) moveDown() {
 		maxIndex = len(m.projects) // 0 for global, 1..N for projects
 	case TabGroups:
 		maxIndex = len(StatusGroups) - 1
+	case TabRuntime:
+		maxIndex = 2 // 0 = model, 1 = text wrap, 2 = log level
 	}
 
 	if m.selectedIndex < maxIndex {
@@ -357,6 +507,9 @@ func (m *SettingsModal) Height() int {
 	case TabGroups:
 		// Header (1) + groups + blank line (1) + help text (1)
 		return 3 + len(StatusGroups)
+	case TabRuntime:
+		// Model (1) + Wrap (1) + Log Level header (1) + 3 radio buttons + blank line (1) + help text (1)
+		return 8
 	default:
 		return 3
 	}

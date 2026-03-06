@@ -30,10 +30,16 @@ func TestSettingsModal_TabSwitching(t *testing.T) {
 		t.Errorf("Expected tab TabGroups (1) after tab press, got %d", modal.currentTab)
 	}
 
-	// Press Tab again to cycle back to Limits
+	// Press Tab again to go to Runtime
+	modal.HandleKey("tab")
+	if modal.currentTab != TabRuntime {
+		t.Errorf("Expected tab TabRuntime (2) after second tab press, got %d", modal.currentTab)
+	}
+
+	// Press Tab once more to cycle back to Limits
 	modal.HandleKey("tab")
 	if modal.currentTab != TabLimits {
-		t.Errorf("Expected tab TabLimits (0) after second tab press, got %d", modal.currentTab)
+		t.Errorf("Expected tab TabLimits (0) after third tab press, got %d", modal.currentTab)
 	}
 
 	// Test direct navigation with '1' for Limits

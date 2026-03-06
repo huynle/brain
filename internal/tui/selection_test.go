@@ -191,17 +191,17 @@ func TestIsOnGroupHeader(t *testing.T) {
 
 	taskTree.SetTasks(tasks)
 
-	// Initially should be on first task (not header)
-	if taskTree.IsOnGroupHeader() {
-		t.Error("Expected to not be on group header initially")
+	// Now should initially be on group header (new behavior)
+	if !taskTree.IsOnGroupHeader() {
+		t.Error("Expected to be on group header initially")
 	}
 
-	// Move to group header
-	taskTree.MoveUp()
+	// Move down to enter group
+	taskTree.MoveDown()
 
-	// Now should be on group header
-	if !taskTree.IsOnGroupHeader() {
-		t.Error("Expected to be on group header after moving up")
+	// Now should be on first task (not header)
+	if taskTree.IsOnGroupHeader() {
+		t.Error("Expected to not be on group header after moving down")
 	}
 }
 

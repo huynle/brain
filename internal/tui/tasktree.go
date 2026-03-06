@@ -328,19 +328,12 @@ func (tt *TaskTree) selectFirstTask() {
 		return
 	}
 
-	// Find first non-empty, non-collapsed group
+	// Find first non-empty group and ALWAYS start on header
 	for i, group := range tt.groups {
 		if len(group.Tasks) > 0 {
 			tt.selectedGroupIdx = i
-			if group.Collapsed {
-				// Start on group header
-				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
-			} else {
-				// Start on first task
-				tt.selectedTaskIdx = 0
-				tt.SelectedID = group.Tasks[0].ID
-			}
+			tt.selectedTaskIdx = -1 // ALWAYS start on header
+			tt.SelectedID = ""
 			return
 		}
 	}
@@ -382,14 +375,14 @@ func (tt *TaskTree) moveDownGrouped() {
 	if tt.selectedTaskIdx == -1 {
 		// On group header
 		if group.Collapsed {
-			// Jump to next group header
+			// Group is collapsed, jump to next group header
 			if tt.selectedGroupIdx < len(tt.groups)-1 {
 				tt.selectedGroupIdx++
 				tt.selectedTaskIdx = -1
 				tt.SelectedID = ""
 			}
 		} else {
-			// Enter group (move to first task)
+			// Group is expanded, enter group (move to first task)
 			if len(group.Tasks) > 0 {
 				tt.selectedTaskIdx = 0
 				tt.SelectedID = group.Tasks[0].ID
@@ -402,20 +395,11 @@ func (tt *TaskTree) moveDownGrouped() {
 			tt.selectedTaskIdx++
 			tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
 		} else {
-			// End of group, move to next group
+			// End of group, move to next group HEADER
 			if tt.selectedGroupIdx < len(tt.groups)-1 {
 				tt.selectedGroupIdx++
-				nextGroup := tt.groups[tt.selectedGroupIdx]
-
-				// Skip group header and go directly to first task if group is not collapsed
-				if !nextGroup.Collapsed && len(nextGroup.Tasks) > 0 {
-					tt.selectedTaskIdx = 0
-					tt.SelectedID = nextGroup.Tasks[0].ID
-				} else {
-					// Group is collapsed or empty, stay on header
-					tt.selectedTaskIdx = -1
-					tt.SelectedID = ""
-				}
+				tt.selectedTaskIdx = -1 // Land on header
+				tt.SelectedID = ""
 			}
 		}
 	}
@@ -500,19 +484,12 @@ func (tt *TaskTree) moveToTopGrouped() {
 		return
 	}
 
-	// Find first non-empty group
+	// Find first non-empty group and ALWAYS start on header
 	for i, group := range tt.groups {
 		if len(group.Tasks) > 0 {
 			tt.selectedGroupIdx = i
-			if group.Collapsed {
-				// Start on group header
-				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
-			} else {
-				// Start on first task
-				tt.selectedTaskIdx = 0
-				tt.SelectedID = group.Tasks[0].ID
-			}
+			tt.selectedTaskIdx = -1 // ALWAYS start on header
+			tt.SelectedID = ""
 			return
 		}
 	}
@@ -674,19 +651,21 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 		// Render group header
 		isGroupSelected := (gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx == -1)
 
-		indicator := "▸" // collapsed
+		// Collapse indicator (▸ collapsed, ▾ expanded)
+		collapseIndicator := "▸"
 		if !group.Collapsed {
-			indicator = "▾" // expanded
+			collapseIndicator = "▾"
 		}
 
-		groupHeader := fmt.Sprintf("%s %s (%d)", indicator, group.Name, group.Count)
+		groupHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, group.Name, group.Count)
 
+		// Selection marker (distinct from collapse indicator)
 		if isGroupSelected {
 			groupHeader = GroupHeaderStyle.Render(groupHeader)
-			groupHeader = fmt.Sprintf("▸ %s", groupHeader) // selection marker
+			groupHeader = fmt.Sprintf("→ %s", groupHeader) // Use arrow for selection
 		} else {
 			groupHeader = GroupHeaderStyle.Render(groupHeader)
-			groupHeader = fmt.Sprintf("  %s", groupHeader) // no selection marker
+			groupHeader = fmt.Sprintf("  %s", groupHeader) // Two spaces for alignment
 		}
 
 		lines = append(lines, groupHeader)

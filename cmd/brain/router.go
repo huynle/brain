@@ -37,6 +37,24 @@ func (c *stubCommand) Type() string {
 }
 
 // =============================================================================
+// Help Command
+// =============================================================================
+
+// HelpCommand displays help information.
+type HelpCommand struct {
+	command string // specific command to show help for (empty = main help)
+}
+
+func (c *HelpCommand) Execute() error {
+	ShowHelp(c.command)
+	return nil
+}
+
+func (c *HelpCommand) Type() string {
+	return "help"
+}
+
+// =============================================================================
 // Built-in Commands Registry
 // =============================================================================
 
@@ -126,7 +144,7 @@ func newRunnerTUICommand(project string, args []string) (Command, error) {
 }
 
 func newHelpCommand() Command {
-	return &stubCommand{cmdType: "help"}
+	return &HelpCommand{command: ""}
 }
 
 // =============================================================================

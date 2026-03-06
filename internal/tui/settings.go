@@ -9,9 +9,28 @@ import (
 // Settings holds persisted TUI preferences.
 type Settings struct {
 	GroupCollapsed    map[string]bool `json:"groupCollapsed"`    // group name -> collapsed state
+	GroupVisible      map[string]bool `json:"groupVisible"`      // group name -> visibility state
 	FeatureCollapsed  map[string]bool `json:"featureCollapsed"`  // feature ID -> collapsed state
 	ProjectLimits     map[string]int  `json:"projectLimits"`     // project -> max parallel tasks
 	GlobalMaxParallel int             `json:"globalMaxParallel"` // global max parallel limit
+}
+
+// getDefaultGroupVisible returns the default visibility map for status groups.
+// Visible by default: Ready, Waiting, Active, Blocked, Completed, Validated
+// Hidden by default: Draft, Cancelled, Superseded, Archived
+func getDefaultGroupVisible() map[string]bool {
+	return map[string]bool{
+		"Ready":      true,
+		"Waiting":    true,
+		"Active":     true,
+		"Blocked":    true,
+		"Completed":  true,
+		"Validated":  true,
+		"Draft":      false,
+		"Cancelled":  false,
+		"Superseded": false,
+		"Archived":   false,
+	}
 }
 
 // getSettingsPath returns the path to the settings file.
@@ -34,6 +53,7 @@ func LoadSettings() (Settings, error) {
 	if err != nil {
 		return Settings{
 			GroupCollapsed:    make(map[string]bool),
+			GroupVisible:      getDefaultGroupVisible(),
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
@@ -46,6 +66,7 @@ func LoadSettings() (Settings, error) {
 			// No settings file yet, return defaults
 			return Settings{
 				GroupCollapsed:    make(map[string]bool),
+				GroupVisible:      getDefaultGroupVisible(),
 				FeatureCollapsed:  make(map[string]bool),
 				ProjectLimits:     make(map[string]int),
 				GlobalMaxParallel: 4,
@@ -53,6 +74,7 @@ func LoadSettings() (Settings, error) {
 		}
 		return Settings{
 			GroupCollapsed:    make(map[string]bool),
+			GroupVisible:      getDefaultGroupVisible(),
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
@@ -63,6 +85,7 @@ func LoadSettings() (Settings, error) {
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{
 			GroupCollapsed:    make(map[string]bool),
+			GroupVisible:      getDefaultGroupVisible(),
 			FeatureCollapsed:  make(map[string]bool),
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
@@ -72,6 +95,17 @@ func LoadSettings() (Settings, error) {
 	// Ensure maps are initialized
 	if settings.GroupCollapsed == nil {
 		settings.GroupCollapsed = make(map[string]bool)
+	}
+	if settings.GroupVisible == nil {
+		settings.GroupVisible = getDefaultGroupVisible()
+	} else {
+		// Merge with defaults to ensure all groups have a visibility setting
+		defaults := getDefaultGroupVisible()
+		for group, visible := range defaults {
+			if _, exists := settings.GroupVisible[group]; !exists {
+				settings.GroupVisible[group] = visible
+			}
+		}
 	}
 	if settings.FeatureCollapsed == nil {
 		settings.FeatureCollapsed = make(map[string]bool)

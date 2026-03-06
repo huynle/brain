@@ -17,7 +17,7 @@ const (
 )
 
 // StatusGroups represents the status groups available in the TUI
-var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Completed"}
+var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 // SettingsModal allows editing project limits, global max parallel, and group visibility.
 // Navigation: j/k to move up/down, tab to switch sections
@@ -81,7 +81,7 @@ func (m *SettingsModal) View() string {
 // renderTabHeader renders the tab selection header
 func (m *SettingsModal) renderTabHeader() string {
 	var s strings.Builder
-	
+
 	// Limits tab
 	if m.currentTab == TabLimits {
 		s.WriteString("[Limits]")
@@ -89,14 +89,14 @@ func (m *SettingsModal) renderTabHeader() string {
 		s.WriteString(" Limits ")
 	}
 	s.WriteString("  ")
-	
+
 	// Groups tab
 	if m.currentTab == TabGroups {
 		s.WriteString("[Groups]")
 	} else {
 		s.WriteString(" Groups ")
 	}
-	
+
 	return s.String()
 }
 
@@ -120,17 +120,17 @@ func (m *SettingsModal) renderGroupsTab() string {
 	var s strings.Builder
 
 	s.WriteString("Status Groups:\n")
-	
+
 	for i, group := range StatusGroups {
 		cursor := m.getCursor(i)
-		
+
 		// Check if group is visible (not in GroupCollapsed or explicitly false)
 		visible := !m.settings.GroupCollapsed[group]
 		checkbox := "☑"
 		if !visible {
 			checkbox = "☐"
 		}
-		
+
 		s.WriteString(fmt.Sprintf("%s %s %s\n", cursor, checkbox, group))
 	}
 
@@ -250,7 +250,7 @@ func (m *SettingsModal) toggleGroupVisibility() {
 	if m.selectedIndex < 0 || m.selectedIndex >= len(StatusGroups) {
 		return
 	}
-	
+
 	group := StatusGroups[m.selectedIndex]
 	// Toggle: if currently visible (not in map or false), hide it (set to true)
 	// if currently hidden (true), show it (set to false or remove)
@@ -261,7 +261,7 @@ func (m *SettingsModal) toggleGroupVisibility() {
 		// Currently visible, hide it
 		m.settings.GroupCollapsed[group] = true
 	}
-	
+
 	// Persist settings immediately
 	_ = SaveSettings(m.settings) // Ignore errors (non-critical)
 }
@@ -269,14 +269,14 @@ func (m *SettingsModal) toggleGroupVisibility() {
 // moveDown moves selection down one item
 func (m *SettingsModal) moveDown() {
 	var maxIndex int
-	
+
 	switch m.currentTab {
 	case TabLimits:
 		maxIndex = len(m.projects) // 0 for global, 1..N for projects
 	case TabGroups:
 		maxIndex = len(StatusGroups) - 1
 	}
-	
+
 	if m.selectedIndex < maxIndex {
 		m.selectedIndex++
 	}
@@ -294,7 +294,7 @@ func (m *SettingsModal) increaseLimit() {
 	if m.currentTab != TabLimits {
 		return
 	}
-	
+
 	if m.selectedIndex == 0 {
 		// Global max parallel
 		m.settings.GlobalMaxParallel++
@@ -310,7 +310,7 @@ func (m *SettingsModal) decreaseLimit() {
 	if m.currentTab != TabLimits {
 		return
 	}
-	
+
 	if m.selectedIndex == 0 {
 		// Global max parallel - minimum 1
 		if m.settings.GlobalMaxParallel > 1 {
@@ -331,7 +331,7 @@ func (m *SettingsModal) setUnlimited() {
 	if m.currentTab != TabLimits {
 		return
 	}
-	
+
 	if m.selectedIndex > 0 {
 		proj := m.projects[m.selectedIndex-1]
 		m.settings.ProjectLimits[proj] = 0

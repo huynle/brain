@@ -1057,54 +1057,55 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
-// renderNodes recursively renders tree nodes into lines.
+// renderNodes recursively renders tree nodes into lines with proper box-drawing indentation.
+// The prefix parameter tracks ancestor line states to render vertical continuation lines correctly.
 func (tt *TaskTree) renderNodes(nodes []TreeNode, prefix string, lines *[]string) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
-		// Determine branch character
-		branch := treeBranch
-		if isLast {
-			branch = treeLastBranch
-		}
-
-		// Only add prefix+branch for non-root nodes
-		linePrefix := ""
-		if prefix != "" || len(nodes) > 0 {
-			if prefix == "" {
-				// Root level: no branch prefix
-				linePrefix = ""
-			} else {
-				linePrefix = prefix + branch
-			}
-		}
-
-		// Build the line
-		line := tt.renderTaskLine(node, linePrefix)
+		// Build the line with tree prefix
+		line := tt.renderTaskLine(node, prefix, isLast)
 		*lines = append(*lines, line)
 
-		// Render children with appropriate prefix
+		// Render children with updated prefix for vertical continuation
 		if len(node.Children) > 0 {
-			childPrefix := prefix
-			if prefix != "" {
-				if isLast {
-					childPrefix = prefix + treeEmpty
-				} else {
-					childPrefix = prefix + treeVertical
-				}
-			} else {
-				// Children of root get indentation
-				childPrefix = "  "
-			}
+			childPrefix := tt.calculateChildPrefix(prefix, isLast)
 			tt.renderNodes(node.Children, childPrefix, lines)
 		}
 	}
 }
 
-// renderTaskLine renders a single task line with status, title, and indicators.
-func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string) string {
+// calculateChildPrefix determines the prefix to pass to child nodes.
+// It maintains vertical continuation lines (│) for non-last siblings
+// and empty space for last siblings (whose branch has ended).
+func (tt *TaskTree) calculateChildPrefix(prefix string, isLast bool) string {
+	// Add vertical line continuation or empty space
+	if isLast {
+		// Last sibling: branch ended, use empty space
+		return prefix + treeEmpty
+	}
+	// Non-last sibling: continue vertical line
+	return prefix + treeVertical
+}
+
+// renderTaskLine renders a single task line with status, title, indicators, and tree connectors.
+// The prefix parameter contains ancestor line state, and isLast determines the branch character.
+func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool) string {
 	task := node.Task
 	isSelected := task.ID == tt.SelectedID
+
+	// Calculate tree connector based on depth and position
+	var treeConnector string
+	if prefix == "" {
+		// Root level: no connector
+		treeConnector = ""
+	} else if isLast {
+		// Last child: use └─
+		treeConnector = treeLastBranch + " "
+	} else {
+		// Non-last child: use ├─
+		treeConnector = treeBranch + " "
+	}
 
 	// Status indicator with color
 	indicator := statusIndicator(task.Classification)
@@ -1134,5 +1135,5 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string) string {
 		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸")
 	}
 
-	return fmt.Sprintf("%s%s%s %s%s%s", selMarker, prefix, indicatorStyled, title, prioritySuffix, cycleSuffix)
+	return fmt.Sprintf("%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, indicatorStyled, title, prioritySuffix, cycleSuffix)
 }

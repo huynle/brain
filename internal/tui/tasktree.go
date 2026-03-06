@@ -232,6 +232,9 @@ type TaskTree struct {
 	selectedGroupIdx int             // index into groups
 	selectedTaskIdx  int             // index into group.Tasks, or -1 for group header
 	useGroupedView   bool            // if true, use grouped view; if false, use tree view
+
+	// Multi-select state (passed in during View rendering)
+	selectedTasks map[string]bool
 }
 
 // NewTaskTree creates a new empty TaskTree component.
@@ -580,6 +583,14 @@ func (tt *TaskTree) ToggleCollapse() {
 	_ = SaveSettings(settings) // Ignore errors (non-critical)
 }
 
+// IsOnGroupHeader returns true if the cursor is on a group header.
+func (tt *TaskTree) IsOnGroupHeader() bool {
+	if !tt.useGroupedView || len(tt.groups) == 0 {
+		return false
+	}
+	return tt.selectedTaskIdx == -1
+}
+
 // SelectedTask returns the currently selected task, or nil if none.
 func (tt *TaskTree) SelectedTask() *types.ResolvedTask {
 	if tt.SelectedID == "" || len(tt.tasks) == 0 {
@@ -613,6 +624,13 @@ func (tt *TaskTree) View(width, height int) string {
 		return tt.viewGrouped(width, height)
 	}
 	return tt.viewLegacy(width, height)
+}
+
+// ViewWithSelection renders the task tree with multi-select checkboxes.
+func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[string]bool) string {
+	// Store selection for rendering
+	tt.selectedTasks = selectedTasks
+	return tt.View(width, height)
 }
 
 // viewLegacy is the original tree-based rendering.
@@ -674,7 +692,7 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 		if !group.Collapsed {
 			for tIdx, task := range group.Tasks {
 				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
-				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected)
+				taskLine := tt.renderGroupedTaskLine(task, isTaskSelected, tt.selectedTasks)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -692,7 +710,13 @@ func (tt *TaskTree) viewGrouped(width, height int) string {
 }
 
 // renderGroupedTaskLine renders a single task line in grouped view.
-func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool) string {
+func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool) string {
+	// Checkbox indicator
+	checkbox := "[ ]"
+	if selectedTasks[task.ID] {
+		checkbox = "[x]"
+	}
+
 	// Status indicator with color
 	indicator := statusIndicator(task.Classification)
 	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
@@ -701,6 +725,9 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 	title := task.Title
 	if isSelected {
 		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
+	} else if selectedTasks[task.ID] {
+		// Apply selection style to selected tasks even when not focused
+		title = SelectedTaskStyle.Render(title)
 	}
 
 	// Priority suffix
@@ -715,7 +742,7 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
 	}
 
-	return fmt.Sprintf("%s  %s %s%s", selMarker, indicatorStyled, title, prioritySuffix)
+	return fmt.Sprintf("%s%s %s %s%s", selMarker, checkbox, indicatorStyled, title, prioritySuffix)
 }
 
 // renderNodes recursively renders tree nodes into lines.

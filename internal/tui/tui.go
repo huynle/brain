@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,24 +41,33 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
+	// Filter state
+	filterMode   bool   // Is filter input active?
+	filterQuery  string // Current filter text
+	filterActive bool   // Is a filter currently applied?
+
 	// Task data
 	tasks []types.ResolvedTask
 	stats TaskStats
+
+	// Multi-select state
+	selectedTasks map[string]bool
 }
 
 // NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg Config) Model {
 	return Model{
-		config:      cfg,
-		keymap:      DefaultKeyMap(),
-		statusBar:   NewStatusBar(cfg.Project),
-		helpBar:     NewHelpBar(),
-		taskTree:    NewTaskTree(),
-		taskDetail:  NewTaskDetail(),
-		logViewer:   NewLogViewer(DefaultMaxLogEntries),
-		activePanel: PanelTasks,
-		sseClient:   NewSSEClient(cfg.APIURL, cfg.Project),
-		ctx:         context.Background(),
+		config:        cfg,
+		keymap:        DefaultKeyMap(),
+		statusBar:     NewStatusBar(cfg.Project),
+		helpBar:       NewHelpBar(),
+		taskTree:      NewTaskTree(),
+		taskDetail:    NewTaskDetail(),
+		logViewer:     NewLogViewer(DefaultMaxLogEntries),
+		activePanel:   PanelTasks,
+		sseClient:     NewSSEClient(cfg.APIURL, cfg.Project),
+		ctx:           context.Background(),
+		selectedTasks: make(map[string]bool),
 	}
 }
 
@@ -127,6 +137,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If in filter mode, handle filter input first
+	if m.filterMode {
+		return m.handleFilterInput(msg)
+	}
+
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		m.sseClient.Stop()
@@ -139,6 +154,19 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
+		case "/":
+			// Activate filter mode
+			if m.activePanel == PanelTasks {
+				m.filterMode = true
+				m.filterQuery = ""
+			}
+			return m, nil
+		case "c":
+			// Clear filter if active
+			if m.filterActive && !m.filterMode {
+				m.clearFilter()
+			}
+			return m, nil
 		case "q":
 			m.sseClient.Stop()
 			return m, tea.Quit
@@ -188,9 +216,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case " ":
-			// Space toggles group collapse when on group header
+			// Space toggles group collapse when on group header, selection when on task
 			if m.activePanel == PanelTasks {
-				m.taskTree.ToggleCollapse()
+				if m.taskTree.IsOnGroupHeader() {
+					// On group header: toggle collapse
+					m.taskTree.ToggleCollapse()
+				} else {
+					// On task: toggle selection
+					m.toggleTaskSelection()
+				}
+			}
+			return m, nil
+		case "A":
+			// Select all visible tasks
+			if m.activePanel == PanelTasks {
+				m.selectAllTasks()
+			}
+			return m, nil
+		case "D":
+			// Clear all selections
+			if m.activePanel == PanelTasks {
+				m.clearSelection()
 			}
 			return m, nil
 		}
@@ -216,6 +262,43 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
+}
+
+// toggleTaskSelection toggles selection for the currently focused task.
+func (m *Model) toggleTaskSelection() {
+	task := m.taskTree.SelectedTask()
+	if task == nil {
+		return
+	}
+
+	if m.selectedTasks[task.ID] {
+		delete(m.selectedTasks, task.ID)
+	} else {
+		m.selectedTasks[task.ID] = true
+	}
+}
+
+// clearSelection clears all selected tasks.
+func (m *Model) clearSelection() {
+	m.selectedTasks = make(map[string]bool)
+}
+
+// selectAllTasks selects all visible tasks.
+func (m *Model) selectAllTasks() {
+	for _, task := range m.filteredTasks() {
+		m.selectedTasks[task.ID] = true
+	}
+}
+
+// getSelectedTasks returns all selected tasks.
+func (m *Model) getSelectedTasks() []types.ResolvedTask {
+	selected := []types.ResolvedTask{}
+	for _, task := range m.tasks {
+		if m.selectedTasks[task.ID] {
+			selected = append(selected, task)
+		}
+	}
+	return selected
 }
 
 // recalcPanelSizes recalculates panel dimensions based on current window size.
@@ -259,6 +342,8 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
+	// Update status bar with selection count
+	m.statusBar.SelectedCount = len(m.selectedTasks)
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
@@ -317,7 +402,28 @@ func (m Model) View() string {
 	// Help bar at bottom
 	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
 
+	// Filter bar (if active or in input mode)
+	var filterBarView string
+	if m.filterMode {
+		// Show filter input bar
+		filterBarView = FilterBarStyle.Render("Filter: " + m.filterQuery + "_")
+	} else if m.filterActive {
+		// Show filter status
+		totalCount := len(m.tasks)
+		matchCount := len(m.filteredTasks())
+		filterBarView = FilterStatusStyle.Render(fmt.Sprintf("Filtered: %d/%d tasks (press 'c' to clear)", matchCount, totalCount))
+	}
+
 	// Compose layout vertically
+	if filterBarView != "" {
+		return lipgloss.JoinVertical(lipgloss.Left,
+			statusBarView,
+			mainContent,
+			helpBarView,
+			filterBarView,
+		)
+	}
+
 	return lipgloss.JoinVertical(lipgloss.Left,
 		statusBarView,
 		mainContent,
@@ -394,4 +500,89 @@ func (m Model) renderLogPanel(width, height int) string {
 		Width(width - 2).
 		Height(height).
 		Render(content)
+}
+
+// =============================================================================
+// Filter Methods
+// =============================================================================
+
+// handleFilterInput processes keyboard input in filter mode.
+func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		// Confirm filter and exit filter mode
+		m.filterMode = false
+		m.filterActive = (m.filterQuery != "")
+		// Apply filter to task tree
+		m.applyFilter()
+		return m, nil
+
+	case tea.KeyEsc:
+		// Cancel filter
+		m.filterMode = false
+		m.filterQuery = ""
+		// If no filter was active, no need to update
+		if !m.filterActive {
+			return m, nil
+		}
+		// Clear the active filter
+		m.clearFilter()
+		return m, nil
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		// Delete last character
+		if len(m.filterQuery) > 0 {
+			m.filterQuery = m.filterQuery[:len(m.filterQuery)-1]
+		}
+		// Real-time filtering
+		m.applyFilter()
+		return m, nil
+
+	case tea.KeyCtrlU:
+		// Clear entire filter input
+		m.filterQuery = ""
+		m.applyFilter()
+		return m, nil
+
+	case tea.KeyRunes:
+		// Append character to filter
+		m.filterQuery += string(msg.Runes)
+		// Real-time filtering
+		m.applyFilter()
+		return m, nil
+	}
+
+	return m, nil
+}
+
+// applyFilter applies the current filter query to the task list.
+func (m *Model) applyFilter() {
+	if m.filterQuery == "" {
+		// No filter, show all tasks
+		m.taskTree.SetTasks(m.tasks)
+		m.filterActive = false
+	} else {
+		// Filter tasks
+		filtered := FilterTasks(m.tasks, m.filterQuery)
+		m.taskTree.SetTasks(filtered)
+		m.filterActive = true
+	}
+	// Sync task detail after filter changes
+	m.syncTaskDetail()
+}
+
+// clearFilter removes the active filter and restores all tasks.
+func (m *Model) clearFilter() {
+	m.filterQuery = ""
+	m.filterActive = false
+	m.taskTree.SetTasks(m.tasks)
+	m.syncTaskDetail()
+}
+
+// filteredTasks returns the current list of tasks (filtered or not).
+func (m *Model) filteredTasks() []types.ResolvedTask {
+	if m.filterQuery == "" {
+		return m.tasks
+	}
+	return FilterTasks(m.tasks, m.filterQuery)
 }

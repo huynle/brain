@@ -75,6 +75,16 @@ var GroupHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(ColorCyan)
 
+// SelectedTaskStyle is used for tasks that are selected (but not focused).
+var SelectedTaskStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("39")). // Blue highlight
+	Bold(true)
+
+// SelectedCountStyle is used for the selection count in status bar.
+var SelectedCountStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("39")).
+	Bold(true)
+
 // =============================================================================
 // Status Styles
 // =============================================================================
@@ -104,3 +114,18 @@ func PriorityStyle(priority string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(ColorPriorityLow)
 	}
 }
+
+// =============================================================================
+// Filter Styles
+// =============================================================================
+
+// FilterBarStyle is used for the filter input bar at the bottom.
+var FilterBarStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("240")).
+	Foreground(lipgloss.Color("255")).
+	Padding(0, 1)
+
+// FilterStatusStyle is used for the filter status line (e.g., "Filtered: 5/24 tasks").
+var FilterStatusStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("243")).
+	Italic(true)

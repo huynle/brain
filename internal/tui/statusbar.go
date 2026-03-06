@@ -8,9 +8,10 @@ import (
 
 // StatusBar displays project name, task stats, and connection status.
 type StatusBar struct {
-	Project   string
-	Connected bool
-	Stats     TaskStats
+	Project       string
+	Connected     bool
+	Stats         TaskStats
+	SelectedCount int
 }
 
 // NewStatusBar creates a new StatusBar for the given project.
@@ -46,6 +47,11 @@ func (s StatusBar) View(width int) string {
 			lipgloss.NewStyle().Foreground(ColorBlocked).Render(IndicatorBlocked),
 			s.Stats.Blocked,
 		)
+	}
+
+	// Add selected count if > 0
+	if s.SelectedCount > 0 {
+		stats += SelectedCountStyle.Render(fmt.Sprintf("  • %d selected", s.SelectedCount))
 	}
 
 	// Right side: connection indicator

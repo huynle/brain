@@ -374,3 +374,254 @@ func AssignLanes(sortedTasks []types.ResolvedTask) []LaneAssignment {
 
 	return results
 }
+
+// Box-drawing characters for git-graph rendering
+var laneChars = struct {
+	Vertical    string
+	Branch      string
+	LastBranch  string
+	MergeStart  string
+	MergeJoin   string
+	Empty       string
+	Connector   string
+}{
+	Vertical:   "│ ",
+	Branch:     "├─",
+	LastBranch: "└─",
+	MergeStart: "╰─",
+	MergeJoin:  "┴─",
+	Empty:      "  ",
+	Connector:  "─",
+}
+
+// LanePrefixSegmentContext provides semantic coloring context for prefix segments.
+type LanePrefixSegmentContext struct {
+	UpstreamLanes   map[int]bool
+	DownstreamLanes map[int]bool
+}
+
+// GeneratePrefix generates the box-drawing prefix string for a single row in the git-graph.
+//
+// Converts a LaneAssignment into the visual prefix that precedes the task
+// marker (○) and task name. Pure function with no side effects.
+//
+// Examples:
+//   Normal child:     │ ├─
+//   Last child:       │ └─
+//   Merge (2 lanes):  ╰─┴─
+//   Merge (3 lanes):  ╰─┴─┴─
+//   Active lanes:     │ │ ├─  (lane 0 + lane 1 active, branch at lane 2)
+func GeneratePrefix(assignment LaneAssignment, index int, allAssignments []LaneAssignment, context *LanePrefixSegmentContext) string {
+	segments := GeneratePrefixSegments(assignment, index, allAssignments, context)
+	result := ""
+	for _, seg := range segments {
+		result += seg.Text
+	}
+	return result
+}
+
+// GeneratePrefixSegments generates structured segments for a prefix with role and kind tags.
+//
+// Returns a slice of LanePrefixSegment with visual role (for rendering) and
+// semantic kind (for coloring). Supports both branch mode (normal parent-child)
+// and merge mode (multiple lanes converging).
+func GeneratePrefixSegments(assignment LaneAssignment, index int, allAssignments []LaneAssignment, context *LanePrefixSegmentContext) []LanePrefixSegment {
+	if context == nil {
+		context = &LanePrefixSegmentContext{
+			UpstreamLanes:   make(map[int]bool),
+			DownstreamLanes: make(map[int]bool),
+		}
+	}
+
+	if assignment.IsMerge && len(assignment.MergeFromLanes) > 0 {
+		return buildMergePrefixSegments(assignment, index, allAssignments, context)
+	}
+
+	return buildBranchPrefixSegments(assignment, index, allAssignments, context)
+}
+
+// laneActiveBelow checks whether a given lane continues below the current row.
+// A lane "continues" if any subsequent assignment has it in activeLanes or is itself on that lane.
+func laneActiveBelow(lane int, currentIndex int, allAssignments []LaneAssignment) bool {
+	for i := currentIndex + 1; i < len(allAssignments); i++ {
+		a := allAssignments[i]
+		if a.Lane == lane {
+			return true
+		}
+		for _, activeLane := range a.ActiveLanes {
+			if activeLane == lane {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// laneKind determines the semantic kind (for coloring) of a lane segment.
+func laneKind(lane int, context *LanePrefixSegmentContext) LanePrefixSegmentKind {
+	if context.UpstreamLanes[lane] {
+		return KindUpstream
+	}
+	if context.DownstreamLanes[lane] {
+		return KindDownstream
+	}
+	return KindNeutral
+}
+
+// createSegment creates a LanePrefixSegment with the given parameters.
+func createSegment(lane int, role LanePrefixSegmentRole, text string, context *LanePrefixSegmentContext) LanePrefixSegment {
+	return LanePrefixSegment{
+		Text: text,
+		Lane: lane,
+		Role: role,
+		Kind: laneKind(lane, context),
+	}
+}
+
+// buildBranchPrefixSegments builds prefix for a non-merge row (root, single-dep, or fork child).
+func buildBranchPrefixSegments(assignment LaneAssignment, index int, allAssignments []LaneAssignment, context *LanePrefixSegmentContext) []LanePrefixSegment {
+	lane := assignment.Lane
+	activeLanes := assignment.ActiveLanes
+	maxLane := lane
+
+	parts := []LanePrefixSegment{}
+
+	// Render lanes before the current lane
+	for l := 0; l < maxLane; l++ {
+		isActive := false
+		for _, active := range activeLanes {
+			if active == l {
+				isActive = true
+				break
+			}
+		}
+
+		if isActive {
+			parts = append(parts, createSegment(l, RoleVertical, laneChars.Vertical, context))
+		} else {
+			parts = append(parts, createSegment(l, RoleEmpty, laneChars.Empty, context))
+		}
+	}
+
+	// At the task's own lane, determine branch vs last-branch
+	continues := laneActiveBelow(lane, index, allAssignments)
+	if continues {
+		parts = append(parts, createSegment(lane, RoleBranch, laneChars.Branch, context))
+	} else {
+		parts = append(parts, createSegment(lane, RoleLastBranch, laneChars.LastBranch, context))
+	}
+
+	return parts
+}
+
+// buildMergePrefixSegments builds prefix for a merge row (task has 2+ in-tree dependencies converging).
+//
+// Merge rendering strategy:
+// - All lanes from the leftmost merge lane to the rightmost are joined
+// - The leftmost merge source starts with ╰─
+// - Each additional merge lane adds ┴─
+// - Non-merge lanes between them get ──
+// - The task's own lane ends the sequence
+func buildMergePrefixSegments(assignment LaneAssignment, index int, allAssignments []LaneAssignment, context *LanePrefixSegmentContext) []LanePrefixSegment {
+	lane := assignment.Lane
+	activeLanes := assignment.ActiveLanes
+	mergeFromLanes := assignment.MergeFromLanes
+
+	// All lanes involved in the merge (the task's own lane + merge-from lanes)
+	allMergeLanes := append([]int{lane}, mergeFromLanes...)
+	
+	// Sort allMergeLanes
+	for i := 0; i < len(allMergeLanes); i++ {
+		for j := i + 1; j < len(allMergeLanes); j++ {
+			if allMergeLanes[i] > allMergeLanes[j] {
+				allMergeLanes[i], allMergeLanes[j] = allMergeLanes[j], allMergeLanes[i]
+			}
+		}
+	}
+
+	minMergeLane := allMergeLanes[0]
+	maxMergeLane := allMergeLanes[len(allMergeLanes)-1]
+
+	// Create set for quick lookup
+	mergeLaneSet := make(map[int]bool)
+	for _, ml := range allMergeLanes {
+		mergeLaneSet[ml] = true
+	}
+
+	parts := []LanePrefixSegment{}
+
+	// Lanes before the merge region
+	for l := 0; l < minMergeLane; l++ {
+		isActive := false
+		for _, active := range activeLanes {
+			if active == l {
+				isActive = true
+				break
+			}
+		}
+
+		if isActive {
+			parts = append(parts, createSegment(l, RoleVertical, laneChars.Vertical, context))
+		} else {
+			parts = append(parts, createSegment(l, RoleEmpty, laneChars.Empty, context))
+		}
+	}
+
+	// The merge region: from minMergeLane to maxMergeLane
+	started := false
+	for l := minMergeLane; l <= maxMergeLane; l++ {
+		if mergeLaneSet[l] || l == lane {
+			if !started {
+				parts = append(parts, createSegment(l, RoleMergeStart, laneChars.MergeStart, context))
+				started = true
+			} else {
+				parts = append(parts, createSegment(l, RoleMergeJoin, laneChars.MergeJoin, context))
+			}
+		} else {
+			// Non-merge lane between merge lanes
+			if started {
+				parts = append(parts, createSegment(l, RoleConnector, laneChars.Connector+laneChars.Connector, context))
+			} else {
+				isActive := false
+				for _, active := range activeLanes {
+					if active == l {
+						isActive = true
+						break
+					}
+				}
+
+				if isActive {
+					parts = append(parts, createSegment(l, RoleVertical, laneChars.Vertical, context))
+				} else {
+					parts = append(parts, createSegment(l, RoleEmpty, laneChars.Empty, context))
+				}
+			}
+		}
+	}
+
+	// If the task's lane is beyond maxMergeLane (shouldn't happen but handle defensively)
+	if lane > maxMergeLane {
+		for l := maxMergeLane + 1; l < lane; l++ {
+			if started {
+				parts = append(parts, createSegment(l, RoleConnector, laneChars.Connector+laneChars.Connector, context))
+			} else {
+				isActive := false
+				for _, active := range activeLanes {
+					if active == l {
+						isActive = true
+						break
+					}
+				}
+
+				if isActive {
+					parts = append(parts, createSegment(l, RoleVertical, laneChars.Vertical, context))
+				} else {
+					parts = append(parts, createSegment(l, RoleEmpty, laneChars.Empty, context))
+				}
+			}
+		}
+		parts = append(parts, createSegment(lane, RoleMergeStart, laneChars.MergeStart, context))
+	}
+
+	return parts
+}

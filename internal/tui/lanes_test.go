@@ -602,3 +602,165 @@ func TestAssignLanes_IndependentTasks(t *testing.T) {
 		t.Errorf("second task's lane %d not in its active lanes: %v", result[1].Lane, result[1].ActiveLanes)
 	}
 }
+
+// =============================================================================
+// GeneratePrefix Tests (Phase 3)
+// =============================================================================
+
+func TestGeneratePrefix_SimpleBranch(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", []string{"a"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	prefix := GeneratePrefix(assignments[0], 0, assignments, nil)
+	if prefix != "├─" {
+		t.Errorf("expected '├─', got '%s'", prefix)
+	}
+}
+
+func TestGeneratePrefix_LastChild(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	prefix := GeneratePrefix(assignments[0], 0, assignments, nil)
+	if prefix != "└─" {
+		t.Errorf("expected '└─', got '%s'", prefix)
+	}
+}
+
+func TestGeneratePrefix_TwoLaneMerge(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", nil),
+		makeLaneTask("c", "Task C", []string{"a", "b"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	var cAssignment LaneAssignment
+	var cIndex int
+	for i, a := range assignments {
+		if a.TaskID == "c" {
+			cAssignment = a
+			cIndex = i
+			break
+		}
+	}
+
+	prefix := GeneratePrefix(cAssignment, cIndex, assignments, nil)
+	if prefix != "╰─┴─" {
+		t.Errorf("expected '╰─┴─', got '%s'", prefix)
+	}
+}
+
+func TestGeneratePrefix_ThreeLaneMerge(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", nil),
+		makeLaneTask("c", "Task C", nil),
+		makeLaneTask("d", "Task D", []string{"a", "b", "c"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	var dAssignment LaneAssignment
+	var dIndex int
+	for i, a := range assignments {
+		if a.TaskID == "d" {
+			dAssignment = a
+			dIndex = i
+			break
+		}
+	}
+
+	prefix := GeneratePrefix(dAssignment, dIndex, assignments, nil)
+	if prefix != "╰─┴─┴─" {
+		t.Errorf("expected '╰─┴─┴─', got '%s'", prefix)
+	}
+}
+
+func TestGeneratePrefix_ActiveLanes(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", []string{"a"}),
+		makeLaneTask("c", "Task C", []string{"a"}),
+		makeLaneTask("d", "Task D", []string{"b"}),
+		makeLaneTask("e", "Task E", []string{"c"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	var eAssignment LaneAssignment
+	var eIndex int
+	for i, a := range assignments {
+		if a.TaskID == "e" {
+			eAssignment = a
+			eIndex = i
+			break
+		}
+	}
+
+	prefix := GeneratePrefix(eAssignment, eIndex, assignments, nil)
+	if prefix != "│ └─" {
+		t.Errorf("expected '│ └─', got '%s'", prefix)
+	}
+}
+
+func TestGeneratePrefixSegments_ContextAware(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", []string{"a"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	context := &LanePrefixSegmentContext{
+		UpstreamLanes:   map[int]bool{0: true},
+		DownstreamLanes: map[int]bool{},
+	}
+
+	segments := GeneratePrefixSegments(assignments[0], 0, assignments, context)
+	
+	if len(segments) == 0 {
+		t.Fatal("expected segments, got none")
+	}
+
+	foundUpstream := false
+	for _, seg := range segments {
+		if seg.Lane == 0 && seg.Kind == KindUpstream {
+			foundUpstream = true
+			break
+		}
+	}
+	if !foundUpstream {
+		t.Errorf("expected to find upstream kind for lane 0, got: %+v", segments)
+	}
+}
+
+func TestGeneratePrefixSegments_RoleTagging(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeLaneTask("a", "Task A", nil),
+		makeLaneTask("b", "Task B", []string{"a"}),
+	}
+	sorted := TopoSort(tasks)
+	assignments := AssignLanes(sorted)
+
+	segments := GeneratePrefixSegments(assignments[0], 0, assignments, nil)
+	
+	foundBranch := false
+	for _, seg := range segments {
+		if seg.Role == RoleBranch {
+			foundBranch = true
+			break
+		}
+	}
+	if !foundBranch {
+		t.Errorf("expected to find RoleBranch segment, got: %+v", segments)
+	}
+}

@@ -246,7 +246,7 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 	}
 }
 
-// Phase 3: New visibility filtering tests
+// Phase 3: Visibility filtering tests (CORRECTED)
 
 func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
 	tasks := []types.ResolvedTask{
@@ -257,19 +257,25 @@ func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
 	}
 
 	// Hide Draft and Archived
-	groups := GroupTasks(tasks, nil)
-
-	// Should have all 4 groups (grouping no longer filters by visibility)
-	if len(groups) != 4 {
-		t.Fatalf("expected 4 groups, got %d", len(groups))
+	visibleGroups := map[string]bool{
+		"Ready":     true,
+		"Completed": true,
+		"Draft":     false,
+		"Archived":  false,
 	}
 
-	// Verify expected order: Ready, Draft, Completed, Archived
-	expectedOrder := []string{"Ready", "Draft", "Completed", "Archived"}
-	for i, expected := range expectedOrder {
-		if groups[i].Name != expected {
-			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
-		}
+	groups := GroupTasks(tasks, visibleGroups)
+
+	// Should only have 2 groups: Ready, Completed
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups, got %d", len(groups))
+	}
+
+	if groups[0].Name != "Ready" {
+		t.Errorf("group[0] name = %q, want %q", groups[0].Name, "Ready")
+	}
+	if groups[1].Name != "Completed" {
+		t.Errorf("group[1].Name = %q, want %q", groups[1].Name, "Completed")
 	}
 }
 
@@ -286,6 +292,13 @@ func TestGroupTasks_WithVisibility_NilMapShowsAll(t *testing.T) {
 	if len(groups) != 3 {
 		t.Fatalf("expected 3 groups, got %d", len(groups))
 	}
+
+	expectedNames := []string{"Ready", "Draft", "Archived"}
+	for i, expected := range expectedNames {
+		if groups[i].Name != expected {
+			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
+		}
+	}
 }
 
 func TestGroupTasks_WithVisibility_EmptyMapShowsAll(t *testing.T) {
@@ -294,9 +307,9 @@ func TestGroupTasks_WithVisibility_EmptyMapShowsAll(t *testing.T) {
 		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
 	}
 
-	groups := GroupTasks(tasks, nil)
+	groups := GroupTasks(tasks, map[string]bool{})
 
-	// Should have all 2 groups
+	// Should have all 2 groups when map is empty
 	if len(groups) != 2 {
 		t.Fatalf("expected 2 groups, got %d", len(groups))
 	}
@@ -308,10 +321,15 @@ func TestGroupTasks_WithVisibility_OnlyHiddenGroups(t *testing.T) {
 		{ID: "t2", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
 	}
 
-	groups := GroupTasks(tasks, nil)
+	visibleGroups := map[string]bool{
+		"Draft":    false,
+		"Archived": false,
+	}
 
-	// Should have all 2 groups (grouping no longer filters)
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(groups))
+	groups := GroupTasks(tasks, visibleGroups)
+
+	// Should have 0 groups when all are hidden
+	if len(groups) != 0 {
+		t.Fatalf("expected 0 groups, got %d", len(groups))
 	}
 }

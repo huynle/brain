@@ -578,7 +578,13 @@ func (m *MetadataModal) View() string {
 	// Show save success message
 	if m.saveSuccess {
 		successStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
-		b.WriteString(successStyle.Render(fmt.Sprintf("✓ Saved %s", getFieldLabel(m.lastSavedField))))
+		var message string
+		if m.mode == ModeFeature {
+			message = fmt.Sprintf("✓ Updated %d tasks in feature %s", len(m.taskIDs), m.featureID)
+		} else {
+			message = fmt.Sprintf("✓ Saved %s", getFieldLabel(m.lastSavedField))
+		}
+		b.WriteString(successStyle.Render(message))
 		b.WriteString("\n\n")
 		m.saveSuccess = false // Clear after displaying
 	}

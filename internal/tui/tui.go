@@ -3,6 +3,9 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -61,6 +64,11 @@ type Model struct {
 	// Resource metrics
 	metricsCollector *MetricsCollector
 	resourceMetrics  ResourceMetrics
+
+	// Status message for user feedback
+	statusMessage     string
+	statusMessageType string // "success", "error", "info"
+	statusMessageTime time.Time
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -170,6 +178,87 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resourceMetrics = m.metricsCollector.Collect()
 		// Schedule next tick
 		return m, tickCmd()
+
+	case taskCompletedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to complete task: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "Task completed successfully")
+		}
+		return m, nil
+
+	case taskCancelledMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to cancel task: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "Task cancelled successfully")
+		}
+		// Close modal after cancel completes
+		m.modalManager.Close()
+		return m, nil
+
+	case batchTasksCompletedMsg:
+		if len(msg.errors) > 0 {
+			m.setStatusMessage("error", fmt.Sprintf("Completed %d tasks, %d failed", msg.successCount, msg.failedCount))
+		} else {
+			m.setStatusMessage("success", fmt.Sprintf("Completed %d tasks successfully", msg.successCount))
+			// Clear selection on success
+			m.clearSelection()
+		}
+		return m, nil
+
+	case batchTasksCancelledMsg:
+		if len(msg.errors) > 0 {
+			m.setStatusMessage("error", fmt.Sprintf("Cancelled %d tasks, %d failed", msg.successCount, msg.failedCount))
+		} else {
+			m.setStatusMessage("success", fmt.Sprintf("Cancelled %d tasks successfully", msg.successCount))
+			// Clear selection on success
+			m.clearSelection()
+		}
+		// Close modal after batch cancel completes
+		m.modalManager.Close()
+		return m, nil
+
+	case taskExecutedMsg:
+		if msg.err != nil {
+			if msg.claimedBy != "" {
+				m.setStatusMessage("error", fmt.Sprintf("✗ Already claimed by %s", msg.claimedBy))
+			} else {
+				m.setStatusMessage("error", fmt.Sprintf("✗ Execute failed: %v", msg.err))
+			}
+		} else {
+			m.setStatusMessage("success", "✓ Task claimed for execution")
+		}
+		m.modalManager.Close()
+		return m, nil
+
+	case taskDeletedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Delete failed: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "✓ Task deleted")
+		}
+		m.modalManager.Close()
+		return m, nil
+
+	case batchTasksDeletedMsg:
+		if msg.failedCount > 0 {
+			m.setStatusMessage("info", fmt.Sprintf("✓ %d deleted, ✗ %d failed", msg.successCount, msg.failedCount))
+		} else {
+			m.setStatusMessage("success", fmt.Sprintf("✓ %d tasks deleted", msg.successCount))
+			// Clear selection on success
+			m.clearSelection()
+		}
+		m.modalManager.Close()
+		return m, nil
+
+	case editorClosedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Editor error: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "✓ File saved - refreshing...")
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -243,17 +332,176 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, nil
+		case "c":
+			// Complete task(s) - no confirmation required
+			if m.activePanel == PanelTasks {
+				// Case 1: Multi-select active - batch complete
+				if len(m.selectedTasks) > 0 {
+					taskPaths := []string{}
+					taskIDs := []string{}
+					for id := range m.selectedTasks {
+						// Find task to get its path
+						for _, t := range m.tasks {
+							if t.ID == id {
+								taskPaths = append(taskPaths, t.Path)
+								taskIDs = append(taskIDs, id)
+								break
+							}
+						}
+					}
+					return m, batchCompleteTasksCmd(m.config.APIURL, taskPaths, taskIDs)
+				}
+
+				// Case 2: Single task selected
+				selectedTask := m.taskTree.SelectedTask()
+				if selectedTask != nil {
+					return m, completeTaskCmd(m.config.APIURL, selectedTask.Path)
+				}
+			}
+			return m, nil
+		case "C":
+			// Cancel task(s) - with confirmation modal
+			if m.activePanel == PanelTasks {
+				// Gather task information for cancel
+				var taskPaths []string
+				var taskIDs []string
+				var confirmMsg string
+
+				// Case 1: Multi-select active - batch cancel
+				if len(m.selectedTasks) > 0 {
+					for id := range m.selectedTasks {
+						// Find task to get its path
+						for _, t := range m.tasks {
+							if t.ID == id {
+								taskPaths = append(taskPaths, t.Path)
+								taskIDs = append(taskIDs, id)
+								break
+							}
+						}
+					}
+					confirmMsg = fmt.Sprintf("Cancel %d selected tasks?", len(taskIDs))
+				} else {
+					// Case 2: Single task selected
+					selectedTask := m.taskTree.SelectedTask()
+					if selectedTask != nil {
+						taskPaths = []string{selectedTask.Path}
+						taskIDs = []string{selectedTask.ID}
+						confirmMsg = "Cancel this task?"
+					}
+				}
+
+				if len(taskPaths) > 0 {
+					// Create modal with callback
+					modal := NewConfirmModal("Confirm Cancel", confirmMsg).
+						WithOnConfirm(func() tea.Msg {
+							if len(taskPaths) == 1 {
+								return cancelTaskCmd(m.config.APIURL, taskPaths[0])()
+							}
+							return batchCancelTasksCmd(m.config.APIURL, taskPaths, taskIDs)()
+						})
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+			}
+			return m, nil
+		case "x":
+			// Execute task - claim for immediate execution
+			if m.activePanel != PanelTasks {
+				return m, nil
+			}
+
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+
+			// Get runner ID from config or generate
+			runnerID := "manual-tui"
+			if m.config.RunnerID != "" {
+				runnerID = m.config.RunnerID
+			}
+
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+
+			message := fmt.Sprintf("Execute task '%s' now?\nThis will claim it for immediate execution.", selectedTask.Title)
+			modal := NewConfirmModal("Execute Task", message).
+				WithOnConfirm(func() tea.Msg {
+					return executeTaskCmd(apiClient, m.config.Project, selectedTask.ID, runnerID)()
+				})
+			return m, m.modalManager.Open(modal)
+		case "d":
+			// Delete task(s) - with confirmation modal
+			if m.activePanel != PanelTasks {
+				return m, nil
+			}
+
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+
+			// Case 1: Multi-select mode - batch delete
+			if len(m.selectedTasks) > 0 {
+				count := len(m.selectedTasks)
+				taskIDs := make([]string, 0, count)
+				taskPaths := make([]string, 0, count)
+				for id := range m.selectedTasks {
+					taskIDs = append(taskIDs, id)
+					// Find task to get path
+					for _, t := range m.tasks {
+						if t.ID == id {
+							taskPaths = append(taskPaths, t.Path)
+							break
+						}
+					}
+				}
+
+				message := fmt.Sprintf("Delete %d tasks? This cannot be undone.", count)
+				modal := NewConfirmModal("Delete Tasks", message).
+					WithOnConfirm(func() tea.Msg {
+						return batchDeleteTasksCmd(apiClient, taskPaths, taskIDs)()
+					})
+				return m, m.modalManager.Open(modal)
+			}
+
+			// Case 2: Single task mode
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+
+			message := fmt.Sprintf("Delete task '%s'?\nThis cannot be undone.", selectedTask.Title)
+			modal := NewConfirmModal("Delete Task", message).
+				WithOnConfirm(func() tea.Msg {
+					return deleteTaskCmd(apiClient, selectedTask.Path)()
+				})
+			return m, m.modalManager.Open(modal)
+		case "e":
+			// Edit task in $EDITOR
+			if m.activePanel != PanelTasks {
+				return m, nil
+			}
+
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+
+			// Construct full file path
+			// Task path format: projects/{project}/task/{id}.md
+			fullPath := filepath.Join(m.config.BrainDir, selectedTask.Path)
+
+			return m, tea.ExecProcess(getEditorCmd(fullPath), func(err error) tea.Msg {
+				return editorClosedMsg{taskID: selectedTask.ID, err: err}
+			})
 		case "/":
 			// Activate filter mode
 			if m.activePanel == PanelTasks {
 				m.filterMode = true
 				m.filterQuery = ""
-			}
-			return m, nil
-		case "c":
-			// Clear filter if active
-			if m.filterActive && !m.filterMode {
-				m.clearFilter()
 			}
 			return m, nil
 		case "q":
@@ -507,6 +755,21 @@ func (m Model) renderBaseView() string {
 	// Help bar at bottom
 	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
 
+	// Status message (if active and not expired)
+	var statusMessageView string
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
+		style := lipgloss.NewStyle().Padding(0, 1)
+		switch m.statusMessageType {
+		case "success":
+			style = style.Foreground(lipgloss.Color("10")) // green
+		case "error":
+			style = style.Foreground(lipgloss.Color("9")) // red
+		case "info":
+			style = style.Foreground(lipgloss.Color("12")) // blue
+		}
+		statusMessageView = style.Render(m.statusMessage)
+	}
+
 	// Filter bar (if active or in input mode)
 	var filterBarView string
 	if m.filterMode {
@@ -520,19 +783,19 @@ func (m Model) renderBaseView() string {
 	}
 
 	// Compose layout vertically
+	var bottomPanels []string
+	if statusMessageView != "" {
+		bottomPanels = append(bottomPanels, statusMessageView)
+	}
+	bottomPanels = append(bottomPanels, helpBarView)
 	if filterBarView != "" {
-		return lipgloss.JoinVertical(lipgloss.Left,
-			statusBarView,
-			mainContent,
-			helpBarView,
-			filterBarView,
-		)
+		bottomPanels = append(bottomPanels, filterBarView)
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		statusBarView,
 		mainContent,
-		helpBarView,
+		lipgloss.JoinVertical(lipgloss.Left, bottomPanels...),
 	)
 }
 
@@ -690,4 +953,266 @@ func (m *Model) filteredTasks() []types.ResolvedTask {
 		return m.tasks
 	}
 	return FilterTasks(m.tasks, m.filterQuery)
+}
+
+// setStatusMessage sets a status message to be displayed to the user.
+func (m *Model) setStatusMessage(msgType, message string) {
+	m.statusMessage = message
+	m.statusMessageType = msgType
+	m.statusMessageTime = time.Now()
+}
+
+// =============================================================================
+// Message Types
+// =============================================================================
+
+type taskCompletedMsg struct {
+	taskID string
+	err    error
+}
+
+type taskCancelledMsg struct {
+	taskID string
+	err    error
+}
+
+type batchTasksCompletedMsg struct {
+	successCount int
+	failedCount  int
+	errors       []error
+}
+
+type batchTasksCancelledMsg struct {
+	successCount int
+	failedCount  int
+	errors       []error
+}
+
+type taskExecutedMsg struct {
+	taskID    string
+	err       error
+	claimedBy string
+}
+
+type taskDeletedMsg struct {
+	taskID string
+	err    error
+}
+
+type batchTasksDeletedMsg struct {
+	successCount int
+	failedCount  int
+	errors       []error
+}
+
+type editorClosedMsg struct {
+	taskID string
+	err    error
+}
+
+// =============================================================================
+// Command Functions
+// =============================================================================
+
+// completeTaskCmd completes a single task.
+func completeTaskCmd(apiURL, taskPath string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		err := apiClient.UpdateTaskStatus(ctx, taskPath, "completed")
+		return taskCompletedMsg{taskID: taskPath, err: err}
+	}
+}
+
+// cancelTaskCmd cancels a single task.
+func cancelTaskCmd(apiURL, taskPath string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		err := apiClient.UpdateTaskStatus(ctx, taskPath, "cancelled")
+		return taskCancelledMsg{taskID: taskPath, err: err}
+	}
+}
+
+// batchCompleteTasksCmd completes multiple tasks in parallel.
+func batchCompleteTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		type result struct {
+			taskID string
+			err    error
+		}
+
+		results := make(chan result, len(taskPaths))
+		ctx := context.Background()
+
+		// Execute all completions in parallel
+		for i, taskPath := range taskPaths {
+			go func(path, id string) {
+				err := apiClient.UpdateTaskStatus(ctx, path, "completed")
+				results <- result{taskID: id, err: err}
+			}(taskPath, taskIDs[i])
+		}
+
+		// Collect results
+		var errors []error
+		successCount := 0
+		failedCount := 0
+
+		for range taskPaths {
+			res := <-results
+			if res.err != nil {
+				errors = append(errors, fmt.Errorf("%s: %w", res.taskID, res.err))
+				failedCount++
+			} else {
+				successCount++
+			}
+		}
+
+		return batchTasksCompletedMsg{
+			successCount: successCount,
+			failedCount:  failedCount,
+			errors:       errors,
+		}
+	}
+}
+
+// batchCancelTasksCmd cancels multiple tasks in parallel.
+func batchCancelTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		type result struct {
+			taskID string
+			err    error
+		}
+
+		results := make(chan result, len(taskPaths))
+		ctx := context.Background()
+
+		// Execute all cancellations in parallel
+		for i, taskPath := range taskPaths {
+			go func(path, id string) {
+				err := apiClient.UpdateTaskStatus(ctx, path, "cancelled")
+				results <- result{taskID: id, err: err}
+			}(taskPath, taskIDs[i])
+		}
+
+		// Collect results
+		var errors []error
+		successCount := 0
+		failedCount := 0
+
+		for range taskPaths {
+			res := <-results
+			if res.err != nil {
+				errors = append(errors, fmt.Errorf("%s: %w", res.taskID, res.err))
+				failedCount++
+			} else {
+				successCount++
+			}
+		}
+
+		return batchTasksCancelledMsg{
+			successCount: successCount,
+			failedCount:  failedCount,
+			errors:       errors,
+		}
+	}
+}
+
+// executeTaskCmd claims a task for immediate execution.
+func executeTaskCmd(client *runner.APIClient, project, taskID, runnerID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		result, err := client.ClaimTask(ctx, project, taskID, runnerID)
+		if err != nil {
+			return taskExecutedMsg{taskID: taskID, err: err}
+		}
+		if !result.Success {
+			return taskExecutedMsg{
+				taskID:    taskID,
+				err:       fmt.Errorf("already claimed by %s", result.ClaimedBy),
+				claimedBy: result.ClaimedBy,
+			}
+		}
+		return taskExecutedMsg{taskID: taskID, err: nil}
+	}
+}
+
+// deleteTaskCmd deletes a single task.
+func deleteTaskCmd(client *runner.APIClient, taskPath string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		err := client.DeleteEntry(ctx, taskPath)
+		return taskDeletedMsg{taskID: taskPath, err: err}
+	}
+}
+
+// batchDeleteTasksCmd deletes multiple tasks in parallel.
+func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		type result struct {
+			taskID string
+			err    error
+		}
+
+		results := make(chan result, len(taskPaths))
+		ctx := context.Background()
+
+		// Execute all deletions in parallel
+		for i, taskPath := range taskPaths {
+			go func(path, id string) {
+				err := client.DeleteEntry(ctx, path)
+				results <- result{taskID: id, err: err}
+			}(taskPath, taskIDs[i])
+		}
+
+		// Collect results
+		var errors []error
+		successCount := 0
+		failedCount := 0
+
+		for range taskPaths {
+			res := <-results
+			if res.err != nil {
+				errors = append(errors, fmt.Errorf("%s: %w", res.taskID, res.err))
+				failedCount++
+			} else {
+				successCount++
+			}
+		}
+
+		return batchTasksDeletedMsg{
+			successCount: successCount,
+			failedCount:  failedCount,
+			errors:       errors,
+		}
+	}
+}
+
+// getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.
+func getEditorCmd(filePath string) *exec.Cmd {
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vim" // fallback
+	}
+
+	cmd := exec.Command(editor, filePath)
+	return cmd
 }

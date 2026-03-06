@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -173,10 +174,18 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	})
 
 	// Create TUI model
+	// Get BrainDir from environment or use default
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		brainDir = homeDir + "/.brain"
+	}
+
 	tuiCfg := tui.Config{
 		APIURL:   cfg.BrainAPIURL,
 		Project:  opts.Projects[0],
 		Projects: opts.Projects,
+		BrainDir: brainDir,
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

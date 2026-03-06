@@ -39,6 +39,11 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 
 	// Task panel specific shortcuts
 	if h.ActivePanel == PanelTasks {
+		shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
+		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+		shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
+		shortcuts += fmt.Sprintf("%s Cancel  ", bold("C"))
+		shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
 		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))

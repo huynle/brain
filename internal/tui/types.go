@@ -51,8 +51,10 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 
 // Config holds the configuration passed to the TUI from the runner.
 type Config struct {
-	APIURL  string
-	Project string
+	APIURL   string
+	Project  string
+	RunnerID string
+	BrainDir string
 	// Projects lists all projects in multi-project mode.
 	Projects []string
 }

@@ -323,6 +323,23 @@ func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID string) e
 	return nil
 }
 
+// DeleteEntry deletes a brain entry by path.
+func (c *APIClient) DeleteEntry(ctx context.Context, entryPath string) error {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s?confirm=true", encodedPath)
+
+	resp, err := c.doRequest(ctx, http.MethodDelete, apiPath, nil)
+	if err != nil {
+		return fmt.Errorf("delete entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // =============================================================================
 // Internal Helpers
 // =============================================================================

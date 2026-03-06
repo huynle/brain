@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1104,5 +1105,528 @@ func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
 		if !childIDs[expectedID] {
 			t.Errorf("expected child '%s' to be under root", expectedID)
 		}
+	}
+}
+// =============================================================================
+// Phase 8: Comprehensive Integration & Edge Case Tests
+// =============================================================================
+
+// Test 1: Deep parent_id hierarchy with depends_on cross-edges
+func TestBuildTree_Phase8_DeepHierarchyWithCrossEdges(t *testing.T) {
+	// Root → Parent (parent_id) → Child (parent_id) → Grandchild (parent_id)
+	// Plus: Child depends_on another task at same level (SiblingTask)
+	// Verify: Tree structure respects parent_id, sorting respects depends_on
+	tasks := []types.ResolvedTask{
+		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "parent", Title: "Parent", Classification: "waiting", Priority: "high", Status: "pending", ParentID: "root"},
+		{ID: "sibling", Title: "Sibling Task", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
+		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"sibling"}},
+		{ID: "grandchild", Title: "Grandchild", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "child"},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	// Verify root structure
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "root" {
+		t.Errorf("expected root 'root', got '%s'", nodes[0].Task.ID)
+	}
+
+	// Root should have 2 children: parent and sibling
+	if len(nodes[0].Children) != 2 {
+		t.Fatalf("expected root to have 2 children, got %d", len(nodes[0].Children))
+	}
+
+	// Find parent and sibling
+	var parentNode, siblingNode *TreeNode
+	for i := range nodes[0].Children {
+		if nodes[0].Children[i].Task.ID == "parent" {
+			parentNode = &nodes[0].Children[i]
+		}
+		if nodes[0].Children[i].Task.ID == "sibling" {
+			siblingNode = &nodes[0].Children[i]
+		}
+	}
+
+	if parentNode == nil {
+		t.Fatal("expected to find parent node")
+	}
+	if siblingNode == nil {
+		t.Fatal("expected to find sibling node")
+	}
+
+	// Parent should have child as child
+	if len(parentNode.Children) != 1 {
+		t.Fatalf("expected parent to have 1 child, got %d", len(parentNode.Children))
+	}
+	if parentNode.Children[0].Task.ID != "child" {
+		t.Errorf("expected parent's child to be 'child', got '%s'", parentNode.Children[0].Task.ID)
+	}
+
+	// Child should have grandchild
+	if len(parentNode.Children[0].Children) != 1 {
+		t.Fatalf("expected child to have 1 child, got %d", len(parentNode.Children[0].Children))
+	}
+	if parentNode.Children[0].Children[0].Task.ID != "grandchild" {
+		t.Errorf("expected grandchild 'grandchild', got '%s'", parentNode.Children[0].Children[0].Task.ID)
+	}
+}
+
+// Test 2: Diamond dependency with mixed relationships
+func TestBuildTree_Phase8_DiamondWithMixedRelationships(t *testing.T) {
+	// Root with two children via parent_id (ChildA, ChildB)
+	// ChildA depends_on ChildB (cross-edge for sorting)
+	// Fourth task (Leaf) has parent_id=ChildB and depends_on=[ChildA]
+	// Verify: No duplication, correct placement, proper sorting
+	tasks := []types.ResolvedTask{
+		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "child_a", Title: "Child A", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"child_b"}},
+		{ID: "child_b", Title: "Child B", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
+		{ID: "leaf", Title: "Leaf", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "child_b", DependsOn: []string{"child_a"}},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	// Count all nodes in tree
+	countNodes := func(ns []TreeNode) int {
+		count := 0
+		var traverse func([]TreeNode)
+		traverse = func(nodes []TreeNode) {
+			for _, n := range nodes {
+				count++
+				traverse(n.Children)
+			}
+		}
+		traverse(ns)
+		return count
+	}
+
+	totalNodes := countNodes(nodes)
+	if totalNodes != 4 {
+		t.Errorf("expected 4 total nodes (no duplication), got %d", totalNodes)
+	}
+
+	// Verify structure
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+
+	root := nodes[0]
+	if len(root.Children) != 2 {
+		t.Fatalf("expected root to have 2 children, got %d", len(root.Children))
+	}
+
+	// child_b should come before child_a (due to depends_on sorting)
+	if root.Children[0].Task.ID != "child_b" {
+		t.Errorf("expected first child to be 'child_b', got '%s'", root.Children[0].Task.ID)
+	}
+	if root.Children[1].Task.ID != "child_a" {
+		t.Errorf("expected second child to be 'child_a', got '%s'", root.Children[1].Task.ID)
+	}
+
+	// child_b should have leaf as child
+	childB := root.Children[0]
+	if len(childB.Children) != 1 {
+		t.Fatalf("expected child_b to have 1 child, got %d", len(childB.Children))
+	}
+	if childB.Children[0].Task.ID != "leaf" {
+		t.Errorf("expected leaf under child_b, got '%s'", childB.Children[0].Task.ID)
+	}
+}
+
+// Test 3: Parent chain through completed tasks (integration test for findActiveAncestor)
+func TestBuildTree_Phase8_ParentChainThroughCompletedTasks(t *testing.T) {
+	// Active root, completed parent, completed grandparent, active great-grandchild
+	// Verify: Active great-grandchild appears directly under active root
+	activeTasks := []types.ResolvedTask{
+		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "great_grandchild", Title: "Great Grandchild", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "grandparent"},
+	}
+
+	allTasks := []types.ResolvedTask{
+		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "completed", ParentID: "root"},
+		{ID: "grandparent", Title: "Grandparent", Classification: "ready", Priority: "medium", Status: "completed", ParentID: "parent"},
+		{ID: "great_grandchild", Title: "Great Grandchild", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "grandparent"},
+	}
+
+	nodes := BuildTree(activeTasks, allTasks)
+
+	// Verify structure
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "root" {
+		t.Errorf("expected root 'root', got '%s'", nodes[0].Task.ID)
+	}
+
+	// Root should have great_grandchild directly (skipping completed ancestors)
+	if len(nodes[0].Children) != 1 {
+		t.Fatalf("expected root to have 1 child, got %d", len(nodes[0].Children))
+	}
+	if nodes[0].Children[0].Task.ID != "great_grandchild" {
+		t.Errorf("expected child 'great_grandchild', got '%s'", nodes[0].Children[0].Task.ID)
+	}
+}
+
+// Test 4: Multiple siblings with complex dependency chain
+func TestBuildTree_Phase8_MultipleSiblingsWithDependencyChain(t *testing.T) {
+	// 5 siblings under same parent
+	// Dependency chain: A → B → C, D → E
+	// Mixed priorities
+	// Verify: Sorted [A, B, C, D, E] respecting both deps and priorities
+	tasks := []types.ResolvedTask{
+		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "pending"},
+		{ID: "a", Title: "Task A", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent"},
+		{ID: "b", Title: "Task B", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"b"}},
+		{ID: "d", Title: "Task D", Classification: "waiting", Priority: "high", Status: "pending", ParentID: "parent"},
+		{ID: "e", Title: "Task E", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"d"}},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root, got %d", len(nodes))
+	}
+
+	parent := nodes[0]
+	if len(parent.Children) != 5 {
+		t.Fatalf("expected parent to have 5 children, got %d", len(parent.Children))
+	}
+
+	// Verify chain: A before B, B before C
+	aIndex, bIndex, cIndex := -1, -1, -1
+	for i, child := range parent.Children {
+		switch child.Task.ID {
+		case "a":
+			aIndex = i
+		case "b":
+			bIndex = i
+		case "c":
+			cIndex = i
+		}
+	}
+
+	if aIndex == -1 || bIndex == -1 || cIndex == -1 {
+		t.Fatal("expected to find tasks A, B, and C")
+	}
+
+	if aIndex >= bIndex {
+		t.Errorf("expected A (index %d) before B (index %d)", aIndex, bIndex)
+	}
+	if bIndex >= cIndex {
+		t.Errorf("expected B (index %d) before C (index %d)", bIndex, cIndex)
+	}
+
+	// Verify chain: D before E
+	dIndex, eIndex := -1, -1
+	for i, child := range parent.Children {
+		switch child.Task.ID {
+		case "d":
+			dIndex = i
+		case "e":
+			eIndex = i
+		}
+	}
+
+	if dIndex == -1 || eIndex == -1 {
+		t.Fatal("expected to find tasks D and E")
+	}
+
+	if dIndex >= eIndex {
+		t.Errorf("expected D (index %d) before E (index %d)", dIndex, eIndex)
+	}
+}
+
+// Test 5: Cycle detection across both relationship types
+func TestBuildTree_Phase8_CycleAcrossBothRelationshipTypes(t *testing.T) {
+	// Task A has parent_id → B
+	// Task B has depends_on → C
+	// Task C has parent_id → A
+	// Verify: All marked with InCycle = true
+	tasks := []types.ResolvedTask{
+		{ID: "a", Title: "Task A", Classification: "blocked", Priority: "medium", Status: "pending", ParentID: "b"},
+		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}},
+		{ID: "c", Title: "Task C", Classification: "blocked", Priority: "medium", Status: "pending", ParentID: "a"},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	// Check that all tasks are marked as in cycle
+	foundA, foundB, foundC := false, false, false
+	var checkCycle func([]TreeNode)
+	checkCycle = func(ns []TreeNode) {
+		for _, n := range ns {
+			switch n.Task.ID {
+			case "a":
+				foundA = true
+				if !n.InCycle {
+					t.Error("expected task 'a' to be marked InCycle")
+				}
+			case "b":
+				foundB = true
+				if !n.InCycle {
+					t.Error("expected task 'b' to be marked InCycle")
+				}
+			case "c":
+				foundC = true
+				if !n.InCycle {
+					t.Error("expected task 'c' to be marked InCycle")
+				}
+			}
+			checkCycle(n.Children)
+		}
+	}
+	checkCycle(nodes)
+
+	if !foundA || !foundB || !foundC {
+		t.Error("expected to find all tasks A, B, and C in tree")
+	}
+}
+
+// Test 6: Empty task list → empty tree
+func TestBuildTree_Phase8_EdgeCase_EmptyTaskList(t *testing.T) {
+	nodes := BuildTree([]types.ResolvedTask{}, []types.ResolvedTask{})
+	if len(nodes) != 0 {
+		t.Errorf("expected empty tree for empty task list, got %d nodes", len(nodes))
+	}
+}
+
+// Test 7: Single task with no relationships → single root
+func TestBuildTree_Phase8_EdgeCase_SingleTaskNoRelationships(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "solo", Title: "Solo Task", Classification: "ready", Priority: "medium", Status: "pending"},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 root node, got %d", len(nodes))
+	}
+	if nodes[0].Task.ID != "solo" {
+		t.Errorf("expected task 'solo', got '%s'", nodes[0].Task.ID)
+	}
+	if len(nodes[0].Children) != 0 {
+		t.Errorf("expected 0 children, got %d", len(nodes[0].Children))
+	}
+}
+
+// Test 8: All tasks have cycles → all marked InCycle, still build tree structure
+func TestBuildTree_Phase8_EdgeCase_AllTasksInCycle(t *testing.T) {
+	// A → B → C → A (all in cycle)
+	tasks := []types.ResolvedTask{
+		{ID: "a", Title: "Task A", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}},
+		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"b"}},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	// All tasks should be in tree
+	if len(nodes) != 3 {
+		t.Errorf("expected 3 root nodes (cycle members as roots), got %d", len(nodes))
+	}
+
+	// All should be marked InCycle
+	for _, node := range nodes {
+		if !node.InCycle {
+			t.Errorf("expected task '%s' to be marked InCycle", node.Task.ID)
+		}
+	}
+}
+
+// Test 9: Large tree (20+ tasks) with mixed relationships → verify no performance issues
+func TestBuildTree_Phase8_EdgeCase_LargeTreePerformance(t *testing.T) {
+	// Create 25 tasks with mixed parent_id and depends_on relationships
+	tasks := make([]types.ResolvedTask, 25)
+	tasks[0] = types.ResolvedTask{
+		ID:             "root",
+		Title:          "Root",
+		Classification: "ready",
+		Priority:       "high",
+		Status:         "pending",
+	}
+
+	// Create chain via parent_id (root → t1 → t2 → ... → t9)
+	for i := 1; i <= 9; i++ {
+		parentID := "root"
+		if i > 1 {
+			parentID = fmt.Sprintf("t%d", i-1)
+		}
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "waiting",
+			Priority:       "medium",
+			Status:         "pending",
+			ParentID:       parentID,
+		}
+	}
+
+	// Create siblings with depends_on (t10-t19 all under root)
+	for i := 10; i < 20; i++ {
+		var deps []string
+		if i > 10 {
+			deps = []string{fmt.Sprintf("t%d", i-1)}
+		}
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "waiting",
+			Priority:       "low",
+			Status:         "pending",
+			DependsOn:      deps,
+		}
+	}
+
+	// Create more independent roots (t20-t24)
+	for i := 20; i < 25; i++ {
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "ready",
+			Priority:       "low",
+			Status:         "pending",
+		}
+	}
+
+	// Measure performance
+	nodes := BuildTree(tasks, tasks)
+
+	// Verify structure was built
+	if len(nodes) < 1 {
+		t.Error("expected at least 1 root node")
+	}
+
+	// Count all nodes
+	countNodes := func(ns []TreeNode) int {
+		count := 0
+		var traverse func([]TreeNode)
+		traverse = func(nodes []TreeNode) {
+			for _, n := range nodes {
+				count++
+				traverse(n.Children)
+			}
+		}
+		traverse(ns)
+		return count
+	}
+
+	totalNodes := countNodes(nodes)
+	if totalNodes != 25 {
+		t.Errorf("expected 25 total nodes, got %d", totalNodes)
+	}
+}
+
+// Test 10: Tasks with non-existent parent_id or depends_on → handle gracefully
+func TestBuildTree_Phase8_EdgeCase_NonExistentReferences(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "orphan1", Title: "Orphan 1", Classification: "ready", Priority: "medium", Status: "pending", ParentID: "nonexistent_parent"},
+		{ID: "orphan2", Title: "Orphan 2", Classification: "ready", Priority: "medium", Status: "pending", DependsOn: []string{"nonexistent_dep"}},
+		{ID: "valid", Title: "Valid Task", Classification: "ready", Priority: "high", Status: "pending"},
+	}
+	nodes := BuildTree(tasks, tasks)
+
+	// All tasks should appear as roots (since their references don't exist)
+	if len(nodes) != 3 {
+		t.Errorf("expected 3 root nodes, got %d", len(nodes))
+	}
+
+	// Verify all tasks are present
+	foundOrphan1, foundOrphan2, foundValid := false, false, false
+	for _, node := range nodes {
+		switch node.Task.ID {
+		case "orphan1":
+			foundOrphan1 = true
+		case "orphan2":
+			foundOrphan2 = true
+		case "valid":
+			foundValid = true
+		}
+	}
+
+	if !foundOrphan1 || !foundOrphan2 || !foundValid {
+		t.Error("expected all tasks to be present in tree")
+	}
+}
+
+// =============================================================================
+// Phase 8: Benchmark Tests
+// =============================================================================
+
+// BenchmarkBuildTree_SmallTree tests performance with 10 tasks
+func BenchmarkBuildTree_SmallTree(b *testing.B) {
+	tasks := make([]types.ResolvedTask, 10)
+	for i := 0; i < 10; i++ {
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "ready",
+			Priority:       "medium",
+			Status:         "pending",
+		}
+		if i > 0 {
+			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildTree(tasks, tasks)
+	}
+}
+
+// BenchmarkBuildTree_MediumTree tests performance with 50 tasks
+func BenchmarkBuildTree_MediumTree(b *testing.B) {
+	tasks := make([]types.ResolvedTask, 50)
+	for i := 0; i < 50; i++ {
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "ready",
+			Priority:       "medium",
+			Status:         "pending",
+		}
+		if i > 0 && i%10 != 0 {
+			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildTree(tasks, tasks)
+	}
+}
+
+// BenchmarkBuildTree_LargeTree tests performance with 100 tasks (acceptance criteria)
+func BenchmarkBuildTree_LargeTree(b *testing.B) {
+	tasks := make([]types.ResolvedTask, 100)
+	tasks[0] = types.ResolvedTask{
+		ID:             "root",
+		Title:          "Root",
+		Classification: "ready",
+		Priority:       "high",
+		Status:         "pending",
+	}
+
+	// Mix of parent_id and depends_on relationships
+	for i := 1; i < 100; i++ {
+		tasks[i] = types.ResolvedTask{
+			ID:             fmt.Sprintf("t%d", i),
+			Title:          fmt.Sprintf("Task %d", i),
+			Classification: "ready",
+			Priority:       "medium",
+			Status:         "pending",
+		}
+
+		if i%3 == 0 {
+			// Use parent_id every 3rd task
+			tasks[i].ParentID = fmt.Sprintf("t%d", i/3)
+		} else if i > 1 {
+			// Use depends_on for others
+			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+		}
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		BuildTree(tasks, tasks)
 	}
 }

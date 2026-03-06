@@ -311,6 +311,18 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				var modal Modal
 
+				// Case 0: Feature header selected (in feature view mode)
+				if m.taskTree.useFeatureView {
+					featureID := m.taskTree.GetSelectedFeatureID()
+					if featureID != "" {
+						modal = NewMetadataModalFeature(featureID, apiClient)
+						if modal != nil {
+							cmd := m.modalManager.Open(modal)
+							return m, cmd
+						}
+					}
+				}
+
 				// Case 1: Multi-select active - batch mode
 				if len(m.selectedTasks) > 0 {
 					taskIDs := make([]string, 0, len(m.selectedTasks))

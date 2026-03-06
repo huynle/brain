@@ -624,24 +624,32 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.activePanel == PanelTasks {
 				m.taskTree.MoveDown()
 				m.syncTaskDetail()
+			} else if m.activePanel == PanelDetails {
+				m.taskDetail.ScrollDown()
 			}
 			return m, nil
 		case "k":
 			if m.activePanel == PanelTasks {
 				m.taskTree.MoveUp()
 				m.syncTaskDetail()
+			} else if m.activePanel == PanelDetails {
+				m.taskDetail.ScrollUp()
 			}
 			return m, nil
 		case "g":
 			if m.activePanel == PanelTasks {
 				m.taskTree.MoveToTop()
 				m.syncTaskDetail()
+			} else if m.activePanel == PanelDetails {
+				m.taskDetail.ScrollToTop()
 			}
 			return m, nil
 		case "G":
 			if m.activePanel == PanelTasks {
 				m.taskTree.MoveToBottom()
 				m.syncTaskDetail()
+			} else if m.activePanel == PanelDetails {
+				m.taskDetail.ScrollToBottom()
 			}
 			return m, nil
 		case " ":
@@ -959,8 +967,9 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveUp()
 		m.syncTaskDetail()
+	} else if m.activePanel == PanelDetails {
+		m.taskDetail.ScrollUp()
 	}
-	// TODO: Add scrolling for logs and detail panels
 	return m, nil
 }
 
@@ -969,8 +978,9 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveDown()
 		m.syncTaskDetail()
+	} else if m.activePanel == PanelDetails {
+		m.taskDetail.ScrollDown()
 	}
-	// TODO: Add scrolling for logs and detail panels
 	return m, nil
 }
 

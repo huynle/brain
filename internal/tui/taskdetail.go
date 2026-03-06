@@ -12,6 +12,10 @@ import (
 type TaskDetail struct {
 	task          *types.ResolvedTask
 	width, height int
+
+	// Viewport scrolling state
+	scrollOffset int // First visible line index (0-based)
+	totalLines   int // Total content lines (set after rendering)
 }
 
 // NewTaskDetail creates a new empty TaskDetail component.
@@ -19,9 +23,45 @@ func NewTaskDetail() TaskDetail {
 	return TaskDetail{}
 }
 
-// SetTask updates the displayed task.
+// SetTask updates the displayed task and resets scroll position.
 func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 	td.task = task
+	td.scrollOffset = 0
+	td.totalLines = 0
+}
+
+// ScrollDown scrolls the viewport down by one line.
+func (td *TaskDetail) ScrollDown() {
+	viewportHeight := td.height - 1 // Account for header line
+	if viewportHeight <= 0 || td.totalLines <= viewportHeight {
+		return
+	}
+	maxOffset := td.totalLines - viewportHeight
+	if td.scrollOffset < maxOffset {
+		td.scrollOffset++
+	}
+}
+
+// ScrollUp scrolls the viewport up by one line.
+func (td *TaskDetail) ScrollUp() {
+	if td.scrollOffset > 0 {
+		td.scrollOffset--
+	}
+}
+
+// ScrollToTop scrolls to the top of the content.
+func (td *TaskDetail) ScrollToTop() {
+	td.scrollOffset = 0
+}
+
+// ScrollToBottom scrolls to the bottom of the content.
+func (td *TaskDetail) ScrollToBottom() {
+	viewportHeight := td.height - 1 // Account for header line
+	if viewportHeight <= 0 || td.totalLines <= viewportHeight {
+		td.scrollOffset = 0
+		return
+	}
+	td.scrollOffset = td.totalLines - viewportHeight
 }
 
 // SetSize updates the component dimensions.
@@ -42,6 +82,8 @@ func (td *TaskDetail) View() string {
 func (td *TaskDetail) renderEmpty() string {
 	header := TitleStyle.Render("Task Detail")
 	placeholder := DimStyle.Render("No task selected")
+	td.totalLines = 0
+	td.scrollOffset = 0
 	return header + "\n" + placeholder
 }
 
@@ -50,9 +92,9 @@ func (td *TaskDetail) renderTask() string {
 	task := td.task
 	var lines []string
 
-	// Header
-	lines = append(lines, TitleStyle.Render("Task Detail"))
-	lines = append(lines, "")
+	// Header with position indicator (rendered separately, not scrolled)
+	// Will be prepended after viewport slicing
+	var headerLine string
 
 	// Title
 	lines = append(lines, lipgloss.NewStyle().Bold(true).Render(task.Title))
@@ -145,15 +187,65 @@ func (td *TaskDetail) renderTask() string {
 			Render("↺ Task is part of a dependency cycle"))
 	}
 
-	// Truncate to height if needed
-	content := strings.Join(lines, "\n")
-	if td.height > 0 {
-		visibleLines := strings.Split(content, "\n")
-		if len(visibleLines) > td.height {
-			visibleLines = visibleLines[:td.height]
-			content = strings.Join(visibleLines, "\n")
+	// Store total content lines
+	td.totalLines = len(lines)
+
+	// Build header with position indicator
+	if td.height > 0 && td.totalLines > td.height-1 {
+		// Content is scrollable (more lines than viewport minus header)
+		viewportHeight := td.height - 1 // Reserve 1 line for header
+		if viewportHeight < 1 {
+			viewportHeight = 1
 		}
+
+		// Clamp scroll offset
+		maxOffset := td.totalLines - viewportHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if td.scrollOffset > maxOffset {
+			td.scrollOffset = maxOffset
+		}
+
+		startLine := td.scrollOffset + 1
+		endLine := td.scrollOffset + viewportHeight
+		if endLine > td.totalLines {
+			endLine = td.totalLines
+		}
+
+		headerLine = TitleStyle.Render("Task Detail") +
+			DimStyle.Render(fmt.Sprintf(" (%d-%d/%d)", startLine, endLine, td.totalLines))
+
+		// Viewport slice
+		end := td.scrollOffset + viewportHeight
+		if end > td.totalLines {
+			end = td.totalLines
+		}
+		visibleLines := make([]string, end-td.scrollOffset)
+		copy(visibleLines, lines[td.scrollOffset:end])
+
+		// Replace first/last visible lines with scroll indicators
+		hasMore := td.scrollOffset > 0
+		hasBelow := end < td.totalLines
+
+		if hasMore && len(visibleLines) > 0 {
+			visibleLines[0] = DimStyle.Render("▲ more above")
+		}
+		if hasBelow && len(visibleLines) > 0 {
+			visibleLines[len(visibleLines)-1] = DimStyle.Render("▼ more below")
+		}
+
+		var result []string
+		result = append(result, headerLine)
+		result = append(result, visibleLines...)
+		return strings.Join(result, "\n")
 	}
 
-	return content
+	// Content fits in viewport - no scrolling needed
+	td.scrollOffset = 0
+	headerLine = TitleStyle.Render("Task Detail")
+	var result []string
+	result = append(result, headerLine)
+	result = append(result, lines...)
+	return strings.Join(result, "\n")
 }

@@ -1081,3 +1081,137 @@ func TestUpdate_JKKeysOnlyWorkInTasksPanel(t *testing.T) {
 		t.Errorf("expected selection to stay at header (empty) when not in tasks panel, got '%s'", m.taskTree.SelectedID)
 	}
 }
+
+// =============================================================================
+// Settings Modal Integration Tests
+// =============================================================================
+
+func TestUpdate_SKey_OpensSettingsModal(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	if m.modalManager.IsOpen() {
+		t.Fatal("expected no modal to be open initially")
+	}
+
+	// Press 'S' to open settings
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.modalManager.IsOpen() {
+		t.Error("expected settings modal to be open after 'S' key")
+	}
+}
+
+func TestUpdate_EscKey_ClosesSettingsModal(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected modal to be open after 'S'")
+	}
+
+	// Press Esc to close
+	msg = tea.KeyMsg{Type: tea.KeyEsc}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.modalManager.IsOpen() {
+		t.Error("expected modal to be closed after Esc")
+	}
+}
+
+func TestUpdate_ModalRoutesKeysCorrectly(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected modal to be open")
+	}
+
+	// Send 'j' key - should be handled by modal, not task tree
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Modal should still be open (j is navigation in modal)
+	if !m.modalManager.IsOpen() {
+		t.Error("expected modal to still be open after 'j'")
+	}
+}
+
+func TestView_WithSettingsModal_ShowsOverlay(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 40
+
+	// Open settings modal
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'S'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	view := m.View()
+
+	// View should contain modal title
+	if !strings.Contains(view, "Settings") {
+		t.Errorf("expected view to contain 'Settings' modal title, got:\n%s", view)
+	}
+
+	// View should contain global max parallel
+	if !strings.Contains(view, "Global Max Parallel") {
+		t.Errorf("expected view to contain 'Global Max Parallel', got:\n%s", view)
+	}
+}
+
+func TestNewModel_InitializesModalManager(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Modal manager should be initialized
+	if m.modalManager.IsOpen() {
+		t.Error("expected modal manager to have no modal open initially")
+	}
+}
+
+func TestNewModel_LoadsSettings(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Settings should be loaded with defaults
+	if m.settings.GlobalMaxParallel == 0 {
+		t.Error("expected settings.GlobalMaxParallel to be initialized")
+	}
+	if m.settings.ProjectLimits == nil {
+		t.Error("expected settings.ProjectLimits to be initialized")
+	}
+}

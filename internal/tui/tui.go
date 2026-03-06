@@ -28,6 +28,10 @@ type Model struct {
 	taskDetail TaskDetail
 	logViewer  LogViewer
 
+	// Modal management
+	modalManager ModalManager
+	settings     Settings
+
 	// SSE client
 	sseClient *SSEClient
 	ctx       context.Context
@@ -60,6 +64,18 @@ type Model struct {
 
 // NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg Config) Model {
+	// Load settings from disk
+	settings, err := LoadSettings()
+	if err != nil {
+		// Fallback to defaults on error (file might not exist yet)
+		settings = Settings{
+			GroupCollapsed:    make(map[string]bool),
+			FeatureCollapsed:  make(map[string]bool),
+			ProjectLimits:     make(map[string]int),
+			GlobalMaxParallel: 4,
+		}
+	}
+
 	return Model{
 		config:           cfg,
 		keymap:           DefaultKeyMap(),
@@ -68,6 +84,8 @@ func NewModel(cfg Config) Model {
 		taskTree:         NewTaskTree(),
 		taskDetail:       NewTaskDetail(),
 		logViewer:        NewLogViewer(DefaultMaxLogEntries),
+		modalManager:     NewModalManager(),
+		settings:         settings,
 		activePanel:      PanelTasks,
 		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
 		ctx:              context.Background(),
@@ -158,6 +176,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // handleKeyMsg processes keyboard input.
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// If modal is open, route keys to modal first
+	if m.modalManager.IsOpen() {
+		handled, cmd := m.modalManager.HandleKey(string(msg.Runes))
+		if msg.Type == tea.KeyEsc {
+			// Esc always closes modal
+			handled, cmd = m.modalManager.HandleKey("esc")
+		}
+		if handled {
+			return m, cmd
+		}
+	}
+
 	// If in filter mode, handle filter input first
 	if m.filterMode {
 		return m.handleFilterInput(msg)
@@ -175,6 +205,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
+		case "S":
+			// Open settings modal
+			modal := NewSettingsModal(m.settings)
+			cmd := m.modalManager.Open(modal)
+			return m, cmd
 		case "/":
 			// Activate filter mode
 			if m.activePanel == PanelTasks {
@@ -363,6 +398,21 @@ func (m Model) View() string {
 		return "Initializing..."
 	}
 
+	// Render base UI
+	baseView := m.renderBaseView()
+
+	// Overlay modal if open
+	if m.modalManager.IsOpen() {
+		modalOverlay := m.modalManager.View(m.width, m.height)
+		// Combine base view with modal overlay (modal handles centering)
+		return baseView + "\n" + modalOverlay
+	}
+
+	return baseView
+}
+
+// renderBaseView renders the main TUI layout (without modal)
+func (m Model) renderBaseView() string {
 	// Update status bar with selection count and metrics
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics

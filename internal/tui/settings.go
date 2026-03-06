@@ -8,8 +8,10 @@ import (
 
 // Settings holds persisted TUI preferences.
 type Settings struct {
-	GroupCollapsed   map[string]bool `json:"groupCollapsed"`   // group name -> collapsed state
-	FeatureCollapsed map[string]bool `json:"featureCollapsed"` // feature ID -> collapsed state
+	GroupCollapsed    map[string]bool `json:"groupCollapsed"`    // group name -> collapsed state
+	FeatureCollapsed  map[string]bool `json:"featureCollapsed"`  // feature ID -> collapsed state
+	ProjectLimits     map[string]int  `json:"projectLimits"`     // project -> max parallel tasks
+	GlobalMaxParallel int             `json:"globalMaxParallel"` // global max parallel limit
 }
 
 // getSettingsPath returns the path to the settings file.
@@ -31,8 +33,10 @@ func LoadSettings() (Settings, error) {
 	path, err := getSettingsPath()
 	if err != nil {
 		return Settings{
-			GroupCollapsed:   make(map[string]bool),
-			FeatureCollapsed: make(map[string]bool),
+			GroupCollapsed:    make(map[string]bool),
+			FeatureCollapsed:  make(map[string]bool),
+			ProjectLimits:     make(map[string]int),
+			GlobalMaxParallel: 4,
 		}, err
 	}
 
@@ -41,21 +45,27 @@ func LoadSettings() (Settings, error) {
 		if os.IsNotExist(err) {
 			// No settings file yet, return defaults
 			return Settings{
-				GroupCollapsed:   make(map[string]bool),
-				FeatureCollapsed: make(map[string]bool),
+				GroupCollapsed:    make(map[string]bool),
+				FeatureCollapsed:  make(map[string]bool),
+				ProjectLimits:     make(map[string]int),
+				GlobalMaxParallel: 4,
 			}, nil
 		}
 		return Settings{
-			GroupCollapsed:   make(map[string]bool),
-			FeatureCollapsed: make(map[string]bool),
+			GroupCollapsed:    make(map[string]bool),
+			FeatureCollapsed:  make(map[string]bool),
+			ProjectLimits:     make(map[string]int),
+			GlobalMaxParallel: 4,
 		}, err
 	}
 
 	var settings Settings
 	if err := json.Unmarshal(data, &settings); err != nil {
 		return Settings{
-			GroupCollapsed:   make(map[string]bool),
-			FeatureCollapsed: make(map[string]bool),
+			GroupCollapsed:    make(map[string]bool),
+			FeatureCollapsed:  make(map[string]bool),
+			ProjectLimits:     make(map[string]int),
+			GlobalMaxParallel: 4,
 		}, err
 	}
 
@@ -65,6 +75,12 @@ func LoadSettings() (Settings, error) {
 	}
 	if settings.FeatureCollapsed == nil {
 		settings.FeatureCollapsed = make(map[string]bool)
+	}
+	if settings.ProjectLimits == nil {
+		settings.ProjectLimits = make(map[string]int)
+	}
+	if settings.GlobalMaxParallel == 0 {
+		settings.GlobalMaxParallel = 4
 	}
 
 	return settings, nil

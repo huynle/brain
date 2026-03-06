@@ -227,6 +227,56 @@ func (c *APIClient) AppendToTask(ctx context.Context, taskPath, content string) 
 	return nil
 }
 
+// GetEntry fetches a brain entry by path.
+func (c *APIClient) GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error) {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, apiPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Entry types.BrainEntry `json:"entry"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode entry: %w", err)
+	}
+
+	return &data.Entry, nil
+}
+
+// UpdateEntry updates specific fields of a brain entry.
+func (c *APIClient) UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error) {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, apiPath, updates)
+	if err != nil {
+		return nil, fmt.Errorf("update entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Entry types.BrainEntry `json:"entry"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode entry: %w", err)
+	}
+
+	return &data.Entry, nil
+}
+
 // ClaimTask attempts to claim a task for a runner.
 func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/claim", projectID, taskID)

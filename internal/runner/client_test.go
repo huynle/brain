@@ -478,6 +478,166 @@ func TestAPIClient_Timeout(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetEntry
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetEntry(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"entry": map[string]interface{}{
+				"id":       "abc123def",
+				"path":     "projects/brain-api/task/abc123def.md",
+				"title":    "Test Task",
+				"type":     "task",
+				"status":   "pending",
+				"priority": "high",
+				"content":  "# Test Task\n\nTask content",
+			},
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	entry, err := client.GetEntry(context.Background(), "projects/brain-api/task/abc123def.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	// Check path encoding via RequestURI (r.URL.Path decodes it)
+	wantURI := "/api/v1/entries/projects%2Fbrain-api%2Ftask%2Fabc123def.md"
+	if gotRequestURI != wantURI {
+		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
+	}
+	if entry.ID != "abc123def" {
+		t.Errorf("ID = %q, want %q", entry.ID, "abc123def")
+	}
+	if entry.Title != "Test Task" {
+		t.Errorf("Title = %q, want %q", entry.Title, "Test Task")
+	}
+	if entry.Status != "pending" {
+		t.Errorf("Status = %q, want %q", entry.Status, "pending")
+	}
+}
+
+func TestAPIClient_GetEntry_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Entry not found",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetEntry(context.Background(), "nonexistent.md")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != 404 {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UpdateEntry
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_UpdateEntry(t *testing.T) {
+	var gotBody map[string]interface{}
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		if r.Method != http.MethodPatch {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"entry": map[string]interface{}{
+				"id":       "abc123def",
+				"path":     "projects/brain-api/task/abc123def.md",
+				"title":    "Updated Task",
+				"type":     "task",
+				"status":   "completed",
+				"priority": "high",
+				"agent":    "dev",
+			},
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	updates := map[string]interface{}{
+		"status": "completed",
+		"agent":  "dev",
+	}
+	entry, err := client.UpdateEntry(context.Background(), "projects/brain-api/task/abc123def.md", updates)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+
+	// Check path encoding
+	wantURI := "/api/v1/entries/projects%2Fbrain-api%2Ftask%2Fabc123def.md"
+	if gotRequestURI != wantURI {
+		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
+	}
+
+	// Check request body
+	if gotBody["status"] != "completed" {
+		t.Errorf("body status = %v, want 'completed'", gotBody["status"])
+	}
+	if gotBody["agent"] != "dev" {
+		t.Errorf("body agent = %v, want 'dev'", gotBody["agent"])
+	}
+
+	// Check response
+	if entry.Status != "completed" {
+		t.Errorf("entry Status = %q, want 'completed'", entry.Status)
+	}
+	if entry.Agent != "dev" {
+		t.Errorf("entry Agent = %q, want 'dev'", entry.Agent)
+	}
+}
+
+func TestAPIClient_UpdateEntry_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": "Invalid status value",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	updates := map[string]interface{}{
+		"status": "invalid",
+	}
+	_, err := client.UpdateEntry(context.Background(), "task.md", updates)
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // APIError
 // ---------------------------------------------------------------------------
 

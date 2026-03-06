@@ -1,13 +1,32 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
+
+// ============================================================================
+// Messages
+// ============================================================================
+
+// metadataFetchedMsg is sent when entry metadata has been fetched.
+type metadataFetchedMsg struct {
+	entry *types.BrainEntry
+	err   error
+}
+
+// metadataUpdatedMsg is sent when a field has been updated.
+type metadataUpdatedMsg struct {
+	field MetadataField
+	value string
+	err   error
+}
 
 // ============================================================================
 // Interaction Mode Enum
@@ -41,6 +60,13 @@ type MetadataModal struct {
 	fieldList       []MetadataField
 	width           int
 	height          int
+
+	// API state
+	loading        bool
+	fetchError     error
+	saveError      error
+	saveSuccess    bool
+	lastSavedField MetadataField
 }
 
 // NewMetadataModal creates a new metadata editing modal.
@@ -258,42 +284,111 @@ func (m *MetadataModal) handleEditDropdownMode(key string) (bool, tea.Cmd) {
 	}
 }
 
-// saveField saves the current edit to the values map.
+// saveField saves the current edit to the values map and sends API update.
 func (m *MetadataModal) saveField() tea.Cmd {
 	fieldType := getFieldType(m.focusedField)
 
-	switch fieldType {
-	case FieldTypeText:
-		m.values[m.focusedField] = m.editBuffer
-	case FieldTypeDropdown:
-		if m.dropdownIndex >= 0 && m.dropdownIndex < len(m.dropdownOptions) {
-			m.values[m.focusedField] = m.dropdownOptions[m.dropdownIndex]
+	// Build updates map
+	updates := make(map[string]interface{})
+
+	if fieldType == FieldTypeText || fieldType == FieldTypeDropdown {
+		var value string
+		if m.interactionMode == ModeEditText {
+			value = m.editBuffer
+		} else {
+			value = m.dropdownOptions[m.dropdownIndex]
 		}
-	case FieldTypeBoolean:
-		// For booleans in dropdown mode
-		if m.dropdownIndex >= 0 && m.dropdownIndex < len(m.dropdownOptions) {
-			m.boolValues[m.focusedField] = m.dropdownOptions[m.dropdownIndex] == "true"
-		}
+
+		m.values[m.focusedField] = value
+		updates[string(m.focusedField)] = value
+	} else if fieldType == FieldTypeBoolean {
+		value := m.boolValues[m.focusedField]
+		updates[string(m.focusedField)] = value
 	}
 
 	// Clear edit buffer
 	m.editBuffer = ""
 
-	// Phase 4 will add API call here
-	return nil
+	// Save field and value for response handling
+	field := m.focusedField
+	fieldValue := m.values[field]
+
+	// Return command that updates via API
+	return func() tea.Msg {
+		ctx := context.Background()
+		_, err := m.apiClient.UpdateEntry(ctx, m.taskID, updates)
+		return metadataUpdatedMsg{
+			field: field,
+			value: fieldValue,
+			err:   err,
+		}
+	}
 }
 
 // ============================================================================
 // Modal Interface Implementation
 // ============================================================================
 
-// Init initializes the modal.
+// Init initializes the modal by fetching entry data.
 func (m *MetadataModal) Init() tea.Cmd {
-	return nil
+	m.loading = true
+	return func() tea.Msg {
+		ctx := context.Background()
+		entry, err := m.apiClient.GetEntry(ctx, m.taskID)
+		return metadataFetchedMsg{
+			entry: entry,
+			err:   err,
+		}
+	}
 }
 
 // Update handles messages.
 func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	switch msg := msg.(type) {
+	case metadataFetchedMsg:
+		m.loading = false
+		if msg.err != nil {
+			m.fetchError = msg.err
+			return m, nil
+		}
+		// Populate values from entry
+		if msg.entry != nil {
+			m.values[FieldStatus] = msg.entry.Status
+			m.values[FieldPriority] = msg.entry.Priority
+			m.values[FieldFeatureID] = msg.entry.FeatureID
+			m.values[FieldGitBranch] = msg.entry.GitBranch
+			m.values[FieldMergeTargetBranch] = msg.entry.MergeTargetBranch
+			m.values[FieldMergePolicy] = msg.entry.MergePolicy
+			m.values[FieldMergeStrategy] = msg.entry.MergeStrategy
+			m.values[FieldExecutionMode] = msg.entry.ExecutionMode
+			m.values[FieldDirectPrompt] = msg.entry.DirectPrompt
+			m.values[FieldAgent] = msg.entry.Agent
+			m.values[FieldModel] = msg.entry.Model
+			m.values[FieldTargetWorkdir] = msg.entry.TargetWorkdir
+			m.values[FieldSchedule] = msg.entry.Schedule
+
+			// Boolean values
+			if msg.entry.CompleteOnIdle != nil {
+				m.boolValues[FieldCompleteOnIdle] = *msg.entry.CompleteOnIdle
+			}
+			if msg.entry.OpenPRBeforeMerge != nil {
+				m.boolValues[FieldOpenPRBeforeMerge] = *msg.entry.OpenPRBeforeMerge
+			}
+		}
+		return m, nil
+
+	case metadataUpdatedMsg:
+		if msg.err != nil {
+			m.saveError = msg.err
+			m.saveSuccess = false
+		} else {
+			m.saveSuccess = true
+			m.lastSavedField = msg.field
+			m.saveError = nil
+		}
+		return m, nil
+	}
+
 	return m, nil
 }
 

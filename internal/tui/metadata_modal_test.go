@@ -1,10 +1,15 @@
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // ============================================================================
@@ -73,8 +78,8 @@ func TestMetadataModal_Interface(t *testing.T) {
 
 	// Test Init
 	cmd := modal.Init()
-	if cmd != nil {
-		t.Error("Init() returned non-nil cmd for stub")
+	if cmd == nil {
+		t.Error("Init() should return non-nil cmd to fetch entry")
 	}
 
 	// Test Update (stub should return modal and nil cmd)
@@ -694,4 +699,128 @@ func TestMetadataModal_enterEditMode_InitializesDropdownIndex(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ============================================================================
+// API Integration Tests
+// ============================================================================
+
+func TestMetadataModal_Init_FetchesEntry(t *testing.T) {
+	// Create test server
+	srv := createTestServer(t, map[string]interface{}{
+		"id":       "abc123",
+		"status":   "pending",
+		"priority": "high",
+		"agent":    "dev",
+	})
+	defer srv.Close()
+
+	cfg := runner.RunnerConfig{BrainAPIURL: srv.URL}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("projects/test/task/abc123.md", apiClient)
+
+	// Init should return a command
+	cmd := modal.Init()
+	if cmd == nil {
+		t.Fatal("Init() should return non-nil command to fetch entry")
+	}
+
+	// Execute the command
+	msg := cmd()
+	fetchedMsg, ok := msg.(metadataFetchedMsg)
+	if !ok {
+		t.Fatalf("Init() command should return metadataFetchedMsg, got %T", msg)
+	}
+
+	// Check that entry was fetched
+	if fetchedMsg.err != nil {
+		t.Fatalf("fetch error: %v", fetchedMsg.err)
+	}
+	if fetchedMsg.entry == nil {
+		t.Fatal("expected non-nil entry")
+	}
+	if fetchedMsg.entry.ID != "abc123" {
+		t.Errorf("entry ID = %q, want %q", fetchedMsg.entry.ID, "abc123")
+	}
+}
+
+func TestMetadataModal_Update_HandlesFetchSuccess(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Create fetched message
+	fetchedMsg := metadataFetchedMsg{
+		entry: &types.BrainEntry{
+			ID:       "task123",
+			Status:   "pending",
+			Priority: "high",
+			Agent:    "dev",
+		},
+		err: nil,
+	}
+
+	// Update with fetched message
+	updatedModal, cmd := modal.Update(fetchedMsg)
+	if cmd != nil {
+		t.Error("Update with fetched message should return nil cmd")
+	}
+
+	m, ok := updatedModal.(*MetadataModal)
+	if !ok {
+		t.Fatalf("Update should return *MetadataModal, got %T", updatedModal)
+	}
+
+	// Check that values were populated
+	if m.values[FieldStatus] != "pending" {
+		t.Errorf("status = %q, want 'pending'", m.values[FieldStatus])
+	}
+	if m.values[FieldPriority] != "high" {
+		t.Errorf("priority = %q, want 'high'", m.values[FieldPriority])
+	}
+	if m.values[FieldAgent] != "dev" {
+		t.Errorf("agent = %q, want 'dev'", m.values[FieldAgent])
+	}
+}
+
+func TestMetadataModal_Update_HandlesFetchError(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Create error message
+	fetchedMsg := metadataFetchedMsg{
+		entry: nil,
+		err:   fmt.Errorf("network error"),
+	}
+
+	// Update with error message
+	updatedModal, cmd := modal.Update(fetchedMsg)
+	if cmd != nil {
+		t.Error("Update with error message should return nil cmd")
+	}
+
+	m, ok := updatedModal.(*MetadataModal)
+	if !ok {
+		t.Fatalf("Update should return *MetadataModal, got %T", updatedModal)
+	}
+
+	// Check that error was set
+	if m.fetchError == nil {
+		t.Error("fetchError should be set")
+	}
+}
+
+// ===========================================================================
+// Test Helper
+// ===========================================================================
+
+func createTestServer(t *testing.T, entryData map[string]interface{}) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		response := map[string]interface{}{
+			"entry": entryData,
+		}
+		json.NewEncoder(w).Encode(response)
+	}))
 }

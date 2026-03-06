@@ -37,6 +37,13 @@ type SettingsModal struct {
 	currentTab    SettingsTab // active tab
 	editMode      bool        // true when editing the default model field
 	editBuffer    string      // buffer for editing the default model
+	saveError     error       // error from last save attempt
+	saveSuccess   bool        // true if last save was successful
+}
+
+// settingsSavedMsg is sent when settings have been saved (successfully or with error)
+type settingsSavedMsg struct {
+	err error
 }
 
 // NewSettingsModal creates a new settings modal with the given settings.
@@ -64,6 +71,25 @@ func (m *SettingsModal) Init() tea.Cmd {
 
 // Update implements Modal
 func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		// Route keyboard input to HandleKey
+		handled, cmd := m.HandleKey(msg.String())
+		if handled {
+			return m, cmd
+		}
+
+	case settingsSavedMsg:
+		if msg.err != nil {
+			m.saveError = msg.err
+			m.saveSuccess = false
+		} else {
+			m.saveSuccess = true
+			m.saveError = nil
+		}
+		return m, nil
+	}
+
 	return m, nil
 }
 

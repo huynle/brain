@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -222,6 +223,89 @@ func TestSettingsModal_Update(t *testing.T) {
 
 	// Command should be nil for this modal
 	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_Update_RoutesKeyMsg(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	initialIndex := modal.selectedIndex
+
+	// Send 'j' key via Update() - should route to HandleKey() and move selection down
+	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+	newModal, cmd := modal.Update(keyMsg)
+
+	// Should return same modal type
+	if _, ok := newModal.(*SettingsModal); !ok {
+		t.Error("Expected Update to return *SettingsModal")
+	}
+
+	// Should route to HandleKey and update selectedIndex
+	updatedModal := newModal.(*SettingsModal)
+	if updatedModal.selectedIndex == initialIndex {
+		t.Errorf("Expected selectedIndex to change from %d after 'j' key, but it stayed the same", initialIndex)
+	}
+	if updatedModal.selectedIndex != initialIndex+1 {
+		t.Errorf("Expected selectedIndex to be %d after 'j' key, got %d", initialIndex+1, updatedModal.selectedIndex)
+	}
+
+	// Command should be nil
+	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+}
+
+func TestSettingsModal_Update_HandlesSaveMessage(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Simulate a successful save
+	successMsg := settingsSavedMsg{err: nil}
+	newModal, cmd := modal.Update(successMsg)
+
+	updatedModal := newModal.(*SettingsModal)
+	if !updatedModal.saveSuccess {
+		t.Error("Expected saveSuccess to be true after successful save message")
+	}
+	if updatedModal.saveError != nil {
+		t.Error("Expected saveError to be nil after successful save message")
+	}
+	if cmd != nil {
+		t.Error("Expected Update to return nil command")
+	}
+
+	// Simulate a failed save
+	modal2 := NewSettingsModal(settings)
+	testErr := fmt.Errorf("save failed")
+	failMsg := settingsSavedMsg{err: testErr}
+	newModal2, cmd2 := modal2.Update(failMsg)
+
+	updatedModal2 := newModal2.(*SettingsModal)
+	if updatedModal2.saveSuccess {
+		t.Error("Expected saveSuccess to be false after failed save message")
+	}
+	if updatedModal2.saveError == nil {
+		t.Error("Expected saveError to be set after failed save message")
+	}
+	if updatedModal2.saveError != testErr {
+		t.Errorf("Expected saveError to be %v, got %v", testErr, updatedModal2.saveError)
+	}
+	if cmd2 != nil {
 		t.Error("Expected Update to return nil command")
 	}
 }

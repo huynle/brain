@@ -339,6 +339,10 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 				m.editBuffer = m.editBuffer[:len(m.editBuffer)-1]
 			}
 			return true, nil
+		case "ctrl+u":
+			// Clear entire line
+			m.editBuffer = ""
+			return true, nil
 		default:
 			// Append character to buffer (only printable characters)
 			if len(key) == 1 && key[0] >= 32 && key[0] <= 126 {

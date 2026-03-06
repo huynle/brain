@@ -447,3 +447,215 @@ func TestSettingsModal_GetMaxIndex(t *testing.T) {
 		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
 	}
 }
+
+func TestSettingsModal_EditMode_CtrlU(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Navigate to Runtime tab and Default Model field
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Start edit mode with Enter
+	handled, _ := modal.HandleKey("enter")
+	if !handled || !modal.editMode {
+		t.Fatal("Expected to enter edit mode")
+	}
+
+	// Verify edit buffer starts with current model
+	if modal.editBuffer != "gpt-4" {
+		t.Errorf("Expected initial edit buffer 'gpt-4', got '%s'", modal.editBuffer)
+	}
+
+	// Type some characters
+	modal.HandleKey("a")
+	modal.HandleKey("b")
+	modal.HandleKey("c")
+
+	// Verify buffer has content
+	if modal.editBuffer != "gpt-4abc" {
+		t.Errorf("Expected buffer 'gpt-4abc', got '%s'", modal.editBuffer)
+	}
+
+	// Press Ctrl-U to clear entire line
+	handled, _ = modal.HandleKey("ctrl+u")
+	if !handled {
+		t.Error("Expected ctrl+u to be handled in edit mode")
+	}
+
+	// Verify buffer is now empty
+	if modal.editBuffer != "" {
+		t.Errorf("Expected empty buffer after ctrl+u, got '%s'", modal.editBuffer)
+	}
+
+	// Should still be in edit mode
+	if !modal.editMode {
+		t.Error("Expected to still be in edit mode after ctrl+u")
+	}
+}
+
+func TestSettingsModal_EditMode_CursorIndicator(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		DefaultModel:      "gpt-4",
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Navigate to Runtime tab and Default Model field
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Before edit mode: should NOT show cursor
+	view := modal.View()
+	if strings.Contains(view, "█") {
+		t.Error("Expected NO cursor indicator before edit mode")
+	}
+	if !strings.Contains(view, "gpt-4") {
+		t.Error("Expected to show model name 'gpt-4'")
+	}
+
+	// Start edit mode with Enter
+	modal.HandleKey("enter")
+
+	// During edit mode: should show cursor at end of buffer
+	view = modal.View()
+	if !strings.Contains(view, "gpt-4█") {
+		t.Error("Expected cursor indicator '█' at end of buffer during edit mode")
+	}
+
+	// Type some characters
+	modal.HandleKey("a")
+	modal.HandleKey("b")
+
+	// Cursor should be at new end
+	view = modal.View()
+	if !strings.Contains(view, "gpt-4ab█") {
+		t.Error("Expected cursor indicator at end after typing")
+	}
+
+	// Clear with Ctrl-U
+	modal.HandleKey("ctrl+u")
+
+	// Cursor should be at empty position
+	view = modal.View()
+	if !strings.Contains(view, "█") {
+		t.Error("Expected cursor indicator after clearing buffer")
+	}
+	if strings.Contains(view, "gpt-4") {
+		t.Error("Expected buffer to be cleared")
+	}
+
+	// Exit edit mode
+	modal.HandleKey("esc")
+
+	// After exit: NO cursor, back to default model
+	view = modal.View()
+	if strings.Contains(view, "█") {
+		t.Error("Expected NO cursor indicator after exiting edit mode")
+	}
+	if !strings.Contains(view, "gpt-4") {
+		t.Error("Expected to show original model name after canceling edit")
+	}
+}
+
+func TestSettingsModal_EditMode_ComplexNames(t *testing.T) {
+	complexNames := []string{
+		"gpt-4-turbo-preview",
+		"claude-3-5-sonnet-20250514",
+		"anthropic/claude-sonnet-4-20250514",
+		"openai/gpt-4-1106-preview",
+		"meta-llama/Llama-3.1-405B",
+	}
+
+	for _, modelName := range complexNames {
+		t.Run(modelName, func(t *testing.T) {
+			settings := Settings{
+				GroupCollapsed:    make(map[string]bool),
+				FeatureCollapsed:  make(map[string]bool),
+				GroupVisible:      getDefaultGroupVisible(),
+				ProjectLimits:     map[string]int{},
+				GlobalMaxParallel: 4,
+				DefaultModel:      "",
+			}
+
+			modal := NewSettingsModal(settings)
+
+			// Navigate to Runtime tab and Default Model field
+			modal.currentTab = TabRuntime
+			modal.selectedIndex = 0
+
+			// Start edit mode
+			modal.HandleKey("enter")
+			if !modal.editMode {
+				t.Fatal("Expected to enter edit mode")
+			}
+
+			// Type the complex model name character by character
+			for _, char := range modelName {
+				modal.HandleKey(string(char))
+			}
+
+			// Verify buffer contains the full model name
+			if modal.editBuffer != modelName {
+				t.Errorf("Expected buffer '%s', got '%s'", modelName, modal.editBuffer)
+			}
+
+			// Verify view shows cursor at end
+			view := modal.View()
+			expectedDisplay := modelName + "█"
+			if !strings.Contains(view, expectedDisplay) {
+				t.Errorf("Expected view to contain '%s'", expectedDisplay)
+			}
+
+			// Save the model
+			modal.HandleKey("enter")
+
+			// Verify edit mode exited
+			if modal.editMode {
+				t.Error("Expected to exit edit mode after Enter")
+			}
+
+			// Verify model was saved
+			if modal.settings.DefaultModel != modelName {
+				t.Errorf("Expected DefaultModel '%s', got '%s'", modelName, modal.settings.DefaultModel)
+			}
+
+			// Verify view shows saved model (no cursor)
+			view = modal.View()
+			if strings.Contains(view, "█") {
+				t.Error("Expected NO cursor after saving")
+			}
+			if !strings.Contains(view, modelName) {
+				t.Errorf("Expected view to contain saved model '%s'", modelName)
+			}
+
+			// Test Ctrl-U clears complex name
+			modal.HandleKey("enter") // Re-enter edit mode
+			modal.HandleKey("ctrl+u")
+			if modal.editBuffer != "" {
+				t.Errorf("Expected empty buffer after ctrl+u, got '%s'", modal.editBuffer)
+			}
+
+			// Verify can type again after clear
+			modal.HandleKey("n")
+			modal.HandleKey("e")
+			modal.HandleKey("w")
+			if modal.editBuffer != "new" {
+				t.Errorf("Expected buffer 'new' after typing post-clear, got '%s'", modal.editBuffer)
+			}
+		})
+	}
+}

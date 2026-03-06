@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -17,8 +18,8 @@ import (
 
 // metadataFetchedMsg is sent when entry metadata has been fetched.
 type metadataFetchedMsg struct {
-	entry *types.BrainEntry
-	err   error
+	entries []*types.BrainEntry
+	err     error
 }
 
 // metadataUpdatedMsg is sent when a field has been updated.
@@ -29,8 +30,17 @@ type metadataUpdatedMsg struct {
 }
 
 // ============================================================================
-// Interaction Mode Enum
+// Mode Enums
 // ============================================================================
+
+// MetadataMode represents the editing mode (single, batch, or feature).
+type MetadataMode int
+
+const (
+	ModeSingle MetadataMode = iota
+	ModeBatch
+	ModeFeature
+)
 
 // MetadataInteractionMode represents the current interaction mode.
 type MetadataInteractionMode int
@@ -47,7 +57,8 @@ const (
 
 // MetadataModal is a modal for editing task metadata fields.
 type MetadataModal struct {
-	taskID          string
+	taskIDs         []string
+	mode            MetadataMode
 	apiClient       *runner.APIClient
 	interactionMode MetadataInteractionMode
 	focusedField    MetadataField
@@ -61,6 +72,9 @@ type MetadataModal struct {
 	width           int
 	height          int
 
+	// Mixed field tracking for batch mode
+	mixedFields map[MetadataField]bool
+
 	// API state
 	loading        bool
 	fetchError     error
@@ -69,8 +83,18 @@ type MetadataModal struct {
 	lastSavedField MetadataField
 }
 
-// NewMetadataModal creates a new metadata editing modal.
+// NewMetadataModal creates a new metadata editing modal for a single task.
 func NewMetadataModal(taskID string, apiClient *runner.APIClient) *MetadataModal {
+	return newMetadataModal([]string{taskID}, ModeSingle, apiClient)
+}
+
+// NewMetadataModalBatch creates a new metadata editing modal for multiple tasks.
+func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *MetadataModal {
+	return newMetadataModal(taskIDs, ModeBatch, apiClient)
+}
+
+// newMetadataModal is the internal constructor.
+func newMetadataModal(taskIDs []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
 	// Initialize field list in proper order
 	fieldList := []MetadataField{
 		FieldStatus,
@@ -91,12 +115,14 @@ func NewMetadataModal(taskID string, apiClient *runner.APIClient) *MetadataModal
 	}
 
 	return &MetadataModal{
-		taskID:          taskID,
+		taskIDs:         taskIDs,
+		mode:            mode,
 		apiClient:       apiClient,
 		interactionMode: ModeNavigate,
 		focusedIndex:    0,
 		values:          make(map[MetadataField]string),
 		boolValues:      make(map[MetadataField]bool),
+		mixedFields:     make(map[MetadataField]bool),
 		fieldList:       fieldList,
 		width:           60,
 		height:          25,
@@ -306,6 +332,9 @@ func (m *MetadataModal) saveField() tea.Cmd {
 		updates[string(m.focusedField)] = value
 	}
 
+	// Clear mixed indicator for this field (user made explicit choice)
+	m.mixedFields[m.focusedField] = false
+
 	// Clear edit buffer
 	m.editBuffer = ""
 
@@ -313,14 +342,38 @@ func (m *MetadataModal) saveField() tea.Cmd {
 	field := m.focusedField
 	fieldValue := m.values[field]
 
-	// Return command that updates via API
+	// Return command that updates via API (all tasks in batch mode)
 	return func() tea.Msg {
 		ctx := context.Background()
-		_, err := m.apiClient.UpdateEntry(ctx, m.taskID, updates)
+
+		var wg sync.WaitGroup
+		errors := make([]error, len(m.taskIDs))
+
+		for i, taskID := range m.taskIDs {
+			wg.Add(1)
+			go func(idx int, id string) {
+				defer wg.Done()
+				_, err := m.apiClient.UpdateEntry(ctx, id, updates)
+				errors[idx] = err
+			}(i, taskID)
+		}
+		wg.Wait()
+
+		// Check for errors
+		for _, err := range errors {
+			if err != nil {
+				return metadataUpdatedMsg{
+					field: field,
+					value: fieldValue,
+					err:   err,
+				}
+			}
+		}
+
 		return metadataUpdatedMsg{
 			field: field,
 			value: fieldValue,
-			err:   err,
+			err:   nil,
 		}
 	}
 }
@@ -334,10 +387,33 @@ func (m *MetadataModal) Init() tea.Cmd {
 	m.loading = true
 	return func() tea.Msg {
 		ctx := context.Background()
-		entry, err := m.apiClient.GetEntry(ctx, m.taskID)
+
+		// Fetch all entries in parallel
+		entries := make([]*types.BrainEntry, len(m.taskIDs))
+		errors := make([]error, len(m.taskIDs))
+
+		var wg sync.WaitGroup
+		for i, taskID := range m.taskIDs {
+			wg.Add(1)
+			go func(idx int, id string) {
+				defer wg.Done()
+				entry, err := m.apiClient.GetEntry(ctx, id)
+				entries[idx] = entry
+				errors[idx] = err
+			}(i, taskID)
+		}
+		wg.Wait()
+
+		// Check for errors
+		for _, err := range errors {
+			if err != nil {
+				return metadataFetchedMsg{entries: nil, err: err}
+			}
+		}
+
 		return metadataFetchedMsg{
-			entry: entry,
-			err:   err,
+			entries: entries,
+			err:     nil,
 		}
 	}
 }
@@ -351,29 +427,37 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.fetchError = msg.err
 			return m, nil
 		}
-		// Populate values from entry
-		if msg.entry != nil {
-			m.values[FieldStatus] = msg.entry.Status
-			m.values[FieldPriority] = msg.entry.Priority
-			m.values[FieldFeatureID] = msg.entry.FeatureID
-			m.values[FieldGitBranch] = msg.entry.GitBranch
-			m.values[FieldMergeTargetBranch] = msg.entry.MergeTargetBranch
-			m.values[FieldMergePolicy] = msg.entry.MergePolicy
-			m.values[FieldMergeStrategy] = msg.entry.MergeStrategy
-			m.values[FieldExecutionMode] = msg.entry.ExecutionMode
-			m.values[FieldDirectPrompt] = msg.entry.DirectPrompt
-			m.values[FieldAgent] = msg.entry.Agent
-			m.values[FieldModel] = msg.entry.Model
-			m.values[FieldTargetWorkdir] = msg.entry.TargetWorkdir
-			m.values[FieldSchedule] = msg.entry.Schedule
 
-			// Boolean values
-			if msg.entry.CompleteOnIdle != nil {
-				m.boolValues[FieldCompleteOnIdle] = *msg.entry.CompleteOnIdle
-			}
-			if msg.entry.OpenPRBeforeMerge != nil {
-				m.boolValues[FieldOpenPRBeforeMerge] = *msg.entry.OpenPRBeforeMerge
-			}
+		if len(msg.entries) == 0 {
+			m.fetchError = fmt.Errorf("no entries loaded")
+			return m, nil
+		}
+
+		// Detect mixed fields for batch mode
+		m.mixedFields = detectMixedFields(msg.entries)
+
+		// Populate values from first entry (or shared values)
+		entry := msg.entries[0]
+		m.values[FieldStatus] = entry.Status
+		m.values[FieldPriority] = entry.Priority
+		m.values[FieldFeatureID] = entry.FeatureID
+		m.values[FieldGitBranch] = entry.GitBranch
+		m.values[FieldMergeTargetBranch] = entry.MergeTargetBranch
+		m.values[FieldMergePolicy] = entry.MergePolicy
+		m.values[FieldMergeStrategy] = entry.MergeStrategy
+		m.values[FieldExecutionMode] = entry.ExecutionMode
+		m.values[FieldDirectPrompt] = entry.DirectPrompt
+		m.values[FieldAgent] = entry.Agent
+		m.values[FieldModel] = entry.Model
+		m.values[FieldTargetWorkdir] = entry.TargetWorkdir
+		m.values[FieldSchedule] = entry.Schedule
+
+		// Boolean values
+		if entry.CompleteOnIdle != nil {
+			m.boolValues[FieldCompleteOnIdle] = *entry.CompleteOnIdle
+		}
+		if entry.OpenPRBeforeMerge != nil {
+			m.boolValues[FieldOpenPRBeforeMerge] = *entry.OpenPRBeforeMerge
 		}
 		return m, nil
 
@@ -385,6 +469,8 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.saveSuccess = true
 			m.lastSavedField = msg.field
 			m.saveError = nil
+			// Clear mixed indicator for this field after successful save
+			m.mixedFields[msg.field] = false
 		}
 		return m, nil
 	}
@@ -514,7 +600,7 @@ func (m *MetadataModal) renderDropdown() string {
 			lines = append(lines, style.Render(line))
 		}
 	}
-	
+
 	return strings.Join(lines, "\n")
 }
 
@@ -582,7 +668,16 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 
 // Title returns the modal title.
 func (m *MetadataModal) Title() string {
-	return "Update Metadata"
+	switch m.mode {
+	case ModeSingle:
+		return "Update Metadata"
+	case ModeBatch:
+		return fmt.Sprintf("Update Metadata - %d tasks selected", len(m.taskIDs))
+	case ModeFeature:
+		return "Update Feature Metadata"
+	default:
+		return "Update Metadata"
+	}
 }
 
 // Width returns the desired width.
@@ -593,4 +688,111 @@ func (m *MetadataModal) Width() int {
 // Height returns the desired height.
 func (m *MetadataModal) Height() int {
 	return m.height
+}
+
+// ============================================================================
+// Batch Mode Helper Functions
+// ============================================================================
+
+// detectMixedFields compares field values across tasks and returns fields with differing values.
+func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
+	mixed := make(map[MetadataField]bool)
+
+	if len(entries) <= 1 {
+		return mixed
+	}
+
+	// String fields
+	stringFields := []MetadataField{
+		FieldFeatureID, FieldGitBranch, FieldMergeTargetBranch,
+		FieldMergePolicy, FieldMergeStrategy, FieldExecutionMode,
+		FieldDirectPrompt, FieldAgent, FieldModel, FieldTargetWorkdir, FieldSchedule,
+	}
+
+	for _, field := range stringFields {
+		values := make([]string, len(entries))
+		for i, entry := range entries {
+			switch field {
+			case FieldFeatureID:
+				values[i] = entry.FeatureID
+			case FieldGitBranch:
+				values[i] = entry.GitBranch
+			case FieldMergeTargetBranch:
+				values[i] = entry.MergeTargetBranch
+			case FieldMergePolicy:
+				values[i] = entry.MergePolicy
+			case FieldMergeStrategy:
+				values[i] = entry.MergeStrategy
+			case FieldExecutionMode:
+				values[i] = entry.ExecutionMode
+			case FieldDirectPrompt:
+				values[i] = entry.DirectPrompt
+			case FieldAgent:
+				values[i] = entry.Agent
+			case FieldModel:
+				values[i] = entry.Model
+			case FieldTargetWorkdir:
+				values[i] = entry.TargetWorkdir
+			case FieldSchedule:
+				values[i] = entry.Schedule
+			}
+		}
+		if !allEqual(values) {
+			mixed[field] = true
+		}
+	}
+
+	// Status and Priority fields
+	statusValues := make([]string, len(entries))
+	for i, entry := range entries {
+		statusValues[i] = entry.Status
+	}
+	if !allEqual(statusValues) {
+		mixed[FieldStatus] = true
+	}
+
+	priorityValues := make([]string, len(entries))
+	for i, entry := range entries {
+		priorityValues[i] = entry.Priority
+	}
+	if !allEqual(priorityValues) {
+		mixed[FieldPriority] = true
+	}
+
+	// Boolean fields
+	completeOnIdleValues := make([]bool, len(entries))
+	for i, entry := range entries {
+		if entry.CompleteOnIdle != nil {
+			completeOnIdleValues[i] = *entry.CompleteOnIdle
+		}
+	}
+	if !allEqual(completeOnIdleValues) {
+		mixed[FieldCompleteOnIdle] = true
+	}
+
+	openPRValues := make([]bool, len(entries))
+	for i, entry := range entries {
+		if entry.OpenPRBeforeMerge != nil {
+			openPRValues[i] = *entry.OpenPRBeforeMerge
+		}
+	}
+	if !allEqual(openPRValues) {
+		mixed[FieldOpenPRBeforeMerge] = true
+	}
+
+	return mixed
+}
+
+// allEqual checks if all values in a slice are equal.
+func allEqual[T comparable](values []T) bool {
+	if len(values) == 0 {
+		return true
+	}
+	first := values[0]
+	for _, v := range values {
+		if v != first {
+			return false
+		}
+	}
+	return true
 }

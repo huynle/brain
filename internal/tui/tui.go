@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // DefaultReconnectDelay is the default delay before reconnecting after disconnect.
@@ -212,16 +212,32 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
-			// Open metadata modal for selected task
+			// Open metadata modal for selected task(s)
 			if m.activePanel == PanelTasks {
-				selectedTask := m.taskTree.SelectedTask()
-				if selectedTask != nil {
-					// Create API client for modal
-					apiClient := runner.NewAPIClient(runner.RunnerConfig{
-						BrainAPIURL: m.config.APIURL,
-						APITimeout:  5000, // 5 second timeout
-					})
-					modal := NewMetadataModal(selectedTask.ID, apiClient)
+				// Create API client for modal
+				apiClient := runner.NewAPIClient(runner.RunnerConfig{
+					BrainAPIURL: m.config.APIURL,
+					APITimeout:  5000, // 5 second timeout
+				})
+
+				var modal Modal
+
+				// Case 1: Multi-select active - batch mode
+				if len(m.selectedTasks) > 0 {
+					taskIDs := make([]string, 0, len(m.selectedTasks))
+					for id := range m.selectedTasks {
+						taskIDs = append(taskIDs, id)
+					}
+					modal = NewMetadataModalBatch(taskIDs, apiClient)
+				} else {
+					// Case 2: Single task selected
+					selectedTask := m.taskTree.SelectedTask()
+					if selectedTask != nil {
+						modal = NewMetadataModal(selectedTask.ID, apiClient)
+					}
+				}
+
+				if modal != nil {
 					cmd := m.modalManager.Open(modal)
 					return m, cmd
 				}

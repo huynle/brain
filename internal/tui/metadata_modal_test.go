@@ -28,9 +28,17 @@ func TestNewMetadataModal(t *testing.T) {
 		t.Fatal("NewMetadataModal returned nil")
 	}
 
-	// Check that taskID is set
-	if modal.taskID != "task123" {
-		t.Errorf("taskID = %q, want %q", modal.taskID, "task123")
+	// Check that taskIDs is set with single task
+	if len(modal.taskIDs) != 1 {
+		t.Errorf("taskIDs length = %d, want 1", len(modal.taskIDs))
+	}
+	if modal.taskIDs[0] != "task123" {
+		t.Errorf("taskIDs[0] = %q, want %q", modal.taskIDs[0], "task123")
+	}
+
+	// Check mode is single
+	if modal.mode != ModeSingle {
+		t.Errorf("mode = %v, want ModeSingle", modal.mode)
 	}
 
 	// Check that apiClient is set
@@ -736,11 +744,11 @@ func TestMetadataModal_Init_FetchesEntry(t *testing.T) {
 	if fetchedMsg.err != nil {
 		t.Fatalf("fetch error: %v", fetchedMsg.err)
 	}
-	if fetchedMsg.entry == nil {
-		t.Fatal("expected non-nil entry")
+	if len(fetchedMsg.entries) == 0 {
+		t.Fatal("expected non-empty entries")
 	}
-	if fetchedMsg.entry.ID != "abc123" {
-		t.Errorf("entry ID = %q, want %q", fetchedMsg.entry.ID, "abc123")
+	if fetchedMsg.entries[0].ID != "abc123" {
+		t.Errorf("entry ID = %q, want %q", fetchedMsg.entries[0].ID, "abc123")
 	}
 }
 
@@ -751,11 +759,13 @@ func TestMetadataModal_Update_HandlesFetchSuccess(t *testing.T) {
 
 	// Create fetched message
 	fetchedMsg := metadataFetchedMsg{
-		entry: &types.BrainEntry{
-			ID:       "task123",
-			Status:   "pending",
-			Priority: "high",
-			Agent:    "dev",
+		entries: []*types.BrainEntry{
+			{
+				ID:       "task123",
+				Status:   "pending",
+				Priority: "high",
+				Agent:    "dev",
+			},
 		},
 		err: nil,
 	}
@@ -790,8 +800,8 @@ func TestMetadataModal_Update_HandlesFetchError(t *testing.T) {
 
 	// Create error message
 	fetchedMsg := metadataFetchedMsg{
-		entry: nil,
-		err:   fmt.Errorf("network error"),
+		entries: nil,
+		err:     fmt.Errorf("network error"),
 	}
 
 	// Update with error message
@@ -809,6 +819,139 @@ func TestMetadataModal_Update_HandlesFetchError(t *testing.T) {
 	if m.fetchError == nil {
 		t.Error("fetchError should be set")
 	}
+}
+
+// ============================================================================
+// Batch Mode Tests
+// ============================================================================
+
+func TestDetectMixedFields(t *testing.T) {
+	t.Run("single entry returns no mixed fields", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", Priority: "high", FeatureID: "test"},
+		}
+		mixed := detectMixedFields(entries)
+		if len(mixed) != 0 {
+			t.Errorf("expected no mixed fields, got %d", len(mixed))
+		}
+	})
+
+	t.Run("two entries with same values returns no mixed fields", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", Priority: "high", FeatureID: "test"},
+			{Status: "pending", Priority: "high", FeatureID: "test"},
+		}
+		mixed := detectMixedFields(entries)
+		if len(mixed) != 0 {
+			t.Errorf("expected no mixed fields, got %d", len(mixed))
+		}
+	})
+
+	t.Run("two entries with different status returns status as mixed", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", Priority: "high", FeatureID: "test"},
+			{Status: "active", Priority: "high", FeatureID: "test"},
+		}
+		mixed := detectMixedFields(entries)
+		if !mixed[FieldStatus] {
+			t.Error("expected status to be mixed")
+		}
+		if mixed[FieldPriority] {
+			t.Error("expected priority to not be mixed")
+		}
+		if mixed[FieldFeatureID] {
+			t.Error("expected feature_id to not be mixed")
+		}
+	})
+
+	t.Run("multiple entries with different feature IDs", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", FeatureID: "feature-1"},
+			{Status: "pending", FeatureID: "feature-2"},
+			{Status: "pending", FeatureID: "feature-3"},
+		}
+		mixed := detectMixedFields(entries)
+		if mixed[FieldStatus] {
+			t.Error("expected status to not be mixed")
+		}
+		if !mixed[FieldFeatureID] {
+			t.Error("expected feature_id to be mixed")
+		}
+	})
+
+	t.Run("mixed boolean fields", func(t *testing.T) {
+		trueVal := true
+		falseVal := false
+		entries := []*types.BrainEntry{
+			{CompleteOnIdle: &trueVal, OpenPRBeforeMerge: &falseVal},
+			{CompleteOnIdle: &falseVal, OpenPRBeforeMerge: &falseVal},
+		}
+		mixed := detectMixedFields(entries)
+		if !mixed[FieldCompleteOnIdle] {
+			t.Error("expected complete_on_idle to be mixed")
+		}
+		if mixed[FieldOpenPRBeforeMerge] {
+			t.Error("expected open_pr_before_merge to not be mixed")
+		}
+	})
+}
+
+func TestMetadataMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	t.Run("single mode title", func(t *testing.T) {
+		modal := NewMetadataModal("task1", apiClient)
+		if modal.Title() != "Update Metadata" {
+			t.Errorf("Title() = %q, want 'Update Metadata'", modal.Title())
+		}
+	})
+
+	t.Run("batch mode title with count", func(t *testing.T) {
+		modal := NewMetadataModalBatch([]string{"task1", "task2", "task3"}, apiClient)
+		expected := "Update Metadata - 3 tasks selected"
+		if modal.Title() != expected {
+			t.Errorf("Title() = %q, want %q", modal.Title(), expected)
+		}
+	})
+}
+
+func TestAllEqual(t *testing.T) {
+	t.Run("empty slice", func(t *testing.T) {
+		if !allEqual([]string{}) {
+			t.Error("expected empty slice to be equal")
+		}
+	})
+
+	t.Run("single element", func(t *testing.T) {
+		if !allEqual([]string{"a"}) {
+			t.Error("expected single element to be equal")
+		}
+	})
+
+	t.Run("all same strings", func(t *testing.T) {
+		if !allEqual([]string{"a", "a", "a"}) {
+			t.Error("expected all same strings to be equal")
+		}
+	})
+
+	t.Run("different strings", func(t *testing.T) {
+		if allEqual([]string{"a", "b", "a"}) {
+			t.Error("expected different strings to not be equal")
+		}
+	})
+
+	t.Run("all same bools", func(t *testing.T) {
+		if !allEqual([]bool{true, true, true}) {
+			t.Error("expected all same bools to be equal")
+		}
+	})
+
+	t.Run("different bools", func(t *testing.T) {
+		if allEqual([]bool{true, false, true}) {
+			t.Error("expected different bools to not be equal")
+		}
+	})
 }
 
 // ===========================================================================

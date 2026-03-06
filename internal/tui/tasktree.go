@@ -451,7 +451,6 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 		return
 	}
 
-
 	if tt.useGroupedView {
 		if tt.useFeatureView {
 			// Feature-based grouping
@@ -876,6 +875,32 @@ func (tt *TaskTree) SelectedTask() *types.ResolvedTask {
 	return nil
 }
 
+// GetSelectedFeatureID returns the feature ID of the currently selected feature header.
+// Returns "" if not in feature view, not on a header, on ungrouped, or index out of bounds.
+func (tt *TaskTree) GetSelectedFeatureID() string {
+	// Only works in feature view mode
+	if !tt.useFeatureView {
+		return ""
+	}
+
+	// Only works when on a header (not on a task)
+	if tt.selectedFeatureTaskIdx != -1 {
+		return ""
+	}
+
+	// Return "" if on ungrouped
+	if tt.isOnUngrouped {
+		return ""
+	}
+
+	// Check bounds
+	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
+		return ""
+	}
+
+	return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
+}
+
 // statusIndicator returns the status icon for a task classification.
 func statusIndicator(classification string) string {
 	switch classification {
@@ -906,7 +931,6 @@ func (tt *TaskTree) View(width, height int) string {
 
 	return tt.viewLegacy(width, height)
 }
-
 
 // ViewWithSelection renders the task tree with multi-select checkboxes.
 func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[string]bool) string {

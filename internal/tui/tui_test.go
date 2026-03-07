@@ -2847,3 +2847,127 @@ func TestHelpModal_ShowsUpdatedKeyBindings(t *testing.T) {
 		t.Errorf("expected help modal to show schedule toggle for C key, got:\n%s", view)
 	}
 }
+
+// =============================================================================
+// Yank (y key) Tests
+// =============================================================================
+
+func TestUpdate_YKey_CopiesTaskTitle(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up a task
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "My Task Title", Path: "projects/test/task/t1.md",
+			Classification: "ready", Priority: "high", Status: "pending"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Navigate to the task
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Press y to yank
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should set a status message (success or error depending on clipboard availability)
+	if m.statusMessage == "" {
+		t.Error("expected status message after pressing y, got empty")
+	}
+	// On platforms with clipboard, should show "Copied: My Task Title"
+	// On platforms without, should show "Failed to copy"
+	if !strings.Contains(m.statusMessage, "Copied:") && !strings.Contains(m.statusMessage, "Failed") {
+		t.Errorf("expected status message about clipboard, got: %s", m.statusMessage)
+	}
+}
+
+func TestUpdate_YKey_NoOpWithoutTask(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// No tasks loaded - press y
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	// Should NOT set a status message when no task is selected
+	if m.statusMessage != "" {
+		t.Errorf("expected no status message when no task selected, got: %s", m.statusMessage)
+	}
+}
+
+func TestUpdate_YKey_NoOpOutsideTasksPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelDetails // Not on tasks panel
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "My Task", Path: "projects/test/task/t1.md",
+			Classification: "ready", Priority: "high", Status: "pending"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Press y while not on task panel
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should NOT set a status message
+	if m.statusMessage != "" {
+		t.Errorf("expected no status message when not on tasks panel, got: %s", m.statusMessage)
+	}
+}
+
+func TestUpdate_YKey_NoOpInScheduleView(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+	m.viewMode = ViewModeSchedules // Schedule view, not tasks view
+
+	// Press y
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	// Should NOT set a status message
+	if m.statusMessage != "" {
+		t.Errorf("expected no status message in schedule view, got: %s", m.statusMessage)
+	}
+}
+
+func TestHelpBar_ShowsYankShortcut(t *testing.T) {
+	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeTasks}
+	view := h.View(120, false)
+
+	if !strings.Contains(view, "Yank") {
+		t.Errorf("expected help bar to show 'Yank' shortcut, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_NoYankInScheduleView(t *testing.T) {
+	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeSchedules}
+	view := h.View(120, false)
+
+	if strings.Contains(view, "Yank") {
+		t.Errorf("expected help bar to NOT show 'Yank' in schedule view, got:\n%s", view)
+	}
+}

@@ -55,6 +55,7 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 			shortcuts += fmt.Sprintf("%s Cancel  ", bold("X"))
 			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
 			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Yank  ", bold("y"))
 			shortcuts += fmt.Sprintf("%s Schedules  ", bold("C"))
 			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 			shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))

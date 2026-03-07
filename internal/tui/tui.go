@@ -918,6 +918,21 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, pauseProjectCmd(m.config.APIURL, projectID, currentlyPaused)
 			}
 			return m, nil
+		case "y":
+			// Yank (copy) selected task title to clipboard (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			if CopyToClipboard(selectedTask.Title) {
+				m.setStatusMessage("success", fmt.Sprintf("Copied: %s", selectedTask.Title))
+			} else {
+				m.setStatusMessage("error", "Failed to copy to clipboard")
+			}
+			return m, nil
 		case "P":
 			// Pause/resume all projects
 			m.allPaused = !m.allPaused

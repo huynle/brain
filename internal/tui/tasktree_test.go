@@ -1107,6 +1107,7 @@ func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
 		}
 	}
 }
+
 // =============================================================================
 // Phase 8: Comprehensive Integration & Edge Case Tests
 // =============================================================================
@@ -1628,5 +1629,144 @@ func BenchmarkBuildTree_LargeTree(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		BuildTree(tasks, tasks)
+	}
+}
+
+// =============================================================================
+// truncateTitle Tests
+// =============================================================================
+
+func TestTruncateTitle_NoTruncationNeeded(t *testing.T) {
+	result := truncateTitle("Hello", 20)
+	if result != "Hello" {
+		t.Errorf("truncateTitle('Hello', 20) = %q, want %q", result, "Hello")
+	}
+}
+
+func TestTruncateTitle_ExactFit(t *testing.T) {
+	result := truncateTitle("Hello", 5)
+	if result != "Hello" {
+		t.Errorf("truncateTitle('Hello', 5) = %q, want %q", result, "Hello")
+	}
+}
+
+func TestTruncateTitle_TruncatesLongTitle(t *testing.T) {
+	result := truncateTitle("Hello World", 8)
+	if len(result) == 0 {
+		t.Fatal("truncateTitle returned empty string")
+	}
+	if !strings.HasSuffix(result, "…") {
+		t.Errorf("truncateTitle('Hello World', 8) = %q, should end with ellipsis", result)
+	}
+	if len([]rune(result)) > 8 {
+		t.Errorf("truncateTitle('Hello World', 8) = %q, rune length %d exceeds maxWidth 8", result, len([]rune(result)))
+	}
+}
+
+func TestTruncateTitle_ZeroWidth(t *testing.T) {
+	result := truncateTitle("Hello", 0)
+	if result != "Hello" {
+		t.Errorf("truncateTitle('Hello', 0) = %q, want %q", result, "Hello")
+	}
+}
+
+func TestTruncateTitle_NegativeWidth(t *testing.T) {
+	result := truncateTitle("Hello", -5)
+	if result != "Hello" {
+		t.Errorf("truncateTitle('Hello', -5) = %q, want %q", result, "Hello")
+	}
+}
+
+func TestTruncateTitle_VerySmallWidth(t *testing.T) {
+	result := truncateTitle("Hello World", 2)
+	if len([]rune(result)) > 2 {
+		t.Errorf("truncateTitle('Hello World', 2) rune length %d exceeds maxWidth 2", len([]rune(result)))
+	}
+}
+
+func TestTruncateTitle_EmptyString(t *testing.T) {
+	result := truncateTitle("", 10)
+	if result != "" {
+		t.Errorf("truncateTitle('', 10) = %q, want empty string", result)
+	}
+}
+
+func TestTruncateTitle_WidthOfOne(t *testing.T) {
+	result := truncateTitle("Hello", 1)
+	if len([]rune(result)) > 1 {
+		t.Errorf("truncateTitle('Hello', 1) rune length %d exceeds maxWidth 1", len([]rune(result)))
+	}
+}
+
+// =============================================================================
+// TextWrap rendering tests
+// =============================================================================
+
+func TestTaskTree_TextWrap_GroupedView_Truncates(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.TextWrap = false
+
+	tasks := []types.ResolvedTask{
+		makeTask("t1", "This is a very long task title that should be truncated when text wrap is disabled", "ready", "medium", nil),
+	}
+	tt.SetTasks(tasks)
+	tt.SelectedID = "t1"
+
+	output := tt.ViewWithProject(40, 20, "test-project")
+	if strings.Contains(output, "This is a very long task title that should be truncated when text wrap is disabled") {
+		t.Error("Expected title to be truncated in grouped view with TextWrap=false and narrow width")
+	}
+}
+
+func TestTaskTree_TextWrap_GroupedView_NoTruncate(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.TextWrap = true
+
+	tasks := []types.ResolvedTask{
+		makeTask("t1", "This is a very long task title that should NOT be truncated", "ready", "medium", nil),
+	}
+	tt.SetTasks(tasks)
+	tt.SelectedID = "t1"
+
+	output := tt.ViewWithProject(40, 20, "test-project")
+	if !strings.Contains(output, "This is a very long task title that should NOT be truncated") {
+		t.Error("Expected full title in grouped view with TextWrap=true")
+	}
+}
+
+func TestTaskTree_TextWrap_LegacyView_Truncates(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(false)
+	tt.TextWrap = false
+
+	tasks := []types.ResolvedTask{
+		makeTask("t1", "This is a very long task title that should be truncated in legacy view", "ready", "medium", nil),
+	}
+	tt.SetTasks(tasks)
+	tt.SelectedID = "t1"
+
+	output := tt.ViewWithProject(30, 20, "test-project")
+	if strings.Contains(output, "This is a very long task title that should be truncated in legacy view") {
+		t.Error("Expected title to be truncated in legacy view with TextWrap=false and narrow width")
+	}
+}
+
+func TestTaskTree_TextWrap_LaneView_Truncates(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(false)
+	tt.SetLaneViewMode(true)
+	tt.TextWrap = false
+
+	tasks := []types.ResolvedTask{
+		makeTask("t1", "This is a very long task title that should be truncated in lane view", "ready", "medium", nil),
+	}
+	tt.SetTasks(tasks)
+	tt.SelectedID = "t1"
+
+	output := tt.ViewWithProject(30, 20, "test-project")
+	if strings.Contains(output, "This is a very long task title that should be truncated in lane view") {
+		t.Error("Expected title to be truncated in lane view with TextWrap=false and narrow width")
 	}
 }

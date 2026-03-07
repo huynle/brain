@@ -61,7 +61,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -77,7 +77,7 @@ func LoadSettings() (Settings, error) {
 				ProjectLimits:     make(map[string]int),
 				GlobalMaxParallel: 4,
 				DefaultModel:      "",
-				TextWrap:          true,
+				TextWrap:          false,
 				LogLevel:          "info",
 			}, nil
 		}
@@ -88,7 +88,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -102,7 +102,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -134,7 +134,7 @@ func LoadSettings() (Settings, error) {
 	if settings.DefaultModel == "" {
 		settings.DefaultModel = "" // Empty string means no override
 	}
-	// TextWrap defaults to true (not set in JSON means false, so we need to check if loaded from file)
+	// TextWrap defaults to false (truncation mode by default)
 	// LogLevel defaults to "info"
 	if settings.LogLevel == "" {
 		settings.LogLevel = "info"

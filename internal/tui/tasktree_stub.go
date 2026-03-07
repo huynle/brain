@@ -15,7 +15,8 @@ var ProjectLabelStyle = lipgloss.NewStyle().
 // renderGroupedTaskLineWithProject renders a single task line with optional project label.
 // When activeProjectID == "all", shows [project-name] prefix for each task.
 // When activeProjectID is a specific project, no project label is shown.
-func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool, showCheckboxes bool, activeProjectID string) string {
+// The width parameter is used for truncation when TextWrap is false.
+func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool, showCheckboxes bool, activeProjectID string, width int) string {
 	// Selection marker
 	selMarker := "  "
 	if isSelected {
@@ -38,12 +39,24 @@ func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, is
 
 	// Project label (ONLY in aggregate view and if ProjectID is not empty)
 	projectLabel := ""
+	projectLabelPlain := ""
 	if activeProjectID == "all" && task.ProjectID != "" {
-		projectLabel = ProjectLabelStyle.Render(fmt.Sprintf("[%s] ", task.ProjectID))
+		projectLabelPlain = fmt.Sprintf("[%s] ", task.ProjectID)
+		projectLabel = ProjectLabelStyle.Render(projectLabelPlain)
 	}
 
-	// Title
+	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
+	if !tt.TextWrap && width > 0 {
+		// Overhead: selMarker(2) + checkbox + indicator(2) + space(1) + projectLabel + suffix
+		overhead := 2 + len(checkboxPart) + 2 + 1 + len(projectLabelPlain)
+		if task.Priority == "high" {
+			overhead++
+		}
+		availableWidth := width - overhead
+		title = truncateTitle(title, availableWidth)
+	}
+
 	if isSelected {
 		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
 	} else if selectedTasks[task.ID] {

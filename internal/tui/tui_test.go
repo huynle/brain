@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -1289,5 +1290,432 @@ func TestRunnerStatusMsg_Fields(t *testing.T) {
 	}
 	if msg.err != nil {
 		t.Errorf("expected nil error, got %v", msg.err)
+	}
+}
+
+// =============================================================================
+// Phase 2: Key Handler Tests for Pause/Resume
+// =============================================================================
+
+func TestUpdate_PKey_PausesActiveProject(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Press 'p' to pause active project
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should set optimistic UI update
+	if !model.pausedProjects["test-project"] {
+		t.Error("expected pausedProjects['test-project'] to be true (optimistic update)")
+	}
+
+	// Should return a command (the API call)
+	if cmd == nil {
+		t.Error("expected non-nil command for pause API call")
+	}
+
+	// Should show info status message
+	if model.statusMessage == "" {
+		t.Error("expected a status message to be set")
+	}
+	if model.statusMessageType != "info" {
+		t.Errorf("expected status message type 'info', got %q", model.statusMessageType)
+	}
+}
+
+func TestUpdate_PKey_ResumesAlreadyPausedProject(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	// Pre-set project as paused
+	m.pausedProjects["test-project"] = true
+
+	// Press 'p' to resume
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should toggle to not paused (optimistic)
+	if model.pausedProjects["test-project"] {
+		t.Error("expected pausedProjects['test-project'] to be false after resume toggle")
+	}
+
+	// Should return a command
+	if cmd == nil {
+		t.Error("expected non-nil command for resume API call")
+	}
+
+	// Status message should mention resuming
+	if !strings.Contains(model.statusMessage, "Resuming") {
+		t.Errorf("expected status message to contain 'Resuming', got %q", model.statusMessage)
+	}
+}
+
+func TestUpdate_PKey_NoProject_DoesNothing(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "", // No project set
+	}
+	m := NewModel(cfg)
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should not set any pause state
+	if len(model.pausedProjects) != 0 {
+		t.Errorf("expected no paused projects, got %d", len(model.pausedProjects))
+	}
+
+	// Should return nil command (nothing to do)
+	if cmd != nil {
+		t.Error("expected nil command when no project is set")
+	}
+}
+
+func TestUpdate_PKey_UsesActiveProjectID(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "proj-a"
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should use activeProjectID, not config.Project
+	if !model.pausedProjects["proj-a"] {
+		t.Error("expected pausedProjects['proj-a'] to be true")
+	}
+	if model.pausedProjects["default-project"] {
+		t.Error("expected pausedProjects['default-project'] to be false")
+	}
+	if cmd == nil {
+		t.Error("expected non-nil command")
+	}
+}
+
+func TestUpdate_ShiftPKey_PausesAll(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Press 'P' (shift+p) to pause all
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should set allPaused
+	if !model.allPaused {
+		t.Error("expected allPaused to be true after 'P'")
+	}
+
+	// Should return a command
+	if cmd == nil {
+		t.Error("expected non-nil command for pause all API call")
+	}
+
+	// Should show info status message
+	if model.statusMessageType != "info" {
+		t.Errorf("expected status message type 'info', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "Pausing all") {
+		t.Errorf("expected status message to contain 'Pausing all', got %q", model.statusMessage)
+	}
+}
+
+func TestUpdate_ShiftPKey_ResumesAll(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.allPaused = true
+
+	// Press 'P' to resume all
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	// Should toggle allPaused to false
+	if model.allPaused {
+		t.Error("expected allPaused to be false after resume toggle")
+	}
+
+	if cmd == nil {
+		t.Error("expected non-nil command for resume all API call")
+	}
+
+	if !strings.Contains(model.statusMessage, "Resuming all") {
+		t.Errorf("expected status message to contain 'Resuming all', got %q", model.statusMessage)
+	}
+}
+
+// =============================================================================
+// Phase 2: Message Handler Tests for Pause/Resume
+// =============================================================================
+
+func TestUpdate_PauseToggledMsg_Success(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.pausedProjects["test-project"] = true // optimistic update already applied
+
+	// Simulate successful pause response
+	updated, cmd := m.Update(pauseToggledMsg{projectID: "test-project", paused: true, err: nil})
+	model := updated.(Model)
+
+	// Pause state should remain (confirmed by server)
+	if !model.pausedProjects["test-project"] {
+		t.Error("expected pausedProjects['test-project'] to remain true on success")
+	}
+
+	// Should show success message
+	if model.statusMessageType != "success" {
+		t.Errorf("expected status message type 'success', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "paused") {
+		t.Errorf("expected status message to contain 'paused', got %q", model.statusMessage)
+	}
+
+	// Should return nil (no follow-up command)
+	if cmd != nil {
+		t.Error("expected nil command after successful pause toggle")
+	}
+}
+
+func TestUpdate_PauseToggledMsg_Error_RevertsOptimistic(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.pausedProjects["test-project"] = true // optimistic update
+
+	// Simulate error response
+	updated, _ := m.Update(pauseToggledMsg{
+		projectID: "test-project",
+		paused:    true,
+		err:       fmt.Errorf("network error"),
+	})
+	model := updated.(Model)
+
+	// Should revert optimistic update (paused=true means we tried to pause, revert = false)
+	if model.pausedProjects["test-project"] {
+		t.Error("expected pausedProjects['test-project'] to be reverted to false on error")
+	}
+
+	// Should show error message
+	if model.statusMessageType != "error" {
+		t.Errorf("expected status message type 'error', got %q", model.statusMessageType)
+	}
+}
+
+func TestUpdate_PauseAllToggledMsg_Success(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.allPaused = true // optimistic update
+
+	updated, cmd := m.Update(pauseAllToggledMsg{paused: true, err: nil})
+	model := updated.(Model)
+
+	if !model.allPaused {
+		t.Error("expected allPaused to remain true on success")
+	}
+	if model.statusMessageType != "success" {
+		t.Errorf("expected 'success', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "paused") {
+		t.Errorf("expected message to contain 'paused', got %q", model.statusMessage)
+	}
+	if cmd != nil {
+		t.Error("expected nil command")
+	}
+}
+
+func TestUpdate_PauseAllToggledMsg_Error_RevertsOptimistic(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.allPaused = true // optimistic update
+
+	updated, _ := m.Update(pauseAllToggledMsg{paused: true, err: fmt.Errorf("server error")})
+	model := updated.(Model)
+
+	// Should revert
+	if model.allPaused {
+		t.Error("expected allPaused to be reverted to false on error")
+	}
+	if model.statusMessageType != "error" {
+		t.Errorf("expected 'error', got %q", model.statusMessageType)
+	}
+}
+
+func TestUpdate_RunnerStatusMsg_Success_UpdatesState(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(runnerStatusMsg{
+		paused:         true,
+		pausedProjects: []string{"proj-a", "proj-b"},
+	})
+	model := updated.(Model)
+
+	if !model.allPaused {
+		t.Error("expected allPaused to be true")
+	}
+	if !model.pausedProjects["proj-a"] {
+		t.Error("expected pausedProjects['proj-a'] to be true")
+	}
+	if !model.pausedProjects["proj-b"] {
+		t.Error("expected pausedProjects['proj-b'] to be true")
+	}
+	if len(model.pausedProjects) != 2 {
+		t.Errorf("expected 2 paused projects, got %d", len(model.pausedProjects))
+	}
+	if cmd != nil {
+		t.Error("expected nil command")
+	}
+}
+
+func TestUpdate_RunnerStatusMsg_Error_NoStateChange(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.allPaused = true
+	m.pausedProjects["existing"] = true
+
+	updated, _ := m.Update(runnerStatusMsg{err: fmt.Errorf("connection refused")})
+	model := updated.(Model)
+
+	// State should not change on error
+	if !model.allPaused {
+		t.Error("expected allPaused to remain true on error")
+	}
+	if !model.pausedProjects["existing"] {
+		t.Error("expected existing paused project to remain")
+	}
+}
+
+// =============================================================================
+// Phase 2: Tea.Cmd Function Tests
+// =============================================================================
+
+func TestPauseProjectCmd_ReturnsPauseToggledMsg(t *testing.T) {
+	// Test that the command function returns the right message type
+	cmd := pauseProjectCmd("http://localhost:9999", "test-project", false)
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+
+	// Execute the command - it will fail to connect but should return the right msg type
+	result := cmd()
+	msg, ok := result.(pauseToggledMsg)
+	if !ok {
+		t.Fatalf("expected pauseToggledMsg, got %T", result)
+	}
+	if msg.projectID != "test-project" {
+		t.Errorf("expected projectID 'test-project', got %q", msg.projectID)
+	}
+	// paused should be true (we're pausing, not resuming)
+	if !msg.paused {
+		t.Error("expected paused=true when currentlyPaused=false")
+	}
+	// err should be non-nil since we can't connect
+	if msg.err == nil {
+		t.Error("expected error since API is not running")
+	}
+}
+
+func TestPauseProjectCmd_Resume_ReturnsPauseToggledMsg(t *testing.T) {
+	cmd := pauseProjectCmd("http://localhost:9999", "test-project", true)
+	result := cmd()
+	msg, ok := result.(pauseToggledMsg)
+	if !ok {
+		t.Fatalf("expected pauseToggledMsg, got %T", result)
+	}
+	// paused should be false (we're resuming)
+	if msg.paused {
+		t.Error("expected paused=false when currentlyPaused=true (resuming)")
+	}
+}
+
+func TestPauseAllCmd_ReturnsPauseAllToggledMsg(t *testing.T) {
+	cmd := pauseAllCmd("http://localhost:9999", false)
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+
+	result := cmd()
+	msg, ok := result.(pauseAllToggledMsg)
+	if !ok {
+		t.Fatalf("expected pauseAllToggledMsg, got %T", result)
+	}
+	if !msg.paused {
+		t.Error("expected paused=true when currentlyPaused=false")
+	}
+	if msg.err == nil {
+		t.Error("expected error since API is not running")
+	}
+}
+
+func TestFetchRunnerStatusCmd_ReturnsRunnerStatusMsg(t *testing.T) {
+	cmd := fetchRunnerStatusCmd("http://localhost:9999")
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+
+	result := cmd()
+	msg, ok := result.(runnerStatusMsg)
+	if !ok {
+		t.Fatalf("expected runnerStatusMsg, got %T", result)
+	}
+	// Should have error since API is not running
+	if msg.err == nil {
+		t.Error("expected error since API is not running")
+	}
+}
+
+// =============================================================================
+// Phase 2: Tick Syncs Runner Status
+// =============================================================================
+
+func TestUpdate_TickMsg_ReturnsCmd(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(TickMsg{})
+	_ = updated.(Model)
+
+	// Should return a command (tick + fetchRunnerStatus batch)
+	if cmd == nil {
+		t.Error("expected non-nil command from TickMsg handler")
 	}
 }

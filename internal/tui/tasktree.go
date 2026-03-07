@@ -380,6 +380,9 @@ type TaskTree struct {
 	useLaneView     bool
 	laneAssignments []LaneAssignment
 	laneTasks       []types.ResolvedTask // topo-sorted
+
+	// Text wrap/truncation
+	TextWrap bool // if true, show full titles; if false, truncate to fit width
 }
 
 // NewTaskTree creates a new empty TaskTree component.
@@ -952,7 +955,7 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 	}
 
 	var lines []string
-	tt.renderNodes(tt.nodes, "", &lines)
+	tt.renderNodes(tt.nodes, "", &lines, width)
 
 	// Truncate to height
 	if height > 0 && len(lines) > height {
@@ -1009,7 +1012,7 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 		if !group.Collapsed {
 			for tIdx, task := range group.Tasks {
 				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -1103,7 +1106,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		if !feature.Collapsed {
 			for tIdx, task := range feature.Tasks {
 				isTaskSelected := (fIdx == tt.selectedFeatureIdx && tIdx == tt.selectedFeatureTaskIdx && !tt.isOnUngrouped)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -1134,7 +1137,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		if !ungrouped.Collapsed {
 			for tIdx, task := range ungrouped.Tasks {
 				isTaskSelected := (tt.isOnUngrouped && tIdx == tt.selectedFeatureTaskIdx)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID)
+				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
 				lines = append(lines, taskLine)
 			}
 		}
@@ -1148,20 +1151,37 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 	return strings.Join(lines, "\n")
 }
 
+// truncateTitle truncates a plain-text title to fit within maxWidth characters,
+// appending "…" if truncation occurs. Must be called BEFORE applying lipgloss styles
+// to avoid cutting ANSI escape sequences.
+func truncateTitle(title string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return title
+	}
+	runes := []rune(title)
+	if len(runes) <= maxWidth {
+		return title
+	}
+	if maxWidth <= 3 {
+		return string(runes[:maxWidth])
+	}
+	return string(runes[:maxWidth-1]) + "…"
+}
+
 // renderNodes recursively renders tree nodes into lines with proper box-drawing indentation.
 // The prefix parameter tracks ancestor line states to render vertical continuation lines correctly.
-func (tt *TaskTree) renderNodes(nodes []TreeNode, prefix string, lines *[]string) {
+func (tt *TaskTree) renderNodes(nodes []TreeNode, prefix string, lines *[]string, width int) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
 		// Build the line with tree prefix
-		line := tt.renderTaskLine(node, prefix, isLast)
+		line := tt.renderTaskLine(node, prefix, isLast, width)
 		*lines = append(*lines, line)
 
 		// Render children with updated prefix for vertical continuation
 		if len(node.Children) > 0 {
 			childPrefix := tt.calculateChildPrefix(prefix, isLast)
-			tt.renderNodes(node.Children, childPrefix, lines)
+			tt.renderNodes(node.Children, childPrefix, lines, width)
 		}
 	}
 }
@@ -1181,7 +1201,8 @@ func (tt *TaskTree) calculateChildPrefix(prefix string, isLast bool) string {
 
 // renderTaskLine renders a single task line with status, title, indicators, and tree connectors.
 // The prefix parameter contains ancestor line state, and isLast determines the branch character.
-func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool) string {
+// The width parameter is used for truncation when TextWrap is false.
+func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, width int) string {
 	task := node.Task
 	isSelected := task.ID == tt.SelectedID
 
@@ -1202,8 +1223,21 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool) st
 	indicator := statusIndicator(task.Classification)
 	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
 
-	// Title
+	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
+	if !tt.TextWrap && width > 0 {
+		// Calculate overhead: selMarker(1) + prefix + treeConnector + indicator(2) + space(1) + suffixes
+		overhead := 1 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector) + 2 + 1
+		if task.Priority == "high" {
+			overhead++ // "!"
+		}
+		if node.InCycle {
+			overhead += 2 // " ↺"
+		}
+		availableWidth := width - overhead
+		title = truncateTitle(title, availableWidth)
+	}
+
 	if isSelected {
 		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
 	}
@@ -1246,7 +1280,7 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 	for i, assignment := range tt.laneAssignments {
 		task := tt.laneTasks[i]
 		isSelected := task.ID == tt.SelectedID
-		line := tt.renderLaneTaskLine(task, assignment, i, isSelected)
+		line := tt.renderLaneTaskLine(task, assignment, i, isSelected, width)
 		lines = append(lines, line)
 	}
 
@@ -1277,7 +1311,7 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 }
 
 // renderLaneTaskLine renders a single task line with lane prefix + task info.
-func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneAssignment, index int, isSelected bool) string {
+func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneAssignment, index int, isSelected bool, width int) string {
 	// Generate lane prefix
 	prefix := GeneratePrefix(assignment, index, tt.laneAssignments, nil)
 
@@ -1285,8 +1319,21 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 	indicator := statusIndicator(task.Classification)
 	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
 
-	// Title with selection
+	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
+	if !tt.TextWrap && width > 0 {
+		// Overhead: selMarker(1) + prefix + space(1) + indicator(2) + space(1) + suffixes
+		overhead := 1 + lipgloss.Width(prefix) + 1 + 2 + 1
+		if task.Priority == "high" {
+			overhead++
+		}
+		if task.InCycle {
+			overhead += 2
+		}
+		availableWidth := width - overhead
+		title = truncateTitle(title, availableWidth)
+	}
+
 	if isSelected {
 		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
 	}

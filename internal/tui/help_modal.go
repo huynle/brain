@@ -99,6 +99,8 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("L", "Toggle logs"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("w", "Toggle text wrap/truncate"))
+	b.WriteString("\n")
 	b.WriteString(formatShortcut("r", "Refresh"))
 	b.WriteString("\n")
 
@@ -158,9 +160,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (7), Multi-Select (3), Views (3), Other (2)
+	// Categories: Navigation (5), Actions (7), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 7 + 3 + 3 + 2 + 5 + 2
+	baseLines := 5 + 7 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

@@ -115,6 +115,10 @@ func NewModel(cfg Config) Model {
 		metricsCollector: NewMetricsCollector(),
 	}
 
+	// Wire TextWrap setting to sub-models
+	m.taskTree.TextWrap = settings.TextWrap
+	m.helpBar.TextWrap = settings.TextWrap
+
 	// Create SSE clients for multi-project mode
 	// Initialize ProjectTabs for multi-project mode
 	if cfg.IsMultiProject() {
@@ -277,8 +281,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		// Collect resource metrics
 		m.resourceMetrics = m.metricsCollector.Collect()
-		// Schedule next tick
-		return m, tickCmd()
+		// Schedule next tick and sync runner pause state
+		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL))
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -358,6 +362,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.setStatusMessage("error", fmt.Sprintf("✗ Editor error: %v", msg.err))
 		} else {
 			m.setStatusMessage("success", "✓ File saved - refreshing...")
+		}
+		return m, nil
+
+	case pauseToggledMsg:
+		if msg.err != nil {
+			// Revert optimistic update
+			m.pausedProjects[msg.projectID] = !msg.paused
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause: %v", msg.err))
+		} else {
+			if msg.paused {
+				m.setStatusMessage("success", fmt.Sprintf("Project %s paused", msg.projectID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Project %s resumed", msg.projectID))
+			}
+		}
+		return m, nil
+
+	case pauseAllToggledMsg:
+		if msg.err != nil {
+			m.allPaused = !msg.paused
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause all: %v", msg.err))
+		} else {
+			if msg.paused {
+				m.setStatusMessage("success", "All projects paused")
+			} else {
+				m.setStatusMessage("success", "All projects resumed")
+			}
+		}
+		return m, nil
+
+	case runnerStatusMsg:
+		if msg.err == nil {
+			m.allPaused = msg.paused
+			m.pausedProjects = make(map[string]bool)
+			for _, id := range msg.pausedProjects {
+				m.pausedProjects[id] = true
+			}
 		}
 		return m, nil
 	}
@@ -653,6 +694,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sseClient.Stop()
 			m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
 			return m, m.sseClient.Connect(m.ctx)
+		case "w":
+			m.settings.TextWrap = !m.settings.TextWrap
+			m.taskTree.TextWrap = m.settings.TextWrap
+			m.helpBar.TextWrap = m.settings.TextWrap
+			_ = SaveSettings(m.settings)
+			return m, nil
 		case "L":
 			m.logsVisible = !m.logsVisible
 			// If hiding the active panel, switch back to tasks
@@ -725,6 +772,33 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.clearSelection()
 			}
 			return m, nil
+		case "p":
+			// Pause/resume active project
+			projectID := m.activeProjectID
+			if projectID == "" || projectID == "all" {
+				projectID = m.config.Project
+			}
+			if projectID != "" {
+				currentlyPaused := m.pausedProjects[projectID]
+				// Optimistic UI update
+				m.pausedProjects[projectID] = !currentlyPaused
+				if currentlyPaused {
+					m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+				} else {
+					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+				}
+				return m, pauseProjectCmd(m.config.APIURL, projectID, currentlyPaused)
+			}
+			return m, nil
+		case "P":
+			// Pause/resume all projects
+			m.allPaused = !m.allPaused
+			if m.allPaused {
+				m.setStatusMessage("info", "Pausing all projects...")
+			} else {
+				m.setStatusMessage("info", "Resuming all projects...")
+			}
+			return m, pauseAllCmd(m.config.APIURL, !m.allPaused)
 		}
 
 	case tea.KeyUp:
@@ -1761,6 +1835,61 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 			failedCount:  failedCount,
 			errors:       errors,
 		}
+	}
+}
+
+// pauseProjectCmd toggles pause/resume for a specific project.
+func pauseProjectCmd(apiURL, projectID string, currentlyPaused bool) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeProject(ctx, projectID)
+		} else {
+			err = apiClient.PauseProject(ctx, projectID)
+		}
+		return pauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: err}
+	}
+}
+
+// pauseAllCmd toggles pause/resume for all projects.
+func pauseAllCmd(apiURL string, currentlyPaused bool) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeAll(ctx)
+		} else {
+			err = apiClient.PauseAll(ctx)
+		}
+		return pauseAllToggledMsg{paused: !currentlyPaused, err: err}
+	}
+}
+
+// fetchRunnerStatusCmd fetches the current runner status (pause state).
+func fetchRunnerStatusCmd(apiURL string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		status, err := apiClient.GetRunnerStatus(ctx)
+		if err != nil {
+			return runnerStatusMsg{err: err}
+		}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
 	}
 }
 

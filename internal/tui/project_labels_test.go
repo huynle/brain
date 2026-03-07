@@ -26,7 +26,7 @@ func TestRenderGroupedTaskLine_AggregateView_ShowsProjectLabel(t *testing.T) {
 	}
 
 	// Render task line in aggregate view context
-	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, m.activeProjectID)
+	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, m.activeProjectID, 120)
 
 	// Should contain project label [brain-api]
 	if !strings.Contains(line, "[brain-api]") {
@@ -58,7 +58,7 @@ func TestRenderGroupedTaskLine_SingleProjectView_NoProjectLabel(t *testing.T) {
 	}
 
 	// Render task line in single-project view
-	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, m.activeProjectID)
+	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, m.activeProjectID, 120)
 
 	// Should NOT contain project label
 	if strings.Contains(line, "[brain-api]") {
@@ -85,7 +85,7 @@ func TestRenderGroupedTaskLine_ProjectLabelStyling(t *testing.T) {
 	}
 
 	// Render in aggregate view
-	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, "all")
+	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, "all", 120)
 
 	// Project label should be present
 	if !strings.Contains(line, "[opencode]") {
@@ -110,7 +110,7 @@ func TestRenderGroupedTaskLine_EmptyProjectID_NoLabel(t *testing.T) {
 	}
 
 	// Render in aggregate view
-	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, "all")
+	line := tt.renderGroupedTaskLineWithProject(task, false, make(map[string]bool), false, "all", 120)
 
 	// Should NOT contain empty brackets
 	if strings.Contains(line, "[]") {
@@ -141,7 +141,7 @@ func TestRenderGroupedTaskLine_WithMultiSelect_ShowsLabelAndCheckbox(t *testing.
 	}
 
 	// Render in aggregate view with multi-select
-	line := tt.renderGroupedTaskLineWithProject(task, false, selectedTasks, true, "all")
+	line := tt.renderGroupedTaskLineWithProject(task, false, selectedTasks, true, "all", 120)
 
 	// Should contain checkbox
 	if !strings.Contains(line, "[x]") && !strings.Contains(line, "[ ]") {
@@ -173,7 +173,7 @@ func TestRenderGroupedTaskLine_SelectedTask_ShowsLabelAndHighlight(t *testing.T)
 	}
 
 	// Render in aggregate view with task selected (isSelected=true)
-	line := tt.renderGroupedTaskLineWithProject(task, true, make(map[string]bool), false, "all")
+	line := tt.renderGroupedTaskLineWithProject(task, true, make(map[string]bool), false, "all", 120)
 
 	// Should contain project label
 	if !strings.Contains(line, "[test-project]") {

@@ -9,6 +9,7 @@ import (
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
 	ActivePanel Panel
+	TextWrap    bool
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -47,6 +48,12 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+	}
+
+	if h.TextWrap {
+		shortcuts += fmt.Sprintf("%s Wrap  ", bold("w"))
+	} else {
+		shortcuts += fmt.Sprintf("%s Trunc  ", bold("w"))
 	}
 
 	shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))

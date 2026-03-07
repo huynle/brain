@@ -9,11 +9,14 @@ import (
 
 // StatusBar displays project name, task stats, and connection status.
 type StatusBar struct {
-	Project       string
-	Connected     bool
-	Stats         TaskStats
-	SelectedCount int
-	Metrics       *ResourceMetrics
+	Project             string
+	Connected           bool
+	Stats               TaskStats
+	SelectedCount       int
+	Metrics             *ResourceMetrics
+	IsPaused            bool
+	EnabledFeatureCount int
+	ActiveFeatureCount  int
 }
 
 // NewStatusBar creates a new StatusBar for the given project.
@@ -29,6 +32,27 @@ func (s StatusBar) View(width int) string {
 
 	// Left side: project name
 	projectName := TitleStyle.Render(s.Project)
+
+	// Pause and feature indicators (before stats, matching TS StatusBar)
+	indicators := ""
+	if s.ActiveFeatureCount > 0 {
+		// Active features take priority over pause indicator
+		indicators += lipgloss.NewStyle().Foreground(ColorMagenta).Bold(true).
+			Render(fmt.Sprintf("▶%d", s.ActiveFeatureCount)) + " "
+	} else if s.IsPaused {
+		// Show pause symbol when no active features
+		indicators += lipgloss.NewStyle().Foreground(ColorWaiting).Bold(true).
+			Render("⏸")
+		if s.EnabledFeatureCount > 0 {
+			suffix := "s"
+			if s.EnabledFeatureCount == 1 {
+				suffix = ""
+			}
+			indicators += lipgloss.NewStyle().Foreground(ColorReady).
+				Render(fmt.Sprintf(" [%d feature%s enabled]", s.EnabledFeatureCount, suffix))
+		}
+		indicators += " "
+	}
 
 	// Middle: task stats
 	stats := fmt.Sprintf(
@@ -72,7 +96,7 @@ func (s StatusBar) View(width int) string {
 	rightContent += connDot
 
 	// Compose the status bar
-	leftContent := projectName + "  " + stats
+	leftContent := projectName + "  " + indicators + stats
 
 	// Use a border style for the status bar
 	barStyle := lipgloss.NewStyle().

@@ -1228,9 +1228,35 @@ func (m Model) View() string {
 
 // renderBaseView renders the main TUI layout (without modal)
 func (m Model) renderBaseView() string {
-	// Update status bar with selection count and metrics
+	// Update status bar with selection count, metrics, and pause/feature indicators
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics
+
+	// Wire pause state to status bar
+	projectID := m.activeProjectID
+	if projectID == "" || projectID == "all" {
+		projectID = m.config.Project
+	}
+	if m.activeProjectID == "all" && m.config.IsMultiProject() {
+		// In "all" mode, paused only if every project is paused
+		m.statusBar.IsPaused = m.allPaused
+	} else {
+		m.statusBar.IsPaused = m.pausedProjects[projectID]
+	}
+
+	// Count enabled and active features from task data
+	enabledFeatures := make(map[string]bool)
+	activeFeatures := make(map[string]bool)
+	for _, task := range m.tasks {
+		if task.FeatureID != "" {
+			enabledFeatures[task.FeatureID] = true
+		}
+		if task.FeatureID != "" && task.Status == "in_progress" {
+			activeFeatures[task.FeatureID] = true
+		}
+	}
+	m.statusBar.EnabledFeatureCount = len(enabledFeatures)
+	m.statusBar.ActiveFeatureCount = len(activeFeatures)
 	// Render ProjectTabs if multi-project mode
 	var projectTabsView string
 	if m.config.IsMultiProject() {

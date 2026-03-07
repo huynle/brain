@@ -365,6 +365,87 @@ func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string)
 }
 
 // =============================================================================
+// Runner Pause/Resume
+// =============================================================================
+
+// PauseProject pauses task execution for a specific project.
+func (c *APIClient) PauseProject(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/pause/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("pause project: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeProject resumes task execution for a specific project.
+func (c *APIClient) ResumeProject(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/resume/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("resume project: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// PauseAll pauses task execution for all projects.
+func (c *APIClient) PauseAll(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/pause", nil)
+	if err != nil {
+		return fmt.Errorf("pause all: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeAll resumes task execution for all projects.
+func (c *APIClient) ResumeAll(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/resume", nil)
+	if err != nil {
+		return fmt.Errorf("resume all: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// GetRunnerStatus returns the current runner status including pause state.
+func (c *APIClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/tasks/runner/status", nil)
+	if err != nil {
+		return nil, fmt.Errorf("get runner status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var status types.RunnerStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decode runner status: %w", err)
+	}
+	return &status, nil
+}
+
+// =============================================================================
 // Internal Helpers
 // =============================================================================
 

@@ -773,3 +773,239 @@ func TestAPIClient_GetFeature_ServerError(t *testing.T) {
 		t.Fatal("expected error for 500 response")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// PauseProject
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_PauseProject(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.PauseProject(context.Background(), "brain-api")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/pause/brain-api" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/pause/brain-api", gotPath)
+	}
+}
+
+func TestAPIClient_PauseProject_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.PauseProject(context.Background(), "brain-api")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ResumeProject
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ResumeProject(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ResumeProject(context.Background(), "brain-api")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/resume/brain-api" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/resume/brain-api", gotPath)
+	}
+}
+
+func TestAPIClient_ResumeProject_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ResumeProject(context.Background(), "brain-api")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// PauseAll
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_PauseAll(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.PauseAll(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/pause" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/pause", gotPath)
+	}
+}
+
+func TestAPIClient_PauseAll_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.PauseAll(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ResumeAll
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ResumeAll(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ResumeAll(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/resume" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/resume", gotPath)
+	}
+}
+
+func TestAPIClient_ResumeAll_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ResumeAll(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetRunnerStatus
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetRunnerStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/tasks/runner/status" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"running":        true,
+			"paused":         true,
+			"pausedProjects": []string{"brain-api", "my-project"},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	status, err := client.GetRunnerStatus(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status == nil {
+		t.Fatal("expected non-nil status")
+	}
+	if !status.Running {
+		t.Error("expected Running to be true")
+	}
+	if !status.Paused {
+		t.Error("expected Paused to be true")
+	}
+	if len(status.PausedProjects) != 2 {
+		t.Fatalf("expected 2 paused projects, got %d", len(status.PausedProjects))
+	}
+	if status.PausedProjects[0] != "brain-api" {
+		t.Errorf("PausedProjects[0] = %q, want %q", status.PausedProjects[0], "brain-api")
+	}
+}
+
+func TestAPIClient_GetRunnerStatus_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetRunnerStatus(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+func TestAPIClient_GetRunnerStatus_NotPaused(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"running":        true,
+			"paused":         false,
+			"pausedProjects": []string{},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	status, err := client.GetRunnerStatus(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if status.Paused {
+		t.Error("expected Paused to be false")
+	}
+	if len(status.PausedProjects) != 0 {
+		t.Errorf("expected 0 paused projects, got %d", len(status.PausedProjects))
+	}
+}

@@ -67,6 +67,10 @@ type Model struct {
 	// Multi-select state
 	selectedTasks map[string]bool
 
+	// Pause/resume state
+	pausedProjects map[string]bool
+	allPaused      bool
+
 	// Resource metrics
 	metricsCollector *MetricsCollector
 	resourceMetrics  ResourceMetrics
@@ -105,6 +109,7 @@ func NewModel(cfg Config) Model {
 		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
+		pausedProjects:   make(map[string]bool),
 		tasksByProject:   make(map[string][]types.ResolvedTask),
 		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
@@ -1544,6 +1549,23 @@ type batchTasksDeletedMsg struct {
 type editorClosedMsg struct {
 	taskID string
 	err    error
+}
+
+type pauseToggledMsg struct {
+	projectID string
+	paused    bool
+	err       error
+}
+
+type pauseAllToggledMsg struct {
+	paused bool
+	err    error
+}
+
+type runnerStatusMsg struct {
+	paused         bool
+	pausedProjects []string
+	err            error
 }
 
 // =============================================================================

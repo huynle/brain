@@ -1215,3 +1215,79 @@ func TestNewModel_LoadsSettings(t *testing.T) {
 		t.Error("expected settings.ProjectLimits to be initialized")
 	}
 }
+
+// =============================================================================
+// Pause/Resume State Tests
+// =============================================================================
+
+func TestNewModel_InitializesPauseState(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// pausedProjects should be initialized as empty map
+	if m.pausedProjects == nil {
+		t.Error("expected pausedProjects to be initialized (non-nil)")
+	}
+	if len(m.pausedProjects) != 0 {
+		t.Errorf("expected pausedProjects to be empty, got %d entries", len(m.pausedProjects))
+	}
+
+	// allPaused should be false initially
+	if m.allPaused {
+		t.Error("expected allPaused to be false initially")
+	}
+}
+
+func TestPauseToggledMsg_Fields(t *testing.T) {
+	// Verify the message type can be constructed and used
+	msg := pauseToggledMsg{
+		projectID: "brain-api",
+		paused:    true,
+		err:       nil,
+	}
+	if msg.projectID != "brain-api" {
+		t.Errorf("projectID = %q, want %q", msg.projectID, "brain-api")
+	}
+	if !msg.paused {
+		t.Error("expected paused to be true")
+	}
+	if msg.err != nil {
+		t.Errorf("expected nil error, got %v", msg.err)
+	}
+}
+
+func TestPauseAllToggledMsg_Fields(t *testing.T) {
+	msg := pauseAllToggledMsg{
+		paused: true,
+		err:    nil,
+	}
+	if !msg.paused {
+		t.Error("expected paused to be true")
+	}
+	if msg.err != nil {
+		t.Errorf("expected nil error, got %v", msg.err)
+	}
+}
+
+func TestRunnerStatusMsg_Fields(t *testing.T) {
+	msg := runnerStatusMsg{
+		paused:         true,
+		pausedProjects: []string{"brain-api", "my-project"},
+		err:            nil,
+	}
+	if !msg.paused {
+		t.Error("expected paused to be true")
+	}
+	if len(msg.pausedProjects) != 2 {
+		t.Fatalf("expected 2 paused projects, got %d", len(msg.pausedProjects))
+	}
+	if msg.pausedProjects[0] != "brain-api" {
+		t.Errorf("pausedProjects[0] = %q, want %q", msg.pausedProjects[0], "brain-api")
+	}
+	if msg.err != nil {
+		t.Errorf("expected nil error, got %v", msg.err)
+	}
+}

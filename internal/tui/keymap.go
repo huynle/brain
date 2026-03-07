@@ -18,8 +18,10 @@ type KeyMap struct {
 	NextTab key.Binding
 
 	// Actions
-	Refresh key.Binding
-	Quit    key.Binding
+	Refresh  key.Binding
+	Quit     key.Binding
+	Pause    key.Binding
+	PauseAll key.Binding
 }
 
 // DefaultKeyMap returns the default key bindings.
@@ -60,6 +62,14 @@ func DefaultKeyMap() KeyMap {
 		Quit: key.NewBinding(
 			key.WithKeys("q", "ctrl+c"),
 			key.WithHelp("q", "Quit"),
+		),
+		Pause: key.NewBinding(
+			key.WithKeys("p"),
+			key.WithHelp("p", "Pause"),
+		),
+		PauseAll: key.NewBinding(
+			key.WithKeys("P"),
+			key.WithHelp("P", "Pause All"),
 		),
 	}
 }

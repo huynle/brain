@@ -10,6 +10,8 @@ import (
 type HelpBar struct {
 	ActivePanel Panel
 	TextWrap    bool
+	IsPaused    bool
+	AllPaused   bool
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -48,6 +50,14 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+		shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+	}
+
+	// Pause indicator (shown regardless of active panel)
+	if h.AllPaused {
+		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ ALL PAUSED") + "  "
+	} else if h.IsPaused {
+		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ PAUSED") + "  "
 	}
 
 	if h.TextWrap {

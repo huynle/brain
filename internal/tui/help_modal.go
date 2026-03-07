@@ -81,6 +81,10 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("d", "Delete task"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("p", "Pause/resume project"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("P", "Pause/resume all projects"))
+	b.WriteString("\n")
 
 	// Multi-select shortcuts
 	b.WriteString(categoryStyle.Render("Multi-Select:"))
@@ -160,9 +164,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (7), Multi-Select (3), Views (4), Other (2)
+	// Categories: Navigation (5), Actions (9), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 7 + 3 + 4 + 2 + 5 + 2
+	baseLines := 5 + 9 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

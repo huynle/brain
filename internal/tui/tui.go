@@ -377,6 +377,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setStatusMessage("success", fmt.Sprintf("Project %s resumed", msg.projectID))
 			}
 		}
+		m.syncHelpBarPauseState()
 		return m, nil
 
 	case pauseAllToggledMsg:
@@ -390,6 +391,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.setStatusMessage("success", "All projects resumed")
 			}
 		}
+		m.syncHelpBarPauseState()
 		return m, nil
 
 	case runnerStatusMsg:
@@ -400,6 +402,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.pausedProjects[id] = true
 			}
 		}
+		m.syncHelpBarPauseState()
 		return m, nil
 	}
 
@@ -787,6 +790,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
 				}
+				m.syncHelpBarPauseState()
 				return m, pauseProjectCmd(m.config.APIURL, projectID, currentlyPaused)
 			}
 			return m, nil
@@ -798,6 +802,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.setStatusMessage("info", "Resuming all projects...")
 			}
+			m.syncHelpBarPauseState()
 			return m, pauseAllCmd(m.config.APIURL, !m.allPaused)
 		}
 
@@ -1117,6 +1122,17 @@ func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
+}
+
+// syncHelpBarPauseState updates the help bar's pause indicators based on current state.
+func (m *Model) syncHelpBarPauseState() {
+	m.helpBar.AllPaused = m.allPaused
+	// Determine active project ID for pause check
+	projectID := m.activeProjectID
+	if projectID == "" || projectID == "all" {
+		projectID = m.config.Project
+	}
+	m.helpBar.IsPaused = m.pausedProjects[projectID]
 }
 
 // toggleTaskSelection toggles selection for the currently focused task.

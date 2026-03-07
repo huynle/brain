@@ -1704,6 +1704,189 @@ func TestFetchRunnerStatusCmd_ReturnsRunnerStatusMsg(t *testing.T) {
 // Phase 2: Tick Syncs Runner Status
 // =============================================================================
 
+// =============================================================================
+// Phase 3: HelpBar Pause State Sync Tests
+// =============================================================================
+
+func TestSyncHelpBarPauseState_ProjectPaused(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.pausedProjects["test-project"] = true
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true when active project is paused")
+	}
+	if m.helpBar.AllPaused {
+		t.Error("expected helpBar.AllPaused to be false")
+	}
+}
+
+func TestSyncHelpBarPauseState_AllPaused(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.allPaused = true
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.AllPaused {
+		t.Error("expected helpBar.AllPaused to be true")
+	}
+}
+
+func TestSyncHelpBarPauseState_NotPaused(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	m.syncHelpBarPauseState()
+
+	if m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be false when no projects paused")
+	}
+	if m.helpBar.AllPaused {
+		t.Error("expected helpBar.AllPaused to be false")
+	}
+}
+
+func TestSyncHelpBarPauseState_MultiProject_ActiveProjectPaused(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "proj-a"
+	m.pausedProjects["proj-a"] = true
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true for active project proj-a")
+	}
+}
+
+func TestSyncHelpBarPauseState_MultiProject_AllTab_FallsBackToConfigProject(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "all"
+	m.pausedProjects["default-project"] = true
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true when 'all' tab and config project is paused")
+	}
+}
+
+func TestUpdate_PKey_SyncsHelpBarPauseState(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Press 'p' to pause
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	// HelpBar should reflect the optimistic pause state
+	if !model.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true after pressing 'p'")
+	}
+}
+
+func TestUpdate_ShiftPKey_SyncsHelpBarAllPaused(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Press 'P' to pause all
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.helpBar.AllPaused {
+		t.Error("expected helpBar.AllPaused to be true after pressing 'P'")
+	}
+}
+
+func TestUpdate_PauseToggledMsg_SyncsHelpBar(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.pausedProjects["test-project"] = true // optimistic
+
+	// Successful pause confirmation
+	updated, _ := m.Update(pauseToggledMsg{projectID: "test-project", paused: true, err: nil})
+	model := updated.(Model)
+
+	if !model.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true after successful pause toggle")
+	}
+}
+
+func TestUpdate_PauseToggledMsg_Error_SyncsHelpBarAfterRevert(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.pausedProjects["test-project"] = true // optimistic
+
+	// Error reverts the optimistic update
+	updated, _ := m.Update(pauseToggledMsg{
+		projectID: "test-project",
+		paused:    true,
+		err:       fmt.Errorf("server error"),
+	})
+	model := updated.(Model)
+
+	// After revert, IsPaused should be false
+	if model.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be false after error revert")
+	}
+}
+
+func TestUpdate_RunnerStatusMsg_SyncsHelpBar(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, _ := m.Update(runnerStatusMsg{
+		paused:         true,
+		pausedProjects: []string{"test-project"},
+	})
+	model := updated.(Model)
+
+	if !model.helpBar.AllPaused {
+		t.Error("expected helpBar.AllPaused to be true after runnerStatusMsg")
+	}
+	if !model.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to be true after runnerStatusMsg with test-project paused")
+	}
+}
+
 func TestUpdate_TickMsg_ReturnsCmd(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",

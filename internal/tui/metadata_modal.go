@@ -29,6 +29,40 @@ type metadataUpdatedMsg struct {
 	err   error
 }
 
+// monitorTemplatesFetchedMsg is sent when monitor template statuses have been fetched.
+type monitorTemplatesFetchedMsg struct {
+	templates []MonitorTemplateState
+	err       error
+}
+
+// monitorToggleResultMsg is sent when a monitor template toggle completes.
+type monitorToggleResultMsg struct {
+	index     int
+	newStatus string
+	taskPath  string
+	err       error
+}
+
+// ============================================================================
+// Monitor Template Types
+// ============================================================================
+
+// MonitorTemplateState represents the state of a monitor template in the metadata modal.
+type MonitorTemplateState struct {
+	TemplateID string
+	Label      string
+	Status     string // "loading", "enabled", "create"
+	Schedule   string
+	TaskPath   string // path for deletion when enabled
+	IsMonitor  bool   // true=monitor API (feature-review), false=entries API (blocked-inspector)
+}
+
+// defaultMonitorTemplates defines the known monitor templates.
+var defaultMonitorTemplates = []MonitorTemplateState{
+	{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "loading", Schedule: "*/30 * * * *", IsMonitor: false},
+	{TemplateID: "feature-review", Label: "Feature Review", Status: "loading", Schedule: "one-shot", IsMonitor: true},
+}
+
 // ============================================================================
 // Mode Enums
 // ============================================================================
@@ -83,6 +117,12 @@ type MetadataModal struct {
 	saveError      error
 	saveSuccess    bool
 	lastSavedField MetadataField
+
+	// Monitor template state (feature mode only)
+	monitorTemplates    []MonitorTemplateState
+	monitorLoading      bool
+	focusedMonitorIndex int // -1 when not in monitor zone
+	monitorClient       *MonitorClient
 }
 
 // NewMetadataModal creates a new metadata editing modal for a single task.
@@ -97,20 +137,34 @@ func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *Metad
 
 // NewMetadataModalFeature creates a new metadata editing modal for a feature.
 // The taskIDs will be populated in Init() when fetching tasks by feature_id.
-func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIClient) *MetadataModal {
+// An optional MonitorClient can be passed to enable monitor template rows.
+func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIClient, monitorClients ...*MonitorClient) *MetadataModal {
+	var mc *MonitorClient
+	if len(monitorClients) > 0 {
+		mc = monitorClients[0]
+	}
+
+	// Copy default monitor templates
+	templates := make([]MonitorTemplateState, len(defaultMonitorTemplates))
+	copy(templates, defaultMonitorTemplates)
+
 	m := &MetadataModal{
-		featureID:       featureID,
-		projectID:       projectID,
-		mode:            ModeFeature,
-		apiClient:       apiClient,
-		taskIDs:         []string{}, // Will be populated in Init
-		values:          make(map[MetadataField]string),
-		boolValues:      make(map[MetadataField]bool),
-		mixedFields:     make(map[MetadataField]bool),
-		interactionMode: ModeNavigate,
-		focusedIndex:    0,
-		width:           60,
-		height:          20,
+		featureID:           featureID,
+		projectID:           projectID,
+		mode:                ModeFeature,
+		apiClient:           apiClient,
+		taskIDs:             []string{}, // Will be populated in Init
+		values:              make(map[MetadataField]string),
+		boolValues:          make(map[MetadataField]bool),
+		mixedFields:         make(map[MetadataField]bool),
+		interactionMode:     ModeNavigate,
+		focusedIndex:        0,
+		width:               60,
+		height:              24, // Base 20 + separator(1) + templates(2) + spacing(1)
+		monitorTemplates:    templates,
+		monitorLoading:      true,
+		focusedMonitorIndex: -1,
+		monitorClient:       mc,
 	}
 	// Set field list based on mode
 	m.fieldList = m.buildFieldList()
@@ -120,16 +174,17 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 // newMetadataModal is the internal constructor.
 func newMetadataModal(taskIDs []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
 	m := &MetadataModal{
-		taskIDs:         taskIDs,
-		mode:            mode,
-		apiClient:       apiClient,
-		interactionMode: ModeNavigate,
-		focusedIndex:    0,
-		values:          make(map[MetadataField]string),
-		boolValues:      make(map[MetadataField]bool),
-		mixedFields:     make(map[MetadataField]bool),
-		width:           60,
-		height:          25,
+		taskIDs:             taskIDs,
+		mode:                mode,
+		apiClient:           apiClient,
+		interactionMode:     ModeNavigate,
+		focusedIndex:        0,
+		values:              make(map[MetadataField]string),
+		boolValues:          make(map[MetadataField]bool),
+		mixedFields:         make(map[MetadataField]bool),
+		width:               60,
+		height:              25,
+		focusedMonitorIndex: -1,
 	}
 	// Set field list based on mode
 	m.fieldList = m.buildFieldList()
@@ -189,34 +244,94 @@ func (m *MetadataModal) buildFieldList() []MetadataField {
 // Navigation Methods
 // ============================================================================
 
-// moveDown moves focus to the next field (wraps to top).
-func (m *MetadataModal) moveDown() {
-	m.focusedIndex++
-	if m.focusedIndex >= len(m.fieldList) {
-		m.focusedIndex = 0
-	}
-	m.focusedField = m.fieldList[m.focusedIndex]
+// hasMonitorRows returns true if this modal has monitor template rows to display.
+func (m *MetadataModal) hasMonitorRows() bool {
+	return m.mode == ModeFeature && len(m.monitorTemplates) > 0 && !m.monitorLoading
 }
 
-// moveUp moves focus to the previous field (wraps to bottom).
+// inMonitorZone returns true if focus is currently in the monitor rows zone.
+func (m *MetadataModal) inMonitorZone() bool {
+	return m.focusedMonitorIndex >= 0
+}
+
+// moveDown moves focus to the next field or monitor row (wraps to top).
+func (m *MetadataModal) moveDown() {
+	if m.inMonitorZone() {
+		// In monitor zone: move to next monitor row or wrap to first field
+		m.focusedMonitorIndex++
+		if m.focusedMonitorIndex >= len(m.monitorTemplates) {
+			// Wrap to first field
+			m.focusedMonitorIndex = -1
+			m.focusedIndex = 0
+			m.focusedField = m.fieldList[0]
+		}
+		return
+	}
+
+	// In field zone
+	m.focusedIndex++
+	if m.focusedIndex >= len(m.fieldList) {
+		if m.hasMonitorRows() {
+			// Move into monitor zone
+			m.focusedMonitorIndex = 0
+			// Keep focusedIndex at len(fieldList) to indicate monitor zone
+		} else {
+			// Wrap to first field
+			m.focusedIndex = 0
+		}
+	}
+	if m.focusedIndex < len(m.fieldList) {
+		m.focusedField = m.fieldList[m.focusedIndex]
+	}
+}
+
+// moveUp moves focus to the previous field or monitor row (wraps to bottom).
 func (m *MetadataModal) moveUp() {
+	if m.inMonitorZone() {
+		// In monitor zone: move to previous monitor row or back to last field
+		m.focusedMonitorIndex--
+		if m.focusedMonitorIndex < 0 {
+			// Move back to last field
+			m.focusedMonitorIndex = -1
+			m.focusedIndex = len(m.fieldList) - 1
+			m.focusedField = m.fieldList[m.focusedIndex]
+		}
+		return
+	}
+
+	// In field zone
 	m.focusedIndex--
 	if m.focusedIndex < 0 {
-		m.focusedIndex = len(m.fieldList) - 1
+		if m.hasMonitorRows() {
+			// Wrap to last monitor row
+			m.focusedMonitorIndex = len(m.monitorTemplates) - 1
+			m.focusedIndex = len(m.fieldList)
+		} else {
+			// Wrap to last field
+			m.focusedIndex = len(m.fieldList) - 1
+		}
 	}
-	m.focusedField = m.fieldList[m.focusedIndex]
+	if m.focusedIndex < len(m.fieldList) {
+		m.focusedField = m.fieldList[m.focusedIndex]
+	}
 }
 
 // moveToTop moves focus to the first field.
 func (m *MetadataModal) moveToTop() {
+	m.focusedMonitorIndex = -1
 	m.focusedIndex = 0
 	m.focusedField = m.fieldList[m.focusedIndex]
 }
 
 // moveToBottom moves focus to the last field.
 func (m *MetadataModal) moveToBottom() {
-	m.focusedIndex = len(m.fieldList) - 1
-	m.focusedField = m.fieldList[m.focusedIndex]
+	if m.hasMonitorRows() {
+		m.focusedMonitorIndex = len(m.monitorTemplates) - 1
+		m.focusedIndex = len(m.fieldList)
+	} else {
+		m.focusedIndex = len(m.fieldList) - 1
+		m.focusedField = m.fieldList[m.focusedIndex]
+	}
 }
 
 // moveDropdownDown moves dropdown selection down (wraps to top).
@@ -492,6 +607,47 @@ func (m *MetadataModal) Init() tea.Cmd {
 	}
 }
 
+// fetchMonitorStatusesCmd returns a tea.Cmd that fetches monitor template statuses.
+func (m *MetadataModal) fetchMonitorStatusesCmd() tea.Cmd {
+	client := m.monitorClient
+	featureID := m.featureID
+	projectID := m.projectID
+	templates := make([]MonitorTemplateState, len(m.monitorTemplates))
+	copy(templates, m.monitorTemplates)
+
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		for i, tmpl := range templates {
+			if tmpl.IsMonitor {
+				result, err := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, projectID)
+				if err != nil {
+					return monitorTemplatesFetchedMsg{err: err}
+				}
+				if result != nil {
+					templates[i].Status = "enabled"
+					templates[i].TaskPath = result.TaskID
+				} else {
+					templates[i].Status = "create"
+				}
+			} else {
+				result, err := client.FindScheduledTask(ctx, tmpl.TemplateID, featureID)
+				if err != nil {
+					return monitorTemplatesFetchedMsg{err: err}
+				}
+				if result != nil {
+					templates[i].Status = "enabled"
+					templates[i].TaskPath = result.Path
+				} else {
+					templates[i].Status = "create"
+				}
+			}
+		}
+
+		return monitorTemplatesFetchedMsg{templates: templates, err: nil}
+	}
+}
+
 // Update handles messages.
 func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -533,6 +689,12 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if entry.OpenPRBeforeMerge != nil {
 			m.boolValues[FieldOpenPRBeforeMerge] = *entry.OpenPRBeforeMerge
 		}
+
+		// In feature mode, kick off monitor template status fetch
+		if m.mode == ModeFeature && m.monitorClient != nil && len(m.monitorTemplates) > 0 {
+			return m, m.fetchMonitorStatusesCmd()
+		}
+
 		return m, nil
 
 	case metadataUpdatedMsg:
@@ -545,6 +707,23 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.saveError = nil
 			// Clear mixed indicator for this field after successful save
 			m.mixedFields[msg.field] = false
+		}
+		return m, nil
+
+	case monitorTemplatesFetchedMsg:
+		m.monitorLoading = false
+		if msg.err != nil {
+			return m, nil
+		}
+		if len(msg.templates) == len(m.monitorTemplates) {
+			m.monitorTemplates = msg.templates
+		}
+		return m, nil
+
+	case monitorToggleResultMsg:
+		if msg.index >= 0 && msg.index < len(m.monitorTemplates) {
+			m.monitorTemplates[msg.index].Status = msg.newStatus
+			m.monitorTemplates[msg.index].TaskPath = msg.taskPath
 		}
 		return m, nil
 	}
@@ -600,7 +779,7 @@ func (m *MetadataModal) View() string {
 	for i, field := range m.fieldList {
 		// Determine indicator and styling based on focus
 		var indicator, line string
-		isFocused := i == m.focusedIndex
+		isFocused := i == m.focusedIndex && !m.inMonitorZone()
 
 		if isFocused {
 			indicator = "→"
@@ -644,6 +823,65 @@ func (m *MetadataModal) View() string {
 
 		b.WriteString(line)
 		b.WriteString("\n")
+	}
+
+	// Render monitor template section (feature mode only)
+	if m.mode == ModeFeature && len(m.monitorTemplates) > 0 {
+		b.WriteString("\n")
+		// Separator
+		separatorStyle := lipgloss.NewStyle().Foreground(ColorDim).Bold(true)
+		b.WriteString(separatorStyle.Render("── Automated Tasks ──"))
+		b.WriteString("\n")
+
+		if m.monitorLoading {
+			loadingStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+			b.WriteString(loadingStyle.Render("  Loading..."))
+			b.WriteString("\n")
+		} else {
+			for i, tmpl := range m.monitorTemplates {
+				isFocused := m.focusedMonitorIndex == i
+
+				// Arrow prefix
+				var indicator string
+				if isFocused {
+					indicator = "→"
+				} else {
+					indicator = " "
+				}
+
+				// Status icon
+				var icon, statusTag string
+				switch tmpl.Status {
+				case "enabled":
+					icon = lipgloss.NewStyle().Foreground(ColorReady).Render("●")
+					statusTag = lipgloss.NewStyle().Foreground(ColorReady).Render("[enabled]")
+				case "loading":
+					icon = lipgloss.NewStyle().Foreground(ColorWaiting).Render("◌")
+					statusTag = lipgloss.NewStyle().Foreground(ColorWaiting).Render("[loading]")
+				default: // "create"
+					icon = lipgloss.NewStyle().Foreground(ColorDim).Render("○")
+					statusTag = lipgloss.NewStyle().Foreground(ColorDim).Render("[create]")
+				}
+
+				// Label
+				var label string
+				if isFocused {
+					label = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render(tmpl.Label)
+				} else {
+					label = tmpl.Label
+				}
+
+				// Schedule (show for enabled)
+				var schedule string
+				if tmpl.Status == "enabled" && tmpl.Schedule != "" {
+					schedule = " " + lipgloss.NewStyle().Foreground(ColorDim).Render(tmpl.Schedule)
+				}
+
+				line := fmt.Sprintf("%s %s %s %s%s", indicator, icon, label, statusTag, schedule)
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
 	}
 
 	// Add footer help text
@@ -738,11 +976,85 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 	case "G":
 		m.moveToBottom()
 		return true, nil
-	case "enter":
-		m.enterEditMode()
-		return true, nil
+	case "enter", " ":
+		if m.inMonitorZone() {
+			return m.toggleMonitorTemplate()
+		}
+		if key == "enter" {
+			m.enterEditMode()
+			return true, nil
+		}
+		return false, nil
 	default:
 		return false, nil
+	}
+}
+
+// toggleMonitorTemplate toggles the focused monitor template between create/enabled.
+func (m *MetadataModal) toggleMonitorTemplate() (bool, tea.Cmd) {
+	if m.focusedMonitorIndex < 0 || m.focusedMonitorIndex >= len(m.monitorTemplates) {
+		return false, nil
+	}
+
+	tmpl := &m.monitorTemplates[m.focusedMonitorIndex]
+	if tmpl.Status == "loading" {
+		return true, nil // Already loading, ignore
+	}
+
+	prevStatus := tmpl.Status
+	tmpl.Status = "loading"
+
+	idx := m.focusedMonitorIndex
+	return true, toggleMonitorTemplateCmd(m.monitorClient, idx, m.monitorTemplates[idx], m.featureID, m.projectID, prevStatus)
+}
+
+// toggleMonitorTemplateCmd creates a tea.Cmd that toggles a monitor template.
+func toggleMonitorTemplateCmd(client *MonitorClient, index int, tmpl MonitorTemplateState, featureID, project, prevStatus string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		if prevStatus == "create" {
+			// Create the monitor/scheduled task
+			var err error
+			if tmpl.IsMonitor {
+				err = client.CreateMonitorTask(ctx, tmpl.TemplateID, featureID, project)
+			} else {
+				prompt := fmt.Sprintf("Check for blocked tasks in feature %s", featureID)
+				err = client.CreateScheduledTask(ctx, tmpl.TemplateID, featureID, project, tmpl.Schedule, prompt)
+			}
+			if err != nil {
+				return monitorToggleResultMsg{index: index, newStatus: prevStatus, err: err}
+			}
+
+			// Find the created task to get its path
+			var taskPath string
+			if tmpl.IsMonitor {
+				result, findErr := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, project)
+				if findErr == nil && result != nil {
+					taskPath = result.TaskID
+				}
+			} else {
+				result, findErr := client.FindScheduledTask(ctx, tmpl.TemplateID, featureID)
+				if findErr == nil && result != nil {
+					taskPath = result.Path
+				}
+			}
+
+			return monitorToggleResultMsg{index: index, newStatus: "enabled", taskPath: taskPath, err: nil}
+		}
+
+		// Delete the monitor/scheduled task
+		var err error
+		if tmpl.IsMonitor {
+			err = client.DeleteMonitorTask(ctx, tmpl.TaskPath)
+		} else {
+			err = client.DeleteScheduledTask(ctx, tmpl.TaskPath)
+		}
+		if err != nil {
+			return monitorToggleResultMsg{index: index, newStatus: prevStatus, err: err}
+		}
+
+		return monitorToggleResultMsg{index: index, newStatus: "create", taskPath: "", err: nil}
 	}
 }
 

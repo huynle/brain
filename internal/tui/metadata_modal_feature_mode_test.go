@@ -58,8 +58,8 @@ func TestNewMetadataModalFeature(t *testing.T) {
 	if modal.width != 60 {
 		t.Errorf("width = %d, want 60", modal.width)
 	}
-	if modal.height != 20 {
-		t.Errorf("height = %d, want 20", modal.height)
+	if modal.height != 24 {
+		t.Errorf("height = %d, want 24", modal.height)
 	}
 }
 

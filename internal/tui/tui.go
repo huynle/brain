@@ -612,7 +612,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.taskTree.useFeatureView {
 					featureID := m.taskTree.GetSelectedFeatureID()
 					if featureID != "" {
-						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient)
+						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
 						if modal != nil {
 							cmd := m.modalManager.Open(modal)
 							return m, cmd
@@ -747,19 +747,23 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				count := len(m.selectedTasks)
 				taskIDs := make([]string, 0, count)
 				taskPaths := make([]string, 0, count)
+				taskTitles := make([]string, 0, count)
 				for id := range m.selectedTasks {
 					taskIDs = append(taskIDs, id)
-					// Find task to get path
+					// Find task to get path and title
 					for _, t := range m.tasks {
 						if t.ID == id {
 							taskPaths = append(taskPaths, t.Path)
+							taskTitles = append(taskTitles, t.Title)
 							break
 						}
 					}
 				}
 
-				message := fmt.Sprintf("Delete %d tasks? This cannot be undone.", count)
+				message := fmt.Sprintf("Delete %d task(s)?", count)
 				modal := NewConfirmModal("Delete Tasks", message).
+					WithTaskTitles(taskTitles).
+					WithDestructive(true).
 					WithOnConfirm(func() tea.Msg {
 						return batchDeleteTasksCmd(apiClient, taskPaths, taskIDs)()
 					})
@@ -772,8 +776,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			message := fmt.Sprintf("Delete task '%s'?\nThis cannot be undone.", selectedTask.Title)
+			message := fmt.Sprintf("Delete %d task(s)?", 1)
 			modal := NewConfirmModal("Delete Task", message).
+				WithTaskTitles([]string{selectedTask.Title}).
+				WithDestructive(true).
 				WithOnConfirm(func() tea.Msg {
 					return deleteTaskCmd(apiClient, selectedTask.Path)()
 				})

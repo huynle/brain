@@ -14,7 +14,12 @@ const config = getConfig();
 let app: ReturnType<typeof createApp>;
 
 beforeAll(() => {
-  app = createApp(config);
+  // Disable auth for integration tests - we're testing task endpoints, not auth
+  const testConfig = {
+    ...config,
+    server: { ...config.server, enableAuth: false },
+  };
+  app = createApp(testConfig);
 });
 
 // =============================================================================

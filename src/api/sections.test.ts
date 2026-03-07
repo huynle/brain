@@ -19,8 +19,11 @@ const config = getConfig();
 const TEST_SUBDIR = `_sections-test-${Date.now()}`;
 const TEST_PATH_PREFIX = `projects/${TEST_SUBDIR}`;
 
-// Create full app with all routes
-const app = createApp(config);
+// Create full app with all routes (auth disabled for integration tests)
+const app = createApp({
+  ...config,
+  server: { ...config.server, enableAuth: false },
+});
 
 beforeAll(() => {
   // Create test subdirectories in the real brain dir

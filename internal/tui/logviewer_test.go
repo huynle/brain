@@ -7,6 +7,85 @@ import (
 )
 
 // =============================================================================
+// LogEntry - Data Model Fields
+// =============================================================================
+
+func TestLogEntry_HasProjectIDField(t *testing.T) {
+	entry := LogEntry{
+		Timestamp: time.Now(),
+		Level:     "info",
+		Message:   "test message",
+		TaskID:    "abc12def",
+		ProjectID: "my-project",
+	}
+
+	if entry.ProjectID != "my-project" {
+		t.Errorf("expected ProjectID 'my-project', got '%s'", entry.ProjectID)
+	}
+}
+
+func TestLogEntry_HasContextField(t *testing.T) {
+	ctx := map[string]interface{}{
+		"component": "runner",
+		"attempt":   float64(3),
+	}
+	entry := LogEntry{
+		Timestamp: time.Now(),
+		Level:     "info",
+		Message:   "test message",
+		Context:   ctx,
+	}
+
+	if entry.Context == nil {
+		t.Fatal("expected Context to be non-nil")
+	}
+	if entry.Context["component"] != "runner" {
+		t.Errorf("expected Context['component'] = 'runner', got '%v'", entry.Context["component"])
+	}
+	if entry.Context["attempt"] != float64(3) {
+		t.Errorf("expected Context['attempt'] = 3, got '%v'", entry.Context["attempt"])
+	}
+}
+
+func TestLogEntry_ContextCanBeNil(t *testing.T) {
+	entry := LogEntry{
+		Timestamp: time.Now(),
+		Level:     "info",
+		Message:   "test message",
+	}
+
+	if entry.Context != nil {
+		t.Errorf("expected Context to be nil by default, got %v", entry.Context)
+	}
+}
+
+// =============================================================================
+// Config - LogDir Field
+// =============================================================================
+
+func TestConfig_HasLogDirField(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+		LogDir:  "/tmp/brain-logs",
+	}
+
+	if cfg.LogDir != "/tmp/brain-logs" {
+		t.Errorf("expected LogDir '/tmp/brain-logs', got '%s'", cfg.LogDir)
+	}
+}
+
+func TestConfig_LogDirDefaultsToEmpty(t *testing.T) {
+	cfg := Config{
+		APIURL: "http://localhost:3333",
+	}
+
+	if cfg.LogDir != "" {
+		t.Errorf("expected LogDir to default to empty string, got '%s'", cfg.LogDir)
+	}
+}
+
+// =============================================================================
 // LogViewer - Empty State
 // =============================================================================
 

@@ -186,6 +186,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		Project:  opts.Projects[0],
 		Projects: opts.Projects,
 		BrainDir: brainDir,
+		LogDir:   cfg.LogDir,
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

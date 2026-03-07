@@ -55,6 +55,7 @@ type Config struct {
 	Project  string
 	RunnerID string
 	BrainDir string
+	LogDir   string
 	// Projects lists all projects in multi-project mode.
 	Projects []string
 }

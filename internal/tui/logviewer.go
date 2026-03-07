@@ -17,6 +17,8 @@ type LogEntry struct {
 	Level     string
 	Message   string
 	TaskID    string
+	ProjectID string
+	Context   map[string]interface{}
 }
 
 // LogViewer displays streaming log entries with color-coded levels.

@@ -16,24 +16,26 @@ const (
 	TabLimits SettingsTab = iota
 	TabGroups
 	TabRuntime
+	TabMonitors
 )
 
 // StatusGroups represents the status groups available in the TUI
 var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
-// SettingsModal allows editing project limits, global max parallel, group visibility, and runtime settings.
+// SettingsModal allows editing project limits, global max parallel, group visibility, runtime settings, and monitors.
 // Navigation: j/k to move up/down, tab to switch sections
 // Adjustment: +/- to increase/decrease limits (Limits tab)
 // Toggle: Space to toggle group visibility - controls whether groups are shown in the task list (Groups tab)
 // Toggle: Space to toggle text wrap (Runtime tab)
-// Direct navigation: 1 for Limits, 2 for Groups, 3 for Runtime
+// Toggle: Space to toggle auto-create monitors (Monitors tab)
+// Direct navigation: 1 for Limits, 2 for Groups, 3 for Runtime, 4 for Monitors
 //
 // Note: Group visibility (GroupVisible) is separate from collapse state (GroupCollapsed).
 // Visibility controls filtering (whether the group appears at all).
 // Collapse controls UI folding (whether an visible group is expanded or collapsed).
 type SettingsModal struct {
 	settings      Settings
-	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab)
+	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab) or 0 = autoMonitors (Monitors tab)
 	projects      []string    // sorted project list
 	currentTab    SettingsTab // active tab
 	editMode      bool        // true when editing the default model field
@@ -111,7 +113,9 @@ func (m *SettingsModal) getMaxIndex() int {
 	case TabGroups:
 		return len(StatusGroups) - 1
 	case TabRuntime:
-		return 3 // 0=model, 1=wrap, 2=log, 3=autoMonitors
+		return 2 // 0=model, 1=wrap, 2=log
+	case TabMonitors:
+		return 0 // single toggle: autoMonitors
 	}
 	return 0
 }
@@ -150,6 +154,8 @@ func (m *SettingsModal) View() string {
 		s.WriteString(m.renderGroupsTab())
 	case TabRuntime:
 		s.WriteString(m.renderRuntimeTab())
+	case TabMonitors:
+		s.WriteString(m.renderMonitorsTab())
 	}
 
 	return s.String()
@@ -161,7 +167,7 @@ func (m *SettingsModal) renderTabHeader() string {
 	activeStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 	inactiveStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	tabNames := []string{"Limits", "Groups", "Runtime"}
+	tabNames := []string{"Limits", "Groups", "Runtime", "Monitors"}
 	for i, name := range tabNames {
 		if SettingsTab(i) == m.currentTab {
 			tabs = append(tabs, activeStyle.Render(fmt.Sprintf("[%s]", name)))
@@ -188,7 +194,7 @@ func (m *SettingsModal) renderLimitsTab() string {
 	// Help text at bottom
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
-	s.WriteString(helpStyle.Render("  j/k: navigate  +/=: increase  -: decrease  0: unlimited  tab/1-3: switch tabs"))
+	s.WriteString(helpStyle.Render("  j/k: navigate  +/=: increase  -: decrease  0: unlimited  tab/1-4: switch tabs"))
 
 	return s.String()
 }
@@ -215,7 +221,7 @@ func (m *SettingsModal) renderGroupsTab() string {
 
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
-	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  tab/1-3: switch tabs"))
+	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  tab/1-4: switch tabs"))
 
 	return s.String()
 }
@@ -261,14 +267,6 @@ func (m *SettingsModal) renderRuntimeTab() string {
 		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
 	}
 
-	// Auto Monitors setting (index 3)
-	cursor3 := m.getCursorForRuntimeTab(3)
-	autoMonCheckbox := "☑"
-	if !m.settings.AutoMonitors {
-		autoMonCheckbox = "☐"
-	}
-	s.WriteString(fmt.Sprintf("%s %s Auto Monitors\n", cursor3, autoMonCheckbox))
-
 	// Mode-aware help text
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
@@ -276,11 +274,53 @@ func (m *SettingsModal) renderRuntimeTab() string {
 	if m.editMode {
 		helpText = "  enter: save  esc: cancel  backspace: delete  ctrl+u: clear"
 	} else {
-		helpText = "  j/k: navigate  enter: edit model  space: toggle  tab/1-3: switch tabs"
+		helpText = "  j/k: navigate  enter: edit model  space: toggle  tab/1-4: switch tabs"
 	}
 	s.WriteString(helpStyle.Render(helpText))
 
 	return s.String()
+}
+
+// renderMonitorsTab renders the Monitors tab content
+func (m *SettingsModal) renderMonitorsTab() string {
+	var s strings.Builder
+
+	// Description
+	descStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	s.WriteString(descStyle.Render("Auto-create monitors for new features"))
+	s.WriteString("\n\n")
+
+	// Auto-create monitors toggle (index 0)
+	cursor := m.getCursorForMonitorsTab(0)
+	if m.settings.AutoMonitors {
+		onStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
+		s.WriteString(fmt.Sprintf("%s Auto-create monitors: %s\n", cursor, onStyle.Render("[ON]")))
+	} else {
+		offStyle := lipgloss.NewStyle().Foreground(ColorDim).Bold(true)
+		s.WriteString(fmt.Sprintf("%s Auto-create monitors: %s\n", cursor, offStyle.Render("[OFF]")))
+	}
+
+	// Sub-description
+	s.WriteString(descStyle.Render("  Creates Blocked Task Inspector and Feature Code Review"))
+	s.WriteString("\n")
+	s.WriteString(descStyle.Render("  for every new feature_id detected at runtime."))
+	s.WriteString("\n")
+
+	// Help text
+	s.WriteString("\n")
+	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle  tab/1-4: switch tabs"))
+
+	return s.String()
+}
+
+// getCursorForMonitorsTab returns styled cursor for Monitors tab (only shows when on Monitors tab)
+func (m *SettingsModal) getCursorForMonitorsTab(index int) string {
+	if m.currentTab == TabMonitors && m.selectedIndex == index {
+		cursorStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+		return cursorStyle.Render(">")
+	}
+	return " "
 }
 
 // renderGlobalLimit renders the global max parallel setting line
@@ -387,6 +427,11 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		m.selectedIndex = 0
 		return true, nil
 
+	case "4":
+		m.currentTab = TabMonitors
+		m.selectedIndex = 0
+		return true, nil
+
 	case "j":
 		m.moveDown()
 		return true, nil
@@ -415,7 +460,7 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		if m.currentTab == TabRuntime && m.selectedIndex == 1 {
 			return true, m.toggleTextWrap()
 		}
-		if m.currentTab == TabRuntime && m.selectedIndex == 3 {
+		if m.currentTab == TabMonitors && m.selectedIndex == 0 {
 			return true, m.toggleAutoMonitors()
 		}
 		return false, nil
@@ -453,6 +498,8 @@ func (m *SettingsModal) switchTab() {
 	case TabGroups:
 		m.currentTab = TabRuntime
 	case TabRuntime:
+		m.currentTab = TabMonitors
+	case TabMonitors:
 		m.currentTab = TabLimits
 	}
 	m.selectedIndex = 0 // Reset selection when switching tabs
@@ -589,8 +636,11 @@ func (m *SettingsModal) Height() int {
 		// Header (1) + groups + blank line (1) + help text (1)
 		return 3 + len(StatusGroups)
 	case TabRuntime:
-		// Model (1) + Wrap (1) + Log Level header (1) + 3 radio buttons + Auto Monitors (1) + blank line (1) + help text (1)
-		return 9
+		// Model (1) + Wrap (1) + Log Level header (1) + 3 radio buttons + blank line (1) + help text (1)
+		return 8
+	case TabMonitors:
+		// Description (1) + blank line (1) + toggle (1) + sub-desc (2) + blank line (1) + help text (1)
+		return 7
 	default:
 		return 3
 	}

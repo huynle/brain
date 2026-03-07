@@ -440,11 +440,18 @@ func TestSettingsModal_GetMaxIndex(t *testing.T) {
 		t.Errorf("Groups tab: expected maxIndex %d, got %d", expected, maxIndex)
 	}
 
-	// Test Runtime tab: should return 3 (model, wrap, log, autoMonitors)
+	// Test Runtime tab: should return 2 (model, wrap, log)
 	modal.currentTab = TabRuntime
 	maxIndex = modal.getMaxIndex()
-	if maxIndex != 3 {
-		t.Errorf("Runtime tab: expected maxIndex 3, got %d", maxIndex)
+	if maxIndex != 2 {
+		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
+	}
+
+	// Test Monitors tab: should return 0 (single toggle: autoMonitors)
+	modal.currentTab = TabMonitors
+	maxIndex = modal.getMaxIndex()
+	if maxIndex != 0 {
+		t.Errorf("Monitors tab: expected maxIndex 0, got %d", maxIndex)
 	}
 }
 
@@ -714,6 +721,26 @@ func TestSettingsModal_TabIndicators(t *testing.T) {
 	if strings.Contains(view, "[Groups]") {
 		t.Error("Expected inactive Groups tab to NOT have brackets")
 	}
+	if strings.Contains(view, "[Monitors]") {
+		t.Error("Expected inactive Monitors tab to NOT have brackets")
+	}
+
+	// Test Monitors tab active
+	modal.currentTab = TabMonitors
+	view = modal.View()
+
+	if !strings.Contains(view, "[Monitors]") {
+		t.Error("Expected active Monitors tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
 }
 
 func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
@@ -743,8 +770,8 @@ func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
 	if !strings.Contains(view, "0:") || !strings.Contains(view, "unlimited") {
 		t.Error("Expected help text to contain '0: unlimited'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -769,8 +796,8 @@ func TestSettingsModal_HelpText_GroupsTab(t *testing.T) {
 	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
 		t.Error("Expected help text to contain 'space: toggle visibility'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -801,8 +828,8 @@ func TestSettingsModal_HelpText_RuntimeTab_Normal(t *testing.T) {
 	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
 		t.Error("Expected help text to contain 'space: toggle'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -843,7 +870,7 @@ func TestSettingsModal_HelpText_RuntimeTab_EditMode(t *testing.T) {
 	}
 }
 
-func TestSettingsModal_RuntimeTab_AutoMonitorsRendered(t *testing.T) {
+func TestSettingsModal_MonitorsTab_Rendered(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
 		FeatureCollapsed:  make(map[string]bool),
@@ -854,20 +881,31 @@ func TestSettingsModal_RuntimeTab_AutoMonitorsRendered(t *testing.T) {
 	}
 
 	modal := NewSettingsModal(settings)
-	modal.currentTab = TabRuntime
+	modal.currentTab = TabMonitors
 
 	view := modal.View()
 
-	// Should render AutoMonitors checkbox (unchecked since false)
-	if !strings.Contains(view, "Auto Monitors") {
-		t.Error("Expected Runtime tab to contain 'Auto Monitors' label")
+	// Should render description
+	if !strings.Contains(view, "Auto-create monitors for new features") {
+		t.Error("Expected Monitors tab to contain description")
 	}
-	if !strings.Contains(view, "☐") || !strings.Contains(view, "Auto Monitors") {
-		t.Error("Expected unchecked checkbox for Auto Monitors when false")
+	// Should render OFF toggle when false
+	if !strings.Contains(view, "Auto-create monitors:") {
+		t.Error("Expected Monitors tab to contain toggle label")
+	}
+	if !strings.Contains(view, "[OFF]") {
+		t.Error("Expected [OFF] when AutoMonitors is false")
+	}
+	// Should render sub-description
+	if !strings.Contains(view, "Blocked Task Inspector") {
+		t.Error("Expected sub-description about Blocked Task Inspector")
+	}
+	if !strings.Contains(view, "Feature Code Review") {
+		t.Error("Expected sub-description about Feature Code Review")
 	}
 }
 
-func TestSettingsModal_RuntimeTab_AutoMonitorsChecked(t *testing.T) {
+func TestSettingsModal_MonitorsTab_ON(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
 		FeatureCollapsed:  make(map[string]bool),
@@ -878,30 +916,20 @@ func TestSettingsModal_RuntimeTab_AutoMonitorsChecked(t *testing.T) {
 	}
 
 	modal := NewSettingsModal(settings)
-	modal.currentTab = TabRuntime
+	modal.currentTab = TabMonitors
 
 	view := modal.View()
 
-	// Should render AutoMonitors checkbox (checked since true)
-	if !strings.Contains(view, "Auto Monitors") {
-		t.Error("Expected Runtime tab to contain 'Auto Monitors' label")
+	// Should render ON toggle when true
+	if !strings.Contains(view, "[ON]") {
+		t.Error("Expected [ON] when AutoMonitors is true")
 	}
-	// The view should contain a checked checkbox next to Auto Monitors
-	// We check that ☑ appears somewhere before "Auto Monitors" in the same line
-	lines := strings.Split(view, "\n")
-	found := false
-	for _, line := range lines {
-		if strings.Contains(line, "Auto Monitors") && strings.Contains(line, "☑") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("Expected checked checkbox (☑) on the Auto Monitors line when true")
+	if strings.Contains(view, "[OFF]") {
+		t.Error("Expected no [OFF] when AutoMonitors is true")
 	}
 }
 
-func TestSettingsModal_RuntimeTab_AutoMonitorsToggle(t *testing.T) {
+func TestSettingsModal_MonitorsTab_Toggle(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
 		FeatureCollapsed:  make(map[string]bool),
@@ -912,8 +940,8 @@ func TestSettingsModal_RuntimeTab_AutoMonitorsToggle(t *testing.T) {
 	}
 
 	modal := NewSettingsModal(settings)
-	modal.currentTab = TabRuntime
-	modal.selectedIndex = 3 // AutoMonitors is at index 3
+	modal.currentTab = TabMonitors
+	modal.selectedIndex = 0 // AutoMonitors is at index 0
 
 	// Toggle with space
 	handled, cmd := modal.HandleKey(" ")
@@ -936,7 +964,7 @@ func TestSettingsModal_RuntimeTab_AutoMonitorsToggle(t *testing.T) {
 	}
 }
 
-func TestSettingsModal_RuntimeTab_NavigateToAutoMonitors(t *testing.T) {
+func TestSettingsModal_MonitorsTab_DirectNav(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
 		FeatureCollapsed:  make(map[string]bool),
@@ -946,21 +974,16 @@ func TestSettingsModal_RuntimeTab_NavigateToAutoMonitors(t *testing.T) {
 	}
 
 	modal := NewSettingsModal(settings)
-	modal.currentTab = TabRuntime
-	modal.selectedIndex = 0
 
-	// Navigate down to AutoMonitors (index 3)
-	modal.HandleKey("j") // index 1 (TextWrap)
-	modal.HandleKey("j") // index 2 (LogLevel)
-	modal.HandleKey("j") // index 3 (AutoMonitors)
-
-	if modal.selectedIndex != 3 {
-		t.Errorf("Expected selectedIndex 3 after navigating to AutoMonitors, got %d", modal.selectedIndex)
+	// Press '4' to navigate directly to Monitors tab
+	handled, _ := modal.HandleKey("4")
+	if !handled {
+		t.Error("Expected '4' key to be handled")
 	}
-
-	// Should not go past 3
-	modal.HandleKey("j")
-	if modal.selectedIndex != 3 {
-		t.Errorf("Expected selectedIndex to stay at 3, got %d", modal.selectedIndex)
+	if modal.currentTab != TabMonitors {
+		t.Errorf("Expected tab TabMonitors (3) after pressing '4', got %d", modal.currentTab)
+	}
+	if modal.selectedIndex != 0 {
+		t.Errorf("Expected selectedIndex 0 after direct nav, got %d", modal.selectedIndex)
 	}
 }

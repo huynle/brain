@@ -626,6 +626,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.viewMode = ViewModeTasks
 			}
 			m.activePanel = PanelTasks
+			m.helpBar.ViewMode = m.viewMode
 			m.selectedTasks = make(map[string]bool)
 			m.filterState = FilterOff
 			m.filterQuery = ""
@@ -1438,7 +1439,12 @@ func (m Model) renderBaseView() string {
 		innerHeight = 1
 	}
 
-	taskContent := m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+	var taskContent string
+	if m.viewMode == ViewModeSchedules {
+		taskContent = m.scheduleList.View(innerWidth, innerHeight)
+	} else {
+		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+	}
 	taskPanel := taskPanelStyle.
 		Width(leftWidth - 2).
 		Height(mainHeight).
@@ -1542,9 +1548,16 @@ func (m Model) renderDetailPanel(width, height int) string {
 	}
 
 	// Temporarily set size for rendering
-	detail := m.taskDetail
-	detail.SetSize(innerWidth, innerHeight)
-	content := detail.View()
+	var content string
+	if m.viewMode == ViewModeSchedules {
+		schedDetail := m.scheduleDetail
+		schedDetail.SetSize(innerWidth, innerHeight)
+		content = schedDetail.View()
+	} else {
+		detail := m.taskDetail
+		detail.SetSize(innerWidth, innerHeight)
+		content = detail.View()
+	}
 
 	return style.
 		Width(width - 2).

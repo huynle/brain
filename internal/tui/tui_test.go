@@ -2623,5 +2623,227 @@ func TestUpdate_TaskActionsGuardedByViewModeTasks(t *testing.T) {
 	}
 }
 
-// TODO: TestUpdate_JKKeys_NavigateScheduleListInScheduleMode - requires schedule-mode j/k wiring in handleKeyMsg
-// TODO: TestUpdate_JKKeys_SyncScheduleDetailInScheduleMode - requires schedule-mode j/k wiring in handleKeyMsg
+func TestUpdate_JKKeys_NavigateScheduleListInScheduleMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up scheduled tasks
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "s1", Title: "Schedule 1", Classification: "ready", Priority: "high",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+		{ID: "s2", Title: "Schedule 2", Classification: "ready", Priority: "medium",
+			Schedule: "0 0 * * *", ScheduleEnabled: &enabled},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// Switch to schedule view
+	m.viewMode = ViewModeSchedules
+
+	// Press j to move down in schedule list
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Should have navigated in scheduleList (moved to second item)
+	selected := m.scheduleList.SelectedTask()
+	if selected == nil {
+		t.Fatal("expected scheduleList to have a selected task after j in schedule mode")
+	}
+	if selected.ID != "s2" {
+		t.Errorf("expected scheduleList selection to be 's2' after j, got '%s'", selected.ID)
+	}
+}
+
+func TestUpdate_JKKeys_SyncScheduleDetailInScheduleMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up scheduled tasks
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "s1", Title: "Schedule 1", Classification: "ready", Priority: "high",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+		{ID: "s2", Title: "Schedule 2", Classification: "ready", Priority: "medium",
+			Schedule: "0 0 * * *", ScheduleEnabled: &enabled},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// Switch to schedule view
+	m.viewMode = ViewModeSchedules
+
+	// Press j to move down
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// scheduleDetail should be synced with the new selection
+	detailView := m.scheduleDetail.View()
+	if !strings.Contains(detailView, "Schedule 2") {
+		t.Errorf("expected scheduleDetail to show 'Schedule 2' after j, got:\n%s", detailView)
+	}
+}
+
+// =============================================================================
+// Phase 3: Rendering and HelpBar Tests
+// =============================================================================
+
+func TestRenderBaseView_ShowsScheduleListInScheduleMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 30
+
+	// Set up scheduled tasks
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "s1", Title: "My Scheduled Task", Classification: "ready", Priority: "high",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Switch to schedule view
+	m.viewMode = ViewModeSchedules
+
+	// Render the view
+	view := m.View()
+
+	// Should show schedule list header "Scheduled" (from ScheduleList.View)
+	if !strings.Contains(view, "Scheduled") {
+		t.Errorf("expected schedule view to show 'Scheduled' header, got:\n%s", view)
+	}
+
+	// Should show the cron expression (schedule list shows these)
+	if !strings.Contains(view, "0 */6 * * *") {
+		t.Errorf("expected schedule view to show cron expression '0 */6 * * *', got:\n%s", view)
+	}
+}
+
+func TestRenderDetailPanel_ShowsScheduleDetailInScheduleMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.width = 120
+	m.height = 30
+	m.detailVisible = true
+
+	// Set up scheduled tasks
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "s1", Title: "My Scheduled Task", Classification: "ready", Priority: "high",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Switch to schedule view and sync detail
+	m.viewMode = ViewModeSchedules
+	(&m).syncScheduleDetail()
+
+	// Render the detail panel
+	detailView := m.renderDetailPanel(60, 20)
+
+	// Should show schedule detail content
+	if !strings.Contains(detailView, "Schedule Details") {
+		t.Errorf("expected detail panel to show 'Schedule Details' in schedule mode, got:\n%s", detailView)
+	}
+}
+
+func TestHelpBar_ShowsScheduleShortcutsInScheduleMode(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.ViewMode = ViewModeSchedules
+
+	view := h.View(120, false)
+
+	// Should show schedule-specific shortcuts
+	if !strings.Contains(view, "Tasks") {
+		t.Errorf("expected helpbar in schedule mode to show 'Tasks' (for C key to go back), got:\n%s", view)
+	}
+
+	// Should NOT show task-specific action shortcuts
+	if strings.Contains(view, "Execute") {
+		t.Errorf("expected helpbar in schedule mode to NOT show 'Execute', got:\n%s", view)
+	}
+	if strings.Contains(view, "Complete") {
+		t.Errorf("expected helpbar in schedule mode to NOT show 'Complete', got:\n%s", view)
+	}
+}
+
+func TestHelpBar_ShowsTaskShortcutsInTaskMode(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.ViewMode = ViewModeTasks
+
+	view := h.View(120, false)
+
+	// Should show task-specific shortcuts
+	if !strings.Contains(view, "Execute") {
+		t.Errorf("expected helpbar in task mode to show 'Execute', got:\n%s", view)
+	}
+	if !strings.Contains(view, "Cancel") {
+		t.Errorf("expected helpbar in task mode to show 'Cancel', got:\n%s", view)
+	}
+}
+
+func TestHelpBar_ShowsCancelOnXInTaskMode(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.ViewMode = ViewModeTasks
+
+	view := h.View(120, false)
+
+	// Cancel should be on X key now (not C)
+	if !strings.Contains(view, "X") || !strings.Contains(view, "Cancel") {
+		t.Errorf("expected helpbar to show 'X Cancel' in task mode, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_ShowsScheduleToggleOnC(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.ViewMode = ViewModeTasks
+
+	view := h.View(120, false)
+
+	// C should show Schedules (to toggle to schedule view)
+	if !strings.Contains(view, "Schedules") {
+		t.Errorf("expected helpbar to show 'Schedules' for C key, got:\n%s", view)
+	}
+}
+
+func TestHelpModal_ShowsUpdatedKeyBindings(t *testing.T) {
+	modal := NewHelpModal(false)
+	view := modal.View()
+
+	// Should show C as schedule toggle, not cancel
+	if strings.Contains(view, "Cancel task") {
+		t.Errorf("expected help modal to NOT show 'Cancel task' for C key, got:\n%s", view)
+	}
+
+	// Should show X as cancel
+	if !strings.Contains(view, "Cancel") {
+		t.Errorf("expected help modal to show 'Cancel' for X key, got:\n%s", view)
+	}
+
+	// Should show C as schedule toggle
+	if !strings.Contains(view, "Schedule") || !strings.Contains(view, "toggle") {
+		t.Errorf("expected help modal to show schedule toggle for C key, got:\n%s", view)
+	}
+}

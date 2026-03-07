@@ -9,6 +9,7 @@ import (
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
 	ActivePanel     Panel
+	ViewMode        ViewMode
 	TextWrap        bool
 	IsPaused        bool
 	AllPaused       bool
@@ -41,20 +42,27 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 
-	// Task panel specific shortcuts
+	// Panel-specific shortcuts (view mode aware)
 	if h.ActivePanel == PanelTasks {
-		shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
-		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
-		shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
-		shortcuts += fmt.Sprintf("%s Cancel  ", bold("C"))
-		shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
-		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
-		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
-		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
-		shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
-		if h.HasTaskSessions {
-			shortcuts += fmt.Sprintf("%s Session  ", bold("o"))
-			shortcuts += fmt.Sprintf("%s Tmux  ", bold("O"))
+		if h.ViewMode == ViewModeSchedules {
+			// Schedule view shortcuts
+			shortcuts += fmt.Sprintf("%s Tasks  ", bold("C"))
+		} else {
+			// Task view shortcuts
+			shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
+			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+			shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
+			shortcuts += fmt.Sprintf("%s Cancel  ", bold("X"))
+			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
+			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Schedules  ", bold("C"))
+			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
+			shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+			shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+			if h.HasTaskSessions {
+				shortcuts += fmt.Sprintf("%s Session  ", bold("o"))
+				shortcuts += fmt.Sprintf("%s Tmux  ", bold("O"))
+			}
 		}
 	}
 

@@ -75,7 +75,9 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("c", "Complete task"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("C", "Cancel task"))
+	b.WriteString(formatShortcut("X", "Cancel running task"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("C", "Schedule/task view toggle"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("e", "Edit in $EDITOR"))
 	b.WriteString("\n")
@@ -164,9 +166,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (9), Multi-Select (3), Views (4), Other (2)
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 9 + 3 + 4 + 2 + 5 + 2
+	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

@@ -20,6 +20,7 @@ type reconnectMsg struct{}
 // bubbletea messages from the event stream.
 type SSEClient struct {
 	apiURL    string
+	apiToken  string
 	projectID string
 
 	// msgCh is the internal channel used to pass messages from the
@@ -30,10 +31,11 @@ type SSEClient struct {
 	cancel context.CancelFunc
 }
 
-// NewSSEClient creates a new SSE client for the given API URL and project.
-func NewSSEClient(apiURL, projectID string) *SSEClient {
+// NewSSEClient creates a new SSE client for the given API URL, token, and project.
+func NewSSEClient(apiURL, apiToken, projectID string) *SSEClient {
 	return &SSEClient{
 		apiURL:    strings.TrimRight(apiURL, "/"),
+		apiToken:  apiToken,
 		projectID: projectID,
 		msgCh:     make(chan tea.Msg, 32),
 	}
@@ -108,6 +110,9 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -121,6 +126,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 2*1024*1024), 2*1024*1024)
 	var lines []string
 
 	for scanner.Scan() {

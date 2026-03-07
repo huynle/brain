@@ -49,10 +49,9 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
-	// Filter state
-	filterMode   bool   // Is filter input active?
-	filterQuery  string // Current filter text
-	filterActive bool   // Is a filter currently applied?
+	// Filter state (3-mode state machine: Off → Typing → Locked)
+	filterState FilterMode // Current filter mode
+	filterQuery string     // Current filter text
 
 	// Task data
 	tasks []types.ResolvedTask
@@ -423,9 +422,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If in filter mode, handle filter input first
-	if m.filterMode {
+	// If in filter typing mode, handle filter input first
+	if m.filterState == FilterTyping {
 		return m.handleFilterInput(msg)
+	}
+
+	// If in filter locked mode, handle Esc to clear and / to re-enter typing
+	if m.filterState == FilterLocked {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.filterState = FilterOff
+			m.filterQuery = ""
+			m.clearFilter()
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "/" {
+				// Re-enter typing mode, keep current query
+				m.filterState = FilterTyping
+				return m, nil
+			}
+		}
+		// All other keys fall through to normal handling
 	}
 
 	switch msg.Type {
@@ -683,9 +700,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return editorClosedMsg{taskID: selectedTask.ID, err: err}
 			})
 		case "/":
-			// Activate filter mode
+			// Activate filter typing mode
 			if m.activePanel == PanelTasks {
-				m.filterMode = true
+				m.filterState = FilterTyping
 				m.filterQuery = ""
 			}
 			return m, nil
@@ -1336,16 +1353,23 @@ func (m Model) renderBaseView() string {
 		statusMessageView = style.Render(m.statusMessage)
 	}
 
-	// Filter bar (if active or in input mode)
+	// Filter bar (based on 3-mode state machine)
 	var filterBarView string
-	if m.filterMode {
-		// Show filter input bar
-		filterBarView = FilterBarStyle.Render("Filter: " + m.filterQuery + "_")
-	} else if m.filterActive {
-		// Show filter status
+	switch m.filterState {
+	case FilterTyping:
+		// Yellow bg with / prefix, cursor, match count
+		matchCount := len(m.filteredTasks())
+		matchWord := "matches"
+		if matchCount == 1 {
+			matchWord = "match"
+		}
+		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+	case FilterLocked:
+		// Cyan bg badge with filter text, N/total count, Esc hint
 		totalCount := len(m.tasks)
 		matchCount := len(m.filteredTasks())
-		filterBarView = FilterStatusStyle.Render(fmt.Sprintf("Filtered: %d/%d tasks (press 'c' to clear)", matchCount, totalCount))
+		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
+			DimStyle.Render("  Esc: clear")
 	}
 
 	// Compose layout vertically
@@ -1441,26 +1465,24 @@ func (m Model) renderLogPanel(width, height int) string {
 // Filter Methods
 // =============================================================================
 
-// handleFilterInput processes keyboard input in filter mode.
+// handleFilterInput processes keyboard input in FilterTyping mode.
+// All runes are captured as filter text — no key leaking to other handlers.
 func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		// Confirm filter and exit filter mode
-		m.filterMode = false
-		m.filterActive = (m.filterQuery != "")
-		// Apply filter to task tree
+		// Lock filter if query is non-empty, otherwise go back to off
+		if m.filterQuery != "" {
+			m.filterState = FilterLocked
+		} else {
+			m.filterState = FilterOff
+		}
 		m.applyFilter()
 		return m, nil
 
 	case tea.KeyEsc:
-		// Cancel filter
-		m.filterMode = false
+		// Always cancel: clear query and go to off
+		m.filterState = FilterOff
 		m.filterQuery = ""
-		// If no filter was active, no need to update
-		if !m.filterActive {
-			return m, nil
-		}
-		// Clear the active filter
 		m.clearFilter()
 		return m, nil
 
@@ -1480,30 +1502,7 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		// Multi-project tab navigation
-		if m.config.IsMultiProject() {
-			switch string(msg.Runes) {
-			case "h", "[":
-				m.projectTabs.PrevTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
-			case "l", "]":
-				m.projectTabs.NextTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
-			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				tabNum := int(msg.Runes[0] - '0')
-				if m.projectTabs.JumpToTab(tabNum) {
-					m.activeProjectID = m.projectTabs.ActiveProject()
-					m.syncActiveProjectView()
-					return m, nil
-				}
-			}
-		}
-
-		// Append character to filter
+		// ALL runes go to filter query — no multi-project tab navigation leak
 		m.filterQuery += string(msg.Runes)
 		// Real-time filtering
 		m.applyFilter()
@@ -1518,12 +1517,10 @@ func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
 		// No filter, show all tasks
 		m.taskTree.SetTasks(m.tasks)
-		m.filterActive = false
 	} else {
 		// Filter tasks
 		filtered := FilterTasks(m.tasks, m.filterQuery)
 		m.taskTree.SetTasks(filtered)
-		m.filterActive = true
 	}
 	// Sync task detail after filter changes
 	m.syncTaskDetail()
@@ -1532,7 +1529,7 @@ func (m *Model) applyFilter() {
 // clearFilter removes the active filter and restores all tasks.
 func (m *Model) clearFilter() {
 	m.filterQuery = ""
-	m.filterActive = false
+	m.filterState = FilterOff
 	m.taskTree.SetTasks(m.tasks)
 	m.syncTaskDetail()
 }
@@ -1588,8 +1585,8 @@ func (m *Model) syncActiveProjectView() {
 	}
 
 	// Update taskTree with the selected tasks
-	if m.filterActive {
-		// If filter is active, apply it
+	if m.filterState == FilterLocked || m.filterState == FilterTyping {
+		// If filter is active (locked or typing), apply it
 		m.applyFilter()
 	} else {
 		// No filter, just set tasks directly

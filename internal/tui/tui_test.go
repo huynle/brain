@@ -2971,3 +2971,320 @@ func TestHelpBar_NoYankInScheduleView(t *testing.T) {
 		t.Errorf("expected help bar to NOT show 'Yank' in schedule view, got:\n%s", view)
 	}
 }
+
+// =============================================================================
+// Auto-Monitor Creation Tests (Phase 2)
+// =============================================================================
+
+func TestNewModel_InitializesAutoMonitorState(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// seenFeatureIDs should be initialized as empty map
+	if m.seenFeatureIDs == nil {
+		t.Error("expected seenFeatureIDs to be initialized (non-nil)")
+	}
+	if len(m.seenFeatureIDs) != 0 {
+		t.Errorf("expected seenFeatureIDs to be empty, got %d entries", len(m.seenFeatureIDs))
+	}
+
+	// initialSnapshotDone should be false
+	if m.initialSnapshotDone {
+		t.Error("expected initialSnapshotDone to be false initially")
+	}
+
+	// monitorClient should be initialized
+	if m.monitorClient == nil {
+		t.Error("expected monitorClient to be initialized (non-nil)")
+	}
+}
+
+func TestAutoMonitor_FirstLoad_SnapshotsExistingFeatures(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.settings.AutoMonitors = true
+
+	// First load with tasks that have feature_ids
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium", FeatureID: "feat-2", ProjectID: "test-project"},
+		{ID: "t3", Title: "Task 3", Classification: "ready", Priority: "low"},
+	}
+	stats := &types.TaskStats{Ready: 3}
+
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: stats})
+	model := updated.(Model)
+
+	// initialSnapshotDone should now be true
+	if !model.initialSnapshotDone {
+		t.Error("expected initialSnapshotDone to be true after first TasksUpdatedMsg")
+	}
+
+	// seenFeatureIDs should contain the existing features
+	if !model.seenFeatureIDs["feat-1"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-1'")
+	}
+	if !model.seenFeatureIDs["feat-2"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-2'")
+	}
+
+	// Tasks without feature_id should NOT be in seenFeatureIDs
+	if len(model.seenFeatureIDs) != 2 {
+		t.Errorf("expected 2 entries in seenFeatureIDs, got %d", len(model.seenFeatureIDs))
+	}
+}
+
+func TestAutoMonitor_SubsequentLoad_DetectsNewFeatures(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.settings.AutoMonitors = true
+
+	// First load - snapshot existing features
+	tasks1 := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks1, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Verify initial snapshot done
+	if !m.initialSnapshotDone {
+		t.Fatal("expected initialSnapshotDone to be true after first load")
+	}
+
+	// Second load - add a new feature
+	tasks2 := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium", FeatureID: "feat-new", ProjectID: "test-project"},
+	}
+	updated, cmd := m.Update(TasksUpdatedMsg{Tasks: tasks2, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// seenFeatureIDs should now contain both features
+	if !m.seenFeatureIDs["feat-1"] {
+		t.Error("expected seenFeatureIDs to still contain 'feat-1'")
+	}
+	if !m.seenFeatureIDs["feat-new"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-new'")
+	}
+
+	// Should return a batched command (SSE continuation + auto-monitor creation)
+	if cmd == nil {
+		t.Error("expected non-nil command (batched SSE + auto-monitor)")
+	}
+}
+
+func TestAutoMonitor_SeenFeatureIDs_AlwaysUpdated_EvenWhenDisabled(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.settings.AutoMonitors = false // Disabled!
+
+	// First load
+	tasks1 := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks1, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Second load with new feature - even though auto-monitors disabled
+	tasks2 := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium", FeatureID: "feat-2", ProjectID: "test-project"},
+	}
+	updated, _ = m.Update(TasksUpdatedMsg{Tasks: tasks2, Stats: &types.TaskStats{Ready: 2}})
+	m = updated.(Model)
+
+	// seenFeatureIDs should be updated even when AutoMonitors is false
+	// This prevents a burst of monitor creation when re-enabling
+	if !m.seenFeatureIDs["feat-2"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-2' even when AutoMonitors=false")
+	}
+}
+
+func TestAutoMonitor_KnownFeatures_DoNotTriggerCreation(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.settings.AutoMonitors = true
+
+	// First load
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "test-project"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Second load with same features (no new ones)
+	updated, _ = m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// seenFeatureIDs should still have exactly 1 entry
+	if len(m.seenFeatureIDs) != 1 {
+		t.Errorf("expected 1 entry in seenFeatureIDs, got %d", len(m.seenFeatureIDs))
+	}
+}
+
+func TestAutoMonitor_MultiProject_DetectsNewFeaturesPerProject(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "proj-a",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.settings.AutoMonitors = true
+
+	// First load from proj-a
+	tasks1 := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-1", ProjectID: "proj-a"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks1, ProjectID: "proj-a", Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Second load from proj-b with a new feature
+	tasks2 := []types.ResolvedTask{
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "high", FeatureID: "feat-b1", ProjectID: "proj-b"},
+	}
+	updated, cmd := m.Update(TasksUpdatedMsg{Tasks: tasks2, ProjectID: "proj-b", Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// seenFeatureIDs should contain both features
+	if !m.seenFeatureIDs["feat-1"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-1'")
+	}
+	if !m.seenFeatureIDs["feat-b1"] {
+		t.Error("expected seenFeatureIDs to contain 'feat-b1'")
+	}
+
+	// Should return a command (SSE continuation + auto-monitor for feat-b1)
+	if cmd == nil {
+		t.Error("expected non-nil command")
+	}
+}
+
+func TestAutoMonitorCreatedMsg_Fields(t *testing.T) {
+	// Verify the message type can be constructed and used
+	msg := autoMonitorCreatedMsg{
+		featureID:  "feat-1",
+		templateID: "blocked-inspector",
+		err:        nil,
+	}
+	if msg.featureID != "feat-1" {
+		t.Errorf("featureID = %q, want %q", msg.featureID, "feat-1")
+	}
+	if msg.templateID != "blocked-inspector" {
+		t.Errorf("templateID = %q, want %q", msg.templateID, "blocked-inspector")
+	}
+	if msg.err != nil {
+		t.Errorf("expected nil error, got %v", msg.err)
+	}
+}
+
+func TestAutoMonitorCreatedMsg_WithError(t *testing.T) {
+	msg := autoMonitorCreatedMsg{
+		featureID:  "feat-1",
+		templateID: "feature-review",
+		err:        fmt.Errorf("connection refused"),
+	}
+	if msg.err == nil {
+		t.Error("expected non-nil error")
+	}
+}
+
+func TestUpdate_AutoMonitorCreatedMsg_Success(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(autoMonitorCreatedMsg{
+		featureID:  "feat-1",
+		templateID: "blocked-inspector",
+		err:        nil,
+	})
+	model := updated.(Model)
+
+	// Should set a success status message
+	if model.statusMessageType != "success" {
+		t.Errorf("expected status message type 'success', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "feat-1") {
+		t.Errorf("expected status message to contain feature ID, got %q", model.statusMessage)
+	}
+
+	// Should return nil (no follow-up command)
+	if cmd != nil {
+		t.Error("expected nil command after successful auto-monitor creation")
+	}
+}
+
+func TestUpdate_AutoMonitorCreatedMsg_Error_SilentlyIgnored(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(autoMonitorCreatedMsg{
+		featureID:  "feat-1",
+		templateID: "blocked-inspector",
+		err:        fmt.Errorf("server error"),
+	})
+	_ = updated.(Model)
+
+	// Errors should not crash or block
+	if cmd != nil {
+		t.Error("expected nil command after auto-monitor creation error")
+	}
+}
+
+func TestAutoCreateMonitorsCmd_ReturnsAutoMonitorCreatedMsg(t *testing.T) {
+	// Create a monitor client pointing to a non-existent server
+	client := NewMonitorClient("http://localhost:9999")
+
+	cmd := autoCreateMonitorsCmd(client, "feat-1", "test-project")
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+
+	// Execute the command - it will fail to connect but should return the right msg type
+	result := cmd()
+	msg, ok := result.(autoMonitorCreatedMsg)
+	if !ok {
+		t.Fatalf("expected autoMonitorCreatedMsg, got %T", result)
+	}
+	if msg.featureID != "feat-1" {
+		t.Errorf("expected featureID 'feat-1', got %q", msg.featureID)
+	}
+	// err should be non-nil since we can't connect
+	if msg.err == nil {
+		t.Error("expected error since API is not running")
+	}
+}
+
+func TestBlockedInspectorPrompt_ContainsFeatureAndProject(t *testing.T) {
+	prompt := blockedInspectorPrompt("my-feature", "my-project")
+
+	if !strings.Contains(prompt, "my-feature") {
+		t.Errorf("expected prompt to contain feature ID 'my-feature', got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "my-project") {
+		t.Errorf("expected prompt to contain project 'my-project', got: %s", prompt)
+	}
+	if !strings.Contains(prompt, "blocked") {
+		t.Errorf("expected prompt to contain 'blocked', got: %s", prompt)
+	}
+}

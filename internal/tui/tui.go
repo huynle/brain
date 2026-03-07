@@ -79,10 +79,18 @@ type Model struct {
 	metricsCollector *MetricsCollector
 	resourceMetrics  ResourceMetrics
 
+	// Log file truncation counter (triggers every 150 ticks ≈ 5 minutes)
+	truncateCounter int
+
 	// Status message for user feedback
 	statusMessage     string
 	statusMessageType string // "success", "error", "info"
 	statusMessageTime time.Time
+
+	// Auto-monitor state
+	seenFeatureIDs      map[string]bool // tracks all feature_ids ever seen across task updates
+	initialSnapshotDone bool            // prevents creating monitors for pre-existing features on first load
+	monitorClient       *MonitorClient  // reusable client for monitor API calls
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -119,6 +127,8 @@ func NewModel(cfg Config) Model {
 		tasksByProject:   make(map[string][]types.ResolvedTask),
 		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
+		seenFeatureIDs:   make(map[string]bool),
+		monitorClient:    NewMonitorClient(cfg.APIURL),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -138,6 +148,24 @@ func NewModel(cfg Config) Model {
 	if cfg.IsMultiProject() {
 		for _, projectID := range cfg.Projects {
 			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, projectID)
+		}
+	}
+
+	// Wire log file persistence
+	if cfg.Project != "" {
+		var logPath string
+		if cfg.LogDir != "" {
+			logPath = filepath.Join(cfg.LogDir, cfg.Project, "tui-logs.jsonl")
+		} else {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				logPath = filepath.Join(homeDir, ".local", "log", "brain-runner", cfg.Project, "tui-logs.jsonl")
+			}
+		}
+		if logPath != "" {
+			m.logViewer.SetLogFile(logPath)
+			// Load existing log entries (ignore errors — don't fail startup)
+			_ = m.logViewer.LoadFromFile()
 		}
 	}
 
@@ -233,6 +261,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Sync task detail with current selection
 		m.syncTaskDetail()
 
+		// Auto-monitor detection: track feature_ids and create monitors for new ones
+		autoMonitorCmds := m.processAutoMonitors(msg)
+
 		// Continue listening for next SSE message
 		// In multi-project mode, use the project-specific client
 		var nextCmd tea.Cmd
@@ -240,6 +271,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			nextCmd = m.sseClients[msg.ProjectID].WaitForNextMsg()
 		} else {
 			nextCmd = m.sseClient.WaitForNextMsg()
+		}
+
+		// Batch SSE continuation with any auto-monitor commands
+		if len(autoMonitorCmds) > 0 {
+			allCmds := append([]tea.Cmd{nextCmd}, autoMonitorCmds...)
+			return m, tea.Batch(allCmds...)
 		}
 		return m, nextCmd
 
@@ -288,6 +325,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TickMsg:
 		// Collect resource metrics
 		m.resourceMetrics = m.metricsCollector.Collect()
+		// Periodic log file truncation (~5 minutes at 2s ticks = 150 ticks)
+		m.truncateCounter++
+		if m.truncateCounter >= 150 {
+			_ = m.logViewer.TruncateFile()
+			m.truncateCounter = 0
+		}
 		// Schedule next tick and sync runner pause state
 		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL))
 
@@ -452,6 +495,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.syncHelpBarPauseState()
+		return m, nil
+
+	case autoMonitorCreatedMsg:
+		if msg.err != nil {
+			// Silently ignore errors (matching TS behavior - 409 expected)
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Auto-monitor created: %s for %s", msg.templateID, msg.featureID))
 		return m, nil
 	}
 
@@ -1810,6 +1861,12 @@ type editorClosedMsg struct {
 	err    error
 }
 
+type autoMonitorCreatedMsg struct {
+	featureID  string
+	templateID string
+	err        error
+}
+
 type pauseToggledMsg struct {
 	projectID string
 	paused    bool
@@ -2076,6 +2133,95 @@ func fetchRunnerStatusCmd(apiURL string) tea.Cmd {
 		}
 		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
 	}
+}
+
+// processAutoMonitors detects new feature_ids in task updates and returns
+// tea.Cmds to create monitors for each new feature. On the first load
+// (initialSnapshotDone == false), it only snapshots existing feature_ids
+// without creating monitors. seenFeatureIDs is always updated, even when
+// AutoMonitors is disabled, to prevent a burst of creation on re-enable.
+func (m *Model) processAutoMonitors(msg TasksUpdatedMsg) []tea.Cmd {
+	var newFeatures []struct {
+		featureID string
+		projectID string
+	}
+
+	for _, task := range msg.Tasks {
+		if task.FeatureID == "" {
+			continue
+		}
+		if !m.seenFeatureIDs[task.FeatureID] {
+			m.seenFeatureIDs[task.FeatureID] = true
+			if m.initialSnapshotDone {
+				newFeatures = append(newFeatures, struct {
+					featureID string
+					projectID string
+				}{featureID: task.FeatureID, projectID: task.ProjectID})
+			}
+		}
+	}
+
+	// Mark initial snapshot as done after first load
+	if !m.initialSnapshotDone {
+		m.initialSnapshotDone = true
+	}
+
+	// Only create monitors if auto-monitors is enabled and there are new features
+	if !m.settings.AutoMonitors || len(newFeatures) == 0 {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	for _, f := range newFeatures {
+		cmds = append(cmds, autoCreateMonitorsCmd(m.monitorClient, f.featureID, f.projectID))
+	}
+	return cmds
+}
+
+// autoCreateMonitorsCmd returns a tea.Cmd that creates both a blocked-inspector
+// scheduled task and a feature-review monitor task for the given feature.
+// Errors are returned in the message (not panicked) for silent handling.
+func autoCreateMonitorsCmd(client *MonitorClient, featureID, projectID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Create blocked-inspector scheduled task
+		prompt := blockedInspectorPrompt(featureID, projectID)
+		err := client.CreateScheduledTask(ctx, "blocked-inspector", featureID, projectID, "*/30 * * * *", prompt)
+		if err != nil {
+			return autoMonitorCreatedMsg{
+				featureID:  featureID,
+				templateID: "blocked-inspector",
+				err:        err,
+			}
+		}
+
+		// Create feature-review monitor task
+		err = client.CreateMonitorTask(ctx, "feature-review", featureID, projectID)
+		if err != nil {
+			return autoMonitorCreatedMsg{
+				featureID:  featureID,
+				templateID: "feature-review",
+				err:        err,
+			}
+		}
+
+		return autoMonitorCreatedMsg{
+			featureID:  featureID,
+			templateID: "blocked-inspector+feature-review",
+			err:        nil,
+		}
+	}
+}
+
+// blockedInspectorPrompt generates the prompt text for a blocked-inspector
+// scheduled task, including the feature ID and project for context.
+func blockedInspectorPrompt(featureID, project string) string {
+	return fmt.Sprintf(
+		"Check for blocked tasks in feature '%s' (project: %s). "+
+			"Analyze dependencies, suggest fixes, or escalate if tasks remain blocked.",
+		featureID, project,
+	)
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

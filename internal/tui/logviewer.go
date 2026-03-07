@@ -44,12 +44,15 @@ func NewLogViewer(maxEntries int) LogViewer {
 }
 
 // AddEntry adds a log entry to the viewer, evicting old entries if at capacity.
+// If a log file is configured, the entry is also persisted to disk.
 func (lv *LogViewer) AddEntry(entry LogEntry) {
 	lv.entries = append(lv.entries, entry)
 	// Circular buffer: evict oldest entries when over capacity
 	if len(lv.entries) > lv.maxEntries {
 		lv.entries = lv.entries[len(lv.entries)-lv.maxEntries:]
 	}
+	// Persist to disk (ignore errors — don't fail the TUI if disk write fails)
+	_ = lv.appendToFile(entry)
 }
 
 // SetSize updates the component dimensions.

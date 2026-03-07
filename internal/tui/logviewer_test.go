@@ -729,3 +729,255 @@ func TestTruncateFile_KeepsLatestEntries(t *testing.T) {
 		t.Errorf("expected last kept entry to contain 'entryF', got: %s", resultLines[2])
 	}
 }
+
+// =============================================================================
+// Phase 3: Integration - AddEntry Persists to File
+// =============================================================================
+
+func TestAddEntry_PersistsToFile(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "test-project", "tui-logs.jsonl")
+
+	lv := NewLogViewer(100)
+	lv.SetLogFile(logPath)
+
+	entry := LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "task started",
+		TaskID:    "abc12def",
+		ProjectID: "test-project",
+	}
+
+	lv.AddEntry(entry)
+
+	// Verify the entry was added to in-memory slice
+	if lv.EntryCount() != 1 {
+		t.Fatalf("expected 1 entry in memory, got %d", lv.EntryCount())
+	}
+
+	// Verify the entry was persisted to disk
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("expected log file to exist after AddEntry, got error: %v", err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) != 1 {
+		t.Fatalf("expected 1 line in log file, got %d", len(lines))
+	}
+
+	// Verify the line is valid JSONL with correct content
+	var raw map[string]interface{}
+	if err := json.Unmarshal([]byte(lines[0]), &raw); err != nil {
+		t.Fatalf("log file line is not valid JSON: %v", err)
+	}
+	if raw["message"] != "task started" {
+		t.Errorf("expected message 'task started', got '%v'", raw["message"])
+	}
+	if raw["taskId"] != "abc12def" {
+		t.Errorf("expected taskId 'abc12def', got '%v'", raw["taskId"])
+	}
+}
+
+// =============================================================================
+// Phase 3: Integration - LogViewer with LogFile Loads Existing Entries
+// =============================================================================
+
+func TestNewLogViewer_WithLogFile_LoadsExisting(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "my-project", "tui-logs.jsonl")
+
+	// Create directory and write JSONL file with existing entries
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"timestamp":"2024-01-15T14:30:45Z","level":"info","message":"existing entry 1","projectId":"my-project"}`,
+		`{"timestamp":"2024-01-15T14:30:46Z","level":"warn","message":"existing entry 2","taskId":"xyz98765"}`,
+		`{"timestamp":"2024-01-15T14:30:47Z","level":"error","message":"existing entry 3"}`,
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create LogViewer, set log file, and load
+	lv := NewLogViewer(100)
+	lv.SetLogFile(logPath)
+	if err := lv.LoadFromFile(); err != nil {
+		t.Fatalf("LoadFromFile failed: %v", err)
+	}
+
+	// Verify entries were loaded
+	if lv.EntryCount() != 3 {
+		t.Fatalf("expected 3 entries loaded from file, got %d", lv.EntryCount())
+	}
+
+	// Verify content
+	if lv.entries[0].Message != "existing entry 1" {
+		t.Errorf("expected first entry message 'existing entry 1', got '%s'", lv.entries[0].Message)
+	}
+	if lv.entries[0].ProjectID != "my-project" {
+		t.Errorf("expected first entry projectId 'my-project', got '%s'", lv.entries[0].ProjectID)
+	}
+	if lv.entries[1].TaskID != "xyz98765" {
+		t.Errorf("expected second entry taskId 'xyz98765', got '%s'", lv.entries[1].TaskID)
+	}
+	if lv.entries[2].Level != "error" {
+		t.Errorf("expected third entry level 'error', got '%s'", lv.entries[2].Level)
+	}
+
+	// Verify the view renders the loaded entries
+	lv.SetSize(80, 20)
+	view := lv.View()
+	if !strings.Contains(view, "existing entry 1") {
+		t.Errorf("expected view to contain 'existing entry 1', got:\n%s", view)
+	}
+}
+
+// =============================================================================
+// Phase 3: Integration - NewModel Wires LogFile Path
+// =============================================================================
+
+func TestNewModel_WithLogDir_SetsLogFilePath(t *testing.T) {
+	dir := t.TempDir()
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+		LogDir:  dir,
+	}
+	m := NewModel(cfg)
+
+	expectedPath := filepath.Join(dir, "test-project", "tui-logs.jsonl")
+	if m.logViewer.logFile != expectedPath {
+		t.Errorf("expected logFile '%s', got '%s'", expectedPath, m.logViewer.logFile)
+	}
+}
+
+func TestNewModel_WithoutLogDir_SetsDefaultLogFilePath(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+		// LogDir is empty — should use default
+	}
+	m := NewModel(cfg)
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("failed to get home dir: %v", err)
+	}
+
+	expectedPath := filepath.Join(homeDir, ".local", "log", "brain-runner", "test-project", "tui-logs.jsonl")
+	if m.logViewer.logFile != expectedPath {
+		t.Errorf("expected logFile '%s', got '%s'", expectedPath, m.logViewer.logFile)
+	}
+}
+
+func TestNewModel_LoadsExistingLogFile(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "test-project", "tui-logs.jsonl")
+
+	// Create directory and write existing log entries
+	if err := os.MkdirAll(filepath.Dir(logPath), 0755); err != nil {
+		t.Fatal(err)
+	}
+	lines := []string{
+		`{"timestamp":"2024-01-15T14:30:45Z","level":"info","message":"pre-existing log"}`,
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+		LogDir:  dir,
+	}
+	m := NewModel(cfg)
+
+	// Should have loaded the existing entry
+	if m.logViewer.EntryCount() != 1 {
+		t.Errorf("expected 1 entry loaded from existing log file, got %d", m.logViewer.EntryCount())
+	}
+	if m.logViewer.entries[0].Message != "pre-existing log" {
+		t.Errorf("expected message 'pre-existing log', got '%s'", m.logViewer.entries[0].Message)
+	}
+}
+
+// =============================================================================
+// Phase 3: Integration - Truncation Counter Logic
+// =============================================================================
+
+func TestTruncateCounter_TriggersAt150(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "test.jsonl")
+
+	maxEntries := 5
+	lv := NewLogViewer(maxEntries)
+	lv.SetLogFile(logPath)
+
+	// Write 10 lines (2x maxEntries = triggers truncation)
+	var lines []string
+	for i := 0; i < 10; i++ {
+		lines = append(lines, `{"timestamp":"2024-01-15T14:30:45Z","level":"info","message":"line`+string(rune('A'+i))+`"}`)
+	}
+	if err := os.WriteFile(logPath, []byte(strings.Join(lines, "\n")+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Verify file has 10 lines before truncation
+	data, _ := os.ReadFile(logPath)
+	beforeLines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(beforeLines) != 10 {
+		t.Fatalf("expected 10 lines before truncation, got %d", len(beforeLines))
+	}
+
+	// Simulate the truncation counter logic:
+	// The Model should have a truncateCounter field that increments on each TickMsg.
+	// When it hits 150, TruncateFile is called and counter resets.
+	// We test this at the Model level by checking the field exists and the logic works.
+
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.logViewer = lv
+
+	// Verify truncateCounter starts at 0
+	if m.truncateCounter != 0 {
+		t.Fatalf("expected truncateCounter to start at 0, got %d", m.truncateCounter)
+	}
+
+	// Simulate 149 ticks — should NOT trigger truncation
+	for i := 0; i < 149; i++ {
+		updated, _ := m.Update(TickMsg{})
+		m = updated.(Model)
+	}
+
+	if m.truncateCounter != 149 {
+		t.Errorf("expected truncateCounter to be 149 after 149 ticks, got %d", m.truncateCounter)
+	}
+
+	// File should still have 10 lines (no truncation yet)
+	data, _ = os.ReadFile(logPath)
+	afterLines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(afterLines) != 10 {
+		t.Errorf("expected 10 lines after 149 ticks (no truncation), got %d", len(afterLines))
+	}
+
+	// Tick 150 — should trigger truncation and reset counter
+	updated, _ := m.Update(TickMsg{})
+	m = updated.(Model)
+
+	if m.truncateCounter != 0 {
+		t.Errorf("expected truncateCounter to reset to 0 after 150th tick, got %d", m.truncateCounter)
+	}
+
+	// File should now have maxEntries (5) lines after truncation
+	data, _ = os.ReadFile(logPath)
+	afterTruncLines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(afterTruncLines) != maxEntries {
+		t.Errorf("expected %d lines after truncation at tick 150, got %d", maxEntries, len(afterTruncLines))
+	}
+}

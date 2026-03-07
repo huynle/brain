@@ -111,7 +111,7 @@ func (m *SettingsModal) getMaxIndex() int {
 	case TabGroups:
 		return len(StatusGroups) - 1
 	case TabRuntime:
-		return 2 // 0=model, 1=wrap, 2=log
+		return 3 // 0=model, 1=wrap, 2=log, 3=autoMonitors
 	}
 	return 0
 }
@@ -261,6 +261,14 @@ func (m *SettingsModal) renderRuntimeTab() string {
 		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
 	}
 
+	// Auto Monitors setting (index 3)
+	cursor3 := m.getCursorForRuntimeTab(3)
+	autoMonCheckbox := "☑"
+	if !m.settings.AutoMonitors {
+		autoMonCheckbox = "☐"
+	}
+	s.WriteString(fmt.Sprintf("%s %s Auto Monitors\n", cursor3, autoMonCheckbox))
+
 	// Mode-aware help text
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
@@ -407,6 +415,9 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		if m.currentTab == TabRuntime && m.selectedIndex == 1 {
 			return true, m.toggleTextWrap()
 		}
+		if m.currentTab == TabRuntime && m.selectedIndex == 3 {
+			return true, m.toggleAutoMonitors()
+		}
 		return false, nil
 
 	case "+":
@@ -457,6 +468,12 @@ func (m *SettingsModal) switchTab() {
 // toggleTextWrap toggles the text wrapping setting and returns a save command
 func (m *SettingsModal) toggleTextWrap() tea.Cmd {
 	m.settings.TextWrap = !m.settings.TextWrap
+	return m.saveSettingsCmd()
+}
+
+// toggleAutoMonitors toggles the auto monitors setting and returns a save command
+func (m *SettingsModal) toggleAutoMonitors() tea.Cmd {
+	m.settings.AutoMonitors = !m.settings.AutoMonitors
 	return m.saveSettingsCmd()
 }
 
@@ -572,8 +589,8 @@ func (m *SettingsModal) Height() int {
 		// Header (1) + groups + blank line (1) + help text (1)
 		return 3 + len(StatusGroups)
 	case TabRuntime:
-		// Model (1) + Wrap (1) + Log Level header (1) + 3 radio buttons + blank line (1) + help text (1)
-		return 8
+		// Model (1) + Wrap (1) + Log Level header (1) + 3 radio buttons + Auto Monitors (1) + blank line (1) + help text (1)
+		return 9
 	default:
 		return 3
 	}

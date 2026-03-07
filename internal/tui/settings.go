@@ -16,6 +16,7 @@ type Settings struct {
 	DefaultModel      string          `json:"defaultModel"`      // default model override for tasks
 	TextWrap          bool            `json:"textWrap"`          // wrap long lines in panels
 	LogLevel          string          `json:"logLevel"`          // log level: "error", "info", "debug"
+	AutoMonitors      bool            `json:"autoMonitors"`      // auto-create monitors for new features
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.

@@ -440,11 +440,11 @@ func TestSettingsModal_GetMaxIndex(t *testing.T) {
 		t.Errorf("Groups tab: expected maxIndex %d, got %d", expected, maxIndex)
 	}
 
-	// Test Runtime tab: should return 2 (model, wrap, log)
+	// Test Runtime tab: should return 3 (model, wrap, log, autoMonitors)
 	modal.currentTab = TabRuntime
 	maxIndex = modal.getMaxIndex()
-	if maxIndex != 2 {
-		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
+	if maxIndex != 3 {
+		t.Errorf("Runtime tab: expected maxIndex 3, got %d", maxIndex)
 	}
 }
 
@@ -840,5 +840,127 @@ func TestSettingsModal_HelpText_RuntimeTab_EditMode(t *testing.T) {
 	}
 	if !strings.Contains(view, "ctrl+u:") || !strings.Contains(view, "clear") {
 		t.Error("Expected help text to contain 'ctrl+u: clear'")
+	}
+}
+
+func TestSettingsModal_RuntimeTab_AutoMonitorsRendered(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      false,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+
+	view := modal.View()
+
+	// Should render AutoMonitors checkbox (unchecked since false)
+	if !strings.Contains(view, "Auto Monitors") {
+		t.Error("Expected Runtime tab to contain 'Auto Monitors' label")
+	}
+	if !strings.Contains(view, "☐") || !strings.Contains(view, "Auto Monitors") {
+		t.Error("Expected unchecked checkbox for Auto Monitors when false")
+	}
+}
+
+func TestSettingsModal_RuntimeTab_AutoMonitorsChecked(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      true,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+
+	view := modal.View()
+
+	// Should render AutoMonitors checkbox (checked since true)
+	if !strings.Contains(view, "Auto Monitors") {
+		t.Error("Expected Runtime tab to contain 'Auto Monitors' label")
+	}
+	// The view should contain a checked checkbox next to Auto Monitors
+	// We check that ☑ appears somewhere before "Auto Monitors" in the same line
+	lines := strings.Split(view, "\n")
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, "Auto Monitors") && strings.Contains(line, "☑") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected checked checkbox (☑) on the Auto Monitors line when true")
+	}
+}
+
+func TestSettingsModal_RuntimeTab_AutoMonitorsToggle(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      false,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 3 // AutoMonitors is at index 3
+
+	// Toggle with space
+	handled, cmd := modal.HandleKey(" ")
+	if !handled {
+		t.Error("Expected space to be handled on AutoMonitors")
+	}
+	if cmd == nil {
+		t.Error("Expected a save command to be returned")
+	}
+
+	// AutoMonitors should now be true
+	if !modal.settings.AutoMonitors {
+		t.Error("Expected AutoMonitors to be true after toggle")
+	}
+
+	// Toggle again
+	modal.HandleKey(" ")
+	if modal.settings.AutoMonitors {
+		t.Error("Expected AutoMonitors to be false after second toggle")
+	}
+}
+
+func TestSettingsModal_RuntimeTab_NavigateToAutoMonitors(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabRuntime
+	modal.selectedIndex = 0
+
+	// Navigate down to AutoMonitors (index 3)
+	modal.HandleKey("j") // index 1 (TextWrap)
+	modal.HandleKey("j") // index 2 (LogLevel)
+	modal.HandleKey("j") // index 3 (AutoMonitors)
+
+	if modal.selectedIndex != 3 {
+		t.Errorf("Expected selectedIndex 3 after navigating to AutoMonitors, got %d", modal.selectedIndex)
+	}
+
+	// Should not go past 3
+	modal.HandleKey("j")
+	if modal.selectedIndex != 3 {
+		t.Errorf("Expected selectedIndex to stay at 3, got %d", modal.selectedIndex)
 	}
 }

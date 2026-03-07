@@ -472,7 +472,7 @@ type ResolvedTask struct {
 	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on"`
 	Created   string   `json:"created"`
-	ProjectID  string   `json:"project_id,omitempty"`
+	ProjectID string   `json:"project_id,omitempty"`
 
 	Workdir            string `json:"workdir"`
 	GitRemote          string `json:"git_remote"`
@@ -487,6 +487,10 @@ type ResolvedTask struct {
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
+
+	// Schedule fields
+	Schedule        string `json:"schedule,omitempty"`
+	ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
 
 	DirectPrompt  string `json:"direct_prompt"`
 	Agent         string `json:"agent"`

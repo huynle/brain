@@ -8,10 +8,11 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel Panel
-	TextWrap    bool
-	IsPaused    bool
-	AllPaused   bool
+	ActivePanel     Panel
+	TextWrap        bool
+	IsPaused        bool
+	AllPaused       bool
+	HasTaskSessions bool // whether selected task has sessions (shows o/O shortcuts)
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -51,6 +52,10 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
 		shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+		if h.HasTaskSessions {
+			shortcuts += fmt.Sprintf("%s Session  ", bold("o"))
+			shortcuts += fmt.Sprintf("%s Tmux  ", bold("O"))
+		}
 	}
 
 	// Pause indicator (shown regardless of active panel)

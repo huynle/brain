@@ -32,6 +32,11 @@ type Model struct {
 	taskDetail TaskDetail
 	logViewer  LogViewer
 
+	// Schedule view
+	viewMode       ViewMode
+	scheduleList   ScheduleList
+	scheduleDetail ScheduleDetail
+
 	// Modal management
 	modalManager ModalManager
 	settings     Settings
@@ -102,6 +107,8 @@ func NewModel(cfg Config) Model {
 		taskTree:         NewTaskTree(),
 		taskDetail:       NewTaskDetail(),
 		logViewer:        NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:     NewScheduleList(),
+		scheduleDetail:   NewScheduleDetail(),
 		modalManager:     NewModalManager(),
 		settings:         settings,
 		activePanel:      PanelTasks,
@@ -219,8 +226,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// In single-project mode, this is a no-op
 		m.syncActiveProjectView()
 
-		// Update taskTree
+		// Update taskTree and scheduleList
 		m.taskTree.SetTasks(m.tasks)
+		m.scheduleList.SetTasks(m.tasks)
 
 		// Sync task detail with current selection
 		m.syncTaskDetail()
@@ -354,6 +362,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.clearSelection()
 		}
 		m.modalManager.Close()
+		return m, nil
+
+	case sessionsFetchedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Failed to fetch sessions: %v", msg.err))
+			return m, nil
+		}
+		if len(msg.sessionIDs) == 0 {
+			m.setStatusMessage("warn", "No sessions available")
+			return m, nil
+		}
+		taskID := extractTaskID(msg.taskPath)
+		if len(msg.sessionIDs) == 1 {
+			if msg.tmuxMode {
+				return m, openSessionTmux(msg.sessionIDs[0], taskID)
+			}
+			return m, openSessionFullscreen(msg.sessionIDs[0], taskID)
+		}
+		// Multiple sessions: open selection modal
+		onSelect := func(sessionID string) tea.Msg {
+			return sessionSelectedMsg{
+				sessionID: sessionID,
+				tmuxMode:  msg.tmuxMode,
+				taskID:    taskID,
+			}
+		}
+		modal := NewSessionSelectModal(msg.sessionIDs, msg.tmuxMode, onSelect)
+		return m, m.modalManager.Open(modal)
+
+	case sessionSelectedMsg:
+		m.modalManager.Close()
+		if msg.tmuxMode {
+			return m, openSessionTmux(msg.sessionID, msg.taskID)
+		}
+		return m, openSessionFullscreen(msg.sessionID, msg.taskID)
+
+	case sessionOpenedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Session error: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "✓ Session closed")
+		}
 		return m, nil
 
 	case editorClosedMsg:
@@ -491,7 +541,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
-			// Open metadata modal for selected task(s)
+			// Open metadata modal for selected task(s) (tasks view only)
+			if m.viewMode != ViewModeTasks {
+				return m, nil
+			}
 			if m.activePanel == PanelTasks {
 				// Create API client for modal
 				apiClient := runner.NewAPIClient(runner.RunnerConfig{
@@ -535,7 +588,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "c":
-			// Complete task(s) - no confirmation required
+			// Complete task(s) - no confirmation required (tasks view only)
+			if m.viewMode != ViewModeTasks {
+				return m, nil
+			}
 			if m.activePanel == PanelTasks {
 				// Case 1: Multi-select active - batch complete
 				if len(m.selectedTasks) > 0 {
@@ -562,53 +618,39 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "C":
-			// Cancel task(s) - with confirmation modal
-			if m.activePanel == PanelTasks {
-				// Gather task information for cancel
-				var taskPaths []string
-				var taskIDs []string
-				var confirmMsg string
-
-				// Case 1: Multi-select active - batch cancel
-				if len(m.selectedTasks) > 0 {
-					for id := range m.selectedTasks {
-						// Find task to get its path
-						for _, t := range m.tasks {
-							if t.ID == id {
-								taskPaths = append(taskPaths, t.Path)
-								taskIDs = append(taskIDs, id)
-								break
-							}
-						}
-					}
-					confirmMsg = fmt.Sprintf("Cancel %d selected tasks?", len(taskIDs))
-				} else {
-					// Case 2: Single task selected
-					selectedTask := m.taskTree.SelectedTask()
-					if selectedTask != nil {
-						taskPaths = []string{selectedTask.Path}
-						taskIDs = []string{selectedTask.ID}
-						confirmMsg = "Cancel this task?"
-					}
-				}
-
-				if len(taskPaths) > 0 {
-					// Create modal with callback
-					modal := NewConfirmModal("Confirm Cancel", confirmMsg).
-						WithOnConfirm(func() tea.Msg {
-							if len(taskPaths) == 1 {
-								return cancelTaskCmd(m.config.APIURL, taskPaths[0])()
-							}
-							return batchCancelTasksCmd(m.config.APIURL, taskPaths, taskIDs)()
-						})
-					cmd := m.modalManager.Open(modal)
-					return m, cmd
-				}
+			// Toggle view mode between tasks and schedules
+			if m.viewMode == ViewModeTasks {
+				m.viewMode = ViewModeSchedules
+				m.detailVisible = true
+			} else {
+				m.viewMode = ViewModeTasks
 			}
+			m.activePanel = PanelTasks
+			m.selectedTasks = make(map[string]bool)
+			m.filterState = FilterOff
+			m.filterQuery = ""
+			m.clearFilter()
 			return m, nil
+		case "X":
+			// Cancel task - only in_progress tasks, with confirmation modal (matching TS)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil || selectedTask.Status != "in_progress" {
+				return m, nil
+			}
+			confirmMsg := fmt.Sprintf("Cancel task '%s'?", selectedTask.Title)
+			taskPath := selectedTask.Path
+			modal := NewConfirmModal("Confirm Cancel", confirmMsg).
+				WithOnConfirm(func() tea.Msg {
+					return cancelTaskCmd(m.config.APIURL, taskPath)()
+				})
+			cmd := m.modalManager.Open(modal)
+			return m, cmd
 		case "x":
-			// Execute task - claim for immediate execution
-			if m.activePanel != PanelTasks {
+			// Execute task - claim for immediate execution (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -635,8 +677,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 			return m, m.modalManager.Open(modal)
 		case "d":
-			// Delete task(s) - with confirmation modal
-			if m.activePanel != PanelTasks {
+			// Delete task(s) - with confirmation modal (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -682,8 +724,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 			return m, m.modalManager.Open(modal)
 		case "e":
-			// Edit task in $EDITOR
-			if m.activePanel != PanelTasks {
+			// Edit task in $EDITOR (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -699,6 +741,34 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.ExecProcess(getEditorCmd(fullPath), func(err error) tea.Msg {
 				return editorClosedMsg{taskID: selectedTask.ID, err: err}
 			})
+		case "o":
+			// Open session fullscreen (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+			return m, fetchSessionsCmd(apiClient, selectedTask.Path, false)
+		case "O":
+			// Open session in tmux (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+			return m, fetchSessionsCmd(apiClient, selectedTask.Path, true)
 		case "/":
 			// Activate filter typing mode
 			if m.activePanel == PanelTasks {
@@ -738,34 +808,70 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveDown()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveDown()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveDown()
+					m.syncTaskDetail()
+				}
 			} else if m.activePanel == PanelDetails {
-				m.taskDetail.ScrollDown()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollDown()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
 			}
 			return m, nil
 		case "k":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveUp()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveUp()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveUp()
+					m.syncTaskDetail()
+				}
 			} else if m.activePanel == PanelDetails {
-				m.taskDetail.ScrollUp()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollUp()
+				}
 			}
 			return m, nil
 		case "g":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveToTop()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveToTop()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveToTop()
+					m.syncTaskDetail()
+				}
 			} else if m.activePanel == PanelDetails {
-				m.taskDetail.ScrollToTop()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollToTop()
+				} else {
+					m.taskDetail.ScrollToTop()
+				}
 			}
 			return m, nil
 		case "G":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveToBottom()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveToBottom()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveToBottom()
+					m.syncTaskDetail()
+				}
 			} else if m.activePanel == PanelDetails {
-				m.taskDetail.ScrollToBottom()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollToBottom()
+				} else {
+					m.taskDetail.ScrollToBottom()
+				}
 			}
 			return m, nil
 		case " ":
@@ -1139,6 +1245,18 @@ func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
+	m.syncHelpBarSessionState()
+}
+
+// syncScheduleDetail updates the schedule detail panel with the currently selected scheduled task.
+func (m *Model) syncScheduleDetail() {
+	m.scheduleDetail.SetTask(m.scheduleList.SelectedTask())
+}
+
+// syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
+func (m *Model) syncHelpBarSessionState() {
+	selectedTask := m.taskTree.SelectedTask()
+	m.helpBar.HasTaskSessions = selectedTask != nil
 }
 
 // syncHelpBarPauseState updates the help bar's pause indicators based on current state.

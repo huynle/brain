@@ -1902,3 +1902,726 @@ func TestUpdate_TickMsg_ReturnsCmd(t *testing.T) {
 		t.Error("expected non-nil command from TickMsg handler")
 	}
 }
+
+// =============================================================================
+// Session Integration Tests (Phase 2)
+// =============================================================================
+
+func TestExtractTaskID(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{"standard path", "projects/test/task/abc12def.md", "abc12def"},
+		{"nested path", "projects/my-project/task/xyz98765.md", "xyz98765"},
+		{"no extension", "projects/test/task/abc12def", "abc12def"},
+		{"just filename", "abc12def.md", "abc12def"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := extractTaskID(tt.path)
+			if got != tt.expected {
+				t.Errorf("extractTaskID(%q) = %q, want %q", tt.path, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSessionSelectedMsg_Fields(t *testing.T) {
+	msg := sessionSelectedMsg{
+		sessionID: "ses_abc",
+		tmuxMode:  true,
+		taskID:    "task123",
+	}
+	if msg.sessionID != "ses_abc" {
+		t.Errorf("sessionID = %q, want %q", msg.sessionID, "ses_abc")
+	}
+	if !msg.tmuxMode {
+		t.Error("expected tmuxMode to be true")
+	}
+	if msg.taskID != "task123" {
+		t.Errorf("taskID = %q, want %q", msg.taskID, "task123")
+	}
+}
+
+func TestUpdate_OKey_RequiresTaskPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelDetails // Not on tasks panel
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}}
+	_, cmd := m.Update(msg)
+
+	if cmd != nil {
+		t.Error("expected nil command when not on tasks panel")
+	}
+}
+
+func TestUpdate_OKey_RequiresSelectedTask(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	// No tasks loaded, so no selected task
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}}
+	_, cmd := m.Update(msg)
+
+	if cmd != nil {
+		t.Error("expected nil command when no task is selected")
+	}
+}
+
+func TestUpdate_OKey_FetchesSessions(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Load tasks and select one
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Path: "projects/test/task/t1.md", Classification: "ready", Priority: "high"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Move to first task (past group header)
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	if m.taskTree.SelectedTask() == nil {
+		t.Fatal("expected a task to be selected after 'j'")
+	}
+
+	// Press 'o' to fetch sessions (fullscreen mode)
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}}
+	_, cmd := m.Update(msg)
+
+	if cmd == nil {
+		t.Error("expected non-nil command (fetchSessionsCmd) after 'o' with selected task")
+	}
+}
+
+func TestUpdate_ShiftOKey_FetchesSessionsTmux(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Load tasks and select one
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Path: "projects/test/task/t1.md", Classification: "ready", Priority: "high"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Move to first task
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Press 'O' to fetch sessions (tmux mode)
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}}
+	_, cmd := m.Update(msg)
+
+	if cmd == nil {
+		t.Error("expected non-nil command (fetchSessionsCmd) after 'O' with selected task")
+	}
+}
+
+func TestUpdate_SessionsFetchedMsg_Error(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(sessionsFetchedMsg{
+		err:      fmt.Errorf("connection refused"),
+		taskPath: "projects/test/task/t1.md",
+	})
+	model := updated.(Model)
+
+	if model.statusMessageType != "error" {
+		t.Errorf("expected status message type 'error', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "Failed to fetch sessions") {
+		t.Errorf("expected error message about fetching sessions, got %q", model.statusMessage)
+	}
+	if cmd != nil {
+		t.Error("expected nil command on error")
+	}
+}
+
+func TestUpdate_SessionsFetchedMsg_SingleSession_Fullscreen(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(sessionsFetchedMsg{
+		sessionIDs: []string{"ses_abc"},
+		taskPath:   "projects/test/task/t1.md",
+		tmuxMode:   false,
+	})
+	_ = updated.(Model)
+
+	// Single session should directly open (return a command)
+	if cmd == nil {
+		t.Error("expected non-nil command for single session fullscreen open")
+	}
+}
+
+func TestUpdate_SessionsFetchedMsg_SingleSession_Tmux(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(sessionsFetchedMsg{
+		sessionIDs: []string{"ses_abc"},
+		taskPath:   "projects/test/task/t1.md",
+		tmuxMode:   true,
+	})
+	_ = updated.(Model)
+
+	// Single session in tmux mode should directly open
+	if cmd == nil {
+		t.Error("expected non-nil command for single session tmux open")
+	}
+}
+
+func TestUpdate_SessionsFetchedMsg_MultipleSessions_OpensModal(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, _ := m.Update(sessionsFetchedMsg{
+		sessionIDs: []string{"ses_a", "ses_b", "ses_c"},
+		taskPath:   "projects/test/task/t1.md",
+		tmuxMode:   false,
+	})
+	model := updated.(Model)
+
+	// Should open a modal
+	if !model.modalManager.IsOpen() {
+		t.Error("expected modal to be open for multiple sessions")
+	}
+}
+
+func TestUpdate_SessionSelectedMsg_Fullscreen(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	// Pre-open a modal to verify it gets closed
+	m.modalManager.Open(NewHelpModal(false))
+
+	updated, cmd := m.Update(sessionSelectedMsg{
+		sessionID: "ses_abc",
+		tmuxMode:  false,
+		taskID:    "t1",
+	})
+	model := updated.(Model)
+
+	// Modal should be closed
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to be closed after session selection")
+	}
+
+	// Should return a command to open the session
+	if cmd == nil {
+		t.Error("expected non-nil command to open session fullscreen")
+	}
+}
+
+func TestUpdate_SessionSelectedMsg_Tmux(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.modalManager.Open(NewHelpModal(false))
+
+	updated, cmd := m.Update(sessionSelectedMsg{
+		sessionID: "ses_abc",
+		tmuxMode:  true,
+		taskID:    "t1",
+	})
+	model := updated.(Model)
+
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to be closed after session selection")
+	}
+
+	if cmd == nil {
+		t.Error("expected non-nil command to open session in tmux")
+	}
+}
+
+func TestUpdate_SessionOpenedMsg_Success(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(sessionOpenedMsg{
+		taskID:    "t1",
+		sessionID: "ses_abc",
+		err:       nil,
+	})
+	model := updated.(Model)
+
+	if model.statusMessageType != "success" {
+		t.Errorf("expected status message type 'success', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "Session closed") {
+		t.Errorf("expected success message about session, got %q", model.statusMessage)
+	}
+	if cmd != nil {
+		t.Error("expected nil command after session closed")
+	}
+}
+
+func TestUpdate_SessionOpenedMsg_Error(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	updated, cmd := m.Update(sessionOpenedMsg{
+		taskID:    "t1",
+		sessionID: "ses_abc",
+		err:       fmt.Errorf("opencode not found"),
+	})
+	model := updated.(Model)
+
+	if model.statusMessageType != "error" {
+		t.Errorf("expected status message type 'error', got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "Session error") {
+		t.Errorf("expected error message about session, got %q", model.statusMessage)
+	}
+	if cmd != nil {
+		t.Error("expected nil command after session error")
+	}
+}
+
+// =============================================================================
+// ViewMode Type Tests
+// =============================================================================
+
+func TestViewMode_Constants(t *testing.T) {
+	// ViewModeTasks should be the zero value
+	var defaultMode ViewMode
+	if defaultMode != ViewModeTasks {
+		t.Errorf("expected zero value to be ViewModeTasks, got %v", defaultMode)
+	}
+
+	// ViewModeSchedules should be different from ViewModeTasks
+	if ViewModeSchedules == ViewModeTasks {
+		t.Error("expected ViewModeSchedules to differ from ViewModeTasks")
+	}
+}
+
+func TestViewMode_String(t *testing.T) {
+	tests := []struct {
+		mode     ViewMode
+		expected string
+	}{
+		{ViewModeTasks, "tasks"},
+		{ViewModeSchedules, "schedules"},
+		{ViewMode(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			if got := tt.mode.String(); got != tt.expected {
+				t.Errorf("ViewMode(%d).String() = %q, want %q", tt.mode, got, tt.expected)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Schedule Sub-Model Wiring Tests
+// =============================================================================
+
+func TestNewModel_InitializesScheduleSubModels(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// viewMode should default to ViewModeTasks (zero value)
+	if m.viewMode != ViewModeTasks {
+		t.Errorf("expected viewMode to be ViewModeTasks, got %v", m.viewMode)
+	}
+
+	// scheduleList should be initialized (verify by checking it doesn't panic)
+	view := m.scheduleList.View(80, 20)
+	if view == "" {
+		t.Error("expected scheduleList.View() to return non-empty string")
+	}
+
+	// scheduleDetail should be initialized (verify by checking it doesn't panic)
+	detailView := m.scheduleDetail.View()
+	if detailView == "" {
+		t.Error("expected scheduleDetail.View() to return non-empty string")
+	}
+}
+
+func TestUpdate_TasksUpdated_PropagatesScheduleList(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Regular Task", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Scheduled Task", Classification: "ready", Priority: "medium",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+		{ID: "t3", Title: "Another Scheduled", Classification: "waiting", Priority: "low",
+			Schedule: "0 0 * * *", ScheduleEnabled: &enabled},
+	}
+	stats := &types.TaskStats{Ready: 2, Waiting: 1}
+
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: stats})
+	model := updated.(Model)
+
+	// scheduleList should have received the tasks and filtered to scheduled only
+	selectedTask := model.scheduleList.SelectedTask()
+	if selectedTask == nil {
+		t.Fatal("expected scheduleList to have a selected task after TasksUpdatedMsg")
+	}
+	// Should auto-select first scheduled task (t2)
+	if selectedTask.ID != "t2" {
+		t.Errorf("expected scheduleList to select first scheduled task 't2', got '%s'", selectedTask.ID)
+	}
+}
+
+func TestSyncScheduleDetail_SyncsWithScheduleList(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	enabled := true
+	tasks := []types.ResolvedTask{
+		{ID: "s1", Title: "Scheduled One", Classification: "ready", Priority: "high",
+			Schedule: "0 */6 * * *", ScheduleEnabled: &enabled},
+		{ID: "s2", Title: "Scheduled Two", Classification: "ready", Priority: "medium",
+			Schedule: "0 0 * * *", ScheduleEnabled: &enabled},
+	}
+	m.scheduleList.SetTasks(tasks)
+
+	// syncScheduleDetail should set the detail to the selected task
+	(&m).syncScheduleDetail()
+
+	// scheduleDetail should now have the selected task from scheduleList
+	detailView := m.scheduleDetail.View()
+	if !strings.Contains(detailView, "Scheduled One") {
+		t.Errorf("expected scheduleDetail to show 'Scheduled One', got:\n%s", detailView)
+	}
+}
+
+func TestSyncScheduleDetail_NilWhenNoSelection(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// No tasks set, so no selection
+	(&m).syncScheduleDetail()
+
+	// scheduleDetail should show empty state
+	detailView := m.scheduleDetail.View()
+	if !strings.Contains(detailView, "Select a scheduled task") {
+		t.Errorf("expected empty state placeholder, got:\n%s", detailView)
+	}
+}
+
+// =============================================================================
+// Phase 2: Key Remapping Tests
+// =============================================================================
+
+func TestUpdate_CKey_TogglesViewMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Start in ViewModeTasks
+	if m.viewMode != ViewModeTasks {
+		t.Fatalf("expected initial viewMode to be ViewModeTasks, got %v", m.viewMode)
+	}
+
+	// Press C to toggle to schedules
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	if m.viewMode != ViewModeSchedules {
+		t.Errorf("after pressing C, expected ViewModeSchedules, got %v", m.viewMode)
+	}
+
+	// Press C again to toggle back to tasks
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	if m.viewMode != ViewModeTasks {
+		t.Errorf("after pressing C again, expected ViewModeTasks, got %v", m.viewMode)
+	}
+}
+
+func TestUpdate_CKey_ClearsSelectionAndFilter(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Set up some multi-select state and filter
+	m.selectedTasks = map[string]bool{"t1": true, "t2": true}
+	m.filterState = FilterLocked
+	m.filterQuery = "some filter"
+
+	// Press C to toggle view
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	// Multi-select should be cleared
+	if len(m.selectedTasks) != 0 {
+		t.Errorf("expected selectedTasks to be cleared after C, got %d items", len(m.selectedTasks))
+	}
+
+	// Filter should be deactivated
+	if m.filterState != FilterOff {
+		t.Errorf("expected filterState to be FilterOff after C, got %v", m.filterState)
+	}
+	if m.filterQuery != "" {
+		t.Errorf("expected filterQuery to be empty after C, got %q", m.filterQuery)
+	}
+}
+
+func TestUpdate_CKey_SetsDetailVisibleInScheduleMode(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Hide detail panel
+	m.detailVisible = false
+
+	// Press C to enter schedule mode
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	// Detail should be visible in schedule mode (matching TS behavior)
+	if !m.detailVisible {
+		t.Error("expected detailVisible to be true when entering schedule mode")
+	}
+}
+
+func TestUpdate_CKey_SetsFocusToPanelTasks(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Set focus to a different panel
+	m.activePanel = PanelLogs
+
+	// Press C to toggle view
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}}
+	updated, _ := m.Update(msg)
+	m = updated.(Model)
+
+	// Focus should reset to tasks panel
+	if m.activePanel != PanelTasks {
+		t.Errorf("expected activePanel to be PanelTasks after C, got %v", m.activePanel)
+	}
+}
+
+func TestUpdate_XKey_CancelsTask(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up a task in in_progress status
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Running Task", Path: "projects/test/task/t1.md",
+			Classification: "ready", Priority: "high", Status: "in_progress"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Navigate to the task
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Press X (uppercase) to cancel
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should open a confirmation modal
+	if !m.modalManager.IsOpen() {
+		t.Error("expected confirmation modal to open after pressing X on in_progress task")
+	}
+}
+
+func TestUpdate_XKey_OnlyWorksOnInProgressTasks(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up a task NOT in in_progress status
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready Task", Path: "projects/test/task/t1.md",
+			Classification: "ready", Priority: "high", Status: "pending"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Navigate to the task
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Press X on a non-in_progress task
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should NOT open modal for non-in_progress task
+	if m.modalManager.IsOpen() {
+		t.Error("expected no modal for non-in_progress task when pressing X")
+	}
+}
+
+func TestUpdate_XKey_OnlyWorksInViewModeTasks(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.activePanel = PanelTasks
+
+	// Set up a task in in_progress status
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Running Task", Path: "projects/test/task/t1.md",
+			Classification: "ready", Priority: "high", Status: "in_progress"},
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+	m = updated.(Model)
+
+	// Navigate to the task
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Switch to schedule view
+	m.viewMode = ViewModeSchedules
+
+	// Press X in schedule mode
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}}
+	updated, _ = m.Update(msg)
+	m = updated.(Model)
+
+	// Should NOT open modal in schedule mode
+	if m.modalManager.IsOpen() {
+		t.Error("expected X key to be guarded by ViewModeTasks")
+	}
+}
+
+func TestUpdate_TaskActionsGuardedByViewModeTasks(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+
+	// Keys that should be guarded by ViewModeTasks
+	guardedKeys := []struct {
+		key  rune
+		name string
+	}{
+		{'c', "complete"},
+		{'x', "execute"},
+		{'e', "edit"},
+		{'s', "metadata"},
+		{'d', "delete"},
+	}
+
+	for _, gk := range guardedKeys {
+		t.Run(gk.name, func(t *testing.T) {
+			m := NewModel(cfg)
+			m.activePanel = PanelTasks
+
+			// Set up tasks
+			tasks := []types.ResolvedTask{
+				{ID: "t1", Title: "Test Task", Path: "projects/test/task/t1.md",
+					Classification: "ready", Priority: "high", Status: "in_progress"},
+			}
+			updated, _ := m.Update(TasksUpdatedMsg{Tasks: tasks, Stats: &types.TaskStats{Ready: 1}})
+			m = updated.(Model)
+
+			// Navigate to the task
+			jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+			updated, _ = m.Update(jMsg)
+			m = updated.(Model)
+
+			// Switch to schedule view
+			m.viewMode = ViewModeSchedules
+
+			// Press the guarded key
+			msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{gk.key}}
+			updated, cmd := m.Update(msg)
+			m = updated.(Model)
+
+			// Should produce no command and no modal
+			if cmd != nil {
+				t.Errorf("expected nil command for '%c' in schedule mode, got non-nil", gk.key)
+			}
+			if m.modalManager.IsOpen() {
+				t.Errorf("expected no modal for '%c' in schedule mode", gk.key)
+			}
+		})
+	}
+}
+
+// TODO: TestUpdate_JKKeys_NavigateScheduleListInScheduleMode - requires schedule-mode j/k wiring in handleKeyMsg
+// TODO: TestUpdate_JKKeys_SyncScheduleDetailInScheduleMode - requires schedule-mode j/k wiring in handleKeyMsg

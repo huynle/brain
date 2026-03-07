@@ -94,3 +94,49 @@ func TestHelpBar_PauseIndicator_ShowsOnNonTaskPanels(t *testing.T) {
 		t.Errorf("expected PAUSED indicator even on non-task panel, got:\n%s", view)
 	}
 }
+
+func TestHelpBar_View_ShowsSessionShortcuts_WhenHasTaskSessions(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.HasTaskSessions = true
+
+	view := h.View(120, false)
+
+	if !strings.Contains(view, "Session") {
+		t.Errorf("expected help bar to contain 'Session' shortcut when HasTaskSessions=true, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Tmux") {
+		t.Errorf("expected help bar to contain 'Tmux' shortcut when HasTaskSessions=true, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_NoSessionShortcuts_WhenNoTaskSessions(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+	h.HasTaskSessions = false
+
+	view := h.View(120, false)
+
+	if strings.Contains(view, "Session") {
+		t.Errorf("expected help bar NOT to contain 'Session' when HasTaskSessions=false, got:\n%s", view)
+	}
+	if strings.Contains(view, "Tmux") {
+		t.Errorf("expected help bar NOT to contain 'Tmux' when HasTaskSessions=false, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_NoSessionShortcuts_WhenNotTaskPanel(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelDetails
+	h.HasTaskSessions = true
+
+	view := h.View(120, false)
+
+	// Session shortcuts should only appear on task panel
+	if strings.Contains(view, "Session") {
+		t.Errorf("expected help bar NOT to contain 'Session' on non-task panel, got:\n%s", view)
+	}
+	if strings.Contains(view, "Tmux") {
+		t.Errorf("expected help bar NOT to contain 'Tmux' on non-task panel, got:\n%s", view)
+	}
+}

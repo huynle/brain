@@ -64,6 +64,26 @@ func (c Config) IsMultiProject() bool {
 	return len(c.Projects) > 1
 }
 
+// ViewMode identifies which view mode the TUI is in.
+type ViewMode int
+
+const (
+	ViewModeTasks     ViewMode = iota // Default: show task tree
+	ViewModeSchedules                 // Show scheduled tasks list
+)
+
+// String returns the display name for a view mode.
+func (v ViewMode) String() string {
+	switch v {
+	case ViewModeTasks:
+		return "tasks"
+	case ViewModeSchedules:
+		return "schedules"
+	default:
+		return "unknown"
+	}
+}
+
 // TaskStats mirrors types.TaskStats with an additional InProgress field
 // for display purposes (active tasks currently being executed).
 type TaskStats struct {

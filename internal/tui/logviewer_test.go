@@ -905,6 +905,146 @@ func TestNewModel_LoadsExistingLogFile(t *testing.T) {
 }
 
 // =============================================================================
+// LogViewer - Filtered Rendering (f key)
+// =============================================================================
+
+func TestLogViewer_Filtered_ShowsOnlyMatchingTask(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "task A log",
+		TaskID:    "taskA",
+	})
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 46, 0, time.UTC),
+		Level:     "info",
+		Message:   "task B log",
+		TaskID:    "taskB",
+	})
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 47, 0, time.UTC),
+		Level:     "info",
+		Message:   "another task A log",
+		TaskID:    "taskA",
+	})
+
+	// Enable filtering for taskA
+	lv.IsFiltering = true
+	lv.FilterTaskID = "taskA"
+
+	view := lv.View()
+
+	if !strings.Contains(view, "task A log") {
+		t.Errorf("expected 'task A log' in filtered view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "another task A log") {
+		t.Errorf("expected 'another task A log' in filtered view, got:\n%s", view)
+	}
+	if strings.Contains(view, "task B log") {
+		t.Errorf("expected 'task B log' to be filtered out, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_Filtered_ShowsTaskLogsHeader(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "test",
+		TaskID:    "abc12def",
+	})
+
+	lv.IsFiltering = true
+	lv.FilterTaskID = "abc12def"
+
+	view := lv.View()
+
+	if !strings.Contains(view, "Task Logs") {
+		t.Errorf("expected 'Task Logs' header when filtering, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_Filtered_EmptyShowsNoLogsForTask(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "task B log",
+		TaskID:    "taskB",
+	})
+
+	// Filter for taskA which has no logs
+	lv.IsFiltering = true
+	lv.FilterTaskID = "taskA"
+
+	view := lv.View()
+
+	if !strings.Contains(view, "No logs for selected task") {
+		t.Errorf("expected 'No logs for selected task' when no matching entries, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_NotFiltered_ShowsAllEntries(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "task A log",
+		TaskID:    "taskA",
+	})
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 46, 0, time.UTC),
+		Level:     "info",
+		Message:   "task B log",
+		TaskID:    "taskB",
+	})
+
+	// IsFiltering is false (default)
+	view := lv.View()
+
+	if !strings.Contains(view, "task A log") {
+		t.Errorf("expected 'task A log' in unfiltered view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "task B log") {
+		t.Errorf("expected 'task B log' in unfiltered view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Logs") {
+		t.Errorf("expected 'Logs' header (not 'Task Logs'), got:\n%s", view)
+	}
+}
+
+func TestLogViewer_Filtered_EmptyFilterTaskID_ShowsAll(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "some log",
+		TaskID:    "taskA",
+	})
+
+	// IsFiltering true but FilterTaskID empty - should show all
+	lv.IsFiltering = true
+	lv.FilterTaskID = ""
+
+	view := lv.View()
+
+	if !strings.Contains(view, "some log") {
+		t.Errorf("expected 'some log' when FilterTaskID is empty, got:\n%s", view)
+	}
+}
+
+// =============================================================================
 // Phase 3: Integration - Truncation Counter Logic
 // =============================================================================
 

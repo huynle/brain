@@ -33,6 +33,10 @@ type LogViewer struct {
 	width      int
 	height     int
 	logFile    string
+
+	// Filtering: when IsFiltering is true, only show entries matching FilterTaskID
+	IsFiltering  bool
+	FilterTaskID string
 }
 
 // NewLogViewer creates a new LogViewer with the given max entries.
@@ -68,16 +72,28 @@ func (lv *LogViewer) EntryCount() int {
 
 // View renders the log viewer.
 func (lv *LogViewer) View() string {
-	header := TitleStyle.Render("Logs")
+	// Determine which entries to show (filtered or all)
+	entries := lv.visibleEntries()
 
-	if len(lv.entries) == 0 {
-		return header + "\n" + DimStyle.Render("No logs")
+	// Header changes based on filter state
+	headerText := "Logs"
+	if lv.IsFiltering && lv.FilterTaskID != "" {
+		headerText = "Task Logs"
+	}
+	header := TitleStyle.Render(headerText)
+
+	if len(entries) == 0 {
+		emptyMsg := "No logs"
+		if lv.IsFiltering && lv.FilterTaskID != "" {
+			emptyMsg = "No logs for selected task"
+		}
+		return header + "\n" + DimStyle.Render(emptyMsg)
 	}
 
 	var lines []string
 	lines = append(lines, header)
 
-	for _, entry := range lv.entries {
+	for _, entry := range entries {
 		line := lv.renderEntry(entry)
 		lines = append(lines, line)
 	}
@@ -89,6 +105,21 @@ func (lv *LogViewer) View() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// visibleEntries returns the entries to display, filtered by task if filtering is active.
+func (lv *LogViewer) visibleEntries() []LogEntry {
+	if !lv.IsFiltering || lv.FilterTaskID == "" {
+		return lv.entries
+	}
+
+	var filtered []LogEntry
+	for _, entry := range lv.entries {
+		if entry.TaskID == lv.FilterTaskID {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 // renderEntry renders a single log entry line.

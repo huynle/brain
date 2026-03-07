@@ -79,6 +79,9 @@ type Model struct {
 	metricsCollector *MetricsCollector
 	resourceMetrics  ResourceMetrics
 
+	// Log filtering: show only logs for the selected task
+	filterLogsByTask bool
+
 	// Log file truncation counter (triggers every 150 ticks ≈ 5 minutes)
 	truncateCounter int
 
@@ -841,6 +844,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.taskTree.TextWrap = m.settings.TextWrap
 			m.helpBar.TextWrap = m.settings.TextWrap
 			_ = SaveSettings(m.settings)
+			return m, nil
+		case "f":
+			// Toggle log filtering by selected task (when logs panel is focused)
+			if m.activePanel == PanelLogs {
+				m.filterLogsByTask = !m.filterLogsByTask
+				return m, nil
+			}
 			return m, nil
 		case "L":
 			m.logsVisible = !m.logsVisible
@@ -1650,6 +1660,22 @@ func (m Model) renderLogPanel(width, height int) string {
 	// Temporarily set size for rendering
 	lv := m.logViewer
 	lv.SetSize(innerWidth, innerHeight)
+
+	// Wire log filtering by selected task
+	if m.filterLogsByTask {
+		selectedTask := m.taskTree.SelectedTask()
+		if selectedTask != nil {
+			lv.IsFiltering = true
+			lv.FilterTaskID = selectedTask.ID
+		} else {
+			lv.IsFiltering = false
+			lv.FilterTaskID = ""
+		}
+	} else {
+		lv.IsFiltering = false
+		lv.FilterTaskID = ""
+	}
+
 	content := lv.View()
 
 	return style.

@@ -43,6 +43,9 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 
 	// Panel-specific shortcuts (view mode aware)
+	if h.ActivePanel == PanelLogs {
+		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
+	}
 	if h.ActivePanel == PanelTasks {
 		if h.ViewMode == ViewModeSchedules {
 			// Schedule view shortcuts

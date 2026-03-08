@@ -59,6 +59,8 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("g/G", "Jump to top/bottom"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("Enter", "Collapse/expand group"))
+	b.WriteString("\n")
 	b.WriteString(formatShortcut("Tab", "Switch panel focus"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("/", "Filter tasks"))
@@ -91,7 +93,7 @@ func (m *HelpModal) View() string {
 	// Multi-select shortcuts
 	b.WriteString(categoryStyle.Render("Multi-Select:"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("Space", "Toggle selection"))
+	b.WriteString(formatShortcut("Space", "Toggle selection / collapse group"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("A", "Select all"))
 	b.WriteString("\n")

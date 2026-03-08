@@ -856,8 +856,25 @@ func (tt *TaskTree) ToggleCollapse() {
 }
 
 // IsOnGroupHeader returns true if the cursor is on a group header.
+// Works for both classification group view and feature view modes.
 func (tt *TaskTree) IsOnGroupHeader() bool {
-	if !tt.useGroupedView || len(tt.groups) == 0 {
+	if !tt.useGroupedView {
+		return false
+	}
+
+	if tt.useFeatureView {
+		// Feature view mode: on a header when selectedFeatureTaskIdx == -1
+		// and we're either on a feature header or the ungrouped header
+		if tt.selectedFeatureTaskIdx != -1 {
+			return false
+		}
+		hasFeatures := len(tt.featureGroups.Features) > 0
+		hasUngrouped := tt.featureGroups.Ungrouped != nil
+		return hasFeatures || (hasUngrouped && tt.isOnUngrouped)
+	}
+
+	// Classification group mode
+	if len(tt.groups) == 0 {
 		return false
 	}
 	return tt.selectedTaskIdx == -1

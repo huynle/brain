@@ -123,7 +123,7 @@ func NewModel(cfg Config) Model {
 		modalManager:     NewModalManager(),
 		settings:         settings,
 		activePanel:      PanelTasks,
-		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
+		sseClient:        NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
 		pausedProjects:   make(map[string]bool),
@@ -131,7 +131,7 @@ func NewModel(cfg Config) Model {
 		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
 		seenFeatureIDs:   make(map[string]bool),
-		monitorClient:    NewMonitorClient(cfg.APIURL),
+		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -150,7 +150,7 @@ func NewModel(cfg Config) Model {
 	}
 	if cfg.IsMultiProject() {
 		for _, projectID := range cfg.Projects {
-			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, projectID)
+			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, cfg.APIToken, projectID)
 		}
 	}
 
@@ -228,11 +228,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TasksUpdatedMsg:
-		// Store tasks by project if ProjectID is set (multi-project mode)
+		// Always store tasks by project if ProjectID is set
 		if msg.ProjectID != "" {
 			m.tasksByProject[msg.ProjectID] = msg.Tasks
-		} else {
-			// Single-project mode: update legacy tasks field directly
+		}
+		// In single-project mode, always update m.tasks directly
+		// (SSE events include ProjectID even for single-project connections,
+		// but syncActiveProjectView is a no-op in single-project mode)
+		if !m.config.IsMultiProject() {
 			m.tasks = msg.Tasks
 		}
 
@@ -314,7 +317,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case reconnectMsg:
 		// Stop old client and create a new one for reconnection
 		m.sseClient.Stop()
-		m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+		m.sseClient = NewSSEClient(m.config.APIURL, m.config.APIToken, m.config.Project)
 		return m, m.sseClient.Connect(m.ctx)
 
 	case reconnectProjectMsg:
@@ -322,7 +325,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if client, ok := m.sseClients[msg.ProjectID]; ok {
 			client.Stop()
 		}
-		m.sseClients[msg.ProjectID] = NewSSEClient(m.config.APIURL, msg.ProjectID)
+		m.sseClients[msg.ProjectID] = NewSSEClient(m.config.APIURL, m.config.APIToken, msg.ProjectID)
 		return m, m.sseClients[msg.ProjectID].Connect(m.ctx)
 
 	case TickMsg:
@@ -335,7 +338,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL))
+		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL, m.config.APIToken))
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -559,6 +562,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.helpBar.ActivePanel = m.activePanel
 		return m, nil
 
+	case tea.KeyEnter:
+		// Enter toggles group collapse when on a group header
+		if m.activePanel == PanelTasks && m.taskTree.IsOnGroupHeader() {
+			m.taskTree.ToggleCollapse()
+		}
+		return m, nil
+
 	case tea.KeyRunes:
 		// Multi-project tab navigation
 		if m.config.IsMultiProject() {
@@ -603,6 +613,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				// Create API client for modal
 				apiClient := runner.NewAPIClient(runner.RunnerConfig{
 					BrainAPIURL: m.config.APIURL,
+					APIToken:    m.config.APIToken,
 					APITimeout:  5000, // 5 second timeout
 				})
 
@@ -661,13 +672,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
-					return m, batchCompleteTasksCmd(m.config.APIURL, taskPaths, taskIDs)
+					return m, batchCompleteTasksCmd(m.config.APIURL, m.config.APIToken, taskPaths, taskIDs)
 				}
 
 				// Case 2: Single task selected
 				selectedTask := m.taskTree.SelectedTask()
 				if selectedTask != nil {
-					return m, completeTaskCmd(m.config.APIURL, selectedTask.Path)
+					return m, completeTaskCmd(m.config.APIURL, m.config.APIToken, selectedTask.Path)
 				}
 			}
 			return m, nil
@@ -697,9 +708,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			confirmMsg := fmt.Sprintf("Cancel task '%s'?", selectedTask.Title)
 			taskPath := selectedTask.Path
+			apiToken := m.config.APIToken
 			modal := NewConfirmModal("Confirm Cancel", confirmMsg).
 				WithOnConfirm(func() tea.Msg {
-					return cancelTaskCmd(m.config.APIURL, taskPath)()
+					return cancelTaskCmd(m.config.APIURL, apiToken, taskPath)()
 				})
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
@@ -843,7 +855,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r":
 			// Refresh: reconnect SSE to get fresh snapshot
 			m.sseClient.Stop()
-			m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+			m.sseClient = NewSSEClient(m.config.APIURL, m.config.APIToken, m.config.Project)
 			return m, m.sseClient.Connect(m.ctx)
 		case "w":
 			m.settings.TextWrap = !m.settings.TextWrap
@@ -982,7 +994,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
 				}
 				m.syncHelpBarPauseState()
-				return m, pauseProjectCmd(m.config.APIURL, projectID, currentlyPaused)
+				return m, pauseProjectCmd(m.config.APIURL, m.config.APIToken, projectID, currentlyPaused)
 			}
 			return m, nil
 		case "y":
@@ -1009,7 +1021,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusMessage("info", "Resuming all projects...")
 			}
 			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.config.APIURL, !m.allPaused)
+			return m, pauseAllCmd(m.config.APIURL, m.config.APIToken, !m.allPaused)
 		}
 
 	case tea.KeyUp:
@@ -1921,10 +1933,11 @@ type runnerStatusMsg struct {
 // =============================================================================
 
 // completeTaskCmd completes a single task.
-func completeTaskCmd(apiURL, taskPath string) tea.Cmd {
+func completeTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1935,10 +1948,11 @@ func completeTaskCmd(apiURL, taskPath string) tea.Cmd {
 }
 
 // cancelTaskCmd cancels a single task.
-func cancelTaskCmd(apiURL, taskPath string) tea.Cmd {
+func cancelTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1949,10 +1963,11 @@ func cancelTaskCmd(apiURL, taskPath string) tea.Cmd {
 }
 
 // batchCompleteTasksCmd completes multiple tasks in parallel.
-func batchCompleteTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCompleteTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1996,10 +2011,11 @@ func batchCompleteTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
 }
 
 // batchCancelTasksCmd cancels multiple tasks in parallel.
-func batchCancelTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCancelTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -2113,10 +2129,11 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 }
 
 // pauseProjectCmd toggles pause/resume for a specific project.
-func pauseProjectCmd(apiURL, projectID string, currentlyPaused bool) tea.Cmd {
+func pauseProjectCmd(apiURL, apiToken, projectID string, currentlyPaused bool) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -2132,10 +2149,11 @@ func pauseProjectCmd(apiURL, projectID string, currentlyPaused bool) tea.Cmd {
 }
 
 // pauseAllCmd toggles pause/resume for all projects.
-func pauseAllCmd(apiURL string, currentlyPaused bool) tea.Cmd {
+func pauseAllCmd(apiURL, apiToken string, currentlyPaused bool) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -2151,10 +2169,11 @@ func pauseAllCmd(apiURL string, currentlyPaused bool) tea.Cmd {
 }
 
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
-func fetchRunnerStatusCmd(apiURL string) tea.Cmd {
+func fetchRunnerStatusCmd(apiURL, apiToken string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 

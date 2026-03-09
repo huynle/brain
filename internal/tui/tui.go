@@ -1592,12 +1592,12 @@ func (m Model) renderBaseView() string {
 // renderBottomPanel renders the bottom panel(s) - detail and/or logs.
 func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
-		// Split horizontally: detail on left (70%), logs on right (30%)
-		detailWidth := width * 70 / 100
-		logWidth := width - detailWidth
-		detailPanel := m.renderDetailPanel(detailWidth, height)
-		logPanel := m.renderLogPanel(logWidth, height)
-		return lipgloss.JoinHorizontal(lipgloss.Top, detailPanel, logPanel)
+		// Stack vertically: detail on top (60%), logs on bottom (40%)
+		detailHeight := height * 60 / 100
+		logHeight := height - detailHeight
+		detailPanel := m.renderDetailPanel(width, detailHeight)
+		logPanel := m.renderLogPanel(width, logHeight)
+		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
 	}
 
 	if m.detailVisible {

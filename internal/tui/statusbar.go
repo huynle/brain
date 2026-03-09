@@ -24,12 +24,49 @@ func NewStatusBar(project string) StatusBar {
 	return StatusBar{Project: project}
 }
 
-// View renders the status bar as a styled single-line string.
+// View renders the status bar as a styled multi-row string.
+// Row 1: Project name, indicators, task stats, connection indicator
+// Row 2: System metrics (CPU/Mem/Proc)
 func (s StatusBar) View(width int) string {
 	if width < 20 {
 		width = 20
 	}
 
+	firstRow := s.renderFirstRow(width)
+	secondRow := s.renderSecondRow(width)
+
+	// Use a border style for the status bar
+	barStyle := lipgloss.NewStyle().
+		BorderStyle(lipgloss.RoundedBorder()).
+		BorderForeground(ColorCyan).
+		Width(width - 2).
+		PaddingLeft(1).
+		PaddingRight(1)
+
+	// Combine both rows with border
+	content := firstRow + "\n" + secondRow
+	rendered := barStyle.Render(content)
+
+	// CRITICAL: Ensure exactly 4 lines (2 content + 2 border lines)
+	// This matches the TypeScript TUI multi-row behavior
+	lineCount := strings.Count(rendered, "\n") + 1
+	if lineCount != 4 {
+		// Pad or truncate to exactly 4 lines
+		lines := strings.Split(rendered, "\n")
+		for len(lines) < 4 {
+			lines = append(lines, "") // Pad with blank lines
+		}
+		if len(lines) > 4 {
+			lines = lines[:4] // Truncate
+		}
+		rendered = strings.Join(lines, "\n")
+	}
+
+	return rendered
+}
+
+// renderFirstRow renders the first row: project name, indicators, task stats, connection indicator
+func (s StatusBar) renderFirstRow(width int) string {
 	// Left side: project name
 	projectName := TitleStyle.Render(s.Project)
 
@@ -86,25 +123,8 @@ func (s StatusBar) View(width int) string {
 		connDot = lipgloss.NewStyle().Foreground(ColorReady).Render(IndicatorConnected)
 	}
 
-	// Right side: metrics + connection indicator
-	rightContent := ""
-	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
-		rightContent = lipgloss.NewStyle().
-			Foreground(ColorReady).
-			Render(s.Metrics.Format()) + "  "
-	}
-	rightContent += connDot
-
-	// Compose the status bar
+	// Compose first row
 	leftContent := projectName + "  " + indicators + stats
-
-	// Use a border style for the status bar
-	barStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(ColorCyan).
-		Width(width - 2).
-		PaddingLeft(1).
-		PaddingRight(1)
 
 	// Place left and right content with space between
 	innerWidth := width - 6 // account for border + padding
@@ -117,25 +137,26 @@ func (s StatusBar) View(width int) string {
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top,
 		leftStyle.Render(leftContent),
-		rightStyle.Render(rightContent),
+		rightStyle.Render(connDot),
 	)
 
-	rendered := barStyle.Render(row)
+	return row
+}
 
-	// CRITICAL: Ensure exactly 3 lines (1 content + 2 border lines)
-	// This matches the TypeScript TUI behavior
-	lineCount := strings.Count(rendered, "\n") + 1
-	if lineCount != 3 {
-		// Pad or truncate to exactly 3 lines
-		lines := strings.Split(rendered, "\n")
-		for len(lines) < 3 {
-			lines = append(lines, "") // Pad with blank lines
-		}
-		if len(lines) > 3 {
-			lines = lines[:3] // Truncate
-		}
-		rendered = strings.Join(lines, "\n")
+// renderSecondRow renders the second row: system metrics (CPU/Mem/Proc)
+func (s StatusBar) renderSecondRow(width int) string {
+	// System metrics
+	metricsContent := ""
+	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
+		metricsContent = lipgloss.NewStyle().
+			Foreground(ColorReady).
+			Render(s.Metrics.Format())
 	}
 
-	return rendered
+	// If no metrics, render empty space
+	if metricsContent == "" {
+		metricsContent = " "
+	}
+
+	return metricsContent
 }

@@ -1074,7 +1074,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Main content starts after that
 	// Help bar is at bottom
 
-	statusBarHeight := 3
+	statusBarHeight := 4 // Status bar now has 2 content rows + 2 border lines
 	projectTabsHeight := 0
 	if m.config.IsMultiProject() {
 		projectTabsHeight = 1

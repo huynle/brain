@@ -19,8 +19,8 @@ func TestStatusBarHeight(t *testing.T) {
 	rendered := sb.View(80)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 3 {
-		t.Errorf("Status bar must be exactly 3 lines, got %d", lineCount)
+	if lineCount != 4 {
+		t.Errorf("Status bar must be exactly 4 lines, got %d", lineCount)
 	}
 }
 
@@ -38,8 +38,8 @@ func TestStatusBarHeightWithBlockedTasks(t *testing.T) {
 	rendered := sb.View(80)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 3 {
-		t.Errorf("Status bar must be exactly 3 lines even with blocked tasks, got %d", lineCount)
+	if lineCount != 4 {
+		t.Errorf("Status bar must be exactly 4 lines even with blocked tasks, got %d", lineCount)
 	}
 }
 
@@ -56,8 +56,8 @@ func TestStatusBarHeightWithMetrics(t *testing.T) {
 	rendered := sb.View(80)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 3 {
-		t.Errorf("Status bar must be exactly 3 lines with metrics, got %d", lineCount)
+	if lineCount != 4 {
+		t.Errorf("Status bar must be exactly 4 lines with metrics, got %d", lineCount)
 	}
 }
 
@@ -70,8 +70,8 @@ func TestStatusBarHeightNarrowWidth(t *testing.T) {
 	rendered := sb.View(30)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 3 {
-		t.Errorf("Status bar must be exactly 3 lines even with narrow width, got %d", lineCount)
+	if lineCount != 4 {
+		t.Errorf("Status bar must be exactly 4 lines even with narrow width, got %d", lineCount)
 	}
 }
 
@@ -87,10 +87,10 @@ func TestStatusBarPauseIndicator(t *testing.T) {
 		t.Error("Status bar should show pause indicator when paused")
 	}
 
-	// Ensure exactly 3 lines
+	// Ensure exactly 4 lines
 	lineCount := strings.Count(rendered, "\n") + 1
-	if lineCount != 3 {
-		t.Errorf("Status bar must be exactly 3 lines with pause indicator, got %d", lineCount)
+	if lineCount != 4 {
+		t.Errorf("Status bar must be exactly 4 lines with pause indicator, got %d", lineCount)
 	}
 }
 

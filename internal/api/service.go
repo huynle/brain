@@ -113,7 +113,7 @@ type TaskService interface {
 	GetFeature(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
 
 	// CheckoutFeature marks a feature for checkout.
-	CheckoutFeature(ctx context.Context, projectId, featureId string) error
+	CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 
 	// TriggerTask manually triggers a scheduled task.
 	TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)

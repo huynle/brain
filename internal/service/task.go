@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,8 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
+	"github.com/huynle/brain-api/pkg/markdown"
 )
 
 // Compile-time check that TaskServiceImpl implements api.TaskService.
@@ -307,9 +310,364 @@ func (s *TaskServiceImpl) GetFeature(ctx context.Context, projectId, featureId s
 	return nil, api.ErrNotFound
 }
 
-// CheckoutFeature marks a feature for checkout. Stub implementation.
-func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featureId string) error {
-	return nil
+// CheckoutFeature marks a feature for checkout.
+func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+	// Sanitize inputs
+	sanitizedProjectID := strings.TrimSpace(projectId)
+	sanitizedFeatureID := strings.TrimSpace(featureId)
+
+	if sanitizedProjectID == "" {
+		return nil, fmt.Errorf("projectId is required")
+	}
+	if sanitizedFeatureID == "" {
+		return nil, fmt.Errorf("featureId is required")
+	}
+
+	// Normalize options with defaults
+	normalizedOpts := normalizeFeatureCheckoutOptions(opts)
+
+	// Generate checkout task key
+	generatedKey := fmt.Sprintf("feature-checkout:%s:round-1", sanitizedFeatureID)
+
+	// Check if checkout task already exists (idempotency)
+	taskDir := filepath.Join(s.config.BrainDir, "projects", sanitizedProjectID, "task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create task directory: %w", err)
+	}
+
+	// Look for existing checkout task with this generated_key
+	existingTask, err := findCheckoutTaskByKey(taskDir, generatedKey)
+	if err == nil && existingTask != nil {
+		// Task already exists
+		return &types.CheckoutFeatureResult{
+			Created:      false,
+			GeneratedKey: generatedKey,
+			Task:         existingTask,
+		}, nil
+	}
+
+	// Get all feature tasks to build depends_on list
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
+	}
+
+	// Extract non-generated task IDs
+	dependsOn := extractUniqueNonGeneratedTaskIds(featureTasks)
+
+	// Generate new task ID
+	shortID := markdown.GenerateShortID()
+	filename := shortID + ".md"
+	taskPath := filepath.Join(taskDir, filename)
+
+	// Build checkout task content
+	content := buildFeatureCheckoutContent(sanitizedFeatureID, normalizedOpts)
+
+	// Build frontmatter
+	trueVal := true
+	fm := &frontmatter.Frontmatter{
+		Type:     "task",
+		Title:    fmt.Sprintf("Feature checkout: %s", sanitizedFeatureID),
+		Status:   "pending",
+		Priority: "medium",
+		Created:  time.Now().Format(time.RFC3339),
+		Tags:     []string{"checkout", sanitizedFeatureID},
+	}
+
+	// Set fields that use frontmatter struct fields
+	fm.FeatureID = sanitizedFeatureID
+	fm.DependsOn = dependsOn
+	fm.Generated = &trueVal
+	fm.GeneratedKind = "feature_checkout"
+	fm.GeneratedKey = generatedKey
+	fm.GeneratedBy = "feature-checkout"
+
+	// Set merge-related fields
+	if normalizedOpts.ExecutionBranch != "" {
+		fm.GitBranch = normalizedOpts.ExecutionBranch
+	}
+	if normalizedOpts.MergeTargetBranch != "" {
+		fm.MergeTargetBranch = normalizedOpts.MergeTargetBranch
+	}
+	if normalizedOpts.MergePolicy != "" {
+		fm.MergePolicy = normalizedOpts.MergePolicy
+	}
+	if normalizedOpts.MergeStrategy != "" {
+		fm.MergeStrategy = normalizedOpts.MergeStrategy
+	}
+	if normalizedOpts.RemoteBranchPolicy != "" {
+		fm.RemoteBranchPolicy = normalizedOpts.RemoteBranchPolicy
+	}
+	if normalizedOpts.ExecutionMode != "" {
+		fm.ExecutionMode = normalizedOpts.ExecutionMode
+	}
+	if normalizedOpts.OpenPRBeforeMerge {
+		fm.OpenPRBeforeMerge = &normalizedOpts.OpenPRBeforeMerge
+	}
+
+	// Write file
+	fmYAML := frontmatter.Serialize(fm)
+	var fileBuilder strings.Builder
+	fileBuilder.WriteString("---\n")
+	fileBuilder.WriteString(fmYAML)
+	fileBuilder.WriteString("---\n")
+	if content != "" {
+		fileBuilder.WriteString("\n")
+		fileBuilder.WriteString(content)
+		fileBuilder.WriteString("\n")
+	}
+	fileContent := fileBuilder.String()
+	if err := os.WriteFile(taskPath, []byte(fileContent), 0644); err != nil {
+		return nil, fmt.Errorf("failed to write checkout task: %w", err)
+	}
+
+	// Build response
+	relPath := fmt.Sprintf("projects/%s/task/%s", sanitizedProjectID, filename)
+	result := &types.CheckoutFeatureResult{
+		Created:      true,
+		GeneratedKey: generatedKey,
+		Task: &types.CreateEntryResponse{
+			ID:     shortID,
+			Path:   relPath,
+			Title:  fmt.Sprintf("Feature checkout: %s", sanitizedFeatureID),
+			Type:   "task",
+			Status: "pending",
+		},
+	}
+
+	return result, nil
+}
+
+// normalizeFeatureCheckoutOptions returns normalized options with defaults.
+func normalizeFeatureCheckoutOptions(opts *types.FeatureCheckoutOptions) *types.FeatureCheckoutOptions {
+	if opts == nil {
+		opts = &types.FeatureCheckoutOptions{}
+	}
+
+	normalized := &types.FeatureCheckoutOptions{
+		ExecutionBranch:    strings.TrimSpace(opts.ExecutionBranch),
+		MergeTargetBranch:  strings.TrimSpace(opts.MergeTargetBranch),
+		MergePolicy:        strings.TrimSpace(opts.MergePolicy),
+		MergeStrategy:      strings.TrimSpace(opts.MergeStrategy),
+		RemoteBranchPolicy: strings.TrimSpace(opts.RemoteBranchPolicy),
+		ExecutionMode:      strings.TrimSpace(opts.ExecutionMode),
+		OpenPRBeforeMerge:  opts.OpenPRBeforeMerge,
+	}
+
+	// Apply defaults
+	if normalized.MergePolicy == "" {
+		normalized.MergePolicy = "auto_merge"
+	}
+	if normalized.MergeStrategy == "" {
+		normalized.MergeStrategy = "squash"
+	}
+	if normalized.RemoteBranchPolicy == "" {
+		normalized.RemoteBranchPolicy = "delete"
+	}
+	if normalized.ExecutionMode == "" {
+		normalized.ExecutionMode = "worktree"
+	}
+
+	return normalized
+}
+
+// buildFeatureCheckoutContent builds the content body for a checkout task.
+func buildFeatureCheckoutContent(featureID string, opts *types.FeatureCheckoutOptions) string {
+	executionBranch := opts.ExecutionBranch
+	if executionBranch == "" {
+		executionBranch = "(default branch for execution context)"
+	}
+	mergeTargetBranch := opts.MergeTargetBranch
+	if mergeTargetBranch == "" {
+		mergeTargetBranch = "(no explicit merge target)"
+	}
+
+	lines := []string{
+		fmt.Sprintf("Automated feature checkout for %s.", featureID),
+		"",
+		"Merge intent:",
+		fmt.Sprintf("- execution_branch: %s", executionBranch),
+		fmt.Sprintf("- merge_target_branch: %s", mergeTargetBranch),
+		fmt.Sprintf("- merge_policy: %s", opts.MergePolicy),
+		fmt.Sprintf("- merge_strategy: %s", opts.MergeStrategy),
+		fmt.Sprintf("- remote_branch_policy: %s", opts.RemoteBranchPolicy),
+		fmt.Sprintf("- open_pr_before_merge: %v", opts.OpenPRBeforeMerge),
+		"",
+		"Safety gates before merge:",
+		"- checkout validation pass",
+		"- merge precheck pass",
+		"- verification commands pass",
+		"",
+		"Guardrails:",
+		"- If merge target is a protected branch, use open_pr_before_merge before auto merge",
+		"- For optional PR-before-merge flow, ensure PR checks are green before final merge",
+		"- cleanup only after confirmed successful push",
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// findCheckoutTaskByKey searches for a checkout task with the given generated_key.
+func findCheckoutTaskByKey(taskDir, generatedKey string) (*types.CreateEntryResponse, error) {
+	entries, err := os.ReadDir(taskDir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		filePath := filepath.Join(taskDir, entry.Name())
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		doc, err := frontmatter.Parse(string(content))
+		if err != nil {
+			continue
+		}
+
+		if doc.Frontmatter.GeneratedKey == generatedKey {
+			// Found existing task
+			shortID := strings.TrimSuffix(entry.Name(), ".md")
+			title := doc.Frontmatter.Title
+			status := doc.Frontmatter.Status
+
+			return &types.CreateEntryResponse{
+				ID:     shortID,
+				Path:   fmt.Sprintf("projects/%s/%s", filepath.Base(filepath.Dir(taskDir)), entry.Name()),
+				Title:  title,
+				Type:   "task",
+				Status: status,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("not found")
+}
+
+// getFeatureTasksFromFilesystem reads tasks from filesystem for a feature.
+func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID string) ([]types.BrainEntry, error) {
+	taskDir := filepath.Join(s.config.BrainDir, "projects", projectID, "task")
+	entries, err := os.ReadDir(taskDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return []types.BrainEntry{}, nil
+		}
+		return nil, err
+	}
+
+	var tasks []types.BrainEntry
+	for _, entry := range entries {
+		if !strings.HasSuffix(entry.Name(), ".md") {
+			continue
+		}
+
+		filePath := filepath.Join(taskDir, entry.Name())
+		content, err := os.ReadFile(filePath)
+		if err != nil {
+			continue
+		}
+
+		doc, err := frontmatter.Parse(string(content))
+		if err != nil {
+			continue
+		}
+
+		taskFeatureID := doc.Frontmatter.FeatureID
+		if taskFeatureID != featureID {
+			continue
+		}
+
+		// Parse Generated field
+		generated := doc.Frontmatter.Generated
+
+		shortID := strings.TrimSuffix(entry.Name(), ".md")
+		tasks = append(tasks, types.BrainEntry{
+			ID:            shortID,
+			Generated:     generated,
+			GeneratedKind: doc.Frontmatter.GeneratedKind,
+		})
+	}
+
+	return tasks, nil
+}
+
+// getString safely extracts a string from a map.
+func getString(m map[string]interface{}, key string) string {
+	if v, ok := m[key].(string); ok {
+		return v
+	}
+	return ""
+}
+
+// extractUniqueNonGeneratedTaskIds extracts unique task IDs from non-generated tasks.
+func extractUniqueNonGeneratedTaskIds(tasks []types.BrainEntry) []string {
+	seen := make(map[string]bool)
+	var result []string
+
+	for _, task := range tasks {
+		// Skip generated tasks
+		if task.Generated != nil && *task.Generated {
+			continue
+		}
+		// Skip empty IDs
+		if task.ID == "" {
+			continue
+		}
+		// Skip duplicates
+		if seen[task.ID] {
+			continue
+		}
+		seen[task.ID] = true
+		result = append(result, task.ID)
+	}
+
+	// Sort for deterministic output
+	if len(result) > 0 {
+		sortStrings(result)
+	}
+	return result
+}
+
+// isTerminalCheckoutStatus returns true if the status is terminal.
+func isTerminalCheckoutStatus(status string) bool {
+	return status == "completed" ||
+		status == "validated" ||
+		status == "cancelled" ||
+		status == "superseded" ||
+		status == "archived"
+}
+
+// extractGeneratedDependentTasks extracts checkout and review tasks.
+func extractGeneratedDependentTasks(tasks []types.BrainEntry) []types.BrainEntry {
+	var result []types.BrainEntry
+	for _, task := range tasks {
+		if task.Generated == nil || !*task.Generated {
+			continue
+		}
+		if task.GeneratedKind == "feature_checkout" || task.GeneratedKind == "feature_review" {
+			result = append(result, task)
+		}
+	}
+	return result
+}
+
+// sortStrings sorts a string slice in place.
+func sortStrings(s []string) {
+	// Simple insertion sort for small slices
+	for i := 1; i < len(s); i++ {
+		key := s[i]
+		j := i - 1
+		for j >= 0 && s[j] > key {
+			s[j+1] = s[j]
+			j--
+		}
+		s[j+1] = key
+	}
 }
 
 // TriggerTask manually triggers a scheduled task. Stub implementation.

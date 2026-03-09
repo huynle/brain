@@ -29,58 +29,85 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 
 	var shortcuts string
 
-	// Multi-project tab shortcuts
+	// Multi-project tab shortcuts (matches TypeScript: h/l/[/]/1-9)
 	if isMultiProject {
-		shortcuts += fmt.Sprintf("%s Tabs  ", bold("h/l"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("h/l/[/]/1-9"))
 	}
 
-	// Common shortcuts
-	shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+	// j/k Navigate/Scroll
+	navLabel := "Navigate"
+	if h.ActivePanel == PanelLogs || h.ActivePanel == PanelDetails {
+		navLabel = "Scroll"
+	}
+	shortcuts += fmt.Sprintf("%s %s  ", bold("j/k"), navLabel)
+
+	// g/G Top/Bottom
 	shortcuts += fmt.Sprintf("%s Top/Bottom  ", bold("g/G"))
-	shortcuts += fmt.Sprintf("%s Collapse  ", bold("Enter"))
-	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
-	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
-	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
-	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 
 	// Panel-specific shortcuts (view mode aware)
 	if h.ActivePanel == PanelLogs {
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
-	}
-	if h.ActivePanel == PanelTasks {
+	} else if h.ActivePanel == PanelDetails {
+		if h.ViewMode == ViewModeSchedules {
+			shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
+		} else {
+			shortcuts += fmt.Sprintf("%s Dependencies  ", bold("d"))
+		}
+	} else if h.ActivePanel == PanelTasks {
 		if h.ViewMode == ViewModeSchedules {
 			// Schedule view shortcuts
-			shortcuts += fmt.Sprintf("%s Tasks  ", bold("C"))
+			shortcuts += fmt.Sprintf("%s Toggle  ", bold("d"))
+			shortcuts += fmt.Sprintf("%s Details  ", bold("Enter"))
 		} else {
 			// Task view shortcuts
-			shortcuts += fmt.Sprintf("%s Select  ", bold("Space"))
-			shortcuts += fmt.Sprintf("%s Select All  ", bold("A"))
-			shortcuts += fmt.Sprintf("%s Deselect All  ", bold("D"))
-			shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
-			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
-			shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
-			shortcuts += fmt.Sprintf("%s Cancel  ", bold("X"))
-			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
-			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
-			shortcuts += fmt.Sprintf("%s Yank  ", bold("y"))
-			shortcuts += fmt.Sprintf("%s Checkout  ", bold("f"))
-			shortcuts += fmt.Sprintf("%s Schedules  ", bold("C"))
 			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
-			shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
-			shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+			shortcuts += fmt.Sprintf("%s Select  ", bold("Space"))
+			shortcuts += fmt.Sprintf("%s Meta/Feature  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 			if h.HasTaskSessions {
 				shortcuts += fmt.Sprintf("%s Session  ", bold("o"))
 				shortcuts += fmt.Sprintf("%s Tmux  ", bold("O"))
 			}
+			shortcuts += fmt.Sprintf("%s Yank  ", bold("y"))
+			shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
+			shortcuts += fmt.Sprintf("%s Checkout  ", bold("f"))
+			shortcuts += fmt.Sprintf("%s Cancel  ", bold("X"))
 		}
 	}
 
+	// Pause (multi-project shows p/P, single-project shows p)
+	if isMultiProject {
+		shortcuts += fmt.Sprintf("%s Pause (project/all)  ", bold("p/P"))
+	} else {
+		shortcuts += fmt.Sprintf("%s Pause (project)  ", bold("p"))
+	}
+
+	// w Wrap/Trunc
 	if h.TextWrap {
 		shortcuts += fmt.Sprintf("%s Wrap  ", bold("w"))
 	} else {
 		shortcuts += fmt.Sprintf("%s Trunc  ", bold("w"))
 	}
 
+	// S Settings
+	shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+
+	// C View
+	shortcuts += fmt.Sprintf("%s View  ", bold("C"))
+
+	// Tab Panel
+	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
+
+	// L Logs
+	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
+
+	// T Detail
+	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+
+	// r Refresh
+	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+
+	// Ctrl-C Quit
 	shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))
 
 	// Focus indicator on the right

@@ -605,6 +605,24 @@ type TriggerResponse struct {
 	Triggered bool   `json:"triggered"`
 }
 
+// FeatureCheckoutOptions contains options for creating a checkout task.
+type FeatureCheckoutOptions struct {
+	ExecutionBranch    string `json:"execution_branch,omitempty"`
+	MergeTargetBranch  string `json:"merge_target_branch,omitempty"`
+	MergePolicy        string `json:"merge_policy,omitempty"`         // "prompt_only", "auto_pr", "auto_merge"
+	MergeStrategy      string `json:"merge_strategy,omitempty"`       // "squash", "merge", "rebase"
+	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"` // "keep", "delete"
+	OpenPRBeforeMerge  bool   `json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      string `json:"execution_mode,omitempty"` // "worktree", "current_branch"
+}
+
+// CheckoutFeatureResult is the response for CheckoutFeature.
+type CheckoutFeatureResult struct {
+	Created      bool                 `json:"created"`
+	GeneratedKey string               `json:"generatedKey"`
+	Task         *CreateEntryResponse `json:"task,omitempty"`
+}
+
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
 	Running        bool     `json:"running"`

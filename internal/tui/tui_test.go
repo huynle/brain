@@ -2799,9 +2799,9 @@ func TestHelpBar_ShowsScheduleShortcutsInScheduleMode(t *testing.T) {
 
 	view := h.View(120, false)
 
-	// Should show schedule-specific shortcuts
-	if !strings.Contains(view, "Tasks") {
-		t.Errorf("expected helpbar in schedule mode to show 'Tasks' (for C key to go back), got:\n%s", view)
+	// Should show "View" label (generic label matching TypeScript, may wrap across lines)
+	if !strings.Contains(view, "View") {
+		t.Errorf("expected helpbar in schedule mode to show 'View' label, got:\n%s", view)
 	}
 
 	// Should NOT show task-specific action shortcuts
@@ -2849,9 +2849,9 @@ func TestHelpBar_ShowsScheduleToggleOnC(t *testing.T) {
 
 	view := h.View(120, false)
 
-	// C should show Schedules (to toggle to schedule view)
-	if !strings.Contains(view, "Schedules") {
-		t.Errorf("expected helpbar to show 'Schedules' for C key, got:\n%s", view)
+	// C should show "View" label (generic label matching TypeScript, may wrap across lines)
+	if !strings.Contains(view, "View") {
+		t.Errorf("expected helpbar to show 'View' label for C key, got:\n%s", view)
 	}
 }
 

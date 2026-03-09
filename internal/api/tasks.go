@@ -224,7 +224,15 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 	projectId := chi.URLParam(r, "projectId")
 	featureId := chi.URLParam(r, "featureId")
 
-	err := h.tasks.CheckoutFeature(r.Context(), projectId, featureId)
+	var opts types.FeatureCheckoutOptions
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+			// Allow empty body - use defaults
+			opts = types.FeatureCheckoutOptions{}
+		}
+	}
+
+	result, err := h.tasks.CheckoutFeature(r.Context(), projectId, featureId, &opts)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
@@ -233,7 +241,7 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+	WriteJSON(w, http.StatusOK, result)
 }
 
 // HandleTriggerTask handles POST /tasks/{projectId}/{taskId}/trigger.

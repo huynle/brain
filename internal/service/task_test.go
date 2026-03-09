@@ -862,9 +862,13 @@ func TestCheckoutFeature_Stub(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	err := svc.CheckoutFeature(ctx, "proj", "feat-1")
+	result, err := svc.CheckoutFeature(ctx, "proj", "feat-1", nil)
 	if err != nil {
 		t.Fatalf("CheckoutFeature stub failed: %v", err)
+	}
+	// After implementation, result should be non-nil
+	if result == nil {
+		t.Error("CheckoutFeature should return non-nil result")
 	}
 }
 
@@ -1174,12 +1178,15 @@ Task content`
 
 // TestExtractUniqueNonGeneratedTaskIds tests the helper function.
 func TestExtractUniqueNonGeneratedTaskIds(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
 	tasks := []types.BrainEntry{
-		{ID: "task1", Generated: false},
-		{ID: "task2", Generated: false},
-		{ID: "task3", Generated: true},  // should be excluded
-		{ID: "task1", Generated: false}, // duplicate
-		{ID: "", Generated: false},      // empty ID
+		{ID: "task1", Generated: &falseVal},
+		{ID: "task2", Generated: &falseVal},
+		{ID: "task3", Generated: &trueVal},  // should be excluded
+		{ID: "task1", Generated: &falseVal}, // duplicate
+		{ID: "", Generated: &falseVal},      // empty ID
 	}
 
 	result := extractUniqueNonGeneratedTaskIds(tasks)
@@ -1225,12 +1232,15 @@ func TestIsTerminalCheckoutStatus(t *testing.T) {
 
 // TestExtractGeneratedDependentTasks tests extraction of checkout/review tasks.
 func TestExtractGeneratedDependentTasks(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
 	tasks := []types.BrainEntry{
-		{ID: "task1", Generated: false},
-		{ID: "checkout1", Generated: true, GeneratedKind: "feature_checkout"},
-		{ID: "review1", Generated: true, GeneratedKind: "feature_review"},
-		{ID: "gap1", Generated: true, GeneratedKind: "gap_task"}, // excluded
-		{ID: "checkout2", Generated: true, GeneratedKind: "feature_checkout"},
+		{ID: "task1", Generated: &falseVal},
+		{ID: "checkout1", Generated: &trueVal, GeneratedKind: "feature_checkout"},
+		{ID: "review1", Generated: &trueVal, GeneratedKind: "feature_review"},
+		{ID: "gap1", Generated: &trueVal, GeneratedKind: "gap_task"}, // excluded
+		{ID: "checkout2", Generated: &trueVal, GeneratedKind: "feature_checkout"},
 	}
 
 	result := extractGeneratedDependentTasks(tasks)

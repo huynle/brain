@@ -2132,15 +2132,20 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 			} else {
 				// Enter ungrouped (move to first task)
 				if len(ungrouped.Tasks) > 0 {
-					tt.selectedTaskIdx = 0
-					tt.SelectedID = ungrouped.Tasks[0].ID
+					// Use flattened tree order for navigation
+					treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+					if len(treeOrder) > 0 {
+						tt.selectedTaskIdx = 0
+						tt.SelectedID = treeOrder[0]
+					}
 				}
 			}
 		} else {
-			// Within ungrouped tasks
-			if tt.selectedTaskIdx < len(ungrouped.Tasks)-1 {
+			// Within ungrouped tasks - use tree order
+			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+			if tt.selectedTaskIdx < len(treeOrder)-1 {
 				tt.selectedTaskIdx++
-				tt.SelectedID = ungrouped.Tasks[tt.selectedTaskIdx].ID
+				tt.SelectedID = treeOrder[tt.selectedTaskIdx]
 			} else {
 				// At end of ungrouped → move to next status header
 				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
@@ -2187,18 +2192,22 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 				}
 			}
 		} else {
-			// Rule 4: Expanded → move to first task
+			// Rule 4: Expanded → move to first task (use tree order)
 			if len(feature.Tasks) > 0 {
-				tt.selectedTaskIdx = 0
-				tt.SelectedID = feature.Tasks[0].ID
+				treeOrder := FlattenTreeOrder(feature.Tasks)
+				if len(treeOrder) > 0 {
+					tt.selectedTaskIdx = 0
+					tt.SelectedID = treeOrder[0]
+				}
 			}
 		}
 	} else {
-		// Rule 5 & 6: Within feature
-		if tt.selectedTaskIdx < len(feature.Tasks)-1 {
-			// Rule 5: Not at end → move to next task
+		// Rule 5 & 6: Within feature - use tree order for navigation
+		treeOrder := FlattenTreeOrder(feature.Tasks)
+		if tt.selectedTaskIdx < len(treeOrder)-1 {
+			// Rule 5: Not at end → move to next task in tree order
 			tt.selectedTaskIdx++
-			tt.SelectedID = feature.Tasks[tt.selectedTaskIdx].ID
+			tt.SelectedID = treeOrder[tt.selectedTaskIdx]
 		} else {
 			// Rule 6: At end → move to next feature header
 			if tt.selectedFeatureIdx < len(statusGroup.Features)-1 {
@@ -2273,10 +2282,11 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 				tt.SelectedID = ""
 			}
 		} else {
-			// Within ungrouped tasks
+			// Within ungrouped tasks - use tree order
 			if tt.selectedTaskIdx > 0 {
+				treeOrder := FlattenTreeOrder(ungrouped.Tasks)
 				tt.selectedTaskIdx--
-				tt.SelectedID = ungrouped.Tasks[tt.selectedTaskIdx].ID
+				tt.SelectedID = treeOrder[tt.selectedTaskIdx]
 			} else {
 				// Move to ungrouped header
 				tt.selectedTaskIdx = -1
@@ -2308,10 +2318,11 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 			tt.SelectedID = ""
 		}
 	} else {
-		// Within feature
+		// Within feature - use tree order
 		if tt.selectedTaskIdx > 0 {
+			treeOrder := FlattenTreeOrder(feature.Tasks)
 			tt.selectedTaskIdx--
-			tt.SelectedID = feature.Tasks[tt.selectedTaskIdx].ID
+			tt.SelectedID = treeOrder[tt.selectedTaskIdx]
 		} else {
 			// Move to feature header
 			tt.selectedTaskIdx = -1

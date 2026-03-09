@@ -38,13 +38,20 @@ func (c *RunnerTUICommand) Type() string {
 // Execute starts the runner in TUI mode.
 func (c *RunnerTUICommand) Execute() error {
 	// Build runner config from unified config
+	// Use Runner.BrainAPIURL if set (from config file), fallback to MCP.APIURL
+	apiURL := c.Config.Runner.BrainAPIURL
+	if apiURL == "" {
+		apiURL = c.Config.MCP.APIURL
+	}
 	runnerCfg := runnercli.RunnerConfig{
-		BrainAPIURL:  c.Config.MCP.APIURL,
+		BrainAPIURL:  apiURL,
+		APIToken:     c.Config.Runner.APIToken,
 		MaxParallel:  c.Config.Runner.MaxParallel,
 		PollInterval: c.Config.Runner.PollInterval,
 		WorkDir:      c.Config.Runner.WorkDir,
 		StateDir:     c.Config.Runner.StateDir,
 		LogDir:       c.Config.Runner.LogDir,
+		APITimeout:   c.Config.Runner.APITimeout,
 	}
 
 	// Apply flags
@@ -137,13 +144,20 @@ func (c *RunCommand) runStart() error {
 	}
 
 	// Build runner config
+	// Use Runner.BrainAPIURL if set (from config file), fallback to MCP.APIURL
+	apiURL := c.Config.Runner.BrainAPIURL
+	if apiURL == "" {
+		apiURL = c.Config.MCP.APIURL
+	}
 	runnerCfg := runnercli.RunnerConfig{
-		BrainAPIURL:  c.Config.MCP.APIURL,
+		BrainAPIURL:  apiURL,
+		APIToken:     c.Config.Runner.APIToken,
 		MaxParallel:  c.Config.Runner.MaxParallel,
 		PollInterval: c.Config.Runner.PollInterval,
 		WorkDir:      c.Config.Runner.WorkDir,
 		StateDir:     c.Config.Runner.StateDir,
 		LogDir:       c.Config.Runner.LogDir,
+		APITimeout:   c.Config.Runner.APITimeout,
 	}
 
 	// Apply flags

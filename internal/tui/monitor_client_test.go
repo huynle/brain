@@ -13,7 +13,7 @@ import (
 // =============================================================================
 
 func TestNewMonitorClient(t *testing.T) {
-	client := NewMonitorClient("http://localhost:3333")
+	client := NewMonitorClient("http://localhost:3333", "")
 	if client == nil {
 		t.Fatal("Expected non-nil MonitorClient")
 	}
@@ -42,7 +42,7 @@ func TestMonitorClient_CreateScheduledTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateScheduledTask(context.Background(), "blocked-inspector", "my-feature", "myproj", "*/30 * * * *", "Check for blocked tasks")
 	if err != nil {
 		t.Fatalf("CreateScheduledTask failed: %v", err)
@@ -95,7 +95,7 @@ func TestMonitorClient_CreateScheduledTask_409Conflict(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateScheduledTask(context.Background(), "blocked-inspector", "my-feature", "myproj", "*/30 * * * *", "prompt")
 
 	// 409 should NOT return an error (silently handled)
@@ -111,7 +111,7 @@ func TestMonitorClient_CreateScheduledTask_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateScheduledTask(context.Background(), "blocked-inspector", "my-feature", "myproj", "*/30 * * * *", "prompt")
 
 	if err == nil {
@@ -150,7 +150,7 @@ func TestMonitorClient_FindScheduledTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	result, err := client.FindScheduledTask(context.Background(), "blocked-inspector", "my-feature")
 	if err != nil {
 		t.Fatalf("FindScheduledTask failed: %v", err)
@@ -170,7 +170,7 @@ func TestMonitorClient_FindScheduledTask_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	result, err := client.FindScheduledTask(context.Background(), "blocked-inspector", "my-feature")
 	if err != nil {
 		t.Fatalf("FindScheduledTask failed: %v", err)
@@ -199,7 +199,7 @@ func TestMonitorClient_DeleteScheduledTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.DeleteScheduledTask(context.Background(), "projects/myproj/task/abc12345.md")
 	if err != nil {
 		t.Fatalf("DeleteScheduledTask failed: %v", err)
@@ -213,7 +213,7 @@ func TestMonitorClient_DeleteScheduledTask_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.DeleteScheduledTask(context.Background(), "projects/myproj/task/abc12345.md")
 	if err == nil {
 		t.Error("Expected error for 404 response, got nil")
@@ -243,7 +243,7 @@ func TestMonitorClient_CreateMonitorTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateMonitorTask(context.Background(), "feature-review", "my-feature", "myproj")
 	if err != nil {
 		t.Fatalf("CreateMonitorTask failed: %v", err)
@@ -271,7 +271,7 @@ func TestMonitorClient_CreateMonitorTask_409Conflict(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateMonitorTask(context.Background(), "feature-review", "my-feature", "myproj")
 
 	// 409 should NOT return an error
@@ -287,7 +287,7 @@ func TestMonitorClient_CreateMonitorTask_ServerError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.CreateMonitorTask(context.Background(), "feature-review", "my-feature", "myproj")
 
 	if err == nil {
@@ -325,7 +325,7 @@ func TestMonitorClient_FindMonitorTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	result, err := client.FindMonitorTask(context.Background(), "feature-review", "my-feature", "myproj")
 	if err != nil {
 		t.Fatalf("FindMonitorTask failed: %v", err)
@@ -348,7 +348,7 @@ func TestMonitorClient_FindMonitorTask_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	result, err := client.FindMonitorTask(context.Background(), "feature-review", "my-feature", "myproj")
 	if err != nil {
 		t.Fatalf("FindMonitorTask failed: %v", err)
@@ -376,7 +376,7 @@ func TestMonitorClient_DeleteMonitorTask(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.DeleteMonitorTask(context.Background(), "abc12345")
 	if err != nil {
 		t.Fatalf("DeleteMonitorTask failed: %v", err)
@@ -390,7 +390,7 @@ func TestMonitorClient_DeleteMonitorTask_NotFound(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewMonitorClient(server.URL)
+	client := NewMonitorClient(server.URL, "")
 	err := client.DeleteMonitorTask(context.Background(), "abc12345")
 	if err == nil {
 		t.Error("Expected error for 404 response, got nil")

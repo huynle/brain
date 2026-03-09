@@ -52,6 +52,7 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 // Config holds the configuration passed to the TUI from the runner.
 type Config struct {
 	APIURL   string
+	APIToken string
 	Project  string
 	RunnerID string
 	BrainDir string

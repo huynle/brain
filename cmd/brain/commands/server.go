@@ -27,18 +27,21 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile string
-		LogFile string
-		LogMaxSize     int // MB
-		LogMaxBackups  int
-		LogMaxAge      int // days
+		PIDFile       string
+		LogFile       string
+		LogMaxSize    int // MB
+		LogMaxBackups int
+		LogMaxAge     int // days
 	}
 	Runner struct {
+		BrainAPIURL     string
+		APIToken        string
 		MaxParallel     int
 		PollInterval    int
 		WorkDir         string
 		StateDir        string
 		LogDir          string
+		APITimeout      int
 		ExcludeProjects []string
 		OpenCode        struct {
 			Agent string

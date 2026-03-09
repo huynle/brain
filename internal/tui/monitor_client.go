@@ -23,14 +23,16 @@ type MonitorTaskResult struct {
 
 // MonitorClient provides HTTP methods for monitor/scheduled-task API calls.
 type MonitorClient struct {
-	apiURL string
-	client *http.Client
+	apiURL   string
+	apiToken string
+	client   *http.Client
 }
 
 // NewMonitorClient creates a new MonitorClient.
-func NewMonitorClient(apiURL string) *MonitorClient {
+func NewMonitorClient(apiURL, apiToken string) *MonitorClient {
 	return &MonitorClient{
-		apiURL: apiURL,
+		apiURL:   apiURL,
+		apiToken: apiToken,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -237,6 +239,9 @@ func (c *MonitorClient) doRequest(ctx context.Context, method, path string, body
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 
 	return c.client.Do(req)
 }

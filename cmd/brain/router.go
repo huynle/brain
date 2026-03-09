@@ -3,9 +3,12 @@ package main
 
 import (
 	"fmt"
-	"github.com/huynle/brain-api/cmd/brain/commands"
+	"log/slog"
 	"os"
 	"path/filepath"
+
+	"github.com/huynle/brain-api/cmd/brain/commands"
+	"github.com/huynle/brain-api/internal/runner"
 )
 
 // =============================================================================
@@ -64,6 +67,7 @@ var builtinCommands = map[string]bool{
 	"server":        true,
 	"mcp":           true,
 	"run":           true,
+	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
 	"start":         true,
 	"stop":          true,
 	"restart":       true,
@@ -196,8 +200,9 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseUninstallCommand(cmdArgs)
 	case "plugin-status":
 		return parsePluginStatusCommand(cmdArgs)
-	case "run":
-		// Handle "brain run <subcommand>" pattern
+	case "run", "runner":
+		// Handle "brain run <subcommand>" and "brain runner <subcommand>" patterns
+		// "runner" is a backwards-compat alias for "run" (from old Node.js CLI)
 		if len(cmdArgs) > 0 {
 			return parseRunCommand(cmdArgs)
 		}
@@ -343,8 +348,8 @@ func looksLikeProjectName(s string) bool {
 // Config and Conversion Helpers
 // =============================================================================
 
-// defaultConfig returns a default UnifiedConfig.
-// In future phases, this will load from config files.
+// defaultConfig returns a UnifiedConfig populated from config file, env vars, and built-in defaults.
+// Config loading priority: CLI flags > env vars > config file > built-in defaults.
 func defaultConfig() *UnifiedConfig {
 	cfg := &UnifiedConfig{}
 
@@ -358,13 +363,32 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
 	cfg.Server.LogFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
 
-	// Runner defaults
-	cfg.Runner.MaxParallel = 3
-	cfg.Runner.PollInterval = 10
-	cfg.Runner.WorkDir = ""
+	// Load runner config from config file + env vars
+	runnerCfg, err := runner.LoadConfig()
+	if err != nil {
+		slog.Warn("failed to load config file, using defaults", "error", err)
+		// Fall back to basic defaults
+		cfg.Runner.MaxParallel = 3
+		cfg.Runner.PollInterval = 10
+		cfg.MCP.APIURL = "http://localhost:3333"
+		return cfg
+	}
 
-	// MCP defaults
-	cfg.MCP.APIURL = "http://localhost:3333"
+	// Populate runner section from loaded config
+	cfg.Runner.BrainAPIURL = runnerCfg.BrainAPIURL
+	cfg.Runner.APIToken = runnerCfg.APIToken
+	cfg.Runner.MaxParallel = runnerCfg.MaxParallel
+	cfg.Runner.PollInterval = runnerCfg.PollInterval
+	cfg.Runner.WorkDir = runnerCfg.WorkDir
+	cfg.Runner.StateDir = runnerCfg.StateDir
+	cfg.Runner.LogDir = runnerCfg.LogDir
+	cfg.Runner.APITimeout = runnerCfg.APITimeout
+	cfg.Runner.ExcludeProjects = runnerCfg.ExcludeProjects
+	cfg.Runner.OpenCode.Agent = runnerCfg.Opencode.Agent
+	cfg.Runner.OpenCode.Model = runnerCfg.Opencode.Model
+
+	// MCP defaults (use the same API URL as runner)
+	cfg.MCP.APIURL = runnerCfg.BrainAPIURL
 
 	return cfg
 }
@@ -387,11 +411,14 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	// Runner
+	cmdCfg.Runner.BrainAPIURL = cfg.Runner.BrainAPIURL
+	cmdCfg.Runner.APIToken = cfg.Runner.APIToken
 	cmdCfg.Runner.MaxParallel = cfg.Runner.MaxParallel
 	cmdCfg.Runner.PollInterval = cfg.Runner.PollInterval
 	cmdCfg.Runner.WorkDir = cfg.Runner.WorkDir
 	cmdCfg.Runner.StateDir = cfg.Runner.StateDir
 	cmdCfg.Runner.LogDir = cfg.Runner.LogDir
+	cmdCfg.Runner.APITimeout = cfg.Runner.APITimeout
 	cmdCfg.Runner.ExcludeProjects = cfg.Runner.ExcludeProjects
 	cmdCfg.Runner.OpenCode.Agent = cfg.Runner.OpenCode.Agent
 	cmdCfg.Runner.OpenCode.Model = cfg.Runner.OpenCode.Model

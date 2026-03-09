@@ -57,9 +57,14 @@ func TestRoute_ProjectName_RoutesToRunnerTUI(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"server", "mcp", "run", "start", "stop", "restart",
+		"server", "mcp", "run", "runner", "start", "stop", "restart",
 		"status", "health", "logs", "dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "help",
+	}
+
+	// "runner" is an alias for "run", so its Type() returns "run"
+	aliasExpected := map[string]string{
+		"runner": "run",
 	}
 
 	for _, builtin := range builtins {
@@ -74,9 +79,13 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 			if cmdType == "runner_tui" {
 				t.Errorf("builtin %q should not route to runner_tui", builtin)
 			}
-			// Should route to the builtin command type
-			if cmdType != builtin {
-				t.Errorf("Type() = %q, want %q", cmdType, builtin)
+			// Should route to the builtin command type (or its alias)
+			expected := builtin
+			if alias, ok := aliasExpected[builtin]; ok {
+				expected = alias
+			}
+			if cmdType != expected {
+				t.Errorf("Type() = %q, want %q", cmdType, expected)
 			}
 		})
 	}

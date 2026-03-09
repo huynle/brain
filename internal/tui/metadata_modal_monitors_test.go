@@ -17,7 +17,7 @@ import (
 func TestMetadataModalFeature_InitializesMonitorTemplates(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
@@ -91,7 +91,7 @@ func TestMetadataModalFeature_NonFeatureMode_NoMonitorTemplates(t *testing.T) {
 func TestMetadataModalFeature_HandleMonitorFetchedMsg(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("dark-mode", "brain-api", apiClient, monitorClient)
 
 	// Simulate receiving monitor templates fetched message
@@ -127,7 +127,7 @@ func TestMetadataModalFeature_HandleMonitorFetchedMsg(t *testing.T) {
 func TestMetadataModalFeature_NavigateFromFieldsToMonitors(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set monitor templates to non-loading state
@@ -157,7 +157,7 @@ func TestMetadataModalFeature_NavigateFromFieldsToMonitors(t *testing.T) {
 func TestMetadataModalFeature_NavigateFromMonitorsToFields(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set monitor templates to non-loading state
@@ -189,7 +189,7 @@ func TestMetadataModalFeature_NavigateFromMonitorsToFields(t *testing.T) {
 func TestMetadataModalFeature_NavigateBetweenMonitorRows(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set monitor templates to non-loading state
@@ -226,7 +226,7 @@ func TestMetadataModalFeature_NavigateBetweenMonitorRows(t *testing.T) {
 func TestMetadataModalFeature_NavigateUp_WrapsFromFirstFieldToLastMonitor(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set monitor templates to non-loading state
@@ -277,7 +277,7 @@ func TestMetadataModalFeature_ToggleMonitor_Create(t *testing.T) {
 
 	cfg := runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient(srv.URL)
+	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set feature-review to "create" status
@@ -340,7 +340,7 @@ func TestMetadataModalFeature_ToggleMonitor_Delete(t *testing.T) {
 
 	cfg := runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient(srv.URL)
+	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set feature-review to "enabled" status with a task path
@@ -403,7 +403,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Create(t *testing.T) {
 
 	cfg := runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient(srv.URL)
+	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set blocked-inspector to "create" status
@@ -461,7 +461,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Delete(t *testing.T) {
 
 	cfg := runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient(srv.URL)
+	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set blocked-inspector to "enabled" status with a task path
@@ -508,7 +508,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Delete(t *testing.T) {
 func TestMetadataModalFeature_HandleToggleResult_Success(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set initial state
@@ -535,7 +535,7 @@ func TestMetadataModalFeature_HandleToggleResult_Success(t *testing.T) {
 func TestMetadataModalFeature_HandleToggleResult_Revert(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set initial state - was "create", toggling to create it
@@ -563,7 +563,7 @@ func TestMetadataModalFeature_HandleToggleResult_Revert(t *testing.T) {
 func TestMetadataModalFeature_View_ShowsMonitorSection(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state
@@ -592,7 +592,7 @@ func TestMetadataModalFeature_View_ShowsMonitorSection(t *testing.T) {
 func TestMetadataModalFeature_View_ShowsStatusIcons(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state
@@ -616,7 +616,7 @@ func TestMetadataModalFeature_View_ShowsStatusIcons(t *testing.T) {
 func TestMetadataModalFeature_View_ShowsLoadingState(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up: main data loaded but monitors still loading
@@ -634,7 +634,7 @@ func TestMetadataModalFeature_View_ShowsLoadingState(t *testing.T) {
 func TestMetadataModalFeature_View_FocusedMonitorRow(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state
@@ -658,7 +658,7 @@ func TestMetadataModalFeature_View_FocusedMonitorRow(t *testing.T) {
 func TestMetadataModalFeature_View_ShowsStatusTags(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state
@@ -685,7 +685,7 @@ func TestMetadataModalFeature_View_ShowsStatusTags(t *testing.T) {
 func TestMetadataModalFeature_Height_IncludesMonitorRows(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Feature mode height should account for monitor rows
@@ -703,7 +703,7 @@ func TestMetadataModalFeature_Height_IncludesMonitorRows(t *testing.T) {
 func TestMetadataModalFeature_EnterOnMonitorRow_DoesNotEnterEditMode(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state
@@ -730,7 +730,7 @@ func TestMetadataModalFeature_EnterOnMonitorRow_DoesNotEnterEditMode(t *testing.
 func TestMetadataModalFeature_SpaceToggle(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333")
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
 	// Set up loaded state

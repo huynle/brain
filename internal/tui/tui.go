@@ -510,6 +510,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusMessage("success", fmt.Sprintf("Auto-monitor created: %s for %s", msg.templateID, msg.featureID))
 		return m, nil
+
+	case SettingsChangedMsg:
+		// Reload settings and re-apply task grouping
+		settings, err := LoadSettings()
+		if err == nil {
+			m.settings = settings
+			m.taskTree.SetTasks(m.tasks)
+		}
+		return m, nil
 	}
 
 	return m, nil

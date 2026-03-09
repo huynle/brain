@@ -41,6 +41,10 @@ type ModalManager struct {
 	stack       []Modal
 }
 
+// SettingsChangedMsg is sent when the Settings modal closes
+// to trigger UI refresh with updated settings.
+type SettingsChangedMsg struct{}
+
 // NewModalManager creates a new ModalManager.
 func NewModalManager() ModalManager {
 	return ModalManager{
@@ -70,6 +74,12 @@ func (m *ModalManager) Close() tea.Cmd {
 		return nil
 	}
 
+	// Check if Settings modal is closing to trigger UI refresh
+	wasSettingsModal := false
+	if _, ok := m.activeModal.(*SettingsModal); ok {
+		wasSettingsModal = true
+	}
+
 	// Check if there's a modal in the stack to restore
 	if len(m.stack) > 0 {
 		// Pop the last modal from stack
@@ -78,6 +88,13 @@ func (m *ModalManager) Close() tea.Cmd {
 	} else {
 		// No more modals, clear active
 		m.activeModal = nil
+	}
+
+	// Send SettingsChangedMsg if Settings modal was closed
+	if wasSettingsModal {
+		return func() tea.Msg {
+			return SettingsChangedMsg{}
+		}
 	}
 
 	return nil

@@ -1464,7 +1464,7 @@ func (m Model) renderBaseView() string {
 	statusBarView := m.statusBar.View(m.width)
 
 	// Pre-render bottom elements to calculate their heights
-	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
+	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject(), m.config.Project)
 
 	// Status message (if active and not expired)
 	var statusMessageView string

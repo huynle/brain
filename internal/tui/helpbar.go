@@ -23,7 +23,8 @@ func NewHelpBar() HelpBar {
 
 // View renders the help bar showing context-aware keyboard shortcuts.
 // isMultiProject controls whether tab-switching shortcuts are shown.
-func (h HelpBar) View(width int, isMultiProject bool) string {
+// projectName is the current project name for contextual display (single-project mode).
+func (h HelpBar) View(width int, isMultiProject bool, projectName string) string {
 	bold := BoldStyle.Render
 	dim := DimStyle.Render
 
@@ -75,11 +76,15 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 		}
 	}
 
-	// Pause (multi-project shows p/P, single-project shows p)
+	// Pause (multi-project shows p/P, single-project shows p with project name)
 	if isMultiProject {
 		shortcuts += fmt.Sprintf("%s Pause (project/all)  ", bold("p/P"))
 	} else {
-		shortcuts += fmt.Sprintf("%s Pause (project)  ", bold("p"))
+		if projectName != "" {
+			shortcuts += fmt.Sprintf("%s Pause (%s)  ", bold("p"), projectName)
+		} else {
+			shortcuts += fmt.Sprintf("%s Pause (project)  ", bold("p"))
+		}
 	}
 
 	// w Wrap/Trunc

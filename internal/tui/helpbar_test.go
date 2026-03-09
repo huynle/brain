@@ -9,7 +9,7 @@ func TestHelpBar_View_ShowsPauseShortcut_Always(t *testing.T) {
 	h := NewHelpBar()
 	h.ActivePanel = PanelTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Pause shortcut should appear regardless of panel (matching TypeScript behavior)
 	if !strings.Contains(view, "Pause") {
@@ -24,7 +24,7 @@ func TestHelpBar_View_ShowsPauseShortcut_OnDetailsPanel(t *testing.T) {
 	h := NewHelpBar()
 	h.ActivePanel = PanelDetails
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Pause shortcut should appear even on non-task panels (matching TypeScript behavior)
 	if !strings.Contains(view, "Pause") {
@@ -40,7 +40,7 @@ func TestHelpBar_View_ShowsSessionShortcuts_WhenHasTaskSessions(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.HasTaskSessions = true
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if !strings.Contains(view, "Session") {
 		t.Errorf("expected help bar to contain 'Session' shortcut when HasTaskSessions=true, got:\n%s", view)
@@ -55,7 +55,7 @@ func TestHelpBar_View_NoSessionShortcuts_WhenNoTaskSessions(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.HasTaskSessions = false
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if strings.Contains(view, "Session") {
 		t.Errorf("expected help bar NOT to contain 'Session' when HasTaskSessions=false, got:\n%s", view)
@@ -70,7 +70,7 @@ func TestHelpBar_View_NoSessionShortcuts_WhenNotTaskPanel(t *testing.T) {
 	h.ActivePanel = PanelDetails
 	h.HasTaskSessions = true
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Session shortcuts should only appear on task panel
 	if strings.Contains(view, "Session") {
@@ -78,5 +78,41 @@ func TestHelpBar_View_NoSessionShortcuts_WhenNotTaskPanel(t *testing.T) {
 	}
 	if strings.Contains(view, "Tmux") {
 		t.Errorf("expected help bar NOT to contain 'Tmux' on non-task panel, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_ShowsProjectNameInPause_SingleProject(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+
+	view := h.View(120, false, "brain-api")
+
+	// Should show project name in pause command
+	if !strings.Contains(view, "Pause (brain-api)") {
+		t.Errorf("expected help bar to contain 'Pause (brain-api)' in single-project mode, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_ShowsGenericPause_WhenNoProjectName(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+
+	view := h.View(120, false, "")
+
+	// Should show generic pause when no project name
+	if !strings.Contains(view, "Pause (project)") {
+		t.Errorf("expected help bar to contain 'Pause (project)' when no project name, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_ShowsProjectAll_MultiProject(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelTasks
+
+	view := h.View(120, true, "brain-api")
+
+	// Should show project/all in multi-project mode (project name ignored)
+	if !strings.Contains(view, "Pause (project/all)") {
+		t.Errorf("expected help bar to contain 'Pause (project/all)' in multi-project mode, got:\n%s", view)
 	}
 }

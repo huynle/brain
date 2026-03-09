@@ -558,7 +558,7 @@ func TestStatusBarView_ShowsProjectName(t *testing.T) {
 
 func TestHelpBarView_ContainsShortcuts(t *testing.T) {
 	hb := NewHelpBar()
-	view := hb.View(120, false)
+	view := hb.View(120, false, "test-project")
 
 	shortcuts := []string{"j/k", "Tab", "Quit"}
 	for _, s := range shortcuts {
@@ -570,7 +570,7 @@ func TestHelpBarView_ContainsShortcuts(t *testing.T) {
 
 func TestHelpBarView_MultiProjectShowsTabShortcuts(t *testing.T) {
 	hb := NewHelpBar()
-	view := hb.View(120, true)
+	view := hb.View(120, true, "test-project")
 
 	if !strings.Contains(view, "h/l") {
 		t.Errorf("expected multi-project help to contain 'h/l' for tab switching, got:\n%s", view)
@@ -2797,7 +2797,7 @@ func TestHelpBar_ShowsScheduleShortcutsInScheduleMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeSchedules
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Should show "View" label (generic label matching TypeScript, may wrap across lines)
 	if !strings.Contains(view, "View") {
@@ -2818,7 +2818,7 @@ func TestHelpBar_ShowsTaskShortcutsInTaskMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Should show task-specific shortcuts
 	if !strings.Contains(view, "Execute") {
@@ -2834,7 +2834,7 @@ func TestHelpBar_ShowsCancelOnXInTaskMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Cancel should be on X key now (not C)
 	if !strings.Contains(view, "X") || !strings.Contains(view, "Cancel") {
@@ -2847,7 +2847,7 @@ func TestHelpBar_ShowsScheduleToggleOnC(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// C should show "View" label (generic label matching TypeScript, may wrap across lines)
 	if !strings.Contains(view, "View") {
@@ -2983,7 +2983,7 @@ func TestUpdate_YKey_NoOpInScheduleView(t *testing.T) {
 
 func TestHelpBar_ShowsYankShortcut(t *testing.T) {
 	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeTasks}
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if !strings.Contains(view, "Yank") {
 		t.Errorf("expected help bar to show 'Yank' shortcut, got:\n%s", view)
@@ -2992,7 +2992,7 @@ func TestHelpBar_ShowsYankShortcut(t *testing.T) {
 
 func TestHelpBar_NoYankInScheduleView(t *testing.T) {
 	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeSchedules}
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if strings.Contains(view, "Yank") {
 		t.Errorf("expected help bar to NOT show 'Yank' in schedule view, got:\n%s", view)

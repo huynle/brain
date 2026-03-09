@@ -32,7 +32,7 @@ type mockTaskService struct {
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getReadyFeaturesFunc func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getFeatureFunc       func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
-	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string) error
+	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
 }
 
@@ -127,11 +127,11 @@ func (m *mockTaskService) GetFeature(ctx context.Context, projectId, featureId s
 	return nil, fmt.Errorf("getFeatureFunc not set")
 }
 
-func (m *mockTaskService) CheckoutFeature(ctx context.Context, projectId, featureId string) error {
+func (m *mockTaskService) CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
 	if m.checkoutFeatureFunc != nil {
-		return m.checkoutFeatureFunc(ctx, projectId, featureId)
+		return m.checkoutFeatureFunc(ctx, projectId, featureId, opts)
 	}
-	return fmt.Errorf("checkoutFeatureFunc not set")
+	return nil, fmt.Errorf("checkoutFeatureFunc not set")
 }
 
 func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
@@ -906,20 +906,20 @@ func TestHandleGetFeature(t *testing.T) {
 func TestHandleCheckoutFeature(t *testing.T) {
 	tests := []struct {
 		name       string
-		mockFn     func(ctx context.Context, projectId, featureId string) error
+		mockFn     func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 		wantStatus int
 	}{
 		{
 			name: "success",
-			mockFn: func(ctx context.Context, projectId, featureId string) error {
-				return nil
+			mockFn: func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+				return &types.CheckoutFeatureResult{Created: true}, nil
 			},
 			wantStatus: http.StatusOK,
 		},
 		{
 			name: "not found",
-			mockFn: func(ctx context.Context, projectId, featureId string) error {
-				return ErrNotFound
+			mockFn: func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+				return nil, ErrNotFound
 			},
 			wantStatus: http.StatusNotFound,
 		},

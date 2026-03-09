@@ -103,6 +103,24 @@ func StatusStyle(classification string) lipgloss.Style {
 	}
 }
 
+// StatusStyleWithState returns a styled string for a task, prioritizing status over classification.
+// Status (execution state) takes precedence: in_progress (blue), completed (gray), cancelled (red)
+// Classification (dependency state) is used for pending tasks: ready (green), waiting (yellow), blocked (red)
+func StatusStyleWithState(status, classification string) lipgloss.Style {
+	// Prioritize status (execution state)
+	switch status {
+	case "in_progress":
+		return lipgloss.NewStyle().Foreground(ColorActive)
+	case "completed":
+		return lipgloss.NewStyle().Foreground(ColorCompleted)
+	case "cancelled":
+		return lipgloss.NewStyle().Foreground(ColorBlocked)
+	}
+
+	// Fall back to classification (dependency state)
+	return StatusStyle(classification)
+}
+
 // PriorityStyle returns a styled string for a priority level.
 func PriorityStyle(priority string) lipgloss.Style {
 	switch priority {

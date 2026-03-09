@@ -1896,3 +1896,59 @@ func TestTaskTree_TextWrap_LaneView_Truncates(t *testing.T) {
 		t.Error("Expected title to be truncated in lane view with TextWrap=false and narrow width")
 	}
 }
+
+// =============================================================================
+// StatusIndicator Tests
+// =============================================================================
+
+func TestStatusIndicator_InProgressStatus(t *testing.T) {
+	// Status should take precedence over classification
+	indicator := statusIndicator("in_progress", "ready")
+	if indicator != IndicatorActive {
+		t.Errorf("expected IndicatorActive (▶) for in_progress status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_CompletedStatus(t *testing.T) {
+	indicator := statusIndicator("completed", "ready")
+	if indicator != IndicatorCompleted {
+		t.Errorf("expected IndicatorCompleted (✓) for completed status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_CancelledStatus(t *testing.T) {
+	indicator := statusIndicator("cancelled", "ready")
+	if indicator != IndicatorBlocked {
+		t.Errorf("expected IndicatorBlocked (✗) for cancelled status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_ReadyClassification(t *testing.T) {
+	// When status is pending, should fall back to classification
+	indicator := statusIndicator("pending", "ready")
+	if indicator != IndicatorReady {
+		t.Errorf("expected IndicatorReady (●) for ready classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_WaitingClassification(t *testing.T) {
+	indicator := statusIndicator("pending", "waiting")
+	if indicator != IndicatorWaiting {
+		t.Errorf("expected IndicatorWaiting (○) for waiting classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_BlockedClassification(t *testing.T) {
+	indicator := statusIndicator("pending", "blocked")
+	if indicator != IndicatorBlocked {
+		t.Errorf("expected IndicatorBlocked (✗) for blocked classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_DefaultToCompleted(t *testing.T) {
+	// Unknown classification should default to completed
+	indicator := statusIndicator("pending", "unknown")
+	if indicator != IndicatorCompleted {
+		t.Errorf("expected IndicatorCompleted (✓) for unknown classification, got %q", indicator)
+	}
+}

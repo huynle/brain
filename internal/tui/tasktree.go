@@ -981,8 +981,21 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 	return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
 }
 
-// statusIndicator returns the status icon for a task classification.
-func statusIndicator(classification string) string {
+// statusIndicator returns the status icon for a task, prioritizing status over classification.
+// Status (execution state) takes precedence: in_progress, completed, cancelled
+// Classification (dependency state) is used for pending tasks: ready, waiting, blocked
+func statusIndicator(status, classification string) string {
+	// Prioritize status (execution state)
+	switch status {
+	case "in_progress":
+		return IndicatorActive
+	case "completed":
+		return IndicatorCompleted
+	case "cancelled":
+		return IndicatorBlocked
+	}
+
+	// Fall back to classification (dependency state)
 	switch classification {
 	case "ready":
 		return IndicatorReady
@@ -1142,8 +1155,8 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 	}
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title
 	title := task.Title
@@ -1470,8 +1483,8 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	}
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
@@ -1578,16 +1591,13 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 ) string {
 	task := node.Task
 
-	// Calculate tree connector based on depth and position
+	// Calculate tree connector
 	var treeConnector string
-	if prefix == "    " {
-		// Root level: no connector
+	if prefix == "" {
 		treeConnector = ""
 	} else if isLast {
-		// Last child: use └─
 		treeConnector = treeLastBranch + " "
 	} else {
-		// Non-last child: use ├─
 		treeConnector = treeBranch + " "
 	}
 
@@ -1608,8 +1618,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	}
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
@@ -1714,8 +1724,8 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 	prefix := GeneratePrefix(assignment, index, tt.laneAssignments, nil)
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title

@@ -192,8 +192,8 @@ func (sl *ScheduleList) renderTaskLine(task types.ResolvedTask, isSelected bool)
 	}
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title (dimmed if schedule disabled)
 	title := task.Title

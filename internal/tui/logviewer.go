@@ -37,6 +37,9 @@ type LogViewer struct {
 	// Filtering: when IsFiltering is true, only show entries matching FilterTaskID
 	IsFiltering  bool
 	FilterTaskID string
+
+	// Multi-project mode: when true, prefix log entries with [projectName]
+	isMultiProject bool
 }
 
 // NewLogViewer creates a new LogViewer with the given max entries.
@@ -63,6 +66,11 @@ func (lv *LogViewer) AddEntry(entry LogEntry) {
 func (lv *LogViewer) SetSize(width, height int) {
 	lv.width = width
 	lv.height = height
+}
+
+// SetMultiProject enables multi-project mode, which adds [projectName] prefix to log entries.
+func (lv *LogViewer) SetMultiProject(enabled bool) {
+	lv.isMultiProject = enabled
 }
 
 // EntryCount returns the number of log entries.
@@ -124,6 +132,12 @@ func (lv *LogViewer) visibleEntries() []LogEntry {
 
 // renderEntry renders a single log entry line.
 func (lv *LogViewer) renderEntry(entry LogEntry) string {
+	// Project prefix in multi-project mode
+	var projectPrefix string
+	if lv.isMultiProject && entry.ProjectID != "" {
+		projectPrefix = DimStyle.Render(fmt.Sprintf("[%s] ", entry.ProjectID))
+	}
+
 	// Timestamp: HH:MM:SS
 	ts := formatTimestamp(entry.Timestamp)
 	tsStyled := DimStyle.Render(ts)
@@ -135,7 +149,7 @@ func (lv *LogViewer) renderEntry(entry LogEntry) string {
 	// Message with truncation
 	msg := truncateMsg(entry.Message, maxMessageLength)
 
-	return fmt.Sprintf("%s %s %s", tsStyled, levelStyled, msg)
+	return fmt.Sprintf("%s%s %s %s", projectPrefix, tsStyled, levelStyled, msg)
 }
 
 // formatTimestamp formats a time as HH:MM:SS.

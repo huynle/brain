@@ -142,6 +142,7 @@ func NewModel(cfg Config) Model {
 	// Initialize ProjectTabs for multi-project mode
 	if cfg.IsMultiProject() {
 		m.projectTabs = NewProjectTabs(cfg.Projects)
+		m.logViewer.SetMultiProject(true)
 	}
 
 	// Initialize activeProjectID for multi-project mode

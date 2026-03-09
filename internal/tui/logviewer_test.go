@@ -1121,3 +1121,114 @@ func TestTruncateCounter_TriggersAt150(t *testing.T) {
 		t.Errorf("expected %d lines after truncation at tick 150, got %d", maxEntries, len(afterTruncLines))
 	}
 }
+
+// =============================================================================
+// Multi-Project Mode - Project Name Prefix
+// =============================================================================
+
+func TestLogViewer_MultiProject_PrefixesWithProjectName(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+	lv.SetMultiProject(true)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "Task completed",
+		ProjectID: "brain-api",
+	})
+
+	view := lv.View()
+
+	// Should contain the project prefix
+	if !strings.Contains(view, "[brain-api]") {
+		t.Errorf("expected '[brain-api]' prefix in multi-project mode, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Task completed") {
+		t.Errorf("expected 'Task completed' message, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_SingleProject_NoPrefix(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+	// isMultiProject defaults to false
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "Task completed",
+		ProjectID: "brain-api",
+	})
+
+	view := lv.View()
+
+	// Should NOT contain the project prefix in single-project mode
+	if strings.Contains(view, "[brain-api]") {
+		t.Errorf("expected no '[brain-api]' prefix in single-project mode, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Task completed") {
+		t.Errorf("expected 'Task completed' message, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_MultiProject_EmptyProjectID_NoPrefix(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+	lv.SetMultiProject(true)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "Task completed",
+		ProjectID: "", // empty project ID
+	})
+
+	view := lv.View()
+
+	// Should not have a prefix when ProjectID is empty
+	if strings.Contains(view, "[]") {
+		t.Errorf("expected no empty '[]' prefix when ProjectID is empty, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Task completed") {
+		t.Errorf("expected 'Task completed' message, got:\n%s", view)
+	}
+}
+
+func TestLogViewer_MultiProject_MultipleProjects_DistinctPrefixes(t *testing.T) {
+	lv := NewLogViewer(100)
+	lv.SetSize(80, 20)
+	lv.SetMultiProject(true)
+
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 45, 0, time.UTC),
+		Level:     "info",
+		Message:   "First project task",
+		ProjectID: "project-a",
+	})
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 46, 0, time.UTC),
+		Level:     "warn",
+		Message:   "Second project task",
+		ProjectID: "project-b",
+	})
+	lv.AddEntry(LogEntry{
+		Timestamp: time.Date(2024, 1, 15, 14, 30, 47, 0, time.UTC),
+		Level:     "error",
+		Message:   "Third project task",
+		ProjectID: "project-c",
+	})
+
+	view := lv.View()
+
+	// All three project prefixes should be present
+	if !strings.Contains(view, "[project-a]") {
+		t.Errorf("expected '[project-a]' prefix, got:\n%s", view)
+	}
+	if !strings.Contains(view, "[project-b]") {
+		t.Errorf("expected '[project-b]' prefix, got:\n%s", view)
+	}
+	if !strings.Contains(view, "[project-c]") {
+		t.Errorf("expected '[project-c]' prefix, got:\n%s", view)
+	}
+}

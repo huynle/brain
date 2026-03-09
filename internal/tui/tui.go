@@ -566,6 +566,60 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Type {
+	case tea.KeyBackspace:
+		// Delete task(s) - with confirmation modal (tasks view only)
+		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
+		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+
+			// Case 1: Multi-select mode - batch delete
+			if len(m.selectedTasks) > 0 {
+				count := len(m.selectedTasks)
+				taskIDs := make([]string, 0, count)
+				taskPaths := make([]string, 0, count)
+				taskTitles := make([]string, 0, count)
+				for id := range m.selectedTasks {
+					taskIDs = append(taskIDs, id)
+					// Find task to get path and title
+					for _, t := range m.tasks {
+						if t.ID == id {
+							taskPaths = append(taskPaths, t.Path)
+							taskTitles = append(taskTitles, t.Title)
+							break
+						}
+					}
+				}
+
+				message := fmt.Sprintf("Delete %d task(s)?", count)
+				modal := NewConfirmModal("Delete Tasks", message).
+					WithTaskTitles(taskTitles).
+					WithDestructive(true).
+					WithOnConfirm(func() tea.Msg {
+						return batchDeleteTasksCmd(apiClient, taskPaths, taskIDs)()
+					})
+				return m, m.modalManager.Open(modal)
+			}
+
+			// Case 2: Single task mode
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+
+			message := fmt.Sprintf("Delete %d task(s)?", 1)
+			modal := NewConfirmModal("Delete Task", message).
+				WithTaskTitles([]string{selectedTask.Title}).
+				WithDestructive(true).
+				WithOnConfirm(func() tea.Msg {
+					return deleteTaskCmd(apiClient, selectedTask.Path)()
+				})
+			return m, m.modalManager.Open(modal)
+		}
+		return m, nil
+
 	case tea.KeyCtrlC:
 		m.sseClient.Stop()
 		return m, tea.Quit

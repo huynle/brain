@@ -468,7 +468,7 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// Feature-based grouping
 			tt.featureGroups = GroupTasksByFeature(tasks)
 
-			// Restore collapsed state for each feature
+			// Restore collapsed state for each feature (use in-memory state, not disk)
 			for i := range tt.featureGroups.Features {
 				featureID := tt.featureGroups.Features[i].ID
 				if collapsed, ok := tt.featureCollapsed[featureID]; ok {
@@ -492,7 +492,7 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// This ensures the old classification-only grouping still works
 			tt.groups = GroupTasks(tasks, settings.GroupVisible)
 
-			// Restore collapsed state for tt.groups
+			// Restore collapsed state for tt.groups (use in-memory state, not disk)
 			for i := range tt.groups {
 				groupName := tt.groups[i].Name
 				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
@@ -500,19 +500,19 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 				}
 			}
 
-			// Restore collapsed state for all 3 levels in statusGroups:
-			// 1. Status-level collapse (using groupCollapsed map)
-			// 2. Feature-level collapse (using featureCollapsed map)
-			// 3. Ungrouped-level collapse (using featureCollapsed map with status prefix)
+			// Restore collapsed state for all 3 levels in statusGroups (use in-memory state, not disk):
+			// 1. Status-level collapse (using in-memory groupCollapsed map)
+			// 2. Feature-level collapse (using in-memory featureCollapsed map)
+			// 3. Ungrouped-level collapse (using in-memory featureCollapsed map with status prefix)
 			for i := range tt.statusGroups {
 				statusName := tt.statusGroups[i].Name
 
-				// Restore status-level collapsed state
+				// Restore status-level collapsed state (from in-memory map)
 				if collapsed, ok := tt.groupCollapsed[statusName]; ok {
 					tt.statusGroups[i].Collapsed = collapsed
 				}
 
-				// Restore feature-level collapsed state
+				// Restore feature-level collapsed state (from in-memory map)
 				for j := range tt.statusGroups[i].Features {
 					featureID := tt.statusGroups[i].Features[j].ID
 					if collapsed, ok := tt.featureCollapsed[featureID]; ok {
@@ -520,7 +520,7 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 					}
 				}
 
-				// Restore ungrouped-level collapsed state (key format: "Status:[Ungrouped]")
+				// Restore ungrouped-level collapsed state (from in-memory map)
 				if tt.statusGroups[i].Ungrouped != nil {
 					ungroupedKey := statusName + ":[Ungrouped]"
 					if collapsed, ok := tt.featureCollapsed[ungroupedKey]; ok {

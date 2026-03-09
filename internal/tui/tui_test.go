@@ -3315,3 +3315,150 @@ func TestBlockedInspectorPrompt_ContainsFeatureAndProject(t *testing.T) {
 		t.Errorf("expected prompt to contain 'blocked', got: %s", prompt)
 	}
 }
+
+// =============================================================================
+// Update Tests - Backspace Key Deletion
+// =============================================================================
+
+func TestUpdate_BackspaceKey_OpensDeleteModal_SingleTask(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelTasks
+
+	// Setup a selected task in the task tree via TasksUpdatedMsg
+	testTask := types.ResolvedTask{
+		ID:             "task-123",
+		Title:          "Test Task",
+		Path:           "/path/to/task",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "high",
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{
+		Tasks: []types.ResolvedTask{testTask},
+		Stats: &types.TaskStats{Ready: 1},
+	})
+	m = updated.(Model)
+
+	// Move to first task (past group header if grouped view)
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, _ = m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should open a modal for deletion confirmation
+	if !model.modalManager.IsOpen() {
+		t.Error("expected modal to be open after backspace key")
+	}
+}
+
+func TestUpdate_BackspaceKey_OpensDeleteModal_MultiSelect(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelTasks
+
+	// Setup multiple selected tasks via TasksUpdatedMsg
+	testTask1 := types.ResolvedTask{
+		ID:             "task-123",
+		Title:          "Test Task 1",
+		Path:           "/path/to/task1",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "high",
+	}
+	testTask2 := types.ResolvedTask{
+		ID:             "task-456",
+		Title:          "Test Task 2",
+		Path:           "/path/to/task2",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "medium",
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{
+		Tasks: []types.ResolvedTask{testTask1, testTask2},
+		Stats: &types.TaskStats{Ready: 2},
+	})
+	m = updated.(Model)
+
+	// Select multiple tasks (mark them as selected)
+	m.selectedTasks = map[string]bool{
+		"task-123": true,
+		"task-456": true,
+	}
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, _ = m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should open a modal for batch deletion confirmation
+	if !model.modalManager.IsOpen() {
+		t.Error("expected modal to be open for batch delete after backspace key")
+	}
+}
+
+func TestUpdate_BackspaceKey_NoOp_WhenNotInTasksView(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeSchedules // Not in tasks view
+	m.activePanel = PanelTasks
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, cmd := m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should NOT open a modal
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to remain closed when not in tasks view")
+	}
+
+	// Should return nil command
+	if cmd != nil {
+		t.Error("expected nil command when not in tasks view")
+	}
+}
+
+func TestUpdate_BackspaceKey_NoOp_WhenNotInTasksPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelLogs // Not in tasks panel
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, cmd := m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should NOT open a modal
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to remain closed when not in tasks panel")
+	}
+
+	// Should return nil command
+	if cmd != nil {
+		t.Error("expected nil command when not in tasks panel")
+	}
+}

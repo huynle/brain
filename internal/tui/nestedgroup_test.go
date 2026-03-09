@@ -127,9 +127,9 @@ func TestGroupTasksByStatusAndFeature_MultipleStatusesWithFeatures(t *testing.T)
 	}
 
 	// Check Completed group
-	completedGroup := result[2]
+	completedGroup := result[3]
 	if completedGroup.Name != "Completed" {
-		t.Errorf("Expected third group 'Completed', got '%s'", completedGroup.Name)
+		t.Errorf("Expected fourth group 'Completed', got '%s'", completedGroup.Name)
 	}
 	if completedGroup.Count != 2 {
 		t.Errorf("Expected Completed count 2, got %d", completedGroup.Count)
@@ -141,15 +141,15 @@ func TestGroupTasksByStatusAndFeature_MultipleStatusesWithFeatures(t *testing.T)
 
 // TestGroupTasksByStatusAndFeature_StatusOrder tests that status groups appear in fixed order.
 func TestGroupTasksByStatusAndFeature_StatusOrder(t *testing.T) {
-	// Create tasks in reverse order to test sorting
+	// Create tasks in reverse order to test sorting - all with feature_id to stay in their classification groups
 	tasks := []types.ResolvedTask{
-		{ID: "task1", Status: "archived"},
-		{ID: "task2", Status: "completed"},
-		{ID: "task3", Status: "cancelled"},
-		{ID: "task4", Status: "blocked", Classification: "blocked"},
-		{ID: "task5", Status: "in_progress", Classification: "ready"}, // in_progress stays in classification group
-		{ID: "task6", Status: "waiting", Classification: "waiting"},
-		{ID: "task7", Status: "pending", Classification: "ready"},
+		{ID: "task1", Status: "archived", FeatureID: "feature-1"},
+		{ID: "task2", Status: "completed", FeatureID: "feature-1"},
+		{ID: "task3", Status: "cancelled", FeatureID: "feature-1"},
+		{ID: "task4", Status: "blocked", Classification: "blocked", FeatureID: "feature-1"},
+		{ID: "task5", Status: "in_progress", Classification: "ready", FeatureID: "feature-1"}, // in_progress stays in classification group
+		{ID: "task6", Status: "waiting", Classification: "waiting", FeatureID: "feature-1"},
+		{ID: "task7", Status: "pending", Classification: "ready", FeatureID: "feature-1"},
 	}
 
 	result := GroupTasksByStatusAndFeature(tasks)
@@ -207,31 +207,43 @@ func TestGroupTasksByStatusAndFeature_FeaturePrioritySorting(t *testing.T) {
 func TestGroupTasksByStatusAndFeature_UngroupedPlacement(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "task1", Classification: "ready", FeatureID: "feature-a"},
-		{ID: "task2", Classification: "ready"}, // No feature_id
+		{ID: "task2", Classification: "ready"}, // No feature_id - goes to Ungrouped status
 		{ID: "task3", Status: "completed", FeatureID: "feature-b"},
-		{ID: "task4", Status: "completed"}, // No feature_id
+		{ID: "task4", Status: "completed"}, // No feature_id - completed is terminal, stays in Completed
 	}
 
 	result := GroupTasksByStatusAndFeature(tasks)
 
-	if len(result) != 2 {
-		t.Fatalf("Expected 2 status groups, got %d", len(result))
+	// Expect 3 status groups: Ungrouped (task2), Ready (task1), Completed (task3, task4)
+	if len(result) != 3 {
+		t.Fatalf("Expected 3 status groups, got %d", len(result))
 	}
 
-	// Ready group
+	// Ungrouped group (task2)
+	if result[0].Name != "Ungrouped" {
+		t.Errorf("Expected first group 'Ungrouped', got '%s'", result[0].Name)
+	}
 	if result[0].Ungrouped == nil {
-		t.Fatal("Expected Ungrouped in Ready")
+		t.Fatal("Expected Ungrouped group to have Ungrouped feature group")
 	}
 	if len(result[0].Ungrouped.Tasks) != 1 {
-		t.Errorf("Expected 1 ungrouped task in Ready, got %d", len(result[0].Ungrouped.Tasks))
+		t.Errorf("Expected 1 ungrouped task in Ungrouped status, got %d", len(result[0].Ungrouped.Tasks))
 	}
 
-	// Completed group
-	if result[1].Ungrouped == nil {
+	// Ready group (task1)
+	if result[1].Name != "Ready" {
+		t.Errorf("Expected second group 'Ready', got '%s'", result[1].Name)
+	}
+
+	// Completed group (task3 with feature, task4 without)
+	if result[2].Name != "Completed" {
+		t.Errorf("Expected third group 'Completed', got '%s'", result[2].Name)
+	}
+	if result[2].Ungrouped == nil {
 		t.Fatal("Expected Ungrouped in Completed")
 	}
-	if len(result[1].Ungrouped.Tasks) != 1 {
-		t.Errorf("Expected 1 ungrouped task in Completed, got %d", len(result[1].Ungrouped.Tasks))
+	if len(result[2].Ungrouped.Tasks) != 1 {
+		t.Errorf("Expected 1 ungrouped task in Completed, got %d", len(result[2].Ungrouped.Tasks))
 	}
 }
 

@@ -1051,7 +1051,8 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 	}
 
 	var lines []string
-	tt.renderNodes(tt.nodes, "", &lines, width)
+	showCheckboxes := len(tt.selectedTasks) > 0
+	tt.renderNodes(tt.nodes, "", &lines, width, showCheckboxes)
 
 	// Truncate to height
 	if height > 0 && len(lines) > height {
@@ -1433,18 +1434,18 @@ func truncateTitle(title string, maxWidth int) string {
 
 // renderNodes recursively renders tree nodes into lines with proper box-drawing indentation.
 // The prefix parameter tracks ancestor line states to render vertical continuation lines correctly.
-func (tt *TaskTree) renderNodes(nodes []TreeNode, prefix string, lines *[]string, width int) {
+func (tt *TaskTree) renderNodes(nodes []TreeNode, prefix string, lines *[]string, width int, showCheckboxes bool) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
 		// Build the line with tree prefix
-		line := tt.renderTaskLine(node, prefix, isLast, width)
+		line := tt.renderTaskLine(node, prefix, isLast, width, showCheckboxes)
 		*lines = append(*lines, line)
 
 		// Render children with updated prefix for vertical continuation
 		if len(node.Children) > 0 {
 			childPrefix := tt.calculateChildPrefix(prefix, isLast)
-			tt.renderNodes(node.Children, childPrefix, lines, width)
+			tt.renderNodes(node.Children, childPrefix, lines, width, showCheckboxes)
 		}
 	}
 }
@@ -1465,7 +1466,7 @@ func (tt *TaskTree) calculateChildPrefix(prefix string, isLast bool) string {
 // renderTaskLine renders a single task line with status, title, indicators, and tree connectors.
 // The prefix parameter contains ancestor line state, and isLast determines the branch character.
 // The width parameter is used for truncation when TextWrap is false.
-func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, width int) string {
+func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, width int, showCheckboxes bool) string {
 	task := node.Task
 	isSelected := task.ID == tt.SelectedID
 
@@ -1486,11 +1487,25 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	indicator := statusIndicator(task.Status, task.Classification)
 	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
+	// Checkbox indicator (ONLY when multi-select active)
+	checkboxPart := ""
+	if showCheckboxes {
+		checkbox := "[ ]"
+		if tt.selectedTasks[task.ID] {
+			checkbox = "[x]"
+		}
+		checkboxPart = checkbox + " "
+	}
+
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Calculate overhead: selMarker(1) + prefix + treeConnector + indicator(2) + space(1) + suffixes
-		overhead := 1 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector) + 2 + 1
+		// Calculate overhead: selMarker(1) + prefix + treeConnector + checkbox + indicator(2) + space(1) + suffixes
+		overhead := 1 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
+		if showCheckboxes {
+			overhead += 4 // "[x] "
+		}
+		overhead += 2 + 1 // indicator + space
 		if task.Priority == "high" {
 			overhead++ // "!"
 		}
@@ -1523,7 +1538,7 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸")
 	}
 
-	return fmt.Sprintf("%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, indicatorStyled, title, prioritySuffix, cycleSuffix)
+	return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)
 }
 
 // renderGroupTaskTree recursively renders tree nodes for grouped view with proper indentation.

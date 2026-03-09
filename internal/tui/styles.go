@@ -112,16 +112,29 @@ func StatusStyle(classification string) lipgloss.Style {
 	}
 }
 
-// StatusStyleWithState returns a styled string for a task, prioritizing status over classification.
-// Handles all 10 status values to match the TypeScript TUI's color scheme.
-// Status (execution state) takes precedence over classification (dependency state).
+// StatusStyleWithState returns a styled string for a task.
+// For pending tasks, classification (dependency state) takes precedence to show readiness.
+// For other statuses, status (execution state) takes precedence.
 func StatusStyleWithState(status, classification string) lipgloss.Style {
-	// Handle all explicit status values
+	// Priority 1: For pending tasks, check classification first to show readiness
+	if status == "pending" {
+		switch classification {
+		case "ready":
+			return lipgloss.NewStyle().Foreground(ColorReady) // green - ready to execute
+		case "waiting":
+			return lipgloss.NewStyle().Foreground(ColorWaiting) // yellow - waiting on dependencies
+		case "blocked":
+			return lipgloss.NewStyle().Foreground(ColorBlocked) // red - blocked by deps
+		default:
+			// pending with unknown classification defaults to waiting
+			return lipgloss.NewStyle().Foreground(ColorWaiting) // yellow
+		}
+	}
+
+	// Priority 2: Handle all other explicit status values
 	switch status {
 	case "draft":
 		return lipgloss.NewStyle().Foreground(ColorDim) // gray
-	case "pending":
-		return lipgloss.NewStyle().Foreground(ColorWaiting) // yellow
 	case "active":
 		return lipgloss.NewStyle().Foreground(ColorActive) // blue
 	case "in_progress":
@@ -140,7 +153,7 @@ func StatusStyleWithState(status, classification string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(ColorDim) // gray
 	}
 
-	// Fall back to classification (dependency state)
+	// Priority 3: Fall back to classification (dependency state)
 	return StatusStyle(classification)
 }
 

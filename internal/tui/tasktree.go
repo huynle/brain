@@ -1082,16 +1082,29 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 	return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
 }
 
-// statusIndicator returns the status icon for a task, prioritizing status over classification.
-// Handles all 10 status values to match the TypeScript TUI's indicators.
-// Status (execution state) takes precedence over classification (dependency state).
+// statusIndicator returns the status icon for a task.
+// For pending tasks, classification (dependency state) takes precedence to show readiness.
+// For other statuses, status (execution state) takes precedence.
 func statusIndicator(status, classification string) string {
-	// Handle all explicit status values
+	// Priority 1: For pending tasks, check classification first to show readiness
+	if status == "pending" {
+		switch classification {
+		case "ready":
+			return IndicatorReady // ● green - ready to execute
+		case "waiting":
+			return IndicatorWaiting // ○ yellow - waiting on dependencies
+		case "blocked":
+			return IndicatorBlocked // ✗ red - blocked by deps
+		default:
+			// pending with unknown classification defaults to waiting
+			return IndicatorWaiting // ○ yellow
+		}
+	}
+
+	// Priority 2: Handle all other explicit status values
 	switch status {
 	case "draft":
 		return IndicatorWaiting // ○ gray
-	case "pending":
-		return IndicatorWaiting // ○ yellow
 	case "active":
 		return IndicatorReady // ● blue
 	case "in_progress":
@@ -1110,7 +1123,7 @@ func statusIndicator(status, classification string) string {
 		return IndicatorWaiting // ○ gray
 	}
 
-	// Fall back to classification (dependency state) for tasks without explicit status
+	// Priority 3: Fall back to classification (dependency state) for tasks without explicit status
 	switch classification {
 	case "ready":
 		return IndicatorReady

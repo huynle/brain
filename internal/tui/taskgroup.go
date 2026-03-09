@@ -70,21 +70,67 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 }
 
 // normalizeClassification maps API classification and status values to display groups.
-// Groups are based on status values, matching the TypeScript implementation.
+// For pending/draft/active/in_progress statuses, classification takes precedence to show readiness.
+// Tasks without featureID go to "Ungrouped" regardless of status/classification.
+// Terminal statuses (completed, validated, etc.) always use status groups.
 func normalizeClassification(classification, status, featureID string) string {
-	// Check status first (primary indicator for grouping)
+	// Priority 1: Tasks without feature_id go to Ungrouped (except terminal states)
+	if featureID == "" {
+		switch status {
+		case "completed", "validated", "cancelled", "superseded", "archived", "draft":
+			// Terminal states and draft stay in their own groups
+		default:
+			// All other tasks without feature_id go to Ungrouped
+			debugLog("normalizeClassification: no feature_id, status=%s -> Ungrouped", status)
+			return "Ungrouped"
+		}
+	}
+
+	// Priority 2: For pending/draft/active/in_progress statuses, check classification first
+	if status == "pending" || status == "draft" || status == "active" || status == "in_progress" {
+		switch classification {
+		case "ready":
+			debugLog("normalizeClassification: status=%s, classification=ready -> Ready group", status)
+			return "Ready"
+		case "waiting":
+			debugLog("normalizeClassification: status=%s, classification=waiting -> Waiting group", status)
+			return "Waiting"
+		case "blocked":
+			debugLog("normalizeClassification: status=%s, classification=blocked -> Blocked group", status)
+			return "Blocked"
+		}
+
+		// For pending with no classification but WITH feature_id, default to Ready
+		if status == "pending" && featureID != "" {
+			debugLog("normalizeClassification: status=pending, no classification, has feature_id -> Ready group (default)")
+			return "Ready"
+		}
+
+		// For in_progress with no classification, default to Completed
+		if status == "in_progress" {
+			debugLog("normalizeClassification: status=in_progress, no classification -> Completed group (default)")
+			return "Completed"
+		}
+	}
+
+	// Priority 3: Check status for execution states
 	switch status {
 	case "draft":
-		debugLog("normalizeClassification: status=draft -> Draft group")
+		debugLog("normalizeClassification: status=draft (no classification) -> Draft group")
 		return "Draft"
 	case "pending":
-		debugLog("normalizeClassification: status=pending -> Pending group")
-		return "Pending"
+		// If we get here with pending, fallback to Waiting
+		debugLog("normalizeClassification: status=pending (fallthrough) -> Waiting group")
+		return "Waiting"
+	case "waiting":
+		debugLog("normalizeClassification: status=waiting -> Waiting group")
+		return "Waiting"
 	case "active":
-		debugLog("normalizeClassification: status=active -> Active group")
+		debugLog("normalizeClassification: status=active (no classification) -> Active group")
 		return "Active"
 	case "in_progress":
-		debugLog("normalizeClassification: status=in_progress -> In Progress group")
+		// Should have been handled above, but fallback to In Progress
+		debugLog("normalizeClassification: status=in_progress (fallthrough) -> In Progress group")
 		return "In Progress"
 	case "blocked":
 		debugLog("normalizeClassification: status=blocked -> Blocked group")
@@ -106,17 +152,16 @@ func normalizeClassification(classification, status, featureID string) string {
 		return "Archived"
 	}
 
-	// Fall back to classification if status doesn't match (for backward compatibility)
-	// Classification "ready" maps to "Active", "waiting" maps to "Pending"
+	// Priority 4: Fall back to classification if status is empty or unknown
 	switch classification {
 	case "ready":
-		debugLog("normalizeClassification: classification=ready -> Active group (fallback)")
-		return "Active"
+		debugLog("normalizeClassification: classification=ready (no status) -> Ready group")
+		return "Ready"
 	case "waiting":
-		debugLog("normalizeClassification: classification=waiting -> Pending group (fallback)")
-		return "Pending"
+		debugLog("normalizeClassification: classification=waiting (no status) -> Waiting group")
+		return "Waiting"
 	case "blocked":
-		debugLog("normalizeClassification: classification=blocked -> Blocked group (fallback)")
+		debugLog("normalizeClassification: classification=blocked (no status) -> Blocked group")
 		return "Blocked"
 	case "not_pending":
 		debugLog("normalizeClassification: classification=not_pending -> Completed group (fallback)")

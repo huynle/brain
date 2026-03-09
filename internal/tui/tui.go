@@ -1550,28 +1550,28 @@ func (m Model) renderBaseView() string {
 	}
 
 	// Determine if right panels are visible
-	hasRightPanel := m.detailVisible || m.logsVisible
+	hasBottomPanel := m.detailVisible || m.logsVisible
 
-	// Calculate widths
-	var leftWidth, rightWidth int
-	if hasRightPanel {
-		rightWidth = m.width * 40 / 100
-		if rightWidth < 20 {
-			rightWidth = 20
+	// Calculate heights
+	var topHeight, bottomHeight int
+	if hasBottomPanel {
+		topHeight = mainHeight * 60 / 100
+		if topHeight < 10 {
+			topHeight = 10
 		}
-		leftWidth = m.width - rightWidth
+		bottomHeight = mainHeight - topHeight
 	} else {
-		leftWidth = m.width
+		topHeight = mainHeight
 	}
 
-	// Left panel: task tree
+	// Top panel: task tree
 	taskPanelStyle := InactiveBorder
 	if m.activePanel == PanelTasks {
 		taskPanelStyle = ActiveBorder
 	}
 
-	innerWidth := leftWidth - 4 // account for border + padding
-	innerHeight := mainHeight - 2
+	innerWidth := m.width - 4 // account for border + padding, use full width
+	innerHeight := topHeight - 2
 	if innerWidth < 10 {
 		innerWidth = 10
 	}
@@ -1586,15 +1586,15 @@ func (m Model) renderBaseView() string {
 		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
 	}
 	taskPanel := taskPanelStyle.
-		Width(leftWidth - 2).
-		Height(mainHeight).
+		Width(m.width - 2).
+		Height(topHeight).
 		Render(taskContent)
 
 	// Build main content
 	var mainContent string
-	if hasRightPanel {
-		rightPanel := m.renderRightPanel(rightWidth, mainHeight)
-		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, taskPanel, rightPanel)
+	if hasBottomPanel {
+		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
 	} else {
 		mainContent = taskPanel
 	}
@@ -1617,14 +1617,15 @@ func (m Model) renderBaseView() string {
 	)
 }
 
-// renderRightPanel renders the right side panel(s) - detail and/or logs.
-func (m Model) renderRightPanel(width, height int) string {
+// renderBottomPanel renders the bottom panel(s) - detail and/or logs.
+func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
-		// Split vertically: detail on top, logs on bottom
-		halfHeight := height / 2
-		detailPanel := m.renderDetailPanel(width, halfHeight)
-		logPanel := m.renderLogPanel(width, height-halfHeight)
-		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
+		// Split horizontally: detail on left (70%), logs on right (30%)
+		detailWidth := width * 70 / 100
+		logWidth := width - detailWidth
+		detailPanel := m.renderDetailPanel(detailWidth, height)
+		logPanel := m.renderLogPanel(logWidth, height)
+		return lipgloss.JoinHorizontal(lipgloss.Top, detailPanel, logPanel)
 	}
 
 	if m.detailVisible {

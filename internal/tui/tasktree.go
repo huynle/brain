@@ -1018,6 +1018,10 @@ func (tt *TaskTree) ViewWithProject(width, height int, activeProjectID string) s
 	}
 
 	if tt.useGroupedView {
+		// Phase 4: Use nested view when statusGroups is populated
+		if len(tt.statusGroups) > 0 && !tt.useFeatureView {
+			return tt.viewNestedGrouped(width, height, activeProjectID)
+		}
 		if tt.useFeatureView {
 			return tt.viewFeatureGrouped(width, height, activeProjectID)
 		}
@@ -1253,6 +1257,139 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				showCheckboxes,
 				activeProjectID,
 			)
+		}
+	}
+
+	// Truncate to height
+	if height > 0 && len(lines) > height {
+		lines = lines[:height]
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// viewNestedGrouped renders tasks in 3-level nested hierarchy: Status → Feature → Tasks
+// This is Phase 4 of nested grouping implementation.
+func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string) string {
+	if len(tt.statusGroups) == 0 {
+		return DimStyle.Render("  No tasks")
+	}
+
+	var lines []string
+	showCheckboxes := len(tt.selectedTasks) > 0
+
+	// Iterate through status groups (Level 1)
+	for sIdx, statusGroup := range tt.statusGroups {
+		// Render status header (Level 1)
+		isStatusSelected := (sIdx == tt.selectedStatusIdx && tt.isOnStatusHeader)
+
+		// Collapse indicator for status
+		collapseIndicator := "▶"
+		if !statusGroup.Collapsed {
+			collapseIndicator = "▾"
+		}
+
+		statusHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, statusGroup.Name, statusGroup.Count)
+
+		// Selection marker for status header
+		if isStatusSelected {
+			statusHeader = GroupHeaderStyle.Render(statusHeader)
+			statusHeader = fmt.Sprintf("→ %s", statusHeader)
+		} else {
+			statusHeader = GroupHeaderStyle.Render(statusHeader)
+			statusHeader = fmt.Sprintf("  %s", statusHeader)
+		}
+
+		lines = append(lines, statusHeader)
+
+		// Render features if status is expanded (Level 2)
+		if !statusGroup.Collapsed {
+			// Render features
+			for fIdx, feature := range statusGroup.Features {
+				isFeatureSelected := (sIdx == tt.selectedStatusIdx && fIdx == tt.selectedFeatureIdx && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1)
+
+				// Collapse indicator for feature
+				featureCollapseIndicator := "▸"
+				if !feature.Collapsed {
+					featureCollapseIndicator = "▾"
+				}
+
+				// Feature header with indentation
+				featureHeader := fmt.Sprintf("%s %s (%d) [%d/%d]",
+					featureCollapseIndicator, feature.Name, feature.Stats.Total,
+					feature.Stats.Completed, feature.Stats.Total)
+
+				// Selection marker for feature header (with indentation)
+				if isFeatureSelected {
+					featureHeader = GroupHeaderStyle.Render(featureHeader)
+					featureHeader = fmt.Sprintf("  → %s", featureHeader)
+				} else {
+					featureHeader = GroupHeaderStyle.Render(featureHeader)
+					featureHeader = fmt.Sprintf("    %s", featureHeader)
+				}
+
+				lines = append(lines, featureHeader)
+
+				// Render tasks if feature is expanded (Level 3)
+				if !feature.Collapsed {
+					tree := BuildTree(feature.Tasks, tt.tasks)
+					visualIndex := 0
+					tt.renderGroupTaskTree(
+						tree,
+						"      ", // base indentation for nested view (3 levels deep)
+						&lines,
+						width,
+						fIdx,
+						&visualIndex,
+						tt.selectedTasks,
+						showCheckboxes,
+						activeProjectID,
+					)
+				}
+			}
+
+			// Render ungrouped if present
+			if statusGroup.Ungrouped != nil {
+				ungrouped := statusGroup.Ungrouped
+				isUngroupedSelected := (sIdx == tt.selectedStatusIdx && tt.selectedFeatureIdx == -1 && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1)
+
+				// Collapse indicator for ungrouped
+				ungroupedCollapseIndicator := "▸"
+				if !ungrouped.Collapsed {
+					ungroupedCollapseIndicator = "▾"
+				}
+
+				ungroupedHeader := fmt.Sprintf("%s %s (%d)", ungroupedCollapseIndicator, ungrouped.Name, len(ungrouped.Tasks))
+
+				// Selection marker for ungrouped header
+				if isUngroupedSelected {
+					ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
+					ungroupedHeader = fmt.Sprintf("  → %s", ungroupedHeader)
+				} else {
+					ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
+					ungroupedHeader = fmt.Sprintf("    %s", ungroupedHeader)
+				}
+
+				lines = append(lines, ungroupedHeader)
+
+				// Render ungrouped tasks if expanded
+				if !ungrouped.Collapsed {
+					tree := BuildTree(ungrouped.Tasks, tt.tasks)
+					visualIndex := 0
+					ungroupedIdx := len(statusGroup.Features) // Use feature count as group index
+					tt.renderGroupTaskTree(
+						tree,
+						"      ",
+						&lines,
+						width,
+						ungroupedIdx,
+						&visualIndex,
+						tt.selectedTasks,
+						showCheckboxes,
+						activeProjectID,
+					)
+				}
+			}
 		}
 	}
 

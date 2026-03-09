@@ -1549,6 +1549,132 @@ func TestBuildTree_Phase8_EdgeCase_NonExistentReferences(t *testing.T) {
 }
 
 // =============================================================================
+// Phase 4: Nested Rendering Tests (3-level hierarchy)
+// =============================================================================
+
+// Test 1: viewNestedGrouped renders 3-level hierarchy correctly
+func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true) // Enable grouped view
+
+	// Create task with completed status (need both classification and status set)
+	completedTask := makeTaskWithFeature("t3", "Dashboard Task", "ready", "medium", "dashboard", nil)
+	completedTask.Status = "completed"
+	completedTask.Classification = "completed"
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task 1", "ready", "high", "auth-system", nil),
+		makeTaskWithFeature("t2", "Auth Task 2", "ready", "low", "auth-system", nil),
+		completedTask,
+		makeTask("t4", "Ungrouped Ready Task", "ready", "medium", nil),
+	}
+
+	// Populate statusGroups to trigger nested mode
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+
+	view := tt.View(80, 30)
+
+	// Should show status headers
+	if !strings.Contains(view, "Ready") {
+		t.Errorf("Expected status header 'Ready' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Completed") {
+		t.Errorf("Expected status header 'Completed' in view, got:\n%s", view)
+	}
+
+	// Should show feature sub-headers with indentation
+	if !strings.Contains(view, "auth-system") {
+		t.Errorf("Expected feature sub-header 'auth-system' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "dashboard") {
+		t.Errorf("Expected feature sub-header 'dashboard' in view, got:\n%s", view)
+	}
+
+	// Should show ungrouped header within Ready status
+	if !strings.Contains(view, "[Ungrouped]") {
+		t.Errorf("Expected [Ungrouped] sub-header in view, got:\n%s", view)
+	}
+}
+
+// Test 2: Collapse indicators at all levels
+func TestTaskTree_ViewNestedGrouped_CollapseIndicatorsAtAllLevels(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+
+	// Expanded status, expanded feature
+	view := tt.View(80, 30)
+	if !strings.Contains(view, "▾") {
+		t.Errorf("Expected expanded indicator ▾ in view, got:\n%s", view)
+	}
+
+	// Collapse status
+	tt.statusGroups[0].Collapsed = true
+	view = tt.View(80, 30)
+	if !strings.Contains(view, "▶") {
+		t.Errorf("Expected collapsed indicator ▶ for collapsed status, got:\n%s", view)
+	}
+}
+
+// Test 3: Selection indicators at all levels
+func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+
+	// Test 1: Status header selected
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+	tt.selectedFeatureIdx = -2
+	tt.selectedTaskIdx = -1
+	tt.SelectedID = ""
+
+	view := tt.View(80, 30)
+	if !strings.Contains(view, "→") {
+		t.Errorf("Expected selection indicator → for status header, got:\n%s", view)
+	}
+
+	// Test 2: Feature header selected
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 0
+	tt.selectedTaskIdx = -1
+	tt.SelectedID = ""
+
+	view = tt.View(80, 30)
+	// Should have selection indicator for feature header
+	count := strings.Count(view, "→")
+	if count == 0 {
+		t.Errorf("Expected selection indicator → for feature header, got:\n%s", view)
+	}
+
+	// Test 3: Task selected
+	tt.selectedTaskIdx = 0
+	tt.SelectedID = "t1"
+
+	view = tt.View(80, 30)
+	if !strings.Contains(view, "▸") {
+		t.Errorf("Expected task selection indicator ▸, got:\n%s", view)
+	}
+}
+
+// =============================================================================
 // Phase 8: Benchmark Tests
 // =============================================================================
 

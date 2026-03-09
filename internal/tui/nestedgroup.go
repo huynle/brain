@@ -18,7 +18,7 @@ func debugLog(format string, args ...interface{}) {
 // StatusGroup represents a collapsible group of tasks organized by status (classification),
 // with nested feature grouping within each status.
 type StatusGroup struct {
-	Name      string         // "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string         // "Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
 	Features  []FeatureGroup // Feature groups within this status
 	Ungrouped *FeatureGroup  // Tasks without feature_id (nil if none)
 	Collapsed bool           // Is the status group collapsed?
@@ -26,10 +26,9 @@ type StatusGroup struct {
 }
 
 // GroupTasksByStatusAndFeature groups tasks first by status (classification), then by feature_id within each status.
-// Returns status groups in fixed display order: Ready, Waiting, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
+// Returns status groups in fixed display order: Draft, Pending, Active, In Progress, Blocked, Cancelled, Completed, Validated, Superseded, Archived.
 // Within each status, features are sorted by priority (high > medium > low), then alphabetically by ID.
 // Tasks without feature_id go into the Ungrouped group within their status.
-// Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
 func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[string]bool) []StatusGroup {
 	debugLog("GroupTasksByStatusAndFeature called: %d tasks, %d visible groups configured", len(tasks), len(visibleGroups))
@@ -43,13 +42,13 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 	for _, task := range tasks {
 		status := normalizeClassification(task.Classification, task.Status, task.FeatureID)
 		statusMap[status] = append(statusMap[status], task)
-		debugLog("Task %s: classification=%s status=%s feature_id=%s -> group=%s", 
+		debugLog("Task %s: classification=%s status=%s feature_id=%s -> group=%s",
 			task.ID, task.Classification, task.Status, task.FeatureID, status)
 	}
 
 	// Step 2: For each status group, create nested feature groups
 	var result []StatusGroup
-	statusOrder := []string{"Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	statusOrder := []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 	for _, statusName := range statusOrder {
 		statusTasks, ok := statusMap[statusName]
@@ -75,7 +74,7 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 		// Group tasks by feature within this status
 		featureResult := GroupTasksByFeature(statusTasks)
 
-		debugLog("Group %s: creating group (visibility=true, %d tasks, %d features)", 
+		debugLog("Group %s: creating group (visibility=true, %d tasks, %d features)",
 			statusName, len(statusTasks), len(featureResult.Features))
 
 		result = append(result, StatusGroup{

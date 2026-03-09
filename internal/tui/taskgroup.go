@@ -8,17 +8,15 @@ import (
 
 // TaskGroup represents a collapsible group of tasks organized by classification.
 type TaskGroup struct {
-	Name      string               // "Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string               // "Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
 	Tasks     []types.ResolvedTask // Tasks in this group
 	Collapsed bool                 // Is the group collapsed?
 	Count     int                  // Total tasks in group
 }
 
 // GroupTasks organizes tasks into groups by classification with optional visibility filtering.
-// Returns groups in priority order: Ungrouped, Ready, Waiting, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
+// Returns groups in priority order: Draft, Pending, Active, In Progress, Blocked, Cancelled, Completed, Validated, Superseded, Archived.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
-// Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
-// Tasks without a feature_id are classified as "Ungrouped" for Ready/Waiting/Blocked classifications.
 func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []TaskGroup {
 	if len(tasks) == 0 {
 		return nil
@@ -46,7 +44,7 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 
 	// Return in display order with visibility filtering
 	result := []TaskGroup{}
-	for _, groupName := range []string{"Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
+	for _, groupName := range []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
 		taskList, ok := groups[groupName]
 		if !ok || len(taskList) == 0 {
 			continue // Skip groups with no tasks
@@ -72,77 +70,62 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 }
 
 // normalizeClassification maps API classification and status values to display groups.
-// If the task has no feature_id (empty string), it is classified as "Ungrouped" for active work,
-// but terminal statuses (completed, draft, etc.) stay in their respective status groups.
+// Groups are based on status values, matching the TypeScript implementation.
 func normalizeClassification(classification, status, featureID string) string {
-	// First check classification (primary indicator)
-	switch classification {
-	case "ready":
-		// Tasks without feature_id in ready state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=ready)")
-			return "Ungrouped"
-		}
-		return "Ready"
-	case "waiting":
-		// Tasks without feature_id in waiting state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=waiting)")
-			return "Ungrouped"
-		}
-		return "Waiting"
-	case "blocked":
-		// Tasks without feature_id in blocked state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=blocked)")
-			return "Ungrouped"
-		}
-		return "Blocked"
-	}
-
-	// Fall back to status for additional classification
-	// Note: in_progress/active tasks stay in their classification groups (Ready/Waiting/Blocked)
-	// and are indicated by the blue arrow indicator, not a separate "Active" group
+	// Check status first (primary indicator for grouping)
 	switch status {
 	case "draft":
-		debugLog("normalizeClassification: status=draft -> Draft group (classification=%s, feature_id=%s)", classification, featureID)
+		debugLog("normalizeClassification: status=draft -> Draft group")
 		return "Draft"
+	case "pending":
+		debugLog("normalizeClassification: status=pending -> Pending group")
+		return "Pending"
+	case "active":
+		debugLog("normalizeClassification: status=active -> Active group")
+		return "Active"
+	case "in_progress":
+		debugLog("normalizeClassification: status=in_progress -> In Progress group")
+		return "In Progress"
+	case "blocked":
+		debugLog("normalizeClassification: status=blocked -> Blocked group")
+		return "Blocked"
 	case "cancelled":
+		debugLog("normalizeClassification: status=cancelled -> Cancelled group")
 		return "Cancelled"
 	case "completed":
+		debugLog("normalizeClassification: status=completed -> Completed group")
 		return "Completed"
 	case "validated":
+		debugLog("normalizeClassification: status=validated -> Validated group")
 		return "Validated"
 	case "superseded":
+		debugLog("normalizeClassification: status=superseded -> Superseded group")
 		return "Superseded"
 	case "archived":
+		debugLog("normalizeClassification: status=archived -> Archived group")
 		return "Archived"
-	case "pending":
-		// Tasks without feature_id in pending state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=pending)")
-			return "Ungrouped"
-		}
-		return "Ready"
+	}
+
+	// Fall back to classification if status doesn't match (for backward compatibility)
+	// Classification "ready" maps to "Active", "waiting" maps to "Pending"
+	switch classification {
+	case "ready":
+		debugLog("normalizeClassification: classification=ready -> Active group (fallback)")
+		return "Active"
 	case "waiting":
-		// Tasks without feature_id in waiting state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=waiting)")
-			return "Ungrouped"
-		}
-		return "Waiting"
+		debugLog("normalizeClassification: classification=waiting -> Pending group (fallback)")
+		return "Pending"
 	case "blocked":
-		// Tasks without feature_id in blocked state go to Ungrouped
-		if featureID == "" {
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=blocked)")
-			return "Ungrouped"
-		}
+		debugLog("normalizeClassification: classification=blocked -> Blocked group (fallback)")
 		return "Blocked"
-	default:
-		// Default: unknown statuses go to Completed
-		debugLog("normalizeClassification: unknown status=%s -> Completed (classification=%s, feature_id=%s)", status, classification, featureID)
+	case "not_pending":
+		debugLog("normalizeClassification: classification=not_pending -> Completed group (fallback)")
 		return "Completed"
 	}
+
+	// Default: unknown statuses/classifications go to Completed
+	debugLog("normalizeClassification: unknown status=%s, classification=%s -> Completed (default)", status, classification)
+	return "Completed"
 }
 
 // FlattenGroupsToIDs returns a flat list of task IDs in visual order,

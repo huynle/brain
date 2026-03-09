@@ -72,7 +72,7 @@ func TestSettingsModal_TabSwitching(t *testing.T) {
 func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
-		GroupVisible:      map[string]bool{"Ready": true, "Waiting": true, "Active": true, "Blocked": true, "Completed": false, "Draft": false}, // Completed is hidden
+		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Active": true, "Blocked": true, "Completed": false, "In Progress": false}, // Completed and In Progress are hidden
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
@@ -89,7 +89,7 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	}
 
 	// Should contain group names
-	expectedGroups := []string{"Ready", "Waiting", "Active", "Blocked", "Completed"}
+	expectedGroups := []string{"Draft", "Pending", "Active", "Blocked", "Completed"}
 	for _, group := range expectedGroups {
 		if !containsString(view, group) {
 			t.Errorf("Expected view to contain group '%s'", group)
@@ -102,9 +102,9 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	}
 
 	// Verify specific checkbox states based on GroupVisible (not GroupCollapsed!)
-	// Ready should show ☑ (visible=true)
-	if !containsString(view, "☑ Ready") {
-		t.Error("Expected 'Ready' to show checked box (☑) when GroupVisible=true")
+	// Draft should show ☑ (visible=true)
+	if !containsString(view, "☑ Draft") {
+		t.Error("Expected 'Draft' to show checked box (☑) when GroupVisible=true")
 	}
 	// Completed should show ☐ (visible=false)
 	if !containsString(view, "☐ Completed") {
@@ -116,7 +116,7 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
-		GroupVisible:      map[string]bool{"Ready": true}, // Ready starts visible
+		GroupVisible:      map[string]bool{"Draft": true}, // Draft starts visible
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
@@ -124,11 +124,11 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 
 	modal := NewSettingsModal(settings)
 	modal.currentTab = TabGroups
-	modal.selectedIndex = 0 // Select first group (Ready)
+	modal.selectedIndex = 0 // Select first group (Draft)
 
-	// Initially, Ready should be visible (GroupVisible["Ready"] = true)
-	if !modal.settings.GroupVisible["Ready"] {
-		t.Error("Expected 'Ready' group to be visible initially (GroupVisible=true)")
+	// Initially, Draft should be visible (GroupVisible["Draft"] = true)
+	if !modal.settings.GroupVisible["Draft"] {
+		t.Error("Expected 'Draft' group to be visible initially (GroupVisible=true)")
 	}
 
 	// Press Space to hide the group
@@ -137,15 +137,15 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 		t.Error("Expected space key to be handled in Groups tab")
 	}
 
-	// Now Ready should be hidden (GroupVisible["Ready"] = false)
-	if modal.settings.GroupVisible["Ready"] {
-		t.Error("Expected 'Ready' group to be hidden after space toggle (GroupVisible=false)")
+	// Now Draft should be hidden (GroupVisible["Draft"] = false)
+	if modal.settings.GroupVisible["Draft"] {
+		t.Error("Expected 'Draft' group to be hidden after space toggle (GroupVisible=false)")
 	}
 
 	// Press Space again to show it
 	modal.HandleKey(" ")
-	if !modal.settings.GroupVisible["Ready"] {
-		t.Error("Expected 'Ready' group to be visible after second space toggle (GroupVisible=true)")
+	if !modal.settings.GroupVisible["Draft"] {
+		t.Error("Expected 'Draft' group to be visible after second space toggle (GroupVisible=true)")
 	}
 }
 

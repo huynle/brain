@@ -149,9 +149,10 @@ func TestNormalizeClassification_Blocked(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeClassification(tt.classification, tt.status)
+			// Use feature_id="feat-1" to test WITH feature_id
+			got := normalizeClassification(tt.classification, tt.status, "feat-1")
 			if got != tt.want {
-				t.Errorf("normalizeClassification(%q, %q) = %q, want %q", tt.classification, tt.status, got, tt.want)
+				t.Errorf("normalizeClassification(%q, %q, \"feat-1\") = %q, want %q", tt.classification, tt.status, got, tt.want)
 			}
 		})
 	}
@@ -159,42 +160,43 @@ func TestNormalizeClassification_Blocked(t *testing.T) {
 
 // NEW: Test cases for split terminal states
 func TestNormalizeClassification_Draft(t *testing.T) {
-	got := normalizeClassification("", "draft")
+	// Terminal states (draft, completed, etc.) should not be affected by feature_id
+	got := normalizeClassification("", "draft", "")
 	want := "Draft"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"draft\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"draft\", \"\") = %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeClassification_Completed(t *testing.T) {
-	got := normalizeClassification("", "completed")
+	got := normalizeClassification("", "completed", "")
 	want := "Completed"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"completed\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"completed\", \"\") = %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeClassification_Validated(t *testing.T) {
-	got := normalizeClassification("", "validated")
+	got := normalizeClassification("", "validated", "")
 	want := "Validated"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"validated\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"validated\", \"\") = %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeClassification_Cancelled(t *testing.T) {
-	got := normalizeClassification("", "cancelled")
+	got := normalizeClassification("", "cancelled", "")
 	want := "Cancelled"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"cancelled\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"cancelled\", \"\") = %q, want %q", got, want)
 	}
 }
 
 func TestNormalizeClassification_Superseded(t *testing.T) {
-	got := normalizeClassification("", "superseded")
+	got := normalizeClassification("", "superseded", "")
 	want := "Superseded"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"superseded\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"superseded\", \"\") = %q, want %q", got, want)
 	}
 }
 

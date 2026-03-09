@@ -224,7 +224,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.recalcPanelSizes()
 		return m, nil
 
 	case TasksUpdatedMsg:
@@ -880,7 +879,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.logsVisible && m.activePanel == PanelLogs {
 				m.activePanel = PanelTasks
 			}
-			m.recalcPanelSizes()
 			return m, nil
 		case "T":
 			m.detailVisible = !m.detailVisible
@@ -888,7 +886,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.detailVisible && m.activePanel == PanelDetails {
 				m.activePanel = PanelTasks
 			}
-			m.recalcPanelSizes()
 			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {
@@ -1404,41 +1401,6 @@ func (m *Model) getSelectedTasks() []types.ResolvedTask {
 		}
 	}
 	return selected
-}
-
-// recalcPanelSizes recalculates panel dimensions based on current window size.
-func (m *Model) recalcPanelSizes() {
-	if m.width == 0 || m.height == 0 {
-		return
-	}
-
-	// Main content height: total - statusbar (3 lines) - helpbar (1 line)
-	mainHeight := m.height - 4
-	if mainHeight < 3 {
-		mainHeight = 3
-	}
-
-	// If right panels are visible, split width 60/40
-	hasRightPanel := m.detailVisible || m.logsVisible
-	if !hasRightPanel {
-		return
-	}
-
-	rightWidth := m.width * 40 / 100
-	if rightWidth < 20 {
-		rightWidth = 20
-	}
-
-	// Split right panel height between detail and logs
-	if m.detailVisible && m.logsVisible {
-		halfHeight := mainHeight / 2
-		m.taskDetail.SetSize(rightWidth, halfHeight)
-		m.logViewer.SetSize(rightWidth, mainHeight-halfHeight)
-	} else if m.detailVisible {
-		m.taskDetail.SetSize(rightWidth, mainHeight)
-	} else if m.logsVisible {
-		m.logViewer.SetSize(rightWidth, mainHeight)
-	}
 }
 
 // View implements tea.Model. Renders the TUI layout.

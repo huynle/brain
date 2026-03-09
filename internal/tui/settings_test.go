@@ -10,18 +10,18 @@ func TestSettings_DefaultGroupVisibility(t *testing.T) {
 	// Test the default function directly
 	defaults := getDefaultGroupVisible()
 
-	// Define expected default visibility
+	// All groups should be visible by default
 	expectedVisible := map[string]bool{
-		"Draft":       false,
+		"Draft":       true,
 		"Pending":     true,
 		"Active":      true,
 		"In Progress": true,
 		"Blocked":     true,
-		"Cancelled":   false,
+		"Cancelled":   true,
 		"Completed":   true,
 		"Validated":   true,
-		"Superseded":  false,
-		"Archived":    false,
+		"Superseded":  true,
+		"Archived":    true,
 	}
 
 	// Verify all expected defaults are set correctly

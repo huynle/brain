@@ -1172,12 +1172,44 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 		}
 	}
 
-	// Truncate to height (simple approach - can be improved with smart scrolling)
+	// Handle viewport scrolling (ensure selected item is visible)
 	if height > 0 && len(lines) > height {
-		// For now, just truncate from the start
-		if len(lines) > height {
-			lines = lines[:height]
+		// Find the line index of the selected item
+		selectedLineIdx := 0
+		lineIdx := 0
+
+		for gIdx, group := range tt.groups {
+			// Check if group header is selected
+			if gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx == -1 {
+				selectedLineIdx = lineIdx
+				break
+			}
+			lineIdx++ // group header line
+
+			// Check tasks in this group if not collapsed
+			if !group.Collapsed {
+				// Count lines for tasks in this group
+				taskLineCount := countGroupTaskLines(BuildTree(group.Tasks, tt.tasks))
+
+				// If selected task is in this group
+				if gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx >= 0 {
+					selectedLineIdx = lineIdx + tt.selectedTaskIdx
+					break
+				}
+				lineIdx += taskLineCount
+			}
 		}
+
+		// Calculate viewport start to keep selected line visible
+		start := 0
+		if selectedLineIdx >= height {
+			start = selectedLineIdx - height + 1
+		}
+		end := start + height
+		if end > len(lines) {
+			end = len(lines)
+		}
+		lines = lines[start:end]
 	}
 
 	return strings.Join(lines, "\n")
@@ -1320,9 +1352,57 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
-	// Truncate to height
+	// Handle viewport scrolling (ensure selected item is visible)
 	if height > 0 && len(lines) > height {
-		lines = lines[:height]
+		// Find the line index of the selected item
+		selectedLineIdx := 0
+		lineIdx := 0
+
+		// Check feature groups
+		for fIdx, feature := range tt.featureGroups.Features {
+			// Check if feature header is selected
+			if fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped {
+				selectedLineIdx = lineIdx
+				break
+			}
+			lineIdx++ // feature header line
+
+			// Check tasks in this feature if not collapsed
+			if !feature.Collapsed {
+				taskLineCount := countGroupTaskLines(BuildTree(feature.Tasks, tt.tasks))
+
+				// If selected task is in this feature
+				if fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx >= 0 && !tt.isOnUngrouped {
+					selectedLineIdx = lineIdx + tt.selectedFeatureTaskIdx
+					break
+				}
+				lineIdx += taskLineCount
+			}
+		}
+
+		// Check ungrouped section
+		if tt.featureGroups.Ungrouped != nil {
+			ungrouped := tt.featureGroups.Ungrouped
+
+			// Check if ungrouped header is selected
+			if tt.isOnUngrouped && tt.selectedFeatureTaskIdx == -1 {
+				selectedLineIdx = lineIdx
+			} else if !ungrouped.Collapsed && tt.isOnUngrouped && tt.selectedFeatureTaskIdx >= 0 {
+				// Selected task is in ungrouped section
+				selectedLineIdx = lineIdx + 1 + tt.selectedFeatureTaskIdx
+			}
+		}
+
+		// Calculate viewport start to keep selected line visible
+		start := 0
+		if selectedLineIdx >= height {
+			start = selectedLineIdx - height + 1
+		}
+		end := start + height
+		if end > len(lines) {
+			end = len(lines)
+		}
+		lines = lines[start:end]
 	}
 
 	return strings.Join(lines, "\n")
@@ -1453,9 +1533,81 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 		}
 	}
 
-	// Truncate to height
+	// Handle viewport scrolling (ensure selected item is visible)
 	if height > 0 && len(lines) > height {
-		lines = lines[:height]
+		// Find the line index of the selected item
+		selectedLineIdx := 0
+		lineIdx := 0
+
+		// Iterate through status groups to find selected line
+		for sIdx, statusGroup := range tt.statusGroups {
+			// Check if status header is selected
+			if sIdx == tt.selectedStatusIdx && tt.isOnStatusHeader {
+				selectedLineIdx = lineIdx
+				break
+			}
+			lineIdx++ // status header line
+
+			// Check features and tasks if status is expanded
+			if !statusGroup.Collapsed {
+				// Check features
+				for fIdx, feature := range statusGroup.Features {
+					// Check if feature header is selected
+					if sIdx == tt.selectedStatusIdx && fIdx == tt.selectedFeatureIdx && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1 {
+						selectedLineIdx = lineIdx
+						break
+					}
+					lineIdx++ // feature header line
+
+					// Check tasks if feature is expanded
+					if !feature.Collapsed {
+						taskLineCount := countGroupTaskLines(BuildTree(feature.Tasks, tt.tasks))
+
+						// If selected task is in this feature
+						if sIdx == tt.selectedStatusIdx && fIdx == tt.selectedFeatureIdx && !tt.isOnStatusHeader && tt.selectedTaskIdx >= 0 {
+							selectedLineIdx = lineIdx + tt.selectedTaskIdx
+							break
+						}
+						lineIdx += taskLineCount
+					}
+				}
+
+				// Check ungrouped if present
+				if statusGroup.Ungrouped != nil {
+					ungrouped := statusGroup.Ungrouped
+
+					// Check if ungrouped header is selected
+					if sIdx == tt.selectedStatusIdx && tt.selectedFeatureIdx == -1 && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1 {
+						selectedLineIdx = lineIdx
+						break
+					}
+					lineIdx++ // ungrouped header line
+
+					// Check ungrouped tasks if expanded
+					if !ungrouped.Collapsed {
+						taskLineCount := countGroupTaskLines(BuildTree(ungrouped.Tasks, tt.tasks))
+
+						// If selected task is in ungrouped section
+						if sIdx == tt.selectedStatusIdx && tt.selectedFeatureIdx == -1 && !tt.isOnStatusHeader && tt.selectedTaskIdx >= 0 {
+							selectedLineIdx = lineIdx + tt.selectedTaskIdx
+							break
+						}
+						lineIdx += taskLineCount
+					}
+				}
+			}
+		}
+
+		// Calculate viewport start to keep selected line visible
+		start := 0
+		if selectedLineIdx >= height {
+			start = selectedLineIdx - height + 1
+		}
+		end := start + height
+		if end > len(lines) {
+			end = len(lines)
+		}
+		lines = lines[start:end]
 	}
 
 	return strings.Join(lines, "\n")
@@ -1636,6 +1788,18 @@ func (tt *TaskTree) renderGroupTaskTree(
 			)
 		}
 	}
+}
+
+// countGroupTaskLines counts the total number of lines (including nested children) in a tree.
+func countGroupTaskLines(nodes []TreeNode) int {
+	count := 0
+	for _, node := range nodes {
+		count++ // Count this node
+		if len(node.Children) > 0 {
+			count += countGroupTaskLines(node.Children) // Count children recursively
+		}
+	}
+	return count
 }
 
 // renderGroupedTaskLineWithTree renders a single task line in grouped view with tree connectors.

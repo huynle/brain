@@ -488,7 +488,19 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			settings, _ := LoadSettings()
 			tt.statusGroups = GroupTasksByStatusAndFeature(tasks, settings.GroupVisible)
 
-			// Restore collapsed state for all 3 levels:
+			// Also populate tt.groups for backwards compatibility with viewGrouped()
+			// This ensures the old classification-only grouping still works
+			tt.groups = GroupTasks(tasks, settings.GroupVisible)
+
+			// Restore collapsed state for tt.groups
+			for i := range tt.groups {
+				groupName := tt.groups[i].Name
+				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
+					tt.groups[i].Collapsed = collapsed
+				}
+			}
+
+			// Restore collapsed state for all 3 levels in statusGroups:
 			// 1. Status-level collapse (using groupCollapsed map)
 			// 2. Feature-level collapse (using featureCollapsed map)
 			// 3. Ungrouped-level collapse (using featureCollapsed map with status prefix)
@@ -601,22 +613,43 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 // selectFirstNestedTask selects the first task in nested status+feature view mode.
 // Initializes 3-level navigation: status groups → feature groups → tasks.
 func (tt *TaskTree) selectFirstNestedTask() {
-	// Start on first status group header
-	if len(tt.statusGroups) > 0 {
+	// Find first active (non-terminal) status group
+	// Terminal groups: Completed, Validated, Superseded, Archived, Cancelled
+	terminalStatuses := map[string]bool{
+		"Completed":  true,
+		"Validated":  true,
+		"Superseded": true,
+		"Archived":   true,
+		"Cancelled":  true,
+	}
+
+	firstActiveIdx := -1
+	for i, group := range tt.statusGroups {
+		if !terminalStatuses[group.Name] {
+			firstActiveIdx = i
+			break
+		}
+	}
+
+	// If we found an active group, select it; otherwise select first group (fallback)
+	if firstActiveIdx >= 0 {
+		tt.selectedStatusIdx = firstActiveIdx
+	} else if len(tt.statusGroups) > 0 {
 		tt.selectedStatusIdx = 0
-		tt.selectedFeatureIdx = -1 // Start on status header
+	} else {
+		// No tasks available
+		tt.SelectedID = ""
+		tt.selectedStatusIdx = 0
+		tt.selectedFeatureIdx = -1
 		tt.selectedFeatureTaskIdx = -1
 		tt.isOnUngrouped = false
-		tt.SelectedID = ""
 		return
 	}
 
-	// No tasks available
-	tt.SelectedID = ""
-	tt.selectedStatusIdx = 0
-	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureIdx = -1 // Start on status header
 	tt.selectedFeatureTaskIdx = -1
 	tt.isOnUngrouped = false
+	tt.SelectedID = ""
 }
 
 // MoveDown moves the cursor down one position.

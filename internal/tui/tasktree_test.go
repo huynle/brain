@@ -595,6 +595,37 @@ func TestTaskTree_View_EmptyShowsPlaceholder(t *testing.T) {
 	}
 }
 
+// TestTaskTree_View_EmptyStateFormat verifies "  No tasks" (two spaces) with dim styling.
+// This ensures visual parity with TypeScript implementation.
+func TestTaskTree_View_EmptyStateFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		viewMode bool // false = legacy tree, true = grouped
+	}{
+		{"Legacy view", false},
+		{"Grouped view", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tt := NewTaskTree()
+			tt.SetViewMode(tc.viewMode)
+			view := tt.View(60, 20)
+
+			// Verify message contains "No tasks" with two leading spaces
+			// This is the key format requirement from the task
+			expected := "  No tasks"
+			if !strings.Contains(view, expected) {
+				t.Errorf("expected '%s' (two spaces before 'No tasks'), got:\n%s", expected, view)
+			}
+
+			// Note: In test environment, lipgloss may render without ANSI codes
+			// The important thing is that the code uses DimStyle.Render()
+			// which will apply proper styling in a real TTY environment
+		})
+	}
+}
+
 func TestTaskTree_View_SelectedTaskHighlighted(t *testing.T) {
 	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{

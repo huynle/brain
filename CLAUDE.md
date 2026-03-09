@@ -4,116 +4,236 @@ This file provides guidance for AI assistants working with the brain codebase.
 
 ## Project Overview
 
-Brain API is a REST service for AI agent memory and knowledge management, with an integrated task queue processor. Built with Bun, Hono, and Ink (for TUI).
+Brain API is a REST service for AI agent memory and knowledge management, with an integrated task queue processor. Built with Go, using the standard library and Bubbletea for the TUI.
 
 ## Key Commands
 
 ```bash
 # Development
-bun run dev          # Start server with hot reload
-bun test             # Run all tests
-bun run typecheck    # TypeScript type checking
+make build           # Build all Go binaries
+go test ./...        # Run all tests
+make typecheck       # Run go vet (static analysis)
+
+# Alternative: using just
+just go-build        # Build all Go binaries
+just go-test         # Run all tests
+just go-check        # Run all checks (vet + test + lint)
 
 # Task Runner
-bun run src/runner/index.ts start <project> --tui  # TUI dashboard
-bun run src/runner/index.ts list <project>         # List tasks
+./bin/brain-runner start <project> --tui    # TUI dashboard
+./bin/brain-runner list <project>           # List tasks
+
+# API Server
+./bin/brain-api      # Start API server
+go run ./cmd/brain-api  # Run API server without building
 ```
 
 ## Architecture
 
-### Core API (`src/api/`)
-- `entries.ts` - CRUD for brain entries
-- `search.ts` - Full-text search
-- `graph.ts` - Graph traversal (backlinks, outlinks)
-- `tasks.ts` - Task queue endpoints
-- `sections.ts` - Section extraction from entries
+### Command-Line Tools (`cmd/`)
+- `brain-api/` - REST API server entry point
+- `brain-runner/` - Task queue processor with TUI
+- `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
+- `brain-mcp/` - MCP (Model Context Protocol) server
 
-### Core Services (`src/core/`)
-- `brain-service.ts` - Main service layer
-- `task-service.ts` - Task management with dependency resolution
-- `task-deps.ts` - Dependency graph algorithms
-- `note-utils.ts` - Note utility functions (ID generation, slugify, frontmatter re-exports)
+### Core API (`internal/api/`)
+- `entries.go` - CRUD for brain entries
+- `search.go` - Full-text search
+- `graph.go` - Graph traversal (backlinks, outlinks)
+- `tasks.go` - Task queue endpoints
+- `sections.go` - Section extraction from entries
 
-### Task Runner (`src/runner/`)
-- `index.ts` - CLI entry point with argument parsing
-- `task-runner.ts` - Main runner orchestration
-- `api-client.ts` - Brain API client
-- `opencode-executor.ts` - OpenCode process spawning
-- `process-manager.ts` - Child process lifecycle
-- `state-manager.ts` - Persistent state for runner
-- `signals.ts` - Graceful shutdown handling
+### Core Services (`internal/service/`)
+- `brain_service.go` - Main service layer
+- `task_service.go` - Task management with dependency resolution
+- `task_deps.go` - Dependency graph algorithms
 
-### TUI Dashboard (`src/runner/tui/`)
+### Storage Layer (`internal/storage/`)
+- `entries.go` - Entry storage operations
+- `search.go` - Full-text search indexing
+- `tasks.go` - Task persistence
+- `graph.go` - Graph relationship storage
 
-The TUI uses Ink (React for CLI) with a component-based architecture:
+### Task Runner (`internal/runner/`)
+- `task_runner.go` - Main runner orchestration
+- `api_client.go` - Brain API client
+- `opencode_executor.go` - OpenCode process spawning
+- `process_manager.go` - Child process lifecycle
+- `state_manager.go` - Persistent state for runner
+- `signals.go` - Graceful shutdown handling
+
+### TUI Dashboard (`internal/tui/`)
+
+The TUI uses Bubbletea (Elm-inspired architecture) with a component-based model:
 
 ```
-App.tsx
-├── StatusBar.tsx      # Top bar: project name, task stats, connection status
-├── TaskTree.tsx       # Left panel: dependency tree visualization
-├── LogViewer.tsx      # Right top: real-time log display
-├── TaskDetail.tsx     # Right bottom: selected task details
-└── HelpBar.tsx        # Bottom: keyboard shortcuts
+Model (tui.go)
+├── StatusBar       # Top bar: project name, task stats, connection status
+├── TaskTree        # Left panel: dependency tree visualization
+├── LogViewer       # Right top: real-time log display
+├── TaskDetail      # Right bottom: selected task details
+└── HelpBar         # Bottom: keyboard shortcuts
 ```
 
-#### TUI Hooks
-- `useTaskSse.ts` - Single-project SSE task stream for real-time updates
-- `useMultiProjectSse.ts` - Multi-project SSE streams with per-project update channels
-- `useLogStream.ts` - Manages log entry buffer with max entries limit
+#### TUI Architecture (Bubbletea Pattern)
+
+Bubbletea follows the Elm architecture with three core functions:
+
+1. **Model** - Application state (struct)
+2. **Update** - Handle messages and update state
+3. **View** - Render the current state to terminal
+
+```go
+// Core pattern
+type Model struct {
+    // State fields
+}
+
+func (m Model) Init() tea.Cmd {
+    // Initialize and return initial commands
+}
+
+func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+    // Handle messages, update state, return new commands
+}
+
+func (m Model) View() string {
+    // Render state to string for display
+}
+```
+
+#### TUI Components
+- `sse.go` - Single-project SSE task stream for real-time updates
+- `multi_project_sse.go` - Multi-project SSE streams with per-project update channels
+- `logviewer.go` - Manages log entry buffer with max entries limit
+- `tasktree.go` - Task list rendering with dependency visualization
+- `statusbar.go` - Top status bar with stats
+- `helpbar.go` - Bottom keyboard shortcuts
 
 #### TUI State Management
 - Focus state: tracks which panel (tasks/logs) is active
 - Selection state: currently selected task ID
 - Stats: computed from task list (ready/waiting/active/completed)
+- Modal system: for confirmations, settings, help screens
 
 #### Key Design Decisions
-1. **Ink over raw terminal** - React component model, testable with ink-testing-library
+1. **Bubbletea over raw terminal** - Elm architecture, functional approach, type-safe
 2. **SSE over polling** - Real-time updates via Server-Sent Events, simpler than WebSocket
 3. **Dependency tree flattening** - Root tasks shown first, children indented
 4. **Cycle detection** - Circular deps marked with `↺` symbol
 
+### Shared Utilities (`pkg/`)
+- `frontmatter/` - YAML frontmatter parsing
+- `markdown/` - Markdown processing utilities
+
 ## Testing Patterns
 
-Tests use Bun's test runner with:
-- `ink-testing-library` for TUI component tests
-- Mock tasks for isolated testing
-- Integration tests for API endpoints
+Tests use Go's built-in testing framework:
 
-```typescript
-// TUI component test pattern
-const { lastFrame, stdin, unmount } = render(<Component {...props} />);
-expect(lastFrame()).toContain('expected text');
-stdin.write('j'); // Send keyboard input
-unmount();
+```go
+// Example test pattern
+func TestTaskService_GetNext(t *testing.T) {
+    // Arrange
+    service := setupTestService(t)
+    
+    // Act
+    task, err := service.GetNext("project-id")
+    
+    // Assert
+    if err != nil {
+        t.Fatalf("unexpected error: %v", err)
+    }
+    if task == nil {
+        t.Fatal("expected task, got nil")
+    }
+}
+
+// Table-driven tests
+func TestDependencyResolution(t *testing.T) {
+    tests := []struct {
+        name     string
+        input    []Task
+        expected []string
+    }{
+        // test cases...
+    }
+    
+    for _, tt := range tests {
+        t.Run(tt.name, func(t *testing.T) {
+            // test logic
+        })
+    }
+}
+```
+
+### TUI Testing
+
+TUI components are tested using Bubbletea's testing patterns:
+
+```go
+// Component test pattern
+func TestStatusBar_Render(t *testing.T) {
+    model := StatusBar{
+        ProjectName: "test-project",
+        Stats: TaskStats{Ready: 5, Active: 2},
+    }
+    
+    view := model.View()
+    
+    if !strings.Contains(view, "test-project") {
+        t.Error("expected project name in view")
+    }
+}
+
+// Update function test
+func TestTaskTree_Update(t *testing.T) {
+    model := TaskTree{}
+    
+    // Send key message
+    newModel, cmd := model.Update(tea.KeyMsg{
+        Type:  tea.KeyRunes,
+        Runes: []rune("j"),
+    })
+    
+    // Verify state change
+    tree := newModel.(TaskTree)
+    // assertions...
+}
 ```
 
 ## Common Tasks
 
 ### Adding a TUI Component
-1. Create component in `src/runner/tui/components/`
-2. Add types to `src/runner/tui/types.ts`
-3. Create test file with `.test.tsx` suffix
-4. Import in `App.tsx`
+1. Create component file in `internal/tui/` (e.g., `mycomponent.go`)
+2. Implement Model struct and Init/Update/View methods
+3. Create test file with `_test.go` suffix
+4. Add component to main Model in `tui.go`
 
 ### Adding API Endpoints
-1. Add route in `src/api/*.ts`
-2. Add test in same file or `tests/` directory
-3. Update API client in `src/runner/api-client.ts`
+1. Add handler in `internal/api/*.go`
+2. Add test in same package or `_test.go` file
+3. Update API client in `internal/runner/api_client.go`
+4. Register route in `cmd/brain-api/main.go` or route initialization
 
 ### Debugging TUI
 ```bash
 # Run with verbose logging
-bun run src/runner/index.ts start project --tui -v
+./bin/brain-runner start project --tui -v
 
 # Check logs
-bun run src/runner/index.ts logs -f
+./bin/brain-runner logs -f
+
+# Run without TUI for direct output
+./bin/brain-runner start project
 ```
 
 ## File Conventions
 
-- Tests: `*.test.ts` or `*.test.tsx` alongside source
-- Types: `types.ts` in each major directory
-- Entry points: `index.ts`
+- Tests: `*_test.go` alongside source files
+- Internal packages: `internal/` (not importable by external projects)
+- Exported packages: `pkg/` (can be imported)
+- Commands: `cmd/<binary-name>/main.go`
+- Entry points: `main.go` in each `cmd/` subdirectory
 
 ## Multi-Project Mode
 
@@ -123,11 +243,11 @@ The task runner supports monitoring multiple projects simultaneously with a shar
 
 ```bash
 # Monitor all projects
-bun run src/runner/index.ts start all --tui
+./bin/brain-runner start all --tui
 
 # Filter with glob patterns
-bun run src/runner/index.ts start all --include 'prod-*' --exclude 'prod-legacy'
-bun run src/runner/index.ts start all -i 'brain-*' -e 'test-*'
+./bin/brain-runner start all --include 'prod-*' --exclude 'prod-legacy'
+./bin/brain-runner start all -i 'brain-*' -e 'test-*'
 
 # List all available projects
 curl http://localhost:3333/api/v1/tasks | jq '.projects'
@@ -158,28 +278,63 @@ curl http://localhost:3333/api/v1/tasks | jq '.projects'
 Task Runner Multi-Project Architecture
 
 TaskRunner
-├── projects: string[]              # List of projects to poll
-├── isMultiProject: boolean         # Enables multi-project behavior
+├── projects: []string              # List of projects to poll
+├── isMultiProject: bool            # Enables multi-project behavior
 └── Shared ProcessManager           # Single pool for all projects
 
-TUI (App.tsx)
-├── useMultiProjectSse              # Real-time SSE streams for all projects
-│   ├── tasksByProject: Map         # Tasks keyed by project
-│   ├── statsByProject: Map         # Stats keyed by project
-│   └── aggregateStats              # Combined stats for "All" view
-├── StatusBar                       # Shows project tabs with task counts
-└── activeProject state             # Current tab selection
+TUI (Model)
+├── sseClients: map[string]*SSEClient  # SSE streams per project
+│   ├── tasksByProject: map            # Tasks keyed by project
+│   └── projectTabs: ProjectTabs       # Tab state management
+├── StatusBar                          # Shows project tabs with task counts
+└── activeProjectID: string            # Current tab selection
 ```
 
 ### Filter Examples
 
 ```bash
 # Only production projects
-bun run src/runner/index.ts start all -i 'prod-*'
+./bin/brain-runner start all -i 'prod-*'
 
 # All except test projects
-bun run src/runner/index.ts start all -e 'test-*' -e '*-staging'
+./bin/brain-runner start all -e 'test-*' -e '*-staging'
 
 # Brain projects except legacy
-bun run src/runner/index.ts start all -i 'brain-*' -e 'brain-legacy'
+./bin/brain-runner start all -i 'brain-*' -e 'brain-legacy'
+```
+
+## Build System
+
+The project uses both `Makefile` and `justfile` for task automation:
+
+### Makefile (Go-focused)
+```bash
+make build        # Build all binaries
+make test         # Run tests
+make test-cover   # Run tests with coverage
+make lint         # Run golangci-lint
+make typecheck    # Run go vet
+make check        # Run all checks
+make clean        # Clean build artifacts
+```
+
+### Justfile (Developer convenience)
+```bash
+just              # List all recipes
+just go-build     # Build binaries
+just go-test      # Run tests
+just go-check     # All checks
+just go-dev       # Run brain-api server
+```
+
+## Go Module
+
+Module path: `github.com/huynle/brain-api`
+
+Use standard Go commands:
+```bash
+go mod tidy       # Clean up dependencies
+go mod download   # Download dependencies
+go build ./...    # Build all packages
+go test ./...     # Test all packages
 ```

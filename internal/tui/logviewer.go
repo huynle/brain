@@ -149,6 +149,12 @@ func (lv *LogViewer) renderEntry(entry LogEntry) string {
 	// Message with truncation
 	msg := truncateMsg(entry.Message, maxMessageLength)
 
+	// Context fields formatted as key="value" pairs
+	contextStr := formatContext(entry.Context)
+	if contextStr != "" {
+		msg += " " + DimStyle.Render(contextStr)
+	}
+
 	return fmt.Sprintf("%s%s %s %s", projectPrefix, tsStyled, levelStyled, msg)
 }
 
@@ -195,6 +201,18 @@ func truncateMsg(msg string, maxLen int) string {
 		return msg
 	}
 	return msg[:maxLen-3] + "..."
+}
+
+// formatContext formats context fields as space-separated key="value" pairs.
+func formatContext(ctx map[string]interface{}) string {
+	if len(ctx) == 0 {
+		return ""
+	}
+	var parts []string
+	for k, v := range ctx {
+		parts = append(parts, fmt.Sprintf(`%s="%v"`, k, v))
+	}
+	return strings.Join(parts, " ")
 }
 
 // =============================================================================

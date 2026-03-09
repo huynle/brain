@@ -373,6 +373,11 @@ type TaskTree struct {
 	selectedFeatureTaskIdx int                // index into feature.Tasks, or -1 for feature header
 	isOnUngrouped          bool               // true if selected feature is the ungrouped group
 
+	// Phase 3: Nested status+feature grouping (3-level navigation)
+	statusGroups      []StatusGroup // Nested status->feature groups
+	selectedStatusIdx int           // Index into statusGroups
+	isOnStatusHeader  bool          // true if cursor is on a status header
+
 	// Multi-select state (passed in during View rendering)
 	selectedTasks map[string]bool
 
@@ -390,9 +395,13 @@ func NewTaskTree() TaskTree {
 	// Load collapsed state from settings
 	settings, _ := LoadSettings()
 	return TaskTree{
-		useGroupedView:   true, // Enable grouped view by default
-		groupCollapsed:   settings.GroupCollapsed,
-		featureCollapsed: settings.FeatureCollapsed,
+		useGroupedView:     true, // Enable grouped view by default
+		groupCollapsed:     settings.GroupCollapsed,
+		featureCollapsed:   settings.FeatureCollapsed,
+		selectedStatusIdx:  0,
+		selectedFeatureIdx: -2,   // -2 means "none" (on status header)
+		selectedTaskIdx:    -1,   // -1 means on header
+		isOnStatusHeader:   true, // Start on status header in nested mode
 	}
 }
 
@@ -805,6 +814,59 @@ func (tt *TaskTree) moveToBottomGrouped() {
 // Only works if the cursor is on a group header. Persists state to settings.
 func (tt *TaskTree) ToggleCollapse() {
 	if !tt.useGroupedView {
+		return
+	}
+
+	// Phase 3: Nested status+feature grouping mode (only if NOT in feature view mode)
+	if !tt.useFeatureView && len(tt.statusGroups) > 0 {
+		// On status header - toggle status group
+		if tt.isOnStatusHeader {
+			tt.statusGroups[tt.selectedStatusIdx].Collapsed = !tt.statusGroups[tt.selectedStatusIdx].Collapsed
+			// Use status name as collapse key
+			statusName := tt.statusGroups[tt.selectedStatusIdx].Name
+			tt.groupCollapsed[statusName] = tt.statusGroups[tt.selectedStatusIdx].Collapsed
+
+			settings, _ := LoadSettings()
+			settings.GroupCollapsed = tt.groupCollapsed
+			settings.FeatureCollapsed = tt.featureCollapsed
+			_ = SaveSettings(settings)
+			return
+		}
+
+		// On feature header - toggle feature (use hierarchical keys)
+		if tt.selectedTaskIdx == -1 {
+			statusName := tt.getCurrentStatusName()
+			featureID := tt.getCurrentFeatureID()
+
+			if featureID == "" {
+				return
+			}
+
+			// Toggle the actual feature
+			if tt.selectedFeatureIdx == -1 {
+				// Ungrouped
+				ungrouped := tt.statusGroups[tt.selectedStatusIdx].Ungrouped
+				if ungrouped != nil {
+					ungrouped.Collapsed = !ungrouped.Collapsed
+				}
+			} else if tt.selectedFeatureIdx >= 0 && tt.selectedFeatureIdx < len(tt.statusGroups[tt.selectedStatusIdx].Features) {
+				// Regular feature
+				tt.statusGroups[tt.selectedStatusIdx].Features[tt.selectedFeatureIdx].Collapsed = !tt.statusGroups[tt.selectedStatusIdx].Features[tt.selectedFeatureIdx].Collapsed
+			}
+
+			// Use hierarchical collapse key
+			collapseKey := makeFeatureCollapseKey(statusName, featureID)
+			collapsed := isFeatureCollapsed(statusName, featureID, tt.featureCollapsed)
+			tt.featureCollapsed[collapseKey] = !collapsed
+
+			settings, _ := LoadSettings()
+			settings.GroupCollapsed = tt.groupCollapsed
+			settings.FeatureCollapsed = tt.featureCollapsed
+			_ = SaveSettings(settings)
+			return
+		}
+
+		// On task - do nothing
 		return
 	}
 
@@ -1596,4 +1658,300 @@ func (tt *TaskTree) moveToBottomLane() {
 	}
 	tt.Cursor = len(tt.laneTasks) - 1
 	tt.SelectedID = tt.laneTasks[tt.Cursor].ID
+}
+
+// =============================================================================
+// Phase 3: 3-Level Navigation Stubs
+// =============================================================================
+
+// moveDownNestedGrouped navigates down through 3-level nested status+feature hierarchy.
+// Navigation rules:
+// 1. On STATUS HEADER, COLLAPSED → Jump to next status header
+// 2. On STATUS HEADER, EXPANDED → Move to first feature header
+// 3. On FEATURE HEADER, COLLAPSED → Jump to next feature header (or next status if last)
+// 4. On FEATURE HEADER, EXPANDED → Move to first task in feature
+// 5. Within FEATURE, not at end → Move to next task
+// 6. At END of FEATURE → Move to next feature header (or next status if last)
+func (tt *TaskTree) moveDownNestedGrouped() {
+	if len(tt.statusGroups) == 0 {
+		return
+	}
+
+	// Defensive check: if selectedTaskIdx >= 0, we're definitely not on a status header
+	// This handles cases where tests manually set indices without updating isOnStatusHeader
+	if tt.selectedTaskIdx >= 0 {
+		tt.isOnStatusHeader = false
+	}
+
+	// Rule 1 & 2: On STATUS HEADER
+	if tt.isOnStatusHeader {
+		statusGroup := tt.statusGroups[tt.selectedStatusIdx]
+
+		if statusGroup.Collapsed {
+			// Rule 1: Collapsed → jump to next status header
+			if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
+				tt.selectedStatusIdx++
+				tt.selectedFeatureIdx = -2
+				tt.selectedTaskIdx = -1
+				tt.isOnStatusHeader = true
+				tt.SelectedID = ""
+			}
+		} else {
+			// Rule 2: Expanded → move to first feature header
+			if len(statusGroup.Features) > 0 {
+				tt.selectedFeatureIdx = 0
+				tt.selectedTaskIdx = -1
+				tt.isOnStatusHeader = false
+				tt.SelectedID = ""
+			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
+				// No features, but has ungrouped tasks
+				tt.selectedFeatureIdx = -1 // ungrouped marker
+				tt.selectedTaskIdx = -1
+				tt.isOnStatusHeader = false
+				tt.SelectedID = ""
+			}
+		}
+		return
+	}
+
+	// Rule 3, 4, 5, 6: On FEATURE HEADER or within feature
+	statusGroup := tt.statusGroups[tt.selectedStatusIdx]
+
+	// Handle ungrouped group (selectedFeatureIdx == -1)
+	if tt.selectedFeatureIdx == -1 {
+		ungrouped := statusGroup.Ungrouped
+		if ungrouped == nil {
+			return
+		}
+
+		if tt.selectedTaskIdx == -1 {
+			// On ungrouped header
+			if ungrouped.Collapsed {
+				// Jump to next status header
+				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
+					tt.selectedStatusIdx++
+					tt.selectedFeatureIdx = -2
+					tt.selectedTaskIdx = -1
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				}
+			} else {
+				// Enter ungrouped (move to first task)
+				if len(ungrouped.Tasks) > 0 {
+					tt.selectedTaskIdx = 0
+					tt.SelectedID = ungrouped.Tasks[0].ID
+				}
+			}
+		} else {
+			// Within ungrouped tasks
+			if tt.selectedTaskIdx < len(ungrouped.Tasks)-1 {
+				tt.selectedTaskIdx++
+				tt.SelectedID = ungrouped.Tasks[tt.selectedTaskIdx].ID
+			} else {
+				// At end of ungrouped → move to next status header
+				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
+					tt.selectedStatusIdx++
+					tt.selectedFeatureIdx = -2
+					tt.selectedTaskIdx = -1
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				}
+			}
+		}
+		return
+	}
+
+	// Handle regular features (selectedFeatureIdx >= 0)
+	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(statusGroup.Features) {
+		return
+	}
+
+	feature := statusGroup.Features[tt.selectedFeatureIdx]
+
+	if tt.selectedTaskIdx == -1 {
+		// Rule 3 & 4: On FEATURE HEADER
+		if feature.Collapsed {
+			// Rule 3: Collapsed → jump to next feature header
+			if tt.selectedFeatureIdx < len(statusGroup.Features)-1 {
+				// Next feature in same status
+				tt.selectedFeatureIdx++
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
+				// Move to ungrouped header
+				tt.selectedFeatureIdx = -1
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Move to next status header
+				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
+					tt.selectedStatusIdx++
+					tt.selectedFeatureIdx = -2
+					tt.selectedTaskIdx = -1
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				}
+			}
+		} else {
+			// Rule 4: Expanded → move to first task
+			if len(feature.Tasks) > 0 {
+				tt.selectedTaskIdx = 0
+				tt.SelectedID = feature.Tasks[0].ID
+			}
+		}
+	} else {
+		// Rule 5 & 6: Within feature
+		if tt.selectedTaskIdx < len(feature.Tasks)-1 {
+			// Rule 5: Not at end → move to next task
+			tt.selectedTaskIdx++
+			tt.SelectedID = feature.Tasks[tt.selectedTaskIdx].ID
+		} else {
+			// Rule 6: At end → move to next feature header
+			if tt.selectedFeatureIdx < len(statusGroup.Features)-1 {
+				// Next feature in same status
+				tt.selectedFeatureIdx++
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
+				// Move to ungrouped header
+				tt.selectedFeatureIdx = -1
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Move to next status header
+				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
+					tt.selectedStatusIdx++
+					tt.selectedFeatureIdx = -2
+					tt.selectedTaskIdx = -1
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				}
+			}
+		}
+	}
+}
+
+// moveUpNestedGrouped navigates up through 3-level nested status+feature hierarchy.
+// Reverse of moveDownNestedGrouped logic.
+func (tt *TaskTree) moveUpNestedGrouped() {
+	if len(tt.statusGroups) == 0 {
+		return
+	}
+
+	// Defensive check: if selectedTaskIdx >= 0, we're not on a status header
+	if tt.selectedTaskIdx >= 0 {
+		tt.isOnStatusHeader = false
+	}
+
+	// On status header - move to previous status
+	if tt.isOnStatusHeader {
+		if tt.selectedStatusIdx > 0 {
+			tt.selectedStatusIdx--
+			// Stay on status header
+			tt.selectedFeatureIdx = -2
+			tt.selectedTaskIdx = -1
+			tt.isOnStatusHeader = true
+			tt.SelectedID = ""
+		}
+		return
+	}
+
+	statusGroup := tt.statusGroups[tt.selectedStatusIdx]
+
+	// Handle ungrouped group
+	if tt.selectedFeatureIdx == -1 {
+		ungrouped := statusGroup.Ungrouped
+		if ungrouped == nil {
+			return
+		}
+
+		if tt.selectedTaskIdx == -1 {
+			// On ungrouped header - move to last feature header or status header
+			if len(statusGroup.Features) > 0 {
+				tt.selectedFeatureIdx = len(statusGroup.Features) - 1
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				// Move to status header
+				tt.selectedFeatureIdx = -2
+				tt.selectedTaskIdx = -1
+				tt.isOnStatusHeader = true
+				tt.SelectedID = ""
+			}
+		} else {
+			// Within ungrouped tasks
+			if tt.selectedTaskIdx > 0 {
+				tt.selectedTaskIdx--
+				tt.SelectedID = ungrouped.Tasks[tt.selectedTaskIdx].ID
+			} else {
+				// Move to ungrouped header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			}
+		}
+		return
+	}
+
+	// Handle regular features
+	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(statusGroup.Features) {
+		return
+	}
+
+	feature := statusGroup.Features[tt.selectedFeatureIdx]
+
+	if tt.selectedTaskIdx == -1 {
+		// On feature header
+		if tt.selectedFeatureIdx > 0 {
+			// Move to previous feature header
+			tt.selectedFeatureIdx--
+			tt.selectedTaskIdx = -1
+			tt.SelectedID = ""
+		} else {
+			// Move to status header
+			tt.selectedFeatureIdx = -2
+			tt.selectedTaskIdx = -1
+			tt.isOnStatusHeader = true
+			tt.SelectedID = ""
+		}
+	} else {
+		// Within feature
+		if tt.selectedTaskIdx > 0 {
+			tt.selectedTaskIdx--
+			tt.SelectedID = feature.Tasks[tt.selectedTaskIdx].ID
+		} else {
+			// Move to feature header
+			tt.selectedTaskIdx = -1
+			tt.SelectedID = ""
+		}
+	}
+}
+
+// getCurrentFeatureID returns the current feature ID for hierarchical collapse keys.
+// Returns empty string if not on a feature header or if on ungrouped.
+func (tt *TaskTree) getCurrentFeatureID() string {
+	if len(tt.statusGroups) == 0 {
+		return ""
+	}
+	if tt.selectedStatusIdx < 0 || tt.selectedStatusIdx >= len(tt.statusGroups) {
+		return ""
+	}
+	if tt.selectedFeatureIdx == -1 {
+		return "[Ungrouped]" // Special marker for ungrouped
+	}
+	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.statusGroups[tt.selectedStatusIdx].Features) {
+		return ""
+	}
+	return tt.statusGroups[tt.selectedStatusIdx].Features[tt.selectedFeatureIdx].ID
+}
+
+// getCurrentStatusName returns the current status name for hierarchical collapse keys.
+// Returns empty string if selectedStatusIdx is out of bounds.
+func (tt *TaskTree) getCurrentStatusName() string {
+	if len(tt.statusGroups) == 0 {
+		return ""
+	}
+	if tt.selectedStatusIdx < 0 || tt.selectedStatusIdx >= len(tt.statusGroups) {
+		return ""
+	}
+	return tt.statusGroups[tt.selectedStatusIdx].Name
 }

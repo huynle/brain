@@ -320,6 +320,33 @@ func TestView_ContainsProjectName(t *testing.T) {
 	}
 }
 
+func TestView_StatusBarAppearsBeforeWindowSizeMsg(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "my-project",
+	}
+	m := NewModel(cfg)
+	// Deliberately don't set width/height to simulate first render before WindowSizeMsg
+	// m.width = 0, m.height = 0 (default values)
+
+	view := m.View()
+
+	// StatusBar should appear even before WindowSizeMsg sets dimensions
+	// This verifies fix for: Missing header bar in Go rewrite TUI
+	if !strings.Contains(view, "my-project") {
+		t.Errorf("expected StatusBar with project name 'my-project' to appear in initial render, got:\n%s", view)
+	}
+	// Should NOT show "Initializing..." message anymore
+	if strings.Contains(view, "Initializing...") {
+		t.Errorf("unexpected 'Initializing...' message blocking StatusBar render, got:\n%s", view)
+	}
+	// Should contain task stats - at least the "ready" indicator
+	// (full stats might be truncated with width=0, but at least some stats should show)
+	if !strings.Contains(view, "ready") {
+		t.Errorf("expected StatusBar to contain task stats, got:\n%s", view)
+	}
+}
+
 func TestView_ContainsTaskPanel(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",

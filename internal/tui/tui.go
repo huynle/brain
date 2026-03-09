@@ -1439,9 +1439,9 @@ func (m *Model) recalcPanelSizes() {
 
 // View implements tea.Model. Renders the TUI layout.
 func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return "Initializing..."
-	}
+	// Don't block rendering when dimensions are unset - components handle zero dimensions gracefully
+	// This ensures StatusBar and other UI elements appear on first render before WindowSizeMsg arrives
+	// The early "Initializing..." message was hiding the StatusBar unnecessarily
 
 	// Render base UI
 	baseView := m.renderBaseView()

@@ -72,7 +72,9 @@ func TestNormalizeClassification_Waiting(t *testing.T) {
 	}
 }
 
-func TestNormalizeClassification_Active(t *testing.T) {
+func TestNormalizeClassification_InProgress(t *testing.T) {
+	// Test that in_progress tasks stay in their classification groups
+	// They don't get moved to a separate "Active" group anymore
 	tests := []struct {
 		name           string
 		classification string
@@ -80,16 +82,34 @@ func TestNormalizeClassification_Active(t *testing.T) {
 		want           string
 	}{
 		{
-			name:           "status in_progress",
-			classification: "",
+			name:           "in_progress with ready classification",
+			classification: "ready",
 			status:         "in_progress",
-			want:           "Active",
+			want:           "Ready",
 		},
 		{
-			name:           "status active",
+			name:           "in_progress with waiting classification",
+			classification: "waiting",
+			status:         "in_progress",
+			want:           "Waiting",
+		},
+		{
+			name:           "in_progress with blocked classification",
+			classification: "blocked",
+			status:         "in_progress",
+			want:           "Blocked",
+		},
+		{
+			name:           "in_progress with no classification defaults to Completed",
 			classification: "",
+			status:         "in_progress",
+			want:           "Completed",
+		},
+		{
+			name:           "active status with ready classification",
+			classification: "ready",
 			status:         "active",
-			want:           "Active",
+			want:           "Ready",
 		},
 	}
 
@@ -220,7 +240,7 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
 		{ID: "t2", Title: "Waiting", Status: "pending", Priority: "high", Classification: "waiting"},
-		{ID: "t3", Title: "Active", Status: "in_progress", Priority: "high", Classification: ""},
+		{ID: "t3", Title: "Active", Status: "in_progress", Priority: "high", Classification: "ready"}, // in_progress stays in classification group
 		{ID: "t4", Title: "Blocked", Status: "blocked", Priority: "high", Classification: "blocked"},
 		{ID: "t5", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
 		{ID: "t6", Title: "Cancelled", Status: "cancelled", Priority: "high", Classification: ""},
@@ -232,8 +252,8 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have 10 groups in this specific order
-	expectedOrder := []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	// Should have 9 groups in this specific order (no "Active" group - in_progress tasks stay in their classification groups)
+	expectedOrder := []string{"Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 	if len(groups) != len(expectedOrder) {
 		t.Fatalf("expected %d groups, got %d", len(expectedOrder), len(groups))
@@ -243,6 +263,22 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 		if groups[i].Name != expected {
 			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
 		}
+	}
+
+	// Verify in_progress task is in Ready group (based on classification)
+	readyGroup := groups[0]
+	if readyGroup.Name != "Ready" {
+		t.Fatalf("expected first group to be Ready, got %s", readyGroup.Name)
+	}
+	foundActive := false
+	for _, task := range readyGroup.Tasks {
+		if task.ID == "t3" && task.Status == "in_progress" {
+			foundActive = true
+			break
+		}
+	}
+	if !foundActive {
+		t.Errorf("expected in_progress task t3 to be in Ready group")
 	}
 }
 

@@ -143,14 +143,14 @@ func TestGroupTasksByStatusAndFeature_StatusOrder(t *testing.T) {
 		{ID: "task2", Status: "completed"},
 		{ID: "task3", Status: "cancelled"},
 		{ID: "task4", Status: "blocked", Classification: "blocked"},
-		{ID: "task5", Status: "in_progress"},
+		{ID: "task5", Status: "in_progress", Classification: "ready"}, // in_progress stays in classification group
 		{ID: "task6", Status: "waiting", Classification: "waiting"},
 		{ID: "task7", Status: "pending", Classification: "ready"},
 	}
 
 	result := GroupTasksByStatusAndFeature(tasks)
 
-	expectedOrder := []string{"Ready", "Waiting", "Active", "Blocked", "Cancelled", "Completed", "Archived"}
+	expectedOrder := []string{"Ready", "Waiting", "Blocked", "Cancelled", "Completed", "Archived"}
 	if len(result) != len(expectedOrder) {
 		t.Fatalf("Expected %d groups, got %d", len(expectedOrder), len(result))
 	}
@@ -159,6 +159,15 @@ func TestGroupTasksByStatusAndFeature_StatusOrder(t *testing.T) {
 		if result[i].Name != expected {
 			t.Errorf("Expected group[%d] = '%s', got '%s'", i, expected, result[i].Name)
 		}
+	}
+
+	// Verify in_progress task is in Ready group
+	readyGroup := result[0]
+	if readyGroup.Name != "Ready" {
+		t.Fatalf("Expected first group to be Ready, got %s", readyGroup.Name)
+	}
+	if readyGroup.Count != 2 { // task5 (in_progress) and task7 (pending) both in Ready
+		t.Errorf("Expected Ready group to have 2 tasks, got %d", readyGroup.Count)
 	}
 }
 

@@ -8,15 +8,16 @@ import (
 
 // TaskGroup represents a collapsible group of tasks organized by classification.
 type TaskGroup struct {
-	Name      string               // "Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string               // "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
 	Tasks     []types.ResolvedTask // Tasks in this group
 	Collapsed bool                 // Is the group collapsed?
 	Count     int                  // Total tasks in group
 }
 
 // GroupTasks organizes tasks into groups by classification with optional visibility filtering.
-// Returns groups in priority order: Ready, Waiting, Active, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
+// Returns groups in priority order: Ready, Waiting, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
+// Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
 func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []TaskGroup {
 	if len(tasks) == 0 {
 		return nil
@@ -44,7 +45,7 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 
 	// Return in display order with visibility filtering
 	result := []TaskGroup{}
-	for _, groupName := range []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
+	for _, groupName := range []string{"Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
 		taskList, ok := groups[groupName]
 		if !ok || len(taskList) == 0 {
 			continue // Skip groups with no tasks
@@ -82,9 +83,9 @@ func normalizeClassification(classification, status string) string {
 	}
 
 	// Fall back to status for additional classification
+	// Note: in_progress/active tasks stay in their classification groups (Ready/Waiting/Blocked)
+	// and are indicated by the blue arrow indicator, not a separate "Active" group
 	switch status {
-	case "in_progress", "active":
-		return "Active"
 	case "draft":
 		return "Draft"
 	case "cancelled":

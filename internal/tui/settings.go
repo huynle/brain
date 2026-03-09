@@ -20,20 +20,19 @@ type Settings struct {
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.
-// Visible by default: Ready, Waiting, Active, Blocked, Completed, Validated
-// Hidden by default: Draft, Cancelled, Superseded, Archived
+// All status groups visible by default.
 func getDefaultGroupVisible() map[string]bool {
 	return map[string]bool{
-		"Ready":      true,
-		"Waiting":    true,
-		"Active":     true,
-		"Blocked":    true,
-		"Completed":  true,
-		"Validated":  true,
-		"Draft":      false,
-		"Cancelled":  false,
-		"Superseded": false,
-		"Archived":   false,
+		"Draft":       true,
+		"Pending":     true,
+		"Active":      true,
+		"In Progress": true,
+		"Blocked":     true,
+		"Cancelled":   true,
+		"Completed":   true,
+		"Validated":   true,
+		"Superseded":  true,
+		"Archived":    true,
 	}
 }
 

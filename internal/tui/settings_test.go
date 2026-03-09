@@ -12,16 +12,16 @@ func TestSettings_DefaultGroupVisibility(t *testing.T) {
 
 	// Define expected default visibility
 	expectedVisible := map[string]bool{
-		"Ready":      true,
-		"Waiting":    true,
-		"Active":     true,
-		"Blocked":    true,
-		"Completed":  true,
-		"Validated":  true,
-		"Draft":      false,
-		"Cancelled":  false,
-		"Superseded": false,
-		"Archived":   false,
+		"Draft":       false,
+		"Pending":     true,
+		"Active":      true,
+		"In Progress": true,
+		"Blocked":     true,
+		"Cancelled":   false,
+		"Completed":   true,
+		"Validated":   true,
+		"Superseded":  false,
+		"Archived":    false,
 	}
 
 	// Verify all expected defaults are set correctly
@@ -58,7 +58,7 @@ func TestSettings_JSONMarshalGroupVisible(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed: make(map[string]bool),
 		GroupVisible: map[string]bool{
-			"Ready":   true,
+			"Active":  true,
 			"Draft":   false,
 			"Blocked": true,
 		},
@@ -81,8 +81,8 @@ func TestSettings_JSONMarshalGroupVisible(t *testing.T) {
 	}
 
 	// Verify GroupVisible is preserved
-	if unmarshaled.GroupVisible["Ready"] != true {
-		t.Error("Expected 'Ready' to be true after unmarshal")
+	if unmarshaled.GroupVisible["Active"] != true {
+		t.Error("Expected 'Active' to be true after unmarshal")
 	}
 	if unmarshaled.GroupVisible["Draft"] != false {
 		t.Error("Expected 'Draft' to be false after unmarshal")
@@ -177,7 +177,7 @@ func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	originalSettings := Settings{
 		GroupCollapsed: make(map[string]bool),
 		GroupVisible: map[string]bool{
-			"Ready":     false, // Hide Ready
+			"Pending":   false, // Hide Pending
 			"Draft":     true,  // Show Draft (opposite of default)
 			"Completed": true,
 		},
@@ -199,8 +199,8 @@ func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	}
 
 	// Verify GroupVisible was persisted correctly
-	if loadedSettings.GroupVisible["Ready"] != false {
-		t.Error("Expected 'Ready' to be false after load")
+	if loadedSettings.GroupVisible["Pending"] != false {
+		t.Error("Expected 'Pending' to be false after load")
 	}
 	if loadedSettings.GroupVisible["Draft"] != true {
 		t.Error("Expected 'Draft' to be true after load")

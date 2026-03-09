@@ -27,7 +27,7 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 	groups := make(map[string][]types.ResolvedTask)
 
 	for _, task := range tasks {
-		classification := normalizeClassification(task.Classification, task.Status)
+		classification := normalizeClassification(task.Classification, task.Status, task.FeatureID)
 		groups[classification] = append(groups[classification], task)
 	}
 
@@ -45,7 +45,7 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 
 	// Return in display order with visibility filtering
 	result := []TaskGroup{}
-	for _, groupName := range []string{"Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
+	for _, groupName := range []string{"Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
 		taskList, ok := groups[groupName]
 		if !ok || len(taskList) == 0 {
 			continue // Skip groups with no tasks
@@ -71,7 +71,22 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 }
 
 // normalizeClassification maps API classification and status values to display groups.
-func normalizeClassification(classification, status string) string {
+// If the task has no feature_id (empty string), it is classified as "Ungrouped".
+func normalizeClassification(classification, status, featureID string) string {
+	// Check if task has no feature_id for Ready/Waiting/Blocked classifications
+	if featureID == "" {
+		// Only classify as Ungrouped for non-terminal classifications
+		switch classification {
+		case "ready", "waiting", "blocked":
+			return "Ungrouped"
+		}
+		// Also check status-based classifications
+		switch status {
+		case "pending", "waiting", "blocked":
+			return "Ungrouped"
+		}
+	}
+
 	// First check classification (primary indicator)
 	switch classification {
 	case "ready":

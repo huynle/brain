@@ -524,6 +524,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// Esc always closes modal
 			handled, cmd = m.modalManager.HandleKey("esc")
 		}
+		if msg.Type == tea.KeyTab {
+			// Tab cycles through modal tabs
+			handled, cmd = m.modalManager.HandleKey("tab")
+		}
 		if handled {
 			return m, cmd
 		}

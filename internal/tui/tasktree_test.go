@@ -701,8 +701,8 @@ func TestTaskTree_FeatureView_CollapsibleFeatures(t *testing.T) {
 	if strings.Contains(view, "Auth Task 1") {
 		t.Errorf("Expected collapsed feature to hide tasks, got:\n%s", view)
 	}
-	if !strings.Contains(view, "▸") {
-		t.Errorf("Expected collapsed indicator ▸, got:\n%s", view)
+	if !strings.Contains(view, "▶") {
+		t.Errorf("Expected collapsed indicator ▶, got:\n%s", view)
 	}
 }
 

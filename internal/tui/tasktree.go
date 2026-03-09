@@ -1191,7 +1191,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		isFeatureSelected := (fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped)
 
 		// Collapse indicator
-		collapseIndicator := "▸"
+		collapseIndicator := "▶"
 		if !feature.Collapsed {
 			collapseIndicator = "▾"
 		}
@@ -1236,7 +1236,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		ungrouped := tt.featureGroups.Ungrouped
 		isUngroupedSelected := (tt.isOnUngrouped && tt.selectedFeatureTaskIdx == -1)
 
-		collapseIndicator := "▸"
+		collapseIndicator := "▶"
 		if !ungrouped.Collapsed {
 			collapseIndicator = "▾"
 		}
@@ -1323,7 +1323,7 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				isFeatureSelected := (sIdx == tt.selectedStatusIdx && fIdx == tt.selectedFeatureIdx && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1)
 
 				// Collapse indicator for feature
-				featureCollapseIndicator := "▸"
+				featureCollapseIndicator := "▶"
 				if !feature.Collapsed {
 					featureCollapseIndicator = "▾"
 				}
@@ -1368,7 +1368,7 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				isUngroupedSelected := (sIdx == tt.selectedStatusIdx && tt.selectedFeatureIdx == -1 && !tt.isOnStatusHeader && tt.selectedTaskIdx == -1)
 
 				// Collapse indicator for ungrouped
-				ungroupedCollapseIndicator := "▸"
+				ungroupedCollapseIndicator := "▶"
 				if !ungrouped.Collapsed {
 					ungroupedCollapseIndicator = "▾"
 				}
@@ -1533,9 +1533,9 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	}
 
 	// Selection marker
-	selMarker := " "
+	selMarker := "  "
 	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸")
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
 	}
 
 	return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)
@@ -1774,9 +1774,9 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 	}
 
 	// Selection marker
-	selMarker := " "
+	selMarker := "  "
 	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸")
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
 	}
 
 	return fmt.Sprintf("%s%s %s %s%s%s", selMarker, prefix, indicatorStyled, title, prioritySuffix, cycleSuffix)

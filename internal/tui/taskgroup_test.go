@@ -33,9 +33,10 @@ func TestNormalizeClassification_Ready(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeClassification(tt.classification, tt.status)
+			// Use feature_id="feat-1" to test WITH feature_id (should remain Ready)
+			got := normalizeClassification(tt.classification, tt.status, "feat-1")
 			if got != tt.want {
-				t.Errorf("normalizeClassification(%q, %q) = %q, want %q", tt.classification, tt.status, got, tt.want)
+				t.Errorf("normalizeClassification(%q, %q, \"feat-1\") = %q, want %q", tt.classification, tt.status, got, tt.want)
 			}
 		})
 	}
@@ -64,9 +65,10 @@ func TestNormalizeClassification_Waiting(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeClassification(tt.classification, tt.status)
+			// Use feature_id="feat-1" to test WITH feature_id (should remain Waiting)
+			got := normalizeClassification(tt.classification, tt.status, "feat-1")
 			if got != tt.want {
-				t.Errorf("normalizeClassification(%q, %q) = %q, want %q", tt.classification, tt.status, got, tt.want)
+				t.Errorf("normalizeClassification(%q, %q, \"feat-1\") = %q, want %q", tt.classification, tt.status, got, tt.want)
 			}
 		})
 	}
@@ -115,9 +117,10 @@ func TestNormalizeClassification_InProgress(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := normalizeClassification(tt.classification, tt.status)
+			// Use feature_id="feat-1" to test WITH feature_id
+			got := normalizeClassification(tt.classification, tt.status, "feat-1")
 			if got != tt.want {
-				t.Errorf("normalizeClassification(%q, %q) = %q, want %q", tt.classification, tt.status, got, tt.want)
+				t.Errorf("normalizeClassification(%q, %q, \"feat-1\") = %q, want %q", tt.classification, tt.status, got, tt.want)
 			}
 		})
 	}
@@ -196,10 +199,74 @@ func TestNormalizeClassification_Superseded(t *testing.T) {
 }
 
 func TestNormalizeClassification_Archived(t *testing.T) {
-	got := normalizeClassification("", "archived")
+	got := normalizeClassification("", "archived", "")
 	want := "Archived"
 	if got != want {
-		t.Errorf("normalizeClassification(\"\", \"archived\") = %q, want %q", got, want)
+		t.Errorf("normalizeClassification(\"\", \"archived\", \"\") = %q, want %q", got, want)
+	}
+}
+
+// Test that tasks without feature_id are classified as "Ungrouped"
+func TestNormalizeClassification_Ungrouped(t *testing.T) {
+	tests := []struct {
+		name           string
+		classification string
+		status         string
+		featureID      string
+		want           string
+	}{
+		{
+			name:           "ready classification without feature_id",
+			classification: "ready",
+			status:         "pending",
+			featureID:      "",
+			want:           "Ungrouped",
+		},
+		{
+			name:           "pending status without feature_id",
+			classification: "",
+			status:         "pending",
+			featureID:      "",
+			want:           "Ungrouped",
+		},
+		{
+			name:           "waiting classification without feature_id",
+			classification: "waiting",
+			status:         "pending",
+			featureID:      "",
+			want:           "Ungrouped",
+		},
+		{
+			name:           "blocked classification without feature_id",
+			classification: "blocked",
+			status:         "pending",
+			featureID:      "",
+			want:           "Ungrouped",
+		},
+		{
+			name:           "ready classification WITH feature_id stays Ready",
+			classification: "ready",
+			status:         "pending",
+			featureID:      "feature-123",
+			want:           "Ready",
+		},
+		{
+			name:           "waiting classification WITH feature_id stays Waiting",
+			classification: "waiting",
+			status:         "pending",
+			featureID:      "feature-123",
+			want:           "Waiting",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := normalizeClassification(tt.classification, tt.status, tt.featureID)
+			if got != tt.want {
+				t.Errorf("normalizeClassification(%q, %q, %q) = %q, want %q",
+					tt.classification, tt.status, tt.featureID, got, tt.want)
+			}
+		})
 	}
 }
 

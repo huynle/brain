@@ -53,6 +53,9 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 			shortcuts += fmt.Sprintf("%s Tasks  ", bold("C"))
 		} else {
 			// Task view shortcuts
+			shortcuts += fmt.Sprintf("%s Select  ", bold("Space"))
+			shortcuts += fmt.Sprintf("%s Select All  ", bold("A"))
+			shortcuts += fmt.Sprintf("%s Deselect All  ", bold("D"))
 			shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
 			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 			shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
@@ -60,6 +63,7 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
 			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
 			shortcuts += fmt.Sprintf("%s Yank  ", bold("y"))
+			shortcuts += fmt.Sprintf("%s Checkout  ", bold("f"))
 			shortcuts += fmt.Sprintf("%s Schedules  ", bold("C"))
 			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 			shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))

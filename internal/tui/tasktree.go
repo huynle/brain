@@ -1006,8 +1006,8 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 		// Render group header
 		isGroupSelected := (gIdx == tt.selectedGroupIdx && tt.selectedTaskIdx == -1)
 
-		// Collapse indicator (▸ collapsed, ▾ expanded)
-		collapseIndicator := "▸"
+		// Collapse indicator (▶ collapsed, ▾ expanded)
+		collapseIndicator := "▶"
 		if !group.Collapsed {
 			collapseIndicator = "▾"
 		}

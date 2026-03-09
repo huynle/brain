@@ -394,10 +394,18 @@ type TaskTree struct {
 func NewTaskTree() TaskTree {
 	// Load collapsed state from settings
 	settings, _ := LoadSettings()
+
+	// Initialize featureCollapsed map if settings don't provide one
+	featureCollapsed := settings.FeatureCollapsed
+	if featureCollapsed == nil {
+		featureCollapsed = make(map[string]bool)
+	}
+
 	return TaskTree{
 		useGroupedView:     true, // Enable grouped view by default
+		useFeatureView:     true, // Enable feature-first grouping by default
 		groupCollapsed:     settings.GroupCollapsed,
-		featureCollapsed:   settings.FeatureCollapsed,
+		featureCollapsed:   featureCollapsed,
 		selectedStatusIdx:  0,
 		selectedFeatureIdx: -2,   // -2 means "none" (on status header)
 		selectedTaskIdx:    -1,   // -1 means on header

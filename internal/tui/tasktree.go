@@ -1379,18 +1379,21 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 ) string {
 	task := node.Task
 
-	// Calculate tree connector based on depth and position
+	// Calculate tree connector and base indentation based on depth and position
 	var treeConnector string
+	var baseIndent string
 	if prefix == "" {
 		// Root level: no connector, but add base indentation to distinguish from group headers
 		treeConnector = ""
-		prefix = "    " // 4 spaces base indentation for grouped view
+		baseIndent = "    " // 4 spaces base indentation for grouped view
 	} else if isLast {
 		// Last child: use └─
 		treeConnector = treeLastBranch + " "
+		baseIndent = ""
 	} else {
 		// Non-last child: use ├─
 		treeConnector = treeBranch + " "
+		baseIndent = ""
 	}
 
 	// Selection marker
@@ -1416,8 +1419,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Calculate overhead: selMarker + prefix + treeConnector + checkbox + indicator + space + suffixes
-		overhead := lipgloss.Width(selMarker) + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
+		// Calculate overhead: selMarker + baseIndent + prefix + treeConnector + checkbox + indicator + space + suffixes
+		overhead := lipgloss.Width(selMarker) + lipgloss.Width(baseIndent) + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
 		if showCheckboxes {
 			overhead += 4 // "[x] "
 		}
@@ -1458,8 +1461,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(" ↺")
 	}
 
-	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
-		selMarker, prefix, treeConnector, checkboxPart,
+	return fmt.Sprintf("%s%s%s%s%s%s %s%s%s%s",
+		selMarker, baseIndent, prefix, treeConnector, checkboxPart,
 		indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
 }
 

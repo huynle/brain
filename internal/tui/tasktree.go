@@ -378,6 +378,10 @@ type TaskTree struct {
 	selectedStatusIdx int           // Index into statusGroups
 	isOnStatusHeader  bool          // true if cursor is on a status header
 
+	// Hybrid view: Status groups for draft/completed within feature view
+	draftCollapsed     bool
+	completedCollapsed bool
+
 	// Multi-select state (passed in during View rendering)
 	selectedTasks map[string]bool
 
@@ -407,9 +411,11 @@ func NewTaskTree() TaskTree {
 		groupCollapsed:     settings.GroupCollapsed,
 		featureCollapsed:   featureCollapsed,
 		selectedStatusIdx:  0,
-		selectedFeatureIdx: -2,   // -2 means "none" (on status header)
-		selectedTaskIdx:    -1,   // -1 means on header
-		isOnStatusHeader:   true, // Start on status header in nested mode
+		selectedFeatureIdx: -2,    // -2 means "none" (on status header)
+		selectedTaskIdx:    -1,    // -1 means on header
+		isOnStatusHeader:   true,  // Start on status header in nested mode
+		draftCollapsed:     false, // Draft section expanded by default
+		completedCollapsed: true,  // Completed section collapsed by default
 	}
 }
 
@@ -1351,6 +1357,8 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 }
 
 // viewFeatureGrouped renders tasks in feature-grouped view.
+// Now includes hybrid status groups: features show only active tasks,
+// with separate Draft and Completed sections after features.
 func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string) string {
 	if len(tt.featureGroups.Features) == 0 && tt.featureGroups.Ungrouped == nil {
 		return DimStyle.Render("  No tasks")
@@ -1359,8 +1367,64 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 	var lines []string
 	showCheckboxes := len(tt.selectedTasks) > 0
 
-	// Render features
-	for fIdx, feature := range tt.featureGroups.Features {
+	// Split tasks into active, draft, and completed/validated
+	// Active tasks: pending, in_progress, blocked, ready, waiting, active
+	// Draft tasks: draft status
+	// Completed tasks: completed, validated, cancelled, superseded, archived
+	var draftTasks, completedTasks []types.ResolvedTask
+	activeFeatureGroups := make([]FeatureGroup, 0)
+	var activeUngrouped *FeatureGroup
+
+	// Process features and split by status
+	for _, feature := range tt.featureGroups.Features {
+		var activeTasks []types.ResolvedTask
+		for _, task := range feature.Tasks {
+			switch task.Status {
+			case "draft":
+				draftTasks = append(draftTasks, task)
+			case "completed", "validated", "cancelled", "superseded", "archived":
+				completedTasks = append(completedTasks, task)
+			default:
+				// Active statuses: pending, in_progress, blocked, active
+				activeTasks = append(activeTasks, task)
+			}
+		}
+
+		// Only add feature if it has active tasks
+		if len(activeTasks) > 0 {
+			activeFeature := feature // Copy
+			activeFeature.Tasks = activeTasks
+			activeFeature.Stats = computeFeatureStats(activeTasks)
+			activeFeatureGroups = append(activeFeatureGroups, activeFeature)
+		}
+	}
+
+	// Process ungrouped tasks
+	if tt.featureGroups.Ungrouped != nil {
+		var activeUngroupedTasks []types.ResolvedTask
+		for _, task := range tt.featureGroups.Ungrouped.Tasks {
+			switch task.Status {
+			case "draft":
+				draftTasks = append(draftTasks, task)
+			case "completed", "validated", "cancelled", "superseded", "archived":
+				completedTasks = append(completedTasks, task)
+			default:
+				activeUngroupedTasks = append(activeUngroupedTasks, task)
+			}
+		}
+
+		if len(activeUngroupedTasks) > 0 {
+			activeUngrouped = &FeatureGroup{
+				ID:    "",
+				Name:  "[Ungrouped]",
+				Tasks: activeUngroupedTasks,
+				Stats: computeFeatureStats(activeUngroupedTasks),
+			}
+		}
+	}
+
+	// Render active features
+	for fIdx, feature := range activeFeatureGroups {
 		isFeatureSelected := (fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped)
 
 		// Collapse indicator
@@ -1411,9 +1475,9 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
-	// Render ungrouped if present
-	if tt.featureGroups.Ungrouped != nil {
-		ungrouped := tt.featureGroups.Ungrouped
+	// Render active ungrouped if present
+	if activeUngrouped != nil {
+		ungrouped := activeUngrouped
 		isUngroupedSelected := (tt.isOnUngrouped && tt.selectedFeatureTaskIdx == -1)
 
 		collapseIndicator := "▶"
@@ -1443,7 +1507,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			tree := BuildTree(ungrouped.Tasks, tt.tasks)
 
 			// Use feature count as group index for ungrouped (to calculate selection correctly)
-			ungroupedIdx := len(tt.featureGroups.Features)
+			ungroupedIdx := len(activeFeatureGroups)
 			visualIndex := 0
 			tt.renderGroupTaskTree(
 				tree,
@@ -1456,6 +1520,68 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				showCheckboxes,
 				activeProjectID,
 				tt.selectedFeatureIdx, // Feature view: ungrouped uses selectedFeatureIdx
+			)
+		}
+	}
+
+	// Render Draft status group
+	if len(draftTasks) > 0 {
+		collapseIndicator := "▶"
+		if !tt.draftCollapsed {
+			collapseIndicator = "▾"
+		}
+
+		draftHeader := fmt.Sprintf("%s Draft (%d)", collapseIndicator, len(draftTasks))
+		draftHeader = GroupHeaderStyle.Render(draftHeader)
+		draftHeader = fmt.Sprintf("  %s", draftHeader)
+		lines = append(lines, draftHeader)
+
+		if !tt.draftCollapsed {
+			// Build dependency tree for draft tasks
+			tree := BuildTree(draftTasks, tt.tasks)
+			visualIndex := 0
+			tt.renderGroupTaskTree(
+				tree,
+				"    ",
+				&lines,
+				width,
+				-1, // No feature index for status groups
+				&visualIndex,
+				tt.selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+				-1, // No feature selection for status groups
+			)
+		}
+	}
+
+	// Render Completed status group
+	if len(completedTasks) > 0 {
+		collapseIndicator := "▶"
+		if !tt.completedCollapsed {
+			collapseIndicator = "▾"
+		}
+
+		completedHeader := fmt.Sprintf("%s Completed (%d)", collapseIndicator, len(completedTasks))
+		completedHeader = GroupHeaderStyle.Render(completedHeader)
+		completedHeader = fmt.Sprintf("  %s", completedHeader)
+		lines = append(lines, completedHeader)
+
+		if !tt.completedCollapsed {
+			// Build dependency tree for completed tasks
+			tree := BuildTree(completedTasks, tt.tasks)
+			visualIndex := 0
+			tt.renderGroupTaskTree(
+				tree,
+				"    ",
+				&lines,
+				width,
+				-1, // No feature index for status groups
+				&visualIndex,
+				tt.selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+				-1, // No feature selection for status groups
 			)
 		}
 	}

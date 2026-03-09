@@ -1496,9 +1496,51 @@ func (m Model) renderBaseView() string {
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
-	// Calculate available height for main content
-	// StatusBar: ~3 lines, HelpBar: 1 line
-	mainHeight := m.height - 4
+	// Pre-render bottom elements to calculate their heights
+	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
+
+	// Status message (if active and not expired)
+	var statusMessageView string
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
+		style := lipgloss.NewStyle().Padding(0, 1)
+		switch m.statusMessageType {
+		case "success":
+			style = style.Foreground(lipgloss.Color("10")) // green
+		case "error":
+			style = style.Foreground(lipgloss.Color("9")) // red
+		case "info":
+			style = style.Foreground(lipgloss.Color("12")) // blue
+		}
+		statusMessageView = style.Render(m.statusMessage)
+	}
+
+	// Filter bar (based on 3-mode state machine)
+	var filterBarView string
+	switch m.filterState {
+	case FilterTyping:
+		// Yellow bg with / prefix, cursor, match count
+		matchCount := len(m.filteredTasks())
+		matchWord := "matches"
+		if matchCount == 1 {
+			matchWord = "match"
+		}
+		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+	case FilterLocked:
+		// Cyan bg badge with filter text, N/total count, Esc hint
+		totalCount := len(m.tasks)
+		matchCount := len(m.filteredTasks())
+		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
+			DimStyle.Render("  Esc: clear")
+	}
+
+	// Calculate available height for main content by measuring all UI elements
+	statusBarHeight := lipgloss.Height(statusBarView)
+	projectTabsHeight := lipgloss.Height(projectTabsView)
+	helpBarHeight := lipgloss.Height(helpBarView)
+	statusMessageHeight := lipgloss.Height(statusMessageView)
+	filterBarHeight := lipgloss.Height(filterBarView)
+
+	mainHeight := m.height - (statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight)
 	if mainHeight < 3 {
 		mainHeight = 3
 	}
@@ -1551,43 +1593,6 @@ func (m Model) renderBaseView() string {
 		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, taskPanel, rightPanel)
 	} else {
 		mainContent = taskPanel
-	}
-
-	// Help bar at bottom
-	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
-
-	// Status message (if active and not expired)
-	var statusMessageView string
-	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
-		style := lipgloss.NewStyle().Padding(0, 1)
-		switch m.statusMessageType {
-		case "success":
-			style = style.Foreground(lipgloss.Color("10")) // green
-		case "error":
-			style = style.Foreground(lipgloss.Color("9")) // red
-		case "info":
-			style = style.Foreground(lipgloss.Color("12")) // blue
-		}
-		statusMessageView = style.Render(m.statusMessage)
-	}
-
-	// Filter bar (based on 3-mode state machine)
-	var filterBarView string
-	switch m.filterState {
-	case FilterTyping:
-		// Yellow bg with / prefix, cursor, match count
-		matchCount := len(m.filteredTasks())
-		matchWord := "matches"
-		if matchCount == 1 {
-			matchWord = "match"
-		}
-		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
-	case FilterLocked:
-		// Cyan bg badge with filter text, N/total count, Esc hint
-		totalCount := len(m.tasks)
-		matchCount := len(m.filteredTasks())
-		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
-			DimStyle.Render("  Esc: clear")
 	}
 
 	// Compose layout vertically

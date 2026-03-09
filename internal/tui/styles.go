@@ -36,6 +36,7 @@ const (
 	IndicatorActive    = "▶" // blue play
 	IndicatorCompleted = "✓" // green dim check
 	IndicatorBlocked   = "✗" // red x
+	IndicatorCancelled = "⊘" // magenta slash
 	IndicatorConnected = "●" // green dot
 	IndicatorDisconn   = "○" // red dot
 )
@@ -112,17 +113,31 @@ func StatusStyle(classification string) lipgloss.Style {
 }
 
 // StatusStyleWithState returns a styled string for a task, prioritizing status over classification.
-// Status (execution state) takes precedence: in_progress (blue), completed (gray), cancelled (red)
-// Classification (dependency state) is used for pending tasks: ready (green), waiting (yellow), blocked (red)
+// Handles all 10 status values to match the TypeScript TUI's color scheme.
+// Status (execution state) takes precedence over classification (dependency state).
 func StatusStyleWithState(status, classification string) lipgloss.Style {
-	// Prioritize status (execution state)
+	// Handle all explicit status values
 	switch status {
+	case "draft":
+		return lipgloss.NewStyle().Foreground(ColorDim) // gray
+	case "pending":
+		return lipgloss.NewStyle().Foreground(ColorWaiting) // yellow
+	case "active":
+		return lipgloss.NewStyle().Foreground(ColorActive) // blue
 	case "in_progress":
-		return lipgloss.NewStyle().Foreground(ColorActive)
-	case "completed":
-		return lipgloss.NewStyle().Foreground(ColorCompleted)
+		return lipgloss.NewStyle().Foreground(ColorActive) // cyan
+	case "blocked":
+		return lipgloss.NewStyle().Foreground(ColorBlocked) // red
 	case "cancelled":
-		return lipgloss.NewStyle().Foreground(ColorBlocked)
+		return lipgloss.NewStyle().Foreground(ColorMagenta) // magenta
+	case "completed":
+		return lipgloss.NewStyle().Foreground(ColorCompleted) // green dim
+	case "validated":
+		return lipgloss.NewStyle().Foreground(ColorReady) // green bright
+	case "superseded":
+		return lipgloss.NewStyle().Foreground(ColorDim) // gray
+	case "archived":
+		return lipgloss.NewStyle().Foreground(ColorDim) // gray
 	}
 
 	// Fall back to classification (dependency state)

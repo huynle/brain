@@ -1075,20 +1075,34 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 }
 
 // statusIndicator returns the status icon for a task, prioritizing status over classification.
-// Status (execution state) takes precedence: in_progress, completed, cancelled
-// Classification (dependency state) is used for pending tasks: ready, waiting, blocked
+// Handles all 10 status values to match the TypeScript TUI's indicators.
+// Status (execution state) takes precedence over classification (dependency state).
 func statusIndicator(status, classification string) string {
-	// Prioritize status (execution state)
+	// Handle all explicit status values
 	switch status {
+	case "draft":
+		return IndicatorWaiting // ○ gray
+	case "pending":
+		return IndicatorWaiting // ○ yellow
+	case "active":
+		return IndicatorReady // ● blue
 	case "in_progress":
-		return IndicatorActive
-	case "completed":
-		return IndicatorCompleted
+		return IndicatorActive // ▶ cyan
+	case "blocked":
+		return IndicatorBlocked // ✗ red
 	case "cancelled":
-		return IndicatorBlocked
+		return IndicatorCancelled // ⊘ magenta
+	case "completed":
+		return IndicatorCompleted // ✓ green dim
+	case "validated":
+		return IndicatorCompleted // ✓ green bright
+	case "superseded":
+		return IndicatorWaiting // ○ gray
+	case "archived":
+		return IndicatorWaiting // ○ gray
 	}
 
-	// Fall back to classification (dependency state)
+	// Fall back to classification (dependency state) for tasks without explicit status
 	switch classification {
 	case "ready":
 		return IndicatorReady
@@ -1335,7 +1349,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 
 		// Feature header with count and stats
-		featureHeader := fmt.Sprintf("%s %s (%d) [%d/%d]", collapseIndicator, feature.Name, feature.Stats.Total, feature.Stats.Completed, feature.Stats.Total)
+		featureHeader := fmt.Sprintf("%s Feature: %s [%d]", collapseIndicator, feature.Name, feature.Stats.Total)
 
 		// Selection marker (2 spaces for alignment)
 		selMarker := "  "
@@ -1528,9 +1542,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				}
 
 				// Feature header with indentation
-				featureHeader := fmt.Sprintf("%s %s (%d) [%d/%d]",
-					featureCollapseIndicator, feature.Name, feature.Stats.Total,
-					feature.Stats.Completed, feature.Stats.Total)
+				featureHeader := fmt.Sprintf("%s Feature: %s [%d]",
+					featureCollapseIndicator, feature.Name, feature.Stats.Total)
 
 				// Selection marker for feature header (with indentation)
 				if isFeatureSelected {

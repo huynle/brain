@@ -1215,6 +1215,7 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 				tt.selectedTasks,
 				showCheckboxes,
 				activeProjectID,
+				tt.selectedGroupIdx, // 2-level view uses selectedGroupIdx
 			)
 		}
 	}
@@ -1370,6 +1371,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				tt.selectedTasks,
 				showCheckboxes,
 				activeProjectID,
+				tt.selectedFeatureIdx, // Feature-only view uses selectedFeatureIdx
 			)
 		}
 	}
@@ -1418,6 +1420,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				tt.selectedTasks,
 				showCheckboxes,
 				activeProjectID,
+				tt.selectedFeatureIdx, // Feature view: ungrouped uses selectedFeatureIdx
 			)
 		}
 	}
@@ -1554,6 +1557,7 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 						tt.selectedTasks,
 						showCheckboxes,
 						activeProjectID,
+						tt.selectedFeatureIdx, // NESTED VIEW FIX: use selectedFeatureIdx not selectedGroupIdx
 					)
 				}
 			}
@@ -1597,6 +1601,7 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 						tt.selectedTasks,
 						showCheckboxes,
 						activeProjectID,
+						tt.selectedFeatureIdx, // Nested view ungrouped: use selectedFeatureIdx
 					)
 				}
 			}
@@ -1825,6 +1830,8 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 
 // renderGroupTaskTree recursively renders tree nodes for grouped view with proper indentation.
 // The prefix parameter tracks ancestor line states, visualIndex tracks position for selection.
+// selectedGroupIdx parameter is the group index to compare against (pass tt.selectedGroupIdx for 2-level view,
+// tt.selectedFeatureIdx for nested view to fix navigation highlighting bug).
 func (tt *TaskTree) renderGroupTaskTree(
 	nodes []TreeNode,
 	prefix string,
@@ -1835,12 +1842,13 @@ func (tt *TaskTree) renderGroupTaskTree(
 	selectedTasks map[string]bool,
 	showCheckboxes bool,
 	activeProjectID string,
+	selectedGroupIdx int,
 ) {
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
 		// Check if this task is selected
-		isSelected := (groupIdx == tt.selectedGroupIdx && *visualIndex == tt.selectedTaskIdx)
+		isSelected := (groupIdx == selectedGroupIdx && *visualIndex == tt.selectedTaskIdx)
 		*visualIndex++
 
 		// Build the line with tree prefix
@@ -1869,6 +1877,7 @@ func (tt *TaskTree) renderGroupTaskTree(
 				selectedTasks,
 				showCheckboxes,
 				activeProjectID,
+				selectedGroupIdx,
 			)
 		}
 	}

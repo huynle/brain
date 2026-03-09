@@ -1812,6 +1812,81 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 	}
 }
 
+// TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation verifies that
+// when navigating with j/k keys in nested mode, the highlighted task matches
+// the selected task index (regression test for navigation bug).
+//
+// Root Cause: renderGroupTaskTree checks groupIdx == tt.selectedGroupIdx,
+// but in nested mode we pass fIdx (feature index) and should check selectedFeatureIdx instead.
+func TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	// Create multiple tasks in DIFFERENT feature groups to expose the bug
+	// The bug occurs when selectedFeatureIdx != selectedGroupIdx
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("f1t1", "Feature1 Task1", "ready", "high", "feature-one", nil),
+		makeTaskWithFeature("f1t2", "Feature1 Task2", "ready", "high", "feature-one", nil),
+		makeTaskWithFeature("f2t1", "Feature2 Task1", "ready", "high", "feature-two", nil),
+		makeTaskWithFeature("f2t2", "Feature2 Task2", "ready", "high", "feature-two", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+
+	// Expand all status and feature groups
+	for i := range tt.statusGroups {
+		tt.statusGroups[i].Collapsed = false
+		for j := range tt.statusGroups[i].Features {
+			tt.statusGroups[i].Features[j].Collapsed = false
+		}
+	}
+
+	// Simulate navigation to second feature's first task
+	// This is where the bug manifests: selectedFeatureIdx=1, but selectedGroupIdx=0 (unrelated)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 1 // Second feature
+	tt.selectedTaskIdx = 0    // First task in that feature
+	tt.SelectedID = "f2t1"
+
+	// DEBUG: Verify state mismatch that causes bug
+	// In nested mode, selectedGroupIdx is NOT used for navigation (defaults to 0)
+	// but rendering checks groupIdx == tt.selectedGroupIdx at line 1843
+	if tt.selectedGroupIdx != 1 {
+		t.Logf("DEBUG: selectedGroupIdx=%d, selectedFeatureIdx=%d (mismatch expected)",
+			tt.selectedGroupIdx, tt.selectedFeatureIdx)
+	}
+
+	view := tt.View(80, 30)
+
+	// The selected task line should contain "Feature2 Task1" with indicator "▸"
+	// BUG: Without the fix, this will FAIL because:
+	// - We pass fIdx=1 as groupIdx to renderGroupTaskTree
+	// - But it checks groupIdx(1) == tt.selectedGroupIdx(0) -> false
+	// - So the highlight appears on wrong line or not at all
+	lines := strings.Split(view, "\n")
+	selectedLineFound := false
+	wrongLineHighlighted := false
+
+	for _, line := range lines {
+		if strings.Contains(line, "▸") && strings.Contains(line, "Feature2 Task1") {
+			selectedLineFound = true
+		}
+		// Check if wrong task is highlighted (Feature1 tasks)
+		if strings.Contains(line, "▸") && strings.Contains(line, "Feature1") {
+			wrongLineHighlighted = true
+		}
+	}
+
+	if !selectedLineFound {
+		t.Errorf("Expected selection indicator ▸ on 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
+	}
+	if wrongLineHighlighted {
+		t.Errorf("Wrong task highlighted - expected Feature2 Task1 but Feature1 task has indicator:\n%s", view)
+	}
+}
+
 // =============================================================================
 // Phase 8: Benchmark Tests
 // =============================================================================

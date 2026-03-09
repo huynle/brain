@@ -1735,8 +1735,30 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 
 // renderLaneTaskLine renders a single task line with lane prefix + task info.
 func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneAssignment, index int, isSelected bool, width int) string {
-	// Generate lane prefix
-	prefix := GeneratePrefix(assignment, index, tt.laneAssignments, nil)
+	// Build relation context for colored dependencies
+	var context *LanePrefixSegmentContext
+	if tt.SelectedID != "" {
+		ancestors, descendants := buildSelectedTaskRelationGraph(tt.laneTasks, tt.SelectedID)
+		ctx := buildSelectedTaskRelationLanes(tt.laneAssignments, ancestors, descendants)
+		context = &ctx
+	}
+
+	// Generate lane prefix segments with coloring context
+	segments := GeneratePrefixSegments(assignment, index, tt.laneAssignments, context)
+
+	// Apply colors based on segment kind
+	prefixRendered := ""
+	for _, seg := range segments {
+		styledText := seg.Text
+		switch seg.Kind {
+		case KindUpstream:
+			styledText = lipgloss.NewStyle().Foreground(ColorCyan).Render(seg.Text)
+		case KindDownstream:
+			styledText = lipgloss.NewStyle().Foreground(ColorMagenta).Render(seg.Text)
+			// KindNeutral: no color
+		}
+		prefixRendered += styledText
+	}
 
 	// Status indicator with color
 	indicator := statusIndicator(task.Status, task.Classification)
@@ -1746,7 +1768,7 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
 		// Overhead: selMarker(1) + prefix + space(1) + indicator(2) + space(1) + suffixes
-		overhead := 1 + lipgloss.Width(prefix) + 1 + 2 + 1
+		overhead := 1 + lipgloss.Width(prefixRendered) + 1 + 2 + 1
 		if task.Priority == "high" {
 			overhead++
 		}
@@ -1779,7 +1801,7 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
 	}
 
-	return fmt.Sprintf("%s%s %s %s%s%s", selMarker, prefix, indicatorStyled, title, prioritySuffix, cycleSuffix)
+	return fmt.Sprintf("%s%s %s %s%s%s", selMarker, prefixRendered, indicatorStyled, title, prioritySuffix, cycleSuffix)
 }
 
 // moveDownLane navigates down in lane view.
@@ -2116,4 +2138,97 @@ func (tt *TaskTree) getCurrentStatusName() string {
 		return ""
 	}
 	return tt.statusGroups[tt.selectedStatusIdx].Name
+}
+
+// =============================================================================
+// Dependency Relation Graph for Colored Lanes
+// =============================================================================
+
+// buildSelectedTaskRelationGraph builds ancestor and descendant sets for the selected task.
+// Ancestors: tasks that the selected task depends on (directly or transitively).
+// Descendants: tasks that depend on the selected task (directly or transitively).
+func buildSelectedTaskRelationGraph(tasks []types.ResolvedTask, selectedID string) (ancestors map[string]bool, descendants map[string]bool) {
+	ancestors = make(map[string]bool)
+	descendants = make(map[string]bool)
+
+	if selectedID == "" {
+		return
+	}
+
+	// Build task lookup and reverse dependency index
+	taskByID := make(map[string]*types.ResolvedTask)
+	dependentsByTask := make(map[string][]string)
+	for i := range tasks {
+		task := &tasks[i]
+		taskByID[task.ID] = task
+		for _, depID := range task.DependsOn {
+			dependentsByTask[depID] = append(dependentsByTask[depID], task.ID)
+		}
+	}
+
+	// Walk up dependencies (ancestors)
+	visited := make(map[string]bool)
+	var walkUp func(taskID string)
+	walkUp = func(taskID string) {
+		if visited[taskID] {
+			return
+		}
+		visited[taskID] = true
+		task, ok := taskByID[taskID]
+		if !ok {
+			return
+		}
+		for _, depID := range task.DependsOn {
+			ancestors[depID] = true
+			walkUp(depID)
+		}
+	}
+	walkUp(selectedID)
+
+	// Walk down dependents (descendants)
+	visited = make(map[string]bool)
+	var walkDown func(taskID string)
+	walkDown = func(taskID string) {
+		if visited[taskID] {
+			return
+		}
+		visited[taskID] = true
+		for _, dependentID := range dependentsByTask[taskID] {
+			descendants[dependentID] = true
+			walkDown(dependentID)
+		}
+	}
+	walkDown(selectedID)
+
+	return
+}
+
+// buildSelectedTaskRelationLanes maps ancestors and descendants to their lane numbers.
+func buildSelectedTaskRelationLanes(assignments []LaneAssignment, ancestors, descendants map[string]bool) LanePrefixSegmentContext {
+	ctx := LanePrefixSegmentContext{
+		UpstreamLanes:   make(map[int]bool),
+		DownstreamLanes: make(map[int]bool),
+	}
+
+	// Build lane by task ID map
+	laneByTaskID := make(map[string]int)
+	for _, assignment := range assignments {
+		laneByTaskID[assignment.TaskID] = assignment.Lane
+	}
+
+	// Map ancestors to upstream lanes
+	for ancestorID := range ancestors {
+		if lane, ok := laneByTaskID[ancestorID]; ok {
+			ctx.UpstreamLanes[lane] = true
+		}
+	}
+
+	// Map descendants to downstream lanes
+	for descendantID := range descendants {
+		if lane, ok := laneByTaskID[descendantID]; ok {
+			ctx.DownstreamLanes[lane] = true
+		}
+	}
+
+	return ctx
 }

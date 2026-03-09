@@ -1983,3 +1983,201 @@ func TestStatusIndicator_DefaultToCompleted(t *testing.T) {
 		t.Errorf("expected IndicatorCompleted (✓) for unknown classification, got %q", indicator)
 	}
 }
+
+// =============================================================================
+// Tests: buildSelectedTaskRelationGraph
+// =============================================================================
+
+func TestBuildSelectedTaskRelationGraph_NoSelection(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "ready", "medium", []string{"a"}),
+	}
+
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "")
+	if len(ancestors) != 0 {
+		t.Errorf("expected empty ancestors for no selection, got %d", len(ancestors))
+	}
+	if len(descendants) != 0 {
+		t.Errorf("expected empty descendants for no selection, got %d", len(descendants))
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_SimpleChain(t *testing.T) {
+	// a <- b <- c (c depends on b, b depends on a)
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+	}
+
+	// Select b: a is ancestor, c is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "b")
+	if !ancestors["a"] {
+		t.Errorf("expected 'a' in ancestors")
+	}
+	if ancestors["b"] {
+		t.Errorf("selected task should not be in ancestors")
+	}
+	if !descendants["c"] {
+		t.Errorf("expected 'c' in descendants")
+	}
+	if descendants["b"] {
+		t.Errorf("selected task should not be in descendants")
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_Diamond(t *testing.T) {
+	//     a
+	//    / \
+	//   b   c
+	//    \ /
+	//     d
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"a"}),
+		makeTask("d", "Task D", "waiting", "medium", []string{"b", "c"}),
+	}
+
+	// Select b: a is ancestor, d is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "b")
+	if !ancestors["a"] {
+		t.Errorf("expected 'a' in ancestors")
+	}
+	if !descendants["d"] {
+		t.Errorf("expected 'd' in descendants")
+	}
+	if ancestors["c"] {
+		t.Errorf("'c' is sibling, not ancestor")
+	}
+	if descendants["c"] {
+		t.Errorf("'c' is sibling, not descendant")
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_MultiLevel(t *testing.T) {
+	// a <- b <- c <- d
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+		makeTask("d", "Task D", "waiting", "medium", []string{"c"}),
+	}
+
+	// Select c: {a, b} are ancestors, {d} is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "c")
+	if !ancestors["a"] || !ancestors["b"] {
+		t.Errorf("expected both 'a' and 'b' in ancestors")
+	}
+	if !descendants["d"] {
+		t.Errorf("expected 'd' in descendants")
+	}
+}
+
+// =============================================================================
+// Tests: buildSelectedTaskRelationLanes
+// =============================================================================
+
+func TestBuildSelectedTaskRelationLanes_Empty(t *testing.T) {
+	assignments := []LaneAssignment{}
+	ancestors := map[string]bool{}
+	descendants := map[string]bool{}
+
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+	if len(ctx.UpstreamLanes) != 0 {
+		t.Errorf("expected empty UpstreamLanes")
+	}
+	if len(ctx.DownstreamLanes) != 0 {
+		t.Errorf("expected empty DownstreamLanes")
+	}
+}
+
+func TestBuildSelectedTaskRelationLanes_MapsTasksToLanes(t *testing.T) {
+	assignments := []LaneAssignment{
+		{Lane: 0, TaskID: "a"},
+		{Lane: 1, TaskID: "b"},
+		{Lane: 2, TaskID: "c"},
+	}
+	ancestors := map[string]bool{"a": true}
+	descendants := map[string]bool{"c": true}
+
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+	if !ctx.UpstreamLanes[0] {
+		t.Errorf("expected lane 0 in UpstreamLanes (task 'a')")
+	}
+	if !ctx.DownstreamLanes[2] {
+		t.Errorf("expected lane 2 in DownstreamLanes (task 'c')")
+	}
+	if ctx.UpstreamLanes[1] || ctx.DownstreamLanes[1] {
+		t.Errorf("task 'b' should not be in upstream or downstream lanes")
+	}
+}
+
+// =============================================================================
+// Tests: renderLaneTaskLine with colored dependencies
+// =============================================================================
+
+func TestRenderLaneTaskLine_ColoredDependencies(t *testing.T) {
+	// Create task graph: a <- b <- c (b depends on a, c depends on b)
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+	}
+
+	// Run topo sort and lane assignment
+	sortedTasks := TopoSort(tasks)
+	assignments := AssignLanes(sortedTasks)
+
+	// Build relation graph for selected task "b"
+	ancestors, descendants := buildSelectedTaskRelationGraph(sortedTasks, "b")
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+
+	// Verify that task 'a' is in upstream lanes
+	foundUpstreamLane := false
+	for _, assignment := range assignments {
+		if assignment.TaskID == "a" {
+			if ctx.UpstreamLanes[assignment.Lane] {
+				foundUpstreamLane = true
+			}
+		}
+	}
+	if !foundUpstreamLane {
+		t.Errorf("expected task 'a' lane to be marked as upstream")
+	}
+
+	// Verify that task 'c' is in downstream lanes
+	foundDownstreamLane := false
+	for _, assignment := range assignments {
+		if assignment.TaskID == "c" {
+			if ctx.DownstreamLanes[assignment.Lane] {
+				foundDownstreamLane = true
+			}
+		}
+	}
+	if !foundDownstreamLane {
+		t.Errorf("expected task 'c' lane to be marked as downstream")
+	}
+
+	// Verify that segments get correct Kind values
+	for i, assignment := range assignments {
+		task := sortedTasks[i]
+		segments := GeneratePrefixSegments(assignment, i, assignments, &ctx)
+
+		for _, seg := range segments {
+			if seg.Role == RoleVertical {
+				// Check if vertical line segments in ancestor lanes are marked as upstream
+				if ctx.UpstreamLanes[seg.Lane] && seg.Kind != KindUpstream {
+					t.Errorf("task %s: vertical segment in upstream lane %d should have KindUpstream, got %v",
+						task.ID, seg.Lane, seg.Kind)
+				}
+				// Check if vertical line segments in descendant lanes are marked as downstream
+				if ctx.DownstreamLanes[seg.Lane] && seg.Kind != KindDownstream {
+					t.Errorf("task %s: vertical segment in downstream lane %d should have KindDownstream, got %v",
+						task.ID, seg.Lane, seg.Kind)
+				}
+			}
+		}
+	}
+}

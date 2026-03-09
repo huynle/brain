@@ -1027,11 +1027,22 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 
 		// Render tasks if not collapsed
 		if !group.Collapsed {
-			for tIdx, task := range group.Tasks {
-				isTaskSelected := (gIdx == tt.selectedGroupIdx && tIdx == tt.selectedTaskIdx)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
-				lines = append(lines, taskLine)
-			}
+			// Build dependency tree for this group
+			tree := BuildTree(group.Tasks, tt.tasks)
+
+			// Render tree with proper indentation
+			visualIndex := 0
+			tt.renderGroupTaskTree(
+				tree,
+				"", // empty prefix for root level
+				&lines,
+				width,
+				gIdx,
+				&visualIndex,
+				tt.selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+			)
 		}
 	}
 
@@ -1121,11 +1132,22 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 		// Render tasks if not collapsed
 		if !feature.Collapsed {
-			for tIdx, task := range feature.Tasks {
-				isTaskSelected := (fIdx == tt.selectedFeatureIdx && tIdx == tt.selectedFeatureTaskIdx && !tt.isOnUngrouped)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
-				lines = append(lines, taskLine)
-			}
+			// Build dependency tree for this feature
+			tree := BuildTree(feature.Tasks, tt.tasks)
+
+			// Render tree with proper indentation
+			visualIndex := 0
+			tt.renderGroupTaskTree(
+				tree,
+				"", // empty prefix for root level
+				&lines,
+				width,
+				fIdx,
+				&visualIndex,
+				tt.selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+			)
 		}
 	}
 
@@ -1152,11 +1174,23 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		lines = append(lines, ungroupedHeader)
 
 		if !ungrouped.Collapsed {
-			for tIdx, task := range ungrouped.Tasks {
-				isTaskSelected := (tt.isOnUngrouped && tIdx == tt.selectedFeatureTaskIdx)
-				taskLine := tt.renderGroupedTaskLineWithProject(task, isTaskSelected, tt.selectedTasks, showCheckboxes, activeProjectID, width)
-				lines = append(lines, taskLine)
-			}
+			// Build dependency tree for ungrouped tasks
+			tree := BuildTree(ungrouped.Tasks, tt.tasks)
+
+			// Use feature count as group index for ungrouped (to calculate selection correctly)
+			ungroupedIdx := len(tt.featureGroups.Features)
+			visualIndex := 0
+			tt.renderGroupTaskTree(
+				tree,
+				"", // empty prefix for root level
+				&lines,
+				width,
+				ungroupedIdx,
+				&visualIndex,
+				tt.selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+			)
 		}
 	}
 
@@ -1278,6 +1312,155 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	}
 
 	return fmt.Sprintf("%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, indicatorStyled, title, prioritySuffix, cycleSuffix)
+}
+
+// renderGroupTaskTree recursively renders tree nodes for grouped view with proper indentation.
+// The prefix parameter tracks ancestor line states, visualIndex tracks position for selection.
+func (tt *TaskTree) renderGroupTaskTree(
+	nodes []TreeNode,
+	prefix string,
+	lines *[]string,
+	width int,
+	groupIdx int,
+	visualIndex *int,
+	selectedTasks map[string]bool,
+	showCheckboxes bool,
+	activeProjectID string,
+) {
+	for i, node := range nodes {
+		isLast := i == len(nodes)-1
+
+		// Check if this task is selected
+		isSelected := (groupIdx == tt.selectedGroupIdx && *visualIndex == tt.selectedTaskIdx)
+		*visualIndex++
+
+		// Build the line with tree prefix
+		line := tt.renderGroupedTaskLineWithTree(
+			node,
+			prefix,
+			isLast,
+			isSelected,
+			selectedTasks,
+			showCheckboxes,
+			activeProjectID,
+			width,
+		)
+		*lines = append(*lines, line)
+
+		// Render children with updated prefix for vertical continuation
+		if len(node.Children) > 0 {
+			childPrefix := tt.calculateChildPrefix(prefix, isLast)
+			tt.renderGroupTaskTree(
+				node.Children,
+				childPrefix,
+				lines,
+				width,
+				groupIdx,
+				visualIndex,
+				selectedTasks,
+				showCheckboxes,
+				activeProjectID,
+			)
+		}
+	}
+}
+
+// renderGroupedTaskLineWithTree renders a single task line in grouped view with tree connectors.
+// The prefix parameter contains ancestor line state, isLast determines the branch character.
+func (tt *TaskTree) renderGroupedTaskLineWithTree(
+	node TreeNode,
+	prefix string,
+	isLast bool,
+	isSelected bool,
+	selectedTasks map[string]bool,
+	showCheckboxes bool,
+	activeProjectID string,
+	width int,
+) string {
+	task := node.Task
+
+	// Calculate tree connector based on depth and position
+	var treeConnector string
+	if prefix == "" {
+		// Root level: no connector, but add base indentation to distinguish from group headers
+		treeConnector = ""
+		prefix = "    " // 4 spaces base indentation for grouped view
+	} else if isLast {
+		// Last child: use └─
+		treeConnector = treeLastBranch + " "
+	} else {
+		// Non-last child: use ├─
+		treeConnector = treeBranch + " "
+	}
+
+	// Selection marker
+	selMarker := "  "
+	if isSelected {
+		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+	}
+
+	// Checkbox indicator (ONLY when multi-select active)
+	checkboxPart := ""
+	if showCheckboxes {
+		checkbox := "[ ]"
+		if selectedTasks[task.ID] {
+			checkbox = "[x]"
+		}
+		checkboxPart = checkbox + " "
+	}
+
+	// Status indicator with color
+	indicator := statusIndicator(task.Classification)
+	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+
+	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
+	title := task.Title
+	if !tt.TextWrap && width > 0 {
+		// Calculate overhead: selMarker + prefix + treeConnector + checkbox + indicator + space + suffixes
+		overhead := lipgloss.Width(selMarker) + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
+		if showCheckboxes {
+			overhead += 4 // "[x] "
+		}
+		overhead += 2 + 1 // indicator + space
+		if task.Priority == "high" {
+			overhead++ // "!"
+		}
+		if node.InCycle {
+			overhead += 2 // " ↺"
+		}
+		availableWidth := width - overhead
+		title = truncateTitle(title, availableWidth)
+	}
+
+	if isSelected {
+		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
+	} else {
+		title = DimStyle.Render(title)
+	}
+
+	// Project label (only in aggregate view)
+	projectLabel := ""
+	if activeProjectID == "all" && task.ProjectID != "" {
+		projectLabel = lipgloss.NewStyle().
+			Foreground(ColorMagenta).
+			Render(fmt.Sprintf("[%s] ", task.ProjectID))
+	}
+
+	// Priority suffix
+	prioritySuffix := ""
+	if task.Priority == "high" {
+		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+	}
+
+	// Cycle suffix
+	cycleSuffix := ""
+	if node.InCycle {
+		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(" ↺")
+	}
+
+	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
+		selMarker, prefix, treeConnector, checkboxPart,
+		indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
 }
 
 // SetLaneViewMode enables or disables lane-based git-graph rendering.

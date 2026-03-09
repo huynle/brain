@@ -1,6 +1,19 @@
 package tui
 
-import "github.com/huynle/brain-api/internal/types"
+import (
+	"fmt"
+	"os"
+
+	"github.com/huynle/brain-api/internal/types"
+)
+
+// debugLog writes a debug message to stderr if DEBUG_TUI_GROUPING env var is set.
+// This helps diagnose why groups might not appear in the TUI.
+func debugLog(format string, args ...interface{}) {
+	if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+		fmt.Fprintf(os.Stderr, "[DEBUG:grouping] "+format+"\n", args...)
+	}
+}
 
 // StatusGroup represents a collapsible group of tasks organized by status (classification),
 // with nested feature grouping within each status.
@@ -19,7 +32,9 @@ type StatusGroup struct {
 // Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
 func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[string]bool) []StatusGroup {
+	debugLog("GroupTasksByStatusAndFeature called: %d tasks, %d visible groups configured", len(tasks), len(visibleGroups))
 	if len(tasks) == 0 {
+		debugLog("No tasks to group")
 		return nil
 	}
 
@@ -28,6 +43,8 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 	for _, task := range tasks {
 		status := normalizeClassification(task.Classification, task.Status, task.FeatureID)
 		statusMap[status] = append(statusMap[status], task)
+		debugLog("Task %s: classification=%s status=%s feature_id=%s -> group=%s", 
+			task.ID, task.Classification, task.Status, task.FeatureID, status)
 	}
 
 	// Step 2: For each status group, create nested feature groups
@@ -37,19 +54,29 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 	for _, statusName := range statusOrder {
 		statusTasks, ok := statusMap[statusName]
 		if !ok || len(statusTasks) == 0 {
+			debugLog("Group %s: skipped (no tasks)", statusName)
 			continue
 		}
 
 		// Check visibility: if visibleGroups is nil/empty, show all groups
 		// If visibleGroups exists and group is explicitly false, skip it
+		visible := true
 		if len(visibleGroups) > 0 {
-			if visible, hasKey := visibleGroups[statusName]; hasKey && !visible {
-				continue // Skip invisible groups
+			if vis, hasKey := visibleGroups[statusName]; hasKey {
+				visible = vis
 			}
+		}
+
+		if !visible {
+			debugLog("Group %s: skipped (visibility=false, %d tasks hidden)", statusName, len(statusTasks))
+			continue
 		}
 
 		// Group tasks by feature within this status
 		featureResult := GroupTasksByFeature(statusTasks)
+
+		debugLog("Group %s: creating group (visibility=true, %d tasks, %d features)", 
+			statusName, len(statusTasks), len(featureResult.Features))
 
 		result = append(result, StatusGroup{
 			Name:      statusName,
@@ -60,5 +87,6 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 		})
 	}
 
+	debugLog("Final result: %d groups created", len(result))
 	return result
 }

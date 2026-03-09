@@ -79,11 +79,13 @@ func normalizeClassification(classification, status, featureID string) string {
 		// Only classify as Ungrouped for non-terminal classifications
 		switch classification {
 		case "ready", "waiting", "blocked":
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=%s)", classification)
 			return "Ungrouped"
 		}
 		// Also check status-based classifications
 		switch status {
 		case "pending", "waiting", "blocked":
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=%s)", status)
 			return "Ungrouped"
 		}
 	}
@@ -103,6 +105,7 @@ func normalizeClassification(classification, status, featureID string) string {
 	// and are indicated by the blue arrow indicator, not a separate "Active" group
 	switch status {
 	case "draft":
+		debugLog("normalizeClassification: status=draft -> Draft group (classification=%s, feature_id=%s)", classification, featureID)
 		return "Draft"
 	case "cancelled":
 		return "Cancelled"
@@ -122,6 +125,7 @@ func normalizeClassification(classification, status, featureID string) string {
 		return "Blocked"
 	default:
 		// Default: unknown statuses go to Completed
+		debugLog("normalizeClassification: unknown status=%s -> Completed (classification=%s, feature_id=%s)", status, classification, featureID)
 		return "Completed"
 	}
 }

@@ -72,31 +72,31 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 }
 
 // normalizeClassification maps API classification and status values to display groups.
-// If the task has no feature_id (empty string), it is classified as "Ungrouped".
+// If the task has no feature_id (empty string), it is classified as "Ungrouped" for active work,
+// but terminal statuses (completed, draft, etc.) stay in their respective status groups.
 func normalizeClassification(classification, status, featureID string) string {
-	// Check if task has no feature_id for Ready/Waiting/Blocked classifications
-	if featureID == "" {
-		// Only classify as Ungrouped for non-terminal classifications
-		switch classification {
-		case "ready", "waiting", "blocked":
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=%s)", classification)
-			return "Ungrouped"
-		}
-		// Also check status-based classifications
-		switch status {
-		case "pending", "waiting", "blocked":
-			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=%s)", status)
-			return "Ungrouped"
-		}
-	}
-
 	// First check classification (primary indicator)
 	switch classification {
 	case "ready":
+		// Tasks without feature_id in ready state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=ready)")
+			return "Ungrouped"
+		}
 		return "Ready"
 	case "waiting":
+		// Tasks without feature_id in waiting state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=waiting)")
+			return "Ungrouped"
+		}
 		return "Waiting"
 	case "blocked":
+		// Tasks without feature_id in blocked state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (classification=blocked)")
+			return "Ungrouped"
+		}
 		return "Blocked"
 	}
 
@@ -118,10 +118,25 @@ func normalizeClassification(classification, status, featureID string) string {
 	case "archived":
 		return "Archived"
 	case "pending":
+		// Tasks without feature_id in pending state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=pending)")
+			return "Ungrouped"
+		}
 		return "Ready"
 	case "waiting":
+		// Tasks without feature_id in waiting state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=waiting)")
+			return "Ungrouped"
+		}
 		return "Waiting"
 	case "blocked":
+		// Tasks without feature_id in blocked state go to Ungrouped
+		if featureID == "" {
+			debugLog("normalizeClassification: task without feature_id -> Ungrouped (status=blocked)")
+			return "Ungrouped"
+		}
 		return "Blocked"
 	default:
 		// Default: unknown statuses go to Completed

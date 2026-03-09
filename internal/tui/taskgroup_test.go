@@ -438,3 +438,57 @@ func TestGroupTasks_WithVisibility_OnlyHiddenGroups(t *testing.T) {
 		t.Fatalf("expected 0 groups, got %d", len(groups))
 	}
 }
+
+// Test the specific user request: tasks without feature_id in classification mode should be "Ungrouped"
+func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		// Tasks WITH feature_id - should use normal classification
+		{ID: "t1", Title: "Ready with feature", Status: "pending", Priority: "high", Classification: "ready", FeatureID: "feature-1"},
+		{ID: "t2", Title: "Waiting with feature", Status: "pending", Priority: "high", Classification: "waiting", FeatureID: "feature-1"},
+		// Tasks WITHOUT feature_id - should be "Ungrouped"
+		{ID: "t3", Title: "Ready without feature", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t4", Title: "Waiting without feature", Status: "pending", Priority: "high", Classification: "waiting"},
+		// Terminal states without feature_id - should remain in their own groups
+		{ID: "t5", Title: "Completed without feature", Status: "completed", Priority: "high", Classification: ""},
+	}
+
+	groups := GroupTasks(tasks, nil)
+
+	// Should have 4 groups: Ungrouped (2 tasks), Ready (1 task), Waiting (1 task), Completed (1 task)
+	if len(groups) != 4 {
+		t.Fatalf("expected 4 groups, got %d", len(groups))
+	}
+
+	// Check order and contents
+	expectedGroups := map[string]int{
+		"Ungrouped": 2,
+		"Ready":     1,
+		"Waiting":   1,
+		"Completed": 1,
+	}
+
+	for _, group := range groups {
+		expectedCount, ok := expectedGroups[group.Name]
+		if !ok {
+			t.Errorf("unexpected group: %s", group.Name)
+			continue
+		}
+		if group.Count != expectedCount {
+			t.Errorf("group %s: expected %d tasks, got %d", group.Name, expectedCount, group.Count)
+		}
+	}
+
+	// Verify Ungrouped comes first
+	if groups[0].Name != "Ungrouped" {
+		t.Errorf("expected first group to be Ungrouped, got %s", groups[0].Name)
+	}
+
+	// Verify Ungrouped contains the correct tasks
+	ungroupedIDs := make(map[string]bool)
+	for _, task := range groups[0].Tasks {
+		ungroupedIDs[task.ID] = true
+	}
+	if !ungroupedIDs["t3"] || !ungroupedIDs["t4"] {
+		t.Errorf("Ungrouped should contain t3 and t4, got: %v", ungroupedIDs)
+	}
+}

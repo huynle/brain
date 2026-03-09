@@ -75,10 +75,16 @@ func (mc *MetricsCollector) Collect() ResourceMetrics {
 }
 
 // Format returns formatted string: "CPU:12.3% Mem:524.2MB 3 procs"
+// Memory displays as GB when >= 1000MB (matching TypeScript behavior)
 func (m ResourceMetrics) Format() string {
-	return fmt.Sprintf("CPU:%.1f%% Mem:%.1fMB %d procs",
+	memDisplay := fmt.Sprintf("%.1fMB", m.MemoryMB)
+	if m.MemoryMB >= 1000 {
+		memDisplay = fmt.Sprintf("%.1fGB", m.MemoryMB/1024)
+	}
+
+	return fmt.Sprintf("CPU:%.1f%% Mem:%s %d procs",
 		m.CPUPercent,
-		m.MemoryMB,
+		memDisplay,
 		m.ProcessCount,
 	)
 }

@@ -28,13 +28,14 @@ func TestGroupTasksByStatusAndFeature_SingleStatusNoFeatures(t *testing.T) {
 
 	result := GroupTasksByStatusAndFeature(tasks)
 
+	// With the new behavior, tasks without feature_id are classified as "Ungrouped"
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 status group, got %d", len(result))
 	}
 
 	statusGroup := result[0]
-	if statusGroup.Name != "Ready" {
-		t.Errorf("Expected status name 'Ready', got '%s'", statusGroup.Name)
+	if statusGroup.Name != "Ungrouped" {
+		t.Errorf("Expected status name 'Ungrouped', got '%s'", statusGroup.Name)
 	}
 	if statusGroup.Count != 2 {
 		t.Errorf("Expected count 2, got %d", statusGroup.Count)
@@ -64,18 +65,27 @@ func TestGroupTasksByStatusAndFeature_MultipleStatusesWithFeatures(t *testing.T)
 
 	result := GroupTasksByStatusAndFeature(tasks)
 
-	// Verify 3 status groups: Ready, Waiting, Completed (in that order)
-	if len(result) != 3 {
-		t.Fatalf("Expected 3 status groups, got %d", len(result))
+	// Verify 4 status groups: Ungrouped (1 task4), Ready (3 with features), Waiting (1), Completed (2)
+	if len(result) != 4 {
+		t.Fatalf("Expected 4 status groups, got %d", len(result))
 	}
 
-	// Check Ready group
-	readyGroup := result[0]
-	if readyGroup.Name != "Ready" {
-		t.Errorf("Expected first group 'Ready', got '%s'", readyGroup.Name)
+	// Check Ungrouped group (task4 without feature)
+	ungroupedGroup := result[0]
+	if ungroupedGroup.Name != "Ungrouped" {
+		t.Errorf("Expected first group 'Ungrouped', got '%s'", ungroupedGroup.Name)
 	}
-	if readyGroup.Count != 4 {
-		t.Errorf("Expected Ready count 4, got %d", readyGroup.Count)
+	if ungroupedGroup.Count != 1 {
+		t.Errorf("Expected Ungrouped count 1, got %d", ungroupedGroup.Count)
+	}
+
+	// Check Ready group (tasks 1, 2, 3 with features)
+	readyGroup := result[1]
+	if readyGroup.Name != "Ready" {
+		t.Errorf("Expected second group 'Ready', got '%s'", readyGroup.Name)
+	}
+	if readyGroup.Count != 3 {
+		t.Errorf("Expected Ready count 3, got %d", readyGroup.Count)
 	}
 	if len(readyGroup.Features) != 2 {
 		t.Fatalf("Expected 2 features in Ready, got %d", len(readyGroup.Features))
@@ -96,21 +106,15 @@ func TestGroupTasksByStatusAndFeature_MultipleStatusesWithFeatures(t *testing.T)
 		t.Errorf("Expected 1 task in ui-redesign, got %d", len(readyGroup.Features[1].Tasks))
 	}
 
-	// Check ungrouped in Ready
-	if readyGroup.Ungrouped == nil {
-		t.Fatal("Expected Ungrouped in Ready")
-	}
-	if len(readyGroup.Ungrouped.Tasks) != 1 {
-		t.Errorf("Expected 1 ungrouped task in Ready, got %d", len(readyGroup.Ungrouped.Tasks))
-	}
-	if readyGroup.Ungrouped.Tasks[0].ID != "task4" {
-		t.Errorf("Expected ungrouped task 'task4', got '%s'", readyGroup.Ungrouped.Tasks[0].ID)
+	// No ungrouped in Ready anymore - task4 is in top-level Ungrouped
+	if readyGroup.Ungrouped != nil {
+		t.Errorf("Expected no Ungrouped in Ready, but it exists with %d tasks", len(readyGroup.Ungrouped.Tasks))
 	}
 
 	// Check Waiting group
-	waitingGroup := result[1]
+	waitingGroup := result[2]
 	if waitingGroup.Name != "Waiting" {
-		t.Errorf("Expected second group 'Waiting', got '%s'", waitingGroup.Name)
+		t.Errorf("Expected third group 'Waiting', got '%s'", waitingGroup.Name)
 	}
 	if waitingGroup.Count != 1 {
 		t.Errorf("Expected Waiting count 1, got %d", waitingGroup.Count)

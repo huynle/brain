@@ -1860,8 +1860,8 @@ func (tt *TaskTree) renderGroupTaskTree(
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
-		// Check if this task is selected
-		isSelected := (groupIdx == selectedGroupIdx && *visualIndex == tt.selectedTaskIdx)
+		// Check if this task is selected (use SelectedID for consistency with mouse and keyboard nav)
+		isSelected := (node.Task.ID == tt.SelectedID)
 		*visualIndex++
 
 		// Build the line with tree prefix
@@ -2378,11 +2378,21 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 		}
 
 		if tt.selectedTaskIdx == -1 {
-			// On ungrouped header - move to last feature header or status header
+			// On ungrouped header - move to last feature (last task if expanded, or header if collapsed)
 			if len(statusGroup.Features) > 0 {
 				tt.selectedFeatureIdx = len(statusGroup.Features) - 1
-				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				lastFeature := statusGroup.Features[tt.selectedFeatureIdx]
+
+				// If last feature is expanded, land on its last task
+				if !lastFeature.Collapsed && len(lastFeature.Tasks) > 0 {
+					treeOrder := FlattenTreeOrder(lastFeature.Tasks)
+					tt.selectedTaskIdx = len(treeOrder) - 1
+					tt.SelectedID = treeOrder[tt.selectedTaskIdx]
+				} else {
+					// Last feature is collapsed, land on its header
+					tt.selectedTaskIdx = -1
+					tt.SelectedID = ""
+				}
 			} else {
 				// Move to status header
 				tt.selectedFeatureIdx = -2
@@ -2415,10 +2425,20 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 	if tt.selectedTaskIdx == -1 {
 		// On feature header
 		if tt.selectedFeatureIdx > 0 {
-			// Move to previous feature header
+			// Move to previous feature
 			tt.selectedFeatureIdx--
-			tt.selectedTaskIdx = -1
-			tt.SelectedID = ""
+			prevFeature := statusGroup.Features[tt.selectedFeatureIdx]
+
+			// If previous feature is expanded, land on its last task
+			if !prevFeature.Collapsed && len(prevFeature.Tasks) > 0 {
+				treeOrder := FlattenTreeOrder(prevFeature.Tasks)
+				tt.selectedTaskIdx = len(treeOrder) - 1
+				tt.SelectedID = treeOrder[tt.selectedTaskIdx]
+			} else {
+				// Previous feature is collapsed, land on its header
+				tt.selectedTaskIdx = -1
+				tt.SelectedID = ""
+			}
 		} else {
 			// Move to status header
 			tt.selectedFeatureIdx = -2

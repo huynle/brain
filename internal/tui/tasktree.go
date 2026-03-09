@@ -484,43 +484,41 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// Preserve selection or auto-select first
 			tt.selectFirstFeatureTask()
 		} else {
-			// Classification-based grouping
-			// Build groups
+			// Nested status+feature grouping (default grouped view)
 			settings, _ := LoadSettings()
-			tt.groups = GroupTasks(tasks, settings.GroupVisible)
+			tt.statusGroups = GroupTasksByStatusAndFeature(tasks, settings.GroupVisible)
 
-			// Restore collapsed state for each group
-			for i := range tt.groups {
-				groupName := tt.groups[i].Name
-				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
-					tt.groups[i].Collapsed = collapsed
+			// Restore collapsed state for all 3 levels:
+			// 1. Status-level collapse (using groupCollapsed map)
+			// 2. Feature-level collapse (using featureCollapsed map)
+			// 3. Ungrouped-level collapse (using featureCollapsed map with status prefix)
+			for i := range tt.statusGroups {
+				statusName := tt.statusGroups[i].Name
+
+				// Restore status-level collapsed state
+				if collapsed, ok := tt.groupCollapsed[statusName]; ok {
+					tt.statusGroups[i].Collapsed = collapsed
+				}
+
+				// Restore feature-level collapsed state
+				for j := range tt.statusGroups[i].Features {
+					featureID := tt.statusGroups[i].Features[j].ID
+					if collapsed, ok := tt.featureCollapsed[featureID]; ok {
+						tt.statusGroups[i].Features[j].Collapsed = collapsed
+					}
+				}
+
+				// Restore ungrouped-level collapsed state (key format: "Status:[Ungrouped]")
+				if tt.statusGroups[i].Ungrouped != nil {
+					ungroupedKey := statusName + ":[Ungrouped]"
+					if collapsed, ok := tt.featureCollapsed[ungroupedKey]; ok {
+						tt.statusGroups[i].Ungrouped.Collapsed = collapsed
+					}
 				}
 			}
 
-			// Preserve selection if possible
-			if tt.SelectedID != "" {
-				found := false
-				for gIdx, group := range tt.groups {
-					for tIdx, task := range group.Tasks {
-						if task.ID == tt.SelectedID {
-							tt.selectedGroupIdx = gIdx
-							tt.selectedTaskIdx = tIdx
-							found = true
-							break
-						}
-					}
-					if found {
-						break
-					}
-				}
-				if !found {
-					// Selection lost, default to first task
-					tt.selectFirstTask()
-				}
-			} else {
-				// Auto-select first task
-				tt.selectFirstTask()
-			}
+			// Initialize selection
+			tt.selectFirstNestedTask()
 		}
 	} else {
 		// Legacy tree view
@@ -600,6 +598,27 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 	tt.isOnUngrouped = false
 }
 
+// selectFirstNestedTask selects the first task in nested status+feature view mode.
+// Initializes 3-level navigation: status groups → feature groups → tasks.
+func (tt *TaskTree) selectFirstNestedTask() {
+	// Start on first status group header
+	if len(tt.statusGroups) > 0 {
+		tt.selectedStatusIdx = 0
+		tt.selectedFeatureIdx = -1 // Start on status header
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
+		return
+	}
+
+	// No tasks available
+	tt.SelectedID = ""
+	tt.selectedStatusIdx = 0
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnUngrouped = false
+}
+
 // MoveDown moves the cursor down one position.
 func (tt *TaskTree) MoveDown() {
 	if tt.useLaneView {
@@ -624,48 +643,65 @@ func (tt *TaskTree) moveDownLegacy() {
 
 // moveDownGrouped navigates down in grouped view.
 func (tt *TaskTree) moveDownGrouped() {
-	if len(tt.groups) == 0 {
+	// Auto-detect nested grouping mode and delegate
+	if len(tt.statusGroups) > 0 && !tt.useFeatureView {
+		tt.moveDownNestedGrouped()
 		return
 	}
 
-	group := tt.groups[tt.selectedGroupIdx]
+	// Classification-only grouping or feature view (handled by legacy code below)
+	if len(tt.groups) == 0 && !tt.useFeatureView {
+		return
+	}
 
-	if tt.selectedTaskIdx == -1 {
-		// On group header
-		if group.Collapsed {
-			// Group is collapsed, jump to next group header
-			if tt.selectedGroupIdx < len(tt.groups)-1 {
-				tt.selectedGroupIdx++
-				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+	// Feature view navigation (uses featureGroups)
+	if tt.useFeatureView {
+		// Feature view navigation is inline below - not extracted yet
+		// TODO: Extract to moveDownFeatureGrouped() if needed
+		// For now, fall through to existing logic
+	}
+
+	// Classification-only grouping (original logic)
+	if len(tt.groups) > 0 {
+		group := tt.groups[tt.selectedGroupIdx]
+
+		if tt.selectedTaskIdx == -1 {
+			// On group header
+			if group.Collapsed {
+				// Group is collapsed, jump to next group header
+				if tt.selectedGroupIdx < len(tt.groups)-1 {
+					tt.selectedGroupIdx++
+					tt.selectedTaskIdx = -1
+					tt.SelectedID = ""
+				} else {
+					// No next group - expand current group and enter it
+					if len(group.Tasks) > 0 {
+						tt.groups[tt.selectedGroupIdx].Collapsed = false
+						tt.groupCollapsed[group.Name] = false
+						tt.selectedTaskIdx = 0
+						tt.SelectedID = group.Tasks[0].ID
+					}
+				}
 			} else {
-				// No next group - expand current group and enter it
+				// Group is expanded, enter group (move to first task)
 				if len(group.Tasks) > 0 {
-					tt.groups[tt.selectedGroupIdx].Collapsed = false
-					tt.groupCollapsed[group.Name] = false
 					tt.selectedTaskIdx = 0
 					tt.SelectedID = group.Tasks[0].ID
 				}
 			}
 		} else {
-			// Group is expanded, enter group (move to first task)
-			if len(group.Tasks) > 0 {
-				tt.selectedTaskIdx = 0
-				tt.SelectedID = group.Tasks[0].ID
-			}
-		}
-	} else {
-		// Within group
-		if tt.selectedTaskIdx < len(group.Tasks)-1 {
-			// Move to next task in group
-			tt.selectedTaskIdx++
-			tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
-		} else {
-			// End of group, move to next group HEADER
-			if tt.selectedGroupIdx < len(tt.groups)-1 {
-				tt.selectedGroupIdx++
-				tt.selectedTaskIdx = -1 // Land on header
-				tt.SelectedID = ""
+			// Within group
+			if tt.selectedTaskIdx < len(group.Tasks)-1 {
+				// Move to next task in group
+				tt.selectedTaskIdx++
+				tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
+			} else {
+				// End of group, move to next group HEADER
+				if tt.selectedGroupIdx < len(tt.groups)-1 {
+					tt.selectedGroupIdx++
+					tt.selectedTaskIdx = -1 // Land on header
+					tt.SelectedID = ""
+				}
 			}
 		}
 	}
@@ -695,6 +731,13 @@ func (tt *TaskTree) moveUpLegacy() {
 
 // moveUpGrouped navigates up in grouped view.
 func (tt *TaskTree) moveUpGrouped() {
+	// Auto-detect nested grouping mode and delegate
+	if len(tt.statusGroups) > 0 && !tt.useFeatureView {
+		tt.moveUpNestedGrouped()
+		return
+	}
+
+	// Classification-only grouping or feature view
 	if len(tt.groups) == 0 {
 		return
 	}
@@ -750,6 +793,9 @@ func (tt *TaskTree) moveToTopLegacy() {
 
 // moveToTopGrouped moves to the first task in grouped view.
 func (tt *TaskTree) moveToTopGrouped() {
+	// TODO: Add auto-detect for nested mode when moveToTopNestedGrouped exists
+
+	// Classification-only grouping or feature view
 	if len(tt.groups) == 0 {
 		return
 	}

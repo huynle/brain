@@ -1140,6 +1140,113 @@ func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
 }
 
 // =============================================================================
+// Nested Status+Feature Grouping Wire-up Tests
+// =============================================================================
+
+// TestTaskTree_SetTasks_PopulatesStatusGroups verifies that SetTasks() correctly
+// calls GroupTasksByStatusAndFeature() to populate statusGroups instead of
+// using classification-only groups.
+func TestTaskTree_SetTasks_PopulatesStatusGroups(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)         // Enable grouped view
+	tt.SetFeatureViewMode(false) // Disable feature-only view (should trigger nested)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready Task 1", Classification: "ready", Priority: "high", Status: "pending", FeatureID: "auth"},
+		{ID: "t2", Title: "Ready Task 2", Classification: "ready", Priority: "medium", Status: "pending", FeatureID: "auth"},
+		{ID: "t3", Title: "Ready Ungrouped", Classification: "ready", Priority: "low", Status: "pending", FeatureID: ""},
+		{ID: "t4", Title: "Waiting Task 1", Classification: "waiting", Priority: "high", Status: "pending", FeatureID: "dashboard"},
+	}
+
+	tt.SetTasks(tasks)
+
+	// Verify statusGroups was populated (NOT empty)
+	if len(tt.statusGroups) == 0 {
+		t.Fatal("expected statusGroups to be populated, got empty slice")
+	}
+
+	// Verify we have nested structure (status → features)
+	foundReady := false
+	foundWaiting := false
+	for _, sg := range tt.statusGroups {
+		if sg.Name == "Ready" {
+			foundReady = true
+			// Should have nested features
+			if len(sg.Features) == 0 && sg.Ungrouped == nil {
+				t.Error("expected Ready status group to have nested features or ungrouped tasks")
+			}
+		}
+		if sg.Name == "Waiting" {
+			foundWaiting = true
+			// Should have nested features
+			if len(sg.Features) == 0 && sg.Ungrouped == nil {
+				t.Error("expected Waiting status group to have nested features or ungrouped tasks")
+			}
+		}
+	}
+
+	if !foundReady {
+		t.Error("expected to find Ready status group")
+	}
+	if !foundWaiting {
+		t.Error("expected to find Waiting status group")
+	}
+}
+
+// TestTaskTree_SetTasks_PreservesNestedCollapsedState verifies that collapsed
+// state is restored across all 3 levels: status, feature, and ungrouped.
+func TestTaskTree_SetTasks_PreservesNestedCollapsedState(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready Task", Classification: "ready", Priority: "high", Status: "pending", FeatureID: "auth"},
+		{ID: "t2", Title: "Ungrouped Task", Classification: "ready", Priority: "medium", Status: "pending", FeatureID: ""},
+	}
+
+	// First pass: populate statusGroups
+	tt.SetTasks(tasks)
+
+	// Manually set collapsed states at all levels
+	tt.groupCollapsed["Ready"] = true               // Status-level collapse
+	tt.featureCollapsed["auth"] = true              // Feature-level collapse
+	tt.featureCollapsed["Ready:[Ungrouped]"] = true // Ungrouped-level collapse
+
+	// Second pass: should restore all collapsed states
+	tt.SetTasks(tasks)
+
+	// Verify status-level collapse was restored
+	foundReady := false
+	for _, sg := range tt.statusGroups {
+		if sg.Name == "Ready" {
+			foundReady = true
+			if !sg.Collapsed {
+				t.Error("expected Ready status group to be collapsed")
+			}
+
+			// Verify feature-level collapse was restored
+			for _, fg := range sg.Features {
+				if fg.ID == "auth" {
+					if !fg.Collapsed {
+						t.Error("expected auth feature to be collapsed")
+					}
+				}
+			}
+
+			// Verify ungrouped-level collapse was restored
+			if sg.Ungrouped != nil && !sg.Ungrouped.Collapsed {
+				t.Error("expected Ungrouped section to be collapsed")
+			}
+		}
+	}
+
+	if !foundReady {
+		t.Fatal("expected to find Ready status group")
+	}
+}
+
+// =============================================================================
 // Phase 8: Comprehensive Integration & Edge Case Tests
 // =============================================================================
 

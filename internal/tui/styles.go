@@ -46,12 +46,12 @@ const (
 
 // ActiveBorder is used for the currently focused panel.
 var ActiveBorder = lipgloss.NewStyle().
-	BorderStyle(lipgloss.RoundedBorder()).
+	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(ColorCyan)
 
 // InactiveBorder is used for unfocused panels.
 var InactiveBorder = lipgloss.NewStyle().
-	BorderStyle(lipgloss.RoundedBorder()).
+	BorderStyle(lipgloss.NormalBorder()).
 	BorderForeground(ColorDim)
 
 // =============================================================================

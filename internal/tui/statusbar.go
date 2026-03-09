@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -39,28 +38,12 @@ func (s StatusBar) View(width int) string {
 	barStyle := lipgloss.NewStyle().
 		BorderStyle(lipgloss.RoundedBorder()).
 		BorderForeground(ColorCyan).
-		Width(width - 2).
-		PaddingLeft(1).
-		PaddingRight(1)
+		Width(width-2).
+		Padding(0, 1) // 0 vertical padding, 1 horizontal padding
 
 	// Combine both rows with border
 	content := firstRow + "\n" + secondRow
 	rendered := barStyle.Render(content)
-
-	// CRITICAL: Ensure exactly 4 lines (2 content + 2 border lines)
-	// This matches the TypeScript TUI multi-row behavior
-	lineCount := strings.Count(rendered, "\n") + 1
-	if lineCount != 4 {
-		// Pad or truncate to exactly 4 lines
-		lines := strings.Split(rendered, "\n")
-		for len(lines) < 4 {
-			lines = append(lines, "") // Pad with blank lines
-		}
-		if len(lines) > 4 {
-			lines = lines[:4] // Truncate
-		}
-		rendered = strings.Join(lines, "\n")
-	}
 
 	return rendered
 }

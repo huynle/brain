@@ -1264,11 +1264,8 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 
 // renderGroupedTaskLine renders a single task line in grouped view.
 func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool, showCheckboxes bool) string {
-	// Selection marker
+	// Selection marker (always 2 spaces for alignment)
 	selMarker := "  "
-	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
-	}
 
 	// Checkbox indicator (ONLY when multi-select active)
 	checkboxPart := ""
@@ -1282,21 +1279,36 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 
 	// Status indicator with color
 	indicator := statusIndicator(task.Status, task.Classification)
-	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title
 	title := task.Title
-	if isSelected {
-		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
-	} else if selectedTasks[task.ID] {
-		// Apply selection style to selected tasks even when not focused
-		title = SelectedTaskStyle.Render(title)
-	}
 
 	// Priority suffix
 	prioritySuffix := ""
 	if task.Priority == "high" {
-		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+		prioritySuffix = "!"
+	}
+
+	// Apply blue background to ALL parts if selected
+	if isSelected {
+		selMarker = SelectedRowStyle.Render(selMarker)
+		checkboxPart = SelectedRowStyle.Render(checkboxPart)
+		indicatorStyled := SelectedRowStyle.Render(indicator)
+		title = SelectedRowStyle.Render(title)
+		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
+		return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
+	}
+
+	// Not selected - apply default styling
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
+
+	if selectedTasks[task.ID] {
+		// Apply selection style to selected tasks even when not focused
+		title = SelectedTaskStyle.Render(title)
+	}
+
+	if task.Priority == "high" {
+		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render(prioritySuffix)
 	}
 
 	return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
@@ -1324,13 +1336,19 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		// Feature header with count and stats
 		featureHeader := fmt.Sprintf("%s %s (%d) [%d/%d]", collapseIndicator, feature.Name, feature.Stats.Total, feature.Stats.Completed, feature.Stats.Total)
 
-		// Selection marker
+		// Selection marker (2 spaces for alignment)
+		selMarker := "  "
+
+		// Apply blue background if selected, otherwise dark blue background
 		if isFeatureSelected {
-			featureHeader = GroupHeaderStyle.Render(featureHeader)
-			featureHeader = fmt.Sprintf("→ %s", featureHeader)
+			// Blue background for selected feature header
+			featureHeader = SelectedRowStyle.Render(featureHeader)
+			selMarker = SelectedRowStyle.Render(selMarker)
+			featureHeader = fmt.Sprintf("%s%s", selMarker, featureHeader)
 		} else {
+			// Dark blue background for unselected feature headers
 			featureHeader = GroupHeaderStyle.Render(featureHeader)
-			featureHeader = fmt.Sprintf("  %s", featureHeader)
+			featureHeader = fmt.Sprintf("%s%s", selMarker, featureHeader)
 		}
 
 		lines = append(lines, featureHeader)
@@ -1368,12 +1386,17 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 		ungroupedHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, ungrouped.Name, len(ungrouped.Tasks))
 
+		// Selection marker (2 spaces for alignment)
+		selMarker := "  "
+
+		// Apply blue background if selected, otherwise dark blue background
 		if isUngroupedSelected {
-			ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
-			ungroupedHeader = fmt.Sprintf("→ %s", ungroupedHeader)
+			ungroupedHeader = SelectedRowStyle.Render(ungroupedHeader)
+			selMarker = SelectedRowStyle.Render(selMarker)
+			ungroupedHeader = fmt.Sprintf("%s%s", selMarker, ungroupedHeader)
 		} else {
 			ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
-			ungroupedHeader = fmt.Sprintf("  %s", ungroupedHeader)
+			ungroupedHeader = fmt.Sprintf("%s%s", selMarker, ungroupedHeader)
 		}
 
 		lines = append(lines, ungroupedHeader)
@@ -1745,8 +1768,8 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Calculate overhead: selMarker(1) + prefix + treeConnector + checkbox + indicator(2) + space(1) + suffixes
-		overhead := 1 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
+		// Calculate overhead: selMarker(2) + prefix + treeConnector + checkbox + indicator(2) + space(1) + suffixes
+		overhead := 2 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
 		if showCheckboxes {
 			overhead += 4 // "[x] "
 		}
@@ -1761,26 +1784,40 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 		title = truncateTitle(title, availableWidth)
 	}
 
-	if isSelected {
-		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
-	}
-
 	// Priority suffix
 	prioritySuffix := ""
 	if task.Priority == "high" {
-		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+		prioritySuffix = "!"
 	}
 
 	// Cycle indicator
 	cycleSuffix := ""
 	if node.InCycle {
-		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(" ↺")
+		cycleSuffix = " ↺"
 	}
 
-	// Selection marker
+	// Selection marker (always 2 spaces for alignment)
 	selMarker := "  "
+
+	// Apply blue background to ALL parts if selected
 	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+		// Apply background to each component
+		selMarker = SelectedRowStyle.Render(selMarker)
+		prefix = SelectedRowStyle.Render(prefix)
+		treeConnector = SelectedRowStyle.Render(treeConnector)
+		checkboxPart = SelectedRowStyle.Render(checkboxPart)
+		indicatorStyled = SelectedRowStyle.Render(indicator)
+		title = SelectedRowStyle.Render(title)
+		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
+		cycleSuffix = SelectedRowStyle.Render(cycleSuffix)
+	} else {
+		// Apply default styling when not selected
+		if task.Priority == "high" {
+			prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render(prioritySuffix)
+		}
+		if node.InCycle {
+			cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(cycleSuffix)
+		}
 	}
 
 	return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)

@@ -10,7 +10,7 @@ import "github.com/charmbracelet/lipgloss"
 var (
 	ColorReady     = lipgloss.Color("2")  // green
 	ColorWaiting   = lipgloss.Color("3")  // yellow
-	ColorActive    = lipgloss.Color("4")  // blue
+	ColorActive    = lipgloss.Color("6")  // cyan
 	ColorBlocked   = lipgloss.Color("1")  // red
 	ColorCompleted = lipgloss.Color("8")  // gray/dim
 	ColorCyan      = lipgloss.Color("6")  // cyan

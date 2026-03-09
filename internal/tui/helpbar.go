@@ -8,7 +8,12 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel Panel
+	ActivePanel     Panel
+	ViewMode        ViewMode
+	TextWrap        bool
+	IsPaused        bool
+	AllPaused       bool
+	HasTaskSessions bool // whether selected task has sessions (shows o/O shortcuts)
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -32,21 +37,51 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 	// Common shortcuts
 	shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 	shortcuts += fmt.Sprintf("%s Top/Bottom  ", bold("g/G"))
+	shortcuts += fmt.Sprintf("%s Collapse  ", bold("Enter"))
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
 	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 
-	// Task panel specific shortcuts
+	// Panel-specific shortcuts (view mode aware)
+	if h.ActivePanel == PanelLogs {
+		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
+	}
 	if h.ActivePanel == PanelTasks {
-		shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
-		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
-		shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
-		shortcuts += fmt.Sprintf("%s Cancel  ", bold("C"))
-		shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
-		shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
-		shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
-		shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+		if h.ViewMode == ViewModeSchedules {
+			// Schedule view shortcuts
+			shortcuts += fmt.Sprintf("%s Tasks  ", bold("C"))
+		} else {
+			// Task view shortcuts
+			shortcuts += fmt.Sprintf("%s Execute  ", bold("x"))
+			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+			shortcuts += fmt.Sprintf("%s Complete  ", bold("c"))
+			shortcuts += fmt.Sprintf("%s Cancel  ", bold("X"))
+			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
+			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Yank  ", bold("y"))
+			shortcuts += fmt.Sprintf("%s Schedules  ", bold("C"))
+			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
+			shortcuts += fmt.Sprintf("%s Settings  ", bold("S"))
+			shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+			if h.HasTaskSessions {
+				shortcuts += fmt.Sprintf("%s Session  ", bold("o"))
+				shortcuts += fmt.Sprintf("%s Tmux  ", bold("O"))
+			}
+		}
+	}
+
+	// Pause indicator (shown regardless of active panel)
+	if h.AllPaused {
+		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ ALL PAUSED") + "  "
+	} else if h.IsPaused {
+		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ PAUSED") + "  "
+	}
+
+	if h.TextWrap {
+		shortcuts += fmt.Sprintf("%s Wrap  ", bold("w"))
+	} else {
+		shortcuts += fmt.Sprintf("%s Trunc  ", bold("w"))
 	}
 
 	shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))

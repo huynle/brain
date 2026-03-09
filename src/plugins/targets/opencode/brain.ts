@@ -8,6 +8,7 @@
  *
  * Configuration:
  * - BRAIN_API_URL: Base URL for the Brain API (default: http://localhost:3333)
+ * - BRAIN_API_TOKEN: Optional auth token for protected Brain API endpoints
  *
  * ============================================================================
  * AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -60,6 +61,17 @@ type TaskPriority = "high" | "medium" | "low";
 // ============================================================================
 
 const BRAIN_API_URL = process.env.BRAIN_API_URL || "http://localhost:3333";
+const BRAIN_API_TOKEN = process.env.BRAIN_API_TOKEN;
+
+function getAuthHeaders(): Record<string, string> {
+  if (!BRAIN_API_TOKEN) {
+    return {};
+  }
+
+  return {
+    Authorization: `Bearer ${BRAIN_API_TOKEN}`,
+  };
+}
 
 // ============================================================================
 // Health Check & Connection State
@@ -100,6 +112,7 @@ async function checkBrainHealth(): Promise<BrainConnectionState> {
     
     const response = await fetch(`${BRAIN_API_URL}/api/v1/health`, {
       signal: controller.signal,
+      headers: getAuthHeaders(),
     });
     clearTimeout(timeoutId);
 
@@ -314,6 +327,7 @@ async function apiRequest<T>(
     method,
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
     },
   };
 

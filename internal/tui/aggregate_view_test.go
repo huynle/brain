@@ -251,21 +251,21 @@ func TestSyncActiveProjectViewWithFilter(t *testing.T) {
 		{ID: "task2", Title: "Other Task", ProjectID: "proj2"},
 	}
 
-	// Set active filter
+	// Set active filter (locked mode = filter applied)
 	m.filterQuery = "Important"
-	m.filterActive = true
+	m.filterState = FilterLocked
 	m.activeProjectID = "all"
 
 	// Call syncActiveProjectView
 	m.syncActiveProjectView()
 
-	// Filter should still be active
-	if !m.filterActive {
-		t.Error("Expected filter to remain active after sync")
+	// Filter state should still be locked after sync
+	if m.filterState != FilterLocked {
+		t.Errorf("Expected filterState to remain FilterLocked after sync, got %v", m.filterState)
 	}
 
 	// Note: We can't easily verify the filtered task list without accessing taskTree internals
-	// The important part is that filterActive remains true, which signals that applyFilter() was called
+	// The important part is that filterState remains FilterLocked, which signals that applyFilter() was called
 }
 
 // TestSyncActiveProjectViewSwitchingProjects verifies view updates when switching between projects.

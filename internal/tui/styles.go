@@ -119,13 +119,14 @@ func PriorityStyle(priority string) lipgloss.Style {
 // Filter Styles
 // =============================================================================
 
-// FilterBarStyle is used for the filter input bar at the bottom.
-var FilterBarStyle = lipgloss.NewStyle().
-	Background(lipgloss.Color("240")).
-	Foreground(lipgloss.Color("255")).
-	Padding(0, 1)
+// FilterTypingStyle is used for the filter input bar when actively typing (yellow bg).
+var FilterTypingStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("3")). // yellow
+	Foreground(lipgloss.Color("0")). // black text on yellow
+	Padding(0, 0)
 
-// FilterStatusStyle is used for the filter status line (e.g., "Filtered: 5/24 tasks").
-var FilterStatusStyle = lipgloss.NewStyle().
-	Foreground(lipgloss.Color("243")).
-	Italic(true)
+// FilterLockedStyle is used for the locked filter badge (cyan bg).
+var FilterLockedStyle = lipgloss.NewStyle().
+	Background(lipgloss.Color("6")). // cyan
+	Foreground(lipgloss.Color("0")). // black text on cyan
+	Padding(0, 0)

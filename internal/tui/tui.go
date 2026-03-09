@@ -32,6 +32,11 @@ type Model struct {
 	taskDetail TaskDetail
 	logViewer  LogViewer
 
+	// Schedule view
+	viewMode       ViewMode
+	scheduleList   ScheduleList
+	scheduleDetail ScheduleDetail
+
 	// Modal management
 	modalManager ModalManager
 	settings     Settings
@@ -49,10 +54,9 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
-	// Filter state
-	filterMode   bool   // Is filter input active?
-	filterQuery  string // Current filter text
-	filterActive bool   // Is a filter currently applied?
+	// Filter state (3-mode state machine: Off → Typing → Locked)
+	filterState FilterMode // Current filter mode
+	filterQuery string     // Current filter text
 
 	// Task data
 	tasks []types.ResolvedTask
@@ -67,14 +71,29 @@ type Model struct {
 	// Multi-select state
 	selectedTasks map[string]bool
 
+	// Pause/resume state
+	pausedProjects map[string]bool
+	allPaused      bool
+
 	// Resource metrics
 	metricsCollector *MetricsCollector
 	resourceMetrics  ResourceMetrics
+
+	// Log filtering: show only logs for the selected task
+	filterLogsByTask bool
+
+	// Log file truncation counter (triggers every 150 ticks ≈ 5 minutes)
+	truncateCounter int
 
 	// Status message for user feedback
 	statusMessage     string
 	statusMessageType string // "success", "error", "info"
 	statusMessageTime time.Time
+
+	// Auto-monitor state
+	seenFeatureIDs      map[string]bool // tracks all feature_ids ever seen across task updates
+	initialSnapshotDone bool            // prevents creating monitors for pre-existing features on first load
+	monitorClient       *MonitorClient  // reusable client for monitor API calls
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -99,16 +118,25 @@ func NewModel(cfg Config) Model {
 		taskTree:         NewTaskTree(),
 		taskDetail:       NewTaskDetail(),
 		logViewer:        NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:     NewScheduleList(),
+		scheduleDetail:   NewScheduleDetail(),
 		modalManager:     NewModalManager(),
 		settings:         settings,
 		activePanel:      PanelTasks,
-		sseClient:        NewSSEClient(cfg.APIURL, cfg.Project),
+		sseClient:        NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
+		pausedProjects:   make(map[string]bool),
 		tasksByProject:   make(map[string][]types.ResolvedTask),
 		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
+		seenFeatureIDs:   make(map[string]bool),
+		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 	}
+
+	// Wire TextWrap setting to sub-models
+	m.taskTree.TextWrap = settings.TextWrap
+	m.helpBar.TextWrap = settings.TextWrap
 
 	// Create SSE clients for multi-project mode
 	// Initialize ProjectTabs for multi-project mode
@@ -122,7 +150,25 @@ func NewModel(cfg Config) Model {
 	}
 	if cfg.IsMultiProject() {
 		for _, projectID := range cfg.Projects {
-			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, projectID)
+			m.sseClients[projectID] = NewSSEClient(cfg.APIURL, cfg.APIToken, projectID)
+		}
+	}
+
+	// Wire log file persistence
+	if cfg.Project != "" {
+		var logPath string
+		if cfg.LogDir != "" {
+			logPath = filepath.Join(cfg.LogDir, cfg.Project, "tui-logs.jsonl")
+		} else {
+			homeDir, err := os.UserHomeDir()
+			if err == nil {
+				logPath = filepath.Join(homeDir, ".local", "log", "brain-runner", cfg.Project, "tui-logs.jsonl")
+			}
+		}
+		if logPath != "" {
+			m.logViewer.SetLogFile(logPath)
+			// Load existing log entries (ignore errors — don't fail startup)
+			_ = m.logViewer.LoadFromFile()
 		}
 	}
 
@@ -139,6 +185,19 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 
 // Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
+	if m.config.IsMultiProject() {
+		// Multi-project mode: connect each per-project SSE client
+		cmds := []tea.Cmd{
+			tea.EnableMouseAllMotion,
+			tickCmd(),
+		}
+		for _, client := range m.sseClients {
+			cmds = append(cmds, client.Connect(m.ctx))
+		}
+		return tea.Batch(cmds...)
+	}
+
+	// Single-project mode: connect legacy single client
 	return tea.Batch(
 		tea.EnableMouseAllMotion,
 		m.sseClient.Connect(m.ctx),
@@ -169,29 +228,47 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case TasksUpdatedMsg:
-		// Store tasks by project if ProjectID is set (multi-project mode)
+		// Always store tasks by project if ProjectID is set
 		if msg.ProjectID != "" {
 			m.tasksByProject[msg.ProjectID] = msg.Tasks
-		} else {
-			// Single-project mode: update legacy tasks field directly
+		}
+		// In single-project mode, always update m.tasks directly
+		// (SSE events include ProjectID even for single-project connections,
+		// but syncActiveProjectView is a no-op in single-project mode)
+		if !m.config.IsMultiProject() {
 			m.tasks = msg.Tasks
 		}
 
 		// Update stats if provided
 		if msg.Stats != nil {
-			m.stats = TaskStatsFromAPI(msg.Stats)
-			m.statusBar.Stats = m.stats
+			tuiStats := TaskStatsFromAPI(msg.Stats)
+
+			// Gap 2: In multi-project mode, update ProjectTabs stats
+			if msg.ProjectID != "" && m.config.IsMultiProject() {
+				m.projectTabs.UpdateStats(msg.ProjectID, tuiStats)
+				// Set m.stats from ProjectTabs (respects active tab)
+				m.stats = m.projectTabs.CurrentStats()
+				m.statusBar.Stats = m.stats
+			} else {
+				// Single-project mode: set stats directly
+				m.stats = tuiStats
+				m.statusBar.Stats = m.stats
+			}
 		}
 
 		// Sync active project view (handles aggregate vs project-specific view)
 		// In single-project mode, this is a no-op
 		m.syncActiveProjectView()
 
-		// Update taskTree
+		// Update taskTree and scheduleList
 		m.taskTree.SetTasks(m.tasks)
+		m.scheduleList.SetTasks(m.tasks)
 
 		// Sync task detail with current selection
 		m.syncTaskDetail()
+
+		// Auto-monitor detection: track feature_ids and create monitors for new ones
+		autoMonitorCmds := m.processAutoMonitors(msg)
 
 		// Continue listening for next SSE message
 		// In multi-project mode, use the project-specific client
@@ -201,35 +278,67 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			nextCmd = m.sseClient.WaitForNextMsg()
 		}
+
+		// Batch SSE continuation with any auto-monitor commands
+		if len(autoMonitorCmds) > 0 {
+			allCmds := append([]tea.Cmd{nextCmd}, autoMonitorCmds...)
+			return m, tea.Batch(allCmds...)
+		}
 		return m, nextCmd
 
 	case SSEConnectedMsg:
 		m.connected = true
 		m.statusBar.Connected = true
 		// Continue listening for next SSE message
+		// Gap 4c: Route to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].WaitForNextMsg()
+		}
 		return m, m.sseClient.WaitForNextMsg()
 
 	case SSEDisconnectedMsg:
 		m.connected = false
 		m.statusBar.Connected = false
-		// Schedule reconnect
+		// Gap 4c: Route reconnect to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].Reconnect(DefaultReconnectDelay)
+		}
+		// Schedule reconnect for legacy single client
 		return m, m.sseClient.Reconnect(DefaultReconnectDelay)
 
 	case SSEErrorMsg:
 		// Log error, stay connected, continue listening
+		// Gap 4c: Route to per-project client if ProjectID is set
+		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
+			return m, m.sseClients[msg.ProjectID].WaitForNextMsg()
+		}
 		return m, m.sseClient.WaitForNextMsg()
 
 	case reconnectMsg:
 		// Stop old client and create a new one for reconnection
 		m.sseClient.Stop()
-		m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+		m.sseClient = NewSSEClient(m.config.APIURL, m.config.APIToken, m.config.Project)
 		return m, m.sseClient.Connect(m.ctx)
+
+	case reconnectProjectMsg:
+		// Stop old per-project client and create a new one for reconnection
+		if client, ok := m.sseClients[msg.ProjectID]; ok {
+			client.Stop()
+		}
+		m.sseClients[msg.ProjectID] = NewSSEClient(m.config.APIURL, m.config.APIToken, msg.ProjectID)
+		return m, m.sseClients[msg.ProjectID].Connect(m.ctx)
 
 	case TickMsg:
 		// Collect resource metrics
 		m.resourceMetrics = m.metricsCollector.Collect()
-		// Schedule next tick
-		return m, tickCmd()
+		// Periodic log file truncation (~5 minutes at 2s ticks = 150 ticks)
+		m.truncateCounter++
+		if m.truncateCounter >= 150 {
+			_ = m.logViewer.TruncateFile()
+			m.truncateCounter = 0
+		}
+		// Schedule next tick and sync runner pause state
+		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL, m.config.APIToken))
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -304,12 +413,102 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modalManager.Close()
 		return m, nil
 
+	case sessionsFetchedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Failed to fetch sessions: %v", msg.err))
+			return m, nil
+		}
+		if len(msg.sessionIDs) == 0 {
+			m.setStatusMessage("warn", "No sessions available")
+			return m, nil
+		}
+		taskID := extractTaskID(msg.taskPath)
+		if len(msg.sessionIDs) == 1 {
+			if msg.tmuxMode {
+				return m, openSessionTmux(msg.sessionIDs[0], taskID)
+			}
+			return m, openSessionFullscreen(msg.sessionIDs[0], taskID)
+		}
+		// Multiple sessions: open selection modal
+		onSelect := func(sessionID string) tea.Msg {
+			return sessionSelectedMsg{
+				sessionID: sessionID,
+				tmuxMode:  msg.tmuxMode,
+				taskID:    taskID,
+			}
+		}
+		modal := NewSessionSelectModal(msg.sessionIDs, msg.tmuxMode, onSelect)
+		return m, m.modalManager.Open(modal)
+
+	case sessionSelectedMsg:
+		m.modalManager.Close()
+		if msg.tmuxMode {
+			return m, openSessionTmux(msg.sessionID, msg.taskID)
+		}
+		return m, openSessionFullscreen(msg.sessionID, msg.taskID)
+
+	case sessionOpenedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("✗ Session error: %v", msg.err))
+		} else {
+			m.setStatusMessage("success", "✓ Session closed")
+		}
+		return m, nil
+
 	case editorClosedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("✗ Editor error: %v", msg.err))
 		} else {
 			m.setStatusMessage("success", "✓ File saved - refreshing...")
 		}
+		return m, nil
+
+	case pauseToggledMsg:
+		if msg.err != nil {
+			// Revert optimistic update
+			m.pausedProjects[msg.projectID] = !msg.paused
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause: %v", msg.err))
+		} else {
+			if msg.paused {
+				m.setStatusMessage("success", fmt.Sprintf("Project %s paused", msg.projectID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Project %s resumed", msg.projectID))
+			}
+		}
+		m.syncHelpBarPauseState()
+		return m, nil
+
+	case pauseAllToggledMsg:
+		if msg.err != nil {
+			m.allPaused = !msg.paused
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause all: %v", msg.err))
+		} else {
+			if msg.paused {
+				m.setStatusMessage("success", "All projects paused")
+			} else {
+				m.setStatusMessage("success", "All projects resumed")
+			}
+		}
+		m.syncHelpBarPauseState()
+		return m, nil
+
+	case runnerStatusMsg:
+		if msg.err == nil {
+			m.allPaused = msg.paused
+			m.pausedProjects = make(map[string]bool)
+			for _, id := range msg.pausedProjects {
+				m.pausedProjects[id] = true
+			}
+		}
+		m.syncHelpBarPauseState()
+		return m, nil
+
+	case autoMonitorCreatedMsg:
+		if msg.err != nil {
+			// Silently ignore errors (matching TS behavior - 409 expected)
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Auto-monitor created: %s for %s", msg.templateID, msg.featureID))
 		return m, nil
 	}
 
@@ -330,9 +529,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If in filter mode, handle filter input first
-	if m.filterMode {
+	// If in filter typing mode, handle filter input first
+	if m.filterState == FilterTyping {
 		return m.handleFilterInput(msg)
+	}
+
+	// If in filter locked mode, handle Esc to clear and / to re-enter typing
+	if m.filterState == FilterLocked {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.filterState = FilterOff
+			m.filterQuery = ""
+			m.clearFilter()
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "/" {
+				// Re-enter typing mode, keep current query
+				m.filterState = FilterTyping
+				return m, nil
+			}
+		}
+		// All other keys fall through to normal handling
 	}
 
 	switch msg.Type {
@@ -343,6 +560,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyTab:
 		m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
 		m.helpBar.ActivePanel = m.activePanel
+		return m, nil
+
+	case tea.KeyEnter:
+		// Enter toggles group collapse when on a group header
+		if m.activePanel == PanelTasks && m.taskTree.IsOnGroupHeader() {
+			m.taskTree.ToggleCollapse()
+		}
 		return m, nil
 
 	case tea.KeyRunes:
@@ -381,11 +605,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
-			// Open metadata modal for selected task(s)
+			// Open metadata modal for selected task(s) (tasks view only)
+			if m.viewMode != ViewModeTasks {
+				return m, nil
+			}
 			if m.activePanel == PanelTasks {
 				// Create API client for modal
 				apiClient := runner.NewAPIClient(runner.RunnerConfig{
 					BrainAPIURL: m.config.APIURL,
+					APIToken:    m.config.APIToken,
 					APITimeout:  5000, // 5 second timeout
 				})
 
@@ -395,7 +623,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if m.taskTree.useFeatureView {
 					featureID := m.taskTree.GetSelectedFeatureID()
 					if featureID != "" {
-						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient)
+						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
 						if modal != nil {
 							cmd := m.modalManager.Open(modal)
 							return m, cmd
@@ -425,7 +653,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "c":
-			// Complete task(s) - no confirmation required
+			// Complete task(s) - no confirmation required (tasks view only)
+			if m.viewMode != ViewModeTasks {
+				return m, nil
+			}
 			if m.activePanel == PanelTasks {
 				// Case 1: Multi-select active - batch complete
 				if len(m.selectedTasks) > 0 {
@@ -441,64 +672,52 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
-					return m, batchCompleteTasksCmd(m.config.APIURL, taskPaths, taskIDs)
+					return m, batchCompleteTasksCmd(m.config.APIURL, m.config.APIToken, taskPaths, taskIDs)
 				}
 
 				// Case 2: Single task selected
 				selectedTask := m.taskTree.SelectedTask()
 				if selectedTask != nil {
-					return m, completeTaskCmd(m.config.APIURL, selectedTask.Path)
+					return m, completeTaskCmd(m.config.APIURL, m.config.APIToken, selectedTask.Path)
 				}
 			}
 			return m, nil
 		case "C":
-			// Cancel task(s) - with confirmation modal
-			if m.activePanel == PanelTasks {
-				// Gather task information for cancel
-				var taskPaths []string
-				var taskIDs []string
-				var confirmMsg string
-
-				// Case 1: Multi-select active - batch cancel
-				if len(m.selectedTasks) > 0 {
-					for id := range m.selectedTasks {
-						// Find task to get its path
-						for _, t := range m.tasks {
-							if t.ID == id {
-								taskPaths = append(taskPaths, t.Path)
-								taskIDs = append(taskIDs, id)
-								break
-							}
-						}
-					}
-					confirmMsg = fmt.Sprintf("Cancel %d selected tasks?", len(taskIDs))
-				} else {
-					// Case 2: Single task selected
-					selectedTask := m.taskTree.SelectedTask()
-					if selectedTask != nil {
-						taskPaths = []string{selectedTask.Path}
-						taskIDs = []string{selectedTask.ID}
-						confirmMsg = "Cancel this task?"
-					}
-				}
-
-				if len(taskPaths) > 0 {
-					// Create modal with callback
-					modal := NewConfirmModal("Confirm Cancel", confirmMsg).
-						WithOnConfirm(func() tea.Msg {
-							if len(taskPaths) == 1 {
-								return cancelTaskCmd(m.config.APIURL, taskPaths[0])()
-							}
-							return batchCancelTasksCmd(m.config.APIURL, taskPaths, taskIDs)()
-						})
-					cmd := m.modalManager.Open(modal)
-					return m, cmd
-				}
+			// Toggle view mode between tasks and schedules
+			if m.viewMode == ViewModeTasks {
+				m.viewMode = ViewModeSchedules
+				m.detailVisible = true
+			} else {
+				m.viewMode = ViewModeTasks
 			}
+			m.activePanel = PanelTasks
+			m.helpBar.ViewMode = m.viewMode
+			m.selectedTasks = make(map[string]bool)
+			m.filterState = FilterOff
+			m.filterQuery = ""
+			m.clearFilter()
 			return m, nil
+		case "X":
+			// Cancel task - only in_progress tasks, with confirmation modal (matching TS)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil || selectedTask.Status != "in_progress" {
+				return m, nil
+			}
+			confirmMsg := fmt.Sprintf("Cancel task '%s'?", selectedTask.Title)
+			taskPath := selectedTask.Path
+			apiToken := m.config.APIToken
+			modal := NewConfirmModal("Confirm Cancel", confirmMsg).
+				WithOnConfirm(func() tea.Msg {
+					return cancelTaskCmd(m.config.APIURL, apiToken, taskPath)()
+				})
+			cmd := m.modalManager.Open(modal)
+			return m, cmd
 		case "x":
-			// Execute task - claim for immediate execution
-			if m.activePanel != PanelTasks {
+			// Execute task - claim for immediate execution (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -525,8 +744,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 			return m, m.modalManager.Open(modal)
 		case "d":
-			// Delete task(s) - with confirmation modal
-			if m.activePanel != PanelTasks {
+			// Delete task(s) - with confirmation modal (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -540,19 +759,23 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				count := len(m.selectedTasks)
 				taskIDs := make([]string, 0, count)
 				taskPaths := make([]string, 0, count)
+				taskTitles := make([]string, 0, count)
 				for id := range m.selectedTasks {
 					taskIDs = append(taskIDs, id)
-					// Find task to get path
+					// Find task to get path and title
 					for _, t := range m.tasks {
 						if t.ID == id {
 							taskPaths = append(taskPaths, t.Path)
+							taskTitles = append(taskTitles, t.Title)
 							break
 						}
 					}
 				}
 
-				message := fmt.Sprintf("Delete %d tasks? This cannot be undone.", count)
+				message := fmt.Sprintf("Delete %d task(s)?", count)
 				modal := NewConfirmModal("Delete Tasks", message).
+					WithTaskTitles(taskTitles).
+					WithDestructive(true).
 					WithOnConfirm(func() tea.Msg {
 						return batchDeleteTasksCmd(apiClient, taskPaths, taskIDs)()
 					})
@@ -565,15 +788,17 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			message := fmt.Sprintf("Delete task '%s'?\nThis cannot be undone.", selectedTask.Title)
+			message := fmt.Sprintf("Delete %d task(s)?", 1)
 			modal := NewConfirmModal("Delete Task", message).
+				WithTaskTitles([]string{selectedTask.Title}).
+				WithDestructive(true).
 				WithOnConfirm(func() tea.Msg {
 					return deleteTaskCmd(apiClient, selectedTask.Path)()
 				})
 			return m, m.modalManager.Open(modal)
 		case "e":
-			// Edit task in $EDITOR
-			if m.activePanel != PanelTasks {
+			// Edit task in $EDITOR (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
 
@@ -589,10 +814,38 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.ExecProcess(getEditorCmd(fullPath), func(err error) tea.Msg {
 				return editorClosedMsg{taskID: selectedTask.ID, err: err}
 			})
+		case "o":
+			// Open session fullscreen (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+			return m, fetchSessionsCmd(apiClient, selectedTask.Path, false)
+		case "O":
+			// Open session in tmux (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+			return m, fetchSessionsCmd(apiClient, selectedTask.Path, true)
 		case "/":
-			// Activate filter mode
+			// Activate filter typing mode
 			if m.activePanel == PanelTasks {
-				m.filterMode = true
+				m.filterState = FilterTyping
 				m.filterQuery = ""
 			}
 			return m, nil
@@ -602,8 +855,21 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r":
 			// Refresh: reconnect SSE to get fresh snapshot
 			m.sseClient.Stop()
-			m.sseClient = NewSSEClient(m.config.APIURL, m.config.Project)
+			m.sseClient = NewSSEClient(m.config.APIURL, m.config.APIToken, m.config.Project)
 			return m, m.sseClient.Connect(m.ctx)
+		case "w":
+			m.settings.TextWrap = !m.settings.TextWrap
+			m.taskTree.TextWrap = m.settings.TextWrap
+			m.helpBar.TextWrap = m.settings.TextWrap
+			_ = SaveSettings(m.settings)
+			return m, nil
+		case "f":
+			// Toggle log filtering by selected task (when logs panel is focused)
+			if m.activePanel == PanelLogs {
+				m.filterLogsByTask = !m.filterLogsByTask
+				return m, nil
+			}
+			return m, nil
 		case "L":
 			m.logsVisible = !m.logsVisible
 			// If hiding the active panel, switch back to tasks
@@ -622,26 +888,70 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveDown()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveDown()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveDown()
+					m.syncTaskDetail()
+				}
+			} else if m.activePanel == PanelDetails {
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollDown()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
 			}
 			return m, nil
 		case "k":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveUp()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveUp()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveUp()
+					m.syncTaskDetail()
+				}
+			} else if m.activePanel == PanelDetails {
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollUp()
+				}
 			}
 			return m, nil
 		case "g":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveToTop()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveToTop()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveToTop()
+					m.syncTaskDetail()
+				}
+			} else if m.activePanel == PanelDetails {
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollToTop()
+				} else {
+					m.taskDetail.ScrollToTop()
+				}
 			}
 			return m, nil
 		case "G":
 			if m.activePanel == PanelTasks {
-				m.taskTree.MoveToBottom()
-				m.syncTaskDetail()
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleList.MoveToBottom()
+					m.syncScheduleDetail()
+				} else {
+					m.taskTree.MoveToBottom()
+					m.syncTaskDetail()
+				}
+			} else if m.activePanel == PanelDetails {
+				if m.viewMode == ViewModeSchedules {
+					m.scheduleDetail.ScrollToBottom()
+				} else {
+					m.taskDetail.ScrollToBottom()
+				}
 			}
 			return m, nil
 		case " ":
@@ -668,6 +978,50 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.clearSelection()
 			}
 			return m, nil
+		case "p":
+			// Pause/resume active project
+			projectID := m.activeProjectID
+			if projectID == "" || projectID == "all" {
+				projectID = m.config.Project
+			}
+			if projectID != "" {
+				currentlyPaused := m.pausedProjects[projectID]
+				// Optimistic UI update
+				m.pausedProjects[projectID] = !currentlyPaused
+				if currentlyPaused {
+					m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+				} else {
+					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+				}
+				m.syncHelpBarPauseState()
+				return m, pauseProjectCmd(m.config.APIURL, m.config.APIToken, projectID, currentlyPaused)
+			}
+			return m, nil
+		case "y":
+			// Yank (copy) selected task title to clipboard (tasks view only)
+			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
+				return m, nil
+			}
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+			if CopyToClipboard(selectedTask.Title) {
+				m.setStatusMessage("success", fmt.Sprintf("Copied: %s", selectedTask.Title))
+			} else {
+				m.setStatusMessage("error", "Failed to copy to clipboard")
+			}
+			return m, nil
+		case "P":
+			// Pause/resume all projects
+			m.allPaused = !m.allPaused
+			if m.allPaused {
+				m.setStatusMessage("info", "Pausing all projects...")
+			} else {
+				m.setStatusMessage("info", "Resuming all projects...")
+			}
+			m.syncHelpBarPauseState()
+			return m, pauseAllCmd(m.config.APIURL, m.config.APIToken, !m.allPaused)
 		}
 
 	case tea.KeyUp:
@@ -959,8 +1313,9 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveUp()
 		m.syncTaskDetail()
+	} else if m.activePanel == PanelDetails {
+		m.taskDetail.ScrollUp()
 	}
-	// TODO: Add scrolling for logs and detail panels
 	return m, nil
 }
 
@@ -969,8 +1324,9 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveDown()
 		m.syncTaskDetail()
+	} else if m.activePanel == PanelDetails {
+		m.taskDetail.ScrollDown()
 	}
-	// TODO: Add scrolling for logs and detail panels
 	return m, nil
 }
 
@@ -984,6 +1340,29 @@ func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
+	m.syncHelpBarSessionState()
+}
+
+// syncScheduleDetail updates the schedule detail panel with the currently selected scheduled task.
+func (m *Model) syncScheduleDetail() {
+	m.scheduleDetail.SetTask(m.scheduleList.SelectedTask())
+}
+
+// syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
+func (m *Model) syncHelpBarSessionState() {
+	selectedTask := m.taskTree.SelectedTask()
+	m.helpBar.HasTaskSessions = selectedTask != nil
+}
+
+// syncHelpBarPauseState updates the help bar's pause indicators based on current state.
+func (m *Model) syncHelpBarPauseState() {
+	m.helpBar.AllPaused = m.allPaused
+	// Determine active project ID for pause check
+	projectID := m.activeProjectID
+	if projectID == "" || projectID == "all" {
+		projectID = m.config.Project
+	}
+	m.helpBar.IsPaused = m.pausedProjects[projectID]
 }
 
 // toggleTaskSelection toggles selection for the currently focused task.
@@ -1079,9 +1458,35 @@ func (m Model) View() string {
 
 // renderBaseView renders the main TUI layout (without modal)
 func (m Model) renderBaseView() string {
-	// Update status bar with selection count and metrics
+	// Update status bar with selection count, metrics, and pause/feature indicators
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics
+
+	// Wire pause state to status bar
+	projectID := m.activeProjectID
+	if projectID == "" || projectID == "all" {
+		projectID = m.config.Project
+	}
+	if m.activeProjectID == "all" && m.config.IsMultiProject() {
+		// In "all" mode, paused only if every project is paused
+		m.statusBar.IsPaused = m.allPaused
+	} else {
+		m.statusBar.IsPaused = m.pausedProjects[projectID]
+	}
+
+	// Count enabled and active features from task data
+	enabledFeatures := make(map[string]bool)
+	activeFeatures := make(map[string]bool)
+	for _, task := range m.tasks {
+		if task.FeatureID != "" {
+			enabledFeatures[task.FeatureID] = true
+		}
+		if task.FeatureID != "" && task.Status == "in_progress" {
+			activeFeatures[task.FeatureID] = true
+		}
+	}
+	m.statusBar.EnabledFeatureCount = len(enabledFeatures)
+	m.statusBar.ActiveFeatureCount = len(activeFeatures)
 	// Render ProjectTabs if multi-project mode
 	var projectTabsView string
 	if m.config.IsMultiProject() {
@@ -1128,7 +1533,12 @@ func (m Model) renderBaseView() string {
 		innerHeight = 1
 	}
 
-	taskContent := m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+	var taskContent string
+	if m.viewMode == ViewModeSchedules {
+		taskContent = m.scheduleList.View(innerWidth, innerHeight)
+	} else {
+		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+	}
 	taskPanel := taskPanelStyle.
 		Width(leftWidth - 2).
 		Height(mainHeight).
@@ -1161,16 +1571,23 @@ func (m Model) renderBaseView() string {
 		statusMessageView = style.Render(m.statusMessage)
 	}
 
-	// Filter bar (if active or in input mode)
+	// Filter bar (based on 3-mode state machine)
 	var filterBarView string
-	if m.filterMode {
-		// Show filter input bar
-		filterBarView = FilterBarStyle.Render("Filter: " + m.filterQuery + "_")
-	} else if m.filterActive {
-		// Show filter status
+	switch m.filterState {
+	case FilterTyping:
+		// Yellow bg with / prefix, cursor, match count
+		matchCount := len(m.filteredTasks())
+		matchWord := "matches"
+		if matchCount == 1 {
+			matchWord = "match"
+		}
+		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+	case FilterLocked:
+		// Cyan bg badge with filter text, N/total count, Esc hint
 		totalCount := len(m.tasks)
 		matchCount := len(m.filteredTasks())
-		filterBarView = FilterStatusStyle.Render(fmt.Sprintf("Filtered: %d/%d tasks (press 'c' to clear)", matchCount, totalCount))
+		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
+			DimStyle.Render("  Esc: clear")
 	}
 
 	// Compose layout vertically
@@ -1225,9 +1642,16 @@ func (m Model) renderDetailPanel(width, height int) string {
 	}
 
 	// Temporarily set size for rendering
-	detail := m.taskDetail
-	detail.SetSize(innerWidth, innerHeight)
-	content := detail.View()
+	var content string
+	if m.viewMode == ViewModeSchedules {
+		schedDetail := m.scheduleDetail
+		schedDetail.SetSize(innerWidth, innerHeight)
+		content = schedDetail.View()
+	} else {
+		detail := m.taskDetail
+		detail.SetSize(innerWidth, innerHeight)
+		content = detail.View()
+	}
 
 	return style.
 		Width(width - 2).
@@ -1254,6 +1678,22 @@ func (m Model) renderLogPanel(width, height int) string {
 	// Temporarily set size for rendering
 	lv := m.logViewer
 	lv.SetSize(innerWidth, innerHeight)
+
+	// Wire log filtering by selected task
+	if m.filterLogsByTask {
+		selectedTask := m.taskTree.SelectedTask()
+		if selectedTask != nil {
+			lv.IsFiltering = true
+			lv.FilterTaskID = selectedTask.ID
+		} else {
+			lv.IsFiltering = false
+			lv.FilterTaskID = ""
+		}
+	} else {
+		lv.IsFiltering = false
+		lv.FilterTaskID = ""
+	}
+
 	content := lv.View()
 
 	return style.
@@ -1266,26 +1706,24 @@ func (m Model) renderLogPanel(width, height int) string {
 // Filter Methods
 // =============================================================================
 
-// handleFilterInput processes keyboard input in filter mode.
+// handleFilterInput processes keyboard input in FilterTyping mode.
+// All runes are captured as filter text — no key leaking to other handlers.
 func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
-		// Confirm filter and exit filter mode
-		m.filterMode = false
-		m.filterActive = (m.filterQuery != "")
-		// Apply filter to task tree
+		// Lock filter if query is non-empty, otherwise go back to off
+		if m.filterQuery != "" {
+			m.filterState = FilterLocked
+		} else {
+			m.filterState = FilterOff
+		}
 		m.applyFilter()
 		return m, nil
 
 	case tea.KeyEsc:
-		// Cancel filter
-		m.filterMode = false
+		// Always cancel: clear query and go to off
+		m.filterState = FilterOff
 		m.filterQuery = ""
-		// If no filter was active, no need to update
-		if !m.filterActive {
-			return m, nil
-		}
-		// Clear the active filter
 		m.clearFilter()
 		return m, nil
 
@@ -1305,30 +1743,7 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		// Multi-project tab navigation
-		if m.config.IsMultiProject() {
-			switch string(msg.Runes) {
-			case "h", "[":
-				m.projectTabs.PrevTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
-			case "l", "]":
-				m.projectTabs.NextTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
-			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-				tabNum := int(msg.Runes[0] - '0')
-				if m.projectTabs.JumpToTab(tabNum) {
-					m.activeProjectID = m.projectTabs.ActiveProject()
-					m.syncActiveProjectView()
-					return m, nil
-				}
-			}
-		}
-
-		// Append character to filter
+		// ALL runes go to filter query — no multi-project tab navigation leak
 		m.filterQuery += string(msg.Runes)
 		// Real-time filtering
 		m.applyFilter()
@@ -1343,12 +1758,10 @@ func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
 		// No filter, show all tasks
 		m.taskTree.SetTasks(m.tasks)
-		m.filterActive = false
 	} else {
 		// Filter tasks
 		filtered := FilterTasks(m.tasks, m.filterQuery)
 		m.taskTree.SetTasks(filtered)
-		m.filterActive = true
 	}
 	// Sync task detail after filter changes
 	m.syncTaskDetail()
@@ -1357,7 +1770,7 @@ func (m *Model) applyFilter() {
 // clearFilter removes the active filter and restores all tasks.
 func (m *Model) clearFilter() {
 	m.filterQuery = ""
-	m.filterActive = false
+	m.filterState = FilterOff
 	m.taskTree.SetTasks(m.tasks)
 	m.syncTaskDetail()
 }
@@ -1393,7 +1806,9 @@ func (m *Model) syncActiveProjectView() {
 	if m.activeProjectID == "all" {
 		// Aggregate view: merge all tasks
 		m.tasks = m.getAllTasks()
-		// TODO: Calculate aggregate stats (Phase 3 will integrate with ProjectTabs)
+		// Gap 3: Set aggregate stats from ProjectTabs
+		m.stats = m.projectTabs.AggregateStats
+		m.statusBar.Stats = m.stats
 	} else {
 		// Project-specific view: show only that project's tasks
 		if tasks, ok := m.tasksByProject[m.activeProjectID]; ok {
@@ -1401,12 +1816,18 @@ func (m *Model) syncActiveProjectView() {
 		} else {
 			m.tasks = []types.ResolvedTask{}
 		}
-		// TODO: Set project-specific stats (Phase 3 will integrate with ProjectTabs)
+		// Gap 3: Set project-specific stats from ProjectTabs
+		if stats, ok := m.projectTabs.StatsByProject[m.activeProjectID]; ok {
+			m.stats = stats
+		} else {
+			m.stats = TaskStats{}
+		}
+		m.statusBar.Stats = m.stats
 	}
 
 	// Update taskTree with the selected tasks
-	if m.filterActive {
-		// If filter is active, apply it
+	if m.filterState == FilterLocked || m.filterState == FilterTyping {
+		// If filter is active (locked or typing), apply it
 		m.applyFilter()
 	} else {
 		// No filter, just set tasks directly
@@ -1484,15 +1905,39 @@ type editorClosedMsg struct {
 	err    error
 }
 
+type autoMonitorCreatedMsg struct {
+	featureID  string
+	templateID string
+	err        error
+}
+
+type pauseToggledMsg struct {
+	projectID string
+	paused    bool
+	err       error
+}
+
+type pauseAllToggledMsg struct {
+	paused bool
+	err    error
+}
+
+type runnerStatusMsg struct {
+	paused         bool
+	pausedProjects []string
+	err            error
+}
+
 // =============================================================================
 // Command Functions
 // =============================================================================
 
 // completeTaskCmd completes a single task.
-func completeTaskCmd(apiURL, taskPath string) tea.Cmd {
+func completeTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1503,10 +1948,11 @@ func completeTaskCmd(apiURL, taskPath string) tea.Cmd {
 }
 
 // cancelTaskCmd cancels a single task.
-func cancelTaskCmd(apiURL, taskPath string) tea.Cmd {
+func cancelTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1517,10 +1963,11 @@ func cancelTaskCmd(apiURL, taskPath string) tea.Cmd {
 }
 
 // batchCompleteTasksCmd completes multiple tasks in parallel.
-func batchCompleteTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCompleteTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1564,10 +2011,11 @@ func batchCompleteTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
 }
 
 // batchCancelTasksCmd cancels multiple tasks in parallel.
-func batchCancelTasksCmd(apiURL string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCancelTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
 		apiClient := runner.NewAPIClient(runner.RunnerConfig{
 			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
 			APITimeout:  5000,
 		})
 
@@ -1678,6 +2126,153 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 			errors:       errors,
 		}
 	}
+}
+
+// pauseProjectCmd toggles pause/resume for a specific project.
+func pauseProjectCmd(apiURL, apiToken, projectID string, currentlyPaused bool) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeProject(ctx, projectID)
+		} else {
+			err = apiClient.PauseProject(ctx, projectID)
+		}
+		return pauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: err}
+	}
+}
+
+// pauseAllCmd toggles pause/resume for all projects.
+func pauseAllCmd(apiURL, apiToken string, currentlyPaused bool) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeAll(ctx)
+		} else {
+			err = apiClient.PauseAll(ctx)
+		}
+		return pauseAllToggledMsg{paused: !currentlyPaused, err: err}
+	}
+}
+
+// fetchRunnerStatusCmd fetches the current runner status (pause state).
+func fetchRunnerStatusCmd(apiURL, apiToken string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(runner.RunnerConfig{
+			BrainAPIURL: apiURL,
+			APIToken:    apiToken,
+			APITimeout:  5000,
+		})
+
+		ctx := context.Background()
+		status, err := apiClient.GetRunnerStatus(ctx)
+		if err != nil {
+			return runnerStatusMsg{err: err}
+		}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
+	}
+}
+
+// processAutoMonitors detects new feature_ids in task updates and returns
+// tea.Cmds to create monitors for each new feature. On the first load
+// (initialSnapshotDone == false), it only snapshots existing feature_ids
+// without creating monitors. seenFeatureIDs is always updated, even when
+// AutoMonitors is disabled, to prevent a burst of creation on re-enable.
+func (m *Model) processAutoMonitors(msg TasksUpdatedMsg) []tea.Cmd {
+	var newFeatures []struct {
+		featureID string
+		projectID string
+	}
+
+	for _, task := range msg.Tasks {
+		if task.FeatureID == "" {
+			continue
+		}
+		if !m.seenFeatureIDs[task.FeatureID] {
+			m.seenFeatureIDs[task.FeatureID] = true
+			if m.initialSnapshotDone {
+				newFeatures = append(newFeatures, struct {
+					featureID string
+					projectID string
+				}{featureID: task.FeatureID, projectID: task.ProjectID})
+			}
+		}
+	}
+
+	// Mark initial snapshot as done after first load
+	if !m.initialSnapshotDone {
+		m.initialSnapshotDone = true
+	}
+
+	// Only create monitors if auto-monitors is enabled and there are new features
+	if !m.settings.AutoMonitors || len(newFeatures) == 0 {
+		return nil
+	}
+
+	var cmds []tea.Cmd
+	for _, f := range newFeatures {
+		cmds = append(cmds, autoCreateMonitorsCmd(m.monitorClient, f.featureID, f.projectID))
+	}
+	return cmds
+}
+
+// autoCreateMonitorsCmd returns a tea.Cmd that creates both a blocked-inspector
+// scheduled task and a feature-review monitor task for the given feature.
+// Errors are returned in the message (not panicked) for silent handling.
+func autoCreateMonitorsCmd(client *MonitorClient, featureID, projectID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+
+		// Create blocked-inspector scheduled task
+		prompt := blockedInspectorPrompt(featureID, projectID)
+		err := client.CreateScheduledTask(ctx, "blocked-inspector", featureID, projectID, "*/30 * * * *", prompt)
+		if err != nil {
+			return autoMonitorCreatedMsg{
+				featureID:  featureID,
+				templateID: "blocked-inspector",
+				err:        err,
+			}
+		}
+
+		// Create feature-review monitor task
+		err = client.CreateMonitorTask(ctx, "feature-review", featureID, projectID)
+		if err != nil {
+			return autoMonitorCreatedMsg{
+				featureID:  featureID,
+				templateID: "feature-review",
+				err:        err,
+			}
+		}
+
+		return autoMonitorCreatedMsg{
+			featureID:  featureID,
+			templateID: "blocked-inspector+feature-review",
+			err:        nil,
+		}
+	}
+}
+
+// blockedInspectorPrompt generates the prompt text for a blocked-inspector
+// scheduled task, including the feature ID and project for context.
+func blockedInspectorPrompt(featureID, project string) string {
+	return fmt.Sprintf(
+		"Check for blocked tasks in feature '%s' (project: %s). "+
+			"Analyze dependencies, suggest fixes, or escalate if tasks remain blocked.",
+		featureID, project,
+	)
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

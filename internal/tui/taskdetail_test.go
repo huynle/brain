@@ -316,12 +316,9 @@ func TestTaskDetail_WithGitContext_ShowsBranch(t *testing.T) {
 // TaskDetail - Viewport Scrolling
 // =============================================================================
 
-func TestTaskDetail_ViewportScrolling(t *testing.T) {
-	td := NewTaskDetail()
-	// Very small height to force scrollable content
-	td.SetSize(80, 5)
-
-	task := &types.ResolvedTask{
+// longTask creates a task with enough fields to generate many content lines.
+func longTask() *types.ResolvedTask {
+	return &types.ResolvedTask{
 		ID:              "abc12def",
 		Title:           "Task with lots of info",
 		Status:          "pending",
@@ -333,13 +330,183 @@ func TestTaskDetail_ViewportScrolling(t *testing.T) {
 		BlockedByReason: "dependency failed",
 		WaitingOn:       []string{"wait1"},
 		GitBranch:       "feature/test",
+		GitRemote:       "origin",
+		Workdir:         "~/projects/brain",
+		ResolvedWorkdir: "/home/user/projects/brain",
 		InCycle:         true,
 	}
-	td.SetTask(task)
+}
 
-	// Should render without panic
+func TestTaskDetail_ViewportScrolling_NoScrollWhenContentFits(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 50) // Large viewport
+
+	td.SetTask(longTask())
 	view := td.View()
+
 	if view == "" {
 		t.Error("expected non-empty view")
+	}
+	// Should not show scroll indicators when content fits
+	if strings.Contains(view, "▲") {
+		t.Error("should not show up-arrow when content fits viewport")
+	}
+	if strings.Contains(view, "▼") {
+		t.Error("should not show down-arrow when content fits viewport")
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ShowsDownIndicatorWhenScrollable(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6) // Small viewport to force scrolling
+
+	td.SetTask(longTask())
+	view := td.View()
+
+	if !strings.Contains(view, "▼") {
+		t.Errorf("expected down-arrow indicator when content exceeds viewport, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ScrollDownShowsUpIndicator(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View() // Initial render to set totalLines
+
+	td.ScrollDown()
+	view := td.View()
+
+	if !strings.Contains(view, "▲") {
+		t.Errorf("expected up-arrow indicator after scrolling down, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ScrollToBottomNoDownIndicator(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View() // Initial render to set totalLines
+
+	td.ScrollToBottom()
+	view := td.View()
+
+	if strings.Contains(view, "▼") {
+		t.Errorf("should not show down-arrow at bottom, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ScrollUpAtTopIsNoop(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View()
+
+	offsetBefore := td.scrollOffset
+	td.ScrollUp()
+
+	if td.scrollOffset != offsetBefore {
+		t.Errorf("scrollOffset should not change when already at top, got %d", td.scrollOffset)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ScrollDownClampsToMax(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View() // Initial render
+
+	// Scroll way past the end
+	for i := 0; i < 100; i++ {
+		td.ScrollDown()
+	}
+
+	viewportHeight := td.height - 1 // header takes 1 line
+	maxOffset := td.totalLines - viewportHeight
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+
+	if td.scrollOffset > maxOffset {
+		t.Errorf("scrollOffset %d exceeds max %d", td.scrollOffset, maxOffset)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_SetTaskResetsScroll(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View()
+	td.ScrollDown()
+	td.ScrollDown()
+
+	if td.scrollOffset == 0 {
+		t.Fatal("expected non-zero scrollOffset after scrolling")
+	}
+
+	// Setting a new task should reset scroll
+	td.SetTask(longTask())
+	if td.scrollOffset != 0 {
+		t.Errorf("expected scrollOffset 0 after SetTask, got %d", td.scrollOffset)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_PositionIndicatorShown(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	view := td.View()
+
+	// Should show position indicator like (1-5/20)
+	if !strings.Contains(view, "/") || !strings.Contains(view, "(") {
+		t.Errorf("expected position indicator in header when scrollable, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_ScrollToTopAfterScrollDown(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	td.SetTask(longTask())
+	td.View()
+
+	td.ScrollDown()
+	td.ScrollDown()
+	td.ScrollDown()
+
+	if td.scrollOffset == 0 {
+		t.Fatal("expected non-zero scrollOffset after scrolling")
+	}
+
+	td.ScrollToTop()
+	if td.scrollOffset != 0 {
+		t.Errorf("expected scrollOffset 0 after ScrollToTop, got %d", td.scrollOffset)
+	}
+}
+
+func TestTaskDetail_ViewportScrolling_EmptyTaskNoScroll(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6)
+
+	// No task set
+	td.ScrollDown()
+	td.ScrollUp()
+	td.ScrollToTop()
+	td.ScrollToBottom()
+
+	// Should not panic and offset should stay 0
+	if td.scrollOffset != 0 {
+		t.Errorf("expected scrollOffset 0 with no task, got %d", td.scrollOffset)
+	}
+
+	view := td.View()
+	if !strings.Contains(view, "No task selected") {
+		t.Error("expected placeholder text for empty task")
 	}
 }

@@ -92,6 +92,85 @@ func TestSettings_JSONMarshalGroupVisible(t *testing.T) {
 	}
 }
 
+// TestSettings_AutoMonitorsDefault tests that AutoMonitors defaults to false
+func TestSettings_AutoMonitorsDefault(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     make(map[string]int),
+		GlobalMaxParallel: 4,
+	}
+
+	// AutoMonitors should default to false (zero value for bool)
+	if settings.AutoMonitors {
+		t.Error("Expected AutoMonitors to default to false")
+	}
+}
+
+// TestSettings_AutoMonitorsJSONRoundTrip tests that AutoMonitors persists through JSON
+func TestSettings_AutoMonitorsJSONRoundTrip(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     make(map[string]int),
+		GlobalMaxParallel: 4,
+		AutoMonitors:      true,
+	}
+
+	// Marshal to JSON
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Failed to marshal settings: %v", err)
+	}
+
+	// Verify JSON contains autoMonitors key
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Failed to unmarshal to map: %v", err)
+	}
+	if _, ok := raw["autoMonitors"]; !ok {
+		t.Error("Expected JSON to contain 'autoMonitors' key")
+	}
+
+	// Unmarshal back
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("Failed to unmarshal settings: %v", err)
+	}
+
+	if !loaded.AutoMonitors {
+		t.Error("Expected AutoMonitors to be true after round-trip")
+	}
+}
+
+// TestSettings_AutoMonitorsFalseRoundTrip tests that AutoMonitors=false persists correctly
+func TestSettings_AutoMonitorsFalseRoundTrip(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		FeatureCollapsed:  make(map[string]bool),
+		ProjectLimits:     make(map[string]int),
+		GlobalMaxParallel: 4,
+		AutoMonitors:      false,
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Failed to marshal settings: %v", err)
+	}
+
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("Failed to unmarshal settings: %v", err)
+	}
+
+	if loaded.AutoMonitors {
+		t.Error("Expected AutoMonitors to be false after round-trip")
+	}
+}
+
 // TestSettings_SaveAndLoadGroupVisible tests round-trip persistence of GroupVisible
 func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	// Test JSON round-trip (this tests the JSON marshaling behavior)

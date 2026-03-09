@@ -446,6 +446,13 @@ func TestSettingsModal_GetMaxIndex(t *testing.T) {
 	if maxIndex != 2 {
 		t.Errorf("Runtime tab: expected maxIndex 2, got %d", maxIndex)
 	}
+
+	// Test Monitors tab: should return 0 (single toggle: autoMonitors)
+	modal.currentTab = TabMonitors
+	maxIndex = modal.getMaxIndex()
+	if maxIndex != 0 {
+		t.Errorf("Monitors tab: expected maxIndex 0, got %d", maxIndex)
+	}
 }
 
 func TestSettingsModal_EditMode_CtrlU(t *testing.T) {
@@ -714,6 +721,26 @@ func TestSettingsModal_TabIndicators(t *testing.T) {
 	if strings.Contains(view, "[Groups]") {
 		t.Error("Expected inactive Groups tab to NOT have brackets")
 	}
+	if strings.Contains(view, "[Monitors]") {
+		t.Error("Expected inactive Monitors tab to NOT have brackets")
+	}
+
+	// Test Monitors tab active
+	modal.currentTab = TabMonitors
+	view = modal.View()
+
+	if !strings.Contains(view, "[Monitors]") {
+		t.Error("Expected active Monitors tab to be highlighted with [brackets]")
+	}
+	if strings.Contains(view, "[Limits]") {
+		t.Error("Expected inactive Limits tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Groups]") {
+		t.Error("Expected inactive Groups tab to NOT have brackets")
+	}
+	if strings.Contains(view, "[Runtime]") {
+		t.Error("Expected inactive Runtime tab to NOT have brackets")
+	}
 }
 
 func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
@@ -743,8 +770,8 @@ func TestSettingsModal_HelpText_LimitsTab(t *testing.T) {
 	if !strings.Contains(view, "0:") || !strings.Contains(view, "unlimited") {
 		t.Error("Expected help text to contain '0: unlimited'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -769,8 +796,8 @@ func TestSettingsModal_HelpText_GroupsTab(t *testing.T) {
 	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
 		t.Error("Expected help text to contain 'space: toggle visibility'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -801,8 +828,8 @@ func TestSettingsModal_HelpText_RuntimeTab_Normal(t *testing.T) {
 	if !strings.Contains(view, "space:") || !strings.Contains(view, "toggle") {
 		t.Error("Expected help text to contain 'space: toggle'")
 	}
-	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-3") {
-		t.Error("Expected help text to mention tab/1-3 for switching tabs")
+	if !strings.Contains(view, "tab") || !strings.Contains(view, "1-4") {
+		t.Error("Expected help text to mention tab/1-4 for switching tabs")
 	}
 }
 
@@ -840,5 +867,123 @@ func TestSettingsModal_HelpText_RuntimeTab_EditMode(t *testing.T) {
 	}
 	if !strings.Contains(view, "ctrl+u:") || !strings.Contains(view, "clear") {
 		t.Error("Expected help text to contain 'ctrl+u: clear'")
+	}
+}
+
+func TestSettingsModal_MonitorsTab_Rendered(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      false,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabMonitors
+
+	view := modal.View()
+
+	// Should render description
+	if !strings.Contains(view, "Auto-create monitors for new features") {
+		t.Error("Expected Monitors tab to contain description")
+	}
+	// Should render OFF toggle when false
+	if !strings.Contains(view, "Auto-create monitors:") {
+		t.Error("Expected Monitors tab to contain toggle label")
+	}
+	if !strings.Contains(view, "[OFF]") {
+		t.Error("Expected [OFF] when AutoMonitors is false")
+	}
+	// Should render sub-description
+	if !strings.Contains(view, "Blocked Task Inspector") {
+		t.Error("Expected sub-description about Blocked Task Inspector")
+	}
+	if !strings.Contains(view, "Feature Code Review") {
+		t.Error("Expected sub-description about Feature Code Review")
+	}
+}
+
+func TestSettingsModal_MonitorsTab_ON(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      true,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabMonitors
+
+	view := modal.View()
+
+	// Should render ON toggle when true
+	if !strings.Contains(view, "[ON]") {
+		t.Error("Expected [ON] when AutoMonitors is true")
+	}
+	if strings.Contains(view, "[OFF]") {
+		t.Error("Expected no [OFF] when AutoMonitors is true")
+	}
+}
+
+func TestSettingsModal_MonitorsTab_Toggle(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+		AutoMonitors:      false,
+	}
+
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabMonitors
+	modal.selectedIndex = 0 // AutoMonitors is at index 0
+
+	// Toggle with space
+	handled, cmd := modal.HandleKey(" ")
+	if !handled {
+		t.Error("Expected space to be handled on AutoMonitors")
+	}
+	if cmd == nil {
+		t.Error("Expected a save command to be returned")
+	}
+
+	// AutoMonitors should now be true
+	if !modal.settings.AutoMonitors {
+		t.Error("Expected AutoMonitors to be true after toggle")
+	}
+
+	// Toggle again
+	modal.HandleKey(" ")
+	if modal.settings.AutoMonitors {
+		t.Error("Expected AutoMonitors to be false after second toggle")
+	}
+}
+
+func TestSettingsModal_MonitorsTab_DirectNav(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	modal := NewSettingsModal(settings)
+
+	// Press '4' to navigate directly to Monitors tab
+	handled, _ := modal.HandleKey("4")
+	if !handled {
+		t.Error("Expected '4' key to be handled")
+	}
+	if modal.currentTab != TabMonitors {
+		t.Errorf("Expected tab TabMonitors (3) after pressing '4', got %d", modal.currentTab)
+	}
+	if modal.selectedIndex != 0 {
+		t.Errorf("Expected selectedIndex 0 after direct nav, got %d", modal.selectedIndex)
 	}
 }

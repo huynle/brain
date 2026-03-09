@@ -16,6 +16,7 @@ type Settings struct {
 	DefaultModel      string          `json:"defaultModel"`      // default model override for tasks
 	TextWrap          bool            `json:"textWrap"`          // wrap long lines in panels
 	LogLevel          string          `json:"logLevel"`          // log level: "error", "info", "debug"
+	AutoMonitors      bool            `json:"autoMonitors"`      // auto-create monitors for new features
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.
@@ -61,7 +62,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -77,7 +78,7 @@ func LoadSettings() (Settings, error) {
 				ProjectLimits:     make(map[string]int),
 				GlobalMaxParallel: 4,
 				DefaultModel:      "",
-				TextWrap:          true,
+				TextWrap:          false,
 				LogLevel:          "info",
 			}, nil
 		}
@@ -88,7 +89,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -102,7 +103,7 @@ func LoadSettings() (Settings, error) {
 			ProjectLimits:     make(map[string]int),
 			GlobalMaxParallel: 4,
 			DefaultModel:      "",
-			TextWrap:          true,
+			TextWrap:          false,
 			LogLevel:          "info",
 		}, err
 	}
@@ -134,7 +135,7 @@ func LoadSettings() (Settings, error) {
 	if settings.DefaultModel == "" {
 		settings.DefaultModel = "" // Empty string means no override
 	}
-	// TextWrap defaults to true (not set in JSON means false, so we need to check if loaded from file)
+	// TextWrap defaults to false (truncation mode by default)
 	// LogLevel defaults to "info"
 	if settings.LogLevel == "" {
 		settings.LogLevel = "info"

@@ -1847,14 +1847,10 @@ export class TaskRunner {
           continue;
         }
 
-        // Check task status from brain API
-        const encodedPath = encodeURIComponent(task.path);
-        const response = await fetch(
-          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
-        );
+        // Check task status from brain API (use apiClient for auth headers)
+        const entry = await this.apiClient.getTaskByPath(task.path);
 
-        if (response.ok) {
-          const entry = await response.json();
+        if (entry) {
           const completionStatus = this.resolveEntryCompletionStatus(entry, task.runId);
 
           if (
@@ -2027,16 +2023,12 @@ export class TaskRunner {
         continue;
       }
 
-      // Check current status from Brain API
+      // Check current status from Brain API (use apiClient for auth headers)
       try {
-        const encodedPath = encodeURIComponent(task.path);
-        const response = await fetch(
-          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
-        );
+        const entry = await this.apiClient.getTaskByPath(task.path);
         
-        if (!response.ok) continue;
+        if (!entry) continue;
         
-        const entry = await response.json();
         const brainStatus = entry.status as EntryStatus;
 
         // Only interested in blocked tasks
@@ -3621,12 +3613,8 @@ export class TaskRunner {
     
     if (taskPath) {
       try {
-        const encodedPath = encodeURIComponent(taskPath);
-        const response = await fetch(
-          `${this.config.brainApiUrl}/api/v1/entries/${encodedPath}`
-        );
-        if (response.ok) {
-          const entry = await response.json();
+        const entry = await this.apiClient.getTaskByPath(taskPath);
+        if (entry) {
           const resolved = this.resolveEntryCompletionStatus(entry, runId);
           if (resolved !== CompletionStatus.Running) {
             completionStatus = resolved;

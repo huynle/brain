@@ -15,11 +15,13 @@ import (
 // RunnerConfig holds configuration for the runner.
 type RunnerConfig struct {
 	BrainAPIURL  string
+	APIToken     string
 	MaxParallel  int
 	PollInterval int
 	WorkDir      string
 	StateDir     string
 	LogDir       string
+	APITimeout   int
 }
 
 // RunnerOptions holds options for running the task runner.
@@ -39,11 +41,13 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	// Convert RunnerConfig to runner.RunnerConfig
 	cfg := runner.RunnerConfig{
 		BrainAPIURL:  opts.Config.BrainAPIURL,
+		APIToken:     opts.Config.APIToken,
 		MaxParallel:  opts.Config.MaxParallel,
 		PollInterval: opts.Config.PollInterval,
 		WorkDir:      opts.Config.WorkDir,
 		StateDir:     opts.Config.StateDir,
 		LogDir:       opts.Config.LogDir,
+		APITimeout:   opts.Config.APITimeout,
 	}
 
 	// Set defaults if not provided
@@ -52,6 +56,9 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = 10
+	}
+	if cfg.APITimeout == 0 {
+		cfg.APITimeout = 5000
 	}
 
 	// Wire up dependencies
@@ -125,11 +132,13 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	// Convert RunnerConfig to runner.RunnerConfig
 	cfg := runner.RunnerConfig{
 		BrainAPIURL:  opts.Config.BrainAPIURL,
+		APIToken:     opts.Config.APIToken,
 		MaxParallel:  opts.Config.MaxParallel,
 		PollInterval: opts.Config.PollInterval,
 		WorkDir:      opts.Config.WorkDir,
 		StateDir:     opts.Config.StateDir,
 		LogDir:       opts.Config.LogDir,
+		APITimeout:   opts.Config.APITimeout,
 	}
 
 	// Set defaults
@@ -138,6 +147,9 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.PollInterval == 0 {
 		cfg.PollInterval = 10
+	}
+	if cfg.APITimeout == 0 {
+		cfg.APITimeout = 5000
 	}
 
 	// Wire up dependencies
@@ -183,9 +195,11 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 
 	tuiCfg := tui.Config{
 		APIURL:   cfg.BrainAPIURL,
+		APIToken: cfg.APIToken,
 		Project:  opts.Projects[0],
 		Projects: opts.Projects,
 		BrainDir: brainDir,
+		LogDir:   cfg.LogDir,
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

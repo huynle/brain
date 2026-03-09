@@ -59,6 +59,8 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("g/G", "Jump to top/bottom"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("Enter", "Collapse/expand group"))
+	b.WriteString("\n")
 	b.WriteString(formatShortcut("Tab", "Switch panel focus"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("/", "Filter tasks"))
@@ -75,17 +77,23 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("c", "Complete task"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("C", "Cancel task"))
+	b.WriteString(formatShortcut("X", "Cancel running task"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("C", "Schedule/task view toggle"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("e", "Edit in $EDITOR"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("d", "Delete task"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("p", "Pause/resume project"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("P", "Pause/resume all projects"))
+	b.WriteString("\n")
 
 	// Multi-select shortcuts
 	b.WriteString(categoryStyle.Render("Multi-Select:"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("Space", "Toggle selection"))
+	b.WriteString(formatShortcut("Space", "Toggle selection / collapse group"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("A", "Select all"))
 	b.WriteString("\n")
@@ -98,6 +106,8 @@ func (m *HelpModal) View() string {
 	b.WriteString(formatShortcut("T", "Toggle task detail"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("L", "Toggle logs"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("w", "Toggle text wrap/truncate"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("r", "Refresh"))
 	b.WriteString("\n")
@@ -158,9 +168,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (7), Multi-Select (3), Views (3), Other (2)
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 7 + 3 + 3 + 2 + 5 + 2
+	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

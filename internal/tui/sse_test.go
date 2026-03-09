@@ -242,7 +242,7 @@ func TestParseSSEEvent_InvalidJSON(t *testing.T) {
 // =============================================================================
 
 func TestNewSSEClient(t *testing.T) {
-	client := NewSSEClient("http://localhost:3333", "test-project")
+	client := NewSSEClient("http://localhost:3333", "", "test-project")
 
 	if client == nil {
 		t.Fatal("expected non-nil client")
@@ -256,7 +256,7 @@ func TestNewSSEClient(t *testing.T) {
 }
 
 func TestSSEClient_StreamURL(t *testing.T) {
-	client := NewSSEClient("http://localhost:3333", "my-project")
+	client := NewSSEClient("http://localhost:3333", "", "my-project")
 	url := client.streamURL()
 
 	expected := "http://localhost:3333/api/v1/tasks/my-project/stream"
@@ -266,7 +266,7 @@ func TestSSEClient_StreamURL(t *testing.T) {
 }
 
 func TestSSEClient_StreamURL_TrailingSlash(t *testing.T) {
-	client := NewSSEClient("http://localhost:3333/", "my-project")
+	client := NewSSEClient("http://localhost:3333/", "", "my-project")
 	url := client.streamURL()
 
 	expected := "http://localhost:3333/api/v1/tasks/my-project/stream"
@@ -306,7 +306,7 @@ func TestSSEClient_ConnectsAndReceivesConnectedEvent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -383,7 +383,7 @@ func TestSSEClient_ReceivesTasksSnapshot(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -482,7 +482,7 @@ func TestSSEClient_HeartbeatIsSkipped(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -537,7 +537,7 @@ func TestSSEClient_ErrorEventProducesSSEErrorMsg(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
@@ -584,7 +584,7 @@ func TestSSEClient_DisconnectOnServerClose(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -611,7 +611,7 @@ func TestSSEClient_DisconnectOnServerClose(t *testing.T) {
 }
 
 func TestSSEClient_ConnectionRefused(t *testing.T) {
-	client := NewSSEClient("http://127.0.0.1:1", "test-project")
+	client := NewSSEClient("http://127.0.0.1:1", "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -636,7 +636,7 @@ func TestSSEClient_ContextCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithCancel(context.Background())
 
 	msgCh := make(chan tea.Msg, 10)
@@ -670,7 +670,7 @@ func TestSSEClient_ContextCancellation(t *testing.T) {
 // =============================================================================
 
 func TestSSEClient_ReconnectReturnsCmd(t *testing.T) {
-	client := NewSSEClient("http://localhost:3333", "test-project")
+	client := NewSSEClient("http://localhost:3333", "", "test-project")
 	cmd := client.Reconnect(100 * time.Millisecond)
 
 	if cmd == nil {
@@ -711,7 +711,7 @@ func TestSSEClient_SetsCorrectHeaders(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewSSEClient(server.URL, "test-project")
+	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 

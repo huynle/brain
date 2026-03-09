@@ -20,6 +20,7 @@ type reconnectMsg struct{}
 // bubbletea messages from the event stream.
 type SSEClient struct {
 	apiURL    string
+	apiToken  string
 	projectID string
 
 	// msgCh is the internal channel used to pass messages from the
@@ -30,10 +31,11 @@ type SSEClient struct {
 	cancel context.CancelFunc
 }
 
-// NewSSEClient creates a new SSE client for the given API URL and project.
-func NewSSEClient(apiURL, projectID string) *SSEClient {
+// NewSSEClient creates a new SSE client for the given API URL, token, and project.
+func NewSSEClient(apiURL, apiToken, projectID string) *SSEClient {
 	return &SSEClient{
 		apiURL:    strings.TrimRight(apiURL, "/"),
+		apiToken:  apiToken,
 		projectID: projectID,
 		msgCh:     make(chan tea.Msg, 32),
 	}
@@ -64,7 +66,7 @@ func (c *SSEClient) waitForSSEMsg() tea.Cmd {
 	return func() tea.Msg {
 		msg, ok := <-c.msgCh
 		if !ok {
-			return SSEDisconnectedMsg{}
+			return SSEDisconnectedMsg{ProjectID: c.projectID}
 		}
 		return msg
 	}
@@ -100,7 +102,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
 	if err != nil {
 		select {
-		case msgCh <- SSEDisconnectedMsg{}:
+		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 		case <-ctx.Done():
 		}
 		return
@@ -108,12 +110,15 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 
 	req.Header.Set("Accept", "text/event-stream")
 	req.Header.Set("Cache-Control", "no-cache")
+	if c.apiToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiToken)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		// Connection refused, timeout, etc.
 		select {
-		case msgCh <- SSEDisconnectedMsg{}:
+		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 		case <-ctx.Done():
 		}
 		return
@@ -121,6 +126,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	defer resp.Body.Close()
 
 	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 2*1024*1024), 2*1024*1024)
 	var lines []string
 
 	for scanner.Scan() {
@@ -166,7 +172,7 @@ func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
 	}
 
 	select {
-	case msgCh <- SSEDisconnectedMsg{}:
+	case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
 	case <-ctx.Done():
 	}
 }
@@ -199,7 +205,7 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
 			return nil, fmt.Errorf("parse connected event: %w", err)
 		}
-		return SSEConnectedMsg{}, nil
+		return SSEConnectedMsg{ProjectID: data.ProjectID}, nil
 
 	case "tasks_snapshot":
 		var data types.SSETasksSnapshotData
@@ -207,8 +213,9 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 			return nil, fmt.Errorf("parse tasks_snapshot event: %w", err)
 		}
 		return TasksUpdatedMsg{
-			Tasks: data.Tasks,
-			Stats: data.Stats,
+			Tasks:     data.Tasks,
+			Stats:     data.Stats,
+			ProjectID: data.ProjectID,
 		}, nil
 
 	case "heartbeat":
@@ -220,7 +227,7 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
 			return nil, fmt.Errorf("parse error event: %w", err)
 		}
-		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message)}, nil
+		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message), ProjectID: data.ProjectID}, nil
 
 	default:
 		// Unknown event type - ignore

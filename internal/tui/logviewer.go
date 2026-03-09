@@ -1,7 +1,11 @@
 package tui
 
 import (
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -17,6 +21,8 @@ type LogEntry struct {
 	Level     string
 	Message   string
 	TaskID    string
+	ProjectID string
+	Context   map[string]interface{}
 }
 
 // LogViewer displays streaming log entries with color-coded levels.
@@ -26,6 +32,11 @@ type LogViewer struct {
 	autoFollow bool
 	width      int
 	height     int
+	logFile    string
+
+	// Filtering: when IsFiltering is true, only show entries matching FilterTaskID
+	IsFiltering  bool
+	FilterTaskID string
 }
 
 // NewLogViewer creates a new LogViewer with the given max entries.
@@ -37,12 +48,15 @@ func NewLogViewer(maxEntries int) LogViewer {
 }
 
 // AddEntry adds a log entry to the viewer, evicting old entries if at capacity.
+// If a log file is configured, the entry is also persisted to disk.
 func (lv *LogViewer) AddEntry(entry LogEntry) {
 	lv.entries = append(lv.entries, entry)
 	// Circular buffer: evict oldest entries when over capacity
 	if len(lv.entries) > lv.maxEntries {
 		lv.entries = lv.entries[len(lv.entries)-lv.maxEntries:]
 	}
+	// Persist to disk (ignore errors — don't fail the TUI if disk write fails)
+	_ = lv.appendToFile(entry)
 }
 
 // SetSize updates the component dimensions.
@@ -58,16 +72,28 @@ func (lv *LogViewer) EntryCount() int {
 
 // View renders the log viewer.
 func (lv *LogViewer) View() string {
-	header := TitleStyle.Render("Logs")
+	// Determine which entries to show (filtered or all)
+	entries := lv.visibleEntries()
 
-	if len(lv.entries) == 0 {
-		return header + "\n" + DimStyle.Render("No logs")
+	// Header changes based on filter state
+	headerText := "Logs"
+	if lv.IsFiltering && lv.FilterTaskID != "" {
+		headerText = "Task Logs"
+	}
+	header := TitleStyle.Render(headerText)
+
+	if len(entries) == 0 {
+		emptyMsg := "No logs"
+		if lv.IsFiltering && lv.FilterTaskID != "" {
+			emptyMsg = "No logs for selected task"
+		}
+		return header + "\n" + DimStyle.Render(emptyMsg)
 	}
 
 	var lines []string
 	lines = append(lines, header)
 
-	for _, entry := range lv.entries {
+	for _, entry := range entries {
 		line := lv.renderEntry(entry)
 		lines = append(lines, line)
 	}
@@ -79,6 +105,21 @@ func (lv *LogViewer) View() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// visibleEntries returns the entries to display, filtered by task if filtering is active.
+func (lv *LogViewer) visibleEntries() []LogEntry {
+	if !lv.IsFiltering || lv.FilterTaskID == "" {
+		return lv.entries
+	}
+
+	var filtered []LogEntry
+	for _, entry := range lv.entries {
+		if entry.TaskID == lv.FilterTaskID {
+			filtered = append(filtered, entry)
+		}
+	}
+	return filtered
 }
 
 // renderEntry renders a single log entry line.
@@ -140,4 +181,188 @@ func truncateMsg(msg string, maxLen int) string {
 		return msg
 	}
 	return msg[:maxLen-3] + "..."
+}
+
+// =============================================================================
+// Persistence - JSONL File Operations
+// =============================================================================
+
+// logEntryJSON is the JSON representation of a LogEntry for JSONL serialization.
+type logEntryJSON struct {
+	Timestamp string                 `json:"timestamp"`
+	Level     string                 `json:"level"`
+	Message   string                 `json:"message"`
+	TaskID    string                 `json:"taskId,omitempty"`
+	ProjectID string                 `json:"projectId,omitempty"`
+	Context   map[string]interface{} `json:"context,omitempty"`
+}
+
+// SetLogFile sets the path for log file persistence.
+func (lv *LogViewer) SetLogFile(path string) {
+	lv.logFile = path
+}
+
+// serializeEntry converts a LogEntry to a JSON string (JSONL format).
+func (lv *LogViewer) serializeEntry(entry LogEntry) string {
+	j := logEntryJSON{
+		Timestamp: entry.Timestamp.Format(time.RFC3339),
+		Level:     entry.Level,
+		Message:   entry.Message,
+		TaskID:    entry.TaskID,
+		ProjectID: entry.ProjectID,
+		Context:   entry.Context,
+	}
+	data, err := json.Marshal(j)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
+}
+
+// deserializeEntry parses a JSONL line back into a LogEntry.
+// Returns error for invalid JSON or missing required fields (timestamp, level, message).
+func (lv *LogViewer) deserializeEntry(line string) (LogEntry, error) {
+	var j logEntryJSON
+	if err := json.Unmarshal([]byte(line), &j); err != nil {
+		return LogEntry{}, fmt.Errorf("invalid JSON: %w", err)
+	}
+
+	if j.Timestamp == "" {
+		return LogEntry{}, fmt.Errorf("missing required field: timestamp")
+	}
+	if j.Level == "" {
+		return LogEntry{}, fmt.Errorf("missing required field: level")
+	}
+	if j.Message == "" {
+		return LogEntry{}, fmt.Errorf("missing required field: message")
+	}
+
+	ts, err := time.Parse(time.RFC3339, j.Timestamp)
+	if err != nil {
+		return LogEntry{}, fmt.Errorf("invalid timestamp: %w", err)
+	}
+
+	return LogEntry{
+		Timestamp: ts,
+		Level:     j.Level,
+		Message:   j.Message,
+		TaskID:    j.TaskID,
+		ProjectID: j.ProjectID,
+		Context:   j.Context,
+	}, nil
+}
+
+// LoadFromFile reads the logFile path, parses each line with deserializeEntry,
+// and populates entries (up to maxEntries, keeping the latest).
+// If the file doesn't exist, returns nil (not an error).
+func (lv *LogViewer) LoadFromFile() error {
+	if lv.logFile == "" {
+		return nil
+	}
+
+	f, err := os.Open(lv.logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open log file: %w", err)
+	}
+	defer f.Close()
+
+	var entries []LogEntry
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		entry, err := lv.deserializeEntry(line)
+		if err != nil {
+			// Skip invalid lines
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read log file: %w", err)
+	}
+
+	// Keep only the last maxEntries
+	if len(entries) > lv.maxEntries {
+		entries = entries[len(entries)-lv.maxEntries:]
+	}
+
+	lv.entries = entries
+	return nil
+}
+
+// appendToFile appends a serialized log entry to the log file.
+// Creates the directory structure if needed. If logFile is empty, returns nil (no-op).
+func (lv *LogViewer) appendToFile(entry LogEntry) error {
+	if lv.logFile == "" {
+		return nil
+	}
+
+	dir := filepath.Dir(lv.logFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("create log directory: %w", err)
+	}
+
+	f, err := os.OpenFile(lv.logFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return fmt.Errorf("open log file for append: %w", err)
+	}
+	defer f.Close()
+
+	line := lv.serializeEntry(entry) + "\n"
+	if _, err := f.WriteString(line); err != nil {
+		return fmt.Errorf("write log entry: %w", err)
+	}
+
+	return nil
+}
+
+// TruncateFile truncates the log file when it has >= 2*maxEntries lines.
+// Keeps the last maxEntries lines. If the file doesn't exist or logFile is empty, returns nil.
+func (lv *LogViewer) TruncateFile() error {
+	if lv.logFile == "" {
+		return nil
+	}
+
+	f, err := os.Open(lv.logFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("open log file for truncation: %w", err)
+	}
+	defer f.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.TrimSpace(line) != "" {
+			lines = append(lines, line)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Errorf("read log file for truncation: %w", err)
+	}
+
+	// Only truncate when file has >= 2*maxEntries lines
+	if len(lines) < 2*lv.maxEntries {
+		return nil
+	}
+
+	// Keep the last maxEntries lines
+	kept := lines[len(lines)-lv.maxEntries:]
+
+	// Rewrite the file
+	content := strings.Join(kept, "\n") + "\n"
+	if err := os.WriteFile(lv.logFile, []byte(content), 0644); err != nil {
+		return fmt.Errorf("rewrite truncated log file: %w", err)
+	}
+
+	return nil
 }

@@ -215,11 +215,14 @@ type UnifiedConfig struct {
 		LogFile string
 	}
 	Runner struct {
+		BrainAPIURL     string
+		APIToken        string
 		MaxParallel     int
 		PollInterval    int
 		WorkDir         string
 		StateDir        string
 		LogDir          string
+		APITimeout      int
 		ExcludeProjects []string
 		OpenCode        struct {
 			Agent string

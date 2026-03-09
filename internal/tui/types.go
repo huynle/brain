@@ -52,9 +52,11 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 // Config holds the configuration passed to the TUI from the runner.
 type Config struct {
 	APIURL   string
+	APIToken string
 	Project  string
 	RunnerID string
 	BrainDir string
+	LogDir   string
 	// Projects lists all projects in multi-project mode.
 	Projects []string
 }
@@ -62,6 +64,26 @@ type Config struct {
 // IsMultiProject returns true if monitoring multiple projects.
 func (c Config) IsMultiProject() bool {
 	return len(c.Projects) > 1
+}
+
+// ViewMode identifies which view mode the TUI is in.
+type ViewMode int
+
+const (
+	ViewModeTasks     ViewMode = iota // Default: show task tree
+	ViewModeSchedules                 // Show scheduled tasks list
+)
+
+// String returns the display name for a view mode.
+func (v ViewMode) String() string {
+	switch v {
+	case ViewModeTasks:
+		return "tasks"
+	case ViewModeSchedules:
+		return "schedules"
+	default:
+		return "unknown"
+	}
 }
 
 // TaskStats mirrors types.TaskStats with an additional InProgress field

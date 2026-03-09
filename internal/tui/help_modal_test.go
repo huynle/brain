@@ -20,6 +20,8 @@ func TestHelpModal_View(t *testing.T) {
 				"j/k",
 				"Move selection up/down",
 				"Actions:",
+				"Pause/resume project",
+				"Pause/resume all projects",
 				"Multi-Select:",
 				"Views:",
 				"Other:",
@@ -92,13 +94,13 @@ func TestHelpModal_Dimensions(t *testing.T) {
 			name:           "single project",
 			isMultiProject: false,
 			wantWidth:      60,
-			wantMinHeight:  25,
+			wantMinHeight:  27,
 		},
 		{
 			name:           "multi-project",
 			isMultiProject: true,
 			wantWidth:      60,
-			wantMinHeight:  28,
+			wantMinHeight:  30,
 		},
 	}
 
@@ -154,6 +156,30 @@ func TestHelpModal_HandleKey(t *testing.T) {
 				t.Errorf("HandleKey(%q) handled = %v, want %v", tt.key, handled, tt.wantHandled)
 			}
 		})
+	}
+}
+
+func TestHelpModal_View_ContainsPauseShortcuts(t *testing.T) {
+	modal := NewHelpModal(false)
+	view := modal.View()
+
+	// Should contain pause shortcuts in Actions section
+	if !strings.Contains(view, "Pause/resume project") {
+		t.Errorf("View() missing 'Pause/resume project' shortcut\nGot:\n%s", view)
+	}
+	if !strings.Contains(view, "Pause/resume all projects") {
+		t.Errorf("View() missing 'Pause/resume all projects' shortcut\nGot:\n%s", view)
+	}
+}
+
+func TestHelpModal_Height_IncludesPauseLines(t *testing.T) {
+	// Height should account for the 2 new pause shortcut lines
+	modal := NewHelpModal(false)
+	height := modal.Height()
+
+	// baseLines = 5+9+3+4+2+5+2 = 30
+	if height < 27 {
+		t.Errorf("Height() = %d, expected at least 27 (includes pause shortcut lines)", height)
 	}
 }
 

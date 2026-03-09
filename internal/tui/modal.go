@@ -29,6 +29,12 @@ type Modal interface {
 	Height() int
 }
 
+// DestructiveModal is an optional interface that modals can implement
+// to indicate they represent a destructive action (renders with red border).
+type DestructiveModal interface {
+	IsDestructive() bool
+}
+
 // ModalManager manages modal lifecycle and rendering.
 type ModalManager struct {
 	activeModal Modal
@@ -49,10 +55,10 @@ func (m *ModalManager) Open(modal Modal) tea.Cmd {
 	if m.activeModal != nil {
 		m.stack = append(m.stack, m.activeModal)
 	}
-	
+
 	// Set new modal as active
 	m.activeModal = modal
-	
+
 	// Initialize the modal
 	return modal.Init()
 }
@@ -123,10 +129,16 @@ func (m *ModalManager) View(width, height int) string {
 	// Get modal content
 	content := m.activeModal.View()
 
+	// Determine border color based on destructive flag
+	borderColor := ColorCyan
+	if dm, ok := m.activeModal.(DestructiveModal); ok && dm.IsDestructive() {
+		borderColor = ColorBlocked // red
+	}
+
 	// Apply modal styling with border and title
 	modalStyle := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(ColorCyan).
+		BorderForeground(borderColor).
 		Padding(1, 2)
 
 	// Add title if present
@@ -134,7 +146,7 @@ func (m *ModalManager) View(width, height int) string {
 	if title != "" {
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorCyan)
+			Foreground(borderColor)
 		content = titleStyle.Render(title) + "\n\n" + content
 	}
 

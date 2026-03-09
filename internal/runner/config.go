@@ -17,17 +17,22 @@ import (
 // DefaultConfigPath returns the primary config file path.
 func DefaultConfigPath() string {
 	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".config", "brain-runner", "config.yaml")
+	return filepath.Join(homeDir, ".config", "brain", "config.yaml")
 }
 
 // configFiles returns the list of config file paths to check, in priority order.
+// Checks ~/.config/brain/ first (preferred), then ~/.config/brain-runner/ (legacy).
 func configFiles() []string {
 	homeDir, _ := os.UserHomeDir()
-	dir := filepath.Join(homeDir, ".config", "brain-runner")
+	primaryDir := filepath.Join(homeDir, ".config", "brain")
+	legacyDir := filepath.Join(homeDir, ".config", "brain-runner")
 	return []string{
-		filepath.Join(dir, "config.yaml"),
-		filepath.Join(dir, "config.yml"),
-		filepath.Join(dir, "config.json"),
+		filepath.Join(primaryDir, "config.yaml"),
+		filepath.Join(primaryDir, "config.yml"),
+		filepath.Join(primaryDir, "config.json"),
+		filepath.Join(legacyDir, "config.yaml"),
+		filepath.Join(legacyDir, "config.yml"),
+		filepath.Join(legacyDir, "config.json"),
 	}
 }
 
@@ -36,7 +41,8 @@ func configFiles() []string {
 // =============================================================================
 
 // LoadConfig loads runner configuration from the default config file
-// (~/.config/brain-runner/config.yaml) with env var overrides, then validates.
+// (~/.config/brain/config.yaml) with env var overrides, then validates.
+// Falls back to legacy path (~/.config/brain-runner/config.yaml) if not found.
 func LoadConfig() (RunnerConfig, error) {
 	// Try each default config file location
 	for _, path := range configFiles() {

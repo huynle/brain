@@ -75,13 +75,6 @@ func (h HelpBar) View(width int, isMultiProject bool) string {
 		}
 	}
 
-	// Pause indicator (shown regardless of active panel)
-	if h.AllPaused {
-		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ ALL PAUSED") + "  "
-	} else if h.IsPaused {
-		shortcuts += BoldStyle.Foreground(ColorWaiting).Render("⏸ PAUSED") + "  "
-	}
-
 	if h.TextWrap {
 		shortcuts += fmt.Sprintf("%s Wrap  ", bold("w"))
 	} else {

@@ -73,7 +73,9 @@ var BoldStyle = lipgloss.NewStyle().Bold(true)
 // GroupHeaderStyle is used for collapsible group headers.
 var GroupHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
-	Foreground(ColorCyan)
+	Foreground(ColorCyan).
+	Background(lipgloss.Color("#1a2a3a")). // Dark blue background for feature headers
+	Padding(0, 1)                          // Padding for background visibility
 
 // SelectedTaskStyle is used for tasks that are selected (but not focused).
 var SelectedTaskStyle = lipgloss.NewStyle().

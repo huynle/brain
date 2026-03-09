@@ -307,10 +307,10 @@ func TestGroupTasks_TerminalStatesInSeparateGroups(t *testing.T) {
 
 func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 	tasks := []types.ResolvedTask{
-		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
-		{ID: "t2", Title: "Waiting", Status: "pending", Priority: "high", Classification: "waiting"},
-		{ID: "t3", Title: "Active", Status: "in_progress", Priority: "high", Classification: "ready"}, // in_progress stays in classification group
-		{ID: "t4", Title: "Blocked", Status: "blocked", Priority: "high", Classification: "blocked"},
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready", FeatureID: "feature-1"},
+		{ID: "t2", Title: "Waiting", Status: "pending", Priority: "high", Classification: "waiting", FeatureID: "feature-1"},
+		{ID: "t3", Title: "Active", Status: "in_progress", Priority: "high", Classification: "ready", FeatureID: "feature-1"}, // in_progress stays in classification group
+		{ID: "t4", Title: "Blocked", Status: "blocked", Priority: "high", Classification: "blocked", FeatureID: "feature-1"},
 		{ID: "t5", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
 		{ID: "t6", Title: "Cancelled", Status: "cancelled", Priority: "high", Classification: ""},
 		{ID: "t7", Title: "Completed", Status: "completed", Priority: "high", Classification: ""},
@@ -355,7 +355,7 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 
 func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
 	tasks := []types.ResolvedTask{
-		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready", FeatureID: "feature-1"},
 		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
 		{ID: "t3", Title: "Completed", Status: "completed", Priority: "high", Classification: ""},
 		{ID: "t4", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
@@ -386,7 +386,7 @@ func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
 
 func TestGroupTasks_WithVisibility_NilMapShowsAll(t *testing.T) {
 	tasks := []types.ResolvedTask{
-		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready"},
+		{ID: "t1", Title: "Ready", Status: "pending", Priority: "high", Classification: "ready", FeatureID: "feature-1"},
 		{ID: "t2", Title: "Draft", Status: "draft", Priority: "high", Classification: ""},
 		{ID: "t3", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
 	}

@@ -40,8 +40,8 @@ func (s StatusBar) View(width int) string {
 		indicators += lipgloss.NewStyle().Foreground(ColorMagenta).Bold(true).
 			Render(fmt.Sprintf("▶%d", s.ActiveFeatureCount)) + " "
 	} else if s.IsPaused {
-		// Show pause symbol when no active features
-		indicators += lipgloss.NewStyle().Foreground(ColorWaiting).Bold(true).
+		// Show pause symbol when no active features (gray, non-bold to match TS)
+		indicators += lipgloss.NewStyle().Foreground(lipgloss.Color("8")).
 			Render("⏸")
 		if s.EnabledFeatureCount > 0 {
 			suffix := "s"

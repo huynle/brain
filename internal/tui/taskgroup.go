@@ -8,16 +8,17 @@ import (
 
 // TaskGroup represents a collapsible group of tasks organized by classification.
 type TaskGroup struct {
-	Name      string               // "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string               // "Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
 	Tasks     []types.ResolvedTask // Tasks in this group
 	Collapsed bool                 // Is the group collapsed?
 	Count     int                  // Total tasks in group
 }
 
 // GroupTasks organizes tasks into groups by classification with optional visibility filtering.
-// Returns groups in priority order: Ready, Waiting, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
+// Returns groups in priority order: Ungrouped, Ready, Waiting, Blocked, Draft, Cancelled, Completed, Validated, Superseded, Archived.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
 // Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
+// Tasks without a feature_id are classified as "Ungrouped" for Ready/Waiting/Blocked classifications.
 func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []TaskGroup {
 	if len(tasks) == 0 {
 		return nil

@@ -25,13 +25,13 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask) []StatusGroup {
 	// Step 1: Group tasks by normalized status (classification)
 	statusMap := make(map[string][]types.ResolvedTask)
 	for _, task := range tasks {
-		status := normalizeClassification(task.Classification, task.Status)
+		status := normalizeClassification(task.Classification, task.Status, task.FeatureID)
 		statusMap[status] = append(statusMap[status], task)
 	}
 
 	// Step 2: For each status group, create nested feature groups
 	var result []StatusGroup
-	statusOrder := []string{"Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	statusOrder := []string{"Ungrouped", "Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 	for _, statusName := range statusOrder {
 		statusTasks, ok := statusMap[statusName]

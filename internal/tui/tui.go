@@ -697,6 +697,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 			m.helpBar.ViewMode = m.viewMode
 			m.selectedTasks = make(map[string]bool)
+			m.syncHelpBarSelectionState()
 			m.filterState = FilterOff
 			m.filterQuery = ""
 			m.clearFilter()
@@ -1367,6 +1368,11 @@ func (m *Model) syncHelpBarPauseState() {
 	m.helpBar.IsPaused = m.pausedProjects[projectID]
 }
 
+// syncHelpBarSelectionState updates the help bar's HasSelectedTasks field based on multi-select state.
+func (m *Model) syncHelpBarSelectionState() {
+	m.helpBar.HasSelectedTasks = len(m.selectedTasks) > 0
+}
+
 // toggleTaskSelection toggles selection for the currently focused task.
 func (m *Model) toggleTaskSelection() {
 	task := m.taskTree.SelectedTask()
@@ -1379,11 +1385,13 @@ func (m *Model) toggleTaskSelection() {
 	} else {
 		m.selectedTasks[task.ID] = true
 	}
+	m.syncHelpBarSelectionState()
 }
 
 // clearSelection clears all selected tasks.
 func (m *Model) clearSelection() {
 	m.selectedTasks = make(map[string]bool)
+	m.syncHelpBarSelectionState()
 }
 
 // selectAllTasks selects all visible tasks.
@@ -1391,6 +1399,7 @@ func (m *Model) selectAllTasks() {
 	for _, task := range m.filteredTasks() {
 		m.selectedTasks[task.ID] = true
 	}
+	m.syncHelpBarSelectionState()
 }
 
 // getSelectedTasks returns all selected tasks.

@@ -8,12 +8,13 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel     Panel
-	ViewMode        ViewMode
-	TextWrap        bool
-	IsPaused        bool
-	AllPaused       bool
-	HasTaskSessions bool // whether selected task has sessions (shows o/O shortcuts)
+	ActivePanel      Panel
+	ViewMode         ViewMode
+	TextWrap         bool
+	IsPaused         bool
+	AllPaused        bool
+	HasTaskSessions  bool // whether selected task has sessions (shows o/O shortcuts)
+	HasSelectedTasks bool // whether tasks are currently selected (shows delete shortcut)
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -63,6 +64,9 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 			// Task view shortcuts
 			shortcuts += fmt.Sprintf("%s Filter  ", bold("/"))
 			shortcuts += fmt.Sprintf("%s Select  ", bold("Space"))
+			if h.HasSelectedTasks {
+				shortcuts += fmt.Sprintf("%s Delete  ", bold("⌫"))
+			}
 			shortcuts += fmt.Sprintf("%s Meta/Feature  ", bold("s"))
 			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 			if h.HasTaskSessions {

@@ -17,7 +17,8 @@ type StatusGroup struct {
 // Within each status, features are sorted by priority (high > medium > low), then alphabetically by ID.
 // Tasks without feature_id go into the Ungrouped group within their status.
 // Note: in_progress tasks stay in their classification groups and are indicated by the blue arrow, not a separate "Active" group.
-func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask) []StatusGroup {
+// If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
+func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[string]bool) []StatusGroup {
 	if len(tasks) == 0 {
 		return nil
 	}
@@ -37,6 +38,14 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask) []StatusGroup {
 		statusTasks, ok := statusMap[statusName]
 		if !ok || len(statusTasks) == 0 {
 			continue
+		}
+
+		// Check visibility: if visibleGroups is nil/empty, show all groups
+		// If visibleGroups exists and group is explicitly false, skip it
+		if len(visibleGroups) > 0 {
+			if visible, hasKey := visibleGroups[statusName]; hasKey && !visible {
+				continue // Skip invisible groups
+			}
 		}
 
 		// Group tasks by feature within this status

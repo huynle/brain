@@ -1602,7 +1602,7 @@ func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
 
 	// Populate statusGroups to trigger nested mode
 	tt.tasks = tasks
-	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
 	tt.selectedStatusIdx = 0
 	tt.isOnStatusHeader = true
 
@@ -1640,7 +1640,7 @@ func TestTaskTree_ViewNestedGrouped_CollapseIndicatorsAtAllLevels(t *testing.T) 
 	}
 
 	tt.tasks = tasks
-	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
 	tt.selectedStatusIdx = 0
 	tt.isOnStatusHeader = true
 
@@ -1668,7 +1668,7 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 	}
 
 	tt.tasks = tasks
-	tt.statusGroups = GroupTasksByStatusAndFeature(tasks)
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
 
 	// Test 1: Status header selected
 	tt.selectedStatusIdx = 0

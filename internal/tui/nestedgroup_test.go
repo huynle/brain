@@ -8,12 +8,12 @@ import (
 
 // TestGroupTasksByStatusAndFeature_Empty tests grouping with no tasks.
 func TestGroupTasksByStatusAndFeature_Empty(t *testing.T) {
-	result := GroupTasksByStatusAndFeature(nil)
+	result := GroupTasksByStatusAndFeature(nil, nil)
 	if len(result) != 0 {
 		t.Errorf("Expected 0 groups, got %d", len(result))
 	}
 
-	result = GroupTasksByStatusAndFeature([]types.ResolvedTask{})
+	result = GroupTasksByStatusAndFeature([]types.ResolvedTask{}, nil)
 	if len(result) != 0 {
 		t.Errorf("Expected 0 groups for empty slice, got %d", len(result))
 	}
@@ -26,7 +26,7 @@ func TestGroupTasksByStatusAndFeature_SingleStatusNoFeatures(t *testing.T) {
 		{ID: "task2", Title: "Task 2", Classification: "ready", Status: "pending"},
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	// With the new behavior, tasks without feature_id are classified as "Ungrouped"
 	if len(result) != 1 {
@@ -63,7 +63,7 @@ func TestGroupTasksByStatusAndFeature_MultipleStatusesWithFeatures(t *testing.T)
 		{ID: "task7", Title: "Completed UI", Status: "completed", FeatureID: "ui-redesign", FeaturePriority: "medium", Priority: "medium"},
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	// Verify 4 status groups: Ungrouped (1 task4), Ready (3 with features), Waiting (1), Completed (2)
 	if len(result) != 4 {
@@ -152,7 +152,7 @@ func TestGroupTasksByStatusAndFeature_StatusOrder(t *testing.T) {
 		{ID: "task7", Status: "pending", Classification: "ready", FeatureID: "feature-1"},
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	expectedOrder := []string{"Ready", "Waiting", "Blocked", "Cancelled", "Completed", "Archived"}
 	if len(result) != len(expectedOrder) {
@@ -183,7 +183,7 @@ func TestGroupTasksByStatusAndFeature_FeaturePrioritySorting(t *testing.T) {
 		{ID: "task3", Classification: "ready", Status: "pending", FeatureID: "feature-medium", FeaturePriority: "medium"},
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 status group, got %d", len(result))
@@ -212,7 +212,7 @@ func TestGroupTasksByStatusAndFeature_UngroupedPlacement(t *testing.T) {
 		{ID: "task4", Status: "completed"}, // No feature_id - completed is terminal, stays in Completed
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	// Expect 3 status groups: Ungrouped (task2), Ready (task1), Completed (task3, task4)
 	if len(result) != 3 {
@@ -254,7 +254,7 @@ func TestGroupTasksByStatusAndFeature_NoUngrouped(t *testing.T) {
 		{ID: "task2", Classification: "ready", FeatureID: "feature-b"},
 	}
 
-	result := GroupTasksByStatusAndFeature(tasks)
+	result := GroupTasksByStatusAndFeature(tasks, nil)
 
 	if len(result) != 1 {
 		t.Fatalf("Expected 1 status group, got %d", len(result))
@@ -262,5 +262,88 @@ func TestGroupTasksByStatusAndFeature_NoUngrouped(t *testing.T) {
 
 	if result[0].Ungrouped != nil {
 		t.Error("Expected Ungrouped to be nil when all tasks have features")
+	}
+}
+
+// TestGroupTasksByStatusAndFeature_VisibilityFiltering tests that status groups are filtered by visibility settings.
+func TestGroupTasksByStatusAndFeature_VisibilityFiltering(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "task1", Status: "draft", FeatureID: "feature-1"},
+		{ID: "task2", Status: "draft", FeatureID: "feature-1"},
+		{ID: "task3", Status: "draft", FeatureID: "feature-1"},
+		{ID: "task4", Classification: "ready", Status: "pending", FeatureID: "feature-2"},
+		{ID: "task5", Status: "completed", FeatureID: "feature-3"},
+		{ID: "task6", Status: "cancelled", FeatureID: "feature-4"},
+	}
+
+	// Test with nil visibleGroups - should show all groups
+	resultAll := GroupTasksByStatusAndFeature(tasks, nil)
+	if len(resultAll) != 4 {
+		t.Errorf("Expected 4 groups with nil visibility, got %d", len(resultAll))
+	}
+
+	// Test with empty visibleGroups - should show all groups
+	resultEmpty := GroupTasksByStatusAndFeature(tasks, map[string]bool{})
+	if len(resultEmpty) != 4 {
+		t.Errorf("Expected 4 groups with empty visibility, got %d", len(resultEmpty))
+	}
+
+	// Test with Draft hidden
+	visibleNoDraft := map[string]bool{
+		"Ready":     true,
+		"Completed": true,
+		"Cancelled": true,
+		"Draft":     false,
+	}
+	resultNoDraft := GroupTasksByStatusAndFeature(tasks, visibleNoDraft)
+	if len(resultNoDraft) != 3 {
+		t.Errorf("Expected 3 groups with Draft hidden, got %d", len(resultNoDraft))
+	}
+	// Verify Draft group is not present
+	for _, group := range resultNoDraft {
+		if group.Name == "Draft" {
+			t.Error("Draft group should be hidden but is present")
+		}
+	}
+
+	// Test with only Ready and Completed visible
+	visibleOnlyReadyCompleted := map[string]bool{
+		"Ready":     true,
+		"Completed": true,
+		"Draft":     false,
+		"Cancelled": false,
+	}
+	resultOnlyTwo := GroupTasksByStatusAndFeature(tasks, visibleOnlyReadyCompleted)
+	if len(resultOnlyTwo) != 2 {
+		t.Errorf("Expected 2 groups with only Ready and Completed visible, got %d", len(resultOnlyTwo))
+	}
+	// Verify only Ready and Completed are present
+	groupNames := make(map[string]bool)
+	for _, group := range resultOnlyTwo {
+		groupNames[group.Name] = true
+	}
+	if !groupNames["Ready"] {
+		t.Error("Ready group should be visible")
+	}
+	if !groupNames["Completed"] {
+		t.Error("Completed group should be visible")
+	}
+	if groupNames["Draft"] {
+		t.Error("Draft group should be hidden")
+	}
+	if groupNames["Cancelled"] {
+		t.Error("Cancelled group should be hidden")
+	}
+
+	// Test with all groups explicitly visible
+	visibleAll := map[string]bool{
+		"Ready":     true,
+		"Draft":     true,
+		"Completed": true,
+		"Cancelled": true,
+	}
+	resultExplicitAll := GroupTasksByStatusAndFeature(tasks, visibleAll)
+	if len(resultExplicitAll) != 4 {
+		t.Errorf("Expected 4 groups with all explicitly visible, got %d", len(resultExplicitAll))
 	}
 }

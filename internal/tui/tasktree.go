@@ -600,27 +600,71 @@ func (tt *TaskTree) selectFirstTask() {
 
 // selectFirstFeatureTask selects the first task in feature view mode.
 func (tt *TaskTree) selectFirstFeatureTask() {
-	// Try features first
+	// Helper to check if a task is active (not draft/completed)
+	isActiveStatus := func(status string) bool {
+		switch status {
+		case "draft", "completed", "validated", "cancelled", "superseded", "archived":
+			return false
+		default:
+			return true
+		}
+	}
+
+	// Try features first - select first ACTIVE task
 	if len(tt.featureGroups.Features) > 0 {
-		// Find first feature with tasks
 		for i, feature := range tt.featureGroups.Features {
-			if len(feature.Tasks) > 0 {
-				tt.selectedFeatureIdx = i
-				tt.selectedFeatureTaskIdx = 0 // Auto-select first task
-				tt.isOnUngrouped = false
-				tt.SelectedID = feature.Tasks[0].ID
+			// Find first active task in this feature
+			for j, task := range feature.Tasks {
+				if isActiveStatus(task.Status) {
+					tt.selectedFeatureIdx = i
+					tt.selectedFeatureTaskIdx = j
+					tt.isOnUngrouped = false
+					tt.SelectedID = task.ID
+					return
+				}
+			}
+		}
+	}
+
+	// Fall back to ungrouped if no active tasks in features
+	if tt.featureGroups.Ungrouped != nil && len(tt.featureGroups.Ungrouped.Tasks) > 0 {
+		for j, task := range tt.featureGroups.Ungrouped.Tasks {
+			if isActiveStatus(task.Status) {
+				tt.selectedFeatureIdx = -1
+				tt.selectedFeatureTaskIdx = j
+				tt.isOnUngrouped = true
+				tt.SelectedID = task.ID
 				return
 			}
 		}
 	}
 
-	// Fall back to ungrouped if no features with tasks
-	if tt.featureGroups.Ungrouped != nil && len(tt.featureGroups.Ungrouped.Tasks) > 0 {
-		tt.selectedFeatureIdx = -1
-		tt.selectedFeatureTaskIdx = 0 // Auto-select first task
-		tt.isOnUngrouped = true
-		tt.SelectedID = tt.featureGroups.Ungrouped.Tasks[0].ID
-		return
+	// No active tasks - fall back to first draft task
+	if len(tt.featureGroups.Features) > 0 {
+		for i, feature := range tt.featureGroups.Features {
+			for j, task := range feature.Tasks {
+				if task.Status == "draft" {
+					tt.selectedFeatureIdx = i
+					tt.selectedFeatureTaskIdx = j
+					tt.isOnUngrouped = false
+					tt.SelectedID = task.ID
+					return
+				}
+			}
+		}
+	}
+
+	// Fall back to draft in ungrouped
+	if tt.featureGroups.Ungrouped != nil {
+		for j, task := range tt.featureGroups.Ungrouped.Tasks {
+			if task.Status == "draft" {
+				tt.selectedFeatureIdx = -1
+				tt.selectedFeatureTaskIdx = j
+				tt.isOnUngrouped = true
+				tt.SelectedID = task.ID
+				return
+			}
+		}
 	}
 
 	// No tasks available

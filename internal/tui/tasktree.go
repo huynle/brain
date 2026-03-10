@@ -582,12 +582,12 @@ func (tt *TaskTree) selectFirstTask() {
 		return
 	}
 
-	// Find first non-empty group and ALWAYS start on header
+	// Find first non-empty group and auto-select first task
 	for i, group := range tt.groups {
 		if len(group.Tasks) > 0 {
 			tt.selectedGroupIdx = i
-			tt.selectedTaskIdx = -1 // ALWAYS start on header
-			tt.SelectedID = ""
+			tt.selectedTaskIdx = 0 // Auto-select first task
+			tt.SelectedID = group.Tasks[0].ID
 			return
 		}
 	}
@@ -602,19 +602,24 @@ func (tt *TaskTree) selectFirstTask() {
 func (tt *TaskTree) selectFirstFeatureTask() {
 	// Try features first
 	if len(tt.featureGroups.Features) > 0 {
-		tt.selectedFeatureIdx = 0
-		tt.selectedFeatureTaskIdx = -1 // Start on header
-		tt.isOnUngrouped = false
-		tt.SelectedID = ""
-		return
+		// Find first feature with tasks
+		for i, feature := range tt.featureGroups.Features {
+			if len(feature.Tasks) > 0 {
+				tt.selectedFeatureIdx = i
+				tt.selectedFeatureTaskIdx = 0 // Auto-select first task
+				tt.isOnUngrouped = false
+				tt.SelectedID = feature.Tasks[0].ID
+				return
+			}
+		}
 	}
 
-	// Fall back to ungrouped if no features
+	// Fall back to ungrouped if no features with tasks
 	if tt.featureGroups.Ungrouped != nil && len(tt.featureGroups.Ungrouped.Tasks) > 0 {
 		tt.selectedFeatureIdx = -1
-		tt.selectedFeatureTaskIdx = -1 // Start on header
+		tt.selectedFeatureTaskIdx = 0 // Auto-select first task
 		tt.isOnUngrouped = true
-		tt.SelectedID = ""
+		tt.SelectedID = tt.featureGroups.Ungrouped.Tasks[0].ID
 		return
 	}
 
@@ -661,9 +666,39 @@ func (tt *TaskTree) selectFirstNestedTask() {
 		return
 	}
 
-	tt.selectedFeatureIdx = -1 // Start on status header
+	// Auto-select first visible task in the selected status group
+	statusGroup := tt.statusGroups[tt.selectedStatusIdx]
+
+	// Try features first
+	if len(statusGroup.Features) > 0 {
+		// Find first feature with tasks
+		for i, feature := range statusGroup.Features {
+			if len(feature.Tasks) > 0 {
+				tt.selectedFeatureIdx = i
+				tt.selectedFeatureTaskIdx = 0
+				tt.isOnUngrouped = false
+				tt.isOnStatusHeader = false
+				tt.SelectedID = feature.Tasks[0].ID
+				return
+			}
+		}
+	}
+
+	// Fall back to ungrouped if no features with tasks
+	if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = 0
+		tt.isOnUngrouped = true
+		tt.isOnStatusHeader = false
+		tt.SelectedID = statusGroup.Ungrouped.Tasks[0].ID
+		return
+	}
+
+	// No tasks in this status group - stay on status header
+	tt.selectedFeatureIdx = -1
 	tt.selectedFeatureTaskIdx = -1
 	tt.isOnUngrouped = false
+	tt.isOnStatusHeader = true
 	tt.SelectedID = ""
 }
 

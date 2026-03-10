@@ -1545,6 +1545,9 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 	// Render Draft status group
 	if len(draftTasks) > 0 {
+		// Add blank line before Draft section
+		lines = append(lines, "")
+
 		collapseIndicator := "▶"
 		if !tt.draftCollapsed {
 			collapseIndicator = "▾"
@@ -1576,6 +1579,9 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 	// Render Completed status group
 	if len(completedTasks) > 0 {
+		// Add blank line before Completed section
+		lines = append(lines, "")
+
 		collapseIndicator := "▶"
 		if !tt.completedCollapsed {
 			collapseIndicator = "▾"
@@ -1673,6 +1679,11 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 
 	// Iterate through status groups (Level 1)
 	for sIdx, statusGroup := range tt.statusGroups {
+		// Add blank line before each status section (except the first one)
+		if sIdx > 0 {
+			lines = append(lines, "")
+		}
+
 		// Render status header (Level 1)
 		isStatusSelected := (sIdx == tt.selectedStatusIdx && tt.isOnStatusHeader)
 

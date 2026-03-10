@@ -1159,23 +1159,42 @@ func (tt *TaskTree) ViewWithSelection(width, height int, selectedTasks map[strin
 // ViewWithProject renders the task tree with optional project labels.
 // When activeProjectID == "all", shows [project-name] prefix for each task.
 func (tt *TaskTree) ViewWithProject(width, height int, activeProjectID string) string {
+	// Render "Tasks (N)" header with bold and underline
+	totalCount := len(tt.tasks)
+	header := lipgloss.NewStyle().
+		Bold(true).
+		Underline(true).
+		Render(fmt.Sprintf("Tasks (%d)", totalCount))
+
+	// Add blank line after header (marginTop={1} in TypeScript)
+	content := "\n"
+
+	// Adjust height to account for header + blank line
+	contentHeight := height
+	if height > 0 {
+		contentHeight = height - 2 // Subtract header line + blank line
+		if contentHeight < 0 {
+			contentHeight = 0
+		}
+	}
+
 	// Check lane view first (takes precedence over grouped view)
 	if tt.useLaneView {
-		return tt.viewLaneTree(width, height)
-	}
-
-	if tt.useGroupedView {
+		content += tt.viewLaneTree(width, contentHeight)
+	} else if tt.useGroupedView {
 		// Phase 4: Use nested view when statusGroups is populated
 		if len(tt.statusGroups) > 0 && !tt.useFeatureView {
-			return tt.viewNestedGrouped(width, height, activeProjectID)
+			content += tt.viewNestedGrouped(width, contentHeight, activeProjectID)
+		} else if tt.useFeatureView {
+			content += tt.viewFeatureGrouped(width, contentHeight, activeProjectID)
+		} else {
+			content += tt.viewGrouped(width, contentHeight, activeProjectID)
 		}
-		if tt.useFeatureView {
-			return tt.viewFeatureGrouped(width, height, activeProjectID)
-		}
-		return tt.viewGrouped(width, height, activeProjectID)
+	} else {
+		content += tt.viewLegacy(width, contentHeight)
 	}
 
-	return tt.viewLegacy(width, height)
+	return header + content
 }
 
 // viewLegacy is the original tree-based rendering.
@@ -1532,7 +1551,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 
 		draftHeader := fmt.Sprintf("%s Draft (%d)", collapseIndicator, len(draftTasks))
-		draftHeader = GroupHeaderStyle.Render(draftHeader)
+		draftHeader = DraftHeaderStyle.Render(draftHeader)
 		draftHeader = fmt.Sprintf("  %s", draftHeader)
 		lines = append(lines, draftHeader)
 
@@ -1563,7 +1582,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 
 		completedHeader := fmt.Sprintf("%s Completed (%d)", collapseIndicator, len(completedTasks))
-		completedHeader = GroupHeaderStyle.Render(completedHeader)
+		completedHeader = CompletedHeaderStyle.Render(completedHeader)
 		completedHeader = fmt.Sprintf("  %s", completedHeader)
 		lines = append(lines, completedHeader)
 

@@ -78,6 +78,18 @@ var GroupHeaderStyle = lipgloss.NewStyle().
 	Background(lipgloss.Color("#1a2a3a")). // Dark blue background for feature headers
 	Padding(0, 1)                          // Padding for background visibility
 
+// DraftHeaderStyle is used for Draft status group headers (gray color).
+var DraftHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#aaaaaa")). // Gray (matches TypeScript)
+	Padding(0, 1)
+
+// CompletedHeaderStyle is used for Completed status group headers (green color).
+var CompletedHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#66cc66")). // Green (matches TypeScript)
+	Padding(0, 1)
+
 // SelectedTaskStyle is used for tasks that are selected (but not focused).
 var SelectedTaskStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("39")). // Blue highlight

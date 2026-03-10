@@ -1621,21 +1621,49 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		lines = append(lines, completedHeader)
 
 		if !tt.completedCollapsed {
-			// Build dependency tree for completed tasks
-			tree := BuildTree(completedTasks, tt.tasks)
-			visualIndex := 0
-			tt.renderGroupTaskTree(
-				tree,
-				"    ",
-				&lines,
-				width,
-				-1, // No feature index for status groups
-				&visualIndex,
-				tt.selectedTasks,
-				showCheckboxes,
-				activeProjectID,
-				-1, // No feature selection for status groups
-			)
+			// Group completed tasks by feature_id
+			completedByFeature := make(map[string][]types.ResolvedTask)
+			for _, task := range completedTasks {
+				featureID := task.FeatureID
+				if featureID == "" {
+					featureID = "[Ungrouped]"
+				}
+				completedByFeature[featureID] = append(completedByFeature[featureID], task)
+			}
+
+			// Sort feature IDs for consistent ordering
+			var featureIDs []string
+			for fid := range completedByFeature {
+				featureIDs = append(featureIDs, fid)
+			}
+			sort.Strings(featureIDs)
+
+			// Render each feature group under Completed
+			for _, featureID := range featureIDs {
+				featureTasks := completedByFeature[featureID]
+
+				// Render dimmed feature header (skip for [Ungrouped])
+				if featureID != "[Ungrouped]" {
+					featureHeader := fmt.Sprintf("  • Feature: %s [%d]", featureID, len(featureTasks))
+					lines = append(lines, DimStyle.Render(featureHeader))
+				}
+
+				// Build dependency tree for this feature's tasks
+				tree := BuildTree(featureTasks, tt.tasks)
+				visualIndex := 0
+				tt.renderGroupTaskTree(
+					tree,
+					"    ",
+					&lines,
+					width,
+					-1, // No feature index for status groups
+					&visualIndex,
+					tt.selectedTasks,
+					showCheckboxes,
+					activeProjectID,
+					-1, // No feature selection for status groups
+				)
+			}
 		}
 	}
 

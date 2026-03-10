@@ -1458,15 +1458,15 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		// Selection marker (2 spaces for alignment)
 		selMarker := "  "
 
-		// Apply blue background if selected, otherwise dark blue background
+		// Apply blue background if selected, otherwise muted blue text (no background)
 		if isFeatureSelected {
 			// Blue background for selected feature header
 			featureHeader = SelectedRowStyle.Render(featureHeader)
 			selMarker = SelectedRowStyle.Render(selMarker)
 			featureHeader = fmt.Sprintf("%s%s", selMarker, featureHeader)
 		} else {
-			// Dark blue background for unselected feature headers
-			featureHeader = GroupHeaderStyle.Render(featureHeader)
+			// Muted blue text for unselected feature headers (matches TypeScript)
+			featureHeader = FeatureHeaderStyle.Render(featureHeader)
 			featureHeader = fmt.Sprintf("%s%s", selMarker, featureHeader)
 		}
 
@@ -1713,10 +1713,10 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 
 				// Selection marker for feature header (with indentation)
 				if isFeatureSelected {
-					featureHeader = GroupHeaderStyle.Render(featureHeader)
+					featureHeader = FeatureHeaderStyle.Render(featureHeader)
 					featureHeader = fmt.Sprintf("  → %s", featureHeader)
 				} else {
-					featureHeader = GroupHeaderStyle.Render(featureHeader)
+					featureHeader = FeatureHeaderStyle.Render(featureHeader)
 					featureHeader = fmt.Sprintf("    %s", featureHeader)
 				}
 

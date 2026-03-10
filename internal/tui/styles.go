@@ -90,6 +90,12 @@ var CompletedHeaderStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#66cc66")). // Green (matches TypeScript)
 	Padding(0, 1)
 
+// FeatureHeaderStyle is used for "Feature: feature-name" headers (muted blue color).
+var FeatureHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#6699cc")). // Muted blue (matches TypeScript FEATURE_HEADER_COLOR)
+	Padding(0, 1)
+
 // SelectedTaskStyle is used for tasks that are selected (but not focused).
 var SelectedTaskStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("39")). // Blue highlight

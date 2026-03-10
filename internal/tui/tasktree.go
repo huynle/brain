@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -2090,11 +2091,21 @@ func (tt *TaskTree) renderGroupTaskTree(
 	activeProjectID string,
 	selectedGroupIdx int,
 ) {
+	// DEBUG: Log SelectedID at function entry
+	if len(nodes) > 0 {
+		fmt.Fprintf(os.Stderr, "DEBUG renderGroupTaskTree: tt.SelectedID='%s', nodes=%d\n", tt.SelectedID, len(nodes))
+	}
+
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
 		// Check if this task is selected (use SelectedID for consistency with mouse and keyboard nav)
 		isSelected := (node.Task.ID == tt.SelectedID)
+
+		// DEBUG: Log comparison for each task
+		fmt.Fprintf(os.Stderr, "DEBUG: Task ID='%s', SelectedID='%s', match=%v\n",
+			node.Task.ID, tt.SelectedID, isSelected)
+
 		*visualIndex++
 
 		// Build the line with tree prefix
@@ -2220,6 +2231,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 
 	// Apply blue background to ALL parts if selected
 	if isSelected {
+		// DEBUG: Add obvious visual marker
+		selMarker = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true).Render(">>> ")
 		selMarker = SelectedRowStyle.Render(selMarker)
 		prefix = SelectedRowStyle.Render(prefix)
 		treeConnector = SelectedRowStyle.Render(treeConnector)

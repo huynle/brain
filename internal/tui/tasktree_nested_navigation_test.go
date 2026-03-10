@@ -290,8 +290,9 @@ func TestNestedNavigation_MoveDownAtEndOfFeature(t *testing.T) {
 	if tt.selectedTaskIdx != -1 {
 		t.Errorf("Expected selectedTaskIdx=-1 (on feature header), got %d", tt.selectedTaskIdx)
 	}
-	if tt.SelectedID != "" {
-		t.Errorf("Expected SelectedID='', got '%s'", tt.SelectedID)
+	// SelectedID should stay as 't1' (last selected task) even when on header
+	if tt.SelectedID != "t1" {
+		t.Errorf("Expected SelectedID='t1' (preserved from last task), got '%s'", tt.SelectedID)
 	}
 }
 

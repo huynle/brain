@@ -2444,7 +2444,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 				tt.selectedFeatureIdx = -2
 				tt.selectedTaskIdx = -1
 				tt.isOnStatusHeader = true
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			}
 		} else {
 			// Rule 2: Expanded → move to first feature header
@@ -2452,7 +2452,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 				tt.selectedFeatureIdx = 0
 				tt.selectedTaskIdx = -1
 				tt.isOnStatusHeader = false
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
 				// No features, only ungrouped tasks - skip ungrouped header and go directly to first task
 				tt.selectedFeatureIdx = -1 // ungrouped marker
@@ -2486,7 +2486,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 					tt.selectedFeatureIdx = -2
 					tt.selectedTaskIdx = -1
 					tt.isOnStatusHeader = true
-					tt.SelectedID = ""
+					// Keep SelectedID pointing to last selected task
 				}
 			} else {
 				// Enter ungrouped (move to first task)
@@ -2512,7 +2512,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 					tt.selectedFeatureIdx = -2
 					tt.selectedTaskIdx = -1
 					tt.isOnStatusHeader = true
-					tt.SelectedID = ""
+					// Keep SelectedID pointing to last selected task
 				}
 			}
 		}
@@ -2534,12 +2534,12 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 				// Next feature in same status
 				tt.selectedFeatureIdx++
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
 				// Move to ungrouped header
 				tt.selectedFeatureIdx = -1
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			} else {
 				// Move to next status header
 				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
@@ -2547,7 +2547,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 					tt.selectedFeatureIdx = -2
 					tt.selectedTaskIdx = -1
 					tt.isOnStatusHeader = true
-					tt.SelectedID = ""
+					// Keep SelectedID pointing to last selected task
 				}
 			}
 		} else {
@@ -2573,12 +2573,12 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 				// Next feature in same status
 				tt.selectedFeatureIdx++
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			} else if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
 				// Move to ungrouped header
 				tt.selectedFeatureIdx = -1
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			} else {
 				// Move to next status header
 				if tt.selectedStatusIdx < len(tt.statusGroups)-1 {
@@ -2586,7 +2586,7 @@ func (tt *TaskTree) moveDownNestedGrouped() {
 					tt.selectedFeatureIdx = -2
 					tt.selectedTaskIdx = -1
 					tt.isOnStatusHeader = true
-					tt.SelectedID = ""
+					// Keep SelectedID pointing to last selected task
 				}
 			}
 		}
@@ -2613,7 +2613,7 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 			tt.selectedFeatureIdx = -2
 			tt.selectedTaskIdx = -1
 			tt.isOnStatusHeader = true
-			tt.SelectedID = ""
+			// Keep SelectedID pointing to last selected task
 		}
 		return
 	}
@@ -2641,14 +2641,14 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 				} else {
 					// Last feature is collapsed, land on its header
 					tt.selectedTaskIdx = -1
-					tt.SelectedID = ""
+					// Keep SelectedID pointing to last selected task
 				}
 			} else {
 				// Move to status header
 				tt.selectedFeatureIdx = -2
 				tt.selectedTaskIdx = -1
 				tt.isOnStatusHeader = true
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			}
 		} else {
 			// Within ungrouped tasks - use tree order
@@ -2659,7 +2659,7 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 			} else {
 				// Move to ungrouped header
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			}
 		}
 		return
@@ -2687,14 +2687,14 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 			} else {
 				// Previous feature is collapsed, land on its header
 				tt.selectedTaskIdx = -1
-				tt.SelectedID = ""
+				// Keep SelectedID pointing to last selected task
 			}
 		} else {
 			// Move to status header
 			tt.selectedFeatureIdx = -2
 			tt.selectedTaskIdx = -1
 			tt.isOnStatusHeader = true
-			tt.SelectedID = ""
+			// Keep SelectedID pointing to last selected task
 		}
 	} else {
 		// Within feature - use tree order
@@ -2705,7 +2705,7 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 		} else {
 			// Move to feature header
 			tt.selectedTaskIdx = -1
-			tt.SelectedID = ""
+			// Keep SelectedID pointing to last selected task
 		}
 	}
 }
@@ -2721,7 +2721,7 @@ func (tt *TaskTree) moveToTopNestedGrouped() {
 	tt.selectedFeatureIdx = -2
 	tt.selectedTaskIdx = -1
 	tt.isOnStatusHeader = true
-	tt.SelectedID = ""
+	// Keep SelectedID pointing to last selected task
 }
 
 // moveToBottomNestedGrouped moves to the last task in the last feature of the last status.
@@ -2743,7 +2743,7 @@ func (tt *TaskTree) moveToBottomNestedGrouped() {
 		if ungrouped.Collapsed {
 			// Stay on ungrouped header
 			tt.selectedTaskIdx = -1
-			tt.SelectedID = ""
+			// Keep SelectedID pointing to last selected task
 		} else {
 			// Move to last task in ungrouped (using tree order)
 			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
@@ -2764,7 +2764,7 @@ func (tt *TaskTree) moveToBottomNestedGrouped() {
 		if feature.Collapsed {
 			// Stay on feature header
 			tt.selectedTaskIdx = -1
-			tt.SelectedID = ""
+			// Keep SelectedID pointing to last selected task
 		} else if len(feature.Tasks) > 0 {
 			// Move to last task in feature (using tree order)
 			treeOrder := FlattenTreeOrder(feature.Tasks)

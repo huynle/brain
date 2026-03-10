@@ -108,8 +108,8 @@ var SelectedCountStyle = lipgloss.NewStyle().
 
 // SelectedRowStyle is used for the currently selected task/feature (blue background).
 var SelectedRowStyle = lipgloss.NewStyle().
-	Background(lipgloss.Color("4")). // blue background
-	Foreground(ColorWhite).          // white text
+	Background(lipgloss.Color("#2563eb")). // blue background (using hex for better compatibility)
+	Foreground(ColorWhite).                // white text
 	Bold(true)
 
 // =============================================================================

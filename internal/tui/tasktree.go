@@ -1559,21 +1559,49 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		lines = append(lines, draftHeader)
 
 		if !tt.draftCollapsed {
-			// Build dependency tree for draft tasks
-			tree := BuildTree(draftTasks, tt.tasks)
-			visualIndex := 0
-			tt.renderGroupTaskTree(
-				tree,
-				"    ",
-				&lines,
-				width,
-				-1, // No feature index for status groups
-				&visualIndex,
-				tt.selectedTasks,
-				showCheckboxes,
-				activeProjectID,
-				-1, // No feature selection for status groups
-			)
+			// Group draft tasks by feature_id
+			draftByFeature := make(map[string][]types.ResolvedTask)
+			for _, task := range draftTasks {
+				featureID := task.FeatureID
+				if featureID == "" {
+					featureID = "[Ungrouped]"
+				}
+				draftByFeature[featureID] = append(draftByFeature[featureID], task)
+			}
+
+			// Sort feature IDs for consistent ordering
+			var featureIDs []string
+			for fid := range draftByFeature {
+				featureIDs = append(featureIDs, fid)
+			}
+			sort.Strings(featureIDs)
+
+			// Render each feature group under Draft
+			for _, featureID := range featureIDs {
+				featureTasks := draftByFeature[featureID]
+
+				// Render dimmed feature header (skip for [Ungrouped])
+				if featureID != "[Ungrouped]" {
+					featureHeader := fmt.Sprintf("  • Feature: %s [%d]", featureID, len(featureTasks))
+					lines = append(lines, DimStyle.Render(featureHeader))
+				}
+
+				// Build dependency tree for this feature's tasks
+				tree := BuildTree(featureTasks, tt.tasks)
+				visualIndex := 0
+				tt.renderGroupTaskTree(
+					tree,
+					"    ",
+					&lines,
+					width,
+					-1, // No feature index for status groups
+					&visualIndex,
+					tt.selectedTasks,
+					showCheckboxes,
+					activeProjectID,
+					-1, // No feature selection for status groups
+				)
+			}
 		}
 	}
 
@@ -2111,9 +2139,6 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 
 	// Selection marker
 	selMarker := "  "
-	if isSelected {
-		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
-	}
 
 	// Checkbox indicator (ONLY when multi-select active)
 	checkboxPart := ""
@@ -2127,7 +2152,6 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 
 	// Status indicator with color
 	indicator := statusIndicator(task.Status, task.Classification)
-	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
@@ -2148,30 +2172,51 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		title = truncateTitle(title, availableWidth)
 	}
 
-	if isSelected {
-		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
-	} else {
-		title = DimStyle.Render(title)
-	}
-
 	// Project label (only in aggregate view)
 	projectLabel := ""
 	if activeProjectID == "all" && task.ProjectID != "" {
-		projectLabel = lipgloss.NewStyle().
-			Foreground(ColorMagenta).
-			Render(fmt.Sprintf("[%s] ", task.ProjectID))
+		projectLabel = fmt.Sprintf("[%s] ", task.ProjectID)
 	}
 
 	// Priority suffix
 	prioritySuffix := ""
 	if task.Priority == "high" {
-		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
+		prioritySuffix = "!"
 	}
 
 	// Cycle suffix
 	cycleSuffix := ""
 	if node.InCycle {
-		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(" ↺")
+		cycleSuffix = " ↺"
+	}
+
+	// Apply blue background to ALL parts if selected
+	if isSelected {
+		selMarker = SelectedRowStyle.Render(selMarker)
+		prefix = SelectedRowStyle.Render(prefix)
+		treeConnector = SelectedRowStyle.Render(treeConnector)
+		checkboxPart = SelectedRowStyle.Render(checkboxPart)
+		indicatorStyled := SelectedRowStyle.Render(indicator)
+		projectLabel = SelectedRowStyle.Render(projectLabel)
+		title = SelectedRowStyle.Render(title)
+		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
+		cycleSuffix = SelectedRowStyle.Render(cycleSuffix)
+		return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
+			selMarker, prefix, treeConnector, checkboxPart,
+			indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
+	}
+
+	// Not selected - apply default styling
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
+	if projectLabel != "" {
+		projectLabel = lipgloss.NewStyle().Foreground(ColorMagenta).Render(projectLabel)
+	}
+	title = DimStyle.Render(title)
+	if task.Priority == "high" {
+		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render(prioritySuffix)
+	}
+	if cycleSuffix != "" {
+		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(cycleSuffix)
 	}
 
 	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",

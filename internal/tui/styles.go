@@ -106,11 +106,17 @@ var SelectedCountStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("39")).
 	Bold(true)
 
-// SelectedRowStyle is used for the currently selected task/feature (blue background).
-var SelectedRowStyle = lipgloss.NewStyle().
-	Background(lipgloss.Color("#2563eb")). // blue background (using hex for better compatibility)
-	Foreground(ColorWhite).                // white text
-	Bold(true)
+// GetSelectedRowStyle returns the style for the currently selected task/feature (blue background).
+// This is a function to ensure the style is created with the current color profile.
+func GetSelectedRowStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Background(lipgloss.Color("#2563eb")). // blue background
+		Foreground(ColorWhite).                // white text
+		Bold(true)
+}
+
+// Deprecated: Use GetSelectedRowStyle() instead. This variable is kept for backward compatibility.
+var SelectedRowStyle = GetSelectedRowStyle()
 
 // =============================================================================
 // Status Styles

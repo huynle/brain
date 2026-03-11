@@ -6,13 +6,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/muesli/termenv"
 )
+
+// truncateToHeight truncates content to fit within the specified number of lines.
+// If content has fewer lines, it's returned as-is (padding will be added by lipgloss.Height).
+// If content has more lines, it's truncated to fit.
+func truncateToHeight(content string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) <= maxLines {
+		return content
+	}
+
+	// Truncate to maxLines
+	return strings.Join(lines[:maxLines], "\n")
+}
 
 // DefaultReconnectDelay is the default delay before reconnecting after disconnect.
 const DefaultReconnectDelay = 3 * time.Second
@@ -98,6 +117,17 @@ type Model struct {
 
 // NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg Config) Model {
+	// Force TrueColor support for proper selection highlighting
+	// This ensures the blue background renders correctly in tmux
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	// Recreate SelectedRowStyle AFTER setting color profile
+	// Try using ANSI color code directly for maximum compatibility
+	SelectedRowStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color("4")).  // blue background (ANSI color 4)
+		Foreground(lipgloss.Color("15")). // white text (ANSI color 15)
+		Bold(true)
+
 	// Load settings from disk
 	settings, err := LoadSettings()
 	if err != nil {
@@ -1497,6 +1527,11 @@ func (m Model) View() string {
 
 // renderBaseView renders the main TUI layout (without modal)
 func (m Model) renderBaseView() string {
+	// Safety check: ensure we have valid dimensions before rendering
+	if m.width < 10 || m.height < 10 {
+		return "Initializing..."
+	}
+
 	// Update status bar with selection count, metrics, and pause/feature indicators
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics
@@ -1573,13 +1608,20 @@ func (m Model) renderBaseView() string {
 	}
 
 	// Calculate available height for main content by measuring all UI elements
-	statusBarHeight := lipgloss.Height(statusBarView)
+	// Fixed heights for UI elements that should be consistent
+	statusBarHeight := 4 // Status bar always takes 4 lines (2 border + 2 content)
+	helpBarHeight := 3   // Help bar wraps to 3 lines
+
 	projectTabsHeight := lipgloss.Height(projectTabsView)
-	helpBarHeight := lipgloss.Height(helpBarView)
 	statusMessageHeight := lipgloss.Height(statusMessageView)
 	filterBarHeight := lipgloss.Height(filterBarView)
 
-	mainHeight := m.height - (statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight)
+	// Total height consumed by fixed UI elements (header at top, footer at bottom)
+	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+
+	// Available height for main content area (tasks + detail/logs panels)
+	// Subtract 1 for safety margin to prevent overflow
+	mainHeight := m.height - fixedUIHeight - 1
 	if mainHeight < 3 {
 		mainHeight = 3
 	}
@@ -1587,16 +1629,23 @@ func (m Model) renderBaseView() string {
 	// Determine if right panels are visible
 	hasBottomPanel := m.detailVisible || m.logsVisible
 
-	// Calculate heights
+	// Calculate heights - ensure total equals mainHeight exactly
 	var topHeight, bottomHeight int
 	if hasBottomPanel {
+		// Split available space: 60% for tasks, 40% for detail/logs
 		topHeight = mainHeight * 60 / 100
 		if topHeight < 10 {
 			topHeight = 10
 		}
+		// Ensure bottomHeight + topHeight = mainHeight (prevent overflow)
 		bottomHeight = mainHeight - topHeight
+		if bottomHeight < 3 {
+			bottomHeight = 3
+			topHeight = mainHeight - bottomHeight
+		}
 	} else {
 		topHeight = mainHeight
+		bottomHeight = 0
 	}
 
 	// Top panel: task tree
@@ -1620,6 +1669,9 @@ func (m Model) renderBaseView() string {
 	} else {
 		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
 	}
+	// Truncate task content to fit within allocated height (minus border)
+	taskContent = truncateToHeight(taskContent, innerHeight)
+
 	taskPanel := taskPanelStyle.
 		Width(m.width - 2).
 		Height(topHeight).
@@ -1698,6 +1750,9 @@ func (m Model) renderDetailPanel(width, height int) string {
 		content = detail.View()
 	}
 
+	// Truncate content to fit within allocated height
+	content = truncateToHeight(content, innerHeight)
+
 	return style.
 		Width(width - 2).
 		Height(height).
@@ -1740,6 +1795,9 @@ func (m Model) renderLogPanel(width, height int) string {
 	}
 
 	content := lv.View()
+
+	// Truncate content to fit within allocated height
+	content = truncateToHeight(content, innerHeight)
 
 	return style.
 		Width(width - 2).

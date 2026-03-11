@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -407,8 +406,8 @@ func NewTaskTree() TaskTree {
 	}
 
 	return TaskTree{
-		useGroupedView:     true, // Enable grouped view by default
-		useFeatureView:     true, // Enable feature-first grouping by default
+		useGroupedView:     true,  // Enable grouped view by default
+		useFeatureView:     false, // Use nested status+feature view by default
 		groupCollapsed:     settings.GroupCollapsed,
 		featureCollapsed:   featureCollapsed,
 		selectedStatusIdx:  0,
@@ -705,8 +704,8 @@ func (tt *TaskTree) selectFirstNestedTask() {
 		tt.SelectedID = ""
 		tt.selectedStatusIdx = 0
 		tt.selectedFeatureIdx = -1
-		tt.selectedFeatureTaskIdx = -1
-		tt.isOnUngrouped = false
+		tt.selectedTaskIdx = -1 // FIXED: use selectedTaskIdx for nested navigation
+		tt.isOnStatusHeader = false
 		return
 	}
 
@@ -719,8 +718,7 @@ func (tt *TaskTree) selectFirstNestedTask() {
 		for i, feature := range statusGroup.Features {
 			if len(feature.Tasks) > 0 {
 				tt.selectedFeatureIdx = i
-				tt.selectedFeatureTaskIdx = 0
-				tt.isOnUngrouped = false
+				tt.selectedTaskIdx = 0 // FIXED: use selectedTaskIdx for nested navigation
 				tt.isOnStatusHeader = false
 				tt.SelectedID = feature.Tasks[0].ID
 				return
@@ -731,8 +729,7 @@ func (tt *TaskTree) selectFirstNestedTask() {
 	// Fall back to ungrouped if no features with tasks
 	if statusGroup.Ungrouped != nil && len(statusGroup.Ungrouped.Tasks) > 0 {
 		tt.selectedFeatureIdx = -1
-		tt.selectedFeatureTaskIdx = 0
-		tt.isOnUngrouped = true
+		tt.selectedTaskIdx = 0 // FIXED: use selectedTaskIdx for nested navigation
 		tt.isOnStatusHeader = false
 		tt.SelectedID = statusGroup.Ungrouped.Tasks[0].ID
 		return
@@ -740,8 +737,7 @@ func (tt *TaskTree) selectFirstNestedTask() {
 
 	// No tasks in this status group - stay on status header
 	tt.selectedFeatureIdx = -1
-	tt.selectedFeatureTaskIdx = -1
-	tt.isOnUngrouped = false
+	tt.selectedTaskIdx = -1
 	tt.isOnStatusHeader = true
 	tt.SelectedID = ""
 }
@@ -1388,11 +1384,27 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible
+		// Calculate viewport start to keep selected line visible with padding
+		// Add padding to prevent selected line from being hidden in empty space at edges
+		const viewportPadding = 2
 		start := 0
-		if selectedLineIdx >= height {
-			start = selectedLineIdx - height + 1
+
+		// If selected line is too far down, scroll down to show it with padding
+		if selectedLineIdx >= start+height-viewportPadding {
+			start = selectedLineIdx - height + viewportPadding + 1
+			if start < 0 {
+				start = 0
+			}
 		}
+
+		// If selected line is too far up, scroll up to show it with padding
+		if selectedLineIdx < start+viewportPadding {
+			start = selectedLineIdx - viewportPadding
+			if start < 0 {
+				start = 0
+			}
+		}
+
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
@@ -1788,11 +1800,27 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible
+		// Calculate viewport start to keep selected line visible with padding
+		// Add padding to prevent selected line from being hidden in empty space at edges
+		const viewportPadding = 2
 		start := 0
-		if selectedLineIdx >= height {
-			start = selectedLineIdx - height + 1
+
+		// If selected line is too far down, scroll down to show it with padding
+		if selectedLineIdx >= start+height-viewportPadding {
+			start = selectedLineIdx - height + viewportPadding + 1
+			if start < 0 {
+				start = 0
+			}
 		}
+
+		// If selected line is too far up, scroll up to show it with padding
+		if selectedLineIdx < start+viewportPadding {
+			start = selectedLineIdx - viewportPadding
+			if start < 0 {
+				start = 0
+			}
+		}
+
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
@@ -1999,11 +2027,27 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible
+		// Calculate viewport start to keep selected line visible with padding
+		// Add padding to prevent selected line from being hidden in empty space at edges
+		const viewportPadding = 2
 		start := 0
-		if selectedLineIdx >= height {
-			start = selectedLineIdx - height + 1
+
+		// If selected line is too far down, scroll down to show it with padding
+		if selectedLineIdx >= start+height-viewportPadding {
+			start = selectedLineIdx - height + viewportPadding + 1
+			if start < 0 {
+				start = 0
+			}
 		}
+
+		// If selected line is too far up, scroll up to show it with padding
+		if selectedLineIdx < start+viewportPadding {
+			start = selectedLineIdx - viewportPadding
+			if start < 0 {
+				start = 0
+			}
+		}
+
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
@@ -2130,17 +2174,13 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	// Selection marker (always 2 spaces for alignment)
 	selMarker := "  "
 
-	// Apply blue background to ALL parts if selected
+	// Build the complete line first to preserve exact spacing
 	if isSelected {
-		// Apply background to each component
-		selMarker = SelectedRowStyle.Render(selMarker)
-		prefix = SelectedRowStyle.Render(prefix)
-		treeConnector = SelectedRowStyle.Render(treeConnector)
-		checkboxPart = SelectedRowStyle.Render(checkboxPart)
-		indicatorStyled = SelectedRowStyle.Render(indicator)
-		title = SelectedRowStyle.Render(title)
-		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
-		cycleSuffix = SelectedRowStyle.Render(cycleSuffix)
+		// Build line without styles first
+		rawLine := fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicator, title, prioritySuffix, cycleSuffix)
+
+		// Apply blue background to the entire line at once
+		return SelectedRowStyle.Render(rawLine)
 	} else {
 		// Apply default styling when not selected
 		if task.Priority == "high" {
@@ -2149,9 +2189,9 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 		if node.InCycle {
 			cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(cycleSuffix)
 		}
-	}
 
-	return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)
+		return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)
+	}
 }
 
 // renderGroupTaskTree recursively renders tree nodes for grouped view with proper indentation.
@@ -2170,22 +2210,15 @@ func (tt *TaskTree) renderGroupTaskTree(
 	activeProjectID string,
 	selectedGroupIdx int,
 ) {
-	// DEBUG: Log SelectedID at function entry
-	if len(nodes) > 0 {
-		fmt.Fprintf(os.Stderr, "DEBUG renderGroupTaskTree: tt.SelectedID='%s', nodes=%d\n", tt.SelectedID, len(nodes))
-	}
 
 	for i, node := range nodes {
 		isLast := i == len(nodes)-1
 
-		// Check if this task is selected (use SelectedID for consistency with mouse and keyboard nav)
-		isSelected := (node.Task.ID == tt.SelectedID)
+		// Check if this task is selected
+		// In nested view: only mark as selected if we're actually on a task (not on a header)
+		isSelected := (node.Task.ID == tt.SelectedID && tt.selectedTaskIdx >= 0)
 
-		// DEBUG: Log comparison for each task
-		fmt.Fprintf(os.Stderr, "DEBUG: Task ID='%s', SelectedID='%s', match=%v\n",
-			node.Task.ID, tt.SelectedID, isSelected)
-
-		*visualIndex++
+		// DEBUG: Log comparison for each task		*visualIndex++
 
 		// Build the line with tree prefix
 		line := tt.renderGroupedTaskLineWithTree(
@@ -2310,8 +2343,6 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 
 	// Apply blue background to ALL parts if selected
 	if isSelected {
-		// DEBUG: Add obvious visual marker
-		selMarker = lipgloss.NewStyle().Foreground(lipgloss.Color("#ff0000")).Bold(true).Render(">>> ")
 		selMarker = SelectedRowStyle.Render(selMarker)
 		prefix = SelectedRowStyle.Render(prefix)
 		treeConnector = SelectedRowStyle.Render(treeConnector)
@@ -2376,11 +2407,27 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 			}
 		}
 
-		// Calculate viewport start to keep selected task visible
+		// Calculate viewport start to keep selected line visible with padding
+		// Add padding to prevent selected line from being hidden in empty space at edges
+		const viewportPadding = 2
 		start := 0
-		if selectedIdx >= height {
-			start = selectedIdx - height + 1
+
+		// If selected line is too far down, scroll down to show it with padding
+		if selectedIdx >= start+height-viewportPadding {
+			start = selectedIdx - height + viewportPadding + 1
+			if start < 0 {
+				start = 0
+			}
 		}
+
+		// If selected line is too far up, scroll up to show it with padding
+		if selectedIdx < start+viewportPadding {
+			start = selectedIdx - viewportPadding
+			if start < 0 {
+				start = 0
+			}
+		}
+
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
@@ -2697,15 +2744,66 @@ func (tt *TaskTree) moveUpNestedGrouped() {
 		tt.isOnStatusHeader = false
 	}
 
-	// On status header - move to previous status
+	// On status header - move to last visible item in previous status
 	if tt.isOnStatusHeader {
 		if tt.selectedStatusIdx > 0 {
 			tt.selectedStatusIdx--
-			// Stay on status header
+			prevStatusGroup := tt.statusGroups[tt.selectedStatusIdx]
+
+			// If previous status group is collapsed, land on its header
+			if prevStatusGroup.Collapsed {
+				tt.selectedFeatureIdx = -2
+				tt.selectedTaskIdx = -1
+				tt.isOnStatusHeader = true
+				return
+			}
+
+			// Previous status is expanded - find last visible item
+			tt.isOnStatusHeader = false
+
+			// Check ungrouped first (it comes last in rendering)
+			if prevStatusGroup.Ungrouped != nil && len(prevStatusGroup.Ungrouped.Tasks) > 0 {
+				tt.selectedFeatureIdx = -1
+				ungrouped := prevStatusGroup.Ungrouped
+
+				if ungrouped.Collapsed {
+					// Land on ungrouped header
+					tt.selectedTaskIdx = -1
+				} else {
+					// Land on last ungrouped task
+					treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+					if len(treeOrder) > 0 {
+						tt.selectedTaskIdx = len(treeOrder) - 1
+						tt.SelectedID = treeOrder[tt.selectedTaskIdx]
+					}
+				}
+				return
+			}
+
+			// No ungrouped - check features
+			if len(prevStatusGroup.Features) > 0 {
+				tt.selectedFeatureIdx = len(prevStatusGroup.Features) - 1
+				lastFeature := prevStatusGroup.Features[tt.selectedFeatureIdx]
+
+				if lastFeature.Collapsed {
+					// Land on feature header
+					tt.selectedTaskIdx = -1
+				} else if len(lastFeature.Tasks) > 0 {
+					// Land on last task in feature
+					treeOrder := FlattenTreeOrder(lastFeature.Tasks)
+					tt.selectedTaskIdx = len(treeOrder) - 1
+					tt.SelectedID = treeOrder[tt.selectedTaskIdx]
+				} else {
+					// Feature is expanded but empty - land on header
+					tt.selectedTaskIdx = -1
+				}
+				return
+			}
+
+			// No features or ungrouped - land on previous status header
 			tt.selectedFeatureIdx = -2
 			tt.selectedTaskIdx = -1
 			tt.isOnStatusHeader = true
-			// Keep SelectedID pointing to last selected task
 		}
 		return
 	}

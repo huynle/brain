@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"os"
 	"sort"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -18,7 +20,14 @@ type TaskGroup struct {
 // Returns groups in priority order: Draft, Pending, Active, In Progress, Blocked, Cancelled, Completed, Validated, Superseded, Archived.
 // If visibleGroups is nil or empty, all groups are shown. If visibleGroups[groupName] == false, that group is excluded.
 func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []TaskGroup {
+	if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+		fmt.Fprintf(os.Stderr, "[GroupTasks] Called with %d tasks, %d visible groups\n", len(tasks), len(visibleGroups))
+	}
+
 	if len(tasks) == 0 {
+		if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+			fmt.Fprintf(os.Stderr, "[GroupTasks] No tasks, returning nil\n")
+		}
 		return nil
 	}
 
@@ -28,6 +37,10 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 	for _, task := range tasks {
 		classification := normalizeClassification(task.Classification, task.Status, task.FeatureID)
 		groups[classification] = append(groups[classification], task)
+		if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+			fmt.Fprintf(os.Stderr, "[GroupTasks] Task %s -> group %s (classification=%s, status=%s, feature=%s)\n",
+				task.ID, classification, task.Classification, task.Status, task.FeatureID)
+		}
 	}
 
 	// Sort tasks within each group by priority and status
@@ -44,7 +57,8 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 
 	// Return in display order with visibility filtering
 	result := []TaskGroup{}
-	for _, groupName := range []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
+	// Order: classification-based groups first (Ready, Waiting, Blocked, Ungrouped), then status-based groups
+	for _, groupName := range []string{"Ready", "Waiting", "Blocked", "Ungrouped", "Draft", "Pending", "Active", "In Progress", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
 		taskList, ok := groups[groupName]
 		if !ok || len(taskList) == 0 {
 			continue // Skip groups with no tasks
@@ -54,8 +68,15 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 		// If visibleGroups exists and group is explicitly false, skip it
 		if len(visibleGroups) > 0 {
 			if visible, hasKey := visibleGroups[groupName]; hasKey && !visible {
+				if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+					fmt.Fprintf(os.Stderr, "[GroupTasks] Skipping group %s (visibility=false, %d tasks hidden)\n", groupName, len(taskList))
+				}
 				continue // Skip invisible groups
 			}
+		}
+
+		if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+			fmt.Fprintf(os.Stderr, "[GroupTasks] Adding group %s with %d tasks\n", groupName, len(taskList))
 		}
 
 		result = append(result, TaskGroup{
@@ -64,6 +85,10 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 			Collapsed: false, // default expanded
 			Count:     len(taskList),
 		})
+	}
+
+	if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+		fmt.Fprintf(os.Stderr, "[GroupTasks] Returning %d groups\n", len(result))
 	}
 
 	return result

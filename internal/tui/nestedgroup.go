@@ -1,13 +1,18 @@
 package tui
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/huynle/brain-api/internal/types"
 )
 
 // debugLog writes a debug message to stderr if DEBUG_TUI_GROUPING env var is set.
 // This helps diagnose why groups might not appear in the TUI.
 func debugLog(format string, args ...interface{}) {
-	// Debug logging disabled
+	if os.Getenv("DEBUG_TUI_GROUPING") != "" {
+		fmt.Fprintf(os.Stderr, "[TUI_GROUPING] "+format+"\n", args...)
+	}
 }
 
 // StatusGroup represents a collapsible group of tasks organized by status (classification),

@@ -506,13 +506,35 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// This ensures the old classification-only grouping still works
 			tt.groups = GroupTasks(tasks, settings.GroupVisible)
 
+			// TEMPORARY FIX: Reset groupCollapsed to ensure all groups start expanded
+			tt.groupCollapsed = make(map[string]bool)
+
 			// Restore collapsed state for tt.groups (use in-memory state, not disk)
+			// IMPORTANT: Do this BEFORE building visual order
 			for i := range tt.groups {
 				groupName := tt.groups[i].Name
 				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
 					tt.groups[i].Collapsed = collapsed
 				}
 			}
+
+			// Build visual order for grouped navigation
+			// This is the order tasks appear in the TUI when rendered as a tree
+			tt.order = []string{}
+			for _, group := range tt.groups {
+				if !group.Collapsed {
+					tree := BuildTree(group.Tasks, tt.tasks)
+					visualOrder := flattenTreeToVisualOrder(tree)
+					tt.order = append(tt.order, visualOrder...)
+				}
+			}
+
+			// Initialize Cursor to 0 for visual order navigation
+			tt.Cursor = 0
+			// Initialize selection to first group header
+			tt.selectedGroupIdx = 0
+			tt.selectedTaskIdx = -1
+			tt.SelectedID = ""
 
 			// Restore collapsed state for all 3 levels in statusGroups (use in-memory state, not disk):
 			// 1. Status-level collapse (using in-memory groupCollapsed map)
@@ -783,45 +805,45 @@ func (tt *TaskTree) moveDownGrouped() {
 		return
 	}
 
-	// Classification-only grouping (original logic)
+	// Classification-only grouping - navigate through visual order
 	if len(tt.groups) > 0 {
-		group := tt.groups[tt.selectedGroupIdx]
-
+		// If on group header, move to first task
 		if tt.selectedTaskIdx == -1 {
-			// On group header
+			group := tt.groups[tt.selectedGroupIdx]
 			if group.Collapsed {
 				// Group is collapsed, jump to next group header
 				if tt.selectedGroupIdx < len(tt.groups)-1 {
 					tt.selectedGroupIdx++
 					tt.selectedTaskIdx = -1
 					tt.SelectedID = ""
-				} else {
-					// No next group - expand current group and enter it
-					if len(group.Tasks) > 0 {
-						tt.groups[tt.selectedGroupIdx].Collapsed = false
-						tt.groupCollapsed[group.Name] = false
-						tt.selectedTaskIdx = 0
-						tt.SelectedID = group.Tasks[0].ID
-					}
 				}
 			} else {
-				// Group is expanded, enter group (move to first task)
-				if len(group.Tasks) > 0 {
+				// Group is expanded, enter first task using visual order
+				tree := BuildTree(group.Tasks, tt.tasks)
+				visualOrder := flattenTreeToVisualOrder(tree)
+				if len(visualOrder) > 0 {
+					tt.SelectedID = visualOrder[0]
 					tt.selectedTaskIdx = 0
-					tt.SelectedID = group.Tasks[0].ID
+					// Update Cursor to match position in global order
+					for i, id := range tt.order {
+						if id == tt.SelectedID {
+							tt.Cursor = i
+							break
+						}
+					}
 				}
 			}
 		} else {
-			// Within group
-			if tt.selectedTaskIdx < len(group.Tasks)-1 {
-				// Move to next task in group
+			// Within tasks - navigate through tt.order using Cursor
+			if len(tt.order) > 0 && tt.Cursor < len(tt.order)-1 {
+				tt.Cursor++
+				tt.SelectedID = tt.order[tt.Cursor]
 				tt.selectedTaskIdx++
-				tt.SelectedID = group.Tasks[tt.selectedTaskIdx].ID
 			} else {
-				// End of group, move to next group HEADER
+				// At end of all tasks - move to next group header if exists
 				if tt.selectedGroupIdx < len(tt.groups)-1 {
 					tt.selectedGroupIdx++
-					tt.selectedTaskIdx = -1 // Land on header
+					tt.selectedTaskIdx = -1
 					tt.SelectedID = ""
 				}
 			}
@@ -865,7 +887,7 @@ func (tt *TaskTree) moveUpGrouped() {
 		return
 	}
 
-	// Classification-only grouping
+	// Classification-only grouping - navigate through visual order
 	if len(tt.groups) == 0 {
 		return
 	}
@@ -876,9 +898,21 @@ func (tt *TaskTree) moveUpGrouped() {
 			tt.selectedGroupIdx--
 			prevGroup := tt.groups[tt.selectedGroupIdx]
 			// Land on last task of previous group if expanded
-			if !prevGroup.Collapsed && len(prevGroup.Tasks) > 0 {
-				tt.selectedTaskIdx = len(prevGroup.Tasks) - 1
-				tt.SelectedID = prevGroup.Tasks[tt.selectedTaskIdx].ID
+			if !prevGroup.Collapsed {
+				tree := BuildTree(prevGroup.Tasks, tt.tasks)
+				visualOrder := flattenTreeToVisualOrder(tree)
+				if len(visualOrder) > 0 {
+					lastTaskID := visualOrder[len(visualOrder)-1]
+					tt.SelectedID = lastTaskID
+					tt.selectedTaskIdx = len(visualOrder) - 1
+					// Update Cursor to match position in global order
+					for i, id := range tt.order {
+						if id == lastTaskID {
+							tt.Cursor = i
+							break
+						}
+					}
+				}
 			} else {
 				// Stay on group header
 				tt.selectedTaskIdx = -1
@@ -886,13 +920,13 @@ func (tt *TaskTree) moveUpGrouped() {
 			}
 		}
 	} else {
-		// Within group
-		if tt.selectedTaskIdx > 0 {
-			// Move to previous task
+		// Within tasks - navigate through tt.order using Cursor
+		if len(tt.order) > 0 && tt.Cursor > 0 {
+			tt.Cursor--
+			tt.SelectedID = tt.order[tt.Cursor]
 			tt.selectedTaskIdx--
-			tt.SelectedID = tt.groups[tt.selectedGroupIdx].Tasks[tt.selectedTaskIdx].ID
 		} else {
-			// At top of group, move to group header
+			// At top of tasks, move to group header
 			tt.selectedTaskIdx = -1
 			tt.SelectedID = ""
 		}
@@ -2264,6 +2298,19 @@ func countGroupTaskLines(nodes []TreeNode) int {
 	return count
 }
 
+// flattenTreeToVisualOrder flattens a tree into a list of task IDs in visual (depth-first) order.
+// This matches the order tasks appear when rendered in the TUI.
+func flattenTreeToVisualOrder(nodes []TreeNode) []string {
+	var result []string
+	for _, node := range nodes {
+		result = append(result, node.Task.ID)
+		if len(node.Children) > 0 {
+			result = append(result, flattenTreeToVisualOrder(node.Children)...)
+		}
+	}
+	return result
+}
+
 // renderGroupedTaskLineWithTree renders a single task line in grouped view with tree connectors.
 // The prefix parameter contains ancestor line state, isLast determines the branch character.
 func (tt *TaskTree) renderGroupedTaskLineWithTree(
@@ -2290,6 +2337,9 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 
 	// Selection marker
 	selMarker := "  "
+	if isSelected {
+		selMarker = "→ "
+	}
 
 	// Checkbox indicator (ONLY when multi-select active)
 	checkboxPart := ""

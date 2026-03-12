@@ -506,15 +506,17 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// This ensures the old classification-only grouping still works
 			tt.groups = GroupTasks(tasks, settings.GroupVisible)
 
-			// TEMPORARY FIX: Reset groupCollapsed to ensure all groups start expanded
-			tt.groupCollapsed = make(map[string]bool)
-
 			// Restore collapsed state for tt.groups (use in-memory state, not disk)
 			// IMPORTANT: Do this BEFORE building visual order
+			// Initialize missing groups as expanded (default state)
 			for i := range tt.groups {
 				groupName := tt.groups[i].Name
 				if collapsed, ok := tt.groupCollapsed[groupName]; ok {
 					tt.groups[i].Collapsed = collapsed
+				} else {
+					// Group not in map yet - default to expanded
+					tt.groups[i].Collapsed = false
+					tt.groupCollapsed[groupName] = false
 				}
 			}
 
@@ -810,17 +812,20 @@ func (tt *TaskTree) moveDownGrouped() {
 		// If on group header, move to first task
 		if tt.selectedTaskIdx == -1 {
 			group := tt.groups[tt.selectedGroupIdx]
+			debugLog("[NAV_DOWN] On group header %s, collapsed=%v", group.Name, group.Collapsed)
 			if group.Collapsed {
 				// Group is collapsed, jump to next group header
 				if tt.selectedGroupIdx < len(tt.groups)-1 {
 					tt.selectedGroupIdx++
 					tt.selectedTaskIdx = -1
 					tt.SelectedID = ""
+					debugLog("[NAV_DOWN] Skipped to next group header")
 				}
 			} else {
 				// Group is expanded, enter first task using visual order
 				tree := BuildTree(group.Tasks, tt.tasks)
 				visualOrder := flattenTreeToVisualOrder(tree)
+				debugLog("[NAV_DOWN] Visual order has %d tasks", len(visualOrder))
 				if len(visualOrder) > 0 {
 					tt.SelectedID = visualOrder[0]
 					tt.selectedTaskIdx = 0
@@ -831,20 +836,26 @@ func (tt *TaskTree) moveDownGrouped() {
 							break
 						}
 					}
+					debugLog("[NAV_DOWN] Moved to first task: ID=%s, Cursor=%d", tt.SelectedID, tt.Cursor)
 				}
 			}
 		} else {
 			// Within tasks - navigate through tt.order using Cursor
+			debugLog("[NAV_DOWN] Within tasks: Cursor=%d, len(order)=%d, SelectedID=%s", tt.Cursor, len(tt.order), tt.SelectedID)
 			if len(tt.order) > 0 && tt.Cursor < len(tt.order)-1 {
 				tt.Cursor++
 				tt.SelectedID = tt.order[tt.Cursor]
 				tt.selectedTaskIdx++
+				debugLog("[NAV_DOWN] Moved to next task: Cursor=%d, SelectedID=%s", tt.Cursor, tt.SelectedID)
 			} else {
 				// At end of all tasks - move to next group header if exists
 				if tt.selectedGroupIdx < len(tt.groups)-1 {
 					tt.selectedGroupIdx++
 					tt.selectedTaskIdx = -1
 					tt.SelectedID = ""
+					debugLog("[NAV_DOWN] Reached end, moved to next group header")
+				} else {
+					debugLog("[NAV_DOWN] At end of all tasks")
 				}
 			}
 		}
@@ -894,6 +905,7 @@ func (tt *TaskTree) moveUpGrouped() {
 
 	if tt.selectedTaskIdx == -1 {
 		// On group header, move to previous group
+		debugLog("[NAV_UP] On group header, selectedGroupIdx=%d", tt.selectedGroupIdx)
 		if tt.selectedGroupIdx > 0 {
 			tt.selectedGroupIdx--
 			prevGroup := tt.groups[tt.selectedGroupIdx]
@@ -912,23 +924,28 @@ func (tt *TaskTree) moveUpGrouped() {
 							break
 						}
 					}
+					debugLog("[NAV_UP] Moved to last task of prev group: ID=%s, Cursor=%d", lastTaskID, tt.Cursor)
 				}
 			} else {
 				// Stay on group header
 				tt.selectedTaskIdx = -1
 				tt.SelectedID = ""
+				debugLog("[NAV_UP] Moved to prev group header (collapsed)")
 			}
 		}
 	} else {
 		// Within tasks - navigate through tt.order using Cursor
+		debugLog("[NAV_UP] Within tasks: Cursor=%d, len(order)=%d, SelectedID=%s", tt.Cursor, len(tt.order), tt.SelectedID)
 		if len(tt.order) > 0 && tt.Cursor > 0 {
 			tt.Cursor--
 			tt.SelectedID = tt.order[tt.Cursor]
 			tt.selectedTaskIdx--
+			debugLog("[NAV_UP] Moved to prev task: Cursor=%d, SelectedID=%s", tt.Cursor, tt.SelectedID)
 		} else {
 			// At top of tasks, move to group header
 			tt.selectedTaskIdx = -1
 			tt.SelectedID = ""
+			debugLog("[NAV_UP] Reached top, moved to group header")
 		}
 	}
 }

@@ -122,6 +122,11 @@ func (td *TaskDetail) renderTask() string {
 		lines = append(lines, fmt.Sprintf("Path: %s", DimStyle.Render(task.Path)))
 	}
 
+	// Created timestamp
+	if task.Created != "" {
+		lines = append(lines, fmt.Sprintf("Created: %s", DimStyle.Render(task.Created)))
+	}
+
 	// Git context
 	if task.GitBranch != "" || task.GitRemote != "" {
 		lines = append(lines, "")
@@ -136,15 +141,19 @@ func (td *TaskDetail) renderTask() string {
 	}
 
 	// Working directory
-	if task.Workdir != "" || task.ResolvedWorkdir != "" {
+	if task.ResolvedWorkdir != "" || task.Workdir != "" {
 		lines = append(lines, "")
 		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Working Directory:"))
-		if task.Workdir != "" {
-			lines = append(lines, fmt.Sprintf("  workdir: %s", task.Workdir))
-		}
+
+		// Show resolved path first (more important, fully qualified)
 		if task.ResolvedWorkdir != "" {
-			lines = append(lines, fmt.Sprintf("  resolved: %s",
+			lines = append(lines, fmt.Sprintf("  %s",
 				lipgloss.NewStyle().Foreground(ColorReady).Render(task.ResolvedWorkdir)))
+		}
+
+		// Show original workdir only if different from resolved
+		if task.Workdir != "" && task.Workdir != task.ResolvedWorkdir {
+			lines = append(lines, fmt.Sprintf("  (from: %s)", DimStyle.Render(task.Workdir)))
 		}
 	}
 

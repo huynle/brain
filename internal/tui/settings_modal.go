@@ -20,7 +20,7 @@ const (
 )
 
 // StatusGroups represents the status groups available in the TUI
-var StatusGroups = []string{"Ready", "Waiting", "Active", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+var StatusGroups = []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 // SettingsModal allows editing project limits, global max parallel, group visibility, runtime settings, and monitors.
 // Navigation: j/k to move up/down, tab to switch sections

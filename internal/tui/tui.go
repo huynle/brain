@@ -6,13 +6,32 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/muesli/termenv"
 )
+
+// truncateToHeight truncates content to fit within the specified number of lines.
+// If content has fewer lines, it's returned as-is (padding will be added by lipgloss.Height).
+// If content has more lines, it's truncated to fit.
+func truncateToHeight(content string, maxLines int) string {
+	if maxLines <= 0 {
+		return ""
+	}
+
+	lines := strings.Split(content, "\n")
+	if len(lines) <= maxLines {
+		return content
+	}
+
+	// Truncate to maxLines
+	return strings.Join(lines[:maxLines], "\n")
+}
 
 // DefaultReconnectDelay is the default delay before reconnecting after disconnect.
 const DefaultReconnectDelay = 3 * time.Second
@@ -98,6 +117,17 @@ type Model struct {
 
 // NewModel creates a new TUI model with the given configuration.
 func NewModel(cfg Config) Model {
+	// Force TrueColor support for proper selection highlighting
+	// This ensures the blue background renders correctly in tmux
+	lipgloss.SetColorProfile(termenv.TrueColor)
+
+	// Recreate SelectedRowStyle AFTER setting color profile
+	// Try using ANSI color code directly for maximum compatibility
+	SelectedRowStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color("4")).  // blue background (ANSI color 4)
+		Foreground(lipgloss.Color("15")). // white text (ANSI color 15)
+		Bold(true)
+
 	// Load settings from disk
 	settings, err := LoadSettings()
 	if err != nil {
@@ -142,6 +172,7 @@ func NewModel(cfg Config) Model {
 	// Initialize ProjectTabs for multi-project mode
 	if cfg.IsMultiProject() {
 		m.projectTabs = NewProjectTabs(cfg.Projects)
+		m.logViewer.SetMultiProject(true)
 	}
 
 	// Initialize activeProjectID for multi-project mode
@@ -224,7 +255,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		m.recalcPanelSizes()
 		return m, nil
 
 	case TasksUpdatedMsg:
@@ -510,6 +540,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusMessage("success", fmt.Sprintf("Auto-monitor created: %s for %s", msg.templateID, msg.featureID))
 		return m, nil
+
+	case SettingsChangedMsg:
+		// Reload settings and re-apply task grouping
+		settings, err := LoadSettings()
+		if err == nil {
+			m.settings = settings
+			m.taskTree.SetTasks(m.tasks)
+		}
+		return m, nil
 	}
 
 	return m, nil
@@ -523,6 +562,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			// Esc always closes modal
 			handled, cmd = m.modalManager.HandleKey("esc")
+		}
+		if msg.Type == tea.KeyTab {
+			// Tab cycles through modal tabs
+			handled, cmd = m.modalManager.HandleKey("tab")
 		}
 		if handled {
 			return m, cmd
@@ -553,6 +596,60 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg.Type {
+	case tea.KeyBackspace:
+		// Delete task(s) - with confirmation modal (tasks view only)
+		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
+		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
+			apiClient := runner.NewAPIClient(runner.RunnerConfig{
+				BrainAPIURL: m.config.APIURL,
+				APITimeout:  5000,
+			})
+
+			// Case 1: Multi-select mode - batch delete
+			if len(m.selectedTasks) > 0 {
+				count := len(m.selectedTasks)
+				taskIDs := make([]string, 0, count)
+				taskPaths := make([]string, 0, count)
+				taskTitles := make([]string, 0, count)
+				for id := range m.selectedTasks {
+					taskIDs = append(taskIDs, id)
+					// Find task to get path and title
+					for _, t := range m.tasks {
+						if t.ID == id {
+							taskPaths = append(taskPaths, t.Path)
+							taskTitles = append(taskTitles, t.Title)
+							break
+						}
+					}
+				}
+
+				message := fmt.Sprintf("Delete %d task(s)?", count)
+				modal := NewConfirmModal("Delete Tasks", message).
+					WithTaskTitles(taskTitles).
+					WithDestructive(true).
+					WithOnConfirm(func() tea.Msg {
+						return batchDeleteTasksCmd(apiClient, taskPaths, taskIDs)()
+					})
+				return m, m.modalManager.Open(modal)
+			}
+
+			// Case 2: Single task mode
+			selectedTask := m.taskTree.SelectedTask()
+			if selectedTask == nil {
+				return m, nil
+			}
+
+			message := fmt.Sprintf("Delete %d task(s)?", 1)
+			modal := NewConfirmModal("Delete Task", message).
+				WithTaskTitles([]string{selectedTask.Title}).
+				WithDestructive(true).
+				WithOnConfirm(func() tea.Msg {
+					return deleteTaskCmd(apiClient, selectedTask.Path)()
+				})
+			return m, m.modalManager.Open(modal)
+		}
+		return m, nil
+
 	case tea.KeyCtrlC:
 		m.sseClient.Stop()
 		return m, tea.Quit
@@ -693,6 +790,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 			m.helpBar.ViewMode = m.viewMode
 			m.selectedTasks = make(map[string]bool)
+			m.syncHelpBarSelectionState()
 			m.filterState = FilterOff
 			m.filterQuery = ""
 			m.clearFilter()
@@ -876,7 +974,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.logsVisible && m.activePanel == PanelLogs {
 				m.activePanel = PanelTasks
 			}
-			m.recalcPanelSizes()
 			return m, nil
 		case "T":
 			m.detailVisible = !m.detailVisible
@@ -884,7 +981,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.detailVisible && m.activePanel == PanelDetails {
 				m.activePanel = PanelTasks
 			}
-			m.recalcPanelSizes()
 			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {
@@ -1073,7 +1169,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Main content starts after that
 	// Help bar is at bottom
 
-	statusBarHeight := 3
+	statusBarHeight := 4 // Status bar now has 2 content rows + 2 border lines
 	projectTabsHeight := 0
 	if m.config.IsMultiProject() {
 		projectTabsHeight = 1
@@ -1365,6 +1461,11 @@ func (m *Model) syncHelpBarPauseState() {
 	m.helpBar.IsPaused = m.pausedProjects[projectID]
 }
 
+// syncHelpBarSelectionState updates the help bar's HasSelectedTasks field based on multi-select state.
+func (m *Model) syncHelpBarSelectionState() {
+	m.helpBar.HasSelectedTasks = len(m.selectedTasks) > 0
+}
+
 // toggleTaskSelection toggles selection for the currently focused task.
 func (m *Model) toggleTaskSelection() {
 	task := m.taskTree.SelectedTask()
@@ -1377,11 +1478,13 @@ func (m *Model) toggleTaskSelection() {
 	} else {
 		m.selectedTasks[task.ID] = true
 	}
+	m.syncHelpBarSelectionState()
 }
 
 // clearSelection clears all selected tasks.
 func (m *Model) clearSelection() {
 	m.selectedTasks = make(map[string]bool)
+	m.syncHelpBarSelectionState()
 }
 
 // selectAllTasks selects all visible tasks.
@@ -1389,6 +1492,7 @@ func (m *Model) selectAllTasks() {
 	for _, task := range m.filteredTasks() {
 		m.selectedTasks[task.ID] = true
 	}
+	m.syncHelpBarSelectionState()
 }
 
 // getSelectedTasks returns all selected tasks.
@@ -1402,46 +1506,11 @@ func (m *Model) getSelectedTasks() []types.ResolvedTask {
 	return selected
 }
 
-// recalcPanelSizes recalculates panel dimensions based on current window size.
-func (m *Model) recalcPanelSizes() {
-	if m.width == 0 || m.height == 0 {
-		return
-	}
-
-	// Main content height: total - statusbar (3 lines) - helpbar (1 line)
-	mainHeight := m.height - 4
-	if mainHeight < 3 {
-		mainHeight = 3
-	}
-
-	// If right panels are visible, split width 60/40
-	hasRightPanel := m.detailVisible || m.logsVisible
-	if !hasRightPanel {
-		return
-	}
-
-	rightWidth := m.width * 40 / 100
-	if rightWidth < 20 {
-		rightWidth = 20
-	}
-
-	// Split right panel height between detail and logs
-	if m.detailVisible && m.logsVisible {
-		halfHeight := mainHeight / 2
-		m.taskDetail.SetSize(rightWidth, halfHeight)
-		m.logViewer.SetSize(rightWidth, mainHeight-halfHeight)
-	} else if m.detailVisible {
-		m.taskDetail.SetSize(rightWidth, mainHeight)
-	} else if m.logsVisible {
-		m.logViewer.SetSize(rightWidth, mainHeight)
-	}
-}
-
 // View implements tea.Model. Renders the TUI layout.
 func (m Model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return "Initializing..."
-	}
+	// Don't block rendering when dimensions are unset - components handle zero dimensions gracefully
+	// This ensures StatusBar and other UI elements appear on first render before WindowSizeMsg arrives
+	// The early "Initializing..." message was hiding the StatusBar unnecessarily
 
 	// Render base UI
 	baseView := m.renderBaseView()
@@ -1458,6 +1527,11 @@ func (m Model) View() string {
 
 // renderBaseView renders the main TUI layout (without modal)
 func (m Model) renderBaseView() string {
+	// Safety check: ensure we have valid dimensions before rendering
+	if m.width < 10 || m.height < 10 {
+		return "Initializing..."
+	}
+
 	// Update status bar with selection count, metrics, and pause/feature indicators
 	m.statusBar.SelectedCount = len(m.selectedTasks)
 	m.statusBar.Metrics = &m.resourceMetrics
@@ -1496,65 +1570,8 @@ func (m Model) renderBaseView() string {
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
-	// Calculate available height for main content
-	// StatusBar: ~3 lines, HelpBar: 1 line
-	mainHeight := m.height - 4
-	if mainHeight < 3 {
-		mainHeight = 3
-	}
-
-	// Determine if right panels are visible
-	hasRightPanel := m.detailVisible || m.logsVisible
-
-	// Calculate widths
-	var leftWidth, rightWidth int
-	if hasRightPanel {
-		rightWidth = m.width * 40 / 100
-		if rightWidth < 20 {
-			rightWidth = 20
-		}
-		leftWidth = m.width - rightWidth
-	} else {
-		leftWidth = m.width
-	}
-
-	// Left panel: task tree
-	taskPanelStyle := InactiveBorder
-	if m.activePanel == PanelTasks {
-		taskPanelStyle = ActiveBorder
-	}
-
-	innerWidth := leftWidth - 4 // account for border + padding
-	innerHeight := mainHeight - 2
-	if innerWidth < 10 {
-		innerWidth = 10
-	}
-	if innerHeight < 1 {
-		innerHeight = 1
-	}
-
-	var taskContent string
-	if m.viewMode == ViewModeSchedules {
-		taskContent = m.scheduleList.View(innerWidth, innerHeight)
-	} else {
-		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
-	}
-	taskPanel := taskPanelStyle.
-		Width(leftWidth - 2).
-		Height(mainHeight).
-		Render(taskContent)
-
-	// Build main content
-	var mainContent string
-	if hasRightPanel {
-		rightPanel := m.renderRightPanel(rightWidth, mainHeight)
-		mainContent = lipgloss.JoinHorizontal(lipgloss.Top, taskPanel, rightPanel)
-	} else {
-		mainContent = taskPanel
-	}
-
-	// Help bar at bottom
-	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject())
+	// Pre-render bottom elements to calculate their heights
+	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject(), m.config.Project)
 
 	// Status message (if active and not expired)
 	var statusMessageView string
@@ -1590,6 +1607,85 @@ func (m Model) renderBaseView() string {
 			DimStyle.Render("  Esc: clear")
 	}
 
+	// Calculate available height for main content by measuring all UI elements
+	// Fixed heights for UI elements that should be consistent
+	statusBarHeight := 4 // Status bar always takes 4 lines (2 border + 2 content)
+	helpBarHeight := 3   // Help bar wraps to 3 lines
+
+	projectTabsHeight := lipgloss.Height(projectTabsView)
+	statusMessageHeight := lipgloss.Height(statusMessageView)
+	filterBarHeight := lipgloss.Height(filterBarView)
+
+	// Total height consumed by fixed UI elements (header at top, footer at bottom)
+	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+
+	// Available height for main content area (tasks + detail/logs panels)
+	// Subtract 1 for safety margin to prevent overflow
+	mainHeight := m.height - fixedUIHeight - 1
+	if mainHeight < 3 {
+		mainHeight = 3
+	}
+
+	// Determine if right panels are visible
+	hasBottomPanel := m.detailVisible || m.logsVisible
+
+	// Calculate heights - ensure total equals mainHeight exactly
+	var topHeight, bottomHeight int
+	if hasBottomPanel {
+		// Split available space: 60% for tasks, 40% for detail/logs
+		topHeight = mainHeight * 60 / 100
+		if topHeight < 10 {
+			topHeight = 10
+		}
+		// Ensure bottomHeight + topHeight = mainHeight (prevent overflow)
+		bottomHeight = mainHeight - topHeight
+		if bottomHeight < 3 {
+			bottomHeight = 3
+			topHeight = mainHeight - bottomHeight
+		}
+	} else {
+		topHeight = mainHeight
+		bottomHeight = 0
+	}
+
+	// Top panel: task tree
+	taskPanelStyle := InactiveBorder
+	if m.activePanel == PanelTasks {
+		taskPanelStyle = ActiveBorder
+	}
+
+	innerWidth := m.width - 4 // account for border + padding, use full width
+	innerHeight := topHeight - 2
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	var taskContent string
+	if m.viewMode == ViewModeSchedules {
+		taskContent = m.scheduleList.View(innerWidth, innerHeight)
+	} else {
+		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+	}
+	// Truncate task content to fit within allocated height (minus border)
+	taskContent = truncateToHeight(taskContent, innerHeight)
+
+	taskPanel := taskPanelStyle.
+		Width(m.width - 2).
+		Height(topHeight).
+		Render(taskContent)
+
+	// Build main content
+	var mainContent string
+	if hasBottomPanel {
+		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
+	} else {
+		mainContent = taskPanel
+	}
+
 	// Compose layout vertically
 	var bottomPanels []string
 	if statusMessageView != "" {
@@ -1608,13 +1704,14 @@ func (m Model) renderBaseView() string {
 	)
 }
 
-// renderRightPanel renders the right side panel(s) - detail and/or logs.
-func (m Model) renderRightPanel(width, height int) string {
+// renderBottomPanel renders the bottom panel(s) - detail and/or logs.
+func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
-		// Split vertically: detail on top, logs on bottom
-		halfHeight := height / 2
-		detailPanel := m.renderDetailPanel(width, halfHeight)
-		logPanel := m.renderLogPanel(width, height-halfHeight)
+		// Stack vertically: detail on top (60%), logs on bottom (40%)
+		detailHeight := height * 60 / 100
+		logHeight := height - detailHeight
+		detailPanel := m.renderDetailPanel(width, detailHeight)
+		logPanel := m.renderLogPanel(width, logHeight)
 		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
 	}
 
@@ -1652,6 +1749,9 @@ func (m Model) renderDetailPanel(width, height int) string {
 		detail.SetSize(innerWidth, innerHeight)
 		content = detail.View()
 	}
+
+	// Truncate content to fit within allocated height
+	content = truncateToHeight(content, innerHeight)
 
 	return style.
 		Width(width - 2).
@@ -1695,6 +1795,9 @@ func (m Model) renderLogPanel(width, height int) string {
 	}
 
 	content := lv.View()
+
+	// Truncate content to fit within allocated height
+	content = truncateToHeight(content, innerHeight)
 
 	return style.
 		Width(width - 2).

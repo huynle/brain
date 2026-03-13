@@ -1,7 +1,7 @@
-node_modules/
-dist/
-*.log
+# macOS
 .DS_Store
+
+# Environment variables
 .env
 .env.local
 
@@ -19,6 +19,7 @@ bin/
 *.out
 coverage.out
 coverage.html
+*.coverprofile
 __debug_bin*
 vendor/
 

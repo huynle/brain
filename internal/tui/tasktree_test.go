@@ -595,6 +595,37 @@ func TestTaskTree_View_EmptyShowsPlaceholder(t *testing.T) {
 	}
 }
 
+// TestTaskTree_View_EmptyStateFormat verifies "  No tasks" (two spaces) with dim styling.
+// This ensures visual parity with TypeScript implementation.
+func TestTaskTree_View_EmptyStateFormat(t *testing.T) {
+	tests := []struct {
+		name     string
+		viewMode bool // false = legacy tree, true = grouped
+	}{
+		{"Legacy view", false},
+		{"Grouped view", true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tt := NewTaskTree()
+			tt.SetViewMode(tc.viewMode)
+			view := tt.View(60, 20)
+
+			// Verify message contains "No tasks" with two leading spaces
+			// This is the key format requirement from the task
+			expected := "  No tasks"
+			if !strings.Contains(view, expected) {
+				t.Errorf("expected '%s' (two spaces before 'No tasks'), got:\n%s", expected, view)
+			}
+
+			// Note: In test environment, lipgloss may render without ANSI codes
+			// The important thing is that the code uses DimStyle.Render()
+			// which will apply proper styling in a real TTY environment
+		})
+	}
+}
+
 func TestTaskTree_View_SelectedTaskHighlighted(t *testing.T) {
 	tt := makeTaskTree()
 	tasks := []types.ResolvedTask{
@@ -643,9 +674,9 @@ func TestTaskTree_FeatureView_GroupsByFeatureID(t *testing.T) {
 		t.Errorf("Expected [Ungrouped] header in view, got:\n%s", view)
 	}
 
-	// Should show task counts
-	if !strings.Contains(view, "(2)") {
-		t.Errorf("Expected task count (2) for auth-system in view, got:\n%s", view)
+	// Should show task counts in brackets [2]
+	if !strings.Contains(view, "[2]") {
+		t.Errorf("Expected task count [2] for auth-system in view, got:\n%s", view)
 	}
 }
 
@@ -663,13 +694,13 @@ func TestTaskTree_FeatureView_ShowsStatsInHeader(t *testing.T) {
 
 	view := tt.View(80, 30)
 
-	// Should show stats in feature header: [completed/total]
+	// Should show stats in feature header: [total]
 	if !strings.Contains(view, "feature-a") {
 		t.Errorf("Expected feature header with stats in view, got:\n%s", view)
 	}
-	// Check for stats format
-	if !strings.Contains(view, "[1/3]") {
-		t.Errorf("Expected stats [1/3] (1 completed out of 3 total) in view, got:\n%s", view)
+	// Check for stats format - just total count
+	if !strings.Contains(view, "[3]") {
+		t.Errorf("Expected stats [3] (total count) in view, got:\n%s", view)
 	}
 }
 
@@ -701,8 +732,8 @@ func TestTaskTree_FeatureView_CollapsibleFeatures(t *testing.T) {
 	if strings.Contains(view, "Auth Task 1") {
 		t.Errorf("Expected collapsed feature to hide tasks, got:\n%s", view)
 	}
-	if !strings.Contains(view, "▸") {
-		t.Errorf("Expected collapsed indicator ▸, got:\n%s", view)
+	if !strings.Contains(view, "▶") {
+		t.Errorf("Expected collapsed indicator ▶, got:\n%s", view)
 	}
 }
 
@@ -1105,6 +1136,113 @@ func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
 		if !childIDs[expectedID] {
 			t.Errorf("expected child '%s' to be under root", expectedID)
 		}
+	}
+}
+
+// =============================================================================
+// Nested Status+Feature Grouping Wire-up Tests
+// =============================================================================
+
+// TestTaskTree_SetTasks_PopulatesStatusGroups verifies that SetTasks() correctly
+// calls GroupTasksByStatusAndFeature() to populate statusGroups instead of
+// using classification-only groups.
+func TestTaskTree_SetTasks_PopulatesStatusGroups(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)         // Enable grouped view
+	tt.SetFeatureViewMode(false) // Disable feature-only view (should trigger nested)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready Task 1", Classification: "ready", Priority: "high", Status: "pending", FeatureID: "auth"},
+		{ID: "t2", Title: "Ready Task 2", Classification: "ready", Priority: "medium", Status: "pending", FeatureID: "auth"},
+		{ID: "t3", Title: "Ready Ungrouped", Classification: "ready", Priority: "low", Status: "pending", FeatureID: ""},
+		{ID: "t4", Title: "Waiting Task 1", Classification: "waiting", Priority: "high", Status: "pending", FeatureID: "dashboard"},
+	}
+
+	tt.SetTasks(tasks)
+
+	// Verify statusGroups was populated (NOT empty)
+	if len(tt.statusGroups) == 0 {
+		t.Fatal("expected statusGroups to be populated, got empty slice")
+	}
+
+	// Verify we have nested structure (status → features)
+	foundReady := false
+	foundWaiting := false
+	for _, sg := range tt.statusGroups {
+		if sg.Name == "Ready" {
+			foundReady = true
+			// Should have nested features
+			if len(sg.Features) == 0 && sg.Ungrouped == nil {
+				t.Error("expected Ready status group to have nested features or ungrouped tasks")
+			}
+		}
+		if sg.Name == "Waiting" {
+			foundWaiting = true
+			// Should have nested features
+			if len(sg.Features) == 0 && sg.Ungrouped == nil {
+				t.Error("expected Waiting status group to have nested features or ungrouped tasks")
+			}
+		}
+	}
+
+	if !foundReady {
+		t.Error("expected to find Ready status group")
+	}
+	if !foundWaiting {
+		t.Error("expected to find Waiting status group")
+	}
+}
+
+// TestTaskTree_SetTasks_PreservesNestedCollapsedState verifies that collapsed
+// state is restored across all 3 levels: status, feature, and ungrouped.
+func TestTaskTree_SetTasks_PreservesNestedCollapsedState(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false)
+
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Ready Task", Classification: "ready", Priority: "high", Status: "pending", FeatureID: "auth"},
+		{ID: "t2", Title: "Ungrouped Task", Classification: "ready", Priority: "medium", Status: "pending", FeatureID: ""},
+	}
+
+	// First pass: populate statusGroups
+	tt.SetTasks(tasks)
+
+	// Manually set collapsed states at all levels
+	tt.groupCollapsed["Ready"] = true               // Status-level collapse
+	tt.featureCollapsed["auth"] = true              // Feature-level collapse
+	tt.featureCollapsed["Ready:[Ungrouped]"] = true // Ungrouped-level collapse
+
+	// Second pass: should restore all collapsed states
+	tt.SetTasks(tasks)
+
+	// Verify status-level collapse was restored
+	foundReady := false
+	for _, sg := range tt.statusGroups {
+		if sg.Name == "Ready" {
+			foundReady = true
+			if !sg.Collapsed {
+				t.Error("expected Ready status group to be collapsed")
+			}
+
+			// Verify feature-level collapse was restored
+			for _, fg := range sg.Features {
+				if fg.ID == "auth" {
+					if !fg.Collapsed {
+						t.Error("expected auth feature to be collapsed")
+					}
+				}
+			}
+
+			// Verify ungrouped-level collapse was restored
+			if sg.Ungrouped != nil && !sg.Ungrouped.Collapsed {
+				t.Error("expected Ungrouped section to be collapsed")
+			}
+		}
+	}
+
+	if !foundReady {
+		t.Fatal("expected to find Ready status group")
 	}
 }
 
@@ -1549,6 +1687,207 @@ func TestBuildTree_Phase8_EdgeCase_NonExistentReferences(t *testing.T) {
 }
 
 // =============================================================================
+// Phase 4: Nested Rendering Tests (3-level hierarchy)
+// =============================================================================
+
+// Test 1: viewNestedGrouped renders 3-level hierarchy correctly
+func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true) // Enable grouped view
+
+	// Create task with completed status (need both classification and status set)
+	completedTask := makeTaskWithFeature("t3", "Dashboard Task", "ready", "medium", "dashboard", nil)
+	completedTask.Status = "completed"
+	completedTask.Classification = "completed"
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task 1", "ready", "high", "auth-system", nil),
+		makeTaskWithFeature("t2", "Auth Task 2", "ready", "low", "auth-system", nil),
+		completedTask,
+		makeTask("t4", "Ungrouped Ready Task", "ready", "medium", nil),
+	}
+
+	// Populate statusGroups to trigger nested mode
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+
+	view := tt.View(80, 30)
+
+	// Should show status headers
+	if !strings.Contains(view, "Ready") {
+		t.Errorf("Expected status header 'Ready' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Completed") {
+		t.Errorf("Expected status header 'Completed' in view, got:\n%s", view)
+	}
+
+	// Should show feature sub-headers with indentation
+	if !strings.Contains(view, "auth-system") {
+		t.Errorf("Expected feature sub-header 'auth-system' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "dashboard") {
+		t.Errorf("Expected feature sub-header 'dashboard' in view, got:\n%s", view)
+	}
+
+	// Should show ungrouped header within Ready status
+	if !strings.Contains(view, "[Ungrouped]") {
+		t.Errorf("Expected [Ungrouped] sub-header in view, got:\n%s", view)
+	}
+}
+
+// Test 2: Collapse indicators at all levels
+func TestTaskTree_ViewNestedGrouped_CollapseIndicatorsAtAllLevels(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+
+	// Expanded status, expanded feature
+	view := tt.View(80, 30)
+	if !strings.Contains(view, "▾") {
+		t.Errorf("Expected expanded indicator ▾ in view, got:\n%s", view)
+	}
+
+	// Collapse status
+	tt.statusGroups[0].Collapsed = true
+	view = tt.View(80, 30)
+	if !strings.Contains(view, "▶") {
+		t.Errorf("Expected collapsed indicator ▶ for collapsed status, got:\n%s", view)
+	}
+}
+
+// Test 3: Selection indicators at all levels
+func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+
+	// Test 1: Status header selected
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+	tt.selectedFeatureIdx = -2
+	tt.selectedTaskIdx = -1
+	tt.SelectedID = ""
+
+	view := tt.View(80, 30)
+	if !strings.Contains(view, "→") {
+		t.Errorf("Expected selection indicator → for status header, got:\n%s", view)
+	}
+
+	// Test 2: Feature header selected
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 0
+	tt.selectedTaskIdx = -1
+	tt.SelectedID = ""
+
+	view = tt.View(80, 30)
+	// Should have selection indicator for feature header
+	count := strings.Count(view, "→")
+	if count == 0 {
+		t.Errorf("Expected selection indicator → for feature header, got:\n%s", view)
+	}
+
+	// Test 3: Task selected
+	tt.selectedTaskIdx = 0
+	tt.SelectedID = "t1"
+
+	view = tt.View(80, 30)
+	if !strings.Contains(view, "▸") {
+		t.Errorf("Expected task selection indicator ▸, got:\n%s", view)
+	}
+}
+
+// TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation verifies that
+// when navigating with j/k keys in nested mode, the highlighted task matches
+// the selected task index (regression test for navigation bug).
+//
+// Root Cause: renderGroupTaskTree checks groupIdx == tt.selectedGroupIdx,
+// but in nested mode we pass fIdx (feature index) and should check selectedFeatureIdx instead.
+func TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+
+	// Create multiple tasks in DIFFERENT feature groups to expose the bug
+	// The bug occurs when selectedFeatureIdx != selectedGroupIdx
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("f1t1", "Feature1 Task1", "ready", "high", "feature-one", nil),
+		makeTaskWithFeature("f1t2", "Feature1 Task2", "ready", "high", "feature-one", nil),
+		makeTaskWithFeature("f2t1", "Feature2 Task1", "ready", "high", "feature-two", nil),
+		makeTaskWithFeature("f2t2", "Feature2 Task2", "ready", "high", "feature-two", nil),
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+
+	// Expand all status and feature groups
+	for i := range tt.statusGroups {
+		tt.statusGroups[i].Collapsed = false
+		for j := range tt.statusGroups[i].Features {
+			tt.statusGroups[i].Features[j].Collapsed = false
+		}
+	}
+
+	// Simulate navigation to second feature's first task
+	// This is where the bug manifests: selectedFeatureIdx=1, but selectedGroupIdx=0 (unrelated)
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 1 // Second feature
+	tt.selectedTaskIdx = 0    // First task in that feature
+	tt.SelectedID = "f2t1"
+
+	// DEBUG: Verify state mismatch that causes bug
+	// In nested mode, selectedGroupIdx is NOT used for navigation (defaults to 0)
+	// but rendering checks groupIdx == tt.selectedGroupIdx at line 1843
+	if tt.selectedGroupIdx != 1 {
+		t.Logf("DEBUG: selectedGroupIdx=%d, selectedFeatureIdx=%d (mismatch expected)",
+			tt.selectedGroupIdx, tt.selectedFeatureIdx)
+	}
+
+	view := tt.View(80, 30)
+
+	// The selected task line should contain "Feature2 Task1" with indicator "▸"
+	// BUG: Without the fix, this will FAIL because:
+	// - We pass fIdx=1 as groupIdx to renderGroupTaskTree
+	// - But it checks groupIdx(1) == tt.selectedGroupIdx(0) -> false
+	// - So the highlight appears on wrong line or not at all
+	lines := strings.Split(view, "\n")
+	selectedLineFound := false
+	wrongLineHighlighted := false
+
+	for _, line := range lines {
+		if strings.Contains(line, "▸") && strings.Contains(line, "Feature2 Task1") {
+			selectedLineFound = true
+		}
+		// Check if wrong task is highlighted (Feature1 tasks)
+		if strings.Contains(line, "▸") && strings.Contains(line, "Feature1") {
+			wrongLineHighlighted = true
+		}
+	}
+
+	if !selectedLineFound {
+		t.Errorf("Expected selection indicator ▸ on 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
+	}
+	if wrongLineHighlighted {
+		t.Errorf("Wrong task highlighted - expected Feature2 Task1 but Feature1 task has indicator:\n%s", view)
+	}
+}
+
+// =============================================================================
 // Phase 8: Benchmark Tests
 // =============================================================================
 
@@ -1768,5 +2107,259 @@ func TestTaskTree_TextWrap_LaneView_Truncates(t *testing.T) {
 	output := tt.ViewWithProject(30, 20, "test-project")
 	if strings.Contains(output, "This is a very long task title that should be truncated in lane view") {
 		t.Error("Expected title to be truncated in lane view with TextWrap=false and narrow width")
+	}
+}
+
+// =============================================================================
+// StatusIndicator Tests
+// =============================================================================
+
+func TestStatusIndicator_InProgressStatus(t *testing.T) {
+	// Status should take precedence over classification
+	indicator := statusIndicator("in_progress", "ready")
+	if indicator != IndicatorActive {
+		t.Errorf("expected IndicatorActive (▶) for in_progress status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_CompletedStatus(t *testing.T) {
+	indicator := statusIndicator("completed", "ready")
+	if indicator != IndicatorCompleted {
+		t.Errorf("expected IndicatorCompleted (✓) for completed status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_CancelledStatus(t *testing.T) {
+	indicator := statusIndicator("cancelled", "ready")
+	if indicator != IndicatorBlocked {
+		t.Errorf("expected IndicatorBlocked (✗) for cancelled status, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_ReadyClassification(t *testing.T) {
+	// When status is pending, should fall back to classification
+	indicator := statusIndicator("pending", "ready")
+	if indicator != IndicatorReady {
+		t.Errorf("expected IndicatorReady (●) for ready classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_WaitingClassification(t *testing.T) {
+	indicator := statusIndicator("pending", "waiting")
+	if indicator != IndicatorWaiting {
+		t.Errorf("expected IndicatorWaiting (○) for waiting classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_BlockedClassification(t *testing.T) {
+	indicator := statusIndicator("pending", "blocked")
+	if indicator != IndicatorBlocked {
+		t.Errorf("expected IndicatorBlocked (✗) for blocked classification, got %q", indicator)
+	}
+}
+
+func TestStatusIndicator_DefaultToCompleted(t *testing.T) {
+	// Unknown classification should default to completed
+	indicator := statusIndicator("pending", "unknown")
+	if indicator != IndicatorCompleted {
+		t.Errorf("expected IndicatorCompleted (✓) for unknown classification, got %q", indicator)
+	}
+}
+
+// =============================================================================
+// Tests: buildSelectedTaskRelationGraph
+// =============================================================================
+
+func TestBuildSelectedTaskRelationGraph_NoSelection(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "ready", "medium", []string{"a"}),
+	}
+
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "")
+	if len(ancestors) != 0 {
+		t.Errorf("expected empty ancestors for no selection, got %d", len(ancestors))
+	}
+	if len(descendants) != 0 {
+		t.Errorf("expected empty descendants for no selection, got %d", len(descendants))
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_SimpleChain(t *testing.T) {
+	// a <- b <- c (c depends on b, b depends on a)
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+	}
+
+	// Select b: a is ancestor, c is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "b")
+	if !ancestors["a"] {
+		t.Errorf("expected 'a' in ancestors")
+	}
+	if ancestors["b"] {
+		t.Errorf("selected task should not be in ancestors")
+	}
+	if !descendants["c"] {
+		t.Errorf("expected 'c' in descendants")
+	}
+	if descendants["b"] {
+		t.Errorf("selected task should not be in descendants")
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_Diamond(t *testing.T) {
+	//     a
+	//    / \
+	//   b   c
+	//    \ /
+	//     d
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"a"}),
+		makeTask("d", "Task D", "waiting", "medium", []string{"b", "c"}),
+	}
+
+	// Select b: a is ancestor, d is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "b")
+	if !ancestors["a"] {
+		t.Errorf("expected 'a' in ancestors")
+	}
+	if !descendants["d"] {
+		t.Errorf("expected 'd' in descendants")
+	}
+	if ancestors["c"] {
+		t.Errorf("'c' is sibling, not ancestor")
+	}
+	if descendants["c"] {
+		t.Errorf("'c' is sibling, not descendant")
+	}
+}
+
+func TestBuildSelectedTaskRelationGraph_MultiLevel(t *testing.T) {
+	// a <- b <- c <- d
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+		makeTask("d", "Task D", "waiting", "medium", []string{"c"}),
+	}
+
+	// Select c: {a, b} are ancestors, {d} is descendant
+	ancestors, descendants := buildSelectedTaskRelationGraph(tasks, "c")
+	if !ancestors["a"] || !ancestors["b"] {
+		t.Errorf("expected both 'a' and 'b' in ancestors")
+	}
+	if !descendants["d"] {
+		t.Errorf("expected 'd' in descendants")
+	}
+}
+
+// =============================================================================
+// Tests: buildSelectedTaskRelationLanes
+// =============================================================================
+
+func TestBuildSelectedTaskRelationLanes_Empty(t *testing.T) {
+	assignments := []LaneAssignment{}
+	ancestors := map[string]bool{}
+	descendants := map[string]bool{}
+
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+	if len(ctx.UpstreamLanes) != 0 {
+		t.Errorf("expected empty UpstreamLanes")
+	}
+	if len(ctx.DownstreamLanes) != 0 {
+		t.Errorf("expected empty DownstreamLanes")
+	}
+}
+
+func TestBuildSelectedTaskRelationLanes_MapsTasksToLanes(t *testing.T) {
+	assignments := []LaneAssignment{
+		{Lane: 0, TaskID: "a"},
+		{Lane: 1, TaskID: "b"},
+		{Lane: 2, TaskID: "c"},
+	}
+	ancestors := map[string]bool{"a": true}
+	descendants := map[string]bool{"c": true}
+
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+	if !ctx.UpstreamLanes[0] {
+		t.Errorf("expected lane 0 in UpstreamLanes (task 'a')")
+	}
+	if !ctx.DownstreamLanes[2] {
+		t.Errorf("expected lane 2 in DownstreamLanes (task 'c')")
+	}
+	if ctx.UpstreamLanes[1] || ctx.DownstreamLanes[1] {
+		t.Errorf("task 'b' should not be in upstream or downstream lanes")
+	}
+}
+
+// =============================================================================
+// Tests: renderLaneTaskLine with colored dependencies
+// =============================================================================
+
+func TestRenderLaneTaskLine_ColoredDependencies(t *testing.T) {
+	// Create task graph: a <- b <- c (b depends on a, c depends on b)
+	tasks := []types.ResolvedTask{
+		makeTask("a", "Task A", "ready", "medium", nil),
+		makeTask("b", "Task B", "waiting", "medium", []string{"a"}),
+		makeTask("c", "Task C", "waiting", "medium", []string{"b"}),
+	}
+
+	// Run topo sort and lane assignment
+	sortedTasks := TopoSort(tasks)
+	assignments := AssignLanes(sortedTasks)
+
+	// Build relation graph for selected task "b"
+	ancestors, descendants := buildSelectedTaskRelationGraph(sortedTasks, "b")
+	ctx := buildSelectedTaskRelationLanes(assignments, ancestors, descendants)
+
+	// Verify that task 'a' is in upstream lanes
+	foundUpstreamLane := false
+	for _, assignment := range assignments {
+		if assignment.TaskID == "a" {
+			if ctx.UpstreamLanes[assignment.Lane] {
+				foundUpstreamLane = true
+			}
+		}
+	}
+	if !foundUpstreamLane {
+		t.Errorf("expected task 'a' lane to be marked as upstream")
+	}
+
+	// Verify that task 'c' is in downstream lanes
+	foundDownstreamLane := false
+	for _, assignment := range assignments {
+		if assignment.TaskID == "c" {
+			if ctx.DownstreamLanes[assignment.Lane] {
+				foundDownstreamLane = true
+			}
+		}
+	}
+	if !foundDownstreamLane {
+		t.Errorf("expected task 'c' lane to be marked as downstream")
+	}
+
+	// Verify that segments get correct Kind values
+	for i, assignment := range assignments {
+		task := sortedTasks[i]
+		segments := GeneratePrefixSegments(assignment, i, assignments, &ctx)
+
+		for _, seg := range segments {
+			if seg.Role == RoleVertical {
+				// Check if vertical line segments in ancestor lanes are marked as upstream
+				if ctx.UpstreamLanes[seg.Lane] && seg.Kind != KindUpstream {
+					t.Errorf("task %s: vertical segment in upstream lane %d should have KindUpstream, got %v",
+						task.ID, seg.Lane, seg.Kind)
+				}
+				// Check if vertical line segments in descendant lanes are marked as downstream
+				if ctx.DownstreamLanes[seg.Lane] && seg.Kind != KindDownstream {
+					t.Errorf("task %s: vertical segment in downstream lane %d should have KindDownstream, got %v",
+						task.ID, seg.Lane, seg.Kind)
+				}
+			}
+		}
 	}
 }

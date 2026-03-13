@@ -34,8 +34,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, is
 	}
 
 	// Status indicator with color
-	indicator := statusIndicator(task.Classification)
-	indicatorStyled := StatusStyle(task.Classification).Render(indicator)
+	indicator := statusIndicator(task.Status, task.Classification)
+	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
 	// Project label (ONLY in aggregate view and if ProjectID is not empty)
 	projectLabel := ""

@@ -862,9 +862,13 @@ func TestCheckoutFeature_Stub(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	err := svc.CheckoutFeature(ctx, "proj", "feat-1")
+	result, err := svc.CheckoutFeature(ctx, "proj", "feat-1", nil)
 	if err != nil {
 		t.Fatalf("CheckoutFeature stub failed: %v", err)
+	}
+	// After implementation, result should be non-nil
+	if result == nil {
+		t.Error("CheckoutFeature should return non-nil result")
 	}
 }
 
@@ -977,4 +981,292 @@ func TestGetTasks_MetadataFlowsToResolution(t *testing.T) {
 	if len(taskB.ResolvedDeps) != 1 || taskB.ResolvedDeps[0] != "aaa11111" {
 		t.Errorf("ResolvedDeps = %v, want [aaa11111]", taskB.ResolvedDeps)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Feature Checkout Tests
+// ---------------------------------------------------------------------------
+
+// TestCheckoutFeature_CreatesCheckoutTask tests that CheckoutFeature creates
+// a checkout task with proper frontmatter.
+func TestCheckoutFeature_CreatesCheckoutTask(t *testing.T) {
+	svc, _, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+	projectID := "test-project"
+	featureID := "feature-123"
+
+	// Create project task directory
+	taskDir := filepath.Join(brainDir, "projects", projectID, "task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatalf("failed to create task dir: %v", err)
+	}
+
+	// Create a non-generated feature task
+	task1Path := filepath.Join(taskDir, "abc12def.md")
+	task1Content := `---
+type: task
+title: Implement auth
+status: pending
+priority: high
+feature_id: feature-123
+---
+Task content`
+	if err := os.WriteFile(task1Path, []byte(task1Content), 0644); err != nil {
+		t.Fatalf("failed to write task: %v", err)
+	}
+
+	// Call CheckoutFeature
+	opts := &types.FeatureCheckoutOptions{
+		ExecutionBranch:    "feature/auth",
+		MergeTargetBranch:  "main",
+		MergePolicy:        "auto_merge",
+		MergeStrategy:      "squash",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  true,
+		ExecutionMode:      "worktree",
+	}
+
+	result, err := svc.CheckoutFeature(ctx, projectID, featureID, opts)
+	if err != nil {
+		t.Fatalf("CheckoutFeature failed: %v", err)
+	}
+
+	// Verify result
+	if !result.Created {
+		t.Error("expected result.Created = true")
+	}
+	if result.GeneratedKey != "feature-checkout:feature-123:round-1" {
+		t.Errorf("GeneratedKey = %q, want %q", result.GeneratedKey, "feature-checkout:feature-123:round-1")
+	}
+	if result.Task == nil {
+		t.Fatal("expected result.Task to be non-nil")
+	}
+
+	// Verify the task file was created
+	files, err := os.ReadDir(taskDir)
+	if err != nil {
+		t.Fatalf("failed to read task dir: %v", err)
+	}
+
+	var checkoutFiles []string
+	for _, f := range files {
+		if f.Name() != "abc12def.md" {
+			checkoutFiles = append(checkoutFiles, f.Name())
+		}
+	}
+
+	if len(checkoutFiles) != 1 {
+		t.Fatalf("expected 1 checkout task file, got %d", len(checkoutFiles))
+	}
+
+	// Read and verify the checkout task content
+	checkoutPath := filepath.Join(taskDir, checkoutFiles[0])
+	content, err := os.ReadFile(checkoutPath)
+	if err != nil {
+		t.Fatalf("failed to read checkout task: %v", err)
+	}
+
+	contentStr := string(content)
+
+	// Verify key frontmatter fields (checking for presence, not exact format)
+	// YAML Serialize may quote strings with special chars
+	expectedSubstrings := []string{
+		"Feature checkout: feature-123", // title content (may be quoted)
+		"type: task",
+		"status: pending",
+		"priority: medium",
+		"feature_id: feature-123",
+		"abc12def",    // depends_on entry (may be quoted)
+		"checkout",    // tag
+		"feature-123", // tag
+		"generated: true",
+		"generated_kind: feature_checkout",
+		"feature-checkout:feature-123:round-1", // generated_key value
+		"generated_by: feature-checkout",
+		"git_branch: feature/auth",
+		"merge_target_branch: main",
+		"merge_policy: auto_merge",
+		"merge_strategy: squash",
+		"remote_branch_policy: delete",
+		"open_pr_before_merge: true",
+		"execution_mode: worktree",
+	}
+
+	for _, expected := range expectedSubstrings {
+		if !contains(contentStr, expected) {
+			t.Errorf("checkout task missing expected substring: %q\nFull content:\n%s", expected, contentStr)
+		}
+	}
+
+	// Verify content body
+	if !contains(contentStr, "Automated feature checkout for feature-123") {
+		t.Error("checkout task missing expected content body")
+	}
+	if !contains(contentStr, "Merge intent:") {
+		t.Error("checkout task missing merge intent section")
+	}
+}
+
+// TestCheckoutFeature_Idempotency tests that calling CheckoutFeature twice
+// returns the existing task.
+func TestCheckoutFeature_Idempotency(t *testing.T) {
+	svc, _, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+	projectID := "test-project"
+	featureID := "feature-456"
+
+	taskDir := filepath.Join(brainDir, "projects", projectID, "task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatalf("failed to create task dir: %v", err)
+	}
+
+	// Create a feature task
+	task1Path := filepath.Join(taskDir, "xyz98765.md")
+	task1Content := `---
+type: task
+title: Add logging
+status: pending
+feature_id: feature-456
+---
+Task content`
+	if err := os.WriteFile(task1Path, []byte(task1Content), 0644); err != nil {
+		t.Fatalf("failed to write task: %v", err)
+	}
+
+	opts := &types.FeatureCheckoutOptions{
+		MergePolicy: "prompt_only",
+	}
+
+	// First call - should create
+	result1, err := svc.CheckoutFeature(ctx, projectID, featureID, opts)
+	if err != nil {
+		t.Fatalf("CheckoutFeature (1st) failed: %v", err)
+	}
+	if !result1.Created {
+		t.Error("expected result1.Created = true")
+	}
+
+	// Second call - should return existing
+	result2, err := svc.CheckoutFeature(ctx, projectID, featureID, opts)
+	if err != nil {
+		t.Fatalf("CheckoutFeature (2nd) failed: %v", err)
+	}
+	if result2.Created {
+		t.Error("expected result2.Created = false (should return existing)")
+	}
+	if result2.Task == nil {
+		t.Fatal("expected result2.Task to be non-nil")
+	}
+
+	// Verify no duplicate files
+	files, err := os.ReadDir(taskDir)
+	if err != nil {
+		t.Fatalf("failed to read task dir: %v", err)
+	}
+
+	checkoutCount := 0
+	for _, f := range files {
+		if f.Name() != "xyz98765.md" {
+			checkoutCount++
+		}
+	}
+	if checkoutCount != 1 {
+		t.Errorf("expected 1 checkout task, got %d", checkoutCount)
+	}
+}
+
+// TestExtractUniqueNonGeneratedTaskIds tests the helper function.
+func TestExtractUniqueNonGeneratedTaskIds(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tasks := []types.BrainEntry{
+		{ID: "task1", Generated: &falseVal},
+		{ID: "task2", Generated: &falseVal},
+		{ID: "task3", Generated: &trueVal},  // should be excluded
+		{ID: "task1", Generated: &falseVal}, // duplicate
+		{ID: "", Generated: &falseVal},      // empty ID
+	}
+
+	result := extractUniqueNonGeneratedTaskIds(tasks)
+
+	expected := []string{"task1", "task2"}
+	if len(result) != len(expected) {
+		t.Fatalf("length = %d, want %d", len(result), len(expected))
+	}
+
+	for i, id := range expected {
+		if result[i] != id {
+			t.Errorf("result[%d] = %q, want %q", i, result[i], id)
+		}
+	}
+}
+
+// TestIsTerminalCheckoutStatus tests the terminal status check.
+func TestIsTerminalCheckoutStatus(t *testing.T) {
+	tests := []struct {
+		status   string
+		terminal bool
+	}{
+		{"pending", false},
+		{"active", false},
+		{"in_progress", false},
+		{"blocked", false},
+		{"completed", true},
+		{"validated", true},
+		{"cancelled", true},
+		{"superseded", true},
+		{"archived", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.status, func(t *testing.T) {
+			result := isTerminalCheckoutStatus(tt.status)
+			if result != tt.terminal {
+				t.Errorf("isTerminalCheckoutStatus(%q) = %v, want %v", tt.status, result, tt.terminal)
+			}
+		})
+	}
+}
+
+// TestExtractGeneratedDependentTasks tests extraction of checkout/review tasks.
+func TestExtractGeneratedDependentTasks(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tasks := []types.BrainEntry{
+		{ID: "task1", Generated: &falseVal},
+		{ID: "checkout1", Generated: &trueVal, GeneratedKind: "feature_checkout"},
+		{ID: "review1", Generated: &trueVal, GeneratedKind: "feature_review"},
+		{ID: "gap1", Generated: &trueVal, GeneratedKind: "gap_task"}, // excluded
+		{ID: "checkout2", Generated: &trueVal, GeneratedKind: "feature_checkout"},
+	}
+
+	result := extractGeneratedDependentTasks(tasks)
+
+	expected := []string{"checkout1", "review1", "checkout2"}
+	if len(result) != len(expected) {
+		t.Fatalf("length = %d, want %d", len(result), len(expected))
+	}
+
+	for i, id := range expected {
+		if result[i].ID != id {
+			t.Errorf("result[%d].ID = %q, want %q", i, result[i].ID, id)
+		}
+	}
+}
+
+// contains is a helper to check if a string contains a substring.
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) &&
+		(s == substr || len(s) > len(substr) && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }

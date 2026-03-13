@@ -65,7 +65,8 @@ func TestMetricsFormat_MultipleProcs(t *testing.T) {
 	}
 
 	formatted := m.Format()
-	assert.Equal(t, "CPU:45.7% Mem:1024.5MB 3 procs", formatted)
+	// Memory >= 1000MB is converted to GB (matching TypeScript behavior)
+	assert.Equal(t, "CPU:45.7% Mem:1.0GB 3 procs", formatted)
 }
 
 func TestMetricsFormat_Zero(t *testing.T) {

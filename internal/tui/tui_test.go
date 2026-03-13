@@ -320,6 +320,33 @@ func TestView_ContainsProjectName(t *testing.T) {
 	}
 }
 
+func TestView_StatusBarAppearsBeforeWindowSizeMsg(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "my-project",
+	}
+	m := NewModel(cfg)
+	// Deliberately don't set width/height to simulate first render before WindowSizeMsg
+	// m.width = 0, m.height = 0 (default values)
+
+	view := m.View()
+
+	// StatusBar should appear even before WindowSizeMsg sets dimensions
+	// This verifies fix for: Missing header bar in Go rewrite TUI
+	if !strings.Contains(view, "my-project") {
+		t.Errorf("expected StatusBar with project name 'my-project' to appear in initial render, got:\n%s", view)
+	}
+	// Should NOT show "Initializing..." message anymore
+	if strings.Contains(view, "Initializing...") {
+		t.Errorf("unexpected 'Initializing...' message blocking StatusBar render, got:\n%s", view)
+	}
+	// Should contain task stats - at least the "ready" indicator
+	// (full stats might be truncated with width=0, but at least some stats should show)
+	if !strings.Contains(view, "ready") {
+		t.Errorf("expected StatusBar to contain task stats, got:\n%s", view)
+	}
+}
+
 func TestView_ContainsTaskPanel(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
@@ -531,7 +558,7 @@ func TestStatusBarView_ShowsProjectName(t *testing.T) {
 
 func TestHelpBarView_ContainsShortcuts(t *testing.T) {
 	hb := NewHelpBar()
-	view := hb.View(120, false)
+	view := hb.View(120, false, "test-project")
 
 	shortcuts := []string{"j/k", "Tab", "Quit"}
 	for _, s := range shortcuts {
@@ -543,7 +570,7 @@ func TestHelpBarView_ContainsShortcuts(t *testing.T) {
 
 func TestHelpBarView_MultiProjectShowsTabShortcuts(t *testing.T) {
 	hb := NewHelpBar()
-	view := hb.View(120, true)
+	view := hb.View(120, true, "test-project")
 
 	if !strings.Contains(view, "h/l") {
 		t.Errorf("expected multi-project help to contain 'h/l' for tab switching, got:\n%s", view)
@@ -2770,11 +2797,11 @@ func TestHelpBar_ShowsScheduleShortcutsInScheduleMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeSchedules
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
-	// Should show schedule-specific shortcuts
-	if !strings.Contains(view, "Tasks") {
-		t.Errorf("expected helpbar in schedule mode to show 'Tasks' (for C key to go back), got:\n%s", view)
+	// Should show "View" label (generic label matching TypeScript, may wrap across lines)
+	if !strings.Contains(view, "View") {
+		t.Errorf("expected helpbar in schedule mode to show 'View' label, got:\n%s", view)
 	}
 
 	// Should NOT show task-specific action shortcuts
@@ -2791,7 +2818,7 @@ func TestHelpBar_ShowsTaskShortcutsInTaskMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Should show task-specific shortcuts
 	if !strings.Contains(view, "Execute") {
@@ -2807,7 +2834,7 @@ func TestHelpBar_ShowsCancelOnXInTaskMode(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	// Cancel should be on X key now (not C)
 	if !strings.Contains(view, "X") || !strings.Contains(view, "Cancel") {
@@ -2820,11 +2847,11 @@ func TestHelpBar_ShowsScheduleToggleOnC(t *testing.T) {
 	h.ActivePanel = PanelTasks
 	h.ViewMode = ViewModeTasks
 
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
-	// C should show Schedules (to toggle to schedule view)
-	if !strings.Contains(view, "Schedules") {
-		t.Errorf("expected helpbar to show 'Schedules' for C key, got:\n%s", view)
+	// C should show "View" label (generic label matching TypeScript, may wrap across lines)
+	if !strings.Contains(view, "View") {
+		t.Errorf("expected helpbar to show 'View' label for C key, got:\n%s", view)
 	}
 }
 
@@ -2956,7 +2983,7 @@ func TestUpdate_YKey_NoOpInScheduleView(t *testing.T) {
 
 func TestHelpBar_ShowsYankShortcut(t *testing.T) {
 	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeTasks}
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if !strings.Contains(view, "Yank") {
 		t.Errorf("expected help bar to show 'Yank' shortcut, got:\n%s", view)
@@ -2965,7 +2992,7 @@ func TestHelpBar_ShowsYankShortcut(t *testing.T) {
 
 func TestHelpBar_NoYankInScheduleView(t *testing.T) {
 	h := HelpBar{ActivePanel: PanelTasks, ViewMode: ViewModeSchedules}
-	view := h.View(120, false)
+	view := h.View(120, false, "test-project")
 
 	if strings.Contains(view, "Yank") {
 		t.Errorf("expected help bar to NOT show 'Yank' in schedule view, got:\n%s", view)
@@ -3286,5 +3313,152 @@ func TestBlockedInspectorPrompt_ContainsFeatureAndProject(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "blocked") {
 		t.Errorf("expected prompt to contain 'blocked', got: %s", prompt)
+	}
+}
+
+// =============================================================================
+// Update Tests - Backspace Key Deletion
+// =============================================================================
+
+func TestUpdate_BackspaceKey_OpensDeleteModal_SingleTask(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelTasks
+
+	// Setup a selected task in the task tree via TasksUpdatedMsg
+	testTask := types.ResolvedTask{
+		ID:             "task-123",
+		Title:          "Test Task",
+		Path:           "/path/to/task",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "high",
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{
+		Tasks: []types.ResolvedTask{testTask},
+		Stats: &types.TaskStats{Ready: 1},
+	})
+	m = updated.(Model)
+
+	// Move to first task (past group header if grouped view)
+	jMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}}
+	updated, _ = m.Update(jMsg)
+	m = updated.(Model)
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, _ = m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should open a modal for deletion confirmation
+	if !model.modalManager.IsOpen() {
+		t.Error("expected modal to be open after backspace key")
+	}
+}
+
+func TestUpdate_BackspaceKey_OpensDeleteModal_MultiSelect(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelTasks
+
+	// Setup multiple selected tasks via TasksUpdatedMsg
+	testTask1 := types.ResolvedTask{
+		ID:             "task-123",
+		Title:          "Test Task 1",
+		Path:           "/path/to/task1",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "high",
+	}
+	testTask2 := types.ResolvedTask{
+		ID:             "task-456",
+		Title:          "Test Task 2",
+		Path:           "/path/to/task2",
+		Status:         "pending",
+		Classification: "ready",
+		Priority:       "medium",
+	}
+	updated, _ := m.Update(TasksUpdatedMsg{
+		Tasks: []types.ResolvedTask{testTask1, testTask2},
+		Stats: &types.TaskStats{Ready: 2},
+	})
+	m = updated.(Model)
+
+	// Select multiple tasks (mark them as selected)
+	m.selectedTasks = map[string]bool{
+		"task-123": true,
+		"task-456": true,
+	}
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, _ = m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should open a modal for batch deletion confirmation
+	if !model.modalManager.IsOpen() {
+		t.Error("expected modal to be open for batch delete after backspace key")
+	}
+}
+
+func TestUpdate_BackspaceKey_NoOp_WhenNotInTasksView(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeSchedules // Not in tasks view
+	m.activePanel = PanelTasks
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, cmd := m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should NOT open a modal
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to remain closed when not in tasks view")
+	}
+
+	// Should return nil command
+	if cmd != nil {
+		t.Error("expected nil command when not in tasks view")
+	}
+}
+
+func TestUpdate_BackspaceKey_NoOp_WhenNotInTasksPanel(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+	m.viewMode = ViewModeTasks
+	m.activePanel = PanelLogs // Not in tasks panel
+
+	// Send backspace key message
+	msg := tea.KeyMsg{Type: tea.KeyBackspace}
+	updated, cmd := m.Update(msg)
+
+	model := updated.(Model)
+
+	// Should NOT open a modal
+	if model.modalManager.IsOpen() {
+		t.Error("expected modal to remain closed when not in tasks panel")
+	}
+
+	// Should return nil command
+	if cmd != nil {
+		t.Error("expected nil command when not in tasks panel")
 	}
 }

@@ -199,6 +199,7 @@ func TestViewGrouped_AggregateView_AllTasksShowProjectLabels(t *testing.T) {
 		Projects: []string{"proj1", "proj2"},
 	}
 	m := NewModel(cfg)
+	m.taskTree.SetFeatureViewMode(false) // Use classification-only grouped view for this test
 
 	// Set up aggregate view
 	m.activeProjectID = "all"
@@ -240,6 +241,7 @@ func TestViewGrouped_SingleProjectView_NoProjectLabels(t *testing.T) {
 		Projects: []string{"proj1", "proj2"},
 	}
 	m := NewModel(cfg)
+	m.taskTree.SetFeatureViewMode(false) // Use classification-only grouped view for this test
 
 	// Set up single-project view
 	m.activeProjectID = "proj1"

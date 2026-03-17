@@ -406,8 +406,8 @@ func NewTaskTree() TaskTree {
 	}
 
 	return TaskTree{
-		useGroupedView:     true,  // Enable grouped view by default
-		useFeatureView:     false, // Use nested status+feature view by default
+		useGroupedView:     true, // Enable grouped view by default
+		useFeatureView:     true, // Use feature-grouped view by default (matches origin/main)
 		groupCollapsed:     settings.GroupCollapsed,
 		featureCollapsed:   featureCollapsed,
 		selectedStatusIdx:  0,

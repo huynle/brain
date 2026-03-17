@@ -14,7 +14,8 @@ import (
 // when using nested status+feature grouping.
 func TestNestedNavigation_InitialState(t *testing.T) {
 	tt := NewTaskTree()
-	tt.SetViewMode(true) // grouped view
+	tt.SetViewMode(true)         // grouped view
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	// Set up nested status+feature groups
 	tasks := []types.ResolvedTask{
@@ -57,6 +58,7 @@ func TestNestedNavigation_InitialState(t *testing.T) {
 func TestNestedNavigation_MoveDownFromStatusHeader(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),
@@ -99,6 +101,7 @@ func TestNestedNavigation_MoveDownFromStatusHeader(t *testing.T) {
 func TestNestedNavigation_MoveDownFromStatusHeaderCollapsed(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks1 := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),
@@ -136,6 +139,7 @@ func TestNestedNavigation_MoveDownFromStatusHeaderCollapsed(t *testing.T) {
 func TestNestedNavigation_MoveDownFromFeatureHeader(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),
@@ -178,6 +182,7 @@ func TestNestedNavigation_MoveDownFromFeatureHeader(t *testing.T) {
 func TestNestedNavigation_MoveDownFromFeatureHeaderCollapsed(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks1 := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),
@@ -220,6 +225,7 @@ func TestNestedNavigation_MoveDownFromFeatureHeaderCollapsed(t *testing.T) {
 func TestNestedNavigation_MoveDownWithinFeature(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),
@@ -257,6 +263,7 @@ func TestNestedNavigation_MoveDownWithinFeature(t *testing.T) {
 func TestNestedNavigation_MoveDownAtEndOfFeature(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks1 := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task 1", "ready", "high", "pending", "feat-a"),

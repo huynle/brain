@@ -11,7 +11,8 @@ import (
 // for tasks with dependencies, matching the legacy tree view behavior.
 func TestViewGrouped_TreeIndentation(t *testing.T) {
 	tt := NewTaskTree()
-	tt.SetViewMode(true) // Enable grouped view
+	tt.SetViewMode(true)         // Enable grouped view
+	tt.SetFeatureViewMode(false) // Use classification-only grouped view for this test
 
 	// Create parent-child dependency structure
 	tasks := []types.ResolvedTask{
@@ -58,7 +59,7 @@ func TestViewGrouped_TreeIndentation(t *testing.T) {
 // tree indentation for tasks with dependencies within each feature group.
 func TestViewFeatureGrouped_TreeIndentation(t *testing.T) {
 	tt := NewTaskTree()
-	tt.SetViewMode(true)      // Enable grouped view
+	tt.SetViewMode(true)        // Enable grouped view
 	tt.SetFeatureViewMode(true) // Enable feature grouping
 
 	// Create tasks with feature IDs and dependencies

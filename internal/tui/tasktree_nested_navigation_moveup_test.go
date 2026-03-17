@@ -14,7 +14,8 @@ import (
 // not on the feature header.
 func TestNestedNavigation_MoveUpFromFeatureHeader_LandsOnPreviousFeatureTasks(t *testing.T) {
 	tt := NewTaskTree()
-	tt.SetViewMode(true) // grouped view
+	tt.SetViewMode(true)         // grouped view
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task A1", "ready", "high", "pending", "feat-a"),
@@ -83,6 +84,7 @@ func TestNestedNavigation_MoveUpFromFeatureHeader_LandsOnPreviousFeatureTasks(t 
 func TestNestedNavigation_MoveUpFromFeatureHeader_CollapsedFeature(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithStatusAndFeature("t1", "Task A1", "ready", "high", "pending", "feat-a"),

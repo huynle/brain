@@ -184,6 +184,7 @@ func TestStatusBar_ShowsSelectionCount(t *testing.T) {
 
 func TestIsOnGroupHeader(t *testing.T) {
 	taskTree := NewTaskTree()
+	taskTree.SetFeatureViewMode(false) // Use classification-only grouped view
 
 	tasks := []types.ResolvedTask{
 		{ID: "task1", Title: "Task 1", Status: "pending", Classification: "ready", Priority: "high"},
@@ -231,6 +232,7 @@ func containsHelper(s, substr string) bool {
 func TestSetTasks_NestedView_PreservesSelection(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Task 1", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-a"},
@@ -307,6 +309,7 @@ func TestSetTasks_NestedView_PreservesSelection(t *testing.T) {
 func TestSetTasks_NestedView_FallsBackWhenTaskRemoved(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Task 1", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-a"},
@@ -445,6 +448,7 @@ func TestSetTasks_LegacyView_PreservesSelection(t *testing.T) {
 func TestSetTasks_NestedView_PreservesStatusHeader(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	// Set up state as if we're on a status header with no task selected
 	tt.isOnStatusHeader = true

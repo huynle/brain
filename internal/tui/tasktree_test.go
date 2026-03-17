@@ -1693,7 +1693,8 @@ func TestBuildTree_Phase8_EdgeCase_NonExistentReferences(t *testing.T) {
 // Test 1: viewNestedGrouped renders 3-level hierarchy correctly
 func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
 	tt := NewTaskTree()
-	tt.SetViewMode(true) // Enable grouped view
+	tt.SetViewMode(true)         // Enable grouped view
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	// Create task with completed status (need both classification and status set)
 	completedTask := makeTaskWithFeature("t3", "Dashboard Task", "ready", "medium", "dashboard", nil)
@@ -1741,6 +1742,7 @@ func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
 func TestTaskTree_ViewNestedGrouped_CollapseIndicatorsAtAllLevels(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
@@ -1769,6 +1771,7 @@ func TestTaskTree_ViewNestedGrouped_CollapseIndicatorsAtAllLevels(t *testing.T) 
 func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	tasks := []types.ResolvedTask{
 		makeTaskWithFeature("t1", "Auth Task", "ready", "high", "auth-system", nil),
@@ -1821,6 +1824,7 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 func TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation(t *testing.T) {
 	tt := NewTaskTree()
 	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // explicitly use nested status+feature view
 
 	// Create multiple tasks in DIFFERENT feature groups to expose the bug
 	// The bug occurs when selectedFeatureIdx != selectedGroupIdx

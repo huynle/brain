@@ -2126,46 +2126,29 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
-	// Handle viewport scrolling (ensure selected item is visible)
+	// Handle viewport scrolling (ensure selected item is visible).
+	// IMPORTANT: iterate over activeFeatureGroups (the same filtered list used for rendering)
+	// and match by feature ID, not index — tt.selectedFeatureIdx indexes into the unfiltered
+	// tt.featureGroups.Features, so direct index comparison against activeFeatureGroups would desync.
 	if height > 0 && len(lines) > height {
-		// Find the line index of the selected item
-		selectedLineIdx := 0
-		lineIdx := 0
-
-		// Check feature groups
-		for fIdx, feature := range tt.featureGroups.Features {
-			// Check if feature header is selected
-			if fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped {
-				selectedLineIdx = lineIdx
-				break
-			}
-			lineIdx++ // feature header line
-
-			// Check tasks in this feature if not collapsed
-			if !feature.Collapsed {
-				taskLineCount := countGroupTaskLines(BuildTree(feature.Tasks, tt.tasks))
-
-				// If selected task is in this feature
-				if fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx >= 0 && !tt.isOnUngrouped {
-					selectedLineIdx = lineIdx + tt.selectedFeatureTaskIdx
-					break
-				}
-				lineIdx += taskLineCount
-			}
-		}
-
-		// Check ungrouped section
-		if tt.featureGroups.Ungrouped != nil {
-			ungrouped := tt.featureGroups.Ungrouped
-
-			// Check if ungrouped header is selected
-			if tt.isOnUngrouped && tt.selectedFeatureTaskIdx == -1 {
-				selectedLineIdx = lineIdx
-			} else if !ungrouped.Collapsed && tt.isOnUngrouped && tt.selectedFeatureTaskIdx >= 0 {
-				// Selected task is in ungrouped section
-				selectedLineIdx = lineIdx + 1 + tt.selectedFeatureTaskIdx
-			}
-		}
+		selectedLineIdx := findSelectedLineInFeatureView(
+			activeFeatureGroups,
+			activeUngrouped,
+			tt.tasks,
+			selectedFeatureID,
+			tt.selectedFeatureTaskIdx,
+			tt.isOnUngrouped,
+			tt.isOnDraftSection,
+			tt.isOnCompletedSection,
+			tt.draftFeatureIdx,
+			tt.completedFeatureIdx,
+			tt.draftCollapsed,
+			tt.completedCollapsed,
+			draftTasks,
+			completedTasks,
+			tt.draftFeatureIDs,
+			tt.completedFeatureIDs,
+		)
 
 		// Calculate viewport start to keep selected line visible with padding
 		// Add padding to prevent selected line from being hidden in empty space at edges
@@ -2197,6 +2180,160 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// findSelectedLineInFeatureView computes the rendered line index of the currently
+// selected item using the same filtered data that viewFeatureGrouped uses for rendering.
+// This prevents desync between scroll targeting and actual rendered row order.
+func findSelectedLineInFeatureView(
+	activeFeatureGroups []FeatureGroup,
+	activeUngrouped *FeatureGroup,
+	allTasks []types.ResolvedTask,
+	selectedFeatureID string,
+	selectedFeatureTaskIdx int,
+	isOnUngrouped bool,
+	isOnDraftSection bool,
+	isOnCompletedSection bool,
+	draftFeatureIdx int,
+	completedFeatureIdx int,
+	draftCollapsed bool,
+	completedCollapsed bool,
+	draftTasks []types.ResolvedTask,
+	completedTasks []types.ResolvedTask,
+	draftFeatureIDs []string,
+	completedFeatureIDs []string,
+) int {
+	lineIdx := 0
+	found := false
+
+	// Walk active feature groups (matches rendering order)
+	for _, feature := range activeFeatureGroups {
+		isThisFeature := (feature.ID == selectedFeatureID && selectedFeatureID != "")
+
+		// Check if feature header is selected
+		if isThisFeature && selectedFeatureTaskIdx == -1 && !isOnUngrouped &&
+			!isOnDraftSection && !isOnCompletedSection {
+			return lineIdx
+		}
+		lineIdx++ // feature header line
+
+		// Count tasks in this feature if not collapsed
+		if !feature.Collapsed {
+			taskLineCount := countGroupTaskLines(BuildTree(feature.Tasks, allTasks))
+
+			// If selected task is in this feature
+			if isThisFeature && selectedFeatureTaskIdx >= 0 && !isOnUngrouped &&
+				!isOnDraftSection && !isOnCompletedSection {
+				return lineIdx + selectedFeatureTaskIdx
+			}
+			lineIdx += taskLineCount
+		}
+	}
+
+	// Walk active ungrouped section
+	if activeUngrouped != nil {
+		// Check if ungrouped header is selected
+		if isOnUngrouped && selectedFeatureTaskIdx == -1 &&
+			!isOnDraftSection && !isOnCompletedSection {
+			return lineIdx
+		}
+		lineIdx++ // ungrouped header line
+
+		if !activeUngrouped.Collapsed {
+			taskLineCount := countGroupTaskLines(BuildTree(activeUngrouped.Tasks, allTasks))
+			if isOnUngrouped && selectedFeatureTaskIdx >= 0 &&
+				!isOnDraftSection && !isOnCompletedSection {
+				return lineIdx + selectedFeatureTaskIdx
+			}
+			lineIdx += taskLineCount
+		}
+	}
+
+	// Walk Draft section
+	if len(draftTasks) > 0 {
+		lineIdx++ // blank line before draft
+		// Draft section header
+		if isOnDraftSection && draftFeatureIdx == -1 {
+			return lineIdx
+		}
+		lineIdx++ // draft header line
+
+		if !draftCollapsed {
+			// Group draft tasks by feature (mirrors rendering)
+			draftByFeature := make(map[string][]types.ResolvedTask)
+			for _, task := range draftTasks {
+				fid := task.FeatureID
+				if fid == "" {
+					fid = "[Ungrouped]"
+				}
+				draftByFeature[fid] = append(draftByFeature[fid], task)
+			}
+
+			for fIdx, featureID := range draftFeatureIDs {
+				featureTasks := draftByFeature[featureID]
+				// Sub-feature header (skip for [Ungrouped])
+				if featureID != "[Ungrouped]" {
+					if isOnDraftSection && draftFeatureIdx == fIdx {
+						return lineIdx
+					}
+					lineIdx++ // sub-feature header
+				}
+
+				// Tasks under this sub-feature (skip if collapsed)
+				isCollapsed := false // featureCollapsed check would need the map; but we just count rendered lines
+				// In rendering, collapsed sub-features skip task rendering
+				// We don't have featureCollapsed here, but the line count in `lines` already includes/excludes them.
+				// Since we're counting to match rendered lines, just count the tree lines.
+				if featureID == "[Ungrouped]" || !isCollapsed {
+					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
+					lineIdx += taskLineCount
+				}
+			}
+		}
+		found = isOnDraftSection
+	}
+
+	// Walk Completed section
+	if len(completedTasks) > 0 {
+		lineIdx++ // blank line before completed
+		// Completed section header
+		if isOnCompletedSection && completedFeatureIdx == -1 {
+			return lineIdx
+		}
+		lineIdx++ // completed header line
+
+		if !completedCollapsed {
+			completedByFeature := make(map[string][]types.ResolvedTask)
+			for _, task := range completedTasks {
+				fid := task.FeatureID
+				if fid == "" {
+					fid = "[Ungrouped]"
+				}
+				completedByFeature[fid] = append(completedByFeature[fid], task)
+			}
+
+			for fIdx, featureID := range completedFeatureIDs {
+				featureTasks := completedByFeature[featureID]
+				if featureID != "[Ungrouped]" {
+					if isOnCompletedSection && completedFeatureIdx == fIdx {
+						return lineIdx
+					}
+					lineIdx++ // sub-feature header
+				}
+
+				isCollapsed := false
+				if featureID == "[Ungrouped]" || !isCollapsed {
+					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
+					lineIdx += taskLineCount
+				}
+			}
+		}
+		found = found || isOnCompletedSection
+	}
+
+	// Fallback: if nothing matched, return 0 (top of viewport)
+	_ = found
+	return 0
 }
 
 // viewNestedGrouped renders tasks in 3-level nested hierarchy: Status → Feature → Tasks

@@ -388,3 +388,122 @@ func TestRenderGroupedTaskLineWithTree_SelectedOverridesRelationColor(t *testing
 		t.Errorf("Expected 'Selected Ancestor' in line, got: %s", line)
 	}
 }
+
+// TestFindSelectedLineInFeatureView_MixedStatusFeatures verifies that viewport scroll
+// targeting uses the same filtered feature list as rendering. When some features contain
+// only non-active tasks (draft/completed), they are excluded from activeFeatureGroups
+// but still present in the unfiltered featureGroups.Features. The selected line
+// computation must use activeFeatureGroups to avoid desync.
+func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
+	// Feature "alpha" has only draft tasks → excluded from activeFeatureGroups
+	// Feature "beta" has active tasks → included in activeFeatureGroups
+	// Feature "gamma" has only completed tasks → excluded from activeFeatureGroups
+	// Feature "delta" has active tasks → included in activeFeatureGroups
+
+	allTasks := []types.ResolvedTask{
+		{ID: "a1", Title: "Alpha Draft", Status: "draft", FeatureID: "alpha", Priority: "medium"},
+		{ID: "b1", Title: "Beta Task 1", Status: "pending", Classification: "ready", FeatureID: "beta", Priority: "high"},
+		{ID: "b2", Title: "Beta Task 2", Status: "pending", Classification: "ready", FeatureID: "beta", Priority: "medium"},
+		{ID: "g1", Title: "Gamma Done", Status: "completed", FeatureID: "gamma", Priority: "low"},
+		{ID: "d1", Title: "Delta Task 1", Status: "in_progress", FeatureID: "delta", Priority: "high"},
+	}
+
+	// activeFeatureGroups: only features with active tasks (beta, delta)
+	activeFeatureGroups := []FeatureGroup{
+		{
+			ID:   "beta",
+			Name: "beta",
+			Tasks: []types.ResolvedTask{
+				allTasks[1], // b1
+				allTasks[2], // b2
+			},
+		},
+		{
+			ID:   "delta",
+			Name: "delta",
+			Tasks: []types.ResolvedTask{
+				allTasks[4], // d1
+			},
+		},
+	}
+
+	draftTasks := []types.ResolvedTask{allTasks[0]}
+	completedTasks := []types.ResolvedTask{allTasks[3]}
+
+	// Test 1: Selecting beta feature header (the first active feature, line 0)
+	lineIdx := findSelectedLineInFeatureView(
+		activeFeatureGroups, nil, allTasks,
+		"beta", -1, false, false, false,
+		-1, -1, false, false,
+		draftTasks, completedTasks, nil, nil,
+	)
+	if lineIdx != 0 {
+		t.Errorf("Expected beta header at line 0, got %d", lineIdx)
+	}
+
+	// Test 2: Selecting first task in beta (b1, line 1 = after header)
+	lineIdx = findSelectedLineInFeatureView(
+		activeFeatureGroups, nil, allTasks,
+		"beta", 0, false, false, false,
+		-1, -1, false, false,
+		draftTasks, completedTasks, nil, nil,
+	)
+	if lineIdx != 1 {
+		t.Errorf("Expected first beta task at line 1, got %d", lineIdx)
+	}
+
+	// Test 3: Selecting delta feature header (line 3 = beta header + 2 beta tasks + delta header)
+	lineIdx = findSelectedLineInFeatureView(
+		activeFeatureGroups, nil, allTasks,
+		"delta", -1, false, false, false,
+		-1, -1, false, false,
+		draftTasks, completedTasks, nil, nil,
+	)
+	if lineIdx != 3 {
+		t.Errorf("Expected delta header at line 3, got %d", lineIdx)
+	}
+
+	// Test 4: Selecting delta's first task (line 4 = after delta header)
+	lineIdx = findSelectedLineInFeatureView(
+		activeFeatureGroups, nil, allTasks,
+		"delta", 0, false, false, false,
+		-1, -1, false, false,
+		draftTasks, completedTasks, nil, nil,
+	)
+	if lineIdx != 4 {
+		t.Errorf("Expected first delta task at line 4, got %d", lineIdx)
+	}
+}
+
+// TestFindSelectedLineInFeatureView_DraftAndCompletedSections verifies that
+// draft and completed section headers are correctly located.
+func TestFindSelectedLineInFeatureView_DraftAndCompletedSections(t *testing.T) {
+	// One active feature with 1 task = 2 lines (header + task)
+	activeFeatureGroups := []FeatureGroup{
+		{
+			ID:   "feat-a",
+			Name: "feat-a",
+			Tasks: []types.ResolvedTask{
+				{ID: "t1", Title: "Task 1", Status: "pending", Classification: "ready", FeatureID: "feat-a"},
+			},
+		},
+	}
+	allTasks := activeFeatureGroups[0].Tasks
+	draftTasks := []types.ResolvedTask{
+		{ID: "d1", Title: "Draft 1", Status: "draft", FeatureID: "feat-a"},
+	}
+	completedTasks := []types.ResolvedTask{
+		{ID: "c1", Title: "Done 1", Status: "completed", FeatureID: "feat-a"},
+	}
+
+	// Draft section header should be at line: 2 (feature header + 1 task) + 1 (blank line) = line 3
+	lineIdx := findSelectedLineInFeatureView(
+		activeFeatureGroups, nil, allTasks,
+		"", -1, false, true, false, // isOnDraftSection=true
+		-1, -1, false, false,
+		draftTasks, completedTasks, nil, nil,
+	)
+	if lineIdx != 3 {
+		t.Errorf("Expected draft section header at line 3, got %d", lineIdx)
+	}
+}

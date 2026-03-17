@@ -495,8 +495,17 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 				}
 			}
 
-			// Preserve selection or auto-select first
-			tt.selectFirstFeatureTask()
+			// Preserve selection across SSE updates if the selected task still exists
+			if tt.SelectedID != "" {
+				if tt.restoreFeatureSelection(tt.SelectedID) {
+					// Selection preserved — skip auto-select
+				} else {
+					// Selected task no longer exists — fall back to first active task
+					tt.selectFirstFeatureTask()
+				}
+			} else {
+				tt.selectFirstFeatureTask()
+			}
 		} else {
 			// Nested status+feature grouping (default grouped view)
 			settings, _ := LoadSettings()
@@ -531,12 +540,12 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 				}
 			}
 
-			// Initialize Cursor to 0 for visual order navigation
-			tt.Cursor = 0
-			// Initialize selection to first group header
-			tt.selectedGroupIdx = 0
-			tt.selectedTaskIdx = -1
-			tt.SelectedID = ""
+			// Save previous selection state before rebuilding
+			previousSelectedID := tt.SelectedID
+			previousStatusIdx := tt.selectedStatusIdx
+			previousFeatureIdx := tt.selectedFeatureIdx
+			previousTaskIdx := tt.selectedTaskIdx
+			previousIsOnStatusHeader := tt.isOnStatusHeader
 
 			// Restore collapsed state for all 3 levels in statusGroups (use in-memory state, not disk):
 			// 1. Status-level collapse (using in-memory groupCollapsed map)
@@ -567,8 +576,36 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 				}
 			}
 
-			// Initialize selection
-			tt.selectFirstNestedTask()
+			// Preserve selection across SSE updates if the selected task still exists
+			if previousSelectedID != "" {
+				if tt.restoreNestedSelection(previousSelectedID) {
+					// Selection preserved — skip auto-select
+				} else if previousIsOnStatusHeader && previousStatusIdx < len(tt.statusGroups) {
+					// Was on a status header and that header index still exists
+					tt.selectedStatusIdx = previousStatusIdx
+					tt.selectedFeatureIdx = -1
+					tt.selectedTaskIdx = -1
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				} else {
+					// Selected task no longer exists — fall back to first active task
+					tt.selectFirstNestedTask()
+				}
+			} else if previousIsOnStatusHeader {
+				// Was on a header with no task selected
+				if previousStatusIdx < len(tt.statusGroups) {
+					tt.selectedStatusIdx = previousStatusIdx
+					tt.selectedFeatureIdx = previousFeatureIdx
+					tt.selectedTaskIdx = previousTaskIdx
+					tt.isOnStatusHeader = true
+					tt.SelectedID = ""
+				} else {
+					tt.selectFirstNestedTask()
+				}
+			} else {
+				// No previous selection — initialize
+				tt.selectFirstNestedTask()
+			}
 		}
 	} else {
 		// Legacy tree view
@@ -622,6 +659,93 @@ func (tt *TaskTree) selectFirstTask() {
 }
 
 // selectFirstFeatureTask selects the first task in feature view mode.
+// restoreFeatureSelection searches the new featureGroups for the previously selected task ID.
+// If found, it restores selectedFeatureIdx, selectedFeatureTaskIdx, and isOnUngrouped.
+// Returns true if the selection was restored, false if the task was not found.
+func (tt *TaskTree) restoreFeatureSelection(previousID string) bool {
+	// Search in feature groups
+	for i, feature := range tt.featureGroups.Features {
+		for j, task := range feature.Tasks {
+			if task.ID == previousID {
+				tt.selectedFeatureIdx = i
+				tt.selectedFeatureTaskIdx = j
+				tt.isOnUngrouped = false
+				tt.SelectedID = previousID
+				return true
+			}
+		}
+	}
+
+	// Search in ungrouped
+	if tt.featureGroups.Ungrouped != nil {
+		for j, task := range tt.featureGroups.Ungrouped.Tasks {
+			if task.ID == previousID {
+				tt.selectedFeatureIdx = -1
+				tt.selectedFeatureTaskIdx = j
+				tt.isOnUngrouped = true
+				tt.SelectedID = previousID
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// restoreNestedSelection searches the new statusGroups for the previously selected task ID.
+// If found, it restores selectedStatusIdx, selectedFeatureIdx, selectedTaskIdx, and related state.
+// Returns true if the selection was restored, false if the task was not found.
+func (tt *TaskTree) restoreNestedSelection(previousID string) bool {
+	for i, statusGroup := range tt.statusGroups {
+		// Search in feature groups within this status group
+		for j, feature := range statusGroup.Features {
+			for k, task := range feature.Tasks {
+				if task.ID == previousID {
+					tt.selectedStatusIdx = i
+					tt.selectedFeatureIdx = j
+					tt.selectedTaskIdx = k
+					tt.isOnStatusHeader = false
+					tt.SelectedID = previousID
+					// Also restore Cursor for tt.order compatibility
+					tt.restoreCursorInOrder(previousID)
+					return true
+				}
+			}
+		}
+
+		// Search in ungrouped within this status group
+		if statusGroup.Ungrouped != nil {
+			for k, task := range statusGroup.Ungrouped.Tasks {
+				if task.ID == previousID {
+					tt.selectedStatusIdx = i
+					tt.selectedFeatureIdx = -1
+					tt.selectedTaskIdx = k
+					tt.isOnStatusHeader = false
+					tt.SelectedID = previousID
+					// Also restore Cursor for tt.order compatibility
+					tt.restoreCursorInOrder(previousID)
+					return true
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+// restoreCursorInOrder restores the Cursor position in tt.order for a given task ID.
+// This maintains compatibility with the grouped view navigation that uses Cursor + order.
+func (tt *TaskTree) restoreCursorInOrder(taskID string) {
+	for i, id := range tt.order {
+		if id == taskID {
+			tt.Cursor = i
+			return
+		}
+	}
+	// If not found in order (e.g., task is in collapsed group), set Cursor to 0
+	tt.Cursor = 0
+}
+
 func (tt *TaskTree) selectFirstFeatureTask() {
 	// Helper to check if a task is active (not draft/completed)
 	isActiveStatus := func(status string) bool {

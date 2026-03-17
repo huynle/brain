@@ -1718,6 +1718,12 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
+	// Build lookup for original (unfiltered) feature stats so we can show [completed/total complete].
+	originalFeatureStats := make(map[string]FeatureStats)
+	for _, f := range tt.featureGroups.Features {
+		originalFeatureStats[f.ID] = f.Stats
+	}
+
 	// Resolve the selected feature ID from the unfiltered list to avoid index mismatch.
 	// activeFeatureGroups is filtered (features with no active tasks removed), so its indices
 	// don't align with tt.selectedFeatureIdx (which indexes into unfiltered tt.featureGroups.Features).
@@ -1737,8 +1743,29 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			collapseIndicator = "▾"
 		}
 
-		// Feature header with count and stats
-		featureHeader := fmt.Sprintf("%s Feature: %s [%d]", collapseIndicator, feature.Name, feature.Stats.Total)
+		// Aggregated status icon from ALL tasks in the original (unfiltered) feature
+		var allFeatureTasks []types.ResolvedTask
+		for _, origFeature := range tt.featureGroups.Features {
+			if origFeature.ID == feature.ID {
+				allFeatureTasks = origFeature.Tasks
+				break
+			}
+		}
+		statusIcon, hasActiveExec := aggregateFeatureStatusIcon(allFeatureTasks)
+
+		// Active execution indicator
+		execIndicator := ""
+		if hasActiveExec {
+			execIndicator = " ⚡"
+		}
+
+		// Stats: [completed/total complete] using original (unfiltered) stats
+		origStats := originalFeatureStats[feature.ID]
+		statsStr := fmt.Sprintf("[%d/%d complete]", origStats.Completed, origStats.Total)
+
+		// Feature header with status icon, name, execution indicator, and completion stats
+		featureHeader := fmt.Sprintf("%s %s Feature: %s%s %s",
+			collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
 
 		// Selection marker (2 spaces for alignment)
 		selMarker := "  "
@@ -1878,7 +1905,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 				// Render dimmed feature header (skip for [Ungrouped])
 				if featureID != "[Ungrouped]" {
-					featureHeader := fmt.Sprintf("  • Feature: %s [%d]", featureID, len(featureTasks))
+					draftStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
+					featureHeader := fmt.Sprintf("  %s Feature: %s [%d]", draftStatusIcon, featureID, len(featureTasks))
 					lines = append(lines, DimStyle.Render(featureHeader))
 				}
 
@@ -1942,7 +1970,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 				// Render dimmed feature header (skip for [Ungrouped])
 				if featureID != "[Ungrouped]" {
-					featureHeader := fmt.Sprintf("  • Feature: %s [%d]", featureID, len(featureTasks))
+					compStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
+					featureHeader := fmt.Sprintf("  %s Feature: %s [%d]", compStatusIcon, featureID, len(featureTasks))
 					lines = append(lines, DimStyle.Render(featureHeader))
 				}
 
@@ -2097,9 +2126,17 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 					featureCollapseIndicator = "▾"
 				}
 
-				// Feature header with indentation
-				featureHeader := fmt.Sprintf("%s Feature: %s [%d]",
-					featureCollapseIndicator, feature.Name, feature.Stats.Total)
+				// Aggregated status icon and execution indicator
+				nestedStatusIcon, nestedHasActive := aggregateFeatureStatusIcon(feature.Tasks)
+				nestedExecIndicator := ""
+				if nestedHasActive {
+					nestedExecIndicator = " ⚡"
+				}
+				nestedStatsStr := fmt.Sprintf("[%d/%d complete]", feature.Stats.Completed, feature.Stats.Total)
+
+				// Feature header with status icon, name, execution indicator, and completion stats
+				featureHeader := fmt.Sprintf("%s %s Feature: %s%s %s",
+					featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
 
 				// Selection marker for feature header (with indentation)
 				if isFeatureSelected {

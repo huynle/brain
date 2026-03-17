@@ -138,6 +138,100 @@ func TestFeatureStats(t *testing.T) {
 	}
 }
 
+// TestAggregateFeatureStatusIcon tests the aggregated status icon logic.
+func TestAggregateFeatureStatusIcon(t *testing.T) {
+	tests := []struct {
+		name             string
+		tasks            []types.ResolvedTask
+		expectedIcon     string
+		expectedIsActive bool
+	}{
+		{
+			name: "in_progress takes priority",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "ready"},
+				{ID: "t2", Status: "in_progress", Classification: "ready"},
+				{ID: "t3", Status: "pending", Classification: "blocked"},
+			},
+			expectedIcon:     IndicatorActive, // ▶
+			expectedIsActive: true,
+		},
+		{
+			name: "active status treated as in_progress",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "active", Classification: "ready"},
+				{ID: "t2", Status: "pending", Classification: "waiting"},
+			},
+			expectedIcon:     IndicatorActive, // ▶
+			expectedIsActive: true,
+		},
+		{
+			name: "blocked when no in_progress",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "blocked"},
+				{ID: "t2", Status: "pending", Classification: "ready"},
+			},
+			expectedIcon:     IndicatorBlocked, // ✗
+			expectedIsActive: false,
+		},
+		{
+			name: "ready when no in_progress or blocked",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "ready"},
+				{ID: "t2", Status: "pending", Classification: "ready"},
+			},
+			expectedIcon:     IndicatorReady, // ●
+			expectedIsActive: false,
+		},
+		{
+			name: "waiting when no in_progress, blocked, or ready",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "waiting"},
+				{ID: "t2", Status: "pending", Classification: "waiting"},
+			},
+			expectedIcon:     IndicatorWaiting, // ○
+			expectedIsActive: false,
+		},
+		{
+			name: "completed when all tasks completed",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "completed", Classification: ""},
+				{ID: "t2", Status: "validated", Classification: ""},
+			},
+			expectedIcon:     IndicatorCompleted, // ✓
+			expectedIsActive: false,
+		},
+		{
+			name: "completed with cancelled and archived",
+			tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "completed", Classification: ""},
+				{ID: "t2", Status: "cancelled", Classification: ""},
+				{ID: "t3", Status: "archived", Classification: ""},
+			},
+			expectedIcon:     IndicatorCompleted, // ✓
+			expectedIsActive: false,
+		},
+		{
+			name:             "empty tasks defaults to ready",
+			tasks:            []types.ResolvedTask{},
+			expectedIcon:     IndicatorReady, // ●
+			expectedIsActive: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			icon, isActive := aggregateFeatureStatusIcon(tt.tasks)
+			if icon != tt.expectedIcon {
+				t.Errorf("Expected icon %q, got %q", tt.expectedIcon, icon)
+			}
+			if isActive != tt.expectedIsActive {
+				t.Errorf("Expected isActive=%v, got %v", tt.expectedIsActive, isActive)
+			}
+		})
+	}
+}
+
 // Helper function to find a feature by ID.
 func findFeature(features []FeatureGroup, id string) *FeatureGroup {
 	for i := range features {

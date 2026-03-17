@@ -674,9 +674,9 @@ func TestTaskTree_FeatureView_GroupsByFeatureID(t *testing.T) {
 		t.Errorf("Expected [Ungrouped] header in view, got:\n%s", view)
 	}
 
-	// Should show task counts in brackets [2]
-	if !strings.Contains(view, "[2]") {
-		t.Errorf("Expected task count [2] for auth-system in view, got:\n%s", view)
+	// Should show completion stats in [completed/total complete] format
+	if !strings.Contains(view, "[0/2 complete]") {
+		t.Errorf("Expected stats [0/2 complete] for auth-system in view, got:\n%s", view)
 	}
 }
 
@@ -694,13 +694,13 @@ func TestTaskTree_FeatureView_ShowsStatsInHeader(t *testing.T) {
 
 	view := tt.View(80, 30)
 
-	// Should show stats in feature header: [total]
+	// Should show stats in feature header: [completed/total complete]
 	if !strings.Contains(view, "feature-a") {
 		t.Errorf("Expected feature header with stats in view, got:\n%s", view)
 	}
-	// Check for stats format - just total count
-	if !strings.Contains(view, "[3]") {
-		t.Errorf("Expected stats [3] (total count) in view, got:\n%s", view)
+	// Check for new completion stats format [completed/total complete]
+	if !strings.Contains(view, "[1/3 complete]") {
+		t.Errorf("Expected stats [1/3 complete] in view, got:\n%s", view)
 	}
 }
 

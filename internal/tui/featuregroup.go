@@ -97,6 +97,60 @@ func GroupTasksByFeature(tasks []types.ResolvedTask) FeatureGroupResult {
 	}
 }
 
+// aggregateFeatureStatusIcon returns an icon representing the aggregated status
+// of all tasks in a feature. Priority order: in_progress > blocked > ready > waiting > completed.
+// Returns (statusIcon, hasActiveExecution).
+func aggregateFeatureStatusIcon(tasks []types.ResolvedTask) (string, bool) {
+	if len(tasks) == 0 {
+		return IndicatorReady, false
+	}
+
+	hasInProgress := false
+	hasBlocked := false
+	hasReady := false
+	hasWaiting := false
+	allCompleted := true
+
+	for _, task := range tasks {
+		switch task.Status {
+		case "in_progress", "active":
+			hasInProgress = true
+			allCompleted = false
+		case "completed", "validated":
+			// completed, don't change allCompleted
+		case "cancelled", "superseded", "archived":
+			// terminal states, treated like completed for aggregation
+		default:
+			allCompleted = false
+		}
+
+		switch task.Classification {
+		case "blocked":
+			hasBlocked = true
+		case "ready":
+			hasReady = true
+		case "waiting":
+			hasWaiting = true
+		}
+	}
+
+	// Priority: in_progress > blocked > ready > waiting > completed
+	switch {
+	case hasInProgress:
+		return IndicatorActive, true // ▶ with ⚡
+	case hasBlocked:
+		return IndicatorBlocked, false // ✗
+	case hasReady:
+		return IndicatorReady, false // ●
+	case hasWaiting:
+		return IndicatorWaiting, false // ○
+	case allCompleted:
+		return IndicatorCompleted, false // ✓
+	default:
+		return IndicatorReady, false // ● default
+	}
+}
+
 // computeFeatureStats calculates aggregate statistics for a list of tasks.
 func computeFeatureStats(tasks []types.ResolvedTask) FeatureStats {
 	stats := FeatureStats{Total: len(tasks)}

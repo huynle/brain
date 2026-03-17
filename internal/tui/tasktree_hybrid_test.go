@@ -49,15 +49,15 @@ func TestTaskTree_HybridView_SeparatesDraftAndCompleted(t *testing.T) {
 		t.Error("Expected 'Completed (3)' status group in view")
 	}
 
-	// Verify that features only show active tasks (not draft/completed)
-	// Feature 1 should show [1] not [3]
-	if !strings.Contains(view, "Feature: feature-1 [1]") {
-		t.Errorf("Expected 'Feature: feature-1 [1]' (only active task), got view:\n%s", view)
+	// Verify that features show completion stats [completed/total complete]
+	// Feature 1 has 3 tasks total (1 completed), so should show [1/3 complete]
+	if !strings.Contains(view, "[1/3 complete]") {
+		t.Errorf("Expected '[1/3 complete]' for feature-1, got view:\n%s", view)
 	}
 
-	// Feature 2 should show [1] not [2]
-	if !strings.Contains(view, "Feature: feature-2 [1]") {
-		t.Errorf("Expected 'Feature: feature-2 [1]' (only active task), got view:\n%s", view)
+	// Feature 2 has 2 tasks total (1 validated), so should show [1/2 complete]
+	if !strings.Contains(view, "[1/2 complete]") {
+		t.Errorf("Expected '[1/2 complete]' for feature-2, got view:\n%s", view)
 	}
 
 	// Ungrouped should show (1) not (3)

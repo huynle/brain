@@ -324,3 +324,72 @@ func TestMoveToBottomFeatureGrouped_EmptyTree(t *testing.T) {
 	// Should not panic
 	tt.MoveToBottom()
 }
+
+func TestMoveDownFeatureGrouped_SkipsInactiveTasks(t *testing.T) {
+	tt := newFeatureViewTree([]FeatureGroup{
+		{
+			ID: "feat-a",
+			Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Priority: "high"},
+				{ID: "t2", Status: "completed"},
+				{ID: "t3", Status: "pending", Priority: "low"},
+			},
+			Collapsed: false,
+		},
+	}, nil)
+
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = 0
+	tt.SelectedID = "t1"
+
+	tt.moveDownFeatureGrouped()
+
+	if tt.SelectedID != "t3" {
+		t.Fatalf("expected to skip completed task and select t3, got %q", tt.SelectedID)
+	}
+	if tt.selectedFeatureTaskIdx != 1 {
+		t.Fatalf("expected tree-order index 1, got %d", tt.selectedFeatureTaskIdx)
+	}
+}
+
+func TestRestoreFeatureSelection_UsesActiveTreeOrderIndex(t *testing.T) {
+	tt := newFeatureViewTree([]FeatureGroup{
+		{
+			ID: "feat-a",
+			Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Priority: "high"},
+				{ID: "t2", Status: "completed"},
+				{ID: "t3", Status: "pending", Priority: "low"},
+			},
+		},
+	}, nil)
+
+	if !tt.restoreFeatureSelection("t3") {
+		t.Fatal("expected restoreFeatureSelection to find t3")
+	}
+
+	if tt.selectedFeatureTaskIdx != 1 {
+		t.Fatalf("expected active tree-order index 1 for t3, got %d", tt.selectedFeatureTaskIdx)
+	}
+}
+
+func TestSelectFirstFeatureTask_UsesTreeOrder(t *testing.T) {
+	tt := newFeatureViewTree([]FeatureGroup{
+		{
+			ID: "feat-a",
+			Tasks: []types.ResolvedTask{
+				{ID: "child", Status: "pending", ParentID: "parent"},
+				{ID: "parent", Status: "pending"},
+			},
+		},
+	}, nil)
+
+	tt.selectFirstFeatureTask()
+
+	if tt.SelectedID != "parent" {
+		t.Fatalf("expected first selected task to follow tree order (parent), got %q", tt.SelectedID)
+	}
+	if tt.selectedFeatureTaskIdx != 0 {
+		t.Fatalf("expected selectedFeatureTaskIdx=0, got %d", tt.selectedFeatureTaskIdx)
+	}
+}

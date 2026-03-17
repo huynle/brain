@@ -665,8 +665,9 @@ func (tt *TaskTree) selectFirstTask() {
 func (tt *TaskTree) restoreFeatureSelection(previousID string) bool {
 	// Search in feature groups
 	for i, feature := range tt.featureGroups.Features {
-		for j, task := range feature.Tasks {
-			if task.ID == previousID {
+		treeOrder := featureActiveTreeOrder(feature.Tasks)
+		for j, id := range treeOrder {
+			if id == previousID {
 				tt.selectedFeatureIdx = i
 				tt.selectedFeatureTaskIdx = j
 				tt.isOnUngrouped = false
@@ -678,8 +679,9 @@ func (tt *TaskTree) restoreFeatureSelection(previousID string) bool {
 
 	// Search in ungrouped
 	if tt.featureGroups.Ungrouped != nil {
-		for j, task := range tt.featureGroups.Ungrouped.Tasks {
-			if task.ID == previousID {
+		treeOrder := featureActiveTreeOrder(tt.featureGroups.Ungrouped.Tasks)
+		for j, id := range treeOrder {
+			if id == previousID {
 				tt.selectedFeatureIdx = -1
 				tt.selectedFeatureTaskIdx = j
 				tt.isOnUngrouped = true
@@ -746,43 +748,53 @@ func (tt *TaskTree) restoreCursorInOrder(taskID string) {
 	tt.Cursor = 0
 }
 
-func (tt *TaskTree) selectFirstFeatureTask() {
-	// Helper to check if a task is active (not draft/completed)
-	isActiveStatus := func(status string) bool {
-		switch status {
-		case "draft", "completed", "validated", "cancelled", "superseded", "archived":
-			return false
-		default:
-			return true
+func isFeatureActiveStatus(status string) bool {
+	switch status {
+	case "draft", "completed", "validated", "cancelled", "superseded", "archived":
+		return false
+	default:
+		return true
+	}
+}
+
+func featureActiveTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
+	active := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if isFeatureActiveStatus(task.Status) {
+			active = append(active, task)
 		}
 	}
+	return active
+}
 
+func featureActiveTreeOrder(tasks []types.ResolvedTask) []string {
+	return FlattenTreeOrder(featureActiveTasks(tasks))
+}
+
+func (tt *TaskTree) selectFirstFeatureTask() {
 	// Try features first - select first ACTIVE task
 	if len(tt.featureGroups.Features) > 0 {
 		for i, feature := range tt.featureGroups.Features {
-			// Find first active task in this feature
-			for j, task := range feature.Tasks {
-				if isActiveStatus(task.Status) {
-					tt.selectedFeatureIdx = i
-					tt.selectedFeatureTaskIdx = j
-					tt.isOnUngrouped = false
-					tt.SelectedID = task.ID
-					return
-				}
+			treeOrder := featureActiveTreeOrder(feature.Tasks)
+			if len(treeOrder) > 0 {
+				tt.selectedFeatureIdx = i
+				tt.selectedFeatureTaskIdx = 0
+				tt.isOnUngrouped = false
+				tt.SelectedID = treeOrder[0]
+				return
 			}
 		}
 	}
 
 	// Fall back to ungrouped if no active tasks in features
 	if tt.featureGroups.Ungrouped != nil && len(tt.featureGroups.Ungrouped.Tasks) > 0 {
-		for j, task := range tt.featureGroups.Ungrouped.Tasks {
-			if isActiveStatus(task.Status) {
-				tt.selectedFeatureIdx = -1
-				tt.selectedFeatureTaskIdx = j
-				tt.isOnUngrouped = true
-				tt.SelectedID = task.ID
-				return
-			}
+		treeOrder := featureActiveTreeOrder(tt.featureGroups.Ungrouped.Tasks)
+		if len(treeOrder) > 0 {
+			tt.selectedFeatureIdx = -1
+			tt.selectedFeatureTaskIdx = 0
+			tt.isOnUngrouped = true
+			tt.SelectedID = treeOrder[0]
+			return
 		}
 	}
 
@@ -3304,7 +3316,7 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 			} else {
 				// Expanded → move to first task
 				if len(ungrouped.Tasks) > 0 {
-					treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+					treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
 					if len(treeOrder) > 0 {
 						tt.selectedFeatureTaskIdx = 0
 						tt.SelectedID = treeOrder[0]
@@ -3313,7 +3325,7 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 			}
 		} else {
 			// Within ungrouped tasks
-			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+			treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
 			if tt.selectedFeatureTaskIdx < len(treeOrder)-1 {
 				tt.selectedFeatureTaskIdx++
 				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
@@ -3355,16 +3367,25 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 		} else {
 			// Rule 2: On FEATURE HEADER, EXPANDED → Move to first task
 			if len(feature.Tasks) > 0 {
-				treeOrder := FlattenTreeOrder(feature.Tasks)
+				treeOrder := featureActiveTreeOrder(feature.Tasks)
 				if len(treeOrder) > 0 {
 					tt.selectedFeatureTaskIdx = 0
 					tt.SelectedID = treeOrder[0]
+				} else if tt.selectedFeatureIdx < len(tt.featureGroups.Features)-1 {
+					tt.selectedFeatureIdx++
+					tt.selectedFeatureTaskIdx = -1
+					tt.SelectedID = ""
+				} else if tt.featureGroups.Ungrouped != nil {
+					tt.selectedFeatureIdx = -1
+					tt.selectedFeatureTaskIdx = -1
+					tt.isOnUngrouped = true
+					tt.SelectedID = ""
 				}
 			}
 		}
 	} else {
 		// Within feature tasks
-		treeOrder := FlattenTreeOrder(feature.Tasks)
+		treeOrder := featureActiveTreeOrder(feature.Tasks)
 
 		if tt.selectedFeatureTaskIdx < len(treeOrder)-1 {
 			// Rule 3: Within FEATURE, not at end → Move to next task
@@ -3409,9 +3430,14 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 
 				if !lastFeature.Collapsed && len(lastFeature.Tasks) > 0 {
 					// Land on last task
-					treeOrder := FlattenTreeOrder(lastFeature.Tasks)
-					tt.selectedFeatureTaskIdx = len(treeOrder) - 1
-					tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+					treeOrder := featureActiveTreeOrder(lastFeature.Tasks)
+					if len(treeOrder) > 0 {
+						tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+						tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+					} else {
+						tt.selectedFeatureTaskIdx = -1
+						tt.SelectedID = ""
+					}
 				} else {
 					// Land on feature header
 					tt.selectedFeatureTaskIdx = -1
@@ -3421,7 +3447,15 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 		} else {
 			// Within ungrouped tasks
 			if tt.selectedFeatureTaskIdx > 0 {
-				treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+				treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
+				if len(treeOrder) == 0 {
+					tt.selectedFeatureTaskIdx = -1
+					tt.SelectedID = ""
+					return
+				}
+				if tt.selectedFeatureTaskIdx >= len(treeOrder) {
+					tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+				}
 				tt.selectedFeatureTaskIdx--
 				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
 			} else {
@@ -3453,9 +3487,14 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 
 			if !prevFeature.Collapsed && len(prevFeature.Tasks) > 0 {
 				// Land on last task of previous feature
-				treeOrder := FlattenTreeOrder(prevFeature.Tasks)
-				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
-				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+				treeOrder := featureActiveTreeOrder(prevFeature.Tasks)
+				if len(treeOrder) > 0 {
+					tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+					tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+				} else {
+					tt.selectedFeatureTaskIdx = -1
+					tt.SelectedID = ""
+				}
 			} else {
 				// Land on feature header
 				tt.selectedFeatureTaskIdx = -1
@@ -3466,7 +3505,15 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 	} else {
 		// Within feature tasks
 		if tt.selectedFeatureTaskIdx > 0 {
-			treeOrder := FlattenTreeOrder(feature.Tasks)
+			treeOrder := featureActiveTreeOrder(feature.Tasks)
+			if len(treeOrder) == 0 {
+				tt.selectedFeatureTaskIdx = -1
+				tt.SelectedID = ""
+				return
+			}
+			if tt.selectedFeatureTaskIdx >= len(treeOrder) {
+				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+			}
 			tt.selectedFeatureTaskIdx--
 			tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
 		} else {

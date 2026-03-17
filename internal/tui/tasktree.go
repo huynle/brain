@@ -1458,7 +1458,7 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 	showCheckboxes := len(tt.selectedTasks) > 0
 	tt.renderNodes(tt.nodes, "", &lines, width, showCheckboxes)
 
-	// Truncate to height
+	// Truncate to height with scroll overflow indicators
 	if height > 0 && len(lines) > height {
 		// Ensure selected item is visible
 		start := 0
@@ -1469,7 +1469,8 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 		if end > len(lines) {
 			end = len(lines)
 		}
-		lines = lines[start:end]
+		totalLines := len(lines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines)
 	}
 
 	return strings.Join(lines, "\n")
@@ -1584,7 +1585,8 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 		if end > len(lines) {
 			end = len(lines)
 		}
-		lines = lines[start:end]
+		totalLines := len(lines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines)
 	}
 
 	return strings.Join(lines, "\n")
@@ -2000,7 +2002,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		if end > len(lines) {
 			end = len(lines)
 		}
-		lines = lines[start:end]
+		totalLines := len(lines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines)
 	}
 
 	return strings.Join(lines, "\n")
@@ -2227,7 +2230,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 		if end > len(lines) {
 			end = len(lines)
 		}
-		lines = lines[start:end]
+		totalLines := len(lines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines)
 	}
 
 	return strings.Join(lines, "\n")
@@ -2623,7 +2627,8 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 		if end > len(lines) {
 			end = len(lines)
 		}
-		lines = lines[start:end]
+		totalLines := len(lines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines)
 	}
 
 	return strings.Join(lines, "\n")
@@ -3475,4 +3480,28 @@ func buildSelectedTaskRelationLanes(assignments []LaneAssignment, ancestors, des
 	}
 
 	return ctx
+}
+
+// applyViewportWithIndicators slices lines to fit within height and adds scroll
+// overflow indicators (↑N more / ↓N more) when content overflows, matching the
+// TS TUI behavior. It replaces the first/last visible lines with indicators.
+func applyViewportWithIndicators(lines []string, start, end, totalLines int) []string {
+	if start >= end || totalLines <= 0 {
+		return lines
+	}
+
+	visible := lines[start:end]
+
+	hasAbove := start > 0
+	hasBelow := end < totalLines
+
+	// Replace first/last lines with indicators when there's overflow
+	if hasAbove && len(visible) > 0 {
+		visible[0] = DimStyle.Render(fmt.Sprintf("  ↑%d more", start))
+	}
+	if hasBelow && len(visible) > 0 {
+		visible[len(visible)-1] = DimStyle.Render(fmt.Sprintf("  ↓%d more", totalLines-end))
+	}
+
+	return visible
 }

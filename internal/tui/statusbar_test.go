@@ -19,8 +19,9 @@ func TestStatusBarHeight(t *testing.T) {
 	rendered := sb.View(80)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 4 {
-		t.Errorf("Status bar must be exactly 4 lines, got %d", lineCount)
+	// Without metrics: border-top + content-row + border-bottom = 3 lines
+	if lineCount != 3 {
+		t.Errorf("Status bar without metrics must be exactly 3 lines, got %d", lineCount)
 	}
 }
 
@@ -38,8 +39,9 @@ func TestStatusBarHeightWithBlockedTasks(t *testing.T) {
 	rendered := sb.View(80)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 4 {
-		t.Errorf("Status bar must be exactly 4 lines even with blocked tasks, got %d", lineCount)
+	// Without metrics: border-top + content-row + border-bottom = 3 lines
+	if lineCount != 3 {
+		t.Errorf("Status bar without metrics must be exactly 3 lines even with blocked tasks, got %d", lineCount)
 	}
 }
 
@@ -66,12 +68,18 @@ func TestStatusBarHeightNarrowWidth(t *testing.T) {
 	sb.Connected = true
 	sb.Stats = TaskStats{Ready: 5, Waiting: 2, InProgress: 1, Completed: 10}
 
-	// Test with minimum width
+	// Test with minimum width (no metrics)
 	rendered := sb.View(30)
 	lineCount := strings.Count(rendered, "\n") + 1
 
-	if lineCount != 4 {
-		t.Errorf("Status bar must be exactly 4 lines even with narrow width, got %d", lineCount)
+	// At narrow width, content may wrap — minimum is 3 lines (border + content + border)
+	if lineCount < 3 {
+		t.Errorf("Status bar must be at least 3 lines even with narrow width, got %d", lineCount)
+	}
+
+	// Verify it still renders key content
+	if !strings.Contains(rendered, "test-project") {
+		t.Error("Narrow status bar should still contain project name")
 	}
 }
 
@@ -87,10 +95,10 @@ func TestStatusBarPauseIndicator(t *testing.T) {
 		t.Error("Status bar should show pause indicator when paused")
 	}
 
-	// Ensure exactly 4 lines
+	// Ensure exactly 3 lines (no metrics)
 	lineCount := strings.Count(rendered, "\n") + 1
-	if lineCount != 4 {
-		t.Errorf("Status bar must be exactly 4 lines with pause indicator, got %d", lineCount)
+	if lineCount != 3 {
+		t.Errorf("Status bar without metrics must be exactly 3 lines with pause indicator, got %d", lineCount)
 	}
 }
 
@@ -152,6 +160,68 @@ func TestStatusBarNoIndicatorsWhenNotPaused(t *testing.T) {
 	}
 	if strings.Contains(rendered, "features enabled") {
 		t.Error("Status bar should NOT show enabled features when not paused")
+	}
+}
+
+func TestStatusBarUsesSquareCorners(t *testing.T) {
+	sb := NewStatusBar("test-project")
+	sb.Connected = true
+	sb.Stats = TaskStats{Ready: 1}
+
+	rendered := sb.View(80)
+
+	// Square corners (NormalBorder) use ┌ and ┐
+	if !strings.Contains(rendered, "┌") {
+		t.Error("Status bar should use square top-left corner ┌, not rounded ╭")
+	}
+	if !strings.Contains(rendered, "┐") {
+		t.Error("Status bar should use square top-right corner ┐, not rounded ╮")
+	}
+	if !strings.Contains(rendered, "└") {
+		t.Error("Status bar should use square bottom-left corner └, not rounded ╰")
+	}
+	if !strings.Contains(rendered, "┘") {
+		t.Error("Status bar should use square bottom-right corner ┘, not rounded ╯")
+	}
+	// Ensure rounded corners are NOT present
+	if strings.Contains(rendered, "╭") || strings.Contains(rendered, "╮") ||
+		strings.Contains(rendered, "╰") || strings.Contains(rendered, "╯") {
+		t.Error("Status bar should NOT use rounded corners")
+	}
+}
+
+func TestStatusBarNoBlankLineWithoutMetrics(t *testing.T) {
+	sb := NewStatusBar("test-project")
+	sb.Connected = true
+	sb.Stats = TaskStats{Ready: 5, Waiting: 2, InProgress: 1, Completed: 10}
+	// Metrics is nil — no second row should render
+
+	rendered := sb.View(80)
+	lines := strings.Split(rendered, "\n")
+
+	// With border: line 0 = top border, line 1 = content, line 2 = bottom border
+	// There should be no blank/space-only line between content and bottom border
+	if len(lines) != 3 {
+		t.Errorf("Expected 3 lines without metrics, got %d", len(lines))
+	}
+}
+
+func TestStatusBarSecondRowRendersWithMetrics(t *testing.T) {
+	sb := NewStatusBar("test-project")
+	sb.Connected = true
+	sb.Stats = TaskStats{Ready: 1}
+	sb.Metrics = &ResourceMetrics{
+		CPUPercent:   25.0,
+		MemoryMB:     256,
+		ProcessCount: 2,
+	}
+
+	rendered := sb.View(80)
+	lines := strings.Split(rendered, "\n")
+
+	// With metrics: top border + row1 + row2 + bottom border = 4 lines
+	if len(lines) != 4 {
+		t.Errorf("Expected 4 lines with metrics, got %d", len(lines))
 	}
 }
 

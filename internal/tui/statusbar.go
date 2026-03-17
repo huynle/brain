@@ -32,17 +32,20 @@ func (s StatusBar) View(width int) string {
 	}
 
 	firstRow := s.renderFirstRow(width)
-	secondRow := s.renderSecondRow(width)
 
 	// Use a border style for the status bar
 	barStyle := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
+		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(ColorCyan).
 		Width(width-2).
 		Padding(0, 1) // 0 vertical padding, 1 horizontal padding
 
-	// Combine both rows with border
-	content := firstRow + "\n" + secondRow
+	// Only include second row when metrics are present
+	content := firstRow
+	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
+		secondRow := s.renderSecondRow(width)
+		content = firstRow + "\n" + secondRow
+	}
 	rendered := barStyle.Render(content)
 
 	return rendered
@@ -126,20 +129,10 @@ func (s StatusBar) renderFirstRow(width int) string {
 	return row
 }
 
-// renderSecondRow renders the second row: system metrics (CPU/Mem/Proc)
+// renderSecondRow renders the second row: system metrics (CPU/Mem/Proc).
+// Only called when Metrics is non-nil and has active processes.
 func (s StatusBar) renderSecondRow(width int) string {
-	// System metrics
-	metricsContent := ""
-	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
-		metricsContent = lipgloss.NewStyle().
-			Foreground(ColorReady).
-			Render(s.Metrics.Format())
-	}
-
-	// If no metrics, render empty space
-	if metricsContent == "" {
-		metricsContent = " "
-	}
-
-	return metricsContent
+	return lipgloss.NewStyle().
+		Foreground(ColorReady).
+		Render(s.Metrics.Format())
 }

@@ -1268,6 +1268,44 @@ func (tt *TaskTree) ToggleCollapse() {
 			return // Only toggle on headers
 		}
 
+		// Handle draft section toggle
+		if tt.isOnDraftSection {
+			if tt.draftFeatureIdx == -1 {
+				// On draft section header → toggle entire draft section
+				tt.draftCollapsed = !tt.draftCollapsed
+			} else if tt.draftFeatureIdx >= 0 && tt.draftFeatureIdx < len(tt.draftFeatureIDs) {
+				// On draft sub-feature header → toggle that sub-feature
+				featureID := tt.draftFeatureIDs[tt.draftFeatureIdx]
+				collapseKey := "draft:" + featureID
+				tt.featureCollapsed[collapseKey] = !tt.featureCollapsed[collapseKey]
+			}
+
+			settings, _ := LoadSettings()
+			settings.GroupCollapsed = tt.groupCollapsed
+			settings.FeatureCollapsed = tt.featureCollapsed
+			_ = SaveSettings(settings)
+			return
+		}
+
+		// Handle completed section toggle
+		if tt.isOnCompletedSection {
+			if tt.completedFeatureIdx == -1 {
+				// On completed section header → toggle entire completed section
+				tt.completedCollapsed = !tt.completedCollapsed
+			} else if tt.completedFeatureIdx >= 0 && tt.completedFeatureIdx < len(tt.completedFeatureIDs) {
+				// On completed sub-feature header → toggle that sub-feature
+				featureID := tt.completedFeatureIDs[tt.completedFeatureIdx]
+				collapseKey := "completed:" + featureID
+				tt.featureCollapsed[collapseKey] = !tt.featureCollapsed[collapseKey]
+			}
+
+			settings, _ := LoadSettings()
+			settings.GroupCollapsed = tt.groupCollapsed
+			settings.FeatureCollapsed = tt.featureCollapsed
+			_ = SaveSettings(settings)
+			return
+		}
+
 		if tt.isOnUngrouped && tt.featureGroups.Ungrouped != nil {
 			// Toggle ungrouped
 			tt.featureGroups.Ungrouped.Collapsed = !tt.featureGroups.Ungrouped.Collapsed
@@ -3573,8 +3611,85 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 	}
 }
 
+// moveUpToEndOfActiveContent moves cursor to the last item before draft/completed sections.
+func (tt *TaskTree) moveUpToEndOfActiveContent() {
+	if tt.featureGroups.Ungrouped != nil {
+		ungrouped := tt.featureGroups.Ungrouped
+		tt.isOnUngrouped = true
+		tt.selectedFeatureIdx = -1
+
+		if !ungrouped.Collapsed && len(ungrouped.Tasks) > 0 {
+			treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
+			if len(treeOrder) > 0 {
+				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+				return
+			}
+		}
+		tt.selectedFeatureTaskIdx = -1
+		tt.SelectedID = ""
+		return
+	}
+
+	if len(tt.featureGroups.Features) > 0 {
+		lastIdx := len(tt.featureGroups.Features) - 1
+		lastFeature := tt.featureGroups.Features[lastIdx]
+		tt.selectedFeatureIdx = lastIdx
+		tt.isOnUngrouped = false
+
+		if !lastFeature.Collapsed && len(lastFeature.Tasks) > 0 {
+			treeOrder := featureActiveTreeOrder(lastFeature.Tasks)
+			if len(treeOrder) > 0 {
+				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+				return
+			}
+		}
+		tt.selectedFeatureTaskIdx = -1
+		tt.SelectedID = ""
+	}
+}
+
 // moveUpFeatureGrouped handles upward 2-level feature view navigation (Features → Tasks).
 func (tt *TaskTree) moveUpFeatureGrouped() {
+	// Handle completed section navigation (moving up)
+	if tt.isOnCompletedSection {
+		if tt.completedFeatureIdx == -1 {
+			// On completed section header → go up to last draft sub-feature or draft header
+			if tt.hasDraftTasks {
+				tt.isOnCompletedSection = false
+				tt.isOnDraftSection = true
+				tt.completedFeatureIdx = -1
+				if !tt.draftCollapsed && len(tt.draftFeatureIDs) > 0 {
+					tt.draftFeatureIdx = len(tt.draftFeatureIDs) - 1
+				} else {
+					tt.draftFeatureIdx = -1
+				}
+			} else {
+				tt.isOnCompletedSection = false
+				tt.moveUpToEndOfActiveContent()
+			}
+		} else if tt.completedFeatureIdx > 0 {
+			tt.completedFeatureIdx--
+		} else {
+			tt.completedFeatureIdx = -1
+		}
+		return
+	}
+
+	// Handle draft section navigation (moving up)
+	if tt.isOnDraftSection {
+		if tt.draftFeatureIdx == -1 {
+			tt.isOnDraftSection = false
+			tt.moveUpToEndOfActiveContent()
+		} else if tt.draftFeatureIdx > 0 {
+			tt.draftFeatureIdx--
+		} else {
+			tt.draftFeatureIdx = -1
+		}
+		return
+	}
+
 	// Handle ungrouped group
 	if tt.isOnUngrouped {
 		if tt.featureGroups.Ungrouped == nil {
@@ -3690,6 +3805,8 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 // moveToTopFeatureGrouped jumps to the first navigable item in feature view.
 // This is the first feature header (or first task if the feature is expanded).
 func (tt *TaskTree) moveToTopFeatureGrouped() {
+	tt.clearDraftCompletedNav()
+
 	if len(tt.featureGroups.Features) == 0 {
 		// No features — try ungrouped
 		if tt.featureGroups.Ungrouped != nil {
@@ -3709,20 +3826,54 @@ func (tt *TaskTree) moveToTopFeatureGrouped() {
 }
 
 // moveToBottomFeatureGrouped jumps to the last navigable item in feature view.
-// Navigates to ungrouped (last item if expanded), or last feature's last task.
+// Order: Active Features → Ungrouped → Draft → Completed
 func (tt *TaskTree) moveToBottomFeatureGrouped() {
-	// Try ungrouped section last (it appears at the bottom)
+	// Try completed section (rendered last)
+	if tt.hasCompletedTasks {
+		tt.isOnUngrouped = false
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnDraftSection = false
+		tt.isOnCompletedSection = true
+		tt.draftFeatureIdx = -1
+		if !tt.completedCollapsed && len(tt.completedFeatureIDs) > 0 {
+			tt.completedFeatureIdx = len(tt.completedFeatureIDs) - 1
+		} else {
+			tt.completedFeatureIdx = -1
+		}
+		tt.SelectedID = ""
+		return
+	}
+
+	// Try draft section
+	if tt.hasDraftTasks {
+		tt.isOnUngrouped = false
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnDraftSection = true
+		tt.isOnCompletedSection = false
+		tt.completedFeatureIdx = -1
+		if !tt.draftCollapsed && len(tt.draftFeatureIDs) > 0 {
+			tt.draftFeatureIdx = len(tt.draftFeatureIDs) - 1
+		} else {
+			tt.draftFeatureIdx = -1
+		}
+		tt.SelectedID = ""
+		return
+	}
+
+	tt.clearDraftCompletedNav()
+
+	// Try ungrouped section
 	if tt.featureGroups.Ungrouped != nil {
 		ungrouped := tt.featureGroups.Ungrouped
 		tt.isOnUngrouped = true
 		tt.selectedFeatureIdx = -1
 
 		if ungrouped.Collapsed || len(ungrouped.Tasks) == 0 {
-			// Collapsed or empty → land on ungrouped header
 			tt.selectedFeatureTaskIdx = -1
 			tt.SelectedID = ""
 		} else {
-			// Expanded → land on last task
 			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
 			if len(treeOrder) > 0 {
 				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
@@ -3747,11 +3898,9 @@ func (tt *TaskTree) moveToBottomFeatureGrouped() {
 	tt.isOnUngrouped = false
 
 	if lastFeature.Collapsed || len(lastFeature.Tasks) == 0 {
-		// Collapsed or empty → land on feature header
 		tt.selectedFeatureTaskIdx = -1
 		tt.SelectedID = ""
 	} else {
-		// Expanded → land on last task
 		treeOrder := FlattenTreeOrder(lastFeature.Tasks)
 		if len(treeOrder) > 0 {
 			tt.selectedFeatureTaskIdx = len(treeOrder) - 1

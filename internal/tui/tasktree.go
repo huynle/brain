@@ -382,6 +382,16 @@ type TaskTree struct {
 	draftCollapsed     bool
 	completedCollapsed bool
 
+	// Navigation state for draft/completed sections in feature view
+	isOnDraftSection     bool     // true if cursor is on Draft section (header or sub-feature)
+	isOnCompletedSection bool     // true if cursor is on Completed section (header or sub-feature)
+	draftFeatureIdx      int      // index into draftFeatureIDs (-1 = on section header)
+	completedFeatureIdx  int      // index into completedFeatureIDs (-1 = on section header)
+	draftFeatureIDs      []string // sorted feature IDs in draft section (cached during render)
+	completedFeatureIDs  []string // sorted feature IDs in completed section (cached during render)
+	hasDraftTasks        bool     // cached: whether draft tasks exist
+	hasCompletedTasks    bool     // cached: whether completed tasks exist
+
 	// Multi-select state (passed in during View rendering)
 	selectedTasks map[string]bool
 
@@ -1791,8 +1801,11 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		featureHeader := fmt.Sprintf("%s %s Feature: %s%s %s",
 			collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
 
-		// Selection marker (2 spaces for alignment)
+		// Selection marker (2 spaces for alignment, → when selected)
 		selMarker := "  "
+		if isFeatureSelected {
+			selMarker = "→ "
+		}
 
 		// Apply blue background if selected, otherwise muted blue text (no background)
 		if isFeatureSelected {
@@ -1851,8 +1864,11 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 		ungroupedHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, ungrouped.Name, len(ungrouped.Tasks))
 
-		// Selection marker (2 spaces for alignment)
+		// Selection marker (2 spaces for alignment, → when selected)
 		selMarker := "  "
+		if isUngroupedSelected {
+			selMarker = "→ "
+		}
 
 		// Apply blue background if selected, otherwise dark blue background
 		if isUngroupedSelected {
@@ -1890,6 +1906,10 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
+	// Cache draft/completed existence for navigation
+	tt.hasDraftTasks = len(draftTasks) > 0
+	tt.hasCompletedTasks = len(completedTasks) > 0
+
 	// Render Draft status group
 	if len(draftTasks) > 0 {
 		// Add blank line before Draft section
@@ -1901,8 +1921,14 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 
 		draftHeader := fmt.Sprintf("%s Draft (%d)", collapseIndicator, len(draftTasks))
-		draftHeader = DraftHeaderStyle.Render(draftHeader)
-		draftHeader = fmt.Sprintf("  %s", draftHeader)
+		if tt.isOnDraftSection && tt.draftFeatureIdx == -1 {
+			// Selected draft section header — show → arrow
+			draftHeader = SelectedRowStyle.Render(draftHeader)
+			draftHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), draftHeader)
+		} else {
+			draftHeader = DraftHeaderStyle.Render(draftHeader)
+			draftHeader = fmt.Sprintf("  %s", draftHeader)
+		}
 		lines = append(lines, draftHeader)
 
 		if !tt.draftCollapsed {
@@ -1923,34 +1949,52 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			}
 			sort.Strings(featureIDs)
 
+			// Cache feature IDs for navigation
+			tt.draftFeatureIDs = featureIDs
+
 			// Render each feature group under Draft
-			for _, featureID := range featureIDs {
+			for fIdx, featureID := range featureIDs {
 				featureTasks := draftByFeature[featureID]
+				isCollapsed := tt.featureCollapsed["draft:"+featureID]
 
 				// Render dimmed feature header (skip for [Ungrouped])
 				if featureID != "[Ungrouped]" {
+					collapseIcon := "▾"
+					if isCollapsed {
+						collapseIcon = "▶"
+					}
 					draftStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
-					featureHeader := fmt.Sprintf("  %s Feature: %s [%d]", draftStatusIcon, featureID, len(featureTasks))
-					lines = append(lines, DimStyle.Render(featureHeader))
+					featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, draftStatusIcon, featureID, len(featureTasks))
+
+					// Highlight if this sub-feature header is selected — show → arrow
+					if tt.isOnDraftSection && tt.draftFeatureIdx == fIdx {
+						featureHeader = SelectedRowStyle.Render(featureHeader)
+						featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
+					} else {
+						featureHeader = DimStyle.Render(featureHeader)
+					}
+					lines = append(lines, featureHeader)
 				}
 
-				// Build dependency tree for this feature's tasks
-				tree := BuildTree(featureTasks, tt.tasks)
-				visualIndex := 0
-				tt.renderGroupTaskTree(
-					tree,
-					"    ",
-					&lines,
-					width,
-					-1, // No feature index for status groups
-					&visualIndex,
-					tt.selectedTasks,
-					showCheckboxes,
-					activeProjectID,
-					-1, // No feature selection for status groups
-					ancestors,
-					descendants,
-				)
+				// Build dependency tree for this feature's tasks (skip if collapsed)
+				if featureID == "[Ungrouped]" || !isCollapsed {
+					tree := BuildTree(featureTasks, tt.tasks)
+					visualIndex := 0
+					tt.renderGroupTaskTree(
+						tree,
+						"    ",
+						&lines,
+						width,
+						-1, // No feature index for status groups
+						&visualIndex,
+						tt.selectedTasks,
+						showCheckboxes,
+						activeProjectID,
+						-1, // No feature selection for status groups
+						ancestors,
+						descendants,
+					)
+				}
 			}
 		}
 	}
@@ -1966,8 +2010,14 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 
 		completedHeader := fmt.Sprintf("%s Completed (%d)", collapseIndicator, len(completedTasks))
-		completedHeader = CompletedHeaderStyle.Render(completedHeader)
-		completedHeader = fmt.Sprintf("  %s", completedHeader)
+		if tt.isOnCompletedSection && tt.completedFeatureIdx == -1 {
+			// Selected completed section header — show → arrow
+			completedHeader = SelectedRowStyle.Render(completedHeader)
+			completedHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), completedHeader)
+		} else {
+			completedHeader = CompletedHeaderStyle.Render(completedHeader)
+			completedHeader = fmt.Sprintf("  %s", completedHeader)
+		}
 		lines = append(lines, completedHeader)
 
 		if !tt.completedCollapsed {
@@ -1988,34 +2038,52 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			}
 			sort.Strings(featureIDs)
 
+			// Cache feature IDs for navigation
+			tt.completedFeatureIDs = featureIDs
+
 			// Render each feature group under Completed
-			for _, featureID := range featureIDs {
+			for fIdx, featureID := range featureIDs {
 				featureTasks := completedByFeature[featureID]
+				isCollapsed := tt.featureCollapsed["completed:"+featureID]
 
 				// Render dimmed feature header (skip for [Ungrouped])
 				if featureID != "[Ungrouped]" {
+					collapseIcon := "▾"
+					if isCollapsed {
+						collapseIcon = "▶"
+					}
 					compStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
-					featureHeader := fmt.Sprintf("  %s Feature: %s [%d]", compStatusIcon, featureID, len(featureTasks))
-					lines = append(lines, DimStyle.Render(featureHeader))
+					featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, compStatusIcon, featureID, len(featureTasks))
+
+					// Highlight if this sub-feature header is selected — show → arrow
+					if tt.isOnCompletedSection && tt.completedFeatureIdx == fIdx {
+						featureHeader = SelectedRowStyle.Render(featureHeader)
+						featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
+					} else {
+						featureHeader = DimStyle.Render(featureHeader)
+					}
+					lines = append(lines, featureHeader)
 				}
 
-				// Build dependency tree for this feature's tasks
-				tree := BuildTree(featureTasks, tt.tasks)
-				visualIndex := 0
-				tt.renderGroupTaskTree(
-					tree,
-					"    ",
-					&lines,
-					width,
-					-1, // No feature index for status groups
-					&visualIndex,
-					tt.selectedTasks,
-					showCheckboxes,
-					activeProjectID,
-					-1, // No feature selection for status groups
-					ancestors,
-					descendants,
-				)
+				// Build dependency tree for this feature's tasks (skip if collapsed)
+				if featureID == "[Ungrouped]" || !isCollapsed {
+					tree := BuildTree(featureTasks, tt.tasks)
+					visualIndex := 0
+					tt.renderGroupTaskTree(
+						tree,
+						"    ",
+						&lines,
+						width,
+						-1, // No feature index for status groups
+						&visualIndex,
+						tt.selectedTasks,
+						showCheckboxes,
+						activeProjectID,
+						-1, // No feature selection for status groups
+						ancestors,
+						descendants,
+					)
+				}
 			}
 		}
 	}
@@ -3299,8 +3367,105 @@ func (tt *TaskTree) moveToBottomNestedGrouped() {
 	tt.SelectedID = ""
 }
 
+// clearDraftCompletedNav resets draft/completed navigation state.
+func (tt *TaskTree) clearDraftCompletedNav() {
+	tt.isOnDraftSection = false
+	tt.isOnCompletedSection = false
+	tt.draftFeatureIdx = -1
+	tt.completedFeatureIdx = -1
+}
+
+// moveToDraftSection moves cursor to draft section header.
+func (tt *TaskTree) moveToDraftSection() {
+	tt.isOnUngrouped = false
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnDraftSection = true
+	tt.isOnCompletedSection = false
+	tt.draftFeatureIdx = -1
+	tt.completedFeatureIdx = -1
+	tt.SelectedID = ""
+}
+
+// moveToCompletedSection moves cursor to completed section header.
+func (tt *TaskTree) moveToCompletedSection() {
+	tt.isOnUngrouped = false
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnDraftSection = false
+	tt.isOnCompletedSection = true
+	tt.draftFeatureIdx = -1
+	tt.completedFeatureIdx = -1
+	tt.SelectedID = ""
+}
+
+// moveToNextSectionAfterActiveFeatures moves past ungrouped → draft → completed.
+func (tt *TaskTree) moveToNextSectionAfterActiveFeatures() {
+	if tt.featureGroups.Ungrouped != nil {
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = true
+		tt.clearDraftCompletedNav()
+		tt.SelectedID = ""
+	} else if tt.hasDraftTasks {
+		tt.moveToDraftSection()
+	} else if tt.hasCompletedTasks {
+		tt.moveToCompletedSection()
+	}
+}
+
 // moveDownFeatureGrouped handles 2-level feature view navigation (Features → Tasks).
 func (tt *TaskTree) moveDownFeatureGrouped() {
+	// Handle completed section navigation
+	if tt.isOnCompletedSection {
+		if tt.completedFeatureIdx == -1 {
+			// On completed section header
+			if tt.completedCollapsed {
+				return // Collapsed → nowhere to go
+			}
+			// Expanded → move to first sub-feature
+			if len(tt.completedFeatureIDs) > 0 {
+				tt.completedFeatureIdx = 0
+			}
+		} else {
+			// On a completed sub-feature header → move to next
+			if tt.completedFeatureIdx < len(tt.completedFeatureIDs)-1 {
+				tt.completedFeatureIdx++
+			}
+			// At end → nowhere to go
+		}
+		return
+	}
+
+	// Handle draft section navigation
+	if tt.isOnDraftSection {
+		if tt.draftFeatureIdx == -1 {
+			// On draft section header
+			if tt.draftCollapsed {
+				// Collapsed → jump to completed if exists
+				if tt.hasCompletedTasks {
+					tt.moveToCompletedSection()
+				}
+				return
+			}
+			// Expanded → move to first sub-feature
+			if len(tt.draftFeatureIDs) > 0 {
+				tt.draftFeatureIdx = 0
+			}
+		} else {
+			// On a draft sub-feature header → move to next
+			if tt.draftFeatureIdx < len(tt.draftFeatureIDs)-1 {
+				tt.draftFeatureIdx++
+			} else {
+				// At end of draft sub-features → jump to completed
+				if tt.hasCompletedTasks {
+					tt.moveToCompletedSection()
+				}
+			}
+		}
+		return
+	}
+
 	// Handle ungrouped group
 	if tt.isOnUngrouped {
 		if tt.featureGroups.Ungrouped == nil {
@@ -3311,7 +3476,12 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 		if tt.selectedFeatureTaskIdx == -1 {
 			// On ungrouped header
 			if ungrouped.Collapsed {
-				// Collapsed → nowhere to go (end of list)
+				// Collapsed → jump to draft or completed
+				if tt.hasDraftTasks {
+					tt.moveToDraftSection()
+				} else if tt.hasCompletedTasks {
+					tt.moveToCompletedSection()
+				}
 				return
 			} else {
 				// Expanded → move to first task
@@ -3329,8 +3499,14 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 			if tt.selectedFeatureTaskIdx < len(treeOrder)-1 {
 				tt.selectedFeatureTaskIdx++
 				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+			} else {
+				// At end of ungrouped → jump to draft or completed
+				if tt.hasDraftTasks {
+					tt.moveToDraftSection()
+				} else if tt.hasCompletedTasks {
+					tt.moveToCompletedSection()
+				}
 			}
-			// At end of ungrouped → nowhere to go (end of list)
 		}
 		return
 	}
@@ -3356,13 +3532,8 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 				tt.selectedFeatureTaskIdx = -1
 				tt.SelectedID = ""
 			} else {
-				// Jump to ungrouped if it exists
-				if tt.featureGroups.Ungrouped != nil {
-					tt.selectedFeatureIdx = -1
-					tt.selectedFeatureTaskIdx = -1
-					tt.isOnUngrouped = true
-					tt.SelectedID = ""
-				}
+				// Past last feature → ungrouped or draft/completed
+				tt.moveToNextSectionAfterActiveFeatures()
 			}
 		} else {
 			// Rule 2: On FEATURE HEADER, EXPANDED → Move to first task
@@ -3375,11 +3546,8 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 					tt.selectedFeatureIdx++
 					tt.selectedFeatureTaskIdx = -1
 					tt.SelectedID = ""
-				} else if tt.featureGroups.Ungrouped != nil {
-					tt.selectedFeatureIdx = -1
-					tt.selectedFeatureTaskIdx = -1
-					tt.isOnUngrouped = true
-					tt.SelectedID = ""
+				} else {
+					tt.moveToNextSectionAfterActiveFeatures()
 				}
 			}
 		}
@@ -3398,13 +3566,8 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 				tt.selectedFeatureTaskIdx = -1
 				tt.SelectedID = ""
 			} else {
-				// Jump to ungrouped if it exists
-				if tt.featureGroups.Ungrouped != nil {
-					tt.selectedFeatureIdx = -1
-					tt.selectedFeatureTaskIdx = -1
-					tt.isOnUngrouped = true
-					tt.SelectedID = ""
-				}
+				// Past last feature → ungrouped or draft/completed
+				tt.moveToNextSectionAfterActiveFeatures()
 			}
 		}
 	}

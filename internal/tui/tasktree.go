@@ -1718,9 +1718,18 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		}
 	}
 
+	// Resolve the selected feature ID from the unfiltered list to avoid index mismatch.
+	// activeFeatureGroups is filtered (features with no active tasks removed), so its indices
+	// don't align with tt.selectedFeatureIdx (which indexes into unfiltered tt.featureGroups.Features).
+	selectedFeatureID := ""
+	if !tt.isOnUngrouped && tt.selectedFeatureIdx >= 0 && tt.selectedFeatureIdx < len(tt.featureGroups.Features) {
+		selectedFeatureID = tt.featureGroups.Features[tt.selectedFeatureIdx].ID
+	}
+
 	// Render active features
 	for fIdx, feature := range activeFeatureGroups {
-		isFeatureSelected := (fIdx == tt.selectedFeatureIdx && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped)
+		isThisFeature := (feature.ID == selectedFeatureID && selectedFeatureID != "")
+		isFeatureSelected := (isThisFeature && tt.selectedFeatureTaskIdx == -1 && !tt.isOnUngrouped)
 
 		// Collapse indicator
 		collapseIndicator := "▶"
@@ -1754,6 +1763,13 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			tree := BuildTree(feature.Tasks, tt.tasks)
 
 			// Render tree with proper indentation
+			// Pass fIdx as both groupIdx and selectedGroupIdx when this is the selected feature,
+			// so the internal groupIdx == selectedGroupIdx check in renderGroupTaskTree passes.
+			// When it's not the selected feature, pass -1 as selectedGroupIdx to prevent matching.
+			selectedGroupForRender := -1
+			if isThisFeature {
+				selectedGroupForRender = fIdx
+			}
 			visualIndex := 0
 			tt.renderGroupTaskTree(
 				tree,
@@ -1765,7 +1781,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				tt.selectedTasks,
 				showCheckboxes,
 				activeProjectID,
-				tt.selectedFeatureIdx, // Feature-only view uses selectedFeatureIdx
+				selectedGroupForRender,
 				ancestors,
 				descendants,
 			)
@@ -2421,8 +2437,9 @@ func (tt *TaskTree) renderGroupTaskTree(
 		isLast := i == len(nodes)-1
 
 		// Check if this task is selected
-		// In nested view: only mark as selected if we're actually on a task (not on a header)
-		isSelected := (node.Task.ID == tt.SelectedID && tt.selectedTaskIdx >= 0)
+		// Works across all views (2-level, feature-only, nested) by matching on SelectedID directly.
+		// SelectedID is only set to a task ID when navigated to a task (not a header/group).
+		isSelected := (node.Task.ID == tt.SelectedID && tt.SelectedID != "")
 
 		// DEBUG: Log comparison for each task		*visualIndex++
 

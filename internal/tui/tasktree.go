@@ -1102,6 +1102,12 @@ func (tt *TaskTree) moveToTopGrouped() {
 		return
 	}
 
+	// Feature view navigation
+	if tt.useFeatureView {
+		tt.moveToTopFeatureGrouped()
+		return
+	}
+
 	if len(tt.groups) == 0 {
 		return
 	}
@@ -1142,6 +1148,12 @@ func (tt *TaskTree) moveToBottomGrouped() {
 	// Auto-detect nested grouping mode and delegate
 	if len(tt.statusGroups) > 0 && !tt.useFeatureView {
 		tt.moveToBottomNestedGrouped()
+		return
+	}
+
+	// Feature view navigation
+	if tt.useFeatureView {
+		tt.moveToBottomFeatureGrouped()
 		return
 	}
 
@@ -3459,6 +3471,82 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 			tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
 		} else {
 			// Move to feature header
+			tt.selectedFeatureTaskIdx = -1
+			tt.SelectedID = ""
+		}
+	}
+}
+
+// moveToTopFeatureGrouped jumps to the first navigable item in feature view.
+// This is the first feature header (or first task if the feature is expanded).
+func (tt *TaskTree) moveToTopFeatureGrouped() {
+	if len(tt.featureGroups.Features) == 0 {
+		// No features — try ungrouped
+		if tt.featureGroups.Ungrouped != nil {
+			tt.selectedFeatureIdx = -1
+			tt.selectedFeatureTaskIdx = -1
+			tt.isOnUngrouped = true
+			tt.SelectedID = ""
+		}
+		return
+	}
+
+	// Jump to the first feature header
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = -1 // On header
+	tt.isOnUngrouped = false
+	tt.SelectedID = ""
+}
+
+// moveToBottomFeatureGrouped jumps to the last navigable item in feature view.
+// Navigates to ungrouped (last item if expanded), or last feature's last task.
+func (tt *TaskTree) moveToBottomFeatureGrouped() {
+	// Try ungrouped section last (it appears at the bottom)
+	if tt.featureGroups.Ungrouped != nil {
+		ungrouped := tt.featureGroups.Ungrouped
+		tt.isOnUngrouped = true
+		tt.selectedFeatureIdx = -1
+
+		if ungrouped.Collapsed || len(ungrouped.Tasks) == 0 {
+			// Collapsed or empty → land on ungrouped header
+			tt.selectedFeatureTaskIdx = -1
+			tt.SelectedID = ""
+		} else {
+			// Expanded → land on last task
+			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+			if len(treeOrder) > 0 {
+				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+			} else {
+				tt.selectedFeatureTaskIdx = -1
+				tt.SelectedID = ""
+			}
+		}
+		return
+	}
+
+	// No ungrouped — go to last feature
+	if len(tt.featureGroups.Features) == 0 {
+		return
+	}
+
+	lastIdx := len(tt.featureGroups.Features) - 1
+	lastFeature := tt.featureGroups.Features[lastIdx]
+
+	tt.selectedFeatureIdx = lastIdx
+	tt.isOnUngrouped = false
+
+	if lastFeature.Collapsed || len(lastFeature.Tasks) == 0 {
+		// Collapsed or empty → land on feature header
+		tt.selectedFeatureTaskIdx = -1
+		tt.SelectedID = ""
+	} else {
+		// Expanded → land on last task
+		treeOrder := FlattenTreeOrder(lastFeature.Tasks)
+		if len(treeOrder) > 0 {
+			tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+			tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+		} else {
 			tt.selectedFeatureTaskIdx = -1
 			tt.SelectedID = ""
 		}

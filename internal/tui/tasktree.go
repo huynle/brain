@@ -1528,6 +1528,7 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 				showCheckboxes,
 				activeProjectID,
 				tt.selectedGroupIdx, // 2-level view uses selectedGroupIdx
+				nil, nil,            // no relation highlighting in 2-level grouped view
 			)
 		}
 	}
@@ -1655,6 +1656,12 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 	var lines []string
 	showCheckboxes := len(tt.selectedTasks) > 0
 
+	// Compute relation graph for highlighting ancestors/descendants of selected task
+	var ancestors, descendants map[string]bool
+	if tt.SelectedID != "" && tt.selectedFeatureTaskIdx >= 0 {
+		ancestors, descendants = buildSelectedTaskRelationGraph(tt.tasks, tt.SelectedID)
+	}
+
 	// Split tasks into active, draft, and completed/validated
 	// Active tasks: pending, in_progress, blocked, ready, waiting, active
 	// Draft tasks: draft status
@@ -1759,6 +1766,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				showCheckboxes,
 				activeProjectID,
 				tt.selectedFeatureIdx, // Feature-only view uses selectedFeatureIdx
+				ancestors,
+				descendants,
 			)
 		}
 	}
@@ -1808,6 +1817,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				showCheckboxes,
 				activeProjectID,
 				tt.selectedFeatureIdx, // Feature view: ungrouped uses selectedFeatureIdx
+				ancestors,
+				descendants,
 			)
 		}
 	}
@@ -1869,6 +1880,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 					showCheckboxes,
 					activeProjectID,
 					-1, // No feature selection for status groups
+					ancestors,
+					descendants,
 				)
 			}
 		}
@@ -1931,6 +1944,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 					showCheckboxes,
 					activeProjectID,
 					-1, // No feature selection for status groups
+					ancestors,
+					descendants,
 				)
 			}
 		}
@@ -2019,6 +2034,12 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 	var lines []string
 	showCheckboxes := len(tt.selectedTasks) > 0
 
+	// Compute relation graph for highlighting ancestors/descendants of selected task
+	var ancestors, descendants map[string]bool
+	if tt.SelectedID != "" && tt.selectedTaskIdx >= 0 {
+		ancestors, descendants = buildSelectedTaskRelationGraph(tt.tasks, tt.SelectedID)
+	}
+
 	// Iterate through status groups (Level 1)
 	for sIdx, statusGroup := range tt.statusGroups {
 		// Add blank line before each status section (except the first one)
@@ -2090,6 +2111,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 						showCheckboxes,
 						activeProjectID,
 						tt.selectedFeatureIdx, // NESTED VIEW FIX: use selectedFeatureIdx not selectedGroupIdx
+						ancestors,
+						descendants,
 					)
 				}
 			}
@@ -2134,6 +2157,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 						showCheckboxes,
 						activeProjectID,
 						tt.selectedFeatureIdx, // Nested view ungrouped: use selectedFeatureIdx
+						ancestors,
+						descendants,
 					)
 				}
 			}
@@ -2388,6 +2413,8 @@ func (tt *TaskTree) renderGroupTaskTree(
 	showCheckboxes bool,
 	activeProjectID string,
 	selectedGroupIdx int,
+	ancestors map[string]bool,
+	descendants map[string]bool,
 ) {
 
 	for i, node := range nodes {
@@ -2409,6 +2436,8 @@ func (tt *TaskTree) renderGroupTaskTree(
 			showCheckboxes,
 			activeProjectID,
 			width,
+			ancestors,
+			descendants,
 		)
 		*lines = append(*lines, line)
 
@@ -2426,6 +2455,8 @@ func (tt *TaskTree) renderGroupTaskTree(
 				showCheckboxes,
 				activeProjectID,
 				selectedGroupIdx,
+				ancestors,
+				descendants,
 			)
 		}
 	}
@@ -2458,6 +2489,8 @@ func flattenTreeToVisualOrder(nodes []TreeNode) []string {
 
 // renderGroupedTaskLineWithTree renders a single task line in grouped view with tree connectors.
 // The prefix parameter contains ancestor line state, isLast determines the branch character.
+// ancestors and descendants are optional maps from buildSelectedTaskRelationGraph for
+// relation highlighting (cyan for ancestors, magenta for descendants).
 func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	node TreeNode,
 	prefix string,
@@ -2467,6 +2500,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	showCheckboxes bool,
 	activeProjectID string,
 	width int,
+	ancestors map[string]bool,
+	descendants map[string]bool,
 ) string {
 	task := node.Task
 
@@ -2478,6 +2513,16 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		treeConnector = treeLastBranch + " "
 	} else {
 		treeConnector = treeBranch + " "
+	}
+
+	// Determine relation highlight color for this task's tree connectors
+	var relationColor lipgloss.Color
+	isAncestor := ancestors[task.ID]
+	isDescendant := descendants[task.ID]
+	if isAncestor {
+		relationColor = ColorCyan
+	} else if isDescendant {
+		relationColor = ColorMagenta
 	}
 
 	// Selection marker
@@ -2552,7 +2597,14 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 			indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
 	}
 
-	// Not selected - apply default styling
+	// Not selected - apply default styling, with optional relation highlighting
+	// Color tree connectors cyan (ancestor) or magenta (descendant)
+	if isAncestor || isDescendant {
+		relationStyle := lipgloss.NewStyle().Foreground(relationColor)
+		prefix = relationStyle.Render(prefix)
+		treeConnector = relationStyle.Render(treeConnector)
+	}
+
 	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 	if projectLabel != "" {
 		projectLabel = lipgloss.NewStyle().Foreground(ColorMagenta).Render(projectLabel)

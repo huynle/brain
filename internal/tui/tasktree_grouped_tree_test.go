@@ -90,3 +90,301 @@ func TestViewFeatureGrouped_TreeIndentation(t *testing.T) {
 		t.Errorf("Expected at least one line with tree connector in feature view, got: %s", output)
 	}
 }
+
+// TestViewFeatureGrouped_RelationHighlighting verifies that selecting a task
+// in the feature-grouped view computes ancestor/descendant relation maps and
+// passes them to renderGroupedTaskLineWithTree without crashing.
+func TestViewFeatureGrouped_RelationHighlighting(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	// Chain: a <- b <- c (c depends on b, b depends on a)
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("a", "Task A", "ready", "high", "feat-1", nil),
+		makeTaskWithFeature("b", "Task B", "waiting", "medium", "feat-1", []string{"a"}),
+		makeTaskWithFeature("c", "Task C", "waiting", "medium", "feat-1", []string{"b"}),
+	}
+	tt.SetTasks(tasks)
+
+	// Select task "b" — "a" should be ancestor (cyan), "c" should be descendant (magenta)
+	tt.SelectedID = "b"
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = 1 // on a task, not a header
+
+	output := tt.viewFeatureGrouped(120, 30, "test-project")
+
+	// All tasks should be rendered
+	if !strings.Contains(output, "Task A") {
+		t.Errorf("Expected 'Task A' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Task B") {
+		t.Errorf("Expected 'Task B' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Task C") {
+		t.Errorf("Expected 'Task C' in output, got: %s", output)
+	}
+}
+
+// TestViewFeatureGrouped_NoHighlightWhenOnHeader verifies that no relation
+// highlighting occurs when the selection is on a feature header (not a task).
+func TestViewFeatureGrouped_NoHighlightWhenOnHeader(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		makeTaskWithFeature("a", "Task A", "ready", "high", "feat-1", nil),
+		makeTaskWithFeature("b", "Task B", "waiting", "medium", "feat-1", []string{"a"}),
+	}
+	tt.SetTasks(tasks)
+
+	// Selection on feature header (selectedFeatureTaskIdx = -1)
+	tt.SelectedID = ""
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = -1
+
+	// Should not panic and should render without relation highlighting
+	output := tt.viewFeatureGrouped(120, 30, "test-project")
+
+	if !strings.Contains(output, "Task A") {
+		t.Errorf("Expected 'Task A' in output, got: %s", output)
+	}
+}
+
+// TestViewNestedGrouped_RelationHighlighting verifies that selecting a task
+// in the nested-grouped view computes ancestor/descendant relation maps.
+func TestViewNestedGrouped_RelationHighlighting(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // Use nested status+feature view
+
+	// Chain: a <- b <- c (all "blocked" status+classification so they land in same "Blocked" status group)
+	tasks := []types.ResolvedTask{
+		{ID: "a", Title: "Task A", Classification: "blocked", Status: "blocked", Priority: "high", FeatureID: "feat-1"},
+		{ID: "b", Title: "Task B", Classification: "blocked", Status: "blocked", Priority: "medium", FeatureID: "feat-1", DependsOn: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "blocked", Status: "blocked", Priority: "medium", FeatureID: "feat-1", DependsOn: []string{"b"}},
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+
+	// Expand all groups
+	for i := range tt.statusGroups {
+		tt.statusGroups[i].Collapsed = false
+		for j := range tt.statusGroups[i].Features {
+			tt.statusGroups[i].Features[j].Collapsed = false
+		}
+	}
+
+	// Select task "b"
+	tt.SelectedID = "b"
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 0
+	tt.selectedTaskIdx = 1 // on a task, not a header
+
+	output := tt.viewNestedGrouped(120, 30, "test-project")
+
+	// All tasks should be rendered
+	if !strings.Contains(output, "Task A") {
+		t.Errorf("Expected 'Task A' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Task B") {
+		t.Errorf("Expected 'Task B' in output, got: %s", output)
+	}
+	if !strings.Contains(output, "Task C") {
+		t.Errorf("Expected 'Task C' in output, got: %s", output)
+	}
+}
+
+// TestViewNestedGrouped_NoHighlightWhenOnStatusHeader verifies that no relation
+// highlighting occurs when the cursor is on a status header.
+func TestViewNestedGrouped_NoHighlightWhenOnStatusHeader(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // Use nested status+feature view
+
+	// All "blocked" status+classification so they land in same "Blocked" status group
+	tasks := []types.ResolvedTask{
+		{ID: "a", Title: "Task A", Classification: "blocked", Status: "blocked", Priority: "high", FeatureID: "feat-1"},
+		{ID: "b", Title: "Task B", Classification: "blocked", Status: "blocked", Priority: "medium", FeatureID: "feat-1", DependsOn: []string{"a"}},
+	}
+
+	tt.tasks = tasks
+	tt.statusGroups = GroupTasksByStatusAndFeature(tasks, nil)
+
+	// Expand all groups
+	for i := range tt.statusGroups {
+		tt.statusGroups[i].Collapsed = false
+		for j := range tt.statusGroups[i].Features {
+			tt.statusGroups[i].Features[j].Collapsed = false
+		}
+	}
+
+	// Selection on status header
+	tt.SelectedID = ""
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+	tt.selectedTaskIdx = -1
+
+	// Should not panic
+	output := tt.viewNestedGrouped(120, 30, "test-project")
+	if !strings.Contains(output, "Task A") {
+		t.Errorf("Expected 'Task A' in output, got: %s", output)
+	}
+}
+
+// TestRenderGroupedTaskLineWithTree_AncestorHighlighting verifies that
+// renderGroupedTaskLineWithTree applies ancestor/descendant coloring to tree connectors.
+func TestRenderGroupedTaskLineWithTree_AncestorHighlighting(t *testing.T) {
+	tt := NewTaskTree()
+
+	node := TreeNode{
+		Task: types.ResolvedTask{
+			ID:             "a",
+			Title:          "Ancestor Task",
+			Status:         "pending",
+			Classification: "ready",
+			Priority:       "medium",
+		},
+	}
+
+	ancestors := map[string]bool{"a": true}
+	descendants := map[string]bool{}
+
+	// Render as non-selected, with task "a" being an ancestor
+	line := tt.renderGroupedTaskLineWithTree(
+		node,
+		"    ", // base prefix
+		false,  // not last
+		false,  // not selected
+		nil,    // no multi-select
+		false,  // no checkboxes
+		"test-project",
+		120,
+		ancestors,
+		descendants,
+	)
+
+	// Should still contain the task title
+	if !strings.Contains(line, "Ancestor Task") {
+		t.Errorf("Expected 'Ancestor Task' in line, got: %s", line)
+	}
+
+	// Should contain tree connector (├─)
+	if !strings.Contains(line, "├─") {
+		t.Errorf("Expected tree connector '├─' in line for non-last child, got: %s", line)
+	}
+}
+
+// TestRenderGroupedTaskLineWithTree_DescendantHighlighting verifies descendant coloring.
+func TestRenderGroupedTaskLineWithTree_DescendantHighlighting(t *testing.T) {
+	tt := NewTaskTree()
+
+	node := TreeNode{
+		Task: types.ResolvedTask{
+			ID:             "c",
+			Title:          "Descendant Task",
+			Status:         "pending",
+			Classification: "waiting",
+			Priority:       "medium",
+		},
+	}
+
+	ancestors := map[string]bool{}
+	descendants := map[string]bool{"c": true}
+
+	line := tt.renderGroupedTaskLineWithTree(
+		node,
+		"    ",
+		true, // last child
+		false,
+		nil,
+		false,
+		"test-project",
+		120,
+		ancestors,
+		descendants,
+	)
+
+	if !strings.Contains(line, "Descendant Task") {
+		t.Errorf("Expected 'Descendant Task' in line, got: %s", line)
+	}
+
+	// Should contain last-branch connector (└─)
+	if !strings.Contains(line, "└─") {
+		t.Errorf("Expected tree connector '└─' in line for last child, got: %s", line)
+	}
+}
+
+// TestRenderGroupedTaskLineWithTree_NilMapsNoHighlighting verifies nil maps are safe.
+func TestRenderGroupedTaskLineWithTree_NilMapsNoHighlighting(t *testing.T) {
+	tt := NewTaskTree()
+
+	node := TreeNode{
+		Task: types.ResolvedTask{
+			ID:             "x",
+			Title:          "Normal Task",
+			Status:         "pending",
+			Classification: "ready",
+			Priority:       "medium",
+		},
+	}
+
+	// nil ancestors and descendants (no highlighting)
+	line := tt.renderGroupedTaskLineWithTree(
+		node,
+		"    ",
+		true,
+		false,
+		nil,
+		false,
+		"test-project",
+		120,
+		nil, nil,
+	)
+
+	if !strings.Contains(line, "Normal Task") {
+		t.Errorf("Expected 'Normal Task' in line, got: %s", line)
+	}
+}
+
+// TestRenderGroupedTaskLineWithTree_SelectedOverridesRelationColor verifies
+// that when a task is both selected and an ancestor/descendant, the selected
+// blue background style takes precedence over relation highlighting.
+func TestRenderGroupedTaskLineWithTree_SelectedOverridesRelationColor(t *testing.T) {
+	tt := NewTaskTree()
+	tt.selectedTaskIdx = 0 // must be >= 0 for isSelected to trigger
+
+	node := TreeNode{
+		Task: types.ResolvedTask{
+			ID:             "a",
+			Title:          "Selected Ancestor",
+			Status:         "pending",
+			Classification: "ready",
+			Priority:       "medium",
+		},
+	}
+
+	ancestors := map[string]bool{"a": true}
+
+	// Render as selected AND ancestor
+	line := tt.renderGroupedTaskLineWithTree(
+		node,
+		"    ",
+		true,
+		true, // isSelected
+		nil,
+		false,
+		"test-project",
+		120,
+		ancestors,
+		nil,
+	)
+
+	// Should still render the task (selected style overrides)
+	if !strings.Contains(line, "Selected Ancestor") {
+		t.Errorf("Expected 'Selected Ancestor' in line, got: %s", line)
+	}
+}

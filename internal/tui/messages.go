@@ -38,3 +38,17 @@ type reconnectProjectMsg struct {
 
 // TickMsg is sent on periodic timer ticks (for animations, status refresh).
 type TickMsg struct{}
+
+// ProcessStartedMsg is sent when a runner spawns a new child process.
+// The TUI uses the PID to track resource metrics via MetricsCollector.
+type ProcessStartedMsg struct {
+	PID    int
+	TaskID string
+}
+
+// ProcessStoppedMsg is sent when a runner child process exits.
+// The TUI unregisters the PID from MetricsCollector.
+type ProcessStoppedMsg struct {
+	PID    int
+	TaskID string
+}

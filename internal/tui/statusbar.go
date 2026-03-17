@@ -40,9 +40,10 @@ func (s StatusBar) View(width int) string {
 		Width(width-2).
 		Padding(0, 1) // 0 vertical padding, 1 horizontal padding
 
-	// Only include second row when metrics are present
+	// Always include second row for metrics display (matches origin/main TS TUI)
+	// Shows "CPU:0.0% Mem:0.0MB 0 procs" when no processes are tracked
 	content := firstRow
-	if s.Metrics != nil && s.Metrics.ProcessCount > 0 {
+	if s.Metrics != nil {
 		secondRow := s.renderSecondRow(width)
 		content = firstRow + "\n" + secondRow
 	}

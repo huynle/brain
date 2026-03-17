@@ -541,6 +541,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatusMessage("success", fmt.Sprintf("Auto-monitor created: %s for %s", msg.templateID, msg.featureID))
 		return m, nil
 
+	case ProcessStartedMsg:
+		// Track the runner child process PID for resource metrics
+		if m.metricsCollector != nil && msg.PID > 0 {
+			_ = m.metricsCollector.TrackProcess(int32(msg.PID))
+		}
+		return m, nil
+
+	case ProcessStoppedMsg:
+		// Untrack the runner child process PID from resource metrics
+		if m.metricsCollector != nil && msg.PID > 0 {
+			m.metricsCollector.UntrackProcess(int32(msg.PID))
+		}
+		return m, nil
+
 	case SettingsChangedMsg:
 		// Reload settings and re-apply task grouping
 		settings, err := LoadSettings()

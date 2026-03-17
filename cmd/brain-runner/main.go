@@ -373,6 +373,22 @@ func cmdStart(args parsedArgs) int {
 		model := tui.NewModel(tuiCfg)
 		p := tea.NewProgram(model, tea.WithAltScreen())
 
+		// Wire runner process events to TUI metrics collector.
+		// When a task starts, its PID is tracked for CPU/memory monitoring.
+		// Dead PIDs are auto-cleaned by MetricsCollector.Collect() on each tick,
+		// but we also explicitly untrack on task completion for immediate cleanup.
+		tr.OnEvent(func(event runner.RunnerEvent) {
+			switch event.Type {
+			case runner.EventTaskStarted:
+				if event.Task != nil && event.Task.PID > 0 {
+					p.Send(tui.ProcessStartedMsg{
+						PID:    event.Task.PID,
+						TaskID: event.Task.ID,
+					})
+				}
+			}
+		})
+
 		// Start the runner in background
 		go func() {
 			if startErr := tr.Start(ctx); startErr != nil {

@@ -1995,27 +1995,25 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				featureTasks := draftByFeature[featureID]
 				isCollapsed := tt.featureCollapsed["draft:"+featureID]
 
-				// Render dimmed feature header (skip for [Ungrouped])
-				if featureID != "[Ungrouped]" {
-					collapseIcon := "▾"
-					if isCollapsed {
-						collapseIcon = "▶"
-					}
-					draftStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
-					featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, draftStatusIcon, featureID, len(featureTasks))
-
-					// Highlight if this sub-feature header is selected — show → arrow
-					if tt.isOnDraftSection && tt.draftFeatureIdx == fIdx {
-						featureHeader = SelectedRowStyle.Render(featureHeader)
-						featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
-					} else {
-						featureHeader = DimStyle.Render(featureHeader)
-					}
-					lines = append(lines, featureHeader)
+				// Render sub-feature header with collapse arrow (including [Ungrouped])
+				collapseIcon := "▾"
+				if isCollapsed {
+					collapseIcon = "▶"
 				}
+				draftStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
+				featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, draftStatusIcon, featureID, len(featureTasks))
+
+				// Highlight if this sub-feature header is selected — show → arrow
+				if tt.isOnDraftSection && tt.draftFeatureIdx == fIdx {
+					featureHeader = SelectedRowStyle.Render(featureHeader)
+					featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
+				} else {
+					featureHeader = DimStyle.Render(featureHeader)
+				}
+				lines = append(lines, featureHeader)
 
 				// Build dependency tree for this feature's tasks (skip if collapsed)
-				if featureID == "[Ungrouped]" || !isCollapsed {
+				if !isCollapsed {
 					tree := BuildTree(featureTasks, tt.tasks)
 					visualIndex := 0
 					tt.renderGroupTaskTree(
@@ -2084,27 +2082,25 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				featureTasks := completedByFeature[featureID]
 				isCollapsed := tt.featureCollapsed["completed:"+featureID]
 
-				// Render dimmed feature header (skip for [Ungrouped])
-				if featureID != "[Ungrouped]" {
-					collapseIcon := "▾"
-					if isCollapsed {
-						collapseIcon = "▶"
-					}
-					compStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
-					featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, compStatusIcon, featureID, len(featureTasks))
-
-					// Highlight if this sub-feature header is selected — show → arrow
-					if tt.isOnCompletedSection && tt.completedFeatureIdx == fIdx {
-						featureHeader = SelectedRowStyle.Render(featureHeader)
-						featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
-					} else {
-						featureHeader = DimStyle.Render(featureHeader)
-					}
-					lines = append(lines, featureHeader)
+				// Render sub-feature header with collapse arrow (including [Ungrouped])
+				collapseIcon := "▾"
+				if isCollapsed {
+					collapseIcon = "▶"
 				}
+				compStatusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
+				featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, compStatusIcon, featureID, len(featureTasks))
+
+				// Highlight if this sub-feature header is selected — show → arrow
+				if tt.isOnCompletedSection && tt.completedFeatureIdx == fIdx {
+					featureHeader = SelectedRowStyle.Render(featureHeader)
+					featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
+				} else {
+					featureHeader = DimStyle.Render(featureHeader)
+				}
+				lines = append(lines, featureHeader)
 
 				// Build dependency tree for this feature's tasks (skip if collapsed)
-				if featureID == "[Ungrouped]" || !isCollapsed {
+				if !isCollapsed {
 					tree := BuildTree(featureTasks, tt.tasks)
 					visualIndex := 0
 					tt.renderGroupTaskTree(
@@ -2271,20 +2267,18 @@ func findSelectedLineInFeatureView(
 
 			for fIdx, featureID := range draftFeatureIDs {
 				featureTasks := draftByFeature[featureID]
-				// Sub-feature header (skip for [Ungrouped])
-				if featureID != "[Ungrouped]" {
-					if isOnDraftSection && draftFeatureIdx == fIdx {
-						return lineIdx
-					}
-					lineIdx++ // sub-feature header
+				// Sub-feature header (all features including [Ungrouped] now have headers)
+				if isOnDraftSection && draftFeatureIdx == fIdx {
+					return lineIdx
 				}
+				lineIdx++ // sub-feature header
 
 				// Tasks under this sub-feature (skip if collapsed)
 				isCollapsed := false // featureCollapsed check would need the map; but we just count rendered lines
 				// In rendering, collapsed sub-features skip task rendering
 				// We don't have featureCollapsed here, but the line count in `lines` already includes/excludes them.
 				// Since we're counting to match rendered lines, just count the tree lines.
-				if featureID == "[Ungrouped]" || !isCollapsed {
+				if !isCollapsed {
 					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
 					lineIdx += taskLineCount
 				}
@@ -2314,15 +2308,14 @@ func findSelectedLineInFeatureView(
 
 			for fIdx, featureID := range completedFeatureIDs {
 				featureTasks := completedByFeature[featureID]
-				if featureID != "[Ungrouped]" {
-					if isOnCompletedSection && completedFeatureIdx == fIdx {
-						return lineIdx
-					}
-					lineIdx++ // sub-feature header
+				// Sub-feature header (all features including [Ungrouped] now have headers)
+				if isOnCompletedSection && completedFeatureIdx == fIdx {
+					return lineIdx
 				}
+				lineIdx++ // sub-feature header
 
 				isCollapsed := false
-				if featureID == "[Ungrouped]" || !isCollapsed {
+				if !isCollapsed {
 					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
 					lineIdx += taskLineCount
 				}

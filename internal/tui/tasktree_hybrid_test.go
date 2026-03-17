@@ -115,3 +115,112 @@ func TestTaskTree_HybridView_CollapseStates(t *testing.T) {
 		t.Error("Expected Completed section to be collapsed (▶) by default")
 	}
 }
+
+// TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted verifies that [Ungrouped]
+// appears as a collapsible sub-feature header with ▶/▾ in Draft and Completed sections,
+// matching the behavior of named sub-features.
+func TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		// Active tasks (won't appear in draft/completed)
+		{ID: "task1", Title: "Active Task", Status: "pending", FeatureID: "feature-1"},
+		// Draft tasks: one in feature, one ungrouped
+		{ID: "task2", Title: "Draft in Feature", Status: "draft", FeatureID: "feature-1"},
+		{ID: "task3", Title: "Draft Ungrouped", Status: "draft", FeatureID: ""},
+		// Completed tasks: one in feature, one ungrouped
+		{ID: "task4", Title: "Completed in Feature", Status: "completed", FeatureID: "feature-1"},
+		{ID: "task5", Title: "Completed Ungrouped", Status: "completed", FeatureID: ""},
+	}
+
+	tt := NewTaskTree()
+	tt.SetTasks(tasks)
+
+	// Render with expanded draft, expanded completed
+	tt.draftCollapsed = false
+	tt.completedCollapsed = false
+	view := tt.ViewWithProject(120, 50, "test-project")
+
+	// [Ungrouped] should appear as a sub-feature header in Draft section with collapse arrow
+	if !strings.Contains(view, "Feature: [Ungrouped]") {
+		t.Errorf("Expected 'Feature: [Ungrouped]' sub-feature header, got view:\n%s", view)
+	}
+
+	// Verify [Ungrouped] in Draft section has collapse indicator (▾ when expanded)
+	// Both draft and completed ungrouped start expanded by default
+	draftUngroupedExpanded := false
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Feature: [Ungrouped]") && strings.Contains(line, "▾") {
+			draftUngroupedExpanded = true
+			break
+		}
+	}
+	if !draftUngroupedExpanded {
+		t.Errorf("Expected [Ungrouped] sub-feature to have ▾ collapse indicator, got view:\n%s", view)
+	}
+
+	// Verify both ungrouped tasks are visible when expanded
+	if !strings.Contains(view, "Draft Ungrouped") {
+		t.Errorf("Expected 'Draft Ungrouped' task to be visible when [Ungrouped] expanded, got view:\n%s", view)
+	}
+
+	// Now collapse the [Ungrouped] in draft section
+	tt.featureCollapsed["draft:[Ungrouped]"] = true
+	tt.SetTasks(tasks) // re-compute
+	tt.draftCollapsed = false
+	tt.completedCollapsed = false
+	view = tt.ViewWithProject(120, 50, "test-project")
+
+	// Should show ▶ for collapsed [Ungrouped]
+	draftUngroupedCollapsed := false
+	for _, line := range strings.Split(view, "\n") {
+		if strings.Contains(line, "Feature: [Ungrouped]") && strings.Contains(line, "▶") {
+			draftUngroupedCollapsed = true
+			break
+		}
+	}
+	if !draftUngroupedCollapsed {
+		t.Errorf("Expected collapsed [Ungrouped] to show ▶ indicator, got view:\n%s", view)
+	}
+
+	// The task under collapsed [Ungrouped] in draft should be hidden
+	// Count occurrences of "Draft Ungrouped" — it should NOT appear
+	draftUngroupedVisible := strings.Contains(view, "Draft Ungrouped")
+	if draftUngroupedVisible {
+		t.Errorf("Expected 'Draft Ungrouped' task to be hidden when [Ungrouped] collapsed, got view:\n%s", view)
+	}
+}
+
+// TestTaskTree_HybridView_UngroupedToggleCollapse verifies that Space toggles collapse
+// on [Ungrouped] sub-feature headers in Draft/Completed sections.
+func TestTaskTree_HybridView_UngroupedToggleCollapse(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "task1", Title: "Draft Ungrouped 1", Status: "draft", FeatureID: ""},
+		{ID: "task2", Title: "Draft Ungrouped 2", Status: "draft", FeatureID: ""},
+	}
+
+	tt := NewTaskTree()
+	tt.SetTasks(tasks)
+
+	// Navigate to the draft section, then to the [Ungrouped] sub-feature header
+	tt.isOnDraftSection = true
+	tt.isOnCompletedSection = false
+	tt.isOnUngrouped = false
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.draftFeatureIdx = 0 // First (and only) sub-feature: [Ungrouped]
+	tt.draftFeatureIDs = []string{"[Ungrouped]"}
+
+	// Toggle collapse on [Ungrouped] in Draft
+	tt.ToggleCollapse()
+
+	// Verify the collapse state was set
+	if !tt.featureCollapsed["draft:[Ungrouped]"] {
+		t.Error("Expected draft:[Ungrouped] to be collapsed after toggle")
+	}
+
+	// Toggle again to expand
+	tt.ToggleCollapse()
+
+	if tt.featureCollapsed["draft:[Ungrouped]"] {
+		t.Error("Expected draft:[Ungrouped] to be expanded after second toggle")
+	}
+}

@@ -831,6 +831,58 @@ func TestUpdate_TKey_TogglesDetailVisibility(t *testing.T) {
 	}
 }
 
+func TestUpdate_TKey_SyncsTaskDetailWhenShowing(t *testing.T) {
+	cfg := Config{
+		APIURL:  "http://localhost:3333",
+		Project: "test-project",
+	}
+	m := NewModel(cfg)
+
+	// Set up tasks and navigate so a task is selected
+	tasks := []types.ResolvedTask{
+		{
+			ID:             "task1",
+			Title:          "Fix the bug",
+			Status:         "pending",
+			Priority:       "high",
+			Classification: "ready",
+			FeatureID:      "feat-a",
+		},
+	}
+	m.tasks = tasks
+	m.taskTree.SetTasks(tasks)
+
+	// Verify task is selected
+	if m.taskTree.SelectedID == "" {
+		t.Fatal("expected a task to be selected after SetTasks")
+	}
+	if m.taskTree.SelectedTask() == nil {
+		t.Fatal("expected SelectedTask() to return non-nil")
+	}
+
+	// Detail panel starts hidden, task detail has no task set
+	if m.detailVisible {
+		t.Fatal("expected detailVisible to be false initially")
+	}
+
+	// Press 'T' to show detail panel
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}}
+	updated, _ := m.Update(msg)
+	model := updated.(Model)
+
+	if !model.detailVisible {
+		t.Error("expected detailVisible to be true after 'T' press")
+	}
+
+	// The task detail should have been synced when showing the panel
+	if model.taskDetail.task == nil {
+		t.Error("expected task detail to be synced with selected task after 'T' press, but task is nil")
+	}
+	if model.taskDetail.task != nil && model.taskDetail.task.ID != "task1" {
+		t.Errorf("expected task detail to show task1, got %s", model.taskDetail.task.ID)
+	}
+}
+
 // =============================================================================
 // Panel Focus Cycling with Visible Panels
 // =============================================================================

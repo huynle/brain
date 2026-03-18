@@ -997,6 +997,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.detailVisible && m.activePanel == PanelDetails {
 				m.activePanel = PanelTasks
 			}
+			// When showing the detail panel, sync it with current selection
+			// so it doesn't show stale "No task selected" state
+			if m.detailVisible {
+				m.syncTaskDetail()
+			}
 			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {

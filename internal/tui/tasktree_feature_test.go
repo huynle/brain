@@ -1097,6 +1097,170 @@ func TestMoveToTopFeatureGrouped_ThenNavigate(t *testing.T) {
 	}
 }
 
+// TestSelectFirstFeatureTask_DraftFeatureIDs_SortedAlphabetically verifies that
+// selectFirstFeatureTask() populates draftFeatureIDs in alphabetical order
+// (matching the renderer's sort.Strings) rather than feature-group iteration order.
+// This prevents j/k navigation from visiting features in the wrong order,
+// skipping features, or backtracking to headers.
+func TestSelectFirstFeatureTask_DraftFeatureIDs_SortedAlphabetically(t *testing.T) {
+	// Create features where GroupTasksByFeature iteration order differs from alphabetical.
+	// All tasks are "draft" so selectFirstFeatureTask falls through to draft section.
+	// GroupTasksByFeature sorts by priority (high>medium>low) then alphabetically.
+	// Give "zebra" high priority so it appears FIRST in featureGroups.Features,
+	// but alphabetical order (used by renderer) would put "alpha" first.
+	tasks := []types.ResolvedTask{
+		// "zebra" feature — high priority, 3 draft tasks
+		{ID: "z1", Status: "draft", Priority: "medium", FeatureID: "zebra", FeaturePriority: "high"},
+		{ID: "z2", Status: "draft", Priority: "medium", FeatureID: "zebra", FeaturePriority: "high"},
+		{ID: "z3", Status: "draft", Priority: "medium", FeatureID: "zebra", FeaturePriority: "high"},
+		// "alpha" feature — medium priority, 1 draft task
+		{ID: "a1", Status: "draft", Priority: "medium", FeatureID: "alpha", FeaturePriority: "medium"},
+		// "middle" feature — medium priority, 2 draft tasks
+		{ID: "m1", Status: "draft", Priority: "medium", FeatureID: "middle", FeaturePriority: "medium"},
+		{ID: "m2", Status: "draft", Priority: "medium", FeatureID: "middle", FeaturePriority: "medium"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.draftCollapsed = false
+	tt.SetTasks(tasks)
+
+	// After SetTasks, selectFirstFeatureTask should have been called.
+	// Verify draftFeatureIDs is sorted alphabetically.
+	if len(tt.draftFeatureIDs) != 3 {
+		t.Fatalf("expected 3 draftFeatureIDs, got %d: %v", len(tt.draftFeatureIDs), tt.draftFeatureIDs)
+	}
+	expectedOrder := []string{"alpha", "middle", "zebra"}
+	for i, expected := range expectedOrder {
+		if tt.draftFeatureIDs[i] != expected {
+			t.Errorf("draftFeatureIDs[%d] = %q, want %q (full list: %v)",
+				i, tt.draftFeatureIDs[i], expected, tt.draftFeatureIDs)
+		}
+	}
+
+	// Verify cursor is on Draft section header
+	if !tt.isOnDraftSection {
+		t.Fatal("expected isOnDraftSection=true")
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("expected draftFeatureIdx=-1 (on section header), got %d", tt.draftFeatureIdx)
+	}
+}
+
+// TestDraftSectionNavigation_VisitsFeaturesInAlphabeticalOrder verifies that
+// j/k navigation through the Draft section visits features in alphabetical order
+// (matching the renderer), with no skipping, backtracking, or blank gaps.
+func TestDraftSectionNavigation_VisitsFeaturesInAlphabeticalOrder(t *testing.T) {
+	// Same setup: features whose iteration order differs from alphabetical.
+	// "zebra" has high priority so it's first in featureGroups, but alphabetical puts "alpha" first.
+	tasks := []types.ResolvedTask{
+		{ID: "z1", Status: "draft", Priority: "medium", FeatureID: "zebra", FeaturePriority: "high"},
+		{ID: "z2", Status: "draft", Priority: "medium", FeatureID: "zebra", FeaturePriority: "high"},
+		{ID: "a1", Status: "draft", Priority: "medium", FeatureID: "alpha", FeaturePriority: "medium"},
+		{ID: "m1", Status: "draft", Priority: "medium", FeatureID: "middle", FeaturePriority: "medium"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.draftCollapsed = false
+	tt.SetTasks(tasks)
+
+	// Should start on Draft section header
+	if !tt.isOnDraftSection {
+		t.Fatal("expected isOnDraftSection=true after SetTasks with only draft tasks")
+	}
+
+	// j → first sub-feature header (should be "alpha" alphabetically)
+	tt.MoveDown()
+	if tt.draftFeatureIdx != 0 {
+		t.Fatalf("after 1st j: expected draftFeatureIdx=0, got %d", tt.draftFeatureIdx)
+	}
+	if len(tt.draftFeatureIDs) < 1 || tt.draftFeatureIDs[0] != "alpha" {
+		t.Fatalf("after 1st j: expected first feature 'alpha', got draftFeatureIDs=%v", tt.draftFeatureIDs)
+	}
+
+	// j → first task in "alpha" (a1)
+	tt.MoveDown()
+	if tt.SelectedID != "a1" {
+		t.Fatalf("after 2nd j: expected SelectedID='a1', got %q", tt.SelectedID)
+	}
+
+	// j → next sub-feature header "middle" (since alpha has only 1 task)
+	tt.MoveDown()
+	if tt.draftFeatureIdx != 1 {
+		t.Fatalf("after 3rd j: expected draftFeatureIdx=1 (middle), got %d", tt.draftFeatureIdx)
+	}
+	if len(tt.draftFeatureIDs) < 2 || tt.draftFeatureIDs[1] != "middle" {
+		t.Fatalf("after 3rd j: expected second feature 'middle', got draftFeatureIDs=%v", tt.draftFeatureIDs)
+	}
+
+	// j → first task in "middle" (m1)
+	tt.MoveDown()
+	if tt.SelectedID != "m1" {
+		t.Fatalf("after 4th j: expected SelectedID='m1', got %q", tt.SelectedID)
+	}
+
+	// j → next sub-feature header "zebra" (since middle has only 1 task)
+	tt.MoveDown()
+	if tt.draftFeatureIdx != 2 {
+		t.Fatalf("after 5th j: expected draftFeatureIdx=2 (zebra), got %d", tt.draftFeatureIdx)
+	}
+	if len(tt.draftFeatureIDs) < 3 || tt.draftFeatureIDs[2] != "zebra" {
+		t.Fatalf("after 5th j: expected third feature 'zebra', got draftFeatureIDs=%v", tt.draftFeatureIDs)
+	}
+
+	// j → first task in "zebra" (z1)
+	tt.MoveDown()
+	if tt.SelectedID != "z1" {
+		t.Fatalf("after 6th j: expected SelectedID='z1', got %q", tt.SelectedID)
+	}
+
+	// j → second task in "zebra" (z2)
+	tt.MoveDown()
+	if tt.SelectedID != "z2" {
+		t.Fatalf("after 7th j: expected SelectedID='z2', got %q", tt.SelectedID)
+	}
+}
+
+// TestCompletedSectionNavigation_FeatureIDsPopulated verifies that
+// selectFirstFeatureTask() also eagerly populates completedFeatureIDs
+// (and other terminal section IDs) when falling back to those sections.
+func TestCompletedSectionNavigation_FeatureIDsPopulated(t *testing.T) {
+	// Only completed tasks — selectFirstFeatureTask falls through to completed section.
+	// "zulu" has high priority so it's first in featureGroups, but alphabetical puts "bravo" first.
+	tasks := []types.ResolvedTask{
+		{ID: "c1", Status: "completed", Priority: "medium", FeatureID: "zulu", FeaturePriority: "high"},
+		{ID: "c2", Status: "completed", Priority: "medium", FeatureID: "bravo", FeaturePriority: "medium"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.completedCollapsed = false
+	tt.SetTasks(tasks)
+
+	// Should land on Completed section header
+	if !tt.isOnCompletedSection {
+		t.Fatal("expected isOnCompletedSection=true after SetTasks with only completed tasks")
+	}
+
+	// completedFeatureIDs should be populated and sorted alphabetically
+	if len(tt.completedFeatureIDs) != 2 {
+		t.Fatalf("expected 2 completedFeatureIDs, got %d: %v", len(tt.completedFeatureIDs), tt.completedFeatureIDs)
+	}
+	if tt.completedFeatureIDs[0] != "bravo" || tt.completedFeatureIDs[1] != "zulu" {
+		t.Errorf("completedFeatureIDs not sorted: got %v, want [bravo, zulu]", tt.completedFeatureIDs)
+	}
+
+	// j → first sub-feature header (should be "bravo")
+	tt.MoveDown()
+	if tt.completedFeatureIdx != 0 {
+		t.Fatalf("after j: expected completedFeatureIdx=0, got %d", tt.completedFeatureIdx)
+	}
+}
+
 // TestMoveToBottomFeatureGrouped_OnlyDraftTasks ensures G lands on Draft section.
 func TestMoveToBottomFeatureGrouped_OnlyDraftTasks(t *testing.T) {
 	tasks := []types.ResolvedTask{

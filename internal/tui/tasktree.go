@@ -947,6 +947,13 @@ func (tt *TaskTree) collectTerminalSectionTasks(sectionName string) []types.Reso
 }
 
 func (tt *TaskTree) selectFirstFeatureTask() {
+	// Eagerly populate ALL terminal section feature IDs (draft, cancelled, superseded,
+	// archived, completed) in sorted order. This ensures navigation indices match the
+	// renderer's alphabetical sort.Strings() ordering. Without this, draftFeatureIDs
+	// (and others) would be populated in feature-group iteration order (by priority),
+	// causing j/k navigation to visit features in the wrong order.
+	tt.refreshTerminalSectionFeatureIDs()
+
 	// Try features first - select first ACTIVE task
 	if len(tt.featureGroups.Features) > 0 {
 		for i, feature := range tt.featureGroups.Features {
@@ -1006,27 +1013,7 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 		tt.isOnUngrouped = false
 		tt.SelectedID = ""
 
-		// Eagerly populate draftFeatureIDs so navigation works before first render.
-		// The View function also sets this, but navigation may run before View.
-		draftFeatureMap := make(map[string]bool)
-		var draftFIDs []string
-		for _, feature := range tt.featureGroups.Features {
-			for _, task := range feature.Tasks {
-				if task.Status == "draft" && !draftFeatureMap[feature.ID] {
-					draftFeatureMap[feature.ID] = true
-					draftFIDs = append(draftFIDs, feature.ID)
-				}
-			}
-		}
-		if tt.featureGroups.Ungrouped != nil {
-			for _, task := range tt.featureGroups.Ungrouped.Tasks {
-				if task.Status == "draft" && !draftFeatureMap["[Ungrouped]"] {
-					draftFeatureMap["[Ungrouped]"] = true
-					draftFIDs = append(draftFIDs, "[Ungrouped]")
-				}
-			}
-		}
-		tt.draftFeatureIDs = draftFIDs
+		// draftFeatureIDs already populated (sorted) by refreshTerminalSectionFeatureIDs() above.
 		return
 	}
 

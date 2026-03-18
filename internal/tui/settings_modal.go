@@ -50,15 +50,16 @@ var statusGroupToAPIStatus = map[string]string{
 // Visibility controls filtering (whether the group appears at all).
 // Collapse controls UI folding (whether a visible group is expanded or collapsed).
 type SettingsModal struct {
-	settings      Settings
-	selectedIndex int            // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab) or 0 = autoMonitors (Monitors tab)
-	projects      []string       // sorted project list
-	currentTab    SettingsTab    // active tab
-	editMode      bool           // true when editing the default model field
-	editBuffer    string         // buffer for editing the default model
-	saveError     error          // error from last save attempt
-	saveSuccess   bool           // true if last save was successful
-	taskCounts    map[string]int // status group name -> task count (e.g., "Draft" -> 3)
+	settings          Settings
+	selectedIndex     int            // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab) or 0 = autoMonitors (Monitors tab)
+	projects          []string       // sorted project list
+	currentTab        SettingsTab    // active tab
+	editMode          bool           // true when editing the default model field
+	editBuffer        string         // buffer for editing the default model
+	saveError         error          // error from last save attempt
+	saveSuccess       bool           // true if last save was successful
+	taskCounts        map[string]int // status group name -> task count (e.g., "Draft" -> 3)
+	runningPerProject map[string]int // project ID -> number of in_progress tasks
 }
 
 // settingsSavedMsg is sent when settings have been saved (successfully or with error)
@@ -66,10 +67,28 @@ type settingsSavedMsg struct {
 	err error
 }
 
-// NewSettingsModal creates a new settings modal with the given settings and optional task counts.
+// SettingsModalOption is a functional option for configuring SettingsModal.
+type SettingsModalOption func(*SettingsModal)
+
+// WithTaskCounts sets the status group task counts (e.g., "Draft" -> 3).
+func WithTaskCounts(counts map[string]int) SettingsModalOption {
+	return func(m *SettingsModal) {
+		m.taskCounts = counts
+	}
+}
+
+// WithRunningPerProject sets the per-project running task counts.
+func WithRunningPerProject(running map[string]int) SettingsModalOption {
+	return func(m *SettingsModal) {
+		m.runningPerProject = running
+	}
+}
+
+// NewSettingsModal creates a new settings modal with the given settings and optional configuration.
 // Projects are sorted alphabetically for consistent display.
-// taskCounts maps status group display names (e.g., "Draft", "Pending") to their task counts.
-func NewSettingsModal(settings Settings, taskCounts ...map[string]int) *SettingsModal {
+// Accepts variadic options: use WithTaskCounts() and WithRunningPerProject() to provide data.
+// For backward compatibility, also accepts a plain map[string]int as the first variadic arg (treated as taskCounts).
+func NewSettingsModal(settings Settings, opts ...interface{}) *SettingsModal {
 	// Extract and sort project names
 	projects := make([]string, 0, len(settings.ProjectLimits))
 	for proj := range settings.ProjectLimits {
@@ -77,18 +96,25 @@ func NewSettingsModal(settings Settings, taskCounts ...map[string]int) *Settings
 	}
 	sort.Strings(projects)
 
-	var counts map[string]int
-	if len(taskCounts) > 0 && taskCounts[0] != nil {
-		counts = taskCounts[0]
-	}
-
-	return &SettingsModal{
+	modal := &SettingsModal{
 		settings:      settings,
 		selectedIndex: 0,
 		projects:      projects,
 		currentTab:    TabLimits,
-		taskCounts:    counts,
 	}
+
+	// Process variadic options
+	for _, opt := range opts {
+		switch v := opt.(type) {
+		case SettingsModalOption:
+			v(modal)
+		case map[string]int:
+			// Backward compatibility: plain map treated as taskCounts
+			modal.taskCounts = v
+		}
+	}
+
+	return modal
 }
 
 // Init implements Modal
@@ -379,13 +405,20 @@ func (m *SettingsModal) renderGlobalLimit() string {
 	return fmt.Sprintf("%s Global Max Parallel: %d", cursor, m.settings.GlobalMaxParallel)
 }
 
-// renderProjectLimits renders the project limits list
+// renderProjectLimits renders the project limits list with running task counts.
+// Format: "project-name [no limit] (0 running)" or "project-name [2] (1 running)"
 func (m *SettingsModal) renderProjectLimits() string {
 	var s strings.Builder
 	for i, proj := range m.projects {
 		cursor := m.getCursorForLimitsTab(i + 1)
 		limitStr := m.formatLimit(m.settings.ProjectLimits[proj])
-		s.WriteString(fmt.Sprintf("%s  %s: %s\n", cursor, proj, limitStr))
+		running := 0
+		if m.runningPerProject != nil {
+			running = m.runningPerProject[proj]
+		}
+		dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+		runningStr := dimStyle.Render(fmt.Sprintf("(%d running)", running))
+		s.WriteString(fmt.Sprintf("%s  %s %s %s\n", cursor, proj, limitStr, runningStr))
 	}
 	return s.String()
 }
@@ -417,12 +450,13 @@ func (m *SettingsModal) getCursorForRuntimeTab(index int) string {
 	return " "
 }
 
-// formatLimit formats a limit value (0 = ∞, otherwise number)
+// formatLimit formats a limit value for display.
+// 0 = "[no limit]", otherwise "[N]" where N is the limit number.
 func (m *SettingsModal) formatLimit(limit int) string {
 	if limit == 0 {
-		return "∞"
+		return "[no limit]"
 	}
-	return fmt.Sprintf("%d", limit)
+	return fmt.Sprintf("[%d]", limit)
 }
 
 // HandleKey implements Modal

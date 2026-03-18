@@ -711,9 +711,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "S":
-			// Open settings modal with task counts per status group
+			// Open settings modal with task counts per status group and per-project running counts
 			taskCounts := m.computeTaskCountsByStatus()
-			modal := NewSettingsModal(m.settings, taskCounts)
+			runningPerProject := m.computeRunningPerProject()
+			modal := NewSettingsModal(m.settings, WithTaskCounts(taskCounts), WithRunningPerProject(runningPerProject))
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
@@ -2409,6 +2410,38 @@ func (m Model) computeTaskCountsByStatus() map[string]int {
 		}
 	}
 	return counts
+}
+
+// computeRunningPerProject computes the number of in_progress tasks per project.
+// Uses tasksByProject in multi-project mode, or tasks in single-project mode.
+func (m Model) computeRunningPerProject() map[string]int {
+	running := make(map[string]int)
+	if len(m.tasksByProject) > 0 {
+		// Multi-project mode: iterate per-project tasks
+		for projectID, tasks := range m.tasksByProject {
+			for _, task := range tasks {
+				if task.Status == "in_progress" {
+					running[projectID]++
+				}
+			}
+		}
+	} else {
+		// Single-project mode: use projectTabs stats if available
+		for _, proj := range m.projectTabs.Projects {
+			if stats, ok := m.projectTabs.StatsByProject[proj]; ok {
+				running[proj] = stats.InProgress
+			}
+		}
+		// Fallback: count from tasks directly
+		if len(running) == 0 {
+			for _, task := range m.tasks {
+				if task.Status == "in_progress" {
+					running[task.ProjectID]++
+				}
+			}
+		}
+	}
+	return running
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

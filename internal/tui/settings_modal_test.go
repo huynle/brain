@@ -987,3 +987,144 @@ func TestSettingsModal_MonitorsTab_DirectNav(t *testing.T) {
 		t.Errorf("Expected selectedIndex 0 after direct nav, got %d", modal.selectedIndex)
 	}
 }
+
+func TestSettingsModal_LimitsTab_RunningCounts(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		GroupVisible:     getDefaultGroupVisible(),
+		ProjectLimits: map[string]int{
+			"project-a": 2,
+			"project-b": 0, // unlimited
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	runningCounts := map[string]int{
+		"project-a": 1,
+		"project-b": 3,
+	}
+
+	modal := NewSettingsModal(settings, WithRunningPerProject(runningCounts))
+	modal.currentTab = TabLimits
+	view := modal.View()
+
+	// Verify project-a shows limit and running count
+	if !strings.Contains(view, "project-a") {
+		t.Error("Expected project-a in limits view")
+	}
+	if !strings.Contains(view, "[2]") {
+		t.Error("Expected [2] limit for project-a")
+	}
+	if !strings.Contains(view, "(1 running)") {
+		t.Error("Expected (1 running) for project-a")
+	}
+
+	// Verify project-b shows no limit and running count
+	if !strings.Contains(view, "project-b") {
+		t.Error("Expected project-b in limits view")
+	}
+	if !strings.Contains(view, "[no limit]") {
+		t.Error("Expected [no limit] for project-b")
+	}
+	if !strings.Contains(view, "(3 running)") {
+		t.Error("Expected (3 running) for project-b")
+	}
+}
+
+func TestSettingsModal_LimitsTab_NoRunningCounts(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:   make(map[string]bool),
+		FeatureCollapsed: make(map[string]bool),
+		GroupVisible:     getDefaultGroupVisible(),
+		ProjectLimits: map[string]int{
+			"my-project": 0,
+		},
+		GlobalMaxParallel: 4,
+	}
+
+	// Create modal without running counts (backward compat)
+	modal := NewSettingsModal(settings)
+	modal.currentTab = TabLimits
+	view := modal.View()
+
+	// Should show (0 running) when no running data provided
+	if !strings.Contains(view, "(0 running)") {
+		t.Error("Expected (0 running) when no running counts provided")
+	}
+	if !strings.Contains(view, "[no limit]") {
+		t.Error("Expected [no limit] for unlimited project")
+	}
+}
+
+func TestSettingsModal_FormatLimit(t *testing.T) {
+	modal := &SettingsModal{}
+
+	tests := []struct {
+		limit    int
+		expected string
+	}{
+		{0, "[no limit]"},
+		{1, "[1]"},
+		{5, "[5]"},
+		{10, "[10]"},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("limit_%d", tt.limit), func(t *testing.T) {
+			result := modal.formatLimit(tt.limit)
+			if result != tt.expected {
+				t.Errorf("formatLimit(%d) = %q, want %q", tt.limit, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSettingsModal_WithTaskCountsOption(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	taskCounts := map[string]int{"Draft": 5, "Pending": 3}
+	runningCounts := map[string]int{"proj-a": 2}
+
+	modal := NewSettingsModal(settings, WithTaskCounts(taskCounts), WithRunningPerProject(runningCounts))
+
+	if modal.taskCounts == nil {
+		t.Fatal("Expected taskCounts to be set")
+	}
+	if modal.taskCounts["Draft"] != 5 {
+		t.Errorf("Expected Draft count 5, got %d", modal.taskCounts["Draft"])
+	}
+	if modal.runningPerProject == nil {
+		t.Fatal("Expected runningPerProject to be set")
+	}
+	if modal.runningPerProject["proj-a"] != 2 {
+		t.Errorf("Expected proj-a running count 2, got %d", modal.runningPerProject["proj-a"])
+	}
+}
+
+func TestSettingsModal_BackwardCompatMapArg(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:    make(map[string]bool),
+		FeatureCollapsed:  make(map[string]bool),
+		GroupVisible:      getDefaultGroupVisible(),
+		ProjectLimits:     map[string]int{},
+		GlobalMaxParallel: 4,
+	}
+
+	// Old-style call with plain map (backward compat)
+	taskCounts := map[string]int{"Draft": 2}
+	modal := NewSettingsModal(settings, taskCounts)
+
+	if modal.taskCounts == nil {
+		t.Fatal("Expected taskCounts to be set via backward-compat path")
+	}
+	if modal.taskCounts["Draft"] != 2 {
+		t.Errorf("Expected Draft count 2, got %d", modal.taskCounts["Draft"])
+	}
+}

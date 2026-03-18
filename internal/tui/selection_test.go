@@ -207,6 +207,52 @@ func TestIsOnGroupHeader(t *testing.T) {
 	}
 }
 
+// TestIsOnGroupHeader_NestedStatusFeatureView tests that IsOnGroupHeader returns
+// true when on status headers and feature headers in nested status+feature mode.
+func TestIsOnGroupHeader_NestedStatusFeatureView(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(false) // nested status+feature view
+	tt.SetTasks(tasks)
+
+	// Manually configure statusGroups
+	tt.statusGroups = []StatusGroup{
+		{
+			Name: "Ready",
+			Features: []FeatureGroup{
+				{ID: "feat-a", Name: "Feature A", Tasks: tasks},
+			},
+			Count: 1,
+		},
+	}
+
+	// On status header
+	tt.selectedStatusIdx = 0
+	tt.isOnStatusHeader = true
+	tt.selectedTaskIdx = -1
+	if !tt.IsOnGroupHeader() {
+		t.Error("Expected IsOnGroupHeader=true when on status header in nested mode")
+	}
+
+	// On feature header within status group
+	tt.isOnStatusHeader = false
+	tt.selectedFeatureIdx = 0
+	tt.selectedTaskIdx = -1
+	if !tt.IsOnGroupHeader() {
+		t.Error("Expected IsOnGroupHeader=true when on feature header in nested mode")
+	}
+
+	// On a task within a feature
+	tt.selectedTaskIdx = 0
+	if tt.IsOnGroupHeader() {
+		t.Error("Expected IsOnGroupHeader=false when on a task in nested mode")
+	}
+}
+
 // Helper function to check if a string contains a substring
 func containsString(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) && containsHelper(s, substr))

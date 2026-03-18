@@ -1601,6 +1601,19 @@ func (tt *TaskTree) IsOnGroupHeader() bool {
 		return hasFeatures || (hasUngrouped && tt.isOnUngrouped)
 	}
 
+	// Nested status+feature grouping mode
+	if len(tt.statusGroups) > 0 {
+		// On a status header (e.g., "Active", "Draft", "Completed")
+		if tt.isOnStatusHeader {
+			return true
+		}
+		// On a feature/ungrouped header within a status group
+		if tt.selectedTaskIdx == -1 {
+			return true
+		}
+		return false
+	}
+
 	// Classification group mode
 	if len(tt.groups) == 0 {
 		return false

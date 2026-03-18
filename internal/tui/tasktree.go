@@ -1609,15 +1609,59 @@ func (tt *TaskTree) IsOnGroupHeader() bool {
 }
 
 // SelectedTask returns the currently selected task, or nil if none.
+// It first checks SelectedID, then falls back to resolving from the
+// terminal section task index if SelectedID is empty but navigation
+// state indicates a task is selected within a terminal section.
 func (tt *TaskTree) SelectedTask() *types.ResolvedTask {
-	if tt.SelectedID == "" || len(tt.tasks) == 0 {
+	if len(tt.tasks) == 0 {
 		return nil
 	}
-	for i := range tt.tasks {
-		if tt.tasks[i].ID == tt.SelectedID {
-			return &tt.tasks[i]
+
+	// Primary: match by SelectedID
+	if tt.SelectedID != "" {
+		for i := range tt.tasks {
+			if tt.tasks[i].ID == tt.SelectedID {
+				return &tt.tasks[i]
+			}
 		}
 	}
+
+	// Fallback: resolve from terminal section task index.
+	// This handles cases where SelectedID is stale/empty but the user
+	// has navigated to a task within a terminal section (draftTaskIdx >= 0, etc.).
+	if tt.isOnAnyTerminalSection() {
+		for _, sec := range tt.terminalSections() {
+			if !sec.isOn() {
+				continue
+			}
+			taskIdx := sec.taskIdx()
+			if taskIdx < 0 {
+				// On section header or sub-feature header, not a task
+				return nil
+			}
+			// Resolve the task ID from the terminal section's tree order
+			sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+			subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), sec.featureIdx(), tt.featureCollapsed, sec.name)
+			if isCollapsed || len(subTasks) == 0 {
+				return nil
+			}
+			treeOrder := terminalSubFeatureTreeOrder(subTasks)
+			if taskIdx >= len(treeOrder) {
+				return nil
+			}
+			taskID := treeOrder[taskIdx]
+			// Find the task in the full task list
+			for i := range tt.tasks {
+				if tt.tasks[i].ID == taskID {
+					// Fix SelectedID to stay in sync
+					tt.SelectedID = taskID
+					return &tt.tasks[i]
+				}
+			}
+			return nil
+		}
+	}
+
 	return nil
 }
 

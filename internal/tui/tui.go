@@ -217,9 +217,12 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 // apiRunnerConfig returns a runner.RunnerConfig populated from the TUI config.
 // Use this instead of building RunnerConfig inline to ensure APIToken and
 // a reasonable timeout are always included.
+// The timeout is clamped to at least DefaultAPITimeout (15s) because the runner's
+// default (5s) is too short for TUI operations like fetching entry metadata from
+// a remote server (where DNS + TLS handshake can consume significant time).
 func (m Model) apiRunnerConfig() runner.RunnerConfig {
 	timeout := m.config.APITimeout
-	if timeout == 0 {
+	if timeout < DefaultAPITimeout {
 		timeout = DefaultAPITimeout
 	}
 	return runner.RunnerConfig{

@@ -758,16 +758,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				// Case 1: Multi-select active - batch mode
 				if len(m.selectedTasks) > 0 {
-					taskIDs := make([]string, 0, len(m.selectedTasks))
+					taskPaths := make([]string, 0, len(m.selectedTasks))
 					for id := range m.selectedTasks {
-						taskIDs = append(taskIDs, id)
+						// Find task to get its path
+						for _, t := range m.tasks {
+							if t.ID == id {
+								taskPaths = append(taskPaths, t.Path)
+								break
+							}
+						}
 					}
-					modal = NewMetadataModalBatch(taskIDs, apiClient)
+					modal = NewMetadataModalBatch(taskPaths, apiClient)
 				} else {
 					// Case 2: Single task selected
 					selectedTask := m.taskTree.SelectedTask()
 					if selectedTask != nil {
-						modal = NewMetadataModal(selectedTask.ID, apiClient)
+						modal = NewMetadataModal(selectedTask.Path, apiClient)
 					}
 				}
 

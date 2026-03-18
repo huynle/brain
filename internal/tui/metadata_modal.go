@@ -90,8 +90,9 @@ const (
 // ============================================================================
 
 // MetadataModal is a modal for editing task metadata fields.
+// taskPaths stores entry paths (e.g. "projects/brain-api/task/abc123.md") for API calls.
 type MetadataModal struct {
-	taskIDs         []string
+	taskPaths       []string
 	featureID       string // Feature ID for ModeFeature
 	projectID       string // Project ID for ModeFeature (needed for API calls)
 	mode            MetadataMode
@@ -126,17 +127,19 @@ type MetadataModal struct {
 }
 
 // NewMetadataModal creates a new metadata editing modal for a single task.
-func NewMetadataModal(taskID string, apiClient *runner.APIClient) *MetadataModal {
-	return newMetadataModal([]string{taskID}, ModeSingle, apiClient)
+// taskPath should be the entry path (e.g. "projects/brain-api/task/abc123.md").
+func NewMetadataModal(taskPath string, apiClient *runner.APIClient) *MetadataModal {
+	return newMetadataModal([]string{taskPath}, ModeSingle, apiClient)
 }
 
 // NewMetadataModalBatch creates a new metadata editing modal for multiple tasks.
-func NewMetadataModalBatch(taskIDs []string, apiClient *runner.APIClient) *MetadataModal {
-	return newMetadataModal(taskIDs, ModeBatch, apiClient)
+// taskPaths should be entry paths (e.g. "projects/brain-api/task/abc123.md").
+func NewMetadataModalBatch(taskPaths []string, apiClient *runner.APIClient) *MetadataModal {
+	return newMetadataModal(taskPaths, ModeBatch, apiClient)
 }
 
 // NewMetadataModalFeature creates a new metadata editing modal for a feature.
-// The taskIDs will be populated in Init() when fetching tasks by feature_id.
+// The taskPaths will be populated in Init() when fetching tasks by feature_id.
 // An optional MonitorClient can be passed to enable monitor template rows.
 func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIClient, monitorClients ...*MonitorClient) *MetadataModal {
 	var mc *MonitorClient
@@ -153,7 +156,7 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 		projectID:           projectID,
 		mode:                ModeFeature,
 		apiClient:           apiClient,
-		taskIDs:             []string{}, // Will be populated in Init
+		taskPaths:           []string{}, // Will be populated in Init
 		values:              make(map[MetadataField]string),
 		boolValues:          make(map[MetadataField]bool),
 		mixedFields:         make(map[MetadataField]bool),
@@ -172,9 +175,9 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 }
 
 // newMetadataModal is the internal constructor.
-func newMetadataModal(taskIDs []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
+func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
 	m := &MetadataModal{
-		taskIDs:             taskIDs,
+		taskPaths:           taskPaths,
 		mode:                mode,
 		apiClient:           apiClient,
 		interactionMode:     ModeNavigate,
@@ -518,15 +521,15 @@ func (m *MetadataModal) saveField() tea.Cmd {
 		ctx := context.Background()
 
 		var wg sync.WaitGroup
-		errors := make([]error, len(m.taskIDs))
+		errors := make([]error, len(m.taskPaths))
 
-		for i, taskID := range m.taskIDs {
+		for i, taskPath := range m.taskPaths {
 			wg.Add(1)
-			go func(idx int, id string) {
+			go func(idx int, path string) {
 				defer wg.Done()
-				_, err := m.apiClient.UpdateEntry(ctx, id, updates)
+				_, err := m.apiClient.UpdateEntry(ctx, path, updates)
 				errors[idx] = err
-			}(i, taskID)
+			}(i, taskPath)
 		}
 		wg.Wait()
 
@@ -559,37 +562,37 @@ func (m *MetadataModal) Init() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Step 1: If ModeFeature, fetch feature to get task IDs
-		taskIDs := m.taskIDs
+		// Step 1: If ModeFeature, fetch tasks by feature to get task paths
+		taskPaths := m.taskPaths
 		if m.mode == ModeFeature && m.featureID != "" {
-			feature, err := m.apiClient.GetFeature(ctx, m.projectID, m.featureID)
+			tasks, err := m.apiClient.GetTasksByFeature(ctx, m.projectID, m.featureID)
 			if err != nil {
-				return metadataFetchedMsg{entries: nil, err: fmt.Errorf("fetch feature: %w", err)}
+				return metadataFetchedMsg{entries: nil, err: fmt.Errorf("fetch tasks for feature: %w", err)}
 			}
 
-			// Extract task IDs from feature
-			taskIDs = make([]string, len(feature.Tasks))
-			for i, task := range feature.Tasks {
-				taskIDs[i] = task.ID
+			// Extract task paths from feature tasks
+			taskPaths = make([]string, len(tasks))
+			for i, task := range tasks {
+				taskPaths[i] = task.Path
 			}
 
 			// Store for later use
-			m.taskIDs = taskIDs
+			m.taskPaths = taskPaths
 		}
 
 		// Step 2: Fetch all task entries in parallel
-		entries := make([]*types.BrainEntry, len(taskIDs))
-		errors := make([]error, len(taskIDs))
+		entries := make([]*types.BrainEntry, len(taskPaths))
+		errors := make([]error, len(taskPaths))
 
 		var wg sync.WaitGroup
-		for i, taskID := range taskIDs {
+		for i, taskPath := range taskPaths {
 			wg.Add(1)
-			go func(idx int, id string) {
+			go func(idx int, path string) {
 				defer wg.Done()
-				entry, err := m.apiClient.GetEntry(ctx, id)
+				entry, err := m.apiClient.GetEntry(ctx, path)
 				entries[idx] = entry
 				errors[idx] = err
-			}(i, taskID)
+			}(i, taskPath)
 		}
 		wg.Wait()
 
@@ -759,7 +762,7 @@ func (m *MetadataModal) View() string {
 		successStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
 		var message string
 		if m.mode == ModeFeature {
-			message = fmt.Sprintf("✓ Updated %d tasks in feature %s", len(m.taskIDs), m.featureID)
+			message = fmt.Sprintf("✓ Updated %d tasks in feature %s", len(m.taskPaths), m.featureID)
 		} else {
 			message = fmt.Sprintf("✓ Saved %s", getFieldLabel(m.lastSavedField))
 		}
@@ -1064,9 +1067,9 @@ func (m *MetadataModal) Title() string {
 	case ModeSingle:
 		return "Update Metadata"
 	case ModeBatch:
-		return fmt.Sprintf("Update Metadata - %d tasks selected", len(m.taskIDs))
+		return fmt.Sprintf("Update Metadata - %d tasks selected", len(m.taskPaths))
 	case ModeFeature:
-		return fmt.Sprintf("Update Feature Metadata - %s (%d tasks)", m.featureID, len(m.taskIDs))
+		return fmt.Sprintf("Update Feature Metadata - %s (%d tasks)", m.featureID, len(m.taskPaths))
 	default:
 		return "Update Metadata"
 	}

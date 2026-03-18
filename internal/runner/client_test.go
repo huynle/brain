@@ -489,16 +489,15 @@ func TestAPIClient_GetEntry(t *testing.T) {
 			t.Errorf("unexpected method: %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Brain API returns entries as flat top-level JSON objects (not wrapped)
 		response := map[string]interface{}{
-			"entry": map[string]interface{}{
-				"id":       "abc123def",
-				"path":     "projects/brain-api/task/abc123def.md",
-				"title":    "Test Task",
-				"type":     "task",
-				"status":   "pending",
-				"priority": "high",
-				"content":  "# Test Task\n\nTask content",
-			},
+			"id":       "abc123def",
+			"path":     "projects/brain-api/task/abc123def.md",
+			"title":    "Test Task",
+			"type":     "task",
+			"status":   "pending",
+			"priority": "high",
+			"content":  "# Test Task\n\nTask content",
 		}
 		json.NewEncoder(w).Encode(response)
 	}))
@@ -566,16 +565,15 @@ func TestAPIClient_UpdateEntry(t *testing.T) {
 		}
 		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set("Content-Type", "application/json")
+		// Brain API returns updated entries as flat top-level JSON objects (not wrapped)
 		response := map[string]interface{}{
-			"entry": map[string]interface{}{
-				"id":       "abc123def",
-				"path":     "projects/brain-api/task/abc123def.md",
-				"title":    "Updated Task",
-				"type":     "task",
-				"status":   "completed",
-				"priority": "high",
-				"agent":    "dev",
-			},
+			"id":       "abc123def",
+			"path":     "projects/brain-api/task/abc123def.md",
+			"title":    "Updated Task",
+			"type":     "task",
+			"status":   "completed",
+			"priority": "high",
+			"agent":    "dev",
 		}
 		json.NewEncoder(w).Encode(response)
 	}))

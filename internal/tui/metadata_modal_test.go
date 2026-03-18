@@ -28,12 +28,12 @@ func TestNewMetadataModal(t *testing.T) {
 		t.Fatal("NewMetadataModal returned nil")
 	}
 
-	// Check that taskIDs is set with single task
-	if len(modal.taskIDs) != 1 {
-		t.Errorf("taskIDs length = %d, want 1", len(modal.taskIDs))
+	// Check that taskPaths is set with single task
+	if len(modal.taskPaths) != 1 {
+		t.Errorf("taskPaths length = %d, want 1", len(modal.taskPaths))
 	}
-	if modal.taskIDs[0] != "task123" {
-		t.Errorf("taskIDs[0] = %q, want %q", modal.taskIDs[0], "task123")
+	if modal.taskPaths[0] != "task123" {
+		t.Errorf("taskPaths[0] = %q, want %q", modal.taskPaths[0], "task123")
 	}
 
 	// Check mode is single
@@ -961,9 +961,7 @@ func TestAllEqual(t *testing.T) {
 func createTestServer(t *testing.T, entryData map[string]interface{}) *httptest.Server {
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		response := map[string]interface{}{
-			"entry": entryData,
-		}
-		json.NewEncoder(w).Encode(response)
+		// Brain API returns entries as flat top-level JSON objects (not wrapped)
+		json.NewEncoder(w).Encode(entryData)
 	}))
 }

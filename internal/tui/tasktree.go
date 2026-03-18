@@ -1619,7 +1619,24 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 		return ""
 	}
 
-	// Check bounds
+	// Check terminal sections (Draft, Cancelled, Superseded, Archived, Completed)
+	// Each terminal section has its own feature index and feature IDs list.
+	if tt.isOnAnyTerminalSection() {
+		for _, sec := range tt.terminalSections() {
+			if sec.isOn() {
+				idx := sec.featureIdx()
+				ids := sec.featureIDs()
+				// idx == -1 means on the section header itself, not a sub-feature
+				if idx < 0 || idx >= len(ids) {
+					return ""
+				}
+				return ids[idx]
+			}
+		}
+		return ""
+	}
+
+	// Active/pending features: check bounds against featureGroups
 	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
 		return ""
 	}

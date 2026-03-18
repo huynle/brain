@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/runner"
@@ -44,9 +45,9 @@ func TestNewMetadataModalFeature(t *testing.T) {
 		t.Error("apiClient is nil")
 	}
 
-	// Check that taskIDs starts empty (will be populated in Init)
-	if len(modal.taskIDs) != 0 {
-		t.Errorf("taskIDs length = %d, want 0 (populated in Init)", len(modal.taskIDs))
+	// Check that taskPaths starts empty (will be populated in Init)
+	if len(modal.taskPaths) != 0 {
+		t.Errorf("taskPaths length = %d, want 0 (populated in Init)", len(modal.taskPaths))
 	}
 
 	// Check initial interaction mode
@@ -71,8 +72,8 @@ func TestMetadataModalFeature_Title(t *testing.T) {
 	featureID := "feat-auth-123"
 	modal := NewMetadataModalFeature(featureID, "brain-api", apiClient)
 
-	// Simulate Init populating taskIDs
-	modal.taskIDs = []string{"task1", "task2", "task3"}
+	// Simulate Init populating taskPaths
+	modal.taskPaths = []string{"task1", "task2", "task3"}
 
 	expectedTitle := "Update Feature Metadata - feat-auth-123 (3 tasks)"
 	actualTitle := modal.Title()
@@ -99,39 +100,33 @@ func TestMetadataModalFeature_Title_NoTasks(t *testing.T) {
 	}
 }
 
-// TestMetadataModalFeature_Init_FetchesFeatureTasks tests that Init fetches feature and populates taskIDs.
+// TestMetadataModalFeature_Init_FetchesFeatureTasks tests that Init fetches feature tasks and populates taskPaths.
 func TestMetadataModalFeature_Init_FetchesFeatureTasks(t *testing.T) {
-	// Create test server that returns feature data
+	// Create test server that returns feature task data
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+		// Tasks by feature endpoint (GET /tasks/:project?feature_id=:featureId)
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "dark-mode",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1", "status": "active"},
-						{"id": "task2", "title": "Task 2", "status": "pending"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "pending"},
 				},
 			})
 			return
 		}
 
-		// Entry endpoints for task1 and task2
-		if r.URL.Path == "/api/v1/entries/task1" || r.URL.Path == "/api/v1/entries/task2" {
+		// Entry endpoints for task paths (r.URL.Path decodes percent-encoding)
+		if strings.HasPrefix(r.URL.Path, "/api/v1/entries/") && (strings.Contains(r.URL.Path, "task1") || strings.Contains(r.URL.Path, "task2")) {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"priority":          "high",
-					"featureId":         "dark-mode",
-					"featurePriority":   "high",
-					"featureDependsOn":  []string{"feature1"},
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":               "active",
+				"priority":             "high",
+				"feature_id":           "dark-mode",
+				"feature_priority":     "high",
+				"feature_depends_on":   []string{"feature1"},
+				"complete_on_idle":     false,
+				"open_pr_before_merge": false,
 			})
 			return
 		}
@@ -199,15 +194,11 @@ func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 
-			// Feature endpoint succeeds
-			if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+			// Tasks by feature endpoint succeeds
+			if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"feature": map[string]interface{}{
-						"featureId": "dark-mode",
-						"tasks": []map[string]interface{}{
-							{"id": "task1", "title": "Task 1"},
-						},
-						"ready": true,
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
 					},
 				})
 				return

@@ -228,6 +228,7 @@ func (c *APIClient) AppendToTask(ctx context.Context, taskPath, content string) 
 }
 
 // GetEntry fetches a brain entry by path.
+// The brain API returns the entry as a flat top-level JSON object (not wrapped).
 func (c *APIClient) GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error) {
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
@@ -242,17 +243,16 @@ func (c *APIClient) GetEntry(ctx context.Context, entryPath string) (*types.Brai
 		return nil, c.readError(resp)
 	}
 
-	var data struct {
-		Entry types.BrainEntry `json:"entry"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	var entry types.BrainEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
 		return nil, fmt.Errorf("decode entry: %w", err)
 	}
 
-	return &data.Entry, nil
+	return &entry, nil
 }
 
 // UpdateEntry updates specific fields of a brain entry.
+// The brain API returns the updated entry as a flat top-level JSON object (not wrapped).
 func (c *APIClient) UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error) {
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
@@ -267,14 +267,12 @@ func (c *APIClient) UpdateEntry(ctx context.Context, entryPath string, updates m
 		return nil, c.readError(resp)
 	}
 
-	var data struct {
-		Entry types.BrainEntry `json:"entry"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	var entry types.BrainEntry
+	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
 		return nil, fmt.Errorf("decode entry: %w", err)
 	}
 
-	return &data.Entry, nil
+	return &entry, nil
 }
 
 // ClaimTask attempts to claim a task for a runner.
@@ -362,6 +360,30 @@ func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string)
 	}
 
 	return data.Feature, nil
+}
+
+// GetTasksByFeature fetches all tasks belonging to a feature within a project.
+// Uses the task list endpoint with feature_id query parameter.
+func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s?feature_id=%s", projectID, featureID)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, apiPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get tasks by feature: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Tasks []types.ResolvedTask `json:"tasks"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode tasks by feature: %w", err)
+	}
+	return data.Tasks, nil
 }
 
 // =============================================================================

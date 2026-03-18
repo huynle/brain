@@ -19,33 +19,27 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+		// Feature tasks endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "dark-mode",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1", "status": "active"},
-						{"id": "task2", "title": "Task 2", "status": "active"},
-						{"id": "task3", "title": "Task 3", "status": "pending"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "active"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3", "status": "pending"},
 				},
 			})
 			return
 		}
 
 		// Entry GET endpoints
-		if r.Method == http.MethodGet && (r.URL.Path == "/api/v1/entries/task1" || r.URL.Path == "/api/v1/entries/task2" || r.URL.Path == "/api/v1/entries/task3") {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"priority":          "medium",
-					"featureId":         "dark-mode",
-					"featurePriority":   "high",
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":            "active",
+				"priority":          "medium",
+				"featureId":         "dark-mode",
+				"featurePriority":   "high",
+				"completeOnIdle":    false,
+				"openPRBeforeMerge": false,
 			})
 			return
 		}
@@ -54,19 +48,17 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 		if r.Method == http.MethodPatch {
 			updateCount++
 			// Extract task ID from path
-			if r.URL.Path == "/api/v1/entries/task1" {
+			if strings.Contains(r.URL.Path, "task1") {
 				updatedTasks["task1"] = true
-			} else if r.URL.Path == "/api/v1/entries/task2" {
+			} else if strings.Contains(r.URL.Path, "task2") {
 				updatedTasks["task2"] = true
-			} else if r.URL.Path == "/api/v1/entries/task3" {
+			} else if strings.Contains(r.URL.Path, "task3") {
 				updatedTasks["task3"] = true
 			}
 
 			// Return success
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status": "completed",
-				},
+				"status": "completed",
 			})
 			return
 		}
@@ -132,33 +124,27 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/perf-test" {
+		// Feature tasks endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "perf-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "perf-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1"},
-						{"id": "task2", "title": "Task 2"},
-						{"id": "task3", "title": "Task 3"},
-						{"id": "task4", "title": "Task 4"},
-						{"id": "task5", "title": "Task 5"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+					{"id": "task4", "path": "projects/brain-api/task/task4.md", "title": "Task 4"},
+					{"id": "task5", "path": "projects/brain-api/task/task5.md", "title": "Task 5"},
 				},
 			})
 			return
 		}
 
 		// Entry GET endpoints
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"priority":          "medium",
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":            "active",
+				"priority":          "medium",
+				"completeOnIdle":    false,
+				"openPRBeforeMerge": false,
 			})
 			return
 		}
@@ -170,9 +156,7 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 			completionTimes = append(completionTimes, time.Now())
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status": "completed",
-				},
+				"status": "completed",
 			})
 			return
 		}
@@ -236,45 +220,37 @@ func TestMetadataModalFeature_SaveField_ErrorHandling(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/error-test" {
+		// Feature tasks endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "error-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "error-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1"},
-						{"id": "task2", "title": "Task 2"},
-						{"id": "task3", "title": "Task 3"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
 				},
 			})
 			return
 		}
 
 		// Entry GET endpoints
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":            "active",
+				"completeOnIdle":    false,
+				"openPRBeforeMerge": false,
 			})
 			return
 		}
 
 		// Entry PATCH endpoints - task2 fails
 		if r.Method == http.MethodPatch {
-			if r.URL.Path == "/api/v1/entries/task2" {
+			if strings.Contains(r.URL.Path, "task2") {
 				http.Error(w, "update failed", http.StatusInternalServerError)
 				return
 			}
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status": "completed",
-				},
+				"status": "completed",
 			})
 			return
 		}
@@ -321,30 +297,24 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/priority-test" {
+		// Feature tasks endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "priority-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "priority-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1"},
-						{"id": "task2", "title": "Task 2"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
 				},
 			})
 			return
 		}
 
 		// Entry GET endpoints
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"featurePriority":   "medium",
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":            "active",
+				"featurePriority":   "medium",
+				"completeOnIdle":    false,
+				"openPRBeforeMerge": false,
 			})
 			return
 		}
@@ -356,9 +326,7 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 			receivedUpdates[r.URL.Path] = updates
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"featurePriority": updates["featurePriority"],
-				},
+				"featurePriority": updates["featurePriority"],
 			})
 			return
 		}
@@ -397,21 +365,25 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 	}
 
 	// Verify both tasks received the feature_priority update
-	for _, path := range []string{"/api/v1/entries/task1", "/api/v1/entries/task2"} {
-		updates, ok := receivedUpdates[path]
-		if !ok {
-			t.Errorf("no update received for %s", path)
-			continue
+	// Paths are now URL-encoded (e.g. projects%2Fbrain-api%2Ftask%2Ftask1.md)
+	for _, taskID := range []string{"task1", "task2"} {
+		found := false
+		for path, updates := range receivedUpdates {
+			if strings.Contains(path, taskID) {
+				found = true
+				priority, ok := updates["feature_priority"]
+				if !ok {
+					t.Errorf("feature_priority not in update payload for %s", taskID)
+					continue
+				}
+				if priority != "high" {
+					t.Errorf("feature_priority = %v, want 'high' for %s", priority, taskID)
+				}
+				break
+			}
 		}
-
-		priority, ok := updates["feature_priority"]
-		if !ok {
-			t.Errorf("feature_priority not in update payload for %s", path)
-			continue
-		}
-
-		if priority != "high" {
-			t.Errorf("feature_priority = %v, want 'high' for %s", priority, path)
+		if !found {
+			t.Errorf("no update received for %s", taskID)
 		}
 	}
 }
@@ -421,30 +393,24 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api/features/message-test" {
+		// Feature tasks endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "message-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "message-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "title": "Task 1"},
-						{"id": "task2", "title": "Task 2"},
-						{"id": "task3", "title": "Task 3"},
-					},
-					"ready": true,
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
 				},
 			})
 			return
 		}
 
 		// Entry GET endpoints
-		if r.Method == http.MethodGet {
+		if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status":            "active",
-					"completeOnIdle":    false,
-					"openPRBeforeMerge": false,
-				},
+				"status":            "active",
+				"completeOnIdle":    false,
+				"openPRBeforeMerge": false,
 			})
 			return
 		}
@@ -452,9 +418,7 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 		// Entry PATCH endpoints
 		if r.Method == http.MethodPatch {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"status": "completed",
-				},
+				"status": "completed",
 			})
 			return
 		}

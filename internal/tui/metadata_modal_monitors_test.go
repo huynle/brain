@@ -390,9 +390,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Create(t *testing.T) {
 			createCalled = true
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"entry": map[string]interface{}{
-					"path": "projects/brain-api/task/scheduled123.md",
-				},
+				"path": "projects/brain-api/task/scheduled123.md",
 			})
 			return
 		}

@@ -1580,10 +1580,22 @@ func (tt *TaskTree) IsOnGroupHeader() bool {
 
 	if tt.useFeatureView {
 		// Feature view mode: on a header when selectedFeatureTaskIdx == -1
-		// and we're either on a feature header or the ungrouped header
+		// and we're either on a feature header, the ungrouped header,
+		// or a terminal section header (Draft/Cancelled/Superseded/Archived/Completed)
 		if tt.selectedFeatureTaskIdx != -1 {
 			return false
 		}
+
+		// Terminal section headers are collapsible group headers too
+		if tt.isOnAnyTerminalSection() {
+			// On a terminal section: treat as header UNLESS we're on a task within
+			// a terminal sub-feature (task indices >= 0)
+			if tt.draftTaskIdx >= 0 || tt.cancelledTaskIdx >= 0 || tt.supersededTaskIdx >= 0 || tt.archivedTaskIdx >= 0 || tt.completedTaskIdx >= 0 {
+				return false
+			}
+			return true
+		}
+
 		hasFeatures := len(tt.featureGroups.Features) > 0
 		hasUngrouped := tt.featureGroups.Ungrouped != nil
 		return hasFeatures || (hasUngrouped && tt.isOnUngrouped)
@@ -4434,24 +4446,39 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 // moveToTopFeatureGrouped jumps to the first navigable item in feature view.
 // This is the first feature header (or first task if the feature is expanded).
 func (tt *TaskTree) moveToTopFeatureGrouped() {
-	tt.clearDraftCompletedNav()
+	tt.clearTerminalSectionNav()
 
-	if len(tt.featureGroups.Features) == 0 {
-		// No features — try ungrouped
-		if tt.featureGroups.Ungrouped != nil {
+	// Find the first feature with active tasks (matching the filtered activeFeatureGroups in View).
+	// The renderer only shows features that have at least one active-status task, so we must
+	// land on a feature that will actually be rendered, otherwise the cursor disappears.
+	for i, feature := range tt.featureGroups.Features {
+		if len(featureActiveTasks(feature.Tasks)) > 0 {
+			tt.selectedFeatureIdx = i
+			tt.selectedFeatureTaskIdx = -1 // On header
+			tt.isOnUngrouped = false
+			tt.SelectedID = ""
+			return
+		}
+	}
+
+	// No active features — try ungrouped with active tasks
+	if tt.featureGroups.Ungrouped != nil {
+		activeTasks := featureActiveTasks(tt.featureGroups.Ungrouped.Tasks)
+		if len(activeTasks) > 0 {
 			tt.selectedFeatureIdx = -1
 			tt.selectedFeatureTaskIdx = -1
 			tt.isOnUngrouped = true
 			tt.SelectedID = ""
+			return
 		}
-		return
 	}
 
-	// Jump to the first feature header
-	tt.selectedFeatureIdx = 0
-	tt.selectedFeatureTaskIdx = -1 // On header
+	// No active tasks anywhere — land on the first terminal section header
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
 	tt.isOnUngrouped = false
 	tt.SelectedID = ""
+	tt.moveToFirstTerminalSection()
 }
 
 // moveToBottomFeatureGrouped jumps to the last navigable item in feature view.
@@ -4473,17 +4500,47 @@ func (tt *TaskTree) moveToBottomFeatureGrouped() {
 
 	tt.clearTerminalSectionNav()
 
-	// Try ungrouped section
+	// Try ungrouped section (only if it has active tasks — matching renderer)
 	if tt.featureGroups.Ungrouped != nil {
 		ungrouped := tt.featureGroups.Ungrouped
-		tt.isOnUngrouped = true
-		tt.selectedFeatureIdx = -1
+		activeTasks := featureActiveTasks(ungrouped.Tasks)
+		if len(activeTasks) > 0 {
+			tt.isOnUngrouped = true
+			tt.selectedFeatureIdx = -1
 
-		if ungrouped.Collapsed || len(ungrouped.Tasks) == 0 {
+			if ungrouped.Collapsed {
+				tt.selectedFeatureTaskIdx = -1
+				tt.SelectedID = ""
+			} else {
+				treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
+				if len(treeOrder) > 0 {
+					tt.selectedFeatureTaskIdx = len(treeOrder) - 1
+					tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
+				} else {
+					tt.selectedFeatureTaskIdx = -1
+					tt.SelectedID = ""
+				}
+			}
+			return
+		}
+	}
+
+	// No active ungrouped — go to last feature with active tasks (matching renderer)
+	for i := len(tt.featureGroups.Features) - 1; i >= 0; i-- {
+		feature := tt.featureGroups.Features[i]
+		activeTasks := featureActiveTasks(feature.Tasks)
+		if len(activeTasks) == 0 {
+			continue
+		}
+
+		tt.selectedFeatureIdx = i
+		tt.isOnUngrouped = false
+
+		if feature.Collapsed {
 			tt.selectedFeatureTaskIdx = -1
 			tt.SelectedID = ""
 		} else {
-			treeOrder := FlattenTreeOrder(ungrouped.Tasks)
+			treeOrder := featureActiveTreeOrder(feature.Tasks)
 			if len(treeOrder) > 0 {
 				tt.selectedFeatureTaskIdx = len(treeOrder) - 1
 				tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
@@ -4495,30 +4552,11 @@ func (tt *TaskTree) moveToBottomFeatureGrouped() {
 		return
 	}
 
-	// No ungrouped — go to last feature
-	if len(tt.featureGroups.Features) == 0 {
-		return
-	}
-
-	lastIdx := len(tt.featureGroups.Features) - 1
-	lastFeature := tt.featureGroups.Features[lastIdx]
-
-	tt.selectedFeatureIdx = lastIdx
+	// No active features at all — nothing to navigate to
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
 	tt.isOnUngrouped = false
-
-	if lastFeature.Collapsed || len(lastFeature.Tasks) == 0 {
-		tt.selectedFeatureTaskIdx = -1
-		tt.SelectedID = ""
-	} else {
-		treeOrder := FlattenTreeOrder(lastFeature.Tasks)
-		if len(treeOrder) > 0 {
-			tt.selectedFeatureTaskIdx = len(treeOrder) - 1
-			tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
-		} else {
-			tt.selectedFeatureTaskIdx = -1
-			tt.SelectedID = ""
-		}
-	}
+	tt.SelectedID = ""
 }
 
 // getCurrentFeatureID returns the current feature ID for hierarchical collapse keys.

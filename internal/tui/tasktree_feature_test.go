@@ -963,3 +963,155 @@ func TestTerminalSectionTaskSelection_AllSections_SSE(t *testing.T) {
 		})
 	}
 }
+
+// --- Tests for g/G with only terminal (draft/completed) tasks ---
+
+// TestMoveToTopFeatureGrouped_OnlyDraftTasks ensures g lands on the Draft section header
+// when all features only contain draft tasks (no active tasks rendered).
+func TestMoveToTopFeatureGrouped_OnlyDraftTasks(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "d2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Navigate somewhere
+	tt.isOnDraftSection = true
+	tt.draftFeatureIdx = 0
+
+	// Press g
+	tt.MoveToTop()
+
+	// Should land on Draft section header (first terminal section)
+	if !tt.isOnDraftSection {
+		t.Fatal("Expected isOnDraftSection=true when only draft tasks exist")
+	}
+	// Cursor should be visible (on section header)
+	if tt.selectedFeatureTaskIdx != -1 {
+		t.Errorf("Expected selectedFeatureTaskIdx=-1, got %d", tt.selectedFeatureTaskIdx)
+	}
+}
+
+// TestMoveToTopFeatureGrouped_MixedActiveAndDraft ensures g lands on the first active
+// feature header, not a draft-only feature.
+func TestMoveToTopFeatureGrouped_MixedActiveAndDraft(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Start on feat-b's task
+	tt.selectedFeatureIdx = 1
+	tt.selectedFeatureTaskIdx = 0
+	tt.SelectedID = "t1"
+
+	// Press g
+	tt.MoveToTop()
+
+	// Should land on feat-b header (first feature with active tasks), not feat-a (draft only)
+	if tt.selectedFeatureIdx != 1 {
+		t.Errorf("Expected selectedFeatureIdx=1 (feat-b with active tasks), got %d", tt.selectedFeatureIdx)
+	}
+	if tt.selectedFeatureTaskIdx != -1 {
+		t.Errorf("Expected on header (-1), got %d", tt.selectedFeatureTaskIdx)
+	}
+	if tt.SelectedID != "" {
+		t.Errorf("Expected SelectedID empty (on header), got %q", tt.SelectedID)
+	}
+}
+
+// TestMoveToTopFeatureGrouped_PreservesCollapsedState ensures g does NOT change
+// any section's collapsed/expanded state.
+func TestMoveToTopFeatureGrouped_PreservesCollapsedState(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Expand draft section explicitly
+	tt.draftCollapsed = false
+	origDraftCollapsed := tt.draftCollapsed
+	origCompletedCollapsed := tt.completedCollapsed
+
+	// Press g
+	tt.MoveToTop()
+
+	// Verify collapsed states are preserved
+	if tt.draftCollapsed != origDraftCollapsed {
+		t.Errorf("draftCollapsed changed: was %v, now %v", origDraftCollapsed, tt.draftCollapsed)
+	}
+	if tt.completedCollapsed != origCompletedCollapsed {
+		t.Errorf("completedCollapsed changed: was %v, now %v", origCompletedCollapsed, tt.completedCollapsed)
+	}
+}
+
+// TestMoveToTopFeatureGrouped_ThenNavigate ensures j/k work after pressing g.
+func TestMoveToTopFeatureGrouped_ThenNavigate(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Navigate to t2
+	tt.MoveDown() // t1 (first task auto-selected by SetTasks)
+	tt.MoveDown() // t2
+
+	// Press g (MoveToTop)
+	tt.MoveToTop()
+
+	// Should be on first feature header
+	if tt.selectedFeatureIdx != 0 || tt.selectedFeatureTaskIdx != -1 {
+		t.Fatalf("after g: expected on header (idx=0, taskIdx=-1), got (idx=%d, taskIdx=%d)",
+			tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+	}
+
+	// Press j — should enter first task
+	tt.MoveDown()
+	if tt.SelectedID != "t1" {
+		t.Fatalf("after g then j: expected t1, got %s", tt.SelectedID)
+	}
+
+	// Press j again — should move to t2
+	tt.MoveDown()
+	if tt.SelectedID != "t2" {
+		t.Fatalf("after g then j j: expected t2, got %s", tt.SelectedID)
+	}
+}
+
+// TestMoveToBottomFeatureGrouped_OnlyDraftTasks ensures G lands on Draft section.
+func TestMoveToBottomFeatureGrouped_OnlyDraftTasks(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	tt.MoveToBottom()
+
+	// Should land on Draft section (it's the only terminal section with tasks)
+	if !tt.isOnDraftSection {
+		t.Fatal("Expected isOnDraftSection=true when only draft tasks exist")
+	}
+}

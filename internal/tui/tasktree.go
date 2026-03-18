@@ -1657,6 +1657,12 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 	if tt.isOnAnyTerminalSection() {
 		for _, sec := range tt.terminalSections() {
 			if sec.isOn() {
+				// If on a task within the sub-feature (taskIdx >= 0), not on the
+				// sub-feature header itself — return "" so the caller falls through
+				// to single-task metadata (SelectedTask) instead of feature-level.
+				if sec.taskIdx() >= 0 {
+					return ""
+				}
 				idx := sec.featureIdx()
 				ids := sec.featureIDs()
 				// idx == -1 means on the section header itself, not a sub-feature

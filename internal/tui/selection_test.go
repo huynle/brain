@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -577,5 +578,320 @@ func TestSetTasks_FeatureView_UngroupedPreservation(t *testing.T) {
 	}
 	if !tt.isOnUngrouped {
 		t.Error("Expected isOnUngrouped=true after SSE update")
+	}
+}
+
+// TestToggleCollapse_TerminalSectionHeader tests that Space toggles collapse on
+// terminal section headers (Draft ▾/▶, Completed ▾/▶, etc.) in feature view mode.
+// This is the exact bug reported: pressing Space on a Draft/Completed section header
+// should toggle between expanded (▾) and collapsed (▶).
+func TestToggleCollapse_TerminalSectionHeader(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	// Create tasks with draft and completed statuses
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Active Task", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Title: "Draft Task 1", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "t3", Title: "Draft Task 2", Status: "draft", Priority: "low", FeatureID: "feat-b"},
+		{ID: "t4", Title: "Completed Task", Status: "completed", Priority: "medium", FeatureID: "feat-a"},
+	}
+	tt.SetTasks(tasks)
+
+	// Navigate to Draft section header
+	tt.moveToDraftSection()
+
+	// Verify we're on the Draft section header
+	if !tt.isOnDraftSection {
+		t.Fatal("Expected isOnDraftSection=true after moveToDraftSection")
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("Expected draftFeatureIdx=-1 (on section header), got %d", tt.draftFeatureIdx)
+	}
+
+	// Verify IsOnGroupHeader returns true
+	if !tt.IsOnGroupHeader() {
+		t.Fatal("Expected IsOnGroupHeader()=true when on Draft section header")
+	}
+
+	// Initially Draft is NOT collapsed (default)
+	if tt.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=false by default")
+	}
+
+	// Toggle collapse (this is what Space does via ToggleCollapse)
+	tt.ToggleCollapse()
+
+	// Verify Draft is now collapsed
+	if !tt.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=true after ToggleCollapse on Draft header")
+	}
+
+	// Toggle again - should expand
+	tt.ToggleCollapse()
+	if tt.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=false after second ToggleCollapse on Draft header")
+	}
+
+	// Test Completed section header toggle
+	tt.moveToCompletedSection()
+	if !tt.isOnCompletedSection {
+		t.Fatal("Expected isOnCompletedSection=true after moveToCompletedSection")
+	}
+	if !tt.IsOnGroupHeader() {
+		t.Fatal("Expected IsOnGroupHeader()=true when on Completed section header")
+	}
+
+	// Completed is collapsed by default
+	initialCompletedCollapsed := tt.completedCollapsed
+	tt.ToggleCollapse()
+	if tt.completedCollapsed == initialCompletedCollapsed {
+		t.Fatal("Expected completedCollapsed to change after ToggleCollapse on Completed header")
+	}
+}
+
+// TestToggleCollapse_TerminalSection_ViaNavigation tests the full navigation path:
+// start at first active task, navigate down past all features/ungrouped to the
+// Draft section header, then verify Space (IsOnGroupHeader + ToggleCollapse) works.
+// This reproduces the actual user interaction flow.
+func TestToggleCollapse_TerminalSection_ViaNavigation(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	// Only draft tasks (no active tasks) - forces selectFirstFeatureTask to
+	// land on Draft section header.
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Draft Task 1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Title: "Draft Task 2", Status: "draft", Priority: "medium", FeatureID: "feat-b"},
+	}
+	tt.SetTasks(tasks)
+
+	// After SetTasks with only draft tasks, selectFirstFeatureTask should land on
+	// Draft section header (no active features/ungrouped to select).
+	t.Logf("State after SetTasks: isOnDraftSection=%v draftFeatureIdx=%d selectedFeatureTaskIdx=%d isOnUngrouped=%v selectedFeatureIdx=%d SelectedID=%s",
+		tt.isOnDraftSection, tt.draftFeatureIdx, tt.selectedFeatureTaskIdx, tt.isOnUngrouped, tt.selectedFeatureIdx, tt.SelectedID)
+
+	if !tt.isOnDraftSection {
+		t.Fatal("Expected to land on Draft section header when there are only draft tasks")
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("Expected draftFeatureIdx=-1 (on section header), got %d", tt.draftFeatureIdx)
+	}
+
+	// Verify Space would work
+	isHeader := tt.IsOnGroupHeader()
+	t.Logf("IsOnGroupHeader=%v", isHeader)
+	if !isHeader {
+		t.Fatal("Expected IsOnGroupHeader()=true when on Draft section header via navigation")
+	}
+
+	// Toggle collapse
+	if tt.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=false initially")
+	}
+	tt.ToggleCollapse()
+	if !tt.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=true after ToggleCollapse")
+	}
+
+	// Now test navigating down to Draft section from active features
+	tt2 := NewTaskTree()
+	tt2.SetViewMode(true)
+	tt2.SetFeatureViewMode(true)
+
+	tasksWithActive := []types.ResolvedTask{
+		{ID: "a1", Title: "Active Task", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-x"},
+		{ID: "d1", Title: "Draft Task", Status: "draft", Priority: "medium", FeatureID: "feat-x"},
+	}
+	tt2.SetTasks(tasksWithActive)
+
+	t.Logf("Initial state: selectedFeatureIdx=%d selectedFeatureTaskIdx=%d isOnDraftSection=%v SelectedID=%s",
+		tt2.selectedFeatureIdx, tt2.selectedFeatureTaskIdx, tt2.isOnDraftSection, tt2.SelectedID)
+
+	// Should start on active task a1
+	if tt2.SelectedID != "a1" {
+		t.Fatalf("Expected initial SelectedID=a1, got %s", tt2.SelectedID)
+	}
+
+	// Navigate down repeatedly until we reach Draft section header
+	maxSteps := 20
+	reachedDraft := false
+	for i := 0; i < maxSteps; i++ {
+		tt2.MoveDown()
+		t.Logf("After MoveDown %d: isOnDraftSection=%v draftFeatureIdx=%d draftTaskIdx=%d selectedFeatureTaskIdx=%d SelectedID=%s isOnGroupHeader=%v",
+			i+1, tt2.isOnDraftSection, tt2.draftFeatureIdx, tt2.draftTaskIdx, tt2.selectedFeatureTaskIdx, tt2.SelectedID, tt2.IsOnGroupHeader())
+		if tt2.isOnDraftSection && tt2.draftFeatureIdx == -1 {
+			reachedDraft = true
+			break
+		}
+	}
+
+	if !reachedDraft {
+		t.Fatal("Failed to reach Draft section header via MoveDown navigation")
+	}
+
+	// Now verify Space would toggle collapse
+	if !tt2.IsOnGroupHeader() {
+		t.Fatal("Expected IsOnGroupHeader()=true when on Draft section header via MoveDown")
+	}
+	tt2.ToggleCollapse()
+	if !tt2.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=true after ToggleCollapse via navigation")
+	}
+}
+
+// TestToggleCollapse_TerminalSection_RendersCorrectly tests that toggling collapse
+// on a terminal section header actually changes the visual output (▾ vs ▶ and
+// hiding/showing child items).
+func TestToggleCollapse_TerminalSection_RendersCorrectly(t *testing.T) {
+	tt := NewTaskTree()
+	tt.SetViewMode(true)
+	tt.SetFeatureViewMode(true)
+
+	tasks := []types.ResolvedTask{
+		{ID: "a1", Title: "Active Task", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-x"},
+		{ID: "d1", Title: "Draft Task Alpha", Status: "draft", Priority: "medium", FeatureID: "feat-x"},
+		{ID: "d2", Title: "Draft Task Beta", Status: "draft", Priority: "low", FeatureID: "feat-y"},
+	}
+	tt.SetTasks(tasks)
+
+	// Render expanded (default: draftCollapsed=false)
+	expandedView := tt.ViewWithProject(80, 40, "")
+	t.Logf("Expanded view:\n%s", expandedView)
+
+	// Verify expanded view shows "▾ Draft" and contains draft task titles
+	if !strings.Contains(expandedView, "▾ Draft") {
+		t.Error("Expected expanded view to contain '▾ Draft'")
+	}
+	if !strings.Contains(expandedView, "Draft Task Alpha") {
+		t.Error("Expected expanded view to contain 'Draft Task Alpha'")
+	}
+
+	// Navigate to Draft section header and toggle collapse
+	tt.moveToDraftSection()
+	tt.ToggleCollapse()
+
+	// Render collapsed
+	collapsedView := tt.ViewWithProject(80, 40, "")
+	t.Logf("Collapsed view:\n%s", collapsedView)
+
+	// Verify collapsed view shows "▶ Draft" and hides draft task titles
+	if !strings.Contains(collapsedView, "▶ Draft") {
+		t.Error("Expected collapsed view to contain '▶ Draft'")
+	}
+	if strings.Contains(collapsedView, "Draft Task Alpha") {
+		t.Error("Expected collapsed view to NOT contain 'Draft Task Alpha'")
+	}
+	if strings.Contains(collapsedView, "Draft Task Beta") {
+		t.Error("Expected collapsed view to NOT contain 'Draft Task Beta'")
+	}
+}
+
+// TestSpaceKey_TerminalSectionHeader_FullModel tests the complete user flow:
+// the full TUI Model handles a Space keypress when cursor is on a Draft section header.
+// This tests the same code path as the actual user pressing Space in the TUI.
+func TestSpaceKey_TerminalSectionHeader_FullModel(t *testing.T) {
+	m := NewModel(Config{
+		Project: "test-project",
+		APIURL:  "http://localhost:3333",
+	})
+	m.width = 120
+	m.height = 40
+
+	// Only draft tasks - forces cursor to Draft section header
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Title: "Draft Task 1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Title: "Draft Task 2", Status: "draft", Priority: "medium", FeatureID: "feat-b"},
+	}
+	m.tasks = tasks
+	m.taskTree.SetTasks(tasks)
+	m.activePanel = PanelTasks
+
+	t.Logf("Before Space: isOnDraftSection=%v draftFeatureIdx=%d draftCollapsed=%v IsOnGroupHeader=%v selectedFeatureTaskIdx=%d",
+		m.taskTree.isOnDraftSection, m.taskTree.draftFeatureIdx, m.taskTree.draftCollapsed, m.taskTree.IsOnGroupHeader(), m.taskTree.selectedFeatureTaskIdx)
+
+	// Verify pre-conditions
+	if !m.taskTree.isOnDraftSection {
+		t.Fatal("Expected isOnDraftSection=true")
+	}
+	if !m.taskTree.IsOnGroupHeader() {
+		t.Fatal("Expected IsOnGroupHeader=true on Draft section header")
+	}
+	if m.taskTree.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=false initially")
+	}
+
+	// Simulate Space keypress - bubbletea sends Space as tea.KeySpace (NOT tea.KeyRunes)
+	spaceMsg := tea.KeyMsg{
+		Type:  tea.KeySpace,
+		Runes: []rune{' '},
+	}
+	newModel, _ := m.Update(spaceMsg)
+	m = newModel.(Model)
+
+	t.Logf("After Space: draftCollapsed=%v isOnDraftSection=%v draftFeatureIdx=%d",
+		m.taskTree.draftCollapsed, m.taskTree.isOnDraftSection, m.taskTree.draftFeatureIdx)
+
+	// Verify Draft is now collapsed
+	if !m.taskTree.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=true after Space keypress on Draft section header")
+	}
+
+	// Press Space again to expand
+	newModel, _ = m.Update(spaceMsg)
+	m = newModel.(Model)
+	if m.taskTree.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=false after second Space keypress")
+	}
+}
+
+// TestSpaceKey_TerminalSection_WithActiveAndDraft tests Space on Draft header
+// when there are both active and draft tasks (the more common real-world scenario).
+func TestSpaceKey_TerminalSection_WithActiveAndDraft(t *testing.T) {
+	m := NewModel(Config{
+		Project: "test-project",
+		APIURL:  "http://localhost:3333",
+	})
+	m.width = 120
+	m.height = 40
+
+	tasks := []types.ResolvedTask{
+		{ID: "a1", Title: "Active Task", Status: "pending", Classification: "ready", Priority: "high", FeatureID: "feat-x"},
+		{ID: "d1", Title: "Draft Task", Status: "draft", Priority: "medium", FeatureID: "feat-x"},
+		{ID: "c1", Title: "Completed Task", Status: "completed", Priority: "low", FeatureID: "feat-x"},
+	}
+	m.tasks = tasks
+	m.taskTree.SetTasks(tasks)
+	m.activePanel = PanelTasks
+
+	// Navigate to Draft section header via MoveDown
+	maxSteps := 20
+	for i := 0; i < maxSteps; i++ {
+		m.taskTree.MoveDown()
+		if m.taskTree.isOnDraftSection && m.taskTree.draftFeatureIdx == -1 {
+			break
+		}
+	}
+
+	if !m.taskTree.isOnDraftSection || m.taskTree.draftFeatureIdx != -1 {
+		t.Fatal("Failed to navigate to Draft section header")
+	}
+
+	t.Logf("On Draft header: IsOnGroupHeader=%v draftCollapsed=%v selectedFeatureTaskIdx=%d",
+		m.taskTree.IsOnGroupHeader(), m.taskTree.draftCollapsed, m.taskTree.selectedFeatureTaskIdx)
+
+	if !m.taskTree.IsOnGroupHeader() {
+		t.Fatal("Expected IsOnGroupHeader=true on Draft section header")
+	}
+
+	// Simulate Space - bubbletea sends Space as tea.KeySpace
+	spaceMsg := tea.KeyMsg{Type: tea.KeySpace, Runes: []rune{' '}}
+	newModel, _ := m.Update(spaceMsg)
+	m = newModel.(Model)
+
+	if !m.taskTree.draftCollapsed {
+		t.Fatal("Expected draftCollapsed=true after Space on Draft header (navigated scenario)")
 	}
 }

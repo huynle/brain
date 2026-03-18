@@ -707,6 +707,19 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case tea.KeySpace:
+		// Space toggles group collapse when on group header, selection when on task.
+		// NOTE: Bubbletea sends Space as KeySpace (not KeyRunes with ' '), so this
+		// must be handled separately from the KeyRunes switch below.
+		if m.activePanel == PanelTasks {
+			if m.taskTree.IsOnGroupHeader() {
+				m.taskTree.ToggleCollapse()
+			} else {
+				m.toggleTaskSelection()
+			}
+		}
+		return m, nil
+
 	case tea.KeyRunes:
 		// Multi-project tab navigation
 		if m.config.IsMultiProject() {
@@ -1089,13 +1102,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case " ":
-			// Space toggles group collapse when on group header, selection when on task
+			// NOTE: In bubbletea v0.22+, Space is sent as tea.KeySpace (handled above),
+			// NOT as tea.KeyRunes with ' '. This case is kept for backwards compatibility
+			// with older bubbletea versions or custom key handling.
 			if m.activePanel == PanelTasks {
 				if m.taskTree.IsOnGroupHeader() {
-					// On group header: toggle collapse
 					m.taskTree.ToggleCollapse()
 				} else {
-					// On task: toggle selection
 					m.toggleTaskSelection()
 				}
 			}

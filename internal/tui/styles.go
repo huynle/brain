@@ -84,6 +84,24 @@ var DraftHeaderStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("#aaaaaa")). // Gray (matches TypeScript)
 	Padding(0, 1)
 
+// CancelledHeaderStyle is used for Cancelled status group headers (red color).
+var CancelledHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#ff6666")). // Red (matches TypeScript)
+	Padding(0, 1)
+
+// SupersededHeaderStyle is used for Superseded status group headers (yellow color).
+var SupersededHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#ffcc00")). // Yellow (matches TypeScript)
+	Padding(0, 1)
+
+// ArchivedHeaderStyle is used for Archived status group headers (gray color).
+var ArchivedHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#aaaaaa")). // Gray (matches TypeScript)
+	Padding(0, 1)
+
 // CompletedHeaderStyle is used for Completed status group headers (green color).
 var CompletedHeaderStyle = lipgloss.NewStyle().
 	Bold(true).

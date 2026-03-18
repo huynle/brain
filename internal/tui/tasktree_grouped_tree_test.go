@@ -429,13 +429,18 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 
 	draftTasks := []types.ResolvedTask{allTasks[0]}
 	completedTasks := []types.ResolvedTask{allTasks[3]}
+	noTasks := []terminalSectionLineInfo{
+		{tasks: draftTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
+	}
 
 	// Test 1: Selecting beta feature header (the first active feature, line 0)
 	lineIdx := findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
-		"beta", -1, false, false, false,
-		-1, -1, false, false,
-		draftTasks, completedTasks, nil, nil,
+		"beta", -1, false, false, noTasks,
 	)
 	if lineIdx != 0 {
 		t.Errorf("Expected beta header at line 0, got %d", lineIdx)
@@ -444,9 +449,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 2: Selecting first task in beta (b1, line 1 = after header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
-		"beta", 0, false, false, false,
-		-1, -1, false, false,
-		draftTasks, completedTasks, nil, nil,
+		"beta", 0, false, false, noTasks,
 	)
 	if lineIdx != 1 {
 		t.Errorf("Expected first beta task at line 1, got %d", lineIdx)
@@ -455,9 +458,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 3: Selecting delta feature header (line 3 = beta header + 2 beta tasks + delta header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
-		"delta", -1, false, false, false,
-		-1, -1, false, false,
-		draftTasks, completedTasks, nil, nil,
+		"delta", -1, false, false, noTasks,
 	)
 	if lineIdx != 3 {
 		t.Errorf("Expected delta header at line 3, got %d", lineIdx)
@@ -466,9 +467,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 4: Selecting delta's first task (line 4 = after delta header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
-		"delta", 0, false, false, false,
-		-1, -1, false, false,
-		draftTasks, completedTasks, nil, nil,
+		"delta", 0, false, false, noTasks,
 	)
 	if lineIdx != 4 {
 		t.Errorf("Expected first delta task at line 4, got %d", lineIdx)
@@ -497,11 +496,16 @@ func TestFindSelectedLineInFeatureView_DraftAndCompletedSections(t *testing.T) {
 	}
 
 	// Draft section header should be at line: 2 (feature header + 1 task) + 1 (blank line) = line 3
+	termSections := []terminalSectionLineInfo{
+		{tasks: draftTasks, isOn: true, collapsed: false, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
+		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
+	}
 	lineIdx := findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
-		"", -1, false, true, false, // isOnDraftSection=true
-		-1, -1, false, false,
-		draftTasks, completedTasks, nil, nil,
+		"", -1, false, true, termSections, // isOnAnyTerminal=true
 	)
 	if lineIdx != 3 {
 		t.Errorf("Expected draft section header at line 3, got %d", lineIdx)

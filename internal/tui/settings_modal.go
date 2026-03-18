@@ -187,11 +187,6 @@ func (m *SettingsModal) View() string {
 		s.WriteString("\n\n")
 	}
 
-	// Header with title
-	headerStyle := lipgloss.NewStyle().Bold(true)
-	s.WriteString(headerStyle.Render("Settings"))
-	s.WriteString("\n\n")
-
 	// Render tab header with indicators
 	s.WriteString(m.renderTabHeader())
 	s.WriteString("\n\n")
@@ -241,7 +236,10 @@ func (m *SettingsModal) renderLimitsTab() string {
 	s.WriteString("Project Limits:\n")
 	s.WriteString(m.renderProjectLimits())
 
-	// Help text at bottom
+	// Separator and help text at bottom
+	s.WriteString("\n")
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	s.WriteString(dimStyle.Render("  ────────────────────────────────────────────"))
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
 	s.WriteString(helpStyle.Render("  j/k: navigate  +/=: increase  -: decrease  0: unlimited  tab/1-4: switch tabs"))
@@ -296,6 +294,9 @@ func (m *SettingsModal) renderGroupsTab() string {
 	}
 
 	s.WriteString("\n")
+	dimSepStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	s.WriteString(dimSepStyle.Render("  ────────────────────────────────────────────"))
+	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
 	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  c: collapse  tab/1-4: switch tabs"))
 
@@ -343,7 +344,10 @@ func (m *SettingsModal) renderRuntimeTab() string {
 		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
 	}
 
-	// Mode-aware help text
+	// Separator and mode-aware help text
+	s.WriteString("\n")
+	dimSepStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	s.WriteString(dimSepStyle.Render("  ────────────────────────────────────────────"))
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
 	var helpText string
@@ -382,7 +386,10 @@ func (m *SettingsModal) renderMonitorsTab() string {
 	s.WriteString(descStyle.Render("  for every new feature_id detected at runtime."))
 	s.WriteString("\n")
 
-	// Help text
+	// Separator and help text
+	s.WriteString("\n")
+	dimSepStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	s.WriteString(dimSepStyle.Render("  ────────────────────────────────────────────"))
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
 	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle  tab/1-4: switch tabs"))

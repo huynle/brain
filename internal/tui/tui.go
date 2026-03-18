@@ -711,8 +711,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "S":
-			// Open settings modal
-			modal := NewSettingsModal(m.settings)
+			// Open settings modal with task counts per status group
+			taskCounts := m.computeTaskCountsByStatus()
+			modal := NewSettingsModal(m.settings, taskCounts)
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
@@ -2390,6 +2391,24 @@ func blockedInspectorPrompt(featureID, project string) string {
 			"Analyze dependencies, suggest fixes, or escalate if tasks remain blocked.",
 		featureID, project,
 	)
+}
+
+// computeTaskCountsByStatus computes task counts per display status group name.
+// Maps the current tasks' statuses to display group names used by StatusGroups.
+func (m Model) computeTaskCountsByStatus() map[string]int {
+	counts := make(map[string]int)
+	// Build reverse mapping: API status -> display group name
+	apiToDisplay := make(map[string]string)
+	for display, api := range statusGroupToAPIStatus {
+		apiToDisplay[api] = display
+	}
+
+	for _, task := range m.tasks {
+		if displayName, ok := apiToDisplay[task.Status]; ok {
+			counts[displayName]++
+		}
+	}
+	return counts
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

@@ -22,26 +22,43 @@ const (
 // StatusGroups represents the status groups available in the TUI
 var StatusGroups = []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
+// statusGroupToAPIStatus maps display group names to API status values.
+// Used for counting tasks per status group.
+var statusGroupToAPIStatus = map[string]string{
+	"Draft":       "draft",
+	"Pending":     "pending",
+	"Active":      "active",
+	"In Progress": "in_progress",
+	"Blocked":     "blocked",
+	"Cancelled":   "cancelled",
+	"Completed":   "completed",
+	"Validated":   "validated",
+	"Superseded":  "superseded",
+	"Archived":    "archived",
+}
+
 // SettingsModal allows editing project limits, global max parallel, group visibility, runtime settings, and monitors.
 // Navigation: j/k to move up/down, tab to switch sections
 // Adjustment: +/- to increase/decrease limits (Limits tab)
 // Toggle: Space to toggle group visibility - controls whether groups are shown in the task list (Groups tab)
+// Toggle: c to toggle collapse state - controls whether a visible group is expanded or collapsed (Groups tab)
 // Toggle: Space to toggle text wrap (Runtime tab)
 // Toggle: Space to toggle auto-create monitors (Monitors tab)
 // Direct navigation: 1 for Limits, 2 for Groups, 3 for Runtime, 4 for Monitors
 //
 // Note: Group visibility (GroupVisible) is separate from collapse state (GroupCollapsed).
 // Visibility controls filtering (whether the group appears at all).
-// Collapse controls UI folding (whether an visible group is expanded or collapsed).
+// Collapse controls UI folding (whether a visible group is expanded or collapsed).
 type SettingsModal struct {
 	settings      Settings
-	selectedIndex int         // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab) or 0 = autoMonitors (Monitors tab)
-	projects      []string    // sorted project list
-	currentTab    SettingsTab // active tab
-	editMode      bool        // true when editing the default model field
-	editBuffer    string      // buffer for editing the default model
-	saveError     error       // error from last save attempt
-	saveSuccess   bool        // true if last save was successful
+	selectedIndex int            // 0 = global, 1..N = projects (Limits tab) or 0..N = groups (Groups tab) or 0..2 = runtime settings (Runtime tab) or 0 = autoMonitors (Monitors tab)
+	projects      []string       // sorted project list
+	currentTab    SettingsTab    // active tab
+	editMode      bool           // true when editing the default model field
+	editBuffer    string         // buffer for editing the default model
+	saveError     error          // error from last save attempt
+	saveSuccess   bool           // true if last save was successful
+	taskCounts    map[string]int // status group name -> task count (e.g., "Draft" -> 3)
 }
 
 // settingsSavedMsg is sent when settings have been saved (successfully or with error)
@@ -49,9 +66,10 @@ type settingsSavedMsg struct {
 	err error
 }
 
-// NewSettingsModal creates a new settings modal with the given settings.
+// NewSettingsModal creates a new settings modal with the given settings and optional task counts.
 // Projects are sorted alphabetically for consistent display.
-func NewSettingsModal(settings Settings) *SettingsModal {
+// taskCounts maps status group display names (e.g., "Draft", "Pending") to their task counts.
+func NewSettingsModal(settings Settings, taskCounts ...map[string]int) *SettingsModal {
 	// Extract and sort project names
 	projects := make([]string, 0, len(settings.ProjectLimits))
 	for proj := range settings.ProjectLimits {
@@ -59,11 +77,17 @@ func NewSettingsModal(settings Settings) *SettingsModal {
 	}
 	sort.Strings(projects)
 
+	var counts map[string]int
+	if len(taskCounts) > 0 && taskCounts[0] != nil {
+		counts = taskCounts[0]
+	}
+
 	return &SettingsModal{
 		settings:      settings,
 		selectedIndex: 0,
 		projects:      projects,
 		currentTab:    TabLimits,
+		taskCounts:    counts,
 	}
 }
 
@@ -199,11 +223,14 @@ func (m *SettingsModal) renderLimitsTab() string {
 	return s.String()
 }
 
-// renderGroupsTab renders the Groups tab content
+// renderGroupsTab renders the Groups tab content with visibility checkboxes,
+// collapse indicators (▸/▾), and task counts per status group.
 func (m *SettingsModal) renderGroupsTab() string {
 	var s strings.Builder
 
 	s.WriteString("Status Groups (☑ = visible, ☐ = hidden):\n")
+
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
 	for i, group := range StatusGroups {
 		cursor := m.getCursor(i)
@@ -216,12 +243,35 @@ func (m *SettingsModal) renderGroupsTab() string {
 			checkbox = "☐"
 		}
 
-		s.WriteString(fmt.Sprintf("%s %s %s\n", cursor, checkbox, group))
+		// Collapse indicator: only shown when group is visible
+		collapseIcon := " "
+		if visible {
+			collapsed := m.settings.GroupCollapsed[group]
+			if collapsed {
+				collapseIcon = "▸"
+			} else {
+				collapseIcon = "▾"
+			}
+		}
+
+		// Task count
+		count := 0
+		if m.taskCounts != nil {
+			count = m.taskCounts[group]
+		}
+		countStr := fmt.Sprintf("(%d)", count)
+
+		// Dim the group name and count if not visible
+		if visible {
+			s.WriteString(fmt.Sprintf("%s %s %s %-14s %s\n", cursor, checkbox, collapseIcon, group, countStr))
+		} else {
+			s.WriteString(fmt.Sprintf("%s %s %s %s\n", cursor, checkbox, collapseIcon, dimStyle.Render(fmt.Sprintf("%-14s %s", group, countStr))))
+		}
 	}
 
 	s.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
-	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  tab/1-4: switch tabs"))
+	s.WriteString(helpStyle.Render("  j/k: navigate  space: toggle visibility  c: collapse  tab/1-4: switch tabs"))
 
 	return s.String()
 }
@@ -465,6 +515,12 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 		}
 		return false, nil
 
+	case "c":
+		if m.currentTab == TabGroups {
+			return true, m.toggleGroupCollapse()
+		}
+		return false, nil
+
 	case "+":
 		if m.currentTab == TabLimits {
 			m.increaseLimit()
@@ -548,6 +604,29 @@ func (m *SettingsModal) toggleGroupVisibility() tea.Cmd {
 	group := StatusGroups[m.selectedIndex]
 	// Toggle visibility: flip the GroupVisible value
 	m.settings.GroupVisible[group] = !m.settings.GroupVisible[group]
+
+	return m.saveSettingsCmd()
+}
+
+// toggleGroupCollapse toggles the collapse state of the selected group and returns a save command.
+// Only works when the selected group is visible.
+func (m *SettingsModal) toggleGroupCollapse() tea.Cmd {
+	if m.selectedIndex < 0 || m.selectedIndex >= len(StatusGroups) {
+		return nil
+	}
+
+	group := StatusGroups[m.selectedIndex]
+
+	// Only toggle collapse for visible groups
+	if !m.settings.GroupVisible[group] {
+		return nil
+	}
+
+	// Toggle collapse state
+	if m.settings.GroupCollapsed == nil {
+		m.settings.GroupCollapsed = make(map[string]bool)
+	}
+	m.settings.GroupCollapsed[group] = !m.settings.GroupCollapsed[group]
 
 	return m.saveSettingsCmd()
 }

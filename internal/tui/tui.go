@@ -565,6 +565,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Route unhandled messages to the active modal (e.g., metadataFetchedMsg,
+	// metadataUpdatedMsg, monitorTemplatesFetchedMsg, monitorToggleResultMsg).
+	// Key events are already routed via handleKeyMsg -> modalManager.HandleKey(),
+	// but async command results (tea.Cmd responses) need to be forwarded here.
+	if m.modalManager.IsOpen() {
+		var cmd tea.Cmd
+		m.modalManager, cmd = m.modalManager.Update(msg)
+		if cmd != nil {
+			return m, cmd
+		}
+	}
+
 	return m, nil
 }
 

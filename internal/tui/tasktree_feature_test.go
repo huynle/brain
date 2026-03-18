@@ -618,3 +618,348 @@ func TestMoveUpFeatureGrouped_RepeatedWithSSE(t *testing.T) {
 		t.Fatalf("after 3rd k: expected t1, got %s (taskIdx=%d)", tt.SelectedID, tt.selectedFeatureTaskIdx)
 	}
 }
+
+// TestTerminalSectionTaskSelection_SSE tests that j/k navigation into individual
+// tasks within Draft/Completed sub-features persists across SSE updates.
+// Bug: selection gets reset after 1-2 presses because SetTasks calls
+// restoreFeatureSelection for terminal-section tasks, which only searches active
+// features and fails, falling back to selectFirstFeatureTask.
+func TestTerminalSectionTaskSelection_SSE(t *testing.T) {
+	// Mix of active and draft tasks so both active features and draft section exist
+	tasks := []types.ResolvedTask{
+		{ID: "active1", Title: "Active task", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "draft1", Title: "Draft task 1", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "draft2", Title: "Draft task 2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Initial state: should be on active1 (the only active task)
+	if tt.SelectedID != "active1" {
+		t.Fatalf("initial: expected SelectedID=active1, got %s", tt.SelectedID)
+	}
+
+	// Manually navigate to Draft section → sub-feature → task
+	// (simulating what j/k navigation would do)
+	tt.clearTerminalSectionNav()
+	tt.isOnDraftSection = true
+	tt.draftFeatureIdx = 0 // First sub-feature in draft section
+	tt.draftTaskIdx = 0    // First task within that sub-feature
+	tt.SelectedID = "draft1"
+	tt.selectedFeatureIdx = -1
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnUngrouped = false
+	tt.draftFeatureIDs = []string{"feat-a"} // populate feature IDs
+
+	// SSE fires — SetTasks called with same task list
+	tt.SetTasks(tasks)
+
+	// Selection should be preserved: still on draft1 within draft section
+	if tt.SelectedID != "draft1" {
+		t.Fatalf("after SSE: expected SelectedID=draft1, got %s (isOnDraftSection=%v, draftFeatureIdx=%d, draftTaskIdx=%d)",
+			tt.SelectedID, tt.isOnDraftSection, tt.draftFeatureIdx, tt.draftTaskIdx)
+	}
+	if !tt.isOnDraftSection {
+		t.Fatal("after SSE: expected isOnDraftSection=true, got false")
+	}
+	if tt.draftFeatureIdx != 0 {
+		t.Fatalf("after SSE: expected draftFeatureIdx=0, got %d", tt.draftFeatureIdx)
+	}
+	if tt.draftTaskIdx != 0 {
+		t.Fatalf("after SSE: expected draftTaskIdx=0, got %d", tt.draftTaskIdx)
+	}
+
+	// Navigate to second draft task
+	tt.draftTaskIdx = 1
+	tt.SelectedID = "draft2"
+
+	// SSE fires again
+	tt.SetTasks(tasks)
+
+	if tt.SelectedID != "draft2" {
+		t.Fatalf("after 2nd SSE: expected SelectedID=draft2, got %s", tt.SelectedID)
+	}
+	if tt.draftTaskIdx != 1 {
+		t.Fatalf("after 2nd SSE: expected draftTaskIdx=1, got %d", tt.draftTaskIdx)
+	}
+}
+
+// TestTerminalSectionTaskNavigation_SSE tests that using MoveDown to navigate
+// into a Draft sub-feature's tasks preserves selection across SSE updates.
+// This simulates the real user flow more accurately than manual field setting.
+func TestTerminalSectionTaskNavigation_SSE(t *testing.T) {
+	// Only draft tasks — so selectFirstFeatureTask will land on Draft section header
+	tasks := []types.ResolvedTask{
+		{ID: "draft1", Title: "Draft task 1", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "draft2", Title: "Draft task 2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "draft3", Title: "Draft task 3", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Initial state: should be on Draft section header (no active tasks)
+	if !tt.isOnDraftSection {
+		t.Fatalf("initial: expected isOnDraftSection=true, got false (SelectedID=%s, featureIdx=%d)",
+			tt.SelectedID, tt.selectedFeatureIdx)
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("initial: expected draftFeatureIdx=-1 (section header), got %d", tt.draftFeatureIdx)
+	}
+
+	// j → should move to first sub-feature header
+	tt.MoveDown()
+	if tt.draftFeatureIdx != 0 {
+		t.Fatalf("after 1st j: expected draftFeatureIdx=0, got %d", tt.draftFeatureIdx)
+	}
+	if tt.draftTaskIdx != -1 {
+		t.Fatalf("after 1st j: expected draftTaskIdx=-1 (sub-feature header), got %d", tt.draftTaskIdx)
+	}
+
+	// SSE fires — should preserve sub-feature header position
+	tt.SetTasks(tasks)
+	if tt.draftFeatureIdx != 0 {
+		t.Fatalf("after SSE on sub-feature header: expected draftFeatureIdx=0, got %d", tt.draftFeatureIdx)
+	}
+
+	// j → should enter first task within the sub-feature
+	tt.MoveDown()
+	if tt.SelectedID != "draft1" {
+		t.Fatalf("after 2nd j: expected SelectedID=draft1, got %s (draftFeatureIdx=%d, draftTaskIdx=%d)",
+			tt.SelectedID, tt.draftFeatureIdx, tt.draftTaskIdx)
+	}
+	if tt.draftTaskIdx != 0 {
+		t.Fatalf("after 2nd j: expected draftTaskIdx=0, got %d", tt.draftTaskIdx)
+	}
+
+	// SSE fires — THIS IS THE KEY CHECK: should preserve task selection
+	tt.SetTasks(tasks)
+	if tt.SelectedID != "draft1" {
+		t.Fatalf("after SSE on task: expected SelectedID=draft1, got %s (isOnDraftSection=%v, draftFeatureIdx=%d, draftTaskIdx=%d)",
+			tt.SelectedID, tt.isOnDraftSection, tt.draftFeatureIdx, tt.draftTaskIdx)
+	}
+	if !tt.isOnDraftSection {
+		t.Fatal("after SSE on task: expected isOnDraftSection=true")
+	}
+	if tt.draftTaskIdx != 0 {
+		t.Fatalf("after SSE on task: expected draftTaskIdx=0, got %d", tt.draftTaskIdx)
+	}
+
+	// j → move to draft2
+	tt.MoveDown()
+	if tt.SelectedID != "draft2" {
+		t.Fatalf("after 3rd j: expected SelectedID=draft2, got %s", tt.SelectedID)
+	}
+
+	// SSE fires — should preserve draft2 selection
+	tt.SetTasks(tasks)
+	if tt.SelectedID != "draft2" {
+		t.Fatalf("after SSE on draft2: expected SelectedID=draft2, got %s (draftTaskIdx=%d)",
+			tt.SelectedID, tt.draftTaskIdx)
+	}
+	if tt.draftTaskIdx != 1 {
+		t.Fatalf("after SSE on draft2: expected draftTaskIdx=1, got %d", tt.draftTaskIdx)
+	}
+
+	// j → move to draft3
+	tt.MoveDown()
+	if tt.SelectedID != "draft3" {
+		t.Fatalf("after 4th j: expected SelectedID=draft3, got %s", tt.SelectedID)
+	}
+
+	// SSE fires — should preserve draft3 selection
+	tt.SetTasks(tasks)
+	if tt.SelectedID != "draft3" {
+		t.Fatalf("after SSE on draft3: expected SelectedID=draft3, got %s (draftTaskIdx=%d)",
+			tt.SelectedID, tt.draftTaskIdx)
+	}
+}
+
+// TestTerminalSectionMixedTasks_SSE tests SSE preservation when there are both active
+// and draft tasks (the most common real-world scenario).
+func TestTerminalSectionMixedTasks_SSE(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "active1", Title: "Active task", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "active2", Title: "Active task 2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "draft1", Title: "Draft task 1", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "draft2", Title: "Draft task 2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Initial state: should be on active1
+	if tt.SelectedID != "active1" {
+		t.Fatalf("initial: expected SelectedID=active1, got %s", tt.SelectedID)
+	}
+
+	// In a real TUI, View() sets hasDraftTasks. Simulate that here so
+	// navigation to terminal sections works.
+	tt.hasDraftTasks = true
+	tt.draftFeatureIDs = []string{"feat-a"}
+
+	// Navigate past all active tasks to draft section using MoveDown
+	maxSteps := 20
+	for i := 0; i < maxSteps; i++ {
+		tt.MoveDown()
+		if tt.isOnDraftSection {
+			break
+		}
+	}
+	if !tt.isOnDraftSection {
+		t.Fatalf("could not navigate to draft section within %d steps", maxSteps)
+	}
+
+	// Now navigate into draft sub-feature
+	tt.MoveDown() // → sub-feature header (draftFeatureIdx=0, draftTaskIdx=-1)
+	tt.MoveDown() // → first draft task (draftTaskIdx=0, SelectedID=draft1)
+
+	if tt.SelectedID != "draft1" {
+		t.Fatalf("navigation into draft: expected draft1, got SelectedID=%s, draftFeatureIdx=%d, draftTaskIdx=%d",
+			tt.SelectedID, tt.draftFeatureIdx, tt.draftTaskIdx)
+	}
+
+	prevDraftTaskIdx := tt.draftTaskIdx
+	prevDraftFeatureIdx := tt.draftFeatureIdx
+
+	// SSE fires — should preserve task selection within draft section
+	tt.SetTasks(tasks)
+
+	if tt.SelectedID != "draft1" {
+		t.Fatalf("after SSE: expected SelectedID=draft1, got %s", tt.SelectedID)
+	}
+	if !tt.isOnDraftSection {
+		t.Fatal("after SSE: isOnDraftSection should be true")
+	}
+	if tt.draftTaskIdx != prevDraftTaskIdx {
+		t.Fatalf("after SSE: draftTaskIdx changed from %d to %d", prevDraftTaskIdx, tt.draftTaskIdx)
+	}
+	if tt.draftFeatureIdx != prevDraftFeatureIdx {
+		t.Fatalf("after SSE: draftFeatureIdx changed from %d to %d", prevDraftFeatureIdx, tt.draftFeatureIdx)
+	}
+
+	// Navigate to draft2 and verify SSE preservation
+	tt.MoveDown() // → draft2
+	if tt.SelectedID != "draft2" {
+		t.Fatalf("after j to draft2: expected draft2, got %s", tt.SelectedID)
+	}
+
+	tt.SetTasks(tasks) // SSE
+	if tt.SelectedID != "draft2" {
+		t.Fatalf("after SSE on draft2: expected draft2, got %s", tt.SelectedID)
+	}
+}
+
+// TestTerminalSectionTaskSelection_AllSections_SSE tests SSE preservation for all
+// terminal sections (Draft, Cancelled, Superseded, Archived, Completed).
+func TestTerminalSectionTaskSelection_AllSections_SSE(t *testing.T) {
+	tests := []struct {
+		name          string
+		taskStatus    string
+		setSection    func(tt *TaskTree)
+		checkSection  func(tt *TaskTree) bool
+		setTaskIdx    func(tt *TaskTree, idx int)
+		getTaskIdx    func(tt *TaskTree) int
+		setFeatureIdx func(tt *TaskTree, idx int)
+		getFeatureIdx func(tt *TaskTree) int
+	}{
+		{
+			name:          "Draft",
+			taskStatus:    "draft",
+			setSection:    func(tt *TaskTree) { tt.isOnDraftSection = true },
+			checkSection:  func(tt *TaskTree) bool { return tt.isOnDraftSection },
+			setTaskIdx:    func(tt *TaskTree, idx int) { tt.draftTaskIdx = idx },
+			getTaskIdx:    func(tt *TaskTree) int { return tt.draftTaskIdx },
+			setFeatureIdx: func(tt *TaskTree, idx int) { tt.draftFeatureIdx = idx },
+			getFeatureIdx: func(tt *TaskTree) int { return tt.draftFeatureIdx },
+		},
+		{
+			name:          "Cancelled",
+			taskStatus:    "cancelled",
+			setSection:    func(tt *TaskTree) { tt.isOnCancelledSection = true },
+			checkSection:  func(tt *TaskTree) bool { return tt.isOnCancelledSection },
+			setTaskIdx:    func(tt *TaskTree, idx int) { tt.cancelledTaskIdx = idx },
+			getTaskIdx:    func(tt *TaskTree) int { return tt.cancelledTaskIdx },
+			setFeatureIdx: func(tt *TaskTree, idx int) { tt.cancelledFeatureIdx = idx },
+			getFeatureIdx: func(tt *TaskTree) int { return tt.cancelledFeatureIdx },
+		},
+		{
+			name:          "Superseded",
+			taskStatus:    "superseded",
+			setSection:    func(tt *TaskTree) { tt.isOnSupersededSection = true },
+			checkSection:  func(tt *TaskTree) bool { return tt.isOnSupersededSection },
+			setTaskIdx:    func(tt *TaskTree, idx int) { tt.supersededTaskIdx = idx },
+			getTaskIdx:    func(tt *TaskTree) int { return tt.supersededTaskIdx },
+			setFeatureIdx: func(tt *TaskTree, idx int) { tt.supersededFeatureIdx = idx },
+			getFeatureIdx: func(tt *TaskTree) int { return tt.supersededFeatureIdx },
+		},
+		{
+			name:          "Archived",
+			taskStatus:    "archived",
+			setSection:    func(tt *TaskTree) { tt.isOnArchivedSection = true },
+			checkSection:  func(tt *TaskTree) bool { return tt.isOnArchivedSection },
+			setTaskIdx:    func(tt *TaskTree, idx int) { tt.archivedTaskIdx = idx },
+			getTaskIdx:    func(tt *TaskTree) int { return tt.archivedTaskIdx },
+			setFeatureIdx: func(tt *TaskTree, idx int) { tt.archivedFeatureIdx = idx },
+			getFeatureIdx: func(tt *TaskTree) int { return tt.archivedFeatureIdx },
+		},
+		{
+			name:          "Completed",
+			taskStatus:    "completed",
+			setSection:    func(tt *TaskTree) { tt.isOnCompletedSection = true },
+			checkSection:  func(tt *TaskTree) bool { return tt.isOnCompletedSection },
+			setTaskIdx:    func(tt *TaskTree, idx int) { tt.completedTaskIdx = idx },
+			getTaskIdx:    func(tt *TaskTree) int { return tt.completedTaskIdx },
+			setFeatureIdx: func(tt *TaskTree, idx int) { tt.completedFeatureIdx = idx },
+			getFeatureIdx: func(tt *TaskTree) int { return tt.completedFeatureIdx },
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			tasks := []types.ResolvedTask{
+				{ID: "active1", Title: "Active task", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+				{ID: "terminal1", Title: "Terminal task 1", Status: tc.taskStatus, Priority: "medium", FeatureID: "feat-a"},
+				{ID: "terminal2", Title: "Terminal task 2", Status: tc.taskStatus, Priority: "medium", FeatureID: "feat-a"},
+			}
+
+			tt := NewTaskTree()
+			tt.useGroupedView = true
+			tt.useFeatureView = true
+			tt.SetTasks(tasks)
+
+			// Navigate to terminal section task
+			tt.clearTerminalSectionNav()
+			tc.setSection(&tt)
+			tc.setFeatureIdx(&tt, 0)
+			tc.setTaskIdx(&tt, 0)
+			tt.SelectedID = "terminal1"
+			tt.selectedFeatureIdx = -1
+			tt.selectedFeatureTaskIdx = -1
+			tt.isOnUngrouped = false
+
+			// SSE fires
+			tt.SetTasks(tasks)
+
+			if tt.SelectedID != "terminal1" {
+				t.Fatalf("after SSE: expected SelectedID=terminal1, got %s", tt.SelectedID)
+			}
+			if !tc.checkSection(&tt) {
+				t.Fatalf("after SSE: section flag was cleared")
+			}
+			if tc.getFeatureIdx(&tt) != 0 {
+				t.Fatalf("after SSE: expected featureIdx=0, got %d", tc.getFeatureIdx(&tt))
+			}
+			if tc.getTaskIdx(&tt) != 0 {
+				t.Fatalf("after SSE: expected taskIdx=0, got %d", tc.getTaskIdx(&tt))
+			}
+		})
+	}
+}

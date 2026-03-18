@@ -522,6 +522,11 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			// Feature-based grouping
 			tt.featureGroups = GroupTasksByFeature(tasks)
 
+			// Eagerly compute terminal section presence flags so that
+			// navigation (MoveDown/MoveUp) can discover terminal sections
+			// immediately after SetTasks, without waiting for View.
+			tt.updateTerminalSectionFlags()
+
 			// Restore collapsed state for each feature (use in-memory state, not disk)
 			for i := range tt.featureGroups.Features {
 				featureID := tt.featureGroups.Features[i].ID
@@ -564,7 +569,10 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 						}
 					}
 					if found {
-						// Terminal section state + SelectedID is still valid, preserve position
+						// Terminal section state + SelectedID is still valid.
+						// Eagerly refresh the terminal section feature IDs so
+						// navigation works correctly if features were reordered.
+						tt.refreshTerminalSectionFeatureIDs()
 					} else {
 						// Task was removed — fall back
 						tt.clearTerminalSectionNav()
@@ -3781,6 +3789,82 @@ func (tt *TaskTree) moveToNextSectionAfterActiveFeatures() {
 // isOnAnyTerminalSection returns true if the cursor is on any terminal status section.
 func (tt *TaskTree) isOnAnyTerminalSection() bool {
 	return tt.isOnDraftSection || tt.isOnCancelledSection || tt.isOnSupersededSection || tt.isOnArchivedSection || tt.isOnCompletedSection
+}
+
+// updateTerminalSectionFlags eagerly computes whether each terminal section has
+// tasks, based on the current featureGroups. View() also sets these flags, but
+// this ensures they are up-to-date immediately after SetTasks() so that
+// navigation (MoveDown/MoveUp → moveToFirstTerminalSection) works without
+// requiring a View() call first.
+func (tt *TaskTree) updateTerminalSectionFlags() {
+	tt.hasDraftTasks = false
+	tt.hasCancelledTasks = false
+	tt.hasSupersededTasks = false
+	tt.hasArchivedTasks = false
+	tt.hasCompletedTasks = false
+
+	allTasks := tt.tasks
+	for _, task := range allTasks {
+		switch task.Status {
+		case "draft":
+			tt.hasDraftTasks = true
+		case "cancelled":
+			tt.hasCancelledTasks = true
+		case "superseded":
+			tt.hasSupersededTasks = true
+		case "archived":
+			tt.hasArchivedTasks = true
+		case "completed", "validated":
+			tt.hasCompletedTasks = true
+		}
+	}
+}
+
+// refreshTerminalSectionFeatureIDs rebuilds the sorted feature ID lists for each
+// terminal section from the current featureGroups. This must be called after
+// featureGroups is rebuilt (via GroupTasksByFeature) so that draftFeatureIDs,
+// completedFeatureIDs, etc. stay in sync. Without this, a stale featureIDs list
+// can cause draftFeatureIdx to point at the wrong sub-feature after an SSE update.
+func (tt *TaskTree) refreshTerminalSectionFeatureIDs() {
+	type sectionDef struct {
+		statuses []string
+		setIDs   func([]string)
+	}
+	sections := []sectionDef{
+		{statuses: []string{"draft"}, setIDs: func(ids []string) { tt.draftFeatureIDs = ids }},
+		{statuses: []string{"cancelled"}, setIDs: func(ids []string) { tt.cancelledFeatureIDs = ids }},
+		{statuses: []string{"superseded"}, setIDs: func(ids []string) { tt.supersededFeatureIDs = ids }},
+		{statuses: []string{"archived"}, setIDs: func(ids []string) { tt.archivedFeatureIDs = ids }},
+		{statuses: []string{"completed", "validated"}, setIDs: func(ids []string) { tt.completedFeatureIDs = ids }},
+	}
+
+	for _, sec := range sections {
+		statusSet := make(map[string]bool)
+		for _, s := range sec.statuses {
+			statusSet[s] = true
+		}
+
+		seen := make(map[string]bool)
+		var ids []string
+		for _, feature := range tt.featureGroups.Features {
+			for _, task := range feature.Tasks {
+				if statusSet[task.Status] && !seen[feature.ID] {
+					seen[feature.ID] = true
+					ids = append(ids, feature.ID)
+				}
+			}
+		}
+		if tt.featureGroups.Ungrouped != nil {
+			for _, task := range tt.featureGroups.Ungrouped.Tasks {
+				if statusSet[task.Status] && !seen["[Ungrouped]"] {
+					seen["[Ungrouped]"] = true
+					ids = append(ids, "[Ungrouped]")
+				}
+			}
+		}
+		sort.Strings(ids)
+		sec.setIDs(ids)
+	}
 }
 
 // terminalSectionOrder defines the rendering/navigation order for terminal sections.

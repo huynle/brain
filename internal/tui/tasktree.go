@@ -527,12 +527,53 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 				}
 			}
 
-			// Preserve selection across SSE updates if the selected task still exists
-			if tt.SelectedID != "" {
-				if tt.restoreFeatureSelection(tt.SelectedID) {
+			// Preserve selection across SSE updates.
+			// Save full navigation state BEFORE attempting restore, because
+			// the user might be on a feature header (SelectedID == "") or on a
+			// terminal section, which restoreFeatureSelection cannot handle.
+			prevSelectedID := tt.SelectedID
+			prevFeatureIdx := tt.selectedFeatureIdx
+			prevFeatureTaskIdx := tt.selectedFeatureTaskIdx
+			prevIsOnUngrouped := tt.isOnUngrouped
+			prevIsOnDraftSection := tt.isOnDraftSection
+			prevIsOnCancelledSection := tt.isOnCancelledSection
+			prevIsOnSupersededSection := tt.isOnSupersededSection
+			prevIsOnArchivedSection := tt.isOnArchivedSection
+			prevIsOnCompletedSection := tt.isOnCompletedSection
+
+			if prevSelectedID != "" {
+				if tt.restoreFeatureSelection(prevSelectedID) {
 					// Selection preserved — skip auto-select
 				} else {
 					// Selected task no longer exists — fall back to first active task
+					tt.selectFirstFeatureTask()
+				}
+			} else if tt.isOnAnyTerminalSection() || prevIsOnDraftSection || prevIsOnCancelledSection ||
+				prevIsOnSupersededSection || prevIsOnArchivedSection || prevIsOnCompletedSection {
+				// On a terminal section header — preserve that position.
+				// Terminal section state (isOnDraftSection, etc.) is independent of
+				// featureGroups rebuild, so just keep the existing values.
+			} else if prevFeatureTaskIdx == -1 {
+				// On a feature header or ungrouped header — restore by index.
+				if prevIsOnUngrouped && tt.featureGroups.Ungrouped != nil {
+					// Was on ungrouped header — it still exists, keep position
+					tt.selectedFeatureIdx = -1
+					tt.selectedFeatureTaskIdx = -1
+					tt.isOnUngrouped = true
+					tt.SelectedID = ""
+				} else if prevFeatureIdx >= 0 && prevFeatureIdx < len(tt.featureGroups.Features) {
+					// Feature header — same index still valid
+					tt.selectedFeatureIdx = prevFeatureIdx
+					tt.selectedFeatureTaskIdx = -1
+					tt.isOnUngrouped = false
+					tt.SelectedID = ""
+				} else if len(tt.featureGroups.Features) > 0 {
+					// Feature was removed — clamp to last feature
+					tt.selectedFeatureIdx = len(tt.featureGroups.Features) - 1
+					tt.selectedFeatureTaskIdx = -1
+					tt.isOnUngrouped = false
+					tt.SelectedID = ""
+				} else {
 					tt.selectFirstFeatureTask()
 				}
 			} else {

@@ -393,3 +393,228 @@ func TestSelectFirstFeatureTask_UsesTreeOrder(t *testing.T) {
 		t.Fatalf("expected selectedFeatureTaskIdx=0, got %d", tt.selectedFeatureTaskIdx)
 	}
 }
+
+// TestMoveDownFeatureGrouped_RepeatedWithSSE reproduces the bug where j/k navigation
+// gets stuck after the first move when SSE updates (SetTasks) fire between keypresses.
+// This simulates: j press → SSE update → j press → SSE update → ...
+// Expected: cursor advances through all tasks, not just the first one.
+func TestMoveDownFeatureGrouped_RepeatedWithSSE(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t3", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t4", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t5", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Verify initial selection is on t1
+	if tt.SelectedID != "t1" {
+		t.Fatalf("initial: expected SelectedID=t1, got %s", tt.SelectedID)
+	}
+
+	// Simulate sequence: j press → SSE update → j press → SSE update ...
+	expectedIDs := []string{"t1", "t2", "t3", "t4", "t5"}
+
+	for i := 0; i < len(expectedIDs)-1; i++ {
+		// Verify current position before move
+		if tt.SelectedID != expectedIDs[i] {
+			t.Fatalf("step %d: before MoveDown, expected SelectedID=%s, got %s (featureIdx=%d, taskIdx=%d)",
+				i, expectedIDs[i], tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+		}
+
+		// Press j
+		tt.MoveDown()
+
+		// Verify moved to next task
+		if tt.SelectedID != expectedIDs[i+1] {
+			t.Fatalf("step %d: after MoveDown, expected SelectedID=%s, got %s (featureIdx=%d, taskIdx=%d)",
+				i, expectedIDs[i+1], tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+		}
+
+		// Simulate SSE update (same tasks, mimics tasks_snapshot)
+		tt.SetTasks(tasks)
+
+		// Verify selection preserved after SSE
+		if tt.SelectedID != expectedIDs[i+1] {
+			t.Fatalf("step %d: after SetTasks (SSE), expected SelectedID=%s, got %s (featureIdx=%d, taskIdx=%d)",
+				i, expectedIDs[i+1], tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+		}
+	}
+}
+
+// TestMoveDownFeatureGrouped_RepeatedWithSSE_AcrossFeatures tests j navigation
+// across multiple features with SSE updates firing between keypresses.
+func TestMoveDownFeatureGrouped_RepeatedWithSSE_AcrossFeatures(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t3", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+		{ID: "t4", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Start on first feature header, then move to first task
+	if tt.SelectedID != "t1" {
+		t.Fatalf("initial: expected SelectedID=t1, got %s", tt.SelectedID)
+	}
+
+	// j → t2
+	tt.MoveDown()
+	if tt.SelectedID != "t2" {
+		t.Fatalf("after 1st j: expected t2, got %s", tt.SelectedID)
+	}
+	tt.SetTasks(tasks) // SSE
+
+	// j → should go to feat-b header (SelectedID="")
+	tt.MoveDown()
+	// At end of feat-a, should move to feat-b header
+	if tt.selectedFeatureTaskIdx != -1 {
+		// On feat-b header
+		t.Logf("after 2nd j: on feature header (idx=%d), SelectedID=%s", tt.selectedFeatureIdx, tt.SelectedID)
+	}
+	tt.SetTasks(tasks) // SSE
+
+	// j → should enter feat-b's first task (t3)
+	tt.MoveDown()
+	if tt.SelectedID != "t3" {
+		t.Fatalf("after 3rd j: expected t3, got %s (featureIdx=%d, taskIdx=%d, isOnUngrouped=%v)",
+			tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx, tt.isOnUngrouped)
+	}
+	tt.SetTasks(tasks) // SSE
+
+	// j → t4
+	tt.MoveDown()
+	if tt.SelectedID != "t4" {
+		t.Fatalf("after 4th j: expected t4, got %s (featureIdx=%d, taskIdx=%d)",
+			tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+	}
+}
+
+// TestMoveToTopFeatureGrouped_WithSSE tests that g (MoveToTop) survives SSE updates.
+// MoveToTop lands on a feature header (SelectedID=""), so SSE must not reset it.
+func TestMoveToTopFeatureGrouped_WithSSE(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t3", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Navigate to t2
+	tt.MoveDown()
+	if tt.SelectedID != "t2" {
+		t.Fatalf("after j: expected t2, got %s", tt.SelectedID)
+	}
+
+	// Press g (MoveToTop) — should land on first feature header
+	tt.MoveToTop()
+	if tt.selectedFeatureIdx != 0 || tt.selectedFeatureTaskIdx != -1 {
+		t.Fatalf("after g: expected on first feature header (idx=0, taskIdx=-1), got (idx=%d, taskIdx=%d)",
+			tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+	}
+
+	// SSE fires — should preserve header position, NOT reset to first task
+	tt.SetTasks(tasks)
+	if tt.selectedFeatureIdx != 0 || tt.selectedFeatureTaskIdx != -1 {
+		t.Fatalf("after SSE on header: expected preserved header (idx=0, taskIdx=-1), got (idx=%d, taskIdx=%d, ID=%s)",
+			tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx, tt.SelectedID)
+	}
+
+	// Now j from header should enter first task
+	tt.MoveDown()
+	if tt.SelectedID != "t1" {
+		t.Fatalf("after j from header: expected t1, got %s", tt.SelectedID)
+	}
+}
+
+// TestMoveToBottomFeatureGrouped_WithSSE tests that G (MoveToBottom) works and survives SSE.
+func TestMoveToBottomFeatureGrouped_WithSSE(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t3", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Press G (MoveToBottom) — should land on last task
+	tt.MoveToBottom()
+	if tt.SelectedID != "t3" {
+		t.Logf("MoveToBottom: featureIdx=%d, taskIdx=%d, isOnUngrouped=%v, ID=%s",
+			tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx, tt.isOnUngrouped, tt.SelectedID)
+	}
+
+	// SSE fires
+	tt.SetTasks(tasks)
+
+	// Selection should be preserved (or at least not reset to t1)
+	if tt.SelectedID == "t1" && tt.selectedFeatureTaskIdx == 0 {
+		t.Fatalf("after G+SSE: selection reset to first task (t1), expected it to stay near bottom")
+	}
+}
+
+// TestMoveUpFeatureGrouped_RepeatedWithSSE tests k navigation with SSE updates.
+func TestMoveUpFeatureGrouped_RepeatedWithSSE(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t3", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t4", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Navigate to last task
+	tt.MoveToBottom()
+	tt.SetTasks(tasks) // SSE
+
+	// Verify on t4 (last active task)
+	if tt.SelectedID != "t4" {
+		t.Logf("MoveToBottom landed on %s (featureIdx=%d, taskIdx=%d)", tt.SelectedID, tt.selectedFeatureIdx, tt.selectedFeatureTaskIdx)
+	}
+
+	// Navigate to t4 explicitly
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = 3
+	tt.SelectedID = "t4"
+	tt.isOnUngrouped = false
+
+	// k → t3
+	tt.MoveUp()
+	if tt.SelectedID != "t3" {
+		t.Fatalf("after 1st k: expected t3, got %s (taskIdx=%d)", tt.SelectedID, tt.selectedFeatureTaskIdx)
+	}
+	tt.SetTasks(tasks) // SSE
+
+	// k → t2
+	tt.MoveUp()
+	if tt.SelectedID != "t2" {
+		t.Fatalf("after 2nd k: expected t2, got %s (taskIdx=%d)", tt.SelectedID, tt.selectedFeatureTaskIdx)
+	}
+	tt.SetTasks(tasks) // SSE
+
+	// k → t1
+	tt.MoveUp()
+	if tt.SelectedID != "t1" {
+		t.Fatalf("after 3rd k: expected t1, got %s (taskIdx=%d)", tt.SelectedID, tt.selectedFeatureTaskIdx)
+	}
+}

@@ -365,10 +365,12 @@ func cmdStart(args parsedArgs) int {
 		}
 
 		tuiCfg := tui.Config{
-			APIURL:   cfg.BrainAPIURL,
-			Project:  primaryProject,
-			Projects: projects,
-			BrainDir: brainDir,
+			APIURL:     cfg.BrainAPIURL,
+			APIToken:   cfg.APIToken,
+			APITimeout: cfg.APITimeout,
+			Project:    primaryProject,
+			Projects:   projects,
+			BrainDir:   brainDir,
 		}
 		model := tui.NewModel(tuiCfg)
 		p := tea.NewProgram(model, tea.WithAltScreen())

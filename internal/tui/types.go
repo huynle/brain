@@ -51,15 +51,21 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 
 // Config holds the configuration passed to the TUI from the runner.
 type Config struct {
-	APIURL   string
-	APIToken string
-	Project  string
-	RunnerID string
-	BrainDir string
-	LogDir   string
+	APIURL     string
+	APIToken   string
+	APITimeout int // milliseconds; 0 defaults to 15000 (15s)
+	Project    string
+	RunnerID   string
+	BrainDir   string
+	LogDir     string
 	// Projects lists all projects in multi-project mode.
 	Projects []string
 }
+
+// DefaultAPITimeout is the default HTTP client timeout for TUI API calls (15 seconds).
+// This is higher than the runner default (5s) because the TUI may connect to
+// remote APIs (e.g., brain.huynle.com) where network latency is higher.
+const DefaultAPITimeout = 15000
 
 // IsMultiProject returns true if monitoring multiple projects.
 func (c Config) IsMultiProject() bool {

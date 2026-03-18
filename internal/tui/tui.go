@@ -214,6 +214,21 @@ func NewModelWithContext(cfg Config, ctx context.Context) Model {
 	return m
 }
 
+// apiRunnerConfig returns a runner.RunnerConfig populated from the TUI config.
+// Use this instead of building RunnerConfig inline to ensure APIToken and
+// a reasonable timeout are always included.
+func (m Model) apiRunnerConfig() runner.RunnerConfig {
+	timeout := m.config.APITimeout
+	if timeout == 0 {
+		timeout = DefaultAPITimeout
+	}
+	return runner.RunnerConfig{
+		BrainAPIURL: m.config.APIURL,
+		APIToken:    m.config.APIToken,
+		APITimeout:  timeout,
+	}
+}
+
 // Init implements tea.Model. Starts the SSE connection on startup.
 func (m Model) Init() tea.Cmd {
 	if m.config.IsMultiProject() {
@@ -368,7 +383,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.config.APIURL, m.config.APIToken))
+		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()))
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -626,10 +641,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// Delete task(s) - with confirmation modal (tasks view only)
 		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
 		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
-			apiClient := runner.NewAPIClient(runner.RunnerConfig{
-				BrainAPIURL: m.config.APIURL,
-				APITimeout:  5000,
-			})
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
 			// Case 1: Multi-select mode - batch delete
 			if len(m.selectedTasks) > 0 {
@@ -736,11 +748,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.activePanel == PanelTasks {
 				// Create API client for modal
-				apiClient := runner.NewAPIClient(runner.RunnerConfig{
-					BrainAPIURL: m.config.APIURL,
-					APIToken:    m.config.APIToken,
-					APITimeout:  5000, // 5 second timeout
-				})
+				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
 				var modal Modal
 
@@ -803,13 +811,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							}
 						}
 					}
-					return m, batchCompleteTasksCmd(m.config.APIURL, m.config.APIToken, taskPaths, taskIDs)
+					return m, batchCompleteTasksCmd(m.apiRunnerConfig(), taskPaths, taskIDs)
 				}
 
 				// Case 2: Single task selected
 				selectedTask := m.taskTree.SelectedTask()
 				if selectedTask != nil {
-					return m, completeTaskCmd(m.config.APIURL, m.config.APIToken, selectedTask.Path)
+					return m, completeTaskCmd(m.apiRunnerConfig(), selectedTask.Path)
 				}
 			}
 			return m, nil
@@ -840,10 +848,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			confirmMsg := fmt.Sprintf("Cancel task '%s'?", selectedTask.Title)
 			taskPath := selectedTask.Path
-			apiToken := m.config.APIToken
+			cfg := m.apiRunnerConfig()
 			modal := NewConfirmModal("Confirm Cancel", confirmMsg).
 				WithOnConfirm(func() tea.Msg {
-					return cancelTaskCmd(m.config.APIURL, apiToken, taskPath)()
+					return cancelTaskCmd(cfg, taskPath)()
 				})
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
@@ -864,10 +872,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				runnerID = m.config.RunnerID
 			}
 
-			apiClient := runner.NewAPIClient(runner.RunnerConfig{
-				BrainAPIURL: m.config.APIURL,
-				APITimeout:  5000,
-			})
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
 			message := fmt.Sprintf("Execute task '%s' now?\nThis will claim it for immediate execution.", selectedTask.Title)
 			modal := NewConfirmModal("Execute Task", message).
@@ -881,10 +886,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			apiClient := runner.NewAPIClient(runner.RunnerConfig{
-				BrainAPIURL: m.config.APIURL,
-				APITimeout:  5000,
-			})
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
 			// Case 1: Multi-select mode - batch delete
 			if len(m.selectedTasks) > 0 {
@@ -955,10 +957,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if selectedTask == nil {
 				return m, nil
 			}
-			apiClient := runner.NewAPIClient(runner.RunnerConfig{
-				BrainAPIURL: m.config.APIURL,
-				APITimeout:  5000,
-			})
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 			return m, fetchSessionsCmd(apiClient, selectedTask.Path, false)
 		case "O":
 			// Open session in tmux (tasks view only)
@@ -969,10 +968,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if selectedTask == nil {
 				return m, nil
 			}
-			apiClient := runner.NewAPIClient(runner.RunnerConfig{
-				BrainAPIURL: m.config.APIURL,
-				APITimeout:  5000,
-			})
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 			return m, fetchSessionsCmd(apiClient, selectedTask.Path, true)
 		case "/":
 			// Activate filter typing mode
@@ -1129,7 +1125,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
 				}
 				m.syncHelpBarPauseState()
-				return m, pauseProjectCmd(m.config.APIURL, m.config.APIToken, projectID, currentlyPaused)
+				return m, pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused)
 			}
 			return m, nil
 		case "y":
@@ -1156,7 +1152,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusMessage("info", "Resuming all projects...")
 			}
 			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.config.APIURL, m.config.APIToken, !m.allPaused)
+			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused)
 		}
 
 	case tea.KeyUp:
@@ -2075,13 +2071,9 @@ type runnerStatusMsg struct {
 // =============================================================================
 
 // completeTaskCmd completes a single task.
-func completeTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
+func completeTaskCmd(cfg runner.RunnerConfig, taskPath string) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		ctx := context.Background()
 		err := apiClient.UpdateTaskStatus(ctx, taskPath, "completed")
@@ -2090,13 +2082,9 @@ func completeTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 }
 
 // cancelTaskCmd cancels a single task.
-func cancelTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
+func cancelTaskCmd(cfg runner.RunnerConfig, taskPath string) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		ctx := context.Background()
 		err := apiClient.UpdateTaskStatus(ctx, taskPath, "cancelled")
@@ -2105,13 +2093,9 @@ func cancelTaskCmd(apiURL, apiToken, taskPath string) tea.Cmd {
 }
 
 // batchCompleteTasksCmd completes multiple tasks in parallel.
-func batchCompleteTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCompleteTasksCmd(cfg runner.RunnerConfig, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		type result struct {
 			taskID string
@@ -2153,13 +2137,9 @@ func batchCompleteTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string)
 }
 
 // batchCancelTasksCmd cancels multiple tasks in parallel.
-func batchCancelTasksCmd(apiURL, apiToken string, taskPaths, taskIDs []string) tea.Cmd {
+func batchCancelTasksCmd(cfg runner.RunnerConfig, taskPaths, taskIDs []string) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		type result struct {
 			taskID string
@@ -2271,13 +2251,9 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 }
 
 // pauseProjectCmd toggles pause/resume for a specific project.
-func pauseProjectCmd(apiURL, apiToken, projectID string, currentlyPaused bool) tea.Cmd {
+func pauseProjectCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		ctx := context.Background()
 		var err error
@@ -2291,13 +2267,9 @@ func pauseProjectCmd(apiURL, apiToken, projectID string, currentlyPaused bool) t
 }
 
 // pauseAllCmd toggles pause/resume for all projects.
-func pauseAllCmd(apiURL, apiToken string, currentlyPaused bool) tea.Cmd {
+func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		ctx := context.Background()
 		var err error
@@ -2311,13 +2283,9 @@ func pauseAllCmd(apiURL, apiToken string, currentlyPaused bool) tea.Cmd {
 }
 
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
-func fetchRunnerStatusCmd(apiURL, apiToken string) tea.Cmd {
+func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(runner.RunnerConfig{
-			BrainAPIURL: apiURL,
-			APIToken:    apiToken,
-			APITimeout:  5000,
-		})
+		apiClient := runner.NewAPIClient(cfg)
 
 		ctx := context.Background()
 		status, err := apiClient.GetRunnerStatus(ctx)

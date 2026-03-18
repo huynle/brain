@@ -194,12 +194,13 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 
 	tuiCfg := tui.Config{
-		APIURL:   cfg.BrainAPIURL,
-		APIToken: cfg.APIToken,
-		Project:  opts.Projects[0],
-		Projects: opts.Projects,
-		BrainDir: brainDir,
-		LogDir:   cfg.LogDir,
+		APIURL:     cfg.BrainAPIURL,
+		APIToken:   cfg.APIToken,
+		APITimeout: cfg.APITimeout,
+		Project:    opts.Projects[0],
+		Projects:   opts.Projects,
+		BrainDir:   brainDir,
+		LogDir:     cfg.LogDir,
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

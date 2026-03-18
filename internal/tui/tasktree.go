@@ -399,6 +399,14 @@ type TaskTree struct {
 	archivedFeatureIdx   int // index into archivedFeatureIDs (-1 = on section header)
 	completedFeatureIdx  int // index into completedFeatureIDs (-1 = on section header)
 
+	// Task-level navigation within terminal sub-features
+	// -1 = on sub-feature header (or section header); 0+ = index into sub-feature's flattened task list
+	draftTaskIdx      int
+	cancelledTaskIdx  int
+	supersededTaskIdx int
+	archivedTaskIdx   int
+	completedTaskIdx  int
+
 	draftFeatureIDs      []string // sorted feature IDs in draft section (cached during render)
 	cancelledFeatureIDs  []string // sorted feature IDs in cancelled section (cached during render)
 	supersededFeatureIDs []string // sorted feature IDs in superseded section (cached during render)
@@ -542,7 +550,27 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 			prevIsOnCompletedSection := tt.isOnCompletedSection
 
 			if prevSelectedID != "" {
-				if tt.restoreFeatureSelection(prevSelectedID) {
+				// If navigated into a terminal sub-feature task, check if the task
+				// still exists — terminal section state is independent of featureGroups rebuild.
+				isOnTerminalTask := (prevIsOnDraftSection || prevIsOnCancelledSection ||
+					prevIsOnSupersededSection || prevIsOnArchivedSection || prevIsOnCompletedSection)
+				if isOnTerminalTask {
+					// Verify the task still exists in the full task list
+					found := false
+					for _, task := range tasks {
+						if task.ID == prevSelectedID {
+							found = true
+							break
+						}
+					}
+					if found {
+						// Terminal section state + SelectedID is still valid, preserve position
+					} else {
+						// Task was removed — fall back
+						tt.clearTerminalSectionNav()
+						tt.selectFirstFeatureTask()
+					}
+				} else if tt.restoreFeatureSelection(prevSelectedID) {
 					// Selection preserved — skip auto-select
 				} else {
 					// Selected task no longer exists — fall back to first active task
@@ -844,6 +872,72 @@ func featureActiveTreeOrder(tasks []types.ResolvedTask) []string {
 	return FlattenTreeOrder(featureActiveTasks(tasks))
 }
 
+// terminalSubFeatureTreeOrder returns the flattened task IDs for a terminal
+// sub-feature. Unlike featureActiveTreeOrder, it does NOT filter by active
+// status because all tasks in terminal sections are draft/completed/etc.
+func terminalSubFeatureTreeOrder(tasks []types.ResolvedTask) []string {
+	return FlattenTreeOrder(tasks)
+}
+
+// getTerminalSubFeatureTasks retrieves the tasks for a specific sub-feature within a terminal section.
+// It groups the provided tasks by feature_id (matching the rendering logic) and returns the tasks
+// for the sub-feature at the given featureIdx.
+func getTerminalSubFeatureTasks(allSectionTasks []types.ResolvedTask, featureIDs []string, featureIdx int, featureCollapsed map[string]bool, sectionName string) ([]types.ResolvedTask, bool) {
+	if featureIdx < 0 || featureIdx >= len(featureIDs) {
+		return nil, false
+	}
+	featureID := featureIDs[featureIdx]
+	collapseKey := sectionName + ":" + featureID
+	if featureCollapsed[collapseKey] {
+		return nil, true // collapsed
+	}
+
+	byFeature := make(map[string][]types.ResolvedTask)
+	for _, task := range allSectionTasks {
+		fid := task.FeatureID
+		if fid == "" {
+			fid = "[Ungrouped]"
+		}
+		byFeature[fid] = append(byFeature[fid], task)
+	}
+	return byFeature[featureID], false
+}
+
+// collectTerminalSectionTasks returns all tasks belonging to a terminal section by status.
+func (tt *TaskTree) collectTerminalSectionTasks(sectionName string) []types.ResolvedTask {
+	var tasks []types.ResolvedTask
+	statusFilter := map[string]bool{}
+	switch sectionName {
+	case "draft":
+		statusFilter["draft"] = true
+	case "cancelled":
+		statusFilter["cancelled"] = true
+	case "superseded":
+		statusFilter["superseded"] = true
+	case "archived":
+		statusFilter["archived"] = true
+	case "completed":
+		statusFilter["completed"] = true
+		statusFilter["validated"] = true
+	}
+
+	for _, feature := range tt.featureGroups.Features {
+		for _, task := range feature.Tasks {
+			if statusFilter[task.Status] {
+				tasks = append(tasks, task)
+			}
+		}
+	}
+	if tt.featureGroups.Ungrouped != nil {
+		for _, task := range tt.featureGroups.Ungrouped.Tasks {
+			if statusFilter[task.Status] {
+				tasks = append(tasks, task)
+			}
+		}
+	}
+	return tasks
+}
+
 func (tt *TaskTree) selectFirstFeatureTask() {
 	// Try features first - select first ACTIVE task
 	if len(tt.featureGroups.Features) > 0 {
@@ -871,32 +965,85 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 		}
 	}
 
-	// No active tasks - fall back to first draft task
-	if len(tt.featureGroups.Features) > 0 {
-		for i, feature := range tt.featureGroups.Features {
-			for j, task := range feature.Tasks {
-				if task.Status == "draft" {
-					tt.selectedFeatureIdx = i
-					tt.selectedFeatureTaskIdx = j
-					tt.isOnUngrouped = false
-					tt.SelectedID = task.ID
-					return
-				}
+	// No active tasks - fall back to Draft section header.
+	// Place cursor on the Draft section header so that j/k navigation
+	// traverses draft sub-features via the terminal section navigation path.
+	hasDraftTasks := false
+	for _, feature := range tt.featureGroups.Features {
+		for _, task := range feature.Tasks {
+			if task.Status == "draft" {
+				hasDraftTasks = true
+				break
+			}
+		}
+		if hasDraftTasks {
+			break
+		}
+	}
+	if !hasDraftTasks && tt.featureGroups.Ungrouped != nil {
+		for _, task := range tt.featureGroups.Ungrouped.Tasks {
+			if task.Status == "draft" {
+				hasDraftTasks = true
+				break
 			}
 		}
 	}
+	if hasDraftTasks {
+		tt.clearTerminalSectionNav()
+		tt.isOnDraftSection = true
+		tt.hasDraftTasks = true
+		tt.draftFeatureIdx = -1 // On the Draft section header itself
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
 
-	// Fall back to draft in ungrouped
-	if tt.featureGroups.Ungrouped != nil {
-		for j, task := range tt.featureGroups.Ungrouped.Tasks {
-			if task.Status == "draft" {
-				tt.selectedFeatureIdx = -1
-				tt.selectedFeatureTaskIdx = j
-				tt.isOnUngrouped = true
-				tt.SelectedID = task.ID
-				return
+		// Eagerly populate draftFeatureIDs so navigation works before first render.
+		// The View function also sets this, but navigation may run before View.
+		draftFeatureMap := make(map[string]bool)
+		var draftFIDs []string
+		for _, feature := range tt.featureGroups.Features {
+			for _, task := range feature.Tasks {
+				if task.Status == "draft" && !draftFeatureMap[feature.ID] {
+					draftFeatureMap[feature.ID] = true
+					draftFIDs = append(draftFIDs, feature.ID)
+				}
 			}
 		}
+		if tt.featureGroups.Ungrouped != nil {
+			for _, task := range tt.featureGroups.Ungrouped.Tasks {
+				if task.Status == "draft" && !draftFeatureMap["[Ungrouped]"] {
+					draftFeatureMap["[Ungrouped]"] = true
+					draftFIDs = append(draftFIDs, "[Ungrouped]")
+				}
+			}
+		}
+		tt.draftFeatureIDs = draftFIDs
+		return
+	}
+
+	// Fall back to Completed section header if there are completed tasks
+	hasCompletedTasks := false
+	for _, feature := range tt.featureGroups.Features {
+		for _, task := range feature.Tasks {
+			if task.Status == "completed" || task.Status == "validated" {
+				hasCompletedTasks = true
+				break
+			}
+		}
+		if hasCompletedTasks {
+			break
+		}
+	}
+	if hasCompletedTasks {
+		tt.clearTerminalSectionNav()
+		tt.isOnCompletedSection = true
+		tt.completedFeatureIdx = -1
+		tt.selectedFeatureIdx = -1
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
+		return
 	}
 
 	// No tasks available
@@ -1333,6 +1480,10 @@ func (tt *TaskTree) ToggleCollapse() {
 
 		// Handle terminal section toggle (Draft/Cancelled/Superseded/Archived/Completed)
 		if tt.isOnAnyTerminalSection() {
+			// If we're on a task within a terminal sub-feature, don't toggle
+			if tt.draftTaskIdx >= 0 || tt.cancelledTaskIdx >= 0 || tt.supersededTaskIdx >= 0 || tt.archivedTaskIdx >= 0 || tt.completedTaskIdx >= 0 {
+				return // Only toggle on headers, not on individual tasks
+			}
 			// Toggle using the collapsed pointer and feature IDs from terminalSections
 			type collapsibleSection struct {
 				isOn       bool
@@ -2036,17 +2187,18 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		isOn        func() bool
 		collapsed   *bool
 		featureIdx  func() int
+		taskIdx     func() int
 		setFeatIDs  func([]string)
 		featureIDs  func() []string
 		collapseKey string
 	}
 
 	terminalSections := []terminalSection{
-		{"Draft", draftTasks, DraftHeaderStyle, func() bool { return tt.isOnDraftSection }, &tt.draftCollapsed, func() int { return tt.draftFeatureIdx }, func(ids []string) { tt.draftFeatureIDs = ids }, func() []string { return tt.draftFeatureIDs }, "draft"},
-		{"Cancelled", cancelledTasks, CancelledHeaderStyle, func() bool { return tt.isOnCancelledSection }, &tt.cancelledCollapsed, func() int { return tt.cancelledFeatureIdx }, func(ids []string) { tt.cancelledFeatureIDs = ids }, func() []string { return tt.cancelledFeatureIDs }, "cancelled"},
-		{"Superseded", supersededTasks, SupersededHeaderStyle, func() bool { return tt.isOnSupersededSection }, &tt.supersededCollapsed, func() int { return tt.supersededFeatureIdx }, func(ids []string) { tt.supersededFeatureIDs = ids }, func() []string { return tt.supersededFeatureIDs }, "superseded"},
-		{"Archived", archivedTasks, ArchivedHeaderStyle, func() bool { return tt.isOnArchivedSection }, &tt.archivedCollapsed, func() int { return tt.archivedFeatureIdx }, func(ids []string) { tt.archivedFeatureIDs = ids }, func() []string { return tt.archivedFeatureIDs }, "archived"},
-		{"Completed", completedTasks, CompletedHeaderStyle, func() bool { return tt.isOnCompletedSection }, &tt.completedCollapsed, func() int { return tt.completedFeatureIdx }, func(ids []string) { tt.completedFeatureIDs = ids }, func() []string { return tt.completedFeatureIDs }, "completed"},
+		{"Draft", draftTasks, DraftHeaderStyle, func() bool { return tt.isOnDraftSection }, &tt.draftCollapsed, func() int { return tt.draftFeatureIdx }, func() int { return tt.draftTaskIdx }, func(ids []string) { tt.draftFeatureIDs = ids }, func() []string { return tt.draftFeatureIDs }, "draft"},
+		{"Cancelled", cancelledTasks, CancelledHeaderStyle, func() bool { return tt.isOnCancelledSection }, &tt.cancelledCollapsed, func() int { return tt.cancelledFeatureIdx }, func() int { return tt.cancelledTaskIdx }, func(ids []string) { tt.cancelledFeatureIDs = ids }, func() []string { return tt.cancelledFeatureIDs }, "cancelled"},
+		{"Superseded", supersededTasks, SupersededHeaderStyle, func() bool { return tt.isOnSupersededSection }, &tt.supersededCollapsed, func() int { return tt.supersededFeatureIdx }, func() int { return tt.supersededTaskIdx }, func(ids []string) { tt.supersededFeatureIDs = ids }, func() []string { return tt.supersededFeatureIDs }, "superseded"},
+		{"Archived", archivedTasks, ArchivedHeaderStyle, func() bool { return tt.isOnArchivedSection }, &tt.archivedCollapsed, func() int { return tt.archivedFeatureIdx }, func() int { return tt.archivedTaskIdx }, func(ids []string) { tt.archivedFeatureIDs = ids }, func() []string { return tt.archivedFeatureIDs }, "archived"},
+		{"Completed", completedTasks, CompletedHeaderStyle, func() bool { return tt.isOnCompletedSection }, &tt.completedCollapsed, func() int { return tt.completedFeatureIdx }, func() int { return tt.completedTaskIdx }, func(ids []string) { tt.completedFeatureIDs = ids }, func() []string { return tt.completedFeatureIDs }, "completed"},
 	}
 
 	for _, sec := range terminalSections {
@@ -2107,8 +2259,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				statusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
 				featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
 
-				// Highlight if this sub-feature header is selected
-				if sec.isOn() && sec.featureIdx() == fIdx {
+				// Highlight if this sub-feature header is selected (not when navigated into its tasks)
+				if sec.isOn() && sec.featureIdx() == fIdx && sec.taskIdx() == -1 {
 					featureHeader = SelectedRowStyle.Render(featureHeader)
 					featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
 				} else {
@@ -2146,11 +2298,11 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 	if height > 0 && len(lines) > height {
 		// Build terminal section descriptors for line-finding
 		termSections := []terminalSectionLineInfo{
-			{tasks: draftTasks, isOn: tt.isOnDraftSection, collapsed: tt.draftCollapsed, featureIdx: tt.draftFeatureIdx, featureIDs: tt.draftFeatureIDs},
-			{tasks: cancelledTasks, isOn: tt.isOnCancelledSection, collapsed: tt.cancelledCollapsed, featureIdx: tt.cancelledFeatureIdx, featureIDs: tt.cancelledFeatureIDs},
-			{tasks: supersededTasks, isOn: tt.isOnSupersededSection, collapsed: tt.supersededCollapsed, featureIdx: tt.supersededFeatureIdx, featureIDs: tt.supersededFeatureIDs},
-			{tasks: archivedTasks, isOn: tt.isOnArchivedSection, collapsed: tt.archivedCollapsed, featureIdx: tt.archivedFeatureIdx, featureIDs: tt.archivedFeatureIDs},
-			{tasks: completedTasks, isOn: tt.isOnCompletedSection, collapsed: tt.completedCollapsed, featureIdx: tt.completedFeatureIdx, featureIDs: tt.completedFeatureIDs},
+			{tasks: draftTasks, isOn: tt.isOnDraftSection, collapsed: tt.draftCollapsed, featureIdx: tt.draftFeatureIdx, taskIdx: tt.draftTaskIdx, featureIDs: tt.draftFeatureIDs, sectionName: "draft", featureCollapsed: tt.featureCollapsed},
+			{tasks: cancelledTasks, isOn: tt.isOnCancelledSection, collapsed: tt.cancelledCollapsed, featureIdx: tt.cancelledFeatureIdx, taskIdx: tt.cancelledTaskIdx, featureIDs: tt.cancelledFeatureIDs, sectionName: "cancelled", featureCollapsed: tt.featureCollapsed},
+			{tasks: supersededTasks, isOn: tt.isOnSupersededSection, collapsed: tt.supersededCollapsed, featureIdx: tt.supersededFeatureIdx, taskIdx: tt.supersededTaskIdx, featureIDs: tt.supersededFeatureIDs, sectionName: "superseded", featureCollapsed: tt.featureCollapsed},
+			{tasks: archivedTasks, isOn: tt.isOnArchivedSection, collapsed: tt.archivedCollapsed, featureIdx: tt.archivedFeatureIdx, taskIdx: tt.archivedTaskIdx, featureIDs: tt.archivedFeatureIDs, sectionName: "archived", featureCollapsed: tt.featureCollapsed},
+			{tasks: completedTasks, isOn: tt.isOnCompletedSection, collapsed: tt.completedCollapsed, featureIdx: tt.completedFeatureIdx, taskIdx: tt.completedTaskIdx, featureIDs: tt.completedFeatureIDs, sectionName: "completed", featureCollapsed: tt.featureCollapsed},
 		}
 		selectedLineIdx := findSelectedLineInFeatureView(
 			activeFeatureGroups,
@@ -2197,11 +2349,14 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 // terminalSectionLineInfo holds the data needed to compute line indices for a terminal section.
 type terminalSectionLineInfo struct {
-	tasks      []types.ResolvedTask
-	isOn       bool
-	collapsed  bool
-	featureIdx int
-	featureIDs []string
+	tasks            []types.ResolvedTask
+	isOn             bool
+	collapsed        bool
+	featureIdx       int
+	taskIdx          int
+	featureIDs       []string
+	sectionName      string
+	featureCollapsed map[string]bool
 }
 
 // findSelectedLineInFeatureView computes the rendered line index of the currently
@@ -2284,16 +2439,27 @@ func findSelectedLineInFeatureView(
 
 			for fIdx, featureID := range sec.featureIDs {
 				featureTasks := byFeature[featureID]
+				isSubCollapsed := false
+				if sec.featureCollapsed != nil {
+					isSubCollapsed = sec.featureCollapsed[sec.sectionName+":"+featureID]
+				}
+
 				// Sub-feature header
-				if sec.isOn && sec.featureIdx == fIdx {
+				if sec.isOn && sec.featureIdx == fIdx && sec.taskIdx == -1 {
 					return lineIdx
 				}
 				lineIdx++ // sub-feature header
 
-				// Count task lines (note: featureCollapsed check is not available here,
-				// but line counts match the rendered output)
-				taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
-				lineIdx += taskLineCount
+				// Count task lines if sub-feature is expanded
+				if !isSubCollapsed {
+					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
+
+					// If on a task within this sub-feature
+					if sec.isOn && sec.featureIdx == fIdx && sec.taskIdx >= 0 {
+						return lineIdx + sec.taskIdx
+					}
+					lineIdx += taskLineCount
+				}
 			}
 		}
 	}
@@ -3520,6 +3686,11 @@ func (tt *TaskTree) clearTerminalSectionNav() {
 	tt.supersededFeatureIdx = -1
 	tt.archivedFeatureIdx = -1
 	tt.completedFeatureIdx = -1
+	tt.draftTaskIdx = -1
+	tt.cancelledTaskIdx = -1
+	tt.supersededTaskIdx = -1
+	tt.archivedTaskIdx = -1
+	tt.completedTaskIdx = -1
 }
 
 // clearDraftCompletedNav is kept as an alias for backward compatibility.
@@ -3606,6 +3777,8 @@ type terminalSectionInfo struct {
 	featureIDs func() []string
 	featureIdx func() int
 	setFeatIdx func(int)
+	taskIdx    func() int
+	setTaskIdx func(int)
 }
 
 func (tt *TaskTree) terminalSections() []terminalSectionInfo {
@@ -3619,6 +3792,8 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			featureIDs: func() []string { return tt.draftFeatureIDs },
 			featureIdx: func() int { return tt.draftFeatureIdx },
 			setFeatIdx: func(i int) { tt.draftFeatureIdx = i },
+			taskIdx:    func() int { return tt.draftTaskIdx },
+			setTaskIdx: func(i int) { tt.draftTaskIdx = i },
 		},
 		{
 			name:       "cancelled",
@@ -3629,6 +3804,8 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			featureIDs: func() []string { return tt.cancelledFeatureIDs },
 			featureIdx: func() int { return tt.cancelledFeatureIdx },
 			setFeatIdx: func(i int) { tt.cancelledFeatureIdx = i },
+			taskIdx:    func() int { return tt.cancelledTaskIdx },
+			setTaskIdx: func(i int) { tt.cancelledTaskIdx = i },
 		},
 		{
 			name:       "superseded",
@@ -3639,6 +3816,8 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			featureIDs: func() []string { return tt.supersededFeatureIDs },
 			featureIdx: func() int { return tt.supersededFeatureIdx },
 			setFeatIdx: func(i int) { tt.supersededFeatureIdx = i },
+			taskIdx:    func() int { return tt.supersededTaskIdx },
+			setTaskIdx: func(i int) { tt.supersededTaskIdx = i },
 		},
 		{
 			name:       "archived",
@@ -3649,6 +3828,8 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			featureIDs: func() []string { return tt.archivedFeatureIDs },
 			featureIdx: func() int { return tt.archivedFeatureIdx },
 			setFeatIdx: func(i int) { tt.archivedFeatureIdx = i },
+			taskIdx:    func() int { return tt.archivedTaskIdx },
+			setTaskIdx: func(i int) { tt.archivedTaskIdx = i },
 		},
 		{
 			name:       "completed",
@@ -3659,6 +3840,8 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			featureIDs: func() []string { return tt.completedFeatureIDs },
 			featureIdx: func() int { return tt.completedFeatureIdx },
 			setFeatIdx: func(i int) { tt.completedFeatureIdx = i },
+			taskIdx:    func() int { return tt.completedTaskIdx },
+			setTaskIdx: func(i int) { tt.completedTaskIdx = i },
 		},
 	}
 }
@@ -3736,6 +3919,7 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 				continue
 			}
 			featIdx := sec.featureIdx()
+			taskIdx := sec.taskIdx()
 			if featIdx == -1 {
 				// On section header
 				if sec.collapsed() {
@@ -3747,15 +3931,51 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 				fids := sec.featureIDs()
 				if len(fids) > 0 {
 					sec.setFeatIdx(0)
+					sec.setTaskIdx(-1)
+					tt.SelectedID = ""
 				}
-			} else {
-				// On a sub-feature header → move to next
+			} else if taskIdx == -1 {
+				// On a sub-feature header
+				// Check if sub-feature is expanded and has tasks
+				sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+				subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), featIdx, tt.featureCollapsed, sec.name)
+				if !isCollapsed && len(subTasks) > 0 {
+					// Expanded sub-feature with tasks → enter first task
+					treeOrder := terminalSubFeatureTreeOrder(subTasks)
+					if len(treeOrder) > 0 {
+						sec.setTaskIdx(0)
+						tt.SelectedID = treeOrder[0]
+						return
+					}
+				}
+				// Collapsed or no tasks → move to next sub-feature or next section
 				fids := sec.featureIDs()
 				if featIdx < len(fids)-1 {
 					sec.setFeatIdx(featIdx + 1)
+					sec.setTaskIdx(-1)
+					tt.SelectedID = ""
 				} else {
 					// At end of sub-features → jump to next terminal section
 					tt.moveToNextTerminalSection()
+				}
+			} else {
+				// Within tasks of a sub-feature → advance to next task
+				sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+				subTasks, _ := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), featIdx, tt.featureCollapsed, sec.name)
+				treeOrder := terminalSubFeatureTreeOrder(subTasks)
+				if taskIdx < len(treeOrder)-1 {
+					sec.setTaskIdx(taskIdx + 1)
+					tt.SelectedID = treeOrder[taskIdx+1]
+				} else {
+					// At last task → move to next sub-feature header or next section
+					fids := sec.featureIDs()
+					if featIdx < len(fids)-1 {
+						sec.setFeatIdx(featIdx + 1)
+						sec.setTaskIdx(-1)
+						tt.SelectedID = ""
+					} else {
+						tt.moveToNextTerminalSection()
+					}
 				}
 			}
 			return
@@ -3911,21 +4131,57 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 				continue
 			}
 			featIdx := sec.featureIdx()
-			if featIdx == -1 {
-				// On section header → go up to previous section's last sub-feature, or active content
+			taskIdx := sec.taskIdx()
+
+			if taskIdx >= 0 {
+				// Within tasks of a sub-feature
+				if taskIdx > 0 {
+					// Move to previous task
+					sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+					subTasks, _ := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), featIdx, tt.featureCollapsed, sec.name)
+					treeOrder := terminalSubFeatureTreeOrder(subTasks)
+					if taskIdx < len(treeOrder) {
+						sec.setTaskIdx(taskIdx - 1)
+						tt.SelectedID = treeOrder[taskIdx-1]
+					} else {
+						// Index out of bounds — return to sub-feature header
+						sec.setTaskIdx(-1)
+						tt.SelectedID = ""
+					}
+				} else {
+					// At first task → move back to sub-feature header
+					sec.setTaskIdx(-1)
+					tt.SelectedID = ""
+				}
+			} else if featIdx == -1 {
+				// On section header → go up to previous section's last task/sub-feature, or active content
 				if !tt.moveToPrevTerminalSection() {
 					// No previous terminal section → go to end of active content
 					tt.clearTerminalSectionNav()
 					tt.moveUpToEndOfActiveContent()
 				} else {
-					// Moved to previous section header. Now position on its last sub-feature if expanded.
+					// Moved to previous section header. Now position on its last sub-feature's last task if expanded.
 					prevSections := tt.terminalSections()
 					for _, ps := range prevSections {
 						if ps.isOn() {
 							if !ps.collapsed() {
 								fids := ps.featureIDs()
 								if len(fids) > 0 {
-									ps.setFeatIdx(len(fids) - 1)
+									lastFeatIdx := len(fids) - 1
+									ps.setFeatIdx(lastFeatIdx)
+									// Try to land on last task of last sub-feature
+									sectionTasks := tt.collectTerminalSectionTasks(ps.name)
+									subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, fids, lastFeatIdx, tt.featureCollapsed, ps.name)
+									if !isCollapsed && len(subTasks) > 0 {
+										treeOrder := terminalSubFeatureTreeOrder(subTasks)
+										if len(treeOrder) > 0 {
+											ps.setTaskIdx(len(treeOrder) - 1)
+											tt.SelectedID = treeOrder[len(treeOrder)-1]
+										}
+									} else {
+										ps.setTaskIdx(-1)
+										tt.SelectedID = ""
+									}
 								}
 							}
 							break
@@ -3933,9 +4189,29 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 					}
 				}
 			} else if featIdx > 0 {
-				sec.setFeatIdx(featIdx - 1)
+				// On a sub-feature header (not the first) → move to previous sub-feature's last task
+				prevFeatIdx := featIdx - 1
+				sec.setFeatIdx(prevFeatIdx)
+				sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+				subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), prevFeatIdx, tt.featureCollapsed, sec.name)
+				if !isCollapsed && len(subTasks) > 0 {
+					treeOrder := terminalSubFeatureTreeOrder(subTasks)
+					if len(treeOrder) > 0 {
+						sec.setTaskIdx(len(treeOrder) - 1)
+						tt.SelectedID = treeOrder[len(treeOrder)-1]
+					} else {
+						sec.setTaskIdx(-1)
+						tt.SelectedID = ""
+					}
+				} else {
+					sec.setTaskIdx(-1)
+					tt.SelectedID = ""
+				}
 			} else {
-				sec.setFeatIdx(-1) // Move to section header
+				// On first sub-feature header → move to section header
+				sec.setFeatIdx(-1)
+				sec.setTaskIdx(-1)
+				tt.SelectedID = ""
 			}
 			return
 		}

@@ -430,11 +430,11 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	draftTasks := []types.ResolvedTask{allTasks[0]}
 	completedTasks := []types.ResolvedTask{allTasks[3]}
 	noTasks := []terminalSectionLineInfo{
-		{tasks: draftTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
+		{tasks: draftTasks, isOn: false, collapsed: false, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, taskIdx: -1, featureIDs: nil},
 	}
 
 	// Test 1: Selecting beta feature header (the first active feature, line 0)
@@ -497,11 +497,11 @@ func TestFindSelectedLineInFeatureView_DraftAndCompletedSections(t *testing.T) {
 
 	// Draft section header should be at line: 2 (feature header + 1 task) + 1 (blank line) = line 3
 	termSections := []terminalSectionLineInfo{
-		{tasks: draftTasks, isOn: true, collapsed: false, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, featureIDs: nil},
-		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, featureIDs: nil},
+		{tasks: draftTasks, isOn: true, collapsed: false, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: nil, isOn: false, collapsed: true, featureIdx: -1, taskIdx: -1, featureIDs: nil},
+		{tasks: completedTasks, isOn: false, collapsed: false, featureIdx: -1, taskIdx: -1, featureIDs: nil},
 	}
 	lineIdx := findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,

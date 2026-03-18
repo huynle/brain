@@ -19,13 +19,16 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature tasks endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
+		// Feature endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "active"},
-					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3", "status": "pending"},
+				"feature": map[string]interface{}{
+					"featureId": "dark-mode",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "active"},
+						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3", "status": "pending"},
+					},
 				},
 			})
 			return
@@ -124,15 +127,18 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature tasks endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "perf-test" {
+		// Feature endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/perf-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
-					{"id": "task4", "path": "projects/brain-api/task/task4.md", "title": "Task 4"},
-					{"id": "task5", "path": "projects/brain-api/task/task5.md", "title": "Task 5"},
+				"feature": map[string]interface{}{
+					"featureId": "perf-test",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+						{"id": "task4", "path": "projects/brain-api/task/task4.md", "title": "Task 4"},
+						{"id": "task5", "path": "projects/brain-api/task/task5.md", "title": "Task 5"},
+					},
 				},
 			})
 			return
@@ -220,13 +226,16 @@ func TestMetadataModalFeature_SaveField_ErrorHandling(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature tasks endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "error-test" {
+		// Feature endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/error-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+				"feature": map[string]interface{}{
+					"featureId": "error-test",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+					},
 				},
 			})
 			return
@@ -297,12 +306,15 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature tasks endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "priority-test" {
+		// Feature endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/priority-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+				"feature": map[string]interface{}{
+					"featureId": "priority-test",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					},
 				},
 			})
 			return
@@ -393,13 +405,16 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Feature tasks endpoint
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "message-test" {
+		// Feature endpoint
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/message-test" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+				"feature": map[string]interface{}{
+					"featureId": "message-test",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+					},
 				},
 			})
 			return

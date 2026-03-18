@@ -363,27 +363,16 @@ func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string)
 }
 
 // GetTasksByFeature fetches all tasks belonging to a feature within a project.
-// Uses the task list endpoint with feature_id query parameter.
+// Uses the dedicated feature endpoint which correctly filters by feature ID.
 func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
-	apiPath := fmt.Sprintf("/api/v1/tasks/%s?feature_id=%s", projectID, featureID)
-
-	resp, err := c.doRequest(ctx, http.MethodGet, apiPath, nil)
+	featureResp, err := c.GetFeature(ctx, projectID, featureID)
 	if err != nil {
 		return nil, fmt.Errorf("get tasks by feature: %w", err)
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, c.readError(resp)
+	if featureResp == nil {
+		return nil, nil
 	}
-
-	var data struct {
-		Tasks []types.ResolvedTask `json:"tasks"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("decode tasks by feature: %w", err)
-	}
-	return data.Tasks, nil
+	return featureResp.Tasks, nil
 }
 
 // =============================================================================

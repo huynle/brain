@@ -106,12 +106,15 @@ func TestMetadataModalFeature_Init_FetchesFeatureTasks(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Tasks by feature endpoint (GET /tasks/:project?feature_id=:featureId)
-		if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
+		// Feature endpoint (GET /tasks/:project/features/:featureId)
+		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"tasks": []map[string]interface{}{
-					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
-					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "pending"},
+				"feature": map[string]interface{}{
+					"featureId": "dark-mode",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "pending"},
+					},
 				},
 			})
 			return
@@ -194,11 +197,14 @@ func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 
-			// Tasks by feature endpoint succeeds
-			if r.URL.Path == "/api/v1/tasks/brain-api" && r.URL.Query().Get("feature_id") == "dark-mode" {
+			// Feature endpoint succeeds
+			if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					"feature": map[string]interface{}{
+						"featureId": "dark-mode",
+						"tasks": []map[string]interface{}{
+							{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+						},
 					},
 				})
 				return

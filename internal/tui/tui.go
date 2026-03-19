@@ -508,6 +508,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorClosedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("✗ Editor error: %v", msg.err))
+			// Clean up temp file
+			if msg.tempFile != "" {
+				os.RemoveAll(filepath.Dir(msg.tempFile))
+			}
+			return m, nil
+		}
+
+		// Read back the temp file and check for changes
+		if msg.tempFile != "" {
+			newContent, err := os.ReadFile(msg.tempFile)
+			// Clean up temp file
+			os.RemoveAll(filepath.Dir(msg.tempFile))
+
+			if err != nil {
+				m.setStatusMessage("error", fmt.Sprintf("✗ Failed to read edited file: %v", err))
+				return m, nil
+			}
+
+			if string(newContent) == msg.originalContent {
+				m.setStatusMessage("info", "No changes made")
+				return m, nil
+			}
+
+			// Sync changes back to API
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			_, err = apiClient.UpdateEntry(context.Background(), msg.taskPath, map[string]interface{}{
+				"content": string(newContent),
+			})
+			if err != nil {
+				m.setStatusMessage("error", fmt.Sprintf("✗ Failed to sync changes: %v", err))
+				return m, nil
+			}
+
+			m.setStatusMessage("success", "✓ Task updated from editor")
 		} else {
 			m.setStatusMessage("success", "✓ File saved - refreshing...")
 		}
@@ -970,6 +1004,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.modalManager.Open(modal)
 		case "e":
 			// Edit task in $EDITOR (tasks view only)
+			// Fetches content from API, writes to temp file, opens editor,
+			// then syncs changes back on close.
 			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
@@ -979,12 +1015,38 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Construct full file path
-			// Task path format: projects/{project}/task/{id}.md
-			fullPath := filepath.Join(m.config.BrainDir, selectedTask.Path)
+			// Fetch entry content from API and write to temp file
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			entry, err := apiClient.GetEntry(context.Background(), selectedTask.Path)
+			if err != nil {
+				m.setStatusMessage("error", fmt.Sprintf("Failed to fetch task: %v", err))
+				return m, nil
+			}
 
-			return m, tea.ExecProcess(getEditorCmd(fullPath), func(err error) tea.Msg {
-				return editorClosedMsg{taskID: selectedTask.ID, err: err}
+			// Write content to temp file
+			tempDir, err := os.MkdirTemp("", "brain-task-")
+			if err != nil {
+				m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+				return m, nil
+			}
+			tempFile := filepath.Join(tempDir, selectedTask.ID+".md")
+			if err := os.WriteFile(tempFile, []byte(entry.Content), 0o644); err != nil {
+				m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+				return m, nil
+			}
+
+			originalContent := entry.Content
+			taskID := selectedTask.ID
+			taskPath := selectedTask.Path
+
+			return m, tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+				return editorClosedMsg{
+					taskID:          taskID,
+					taskPath:        taskPath,
+					tempFile:        tempFile,
+					originalContent: originalContent,
+					err:             err,
+				}
 			})
 		case "o":
 			// Open session fullscreen (tasks view only)
@@ -2094,8 +2156,11 @@ type batchTasksDeletedMsg struct {
 }
 
 type editorClosedMsg struct {
-	taskID string
-	err    error
+	taskID          string
+	taskPath        string
+	tempFile        string
+	originalContent string
+	err             error
 }
 
 type autoMonitorCreatedMsg struct {

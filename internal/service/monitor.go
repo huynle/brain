@@ -206,6 +206,16 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 	tags = append(tags, template.Tags...)
 	tags = append(tags, tag)
 
+	// Determine status: inherit from feature tasks if feature-scoped
+	status := "active"
+	if scope.Type == "feature" && scope.FeatureID != "" && project != "" {
+		featureStatus, err := s.resolveFeatureTaskStatus(ctx, project, scope.FeatureID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve feature status: %w", err)
+		}
+		status = featureStatus
+	}
+
 	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:            "task",
 		Title:           title,
@@ -217,7 +227,7 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		Tags:            tags,
 		FeatureID:       scope.FeatureID,
 		Project:         project,
-		Status:          "active",
+		Status:          status,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("save monitor entry: %w", err)
@@ -354,4 +364,62 @@ func (s *MonitorServiceImpl) Delete(ctx context.Context, taskID string) (string,
 	}
 
 	return entry.Path, nil
+}
+
+// resolveFeatureTaskStatus determines what status a new monitor task should
+// inherit from the existing tasks in a feature. All non-monitor tasks must
+// share the same status; if they have mixed statuses, an error is returned.
+func (s *MonitorServiceImpl) resolveFeatureTaskStatus(ctx context.Context, project, featureID string) (string, error) {
+	result, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		FeatureID: featureID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("list feature tasks: %w", err)
+	}
+
+	// Filter to tasks in this project and exclude existing monitors
+	projectPrefix := "projects/" + project + "/"
+	statuses := make(map[string]int)
+	for _, entry := range result.Entries {
+		if !strings.HasPrefix(entry.Path, projectPrefix) {
+			continue
+		}
+		// Skip existing monitor tasks (they have schedule/monitor tags)
+		if isMonitorEntry(entry) {
+			continue
+		}
+		if entry.Status != "" {
+			statuses[entry.Status]++
+		}
+	}
+
+	if len(statuses) == 0 {
+		// No tasks found, default to "active"
+		return "active", nil
+	}
+
+	if len(statuses) == 1 {
+		// All tasks share the same status - inherit it
+		for status := range statuses {
+			return status, nil
+		}
+	}
+
+	// Mixed statuses - build error message
+	var parts []string
+	for status, count := range statuses {
+		parts = append(parts, fmt.Sprintf("%s(%d)", status, count))
+	}
+	return "", fmt.Errorf("feature %q has mixed task statuses: %s; all tasks must share the same status to create automated tasks", featureID, strings.Join(parts, ", "))
+}
+
+// isMonitorEntry checks if an entry is a monitor task (has monitor-related tags).
+func isMonitorEntry(entry types.BrainEntry) bool {
+	for _, tag := range entry.Tags {
+		if strings.HasPrefix(tag, "monitor:") {
+			return true
+		}
+	}
+	return false
 }

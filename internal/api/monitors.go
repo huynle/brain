@@ -104,6 +104,10 @@ func (h *Handler) HandleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusBadRequest, "Bad Request", errMsg)
 			return
 		}
+		if strings.Contains(errMsg, "mixed task statuses") {
+			WriteError(w, http.StatusConflict, "Conflict", errMsg)
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", errMsg)
 		return
 	}

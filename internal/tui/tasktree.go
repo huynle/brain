@@ -2187,15 +2187,16 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		origStats := originalFeatureStats[feature.ID]
 		statsStr := fmt.Sprintf("[%d/%d complete]", origStats.Completed, origStats.Total)
 
-		// Feature header with status icon, name, execution indicator, and completion stats
-		// Ungrouped tasks don't get the "Feature:" prefix
+		// Feature header: collapse indicator + name + execution indicator + stats
+		// Status icon is omitted to avoid visual clutter with the → cursor and ▾/▶ collapse icon
+		_ = statusIcon // used only for terminal section sub-features
 		var featureHeader string
 		if feature.Name == "[Ungrouped]" {
-			featureHeader = fmt.Sprintf("%s %s %s%s %s",
-				collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s %s%s %s",
+				collapseIndicator, feature.Name, execIndicator, statsStr)
 		} else {
-			featureHeader = fmt.Sprintf("%s %s Feature: %s%s %s",
-				collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s Feature: %s%s %s",
+				collapseIndicator, feature.Name, execIndicator, statsStr)
 		}
 
 		// Selection marker (2 spaces for alignment, → when selected)
@@ -2669,15 +2670,16 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				}
 				nestedStatsStr := fmt.Sprintf("[%d/%d complete]", feature.Stats.Completed, feature.Stats.Total)
 
-				// Feature header with status icon, name, execution indicator, and completion stats
-				// Ungrouped tasks don't get the "Feature:" prefix
+				// Feature header: collapse indicator + name + execution indicator + stats
+				// Status icon omitted to avoid visual clutter with → cursor and ▾/▶ collapse
+				_ = nestedStatusIcon
 				var featureHeader string
 				if feature.Name == "[Ungrouped]" {
-					featureHeader = fmt.Sprintf("%s %s %s%s %s",
-						featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
+					featureHeader = fmt.Sprintf("%s %s%s %s",
+						featureCollapseIndicator, feature.Name, nestedExecIndicator, nestedStatsStr)
 				} else {
-					featureHeader = fmt.Sprintf("%s %s Feature: %s%s %s",
-						featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
+					featureHeader = fmt.Sprintf("%s Feature: %s%s %s",
+						featureCollapseIndicator, feature.Name, nestedExecIndicator, nestedStatsStr)
 				}
 
 				// Selection marker for feature header (with indentation)

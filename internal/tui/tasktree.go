@@ -1714,6 +1714,28 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 	return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
 }
 
+// GetSelectedFeatureTasks returns the tasks for the currently selected feature header.
+// Returns nil if not on a feature header or no tasks available.
+func (tt *TaskTree) GetSelectedFeatureTasks() []types.ResolvedTask {
+	if !tt.useFeatureView {
+		return nil
+	}
+
+	featureID := tt.GetSelectedFeatureID()
+	if featureID == "" {
+		return nil
+	}
+
+	// Search all features for the matching ID
+	for _, f := range tt.featureGroups.Features {
+		if f.ID == featureID {
+			return f.Tasks
+		}
+	}
+
+	return nil
+}
+
 // statusIndicator returns the status icon for a task.
 // For pending tasks, classification (dependency state) takes precedence to show readiness.
 // For other statuses, status (execution state) takes precedence.
@@ -4245,6 +4267,23 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 	}
 }
 
+// hasActiveFeatureContent returns true if there are any active (non-terminal status) tasks
+// in the feature groups or ungrouped section. Used to prevent moveUpToEndOfActiveContent
+// from being called when there's nothing to move to, which would leave the cursor in a void state.
+func (tt *TaskTree) hasActiveFeatureContent() bool {
+	for _, f := range tt.featureGroups.Features {
+		if len(featureActiveTasks(f.Tasks)) > 0 {
+			return true
+		}
+	}
+	if tt.featureGroups.Ungrouped != nil {
+		if len(featureActiveTasks(tt.featureGroups.Ungrouped.Tasks)) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // moveUpToEndOfActiveContent moves cursor to the last item before draft/completed sections.
 func (tt *TaskTree) moveUpToEndOfActiveContent() {
 	if tt.featureGroups.Ungrouped != nil {
@@ -4319,9 +4358,13 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 			} else if featIdx == -1 {
 				// On section header → go up to previous section's last task/sub-feature, or active content
 				if !tt.moveToPrevTerminalSection() {
-					// No previous terminal section → go to end of active content
-					tt.clearTerminalSectionNav()
-					tt.moveUpToEndOfActiveContent()
+					// No previous terminal section → try to go to end of active content.
+					// But only move if there IS active content to move to; otherwise stay put (no-op).
+					if tt.hasActiveFeatureContent() {
+						tt.clearTerminalSectionNav()
+						tt.moveUpToEndOfActiveContent()
+					}
+					// else: no active content above → stay put (no-op), cursor remains on first terminal section header
 				} else {
 					// Moved to previous section header. Now position on its last sub-feature's last task if expanded.
 					prevSections := tt.terminalSections()

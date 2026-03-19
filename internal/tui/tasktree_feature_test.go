@@ -1279,3 +1279,206 @@ func TestMoveToBottomFeatureGrouped_OnlyDraftTasks(t *testing.T) {
 		t.Fatal("Expected isOnDraftSection=true when only draft tasks exist")
 	}
 }
+
+// TestMoveUp_AtTopOfList_IsNoOp tests that pressing k at the very top of the list
+// is a no-op — the cursor stays on the first item (Draft section header) and
+// does not disappear.
+func TestMoveUp_AtTopOfList_IsNoOp(t *testing.T) {
+	// All draft tasks — no active features, so the first navigable item
+	// is the Draft section header.
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "d2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Verify initial state: cursor should be on Draft section header
+	if !tt.isOnDraftSection {
+		t.Fatal("Expected isOnDraftSection=true after SetTasks with only draft tasks")
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("Expected draftFeatureIdx=-1 (on section header), got %d", tt.draftFeatureIdx)
+	}
+
+	// Press k — should be a no-op
+	tt.MoveUp()
+
+	// Cursor should still be on Draft section header
+	if !tt.isOnDraftSection {
+		t.Fatal("After MoveUp at top: expected isOnDraftSection=true, cursor disappeared")
+	}
+	if tt.draftFeatureIdx != -1 {
+		t.Fatalf("After MoveUp at top: expected draftFeatureIdx=-1, got %d", tt.draftFeatureIdx)
+	}
+}
+
+// TestMoveDown_AtBottomOfList_IsNoOp tests that pressing j at the very bottom
+// of the list is a no-op — the cursor stays on the last item.
+func TestMoveDown_AtBottomOfList_IsNoOp(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "d2", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Navigate to the absolute bottom by pressing j until we can't go further.
+	// Track state to detect when movement stops.
+	maxIterations := 20 // Safety limit
+	for i := 0; i < maxIterations; i++ {
+		prevSelectedID := tt.SelectedID
+		prevDraftFeatIdx := tt.draftFeatureIdx
+		prevDraftTaskIdx := tt.draftTaskIdx
+		prevIsOnDraft := tt.isOnDraftSection
+
+		tt.MoveDown()
+
+		// Check if state didn't change — we've hit the bottom
+		if tt.SelectedID == prevSelectedID && tt.draftFeatureIdx == prevDraftFeatIdx &&
+			tt.draftTaskIdx == prevDraftTaskIdx && tt.isOnDraftSection == prevIsOnDraft {
+			break
+		}
+	}
+
+	// Record the state at the absolute bottom
+	bottomIsOnDraft := tt.isOnDraftSection
+	bottomDraftFeatIdx := tt.draftFeatureIdx
+	bottomDraftTaskIdx := tt.draftTaskIdx
+	bottomSelectedID := tt.SelectedID
+
+	// Press j one more time — should be a no-op
+	tt.MoveDown()
+
+	// Cursor should remain in the same position
+	if tt.isOnDraftSection != bottomIsOnDraft {
+		t.Fatalf("After MoveDown at bottom: isOnDraftSection changed from %v to %v", bottomIsOnDraft, tt.isOnDraftSection)
+	}
+	if tt.draftFeatureIdx != bottomDraftFeatIdx {
+		t.Fatalf("After MoveDown at bottom: draftFeatureIdx changed from %d to %d", bottomDraftFeatIdx, tt.draftFeatureIdx)
+	}
+	if tt.draftTaskIdx != bottomDraftTaskIdx {
+		t.Fatalf("After MoveDown at bottom: draftTaskIdx changed from %d to %d", bottomDraftTaskIdx, tt.draftTaskIdx)
+	}
+	if tt.SelectedID != bottomSelectedID {
+		t.Fatalf("After MoveDown at bottom: SelectedID changed from %q to %q", bottomSelectedID, tt.SelectedID)
+	}
+}
+
+// TestMoveToTop_ThenMoveUp_CursorStays tests the exact bug scenario:
+// g (jump to top) then k (move up) should leave cursor on the first item.
+func TestMoveToTop_ThenMoveUp_CursorStays(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Status: "draft", Priority: "high", FeatureID: "feat-a"},
+		{ID: "d2", Status: "draft", Priority: "medium", FeatureID: "feat-b"},
+		{ID: "c1", Status: "completed", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Press g — jump to top
+	tt.MoveToTop()
+
+	// Record state at top
+	topIsOnDraft := tt.isOnDraftSection
+	topDraftFeatIdx := tt.draftFeatureIdx
+
+	// Press k — should be a no-op
+	tt.MoveUp()
+
+	// Cursor should NOT have disappeared
+	isOnAnything := tt.isOnDraftSection || tt.isOnCancelledSection || tt.isOnSupersededSection ||
+		tt.isOnArchivedSection || tt.isOnCompletedSection ||
+		tt.selectedFeatureIdx >= 0 || tt.isOnUngrouped
+
+	if !isOnAnything {
+		t.Fatal("After g then k: cursor disappeared entirely — not on any section or feature")
+	}
+
+	// Should still be on the same item as after g
+	if topIsOnDraft && !tt.isOnDraftSection {
+		t.Fatal("After g then k: was on Draft section but cursor moved away")
+	}
+	if tt.draftFeatureIdx != topDraftFeatIdx {
+		t.Fatalf("After g then k: draftFeatureIdx changed from %d to %d", topDraftFeatIdx, tt.draftFeatureIdx)
+	}
+}
+
+// TestMoveToBottom_ThenMoveDown_CursorStays tests that G then j leaves
+// cursor on the last item.
+func TestMoveToBottom_ThenMoveDown_CursorStays(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "c1", Status: "completed", Priority: "high", FeatureID: "feat-a"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Press G — jump to bottom
+	tt.MoveToBottom()
+
+	// Record state at bottom
+	bottomIsOnCompleted := tt.isOnCompletedSection
+	bottomCompletedFeatIdx := tt.completedFeatureIdx
+	bottomSelectedID := tt.SelectedID
+
+	// Press j — should be a no-op
+	tt.MoveDown()
+
+	// Cursor should remain in the same position
+	if tt.isOnCompletedSection != bottomIsOnCompleted {
+		t.Fatalf("After G then j: isOnCompletedSection changed from %v to %v", bottomIsOnCompleted, tt.isOnCompletedSection)
+	}
+	if tt.completedFeatureIdx != bottomCompletedFeatIdx {
+		t.Fatalf("After G then j: completedFeatureIdx changed from %d to %d", bottomCompletedFeatIdx, tt.completedFeatureIdx)
+	}
+	if tt.SelectedID != bottomSelectedID {
+		t.Fatalf("After G then j: SelectedID changed from %q to %q", bottomSelectedID, tt.SelectedID)
+	}
+}
+
+// TestMoveUp_AtFirstFeatureHeader_IsNoOp tests that k on the first active feature
+// header (when there ARE active features) is a no-op.
+func TestMoveUp_AtFirstFeatureHeader_IsNoOp(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "pending", Priority: "high", FeatureID: "feat-a"},
+		{ID: "t2", Status: "pending", Priority: "high", FeatureID: "feat-b"},
+	}
+
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+	tt.SetTasks(tasks)
+
+	// Jump to top — should land on first feature header
+	tt.MoveToTop()
+
+	if tt.selectedFeatureIdx != 0 {
+		t.Fatalf("Expected to be on first feature (idx 0), got %d", tt.selectedFeatureIdx)
+	}
+	if tt.selectedFeatureTaskIdx != -1 {
+		t.Fatalf("Expected to be on feature header (-1), got %d", tt.selectedFeatureTaskIdx)
+	}
+
+	// Press k — should be a no-op
+	tt.MoveUp()
+
+	if tt.selectedFeatureIdx != 0 {
+		t.Fatalf("After k at top: selectedFeatureIdx changed to %d", tt.selectedFeatureIdx)
+	}
+	if tt.selectedFeatureTaskIdx != -1 {
+		t.Fatalf("After k at top: selectedFeatureTaskIdx changed to %d", tt.selectedFeatureTaskIdx)
+	}
+}

@@ -21,14 +21,13 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 
 		// Feature endpoint
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "dark-mode",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "active"},
-						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3", "status": "pending"},
-					},
+				"featureId": "dark-mode",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "active"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3", "status": "pending"},
 				},
 			})
 			return
@@ -129,16 +128,15 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 
 		// Feature endpoint
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/perf-test" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "perf-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
-						{"id": "task4", "path": "projects/brain-api/task/task4.md", "title": "Task 4"},
-						{"id": "task5", "path": "projects/brain-api/task/task5.md", "title": "Task 5"},
-					},
+				"featureId": "perf-test",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
+					{"id": "task4", "path": "projects/brain-api/task/task4.md", "title": "Task 4"},
+					{"id": "task5", "path": "projects/brain-api/task/task5.md", "title": "Task 5"},
 				},
 			})
 			return
@@ -228,14 +226,13 @@ func TestMetadataModalFeature_SaveField_ErrorHandling(t *testing.T) {
 
 		// Feature endpoint
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/error-test" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "error-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
-					},
+				"featureId": "error-test",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
 				},
 			})
 			return
@@ -308,13 +305,12 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 
 		// Feature endpoint
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/priority-test" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "priority-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-					},
+				"featureId": "priority-test",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
 				},
 			})
 			return
@@ -407,14 +403,13 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 
 		// Feature endpoint
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/message-test" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "message-test",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
-						{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
-					},
+				"featureId": "message-test",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2"},
+					{"id": "task3", "path": "projects/brain-api/task/task3.md", "title": "Task 3"},
 				},
 			})
 			return

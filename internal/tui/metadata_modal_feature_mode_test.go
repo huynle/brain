@@ -108,13 +108,12 @@ func TestMetadataModalFeature_Init_FetchesFeatureTasks(t *testing.T) {
 
 		// Feature endpoint (GET /tasks/:project/features/:featureId)
 		if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+			// Server returns FeatureResponse directly (no "feature" wrapper)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"feature": map[string]interface{}{
-					"featureId": "dark-mode",
-					"tasks": []map[string]interface{}{
-						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
-						{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "pending"},
-					},
+				"featureId": "dark-mode",
+				"tasks": []map[string]interface{}{
+					{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1", "status": "active"},
+					{"id": "task2", "path": "projects/brain-api/task/task2.md", "title": "Task 2", "status": "pending"},
 				},
 			})
 			return
@@ -199,12 +198,11 @@ func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 
 			// Feature endpoint succeeds
 			if r.URL.Path == "/api/v1/tasks/brain-api/features/dark-mode" {
+				// Server returns FeatureResponse directly (no "feature" wrapper)
 				json.NewEncoder(w).Encode(map[string]interface{}{
-					"feature": map[string]interface{}{
-						"featureId": "dark-mode",
-						"tasks": []map[string]interface{}{
-							{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
-						},
+					"featureId": "dark-mode",
+					"tasks": []map[string]interface{}{
+						{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
 					},
 				})
 				return

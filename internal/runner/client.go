@@ -352,14 +352,12 @@ func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string)
 		return nil, c.readError(resp)
 	}
 
-	var data struct {
-		Feature *types.FeatureResponse `json:"feature"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+	var feature types.FeatureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&feature); err != nil {
 		return nil, fmt.Errorf("decode feature: %w", err)
 	}
 
-	return data.Feature, nil
+	return &feature, nil
 }
 
 // GetTasksByFeature fetches all tasks belonging to a feature within a project.

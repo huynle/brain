@@ -661,36 +661,35 @@ func TestAPIClient_GetFeature_Success(t *testing.T) {
 			t.Errorf("unexpected method: %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// Server returns FeatureResponse directly (no "feature" wrapper)
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"feature": map[string]interface{}{
-				"featureId": "dark-mode",
-				"tasks": []map[string]interface{}{
-					{
-						"id":         "abc123",
-						"title":      "Add dark mode toggle",
-						"status":     "active",
-						"priority":   "high",
-						"featureId":  "dark-mode",
-						"dependsOn":  []string{},
-						"dependents": []string{},
-					},
-					{
-						"id":         "def456",
-						"title":      "Update theme colors",
-						"status":     "pending",
-						"priority":   "medium",
-						"featureId":  "dark-mode",
-						"dependsOn":  []string{"abc123"},
-						"dependents": []string{},
-					},
+			"featureId": "dark-mode",
+			"tasks": []map[string]interface{}{
+				{
+					"id":         "abc123",
+					"title":      "Add dark mode toggle",
+					"status":     "active",
+					"priority":   "high",
+					"featureId":  "dark-mode",
+					"dependsOn":  []string{},
+					"dependents": []string{},
 				},
-				"ready": true,
-				"stats": map[string]int{
-					"ready":     1,
-					"waiting":   0,
-					"blocked":   0,
-					"completed": 0,
+				{
+					"id":         "def456",
+					"title":      "Update theme colors",
+					"status":     "pending",
+					"priority":   "medium",
+					"featureId":  "dark-mode",
+					"dependsOn":  []string{"abc123"},
+					"dependents": []string{},
 				},
+			},
+			"ready": true,
+			"stats": map[string]int{
+				"ready":     1,
+				"waiting":   0,
+				"blocked":   0,
+				"completed": 0,
 			},
 		})
 	}))

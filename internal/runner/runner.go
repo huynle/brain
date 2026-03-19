@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"sync"
 	"time"
 
@@ -248,8 +249,11 @@ func (tr *TaskRunner) Stop() error {
 	// Wait for the poll loop to exit
 	<-tr.done
 
-	// Kill all running processes
+	// Clean up tmux windows for all running tasks, then kill processes
 	if tr.processMgr != nil {
+		for _, info := range tr.processMgr.GetAll() {
+			tr.cleanupTaskTmux(info.Task)
+		}
 		ctx := context.Background()
 		tr.processMgr.KillAll(ctx)
 	}
@@ -284,7 +288,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 1. Health check
 	health, err := tr.client.CheckHealth(ctx)
-	if err != nil || health.Status != "ok" {
+	if err != nil || (health.Status != "ok" && health.Status != "healthy") {
 		return
 	}
 
@@ -489,6 +493,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	}
 	tr.mu.Unlock()
 
+	// Clean up tmux window (graceful: Ctrl+C then kill)
+	tr.cleanupTaskTmux(task)
+
 	// Cleanup temp files
 	tr.executor.Cleanup(taskID, task.ProjectID)
 
@@ -498,6 +505,47 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		Result: result,
 		TaskID: taskID,
 	})
+}
+
+// =============================================================================
+// Tmux Cleanup
+// =============================================================================
+
+// cleanupTaskTmux gracefully closes a task's tmux window.
+// It sends Ctrl+C first to let OpenCode shut down, waits briefly, then kills the window.
+func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
+	if task.WindowName == "" && task.PaneID == "" {
+		return
+	}
+
+	target := task.WindowName
+	targetType := "window"
+	if target == "" {
+		target = task.PaneID
+		targetType = "pane"
+	}
+
+	// Step 1: Send Ctrl+C for graceful shutdown
+	sendKeysCmd := exec.Command("tmux", "send-keys", "-t", target, "C-c", "")
+	if err := sendKeysCmd.Run(); err != nil {
+		// Window may already be closed
+		tr.logger.Printf("tmux send-keys failed for %s %s (may be closed): %v", targetType, target, err)
+	}
+
+	// Wait 500ms for graceful shutdown
+	time.Sleep(500 * time.Millisecond)
+
+	// Step 2: Kill the window/pane
+	var killCmd *exec.Cmd
+	if targetType == "window" {
+		killCmd = exec.Command("tmux", "kill-window", "-t", target)
+	} else {
+		killCmd = exec.Command("tmux", "kill-pane", "-t", target)
+	}
+	if err := killCmd.Run(); err != nil {
+		// Already closed
+		tr.logger.Printf("tmux kill-%s failed for %s (may be closed): %v", targetType, target, err)
+	}
 }
 
 // =============================================================================
@@ -558,6 +606,13 @@ func (tr *TaskRunner) IsPaused(projectID string) bool {
 		return true
 	}
 	return tr.pauseCache[projectID]
+}
+
+// IsAllPaused returns whether all projects are globally paused.
+func (tr *TaskRunner) IsAllPaused() bool {
+	tr.pauseMu.RLock()
+	defer tr.pauseMu.RUnlock()
+	return tr.allPaused
 }
 
 // =============================================================================

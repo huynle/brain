@@ -222,6 +222,11 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 		// Heartbeat is ignored (used for keepalive only)
 		return nil, nil
 
+	case "project_dirty":
+		// Project data changed - the server will follow up with a tasks_snapshot
+		// but we ignore this lightweight signal since the snapshot follows immediately.
+		return nil, nil
+
 	case "error":
 		var data types.SSEErrorData
 		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {

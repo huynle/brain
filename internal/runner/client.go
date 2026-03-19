@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -68,7 +69,7 @@ func (c *APIClient) CheckHealth(ctx context.Context) (APIHealth, error) {
 	}
 	c.mu.Unlock()
 
-	resp, err := c.doRequest(ctx, http.MethodGet, "/health", nil)
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/health", nil)
 	if err != nil {
 		unhealthy := APIHealth{Status: "unhealthy"}
 		c.mu.Lock()
@@ -156,13 +157,29 @@ func (c *APIClient) GetNextTask(ctx context.Context, projectID string) (*types.R
 		return nil, c.readError(resp)
 	}
 
-	var data struct {
-		Task types.ResolvedTask `json:"task"`
+	// Read body first to check for null/empty response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read next task body: %w", err)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+
+	// Handle null, empty, or no-task responses
+	trimmed := strings.TrimSpace(string(body))
+	if trimmed == "" || trimmed == "null" || trimmed == "{}" {
+		return nil, nil
+	}
+
+	var task types.ResolvedTask
+	if err := json.Unmarshal(body, &task); err != nil {
 		return nil, fmt.Errorf("decode next task: %w", err)
 	}
-	return &data.Task, nil
+
+	// Extra safety: if the decoded task has no ID, treat as no task
+	if task.ID == "" {
+		return nil, nil
+	}
+
+	return &task, nil
 }
 
 // GetAllTasks returns all tasks in a project.
@@ -370,7 +387,7 @@ func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID 
 	if featureResp == nil {
 		return nil, nil
 	}
-	return featureResp.Tasks, nil
+	return featureResp.Feature.Tasks, nil
 }
 
 // =============================================================================
@@ -494,18 +511,17 @@ func (c *APIClient) readError(resp *http.Response) error {
 	}
 }
 
-// encodePathComponent percent-encodes a path component like JavaScript's
-// encodeURIComponent — encoding slashes, spaces, and other special chars.
+// encodePathComponent encodes a brain entry path for use in URLs.
+// Brain paths like "projects/test1/task/abc.md" should keep slashes intact
+// since the Go server uses wildcard routes (/*). Only encode special characters
+// within each path segment (spaces, etc.).
 func encodePathComponent(s string) string {
-	var b strings.Builder
-	for _, c := range []byte(s) {
-		if isUnreserved(c) {
-			b.WriteByte(c)
-		} else {
-			fmt.Fprintf(&b, "%%%02X", c)
-		}
+	// Split by slash, encode each segment, rejoin
+	parts := strings.Split(s, "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
 	}
-	return b.String()
+	return strings.Join(parts, "/")
 }
 
 // isUnreserved returns true for RFC 3986 unreserved characters.

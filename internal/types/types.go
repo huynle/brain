@@ -492,10 +492,11 @@ type ResolvedTask struct {
 	Schedule        string `json:"schedule,omitempty"`
 	ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
 
-	DirectPrompt  string `json:"direct_prompt"`
-	Agent         string `json:"agent"`
-	Model         string `json:"model"`
-	TargetWorkdir string `json:"target_workdir,omitempty"`
+	DirectPrompt  string            `json:"direct_prompt"`
+	Agent         string            `json:"agent"`
+	Model         string            `json:"model"`
+	TargetWorkdir string            `json:"target_workdir,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
 
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`
@@ -594,8 +595,9 @@ type FeatureListResponse struct {
 }
 
 // FeatureResponse is the response for GET /tasks/:projectId/features/:featureId.
+// The API returns {"feature": {...}}, so we use a wrapper field.
 type FeatureResponse struct {
-	Feature
+	Feature Feature `json:"feature"`
 }
 
 // TriggerResponse is the response for POST /tasks/:projectId/:taskId/trigger.

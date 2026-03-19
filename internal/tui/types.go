@@ -49,6 +49,17 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 	return PanelTasks
 }
 
+// RunnerController is an interface for controlling the embedded task runner.
+// If nil, the TUI falls back to HTTP API calls for pause/resume.
+type RunnerController interface {
+	PauseProject(projectID string)
+	ResumeProject(projectID string)
+	PauseAll()
+	ResumeAll()
+	IsPaused(projectID string) bool
+	IsAllPaused() bool
+}
+
 // Config holds the configuration passed to the TUI from the runner.
 type Config struct {
 	APIURL     string
@@ -60,6 +71,9 @@ type Config struct {
 	LogDir     string
 	// Projects lists all projects in multi-project mode.
 	Projects []string
+	// Runner is the embedded task runner controller (optional).
+	// If set, pause/resume calls go directly to the runner instead of via HTTP.
+	Runner RunnerController
 }
 
 // DefaultAPITimeout is the default HTTP client timeout for TUI API calls (15 seconds).

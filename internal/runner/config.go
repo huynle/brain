@@ -99,6 +99,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		},
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
+		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -200,4 +201,13 @@ func firstNonZero(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// defaultEnvPassthrough returns the env passthrough list, using defaults if empty.
+// The defaults ensure BRAIN_API_URL and BRAIN_API_TOKEN are always forwarded.
+func defaultEnvPassthrough(configured []string) []string {
+	if len(configured) > 0 {
+		return configured
+	}
+	return []string{"BRAIN_API_URL", "BRAIN_API_TOKEN"}
 }

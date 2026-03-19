@@ -26,6 +26,12 @@ type RunnerConfig struct {
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
+
+	// EnvPassthrough is a list of environment variable names to forward
+	// from the runner process to spawned OpenCode agents.
+	// Defaults: ["BRAIN_API_URL", "BRAIN_API_TOKEN"]
+	// Values are read from the runner's own environment at spawn time.
+	EnvPassthrough []string `yaml:"env_passthrough" json:"env_passthrough"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.

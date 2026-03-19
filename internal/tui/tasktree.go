@@ -2173,8 +2173,15 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		statsStr := fmt.Sprintf("[%d/%d complete]", origStats.Completed, origStats.Total)
 
 		// Feature header with status icon, name, execution indicator, and completion stats
-		featureHeader := fmt.Sprintf("%s %s Feature: %s%s %s",
-			collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
+		// Ungrouped tasks don't get the "Feature:" prefix
+		var featureHeader string
+		if feature.Name == "[Ungrouped]" {
+			featureHeader = fmt.Sprintf("%s %s %s%s %s",
+				collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
+		} else {
+			featureHeader = fmt.Sprintf("%s %s Feature: %s%s %s",
+				collapseIndicator, statusIcon, feature.Name, execIndicator, statsStr)
+		}
 
 		// Selection marker (2 spaces for alignment, → when selected)
 		selMarker := "  "
@@ -2366,7 +2373,12 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 					collapseIcon = "▶"
 				}
 				statusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
-				featureHeader := fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+				var featureHeader string
+				if featureID == "[Ungrouped]" {
+					featureHeader = fmt.Sprintf("  %s %s %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+				} else {
+					featureHeader = fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+				}
 
 				// Highlight if this sub-feature header is selected (not when navigated into its tasks)
 				if sec.isOn() && sec.featureIdx() == fIdx && sec.taskIdx() == -1 {
@@ -2643,8 +2655,15 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				nestedStatsStr := fmt.Sprintf("[%d/%d complete]", feature.Stats.Completed, feature.Stats.Total)
 
 				// Feature header with status icon, name, execution indicator, and completion stats
-				featureHeader := fmt.Sprintf("%s %s Feature: %s%s %s",
-					featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
+				// Ungrouped tasks don't get the "Feature:" prefix
+				var featureHeader string
+				if feature.Name == "[Ungrouped]" {
+					featureHeader = fmt.Sprintf("%s %s %s%s %s",
+						featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
+				} else {
+					featureHeader = fmt.Sprintf("%s %s Feature: %s%s %s",
+						featureCollapseIndicator, nestedStatusIcon, feature.Name, nestedExecIndicator, nestedStatsStr)
+				}
 
 				// Selection marker for feature header (with indentation)
 				if isFeatureSelected {

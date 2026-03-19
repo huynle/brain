@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -243,8 +244,19 @@ func (e *Executor) spawnBackground(
 		return nil, fmt.Errorf("start opencode process: %w", err)
 	}
 
+	// Create process wrapper that tracks exit status.
+	// NewOsProcess starts a goroutine that calls cmd.Wait() internally.
+	proc := NewOsProcess(cmd)
+
+	// Close the log file when the process exits
+	go func() {
+		<-proc.Done()
+		logFile.Close()
+	}()
+
 	return &SpawnResult{
 		PID:        cmd.Process.Pid,
+		Proc:       proc,
 		PromptFile: promptFile,
 		Workdir:    workdir,
 	}, nil
@@ -270,19 +282,75 @@ func (e *Executor) buildRunnerScript(task *types.ResolvedTask, projectID, workdi
 		modelFlag = fmt.Sprintf(`--model "%s" `, model)
 	}
 
+	// Build environment exports so the spawned OpenCode agent connects
+	// to the same brain server the runner is using
+	envBlock := e.buildEnvExports(task)
+
 	script := fmt.Sprintf(`#!/bin/bash
 cd "%s"
-"%s" %s%s--port 0 --prompt "$(cat '%s')"
+%s"%s" %s%s--port 0 --prompt "$(cat '%s')"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
 exit $exit_code
-`, workdir, e.config.Opencode.Bin, agentFlag, modelFlag, promptFile)
+`, workdir, envBlock, e.config.Opencode.Bin, agentFlag, modelFlag, promptFile)
 
 	if err := os.WriteFile(runnerScript, []byte(script), 0o755); err != nil {
 		return "", fmt.Errorf("write runner script: %w", err)
 	}
 	return runnerScript, nil
+}
+
+// buildEnvExports builds shell export statements for env vars that should be
+// propagated to spawned OpenCode processes.
+//
+// Merge order (later wins):
+//  1. Config passthrough: env var names from RunnerConfig.EnvPassthrough,
+//     values read from the runner's own environment
+//  2. Config-level hardcoded: BRAIN_API_URL and BRAIN_API_TOKEN from runner config
+//  3. Task-level: task.Env map overrides everything
+func (e *Executor) buildEnvExports(task *types.ResolvedTask) string {
+	env := make(map[string]string)
+
+	// 1. Passthrough: read named vars from the runner's own environment
+	for _, name := range e.config.EnvPassthrough {
+		if val := os.Getenv(name); val != "" {
+			env[name] = val
+		}
+	}
+
+	// 2. Always ensure BRAIN_API_URL and BRAIN_API_TOKEN from runner config
+	//    (these may differ from the parent env if explicitly configured)
+	if e.config.BrainAPIURL != "" {
+		env["BRAIN_API_URL"] = e.config.BrainAPIURL
+	}
+	if e.config.APIToken != "" {
+		env["BRAIN_API_TOKEN"] = e.config.APIToken
+	}
+
+	// 3. Task-level overrides win
+	if task != nil {
+		for k, v := range task.Env {
+			env[k] = v
+		}
+	}
+
+	if len(env) == 0 {
+		return ""
+	}
+
+	// Sort keys for deterministic output
+	keys := make([]string, 0, len(env))
+	for k := range env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var lines []string
+	for _, k := range keys {
+		lines = append(lines, fmt.Sprintf(`export %s="%s"`, k, env[k]))
+	}
+	return strings.Join(lines, "\n") + "\n"
 }
 
 // =============================================================================
@@ -308,6 +376,16 @@ func (e *Executor) spawnTUI(
 		windowName = fmt.Sprintf("%s-%s", projectID, shortID)
 	}
 
+	// Check if a tmux window with this name already exists (prevent duplicates)
+	checkCmd := e.CommandFactory("tmux", "list-windows", "-F", "#{window_name}")
+	if checkOutput, err := checkCmd.Output(); err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(string(checkOutput)), "\n") {
+			if line == windowName {
+				return nil, fmt.Errorf("tmux window %q already exists (duplicate spawn prevented)", windowName)
+			}
+		}
+	}
+
 	runnerScript, err := e.buildRunnerScript(task, projectID, workdir, promptFile, opts)
 	if err != nil {
 		return nil, err
@@ -329,6 +407,7 @@ func (e *Executor) spawnTUI(
 
 	return &SpawnResult{
 		PID:        pid,
+		Proc:       NewPidProcess(pid),
 		WindowName: windowName,
 		PromptFile: promptFile,
 		Workdir:    workdir,
@@ -386,6 +465,7 @@ func (e *Executor) spawnDashboard(
 
 	return &SpawnResult{
 		PID:        pid,
+		Proc:       NewPidProcess(pid),
 		PaneID:     paneID,
 		PromptFile: promptFile,
 		Workdir:    workdir,

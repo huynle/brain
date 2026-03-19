@@ -91,8 +91,9 @@ type Model struct {
 	selectedTasks map[string]bool
 
 	// Pause/resume state
-	pausedProjects map[string]bool
-	allPaused      bool
+	pausedProjects   map[string]bool
+	allPaused        bool
+	runnerController RunnerController // direct reference to embedded runner (nil if standalone)
 
 	// Resource metrics
 	metricsCollector *MetricsCollector
@@ -157,6 +158,7 @@ func NewModel(cfg Config) Model {
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
 		pausedProjects:   make(map[string]bool),
+		runnerController: cfg.Runner,
 		tasksByProject:   make(map[string][]types.ResolvedTask),
 		sseClients:       make(map[string]*SSEClient),
 		metricsCollector: NewMetricsCollector(),
@@ -542,10 +544,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case runnerStatusMsg:
 		if msg.err == nil {
-			m.allPaused = msg.paused
-			m.pausedProjects = make(map[string]bool)
-			for _, id := range msg.pausedProjects {
-				m.pausedProjects[id] = true
+			// If we have a direct runner controller, get pause state from it
+			// instead of from the API server's separate RunnerService
+			if m.runnerController != nil {
+				m.allPaused = m.runnerController.IsAllPaused()
+				// Per-project pause state from the embedded runner
+				m.pausedProjects = make(map[string]bool)
+				for _, proj := range m.config.Projects {
+					if m.runnerController.IsPaused(proj) && !m.runnerController.IsAllPaused() {
+						m.pausedProjects[proj] = true
+					}
+				}
+			} else {
+				m.allPaused = msg.paused
+				m.pausedProjects = make(map[string]bool)
+				for _, id := range msg.pausedProjects {
+					m.pausedProjects[id] = true
+				}
 			}
 		}
 		m.syncHelpBarPauseState()
@@ -774,6 +789,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					if featureID != "" {
 						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
 						if modal != nil {
+							// Pre-populate task paths from local task tree data
+							// so the modal doesn't need to fetch from API.
+							if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
+								taskPaths := make([]string, len(featureTasks))
+								for i, t := range featureTasks {
+									taskPaths[i] = t.Path
+								}
+								modal.(*MetadataModal).taskPaths = taskPaths
+							}
 							cmd := m.modalManager.Open(modal)
 							return m, cmd
 						}
@@ -1126,14 +1150,31 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "p":
-			// Pause/resume active project
+			// Pause/resume active project.
+			// In single-project mode, if allPaused is true (startup default),
+			// pressing 'p' should toggle allPaused to start execution.
 			projectID := m.activeProjectID
 			if projectID == "" || projectID == "all" {
 				projectID = m.config.Project
 			}
 			if projectID != "" {
+				if m.allPaused {
+					// Global pause is active; toggle it off to start running
+					m.allPaused = false
+					m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+					m.syncHelpBarPauseState()
+					return m, pauseAllCmd(m.apiRunnerConfig(), true, m.runnerController) // currentlyPaused=true -> will resume
+				}
+				// Single-project mode: check if we should re-pause globally
+				if !m.config.IsMultiProject() && !m.pausedProjects[projectID] {
+					// For single-project: 'p' toggles allPaused for consistent behavior
+					m.allPaused = true
+					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+					m.syncHelpBarPauseState()
+					return m, pauseAllCmd(m.apiRunnerConfig(), false, m.runnerController) // currentlyPaused=false -> will pause
+				}
+				// Multi-project mode: toggle per-project pause
 				currentlyPaused := m.pausedProjects[projectID]
-				// Optimistic UI update
 				m.pausedProjects[projectID] = !currentlyPaused
 				if currentlyPaused {
 					m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
@@ -1141,7 +1182,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
 				}
 				m.syncHelpBarPauseState()
-				return m, pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused)
+				return m, pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
 			}
 			return m, nil
 		case "y":
@@ -1168,7 +1209,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setStatusMessage("info", "Resuming all projects...")
 			}
 			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused)
+			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused, m.runnerController)
 		}
 
 	case tea.KeyUp:
@@ -2267,10 +2308,20 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 }
 
 // pauseProjectCmd toggles pause/resume for a specific project.
-func pauseProjectCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool) tea.Cmd {
+func pauseProjectCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool, rc RunnerController) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(cfg)
+		// If we have a direct runner reference, use it (in-process, no HTTP)
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeProject(projectID)
+			} else {
+				rc.PauseProject(projectID)
+			}
+			return pauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: nil}
+		}
 
+		// Fallback to HTTP API
+		apiClient := runner.NewAPIClient(cfg)
 		ctx := context.Background()
 		var err error
 		if currentlyPaused {
@@ -2283,10 +2334,20 @@ func pauseProjectCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused 
 }
 
 // pauseAllCmd toggles pause/resume for all projects.
-func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool) tea.Cmd {
+func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerController) tea.Cmd {
 	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(cfg)
+		// If we have a direct runner reference, use it (in-process, no HTTP)
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeAll()
+			} else {
+				rc.PauseAll()
+			}
+			return pauseAllToggledMsg{paused: !currentlyPaused, err: nil}
+		}
 
+		// Fallback to HTTP API
+		apiClient := runner.NewAPIClient(cfg)
 		ctx := context.Background()
 		var err error
 		if currentlyPaused {

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"sync"
 	"syscall"
 	"time"
@@ -35,6 +36,108 @@ type Process interface {
 	Exited() bool
 	ExitCode() int
 	Kill(sig os.Signal) error
+}
+
+// OsProcess wraps *exec.Cmd to implement the Process interface.
+// It tracks exit status via cmd.Wait() called in a background goroutine.
+type OsProcess struct {
+	cmd      *exec.Cmd
+	pid      int
+	exited   bool
+	exitCode int
+	mu       sync.Mutex
+	done     chan struct{}
+}
+
+// NewOsProcess creates an OsProcess from a started *exec.Cmd.
+// The caller must ensure cmd.Start() has been called.
+// A goroutine is started to monitor the process exit.
+func NewOsProcess(cmd *exec.Cmd) *OsProcess {
+	p := &OsProcess{
+		cmd:  cmd,
+		pid:  cmd.Process.Pid,
+		done: make(chan struct{}),
+	}
+
+	// Monitor the process exit in a goroutine
+	go func() {
+		err := cmd.Wait()
+		p.mu.Lock()
+		p.exited = true
+		if err != nil {
+			if exitErr, ok := err.(*exec.ExitError); ok {
+				p.exitCode = exitErr.ExitCode()
+			} else {
+				p.exitCode = -1
+			}
+		} else {
+			p.exitCode = 0
+		}
+		p.mu.Unlock()
+		close(p.done)
+	}()
+
+	return p
+}
+
+func (p *OsProcess) Pid() int {
+	return p.pid
+}
+
+func (p *OsProcess) Exited() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exited
+}
+
+func (p *OsProcess) ExitCode() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.exitCode
+}
+
+func (p *OsProcess) Kill(sig os.Signal) error {
+	if p.cmd.Process == nil {
+		return fmt.Errorf("process not started")
+	}
+	return p.cmd.Process.Signal(sig)
+}
+
+// Done returns a channel that is closed when the process exits.
+func (p *OsProcess) Done() <-chan struct{} {
+	return p.done
+}
+
+// PidProcess tracks a process by PID only (for tmux-spawned processes).
+// It checks liveness via kill -0 signal probe.
+type PidProcess struct {
+	pid int
+}
+
+// NewPidProcess creates a PidProcess for a given PID.
+func NewPidProcess(pid int) *PidProcess {
+	return &PidProcess{pid: pid}
+}
+
+func (p *PidProcess) Pid() int {
+	return p.pid
+}
+
+func (p *PidProcess) Exited() bool {
+	return !IsPidAlive(p.pid)
+}
+
+func (p *PidProcess) ExitCode() int {
+	// Cannot determine exit code for PID-only processes
+	return -1
+}
+
+func (p *PidProcess) Kill(sig os.Signal) error {
+	proc, err := os.FindProcess(p.pid)
+	if err != nil {
+		return err
+	}
+	return proc.Signal(sig)
 }
 
 // ProcessInfo holds a tracked process and its metadata.

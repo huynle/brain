@@ -48,6 +48,9 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 		StateDir:     opts.Config.StateDir,
 		LogDir:       opts.Config.LogDir,
 		APITimeout:   opts.Config.APITimeout,
+		Opencode: runner.OpencodeConfig{
+			Bin: "opencode",
+		},
 	}
 
 	// Set defaults if not provided
@@ -59,6 +62,9 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.APITimeout == 0 {
 		cfg.APITimeout = 5000
+	}
+	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
+		cfg.Opencode.Bin = bin
 	}
 
 	// Wire up dependencies
@@ -139,6 +145,9 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		StateDir:     opts.Config.StateDir,
 		LogDir:       opts.Config.LogDir,
 		APITimeout:   opts.Config.APITimeout,
+		Opencode: runner.OpencodeConfig{
+			Bin: "opencode", // Default; overridden by OPENCODE_BIN env var in LoadConfig
+		},
 	}
 
 	// Set defaults
@@ -150,6 +159,10 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.APITimeout == 0 {
 		cfg.APITimeout = 5000
+	}
+	// Allow env var override for opencode binary
+	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
+		cfg.Opencode.Bin = bin
 	}
 
 	// Wire up dependencies
@@ -201,6 +214,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		Projects:   opts.Projects,
 		BrainDir:   brainDir,
 		LogDir:     cfg.LogDir,
+		Runner:     tr, // Wire the embedded runner directly to the TUI
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

@@ -562,9 +562,9 @@ func (m *MetadataModal) Init() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Step 1: If ModeFeature, fetch tasks by feature to get task paths
+		// Step 1: If ModeFeature and task paths not already populated, fetch from API
 		taskPaths := m.taskPaths
-		if m.mode == ModeFeature && m.featureID != "" {
+		if m.mode == ModeFeature && m.featureID != "" && len(taskPaths) == 0 {
 			tasks, err := m.apiClient.GetTasksByFeature(ctx, m.projectID, m.featureID)
 			if err != nil {
 				return metadataFetchedMsg{entries: nil, err: fmt.Errorf("fetch tasks for feature: %w", err)}

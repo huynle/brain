@@ -1668,23 +1668,13 @@ func (tt *TaskTree) SelectedTask() *types.ResolvedTask {
 // GetSelectedFeatureID returns the feature ID of the currently selected feature header.
 // Returns "" if not in feature view, not on a header, on ungrouped, or index out of bounds.
 func (tt *TaskTree) GetSelectedFeatureID() string {
-	// Only works in feature view mode
-	if !tt.useFeatureView {
-		return ""
-	}
-
-	// Only works when on a header (not on a task)
-	if tt.selectedFeatureTaskIdx != -1 {
-		return ""
-	}
-
 	// Return "" if on ungrouped
 	if tt.isOnUngrouped {
 		return ""
 	}
 
-	// Check terminal sections (Draft, Cancelled, Superseded, Archived, Completed)
-	// Each terminal section has its own feature index and feature IDs list.
+	// Check terminal sections first (works in both feature view and status-grouped view).
+	// Terminal sections (Completed, Draft, Cancelled, etc.) have their own feature sub-groups.
 	if tt.isOnAnyTerminalSection() {
 		for _, sec := range tt.terminalSections() {
 			if sec.isOn() {
@@ -1700,36 +1690,61 @@ func (tt *TaskTree) GetSelectedFeatureID() string {
 				if idx < 0 || idx >= len(ids) {
 					return ""
 				}
-				return ids[idx]
+				fid := ids[idx]
+				// Don't return [Ungrouped] as a feature ID
+				if fid == "[Ungrouped]" {
+					return ""
+				}
+				return fid
 			}
 		}
 		return ""
 	}
 
-	// Active/pending features: check bounds against featureGroups
-	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
-		return ""
+	// Feature view mode: check active/pending features
+	if tt.useFeatureView {
+		// Only works when on a header (not on a task)
+		if tt.selectedFeatureTaskIdx != -1 {
+			return ""
+		}
+
+		if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
+			return ""
+		}
+
+		return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
 	}
 
-	return tt.featureGroups.Features[tt.selectedFeatureIdx].ID
+	return ""
 }
 
 // GetSelectedFeatureTasks returns the tasks for the currently selected feature header.
 // Returns nil if not on a feature header or no tasks available.
 func (tt *TaskTree) GetSelectedFeatureTasks() []types.ResolvedTask {
-	if !tt.useFeatureView {
-		return nil
-	}
-
 	featureID := tt.GetSelectedFeatureID()
 	if featureID == "" {
 		return nil
 	}
 
-	// Search all features for the matching ID
+	// Search active/pending features
 	for _, f := range tt.featureGroups.Features {
 		if f.ID == featureID {
 			return f.Tasks
+		}
+	}
+
+	// Search terminal section sub-features (Completed, Draft, etc.)
+	// Tasks may only exist in terminal sections if all are completed/cancelled
+	for _, t := range tt.tasks {
+		if t.FeatureID == featureID {
+			// Found at least one - collect all tasks with this feature ID
+			var tasks []types.ResolvedTask
+			for _, task := range tt.tasks {
+				if task.FeatureID == featureID {
+					tasks = append(tasks, task)
+				}
+			}
+			return tasks
 		}
 	}
 

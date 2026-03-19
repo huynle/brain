@@ -783,24 +783,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				var modal Modal
 
-				// Case 0: Feature header selected (in feature view mode)
-				if m.taskTree.useFeatureView {
-					featureID := m.taskTree.GetSelectedFeatureID()
-					if featureID != "" {
-						modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
-						if modal != nil {
-							// Pre-populate task paths from local task tree data
-							// so the modal doesn't need to fetch from API.
-							if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
-								taskPaths := make([]string, len(featureTasks))
-								for i, t := range featureTasks {
-									taskPaths[i] = t.Path
-								}
-								modal.(*MetadataModal).taskPaths = taskPaths
+				// Case 0: Feature header selected (in feature view mode or status-grouped view)
+				featureID := m.taskTree.GetSelectedFeatureID()
+				if featureID != "" && featureID != "[Ungrouped]" {
+					modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
+					if modal != nil {
+						// Pre-populate task paths from local task tree data
+						// so the modal doesn't need to fetch from API.
+						if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
+							taskPaths := make([]string, len(featureTasks))
+							for i, t := range featureTasks {
+								taskPaths[i] = t.Path
 							}
-							cmd := m.modalManager.Open(modal)
-							return m, cmd
+							modal.(*MetadataModal).taskPaths = taskPaths
 						}
+						cmd := m.modalManager.Open(modal)
+						return m, cmd
 					}
 				}
 

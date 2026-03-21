@@ -122,7 +122,7 @@ func TestExecutor_ResolveWorkdir_TargetWorkdir(t *testing.T) {
 	task := testResolvedTask("abc123")
 	task.TargetWorkdir = dir // exists
 
-	result := e.ResolveWorkdir(task)
+	result, _ := e.ResolveWorkdir(task)
 	if result != dir {
 		t.Errorf("ResolveWorkdir = %q, want %q (target_workdir)", result, dir)
 	}
@@ -136,7 +136,7 @@ func TestExecutor_ResolveWorkdir_TargetWorkdir_NotExists(t *testing.T) {
 	task := testResolvedTask("abc123")
 	task.TargetWorkdir = "/nonexistent/path"
 
-	result := e.ResolveWorkdir(task)
+	result, _ := e.ResolveWorkdir(task)
 	if result == "/nonexistent/path" {
 		t.Error("ResolveWorkdir should not return nonexistent target_workdir")
 	}
@@ -151,7 +151,7 @@ func TestExecutor_ResolveWorkdir_ResolvedWorkdir(t *testing.T) {
 	task := testResolvedTask("abc123")
 	task.ResolvedWorkdir = dir
 
-	result := e.ResolveWorkdir(task)
+	result, _ := e.ResolveWorkdir(task)
 	if result != dir {
 		t.Errorf("ResolveWorkdir = %q, want %q (resolved_workdir)", result, dir)
 	}
@@ -165,7 +165,7 @@ func TestExecutor_ResolveWorkdir_FallbackToConfig(t *testing.T) {
 	task := testResolvedTask("abc123")
 	// No workdir fields set
 
-	result := e.ResolveWorkdir(task)
+	result, _ := e.ResolveWorkdir(task)
 	if result != "/config/default" {
 		t.Errorf("ResolveWorkdir = %q, want %q (config default)", result, "/config/default")
 	}
@@ -181,7 +181,7 @@ func TestExecutor_ResolveWorkdir_Priority_TargetOverResolved(t *testing.T) {
 	task.TargetWorkdir = targetDir
 	task.ResolvedWorkdir = resolvedDir
 
-	result := e.ResolveWorkdir(task)
+	result, _ := e.ResolveWorkdir(task)
 	if result != targetDir {
 		t.Errorf("ResolveWorkdir = %q, want %q (target_workdir takes priority over resolved_workdir)", result, targetDir)
 	}

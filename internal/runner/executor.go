@@ -113,23 +113,195 @@ Start now.`, task.Path)
 // =============================================================================
 
 // ResolveWorkdir resolves the working directory for a task.
-// Priority: target_workdir (if exists) > resolved_workdir (if exists) > config default.
-func (e *Executor) ResolveWorkdir(task *types.ResolvedTask) string {
-	// target_workdir is an explicit override (absolute path)
+// For worktree execution mode, it ensures a git worktree exists and returns its path.
+// Fallback chain: worktree > target_workdir > resolved_workdir > config default.
+func (e *Executor) ResolveWorkdir(task *types.ResolvedTask) (string, error) {
+	executionMode := task.ExecutionMode
+	if executionMode == "" {
+		executionMode = "worktree" // default matches origin/main
+	}
+
+	// Worktree mode: try to create/find a git worktree
+	if executionMode == "worktree" {
+		worktreePath, err := e.ensureWorktree(task)
+		if err != nil {
+			return "", fmt.Errorf("ensure worktree: %w", err)
+		}
+		if worktreePath != "" {
+			return worktreePath, nil
+		}
+		// ensureWorktree returned "" (no branch set, or is main/master) — fall through
+	}
+
+	// Fallback chain (both modes)
 	if task.TargetWorkdir != "" {
 		if _, err := os.Stat(task.TargetWorkdir); err == nil {
-			return task.TargetWorkdir
+			return task.TargetWorkdir, nil
 		}
 	}
-
-	// resolved_workdir from the API (already resolved by the server)
+	if task.Workdir != "" {
+		homeDir, _ := os.UserHomeDir()
+		p := filepath.Join(homeDir, task.Workdir)
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
+		}
+	}
 	if task.ResolvedWorkdir != "" {
 		if _, err := os.Stat(task.ResolvedWorkdir); err == nil {
-			return task.ResolvedWorkdir
+			return task.ResolvedWorkdir, nil
+		}
+	}
+	return e.config.WorkDir, nil
+}
+
+// ensureWorktree ensures a git worktree exists for the task's branch.
+// Returns the worktree path, or "" if worktree mode doesn't apply.
+// Returns an error if worktree creation fails.
+func (e *Executor) ensureWorktree(task *types.ResolvedTask) (string, error) {
+	// Guard: explicit current_branch mode
+	if task.ExecutionMode == "current_branch" {
+		return "", nil
+	}
+	// Guard: no branch specified
+	if task.GitBranch == "" {
+		return "", nil
+	}
+	// Guard: skip for default branches
+	if task.GitBranch == "main" || task.GitBranch == "master" {
+		return "", nil
+	}
+
+	// Resolve main repo path
+	mainRepoPath := ""
+	if task.Workdir != "" {
+		homeDir, _ := os.UserHomeDir()
+		mainRepoPath = filepath.Join(homeDir, task.Workdir)
+	} else if task.TargetWorkdir != "" {
+		if _, err := os.Stat(task.TargetWorkdir); err == nil {
+			mainRepoPath = task.TargetWorkdir
+		}
+	}
+	if mainRepoPath == "" {
+		// No repo context, can't create worktree
+		return "", nil
+	}
+
+	// Check if branch is the current branch in the main repo
+	cmd := e.CommandFactory("git", "-C", mainRepoPath, "branch", "--show-current")
+	if out, err := cmd.Output(); err == nil {
+		if strings.TrimSpace(string(out)) == task.GitBranch {
+			return "", nil // Branch is current in main repo, run there
 		}
 	}
 
-	return e.config.WorkDir
+	// Check if branch already checked out in an existing worktree
+	cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "list", "--porcelain")
+	if out, err := cmd.Output(); err == nil {
+		if existingPath := findWorktreeForBranch(string(out), task.GitBranch); existingPath != "" {
+			return existingPath, nil
+		}
+	}
+
+	// Compute worktree path: {mainRepo}/.worktrees/{sanitized-branch}
+	sanitizedBranch := sanitizeBranchName(task.GitBranch)
+	worktreePath := filepath.Join(mainRepoPath, ".worktrees", sanitizedBranch)
+
+	// If already exists on disk, reuse
+	if _, err := os.Stat(worktreePath); err == nil {
+		return worktreePath, nil
+	}
+
+	// Verify main repo exists
+	if _, err := os.Stat(mainRepoPath); err != nil {
+		return "", fmt.Errorf("main repo not found: %s", mainRepoPath)
+	}
+
+	// Ensure .worktrees/ directory exists
+	worktreesDir := filepath.Join(mainRepoPath, ".worktrees")
+	if err := os.MkdirAll(worktreesDir, 0o755); err != nil {
+		return "", fmt.Errorf("create .worktrees dir: %w", err)
+	}
+
+	// Ensure .worktrees is in .gitignore
+	ensureWorktreesIgnored(mainRepoPath)
+
+	// Check if branch exists
+	checkCmd := e.CommandFactory("git", "-C", mainRepoPath, "rev-parse", "--verify", task.GitBranch)
+	branchExists := checkCmd.Run() == nil
+
+	// Create worktree
+	if branchExists {
+		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", worktreePath, task.GitBranch)
+	} else {
+		// Get default branch
+		defaultBranch := getDefaultBranch(e.CommandFactory, mainRepoPath)
+		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", "-b", task.GitBranch, worktreePath, defaultBranch)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git worktree add failed: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+
+	return worktreePath, nil
+}
+
+// findWorktreeForBranch parses `git worktree list --porcelain` output and
+// returns the path of the worktree that has the given branch checked out.
+func findWorktreeForBranch(porcelainOutput, branch string) string {
+	var currentPath string
+	targetRef := "refs/heads/" + branch
+	for _, line := range strings.Split(porcelainOutput, "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			currentPath = strings.TrimPrefix(line, "worktree ")
+		} else if strings.HasPrefix(line, "branch ") {
+			ref := strings.TrimPrefix(line, "branch ")
+			if ref == targetRef && currentPath != "" {
+				return currentPath
+			}
+		} else if line == "" {
+			currentPath = ""
+		}
+	}
+	return ""
+}
+
+// sanitizeBranchName converts a git branch name to a safe directory name.
+// "feature/xyz" -> "feature-xyz"
+func sanitizeBranchName(branch string) string {
+	s := strings.ReplaceAll(branch, "/", "-")
+	var result strings.Builder
+	for _, c := range s {
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			result.WriteRune(c)
+		}
+	}
+	return result.String()
+}
+
+// getDefaultBranch returns "main" or "master" based on what exists.
+func getDefaultBranch(cmdFactory CommandFactory, repoPath string) string {
+	cmd := cmdFactory("git", "-C", repoPath, "rev-parse", "--verify", "main")
+	if cmd.Run() == nil {
+		return "main"
+	}
+	return "master"
+}
+
+// ensureWorktreesIgnored adds ".worktrees" to .gitignore if not already present.
+func ensureWorktreesIgnored(repoPath string) {
+	gitignorePath := filepath.Join(repoPath, ".gitignore")
+	content, err := os.ReadFile(gitignorePath)
+	if err != nil {
+		// No .gitignore or can't read - create one
+		_ = os.WriteFile(gitignorePath, []byte(".worktrees\n"), 0o644)
+		return
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		if strings.TrimSpace(line) == ".worktrees" {
+			return // Already ignored
+		}
+	}
+	// Append
+	_ = os.WriteFile(gitignorePath, append(content, []byte("\n.worktrees\n")...), 0o644)
 }
 
 // =============================================================================
@@ -178,7 +350,11 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 	// Resolve workdir
 	workdir := opts.Workdir
 	if workdir == "" {
-		workdir = e.ResolveWorkdir(task)
+		var err error
+		workdir, err = e.ResolveWorkdir(task)
+		if err != nil {
+			return nil, fmt.Errorf("resolve workdir: %w", err)
+		}
 	}
 
 	switch opts.Mode {

@@ -215,10 +215,10 @@ func (m *mockExecutor) BuildPrompt(task *types.ResolvedTask, isResume bool) stri
 	return m.buildPromptResult
 }
 
-func (m *mockExecutor) ResolveWorkdir(task *types.ResolvedTask) string {
+func (m *mockExecutor) ResolveWorkdir(task *types.ResolvedTask) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.resolveWorkdir
+	return m.resolveWorkdir, nil
 }
 
 func (m *mockExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error) {

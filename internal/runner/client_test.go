@@ -705,32 +705,32 @@ func TestAPIClient_GetFeature_Success(t *testing.T) {
 		t.Fatal("expected feature, got nil")
 	}
 
-	if feature.FeatureID != "dark-mode" {
-		t.Errorf("FeatureID = %q, want %q", feature.FeatureID, "dark-mode")
+	if feature.Feature.FeatureID != "dark-mode" {
+		t.Errorf("FeatureID = %q, want %q", feature.Feature.FeatureID, "dark-mode")
 	}
 
-	if len(feature.Tasks) != 2 {
-		t.Fatalf("expected 2 tasks, got %d", len(feature.Tasks))
+	if len(feature.Feature.Tasks) != 2 {
+		t.Fatalf("expected 2 tasks, got %d", len(feature.Feature.Tasks))
 	}
 
-	if feature.Tasks[0].ID != "abc123" {
-		t.Errorf("Tasks[0].ID = %q, want %q", feature.Tasks[0].ID, "abc123")
+	if feature.Feature.Tasks[0].ID != "abc123" {
+		t.Errorf("Tasks[0].ID = %q, want %q", feature.Feature.Tasks[0].ID, "abc123")
 	}
 
-	if feature.Tasks[1].ID != "def456" {
-		t.Errorf("Tasks[1].ID = %q, want %q", feature.Tasks[1].ID, "def456")
+	if feature.Feature.Tasks[1].ID != "def456" {
+		t.Errorf("Tasks[1].ID = %q, want %q", feature.Feature.Tasks[1].ID, "def456")
 	}
 
-	if !feature.Ready {
+	if !feature.Feature.Ready {
 		t.Error("expected Ready to be true")
 	}
 
-	if feature.Stats == nil {
+	if feature.Feature.Stats == nil {
 		t.Fatal("expected Stats, got nil")
 	}
 
-	if feature.Stats.Ready != 1 {
-		t.Errorf("Stats.Ready = %d, want 1", feature.Stats.Ready)
+	if feature.Feature.Stats.Ready != 1 {
+		t.Errorf("Stats.Ready = %d, want 1", feature.Feature.Stats.Ready)
 	}
 }
 

@@ -33,7 +33,7 @@ type Client interface {
 // TaskExecutor abstracts the Executor for testability.
 type TaskExecutor interface {
 	BuildPrompt(task *types.ResolvedTask, isResume bool) string
-	ResolveWorkdir(task *types.ResolvedTask) string
+	ResolveWorkdir(task *types.ResolvedTask) (string, error)
 	Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error)
 	Cleanup(taskID, projectID string) error
 }
@@ -376,10 +376,18 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("update task status: %w", err)
 	}
 
-	// Resolve workdir and spawn
+	// Resolve workdir (may create git worktree)
+	workdir, err := tr.executor.ResolveWorkdir(task)
+	if err != nil {
+		// Worktree creation failed - mark task as blocked
+		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
+		return fmt.Errorf("resolve workdir: %w", err)
+	}
+
 	spawnOpts := SpawnOptions{
 		Mode:    tr.mode,
-		Workdir: tr.executor.ResolveWorkdir(task),
+		Workdir: workdir,
 	}
 
 	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)

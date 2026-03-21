@@ -9,6 +9,7 @@ import (
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
 // =============================================================================
@@ -356,7 +357,7 @@ func defaultConfig() *UnifiedConfig {
 	// Server defaults
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
-	cfg.Server.BrainDir = "~/brain" // Will be expanded
+	cfg.Server.BrainDir = pathutil.ExpandTilde("~/brain")
 	cfg.Server.LogLevel = "info"
 
 	homeDir, _ := os.UserHomeDir()

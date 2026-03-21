@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/tui"
+	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
 // RunnerConfig holds configuration for the runner.
@@ -205,6 +206,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		homeDir, _ := os.UserHomeDir()
 		brainDir = homeDir + "/.brain"
 	}
+	brainDir = pathutil.ExpandTilde(brainDir)
 
 	tuiCfg := tui.Config{
 		APIURL:     cfg.BrainAPIURL,

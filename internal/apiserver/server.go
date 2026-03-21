@@ -15,6 +15,7 @@ import (
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
 // ServerOptions holds configuration for running the Brain API server.
@@ -47,6 +48,8 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	})))
 
 	// ─── Storage Layer ──────────────────────────────────────────────
+	// Expand ~ to home directory (Go does not do this automatically)
+	opts.BrainDir = pathutil.ExpandTilde(opts.BrainDir)
 	dbPath := filepath.Join(opts.BrainDir, ".zk", "brain.db")
 
 	// Ensure the .zk directory exists

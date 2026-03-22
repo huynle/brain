@@ -241,6 +241,90 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		}
 	}()
 
+	// Wire runner events to TUI log panel + process metrics tracking
+	tr.OnEvent(func(event runner.RunnerEvent) {
+		var entry tui.LogEntry
+		entry.Timestamp = time.Now()
+
+		switch event.Type {
+		case runner.EventTaskStarted:
+			if event.Task != nil {
+				entry.Level = "info"
+				entry.Message = fmt.Sprintf("Task started: %s", event.Task.Title)
+				entry.TaskID = event.Task.ID
+				entry.ProjectID = event.Task.ProjectID
+				// Track the process PID for metrics (CPU/mem/proc count)
+				if event.Task.PID > 0 {
+					p.Send(tui.ProcessStartedMsg{
+						PID:    event.Task.PID,
+						TaskID: event.Task.ID,
+					})
+				}
+			}
+		case runner.EventTaskCompleted:
+			if event.Result != nil {
+				entry.Level = "info"
+				exitCode := 0
+				if event.Result.ExitCode != nil {
+					exitCode = *event.Result.ExitCode
+				}
+				entry.Message = fmt.Sprintf("Task completed: %s (exit %d)", event.Result.TaskID, exitCode)
+				entry.TaskID = event.Result.TaskID
+			}
+		case runner.EventTaskFailed:
+			if event.Result != nil {
+				entry.Level = "error"
+				exitCode := 0
+				if event.Result.ExitCode != nil {
+					exitCode = *event.Result.ExitCode
+				}
+				entry.Message = fmt.Sprintf("Task failed: %s (exit %d)", event.Result.TaskID, exitCode)
+				entry.TaskID = event.Result.TaskID
+			}
+		case runner.EventTaskCancelled:
+			entry.Level = "warn"
+			entry.Message = fmt.Sprintf("Task cancelled: %s", event.TaskID)
+			entry.TaskID = event.TaskID
+		case runner.EventProjectPaused:
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Project paused: %s", event.ProjectID)
+			entry.ProjectID = event.ProjectID
+		case runner.EventProjectResumed:
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Project resumed: %s", event.ProjectID)
+			entry.ProjectID = event.ProjectID
+		case runner.EventAllPaused:
+			entry.Level = "info"
+			entry.Message = "All projects paused"
+		case runner.EventAllResumed:
+			entry.Level = "info"
+			entry.Message = "All projects resumed"
+		case runner.EventPollComplete:
+			entry.Level = "debug"
+			entry.Message = fmt.Sprintf("Poll complete: %d ready, %d running", event.ReadyCount, event.RunningCount)
+		case runner.EventSessionDiscovered:
+			// Send session info directly to TUI for in-memory storage
+			p.Send(tui.SessionDiscoveredMsg{
+				TaskPath:  event.TaskPath,
+				SessionID: event.SessionID,
+			})
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Session discovered: %s", event.SessionID)
+		case runner.EventShutdown:
+			entry.Level = "info"
+			entry.Message = "Runner shutting down"
+			if event.Reason != "" {
+				entry.Message += ": " + event.Reason
+			}
+		default:
+			return // Don't log unknown events
+		}
+
+		if entry.Message != "" {
+			p.Send(tui.LogEntryMsg{Entry: entry})
+		}
+	})
+
 	// Start the runner in background
 	go func() {
 		if startErr := tr.Start(runCtx); startErr != nil {

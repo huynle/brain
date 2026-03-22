@@ -206,9 +206,10 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 	tags = append(tags, template.Tags...)
 	tags = append(tags, tag)
 
-	// Determine status: inherit from feature tasks if feature-scoped
+	// Determine status: Blocked Inspector is always "active" (it runs on schedule).
+	// Other monitors inherit from feature task status if feature-scoped.
 	status := "active"
-	if scope.Type == "feature" && scope.FeatureID != "" && project != "" {
+	if templateID != "blocked-inspector" && scope.Type == "feature" && scope.FeatureID != "" && project != "" {
 		featureStatus, err := s.resolveFeatureTaskStatus(ctx, project, scope.FeatureID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve feature status: %w", err)
@@ -216,14 +217,18 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		status = featureStatus
 	}
 
+	// Build the direct_prompt for the agent
+	directPrompt := buildMonitorPrompt(templateID, scope)
+
 	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:            "task",
 		Title:           title,
-		Content:         fmt.Sprintf("## Monitor Task\n\nTemplate: %s\nScope: %s\n\nThis task was created from a monitor template.", template.Label, describeScopeShort(scope)),
+		Content:         fmt.Sprintf("## Monitor Task\n\nTemplate: %s\nScope: %s\n\nThis task was created from a monitor template. It runs on schedule with complete_on_idle.", template.Label, describeScopeShort(scope)),
 		Schedule:        schedule,
 		ScheduleEnabled: &schedEnabled,
 		CompleteOnIdle:  &completeOnIdle,
 		ExecutionMode:   "current_branch",
+		DirectPrompt:    directPrompt,
 		Tags:            tags,
 		FeatureID:       scope.FeatureID,
 		Project:         project,
@@ -231,6 +236,83 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 	})
 	if err != nil {
 		return nil, fmt.Errorf("save monitor entry: %w", err)
+	}
+
+	return &types.CreateMonitorResult{
+		ID:    result.ID,
+		Path:  result.Path,
+		Title: title,
+	}, nil
+}
+
+// CreateForFeature creates a feature-review monitor as a dependency-gated one-shot task.
+// Unlike Create(), this sets status="pending" with depends_on pointing to all non-generated
+// tasks in the feature, so it only becomes ready when all feature tasks complete.
+func (s *MonitorServiceImpl) CreateForFeature(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error) {
+	template, ok := monitorTemplates[templateID]
+	if !ok {
+		return nil, fmt.Errorf("unknown monitor template: %s", templateID)
+	}
+
+	// Check for existing monitor
+	existing, err := s.Find(ctx, templateID, scope)
+	if err != nil {
+		return nil, fmt.Errorf("check existing monitor: %w", err)
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("monitor already exists for template %q with this scope (id: %s)", templateID, existing.ID)
+	}
+
+	tag := BuildMonitorTag(templateID, scope)
+	title := BuildMonitorTitle(template.Label, scope)
+
+	// Get all non-generated tasks in the feature for depends_on
+	featureTasks, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		FeatureID: scope.FeatureID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list feature tasks: %w", err)
+	}
+
+	var dependsOn []string
+	for _, entry := range featureTasks.Entries {
+		// Skip generated tasks (monitors, review tasks, etc.)
+		if entry.Generated != nil && *entry.Generated {
+			continue
+		}
+		dependsOn = append(dependsOn, entry.Path)
+	}
+
+	tags := make([]string, 0, len(template.Tags)+1)
+	tags = append(tags, template.Tags...)
+	tags = append(tags, tag)
+
+	completeOnIdle := true
+	generated := true
+
+	// Build the direct_prompt for the review agent
+	directPrompt := buildMonitorPrompt(templateID, scope)
+
+	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
+		Type:           "task",
+		Title:          title,
+		Content:        fmt.Sprintf("## Feature Review Task\n\nTemplate: %s\nFeature: %s\nProject: %s\n\nThis task was created as a one-shot feature review. It becomes ready when all dependency tasks complete.", template.Label, scope.FeatureID, scope.Project),
+		Status:         "pending",
+		CompleteOnIdle: &completeOnIdle,
+		ExecutionMode:  "current_branch",
+		DirectPrompt:   directPrompt,
+		Tags:           tags,
+		FeatureID:      scope.FeatureID,
+		Project:        scope.Project,
+		DependsOn:      dependsOn,
+		Generated:      &generated,
+		GeneratedKind:  "feature_review",
+		GeneratedKey:   fmt.Sprintf("feature-review:%s", scope.FeatureID),
+		GeneratedBy:    "feature-completion-hook",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save feature review entry: %w", err)
 	}
 
 	return &types.CreateMonitorResult{

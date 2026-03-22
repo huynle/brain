@@ -137,7 +137,7 @@ func (m *SessionSelectModal) HandleKey(key string) (bool, tea.Cmd) {
 		}
 		return true, nil
 
-	case "enter":
+	case "enter", "return":
 		if m.selectedIndex >= 0 && m.selectedIndex < len(m.sessionIDs) {
 			selectedID := m.sessionIDs[m.selectedIndex]
 			return true, func() tea.Msg {

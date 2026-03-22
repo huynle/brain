@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -150,6 +151,54 @@ func (s *StorageLayer) GetNoteByTitle(ctx context.Context, title string) (*NoteR
 		return nil, fmt.Errorf("get note by title: %w", err)
 	}
 	return n, nil
+}
+
+// MergeMetadata performs a shallow JSON merge on the metadata column for a note.
+// It reads the current metadata, merges the provided fields, and writes back.
+// This operates entirely in SQLite without touching the filesystem.
+func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields map[string]interface{}) (*NoteRow, error) {
+	// Read current metadata
+	row, err := s.GetNoteByPath(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, nil
+	}
+
+	// Parse existing metadata
+	existing := make(map[string]interface{})
+	if row.Metadata != "" && row.Metadata != "{}" {
+		if err := json.Unmarshal([]byte(row.Metadata), &existing); err != nil {
+			existing = make(map[string]interface{})
+		}
+	}
+
+	// Merge new fields (shallow: top-level keys from fields override existing,
+	// but for map values like "sessions", we do a deep merge one level)
+	for k, v := range fields {
+		if newMap, ok := v.(map[string]interface{}); ok {
+			if existingMap, ok := existing[k].(map[string]interface{}); ok {
+				// Merge maps one level deep
+				for mk, mv := range newMap {
+					existingMap[mk] = mv
+				}
+				existing[k] = existingMap
+				continue
+			}
+		}
+		existing[k] = v
+	}
+
+	// Serialize and write back
+	metaJSON, err := json.Marshal(existing)
+	if err != nil {
+		return nil, fmt.Errorf("marshal metadata: %w", err)
+	}
+
+	return s.UpdateNote(ctx, path, map[string]interface{}{
+		"metadata": string(metaJSON),
+	})
 }
 
 // UpdateNote updates a note by path with the given field updates.

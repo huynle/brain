@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -23,11 +24,23 @@ func NewTaskDetail() TaskDetail {
 	return TaskDetail{}
 }
 
-// SetTask updates the displayed task and resets scroll position.
+// SetTask updates the displayed task. Only resets scroll position if the task changes.
 func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
+	// Only reset scroll position when switching to a different task
+	oldID := ""
+	if td.task != nil {
+		oldID = td.task.ID
+	}
+	newID := ""
+	if task != nil {
+		newID = task.ID
+	}
+
 	td.task = task
-	td.scrollOffset = 0
-	td.totalLines = 0
+	if oldID != newID {
+		td.scrollOffset = 0
+		td.totalLines = 0
+	}
 }
 
 // ScrollDown scrolls the viewport down by one line.
@@ -64,10 +77,95 @@ func (td *TaskDetail) ScrollToBottom() {
 	td.scrollOffset = td.totalLines - viewportHeight
 }
 
-// SetSize updates the component dimensions.
+// SetSize updates the component dimensions and recomputes total lines for scrolling.
 func (td *TaskDetail) SetSize(width, height int) {
 	td.width = width
 	td.height = height
+	// Recompute totalLines so ScrollDown/ScrollUp have accurate bounds
+	if td.task != nil {
+		td.totalLines = td.countContentLines()
+	}
+}
+
+// countContentLines counts how many content lines the task produces (excluding header).
+// Used by SetSize to precompute totalLines for scroll bounds.
+func (td *TaskDetail) countContentLines() int {
+	if td.task == nil {
+		return 0
+	}
+	task := td.task
+	count := 0
+
+	// Title
+	count++
+	// Status
+	count++
+	// Priority
+	if task.Priority != "" {
+		count++
+	}
+	// ID
+	count++
+	// Path
+	if task.Path != "" {
+		count++
+	}
+	// Created
+	if task.Created != "" {
+		count++
+	}
+	// Git context
+	if task.GitBranch != "" || task.GitRemote != "" {
+		count++ // blank line
+		count++ // header
+		if task.GitBranch != "" {
+			count++
+		}
+		if task.GitRemote != "" {
+			count++
+		}
+	}
+	// Working directory
+	if task.ResolvedWorkdir != "" || task.Workdir != "" {
+		count++ // blank line
+		count++ // header
+		if task.ResolvedWorkdir != "" {
+			count++
+		}
+		if task.Workdir != "" && task.Workdir != task.ResolvedWorkdir {
+			count++
+		}
+	}
+	// Dependencies
+	hasDeps := len(task.DependsOn) > 0
+	hasWaiting := len(task.WaitingOn) > 0
+	hasBlocked := len(task.BlockedBy) > 0
+	if hasDeps || hasWaiting || hasBlocked {
+		count++ // blank line
+		count++ // header
+		count += len(task.DependsOn)
+		if hasWaiting {
+			count++
+		}
+		if hasBlocked {
+			count++
+		}
+		if task.BlockedByReason != "" {
+			count++
+		}
+	}
+	// Sessions
+	if len(task.Sessions) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(task.Sessions)
+	}
+	// Cycle warning
+	if task.InCycle {
+		count++ // blank line
+		count++ // warning
+	}
+	return count
 }
 
 // View renders the task detail panel.
@@ -186,6 +284,35 @@ func (td *TaskDetail) renderTask() string {
 			lines = append(lines, fmt.Sprintf("  %s %s",
 				lipgloss.NewStyle().Foreground(ColorBlocked).Render("Reason:"),
 				task.BlockedByReason))
+		}
+	}
+
+	// Sessions
+	if len(task.Sessions) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render(
+			fmt.Sprintf("Sessions (%d):", len(task.Sessions))))
+
+		// Sort by timestamp descending (most recent first)
+		type sessionEntry struct {
+			id        string
+			timestamp string
+		}
+		sortedSessions := make([]sessionEntry, 0, len(task.Sessions))
+		for id, info := range task.Sessions {
+			sortedSessions = append(sortedSessions, sessionEntry{id: id, timestamp: info.Timestamp})
+		}
+		sort.Slice(sortedSessions, func(i, j int) bool {
+			return sortedSessions[i].timestamp > sortedSessions[j].timestamp
+		})
+
+		for _, s := range sortedSessions {
+			sessionStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+			line := fmt.Sprintf("  %s", sessionStyle.Render(s.id))
+			if s.timestamp != "" {
+				line += DimStyle.Render(fmt.Sprintf(" (%s)", s.timestamp))
+			}
+			lines = append(lines, line)
 		}
 	}
 

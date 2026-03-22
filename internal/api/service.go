@@ -25,6 +25,10 @@ type BrainService interface {
 	// Update modifies an existing brain entry.
 	Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
 
+	// UpdateMetadata merges fields into the entry's metadata JSON in SQLite.
+	// Used for runtime state (sessions, claims) without filesystem access.
+	UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
+
 	// Delete removes a brain entry by path or ID.
 	Delete(ctx context.Context, pathOrID string) error
 
@@ -147,6 +151,9 @@ type MonitorService interface {
 
 	// Create creates a new monitor from a template.
 	Create(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
+
+	// CreateForFeature creates a feature-review monitor as a dependency-gated one-shot task.
+	CreateForFeature(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error)
 
 	// Toggle enables or disables a monitor by task ID.
 	Toggle(ctx context.Context, taskID string, enabled bool) (string, error)

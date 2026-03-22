@@ -5,6 +5,8 @@
 package tui
 
 import (
+	"context"
+
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -58,6 +60,9 @@ type RunnerController interface {
 	ResumeAll()
 	IsPaused(projectID string) bool
 	IsAllPaused() bool
+	// ExecuteTask manually executes a task (TUI "x" key).
+	// Performs the full claim → status update → workdir resolve → spawn pipeline.
+	ExecuteTask(ctx context.Context, task *types.ResolvedTask, projectID string) error
 }
 
 // Config holds the configuration passed to the TUI from the runner.

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -485,13 +486,62 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		return nil, fmt.Errorf("write file %q: %w", absPath, err)
 	}
 
+	// Preserve runtime metadata (sessions, etc.) from the DB that the file
+	// system doesn't track. Read current metadata before re-indexing.
+	var preservedSessions map[string]interface{}
+	if row.Metadata != "" && row.Metadata != "{}" {
+		var existingMeta map[string]interface{}
+		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
+			if sess, ok := existingMeta["sessions"]; ok {
+				if sessMap, ok := sess.(map[string]interface{}); ok && len(sessMap) > 0 {
+					preservedSessions = sessMap
+				}
+			}
+		}
+	}
+
 	// Re-index
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
 
+	// Restore preserved sessions into the re-indexed metadata
+	if preservedSessions != nil {
+		_, _ = s.storage.MergeMetadata(ctx, row.Path, map[string]interface{}{
+			"sessions": preservedSessions,
+		})
+	}
+
 	// Re-read and return
 	return s.Recall(ctx, row.Path)
+}
+
+// =============================================================================
+// Metadata Updates (SQLite-only, no filesystem)
+// =============================================================================
+
+// UpdateMetadata performs a shallow merge of fields into the entry's metadata
+// JSON column directly in SQLite. This bypasses the file-read/write logic
+// and is used for runtime state like session tracking.
+func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	row, err := s.resolveEntry(ctx, pathOrID)
+	if err != nil {
+		return nil, err
+	}
+	if row == nil {
+		return nil, api.ErrNotFound
+	}
+
+	updated, err := s.storage.MergeMetadata(ctx, row.Path, fields)
+	if err != nil {
+		return nil, fmt.Errorf("merge metadata: %w", err)
+	}
+	if updated == nil {
+		return nil, api.ErrNotFound
+	}
+
+	entry := NoteRowToBrainEntry(updated)
+	return &entry, nil
 }
 
 // =============================================================================

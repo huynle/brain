@@ -264,6 +264,51 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, entry)
 }
 
+// HandleUpdateOrMetadata dispatches PATCH /entries/* to either HandleUpdateEntry
+// or HandleUpdateMetadata based on whether the path ends with "/metadata".
+func (h *Handler) HandleUpdateOrMetadata(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "*")
+	if strings.HasSuffix(id, "/metadata") {
+		h.HandleUpdateMetadata(w, r)
+		return
+	}
+	h.HandleUpdateEntry(w, r)
+}
+
+// HandleUpdateMetadata handles PATCH /entries/*/metadata.
+// It merges the provided JSON fields into the entry's metadata column directly
+// in SQLite, bypassing the file-read/write logic. Used for runtime state like
+// session tracking, claims, etc.
+func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "*")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	// Strip "/metadata" suffix from the path to get the entry path
+	id = strings.TrimSuffix(id, "/metadata")
+
+	var fields map[string]interface{}
+	if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+		return
+	}
+
+	entry, err := h.brain.UpdateMetadata(r.Context(), id, fields)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Entry not found: %s", id))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Notify SSE clients about the change
+	h.notifyProjectChanged(r, entry.Path, entry.Type)
+
+	WriteJSON(w, http.StatusOK, entry)
+}
+
 // HandleDeleteEntry handles DELETE /entries/{id} or DELETE /entries/path/to/entry.md.
 func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	// Chi wildcard /* captures everything after /entries/ in the "*" parameter

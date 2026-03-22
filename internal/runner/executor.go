@@ -696,9 +696,22 @@ func portFromName(name string) (int, bool) {
 
 // ParseLsofOutput parses lsof output to find the first LISTEN port.
 // Expected format: `lsof -i -P -n -p <pid>`
+// If pid > 0, only lines matching that PID are considered (the lsof output
+// column format is: COMMAND PID USER FD TYPE DEVICE SIZE/OFF NODE NAME).
 func ParseLsofOutput(output string) (int, error) {
+	return ParseLsofOutputForPID(output, 0)
+}
+
+// ParseLsofOutputForPID parses lsof output to find the first LISTEN port
+// belonging to the given PID. If pid is 0, any PID matches.
+func ParseLsofOutputForPID(output string, pid int) (int, error) {
 	if output == "" {
 		return 0, fmt.Errorf("empty lsof output")
+	}
+
+	pidStr := ""
+	if pid > 0 {
+		pidStr = strconv.Itoa(pid)
 	}
 
 	for _, line := range strings.Split(output, "\n") {
@@ -706,10 +719,17 @@ func ParseLsofOutput(output string) (int, error) {
 			continue
 		}
 
-		// Find the NAME field — it's the last whitespace-delimited field before (LISTEN)
-		// Example: TCP *:52341 (LISTEN)
-		// We need to extract the host:port part
 		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+
+		// Filter by PID if specified (PID is the second field)
+		if pidStr != "" && fields[1] != pidStr {
+			continue
+		}
+
+		// Find the NAME field — it's the last whitespace-delimited field before (LISTEN)
 		for i, f := range fields {
 			if f == "(LISTEN)" && i > 0 {
 				port, ok := portFromName(fields[i-1])
@@ -731,7 +751,7 @@ func DiscoverPort(pid int) (int, error) {
 	if err != nil {
 		return 0, fmt.Errorf("lsof failed: %w", err)
 	}
-	return ParseLsofOutput(string(output))
+	return ParseLsofOutputForPID(string(output), pid)
 }
 
 // =============================================================================

@@ -107,7 +107,7 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				// Uses /* to capture paths with slashes (e.g., projects/govpu/task/1bg4bj9y.md)
 				if o.handler != nil {
 					r.Get("/*", o.handler.HandleGetEntry)
-					r.Patch("/*", o.handler.HandleUpdateEntry)
+					r.Patch("/*", o.handler.HandleUpdateOrMetadata)
 					r.Delete("/*", o.handler.HandleDeleteEntry)
 				} else {
 					r.Get("/*", notImplemented)

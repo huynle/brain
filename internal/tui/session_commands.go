@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // sessionOpenedMsg is sent when a session has been opened (or failed to open).
@@ -33,6 +34,32 @@ type sessionSelectedMsg struct {
 	sessionID string
 	tmuxMode  bool
 	taskID    string
+}
+
+// sortedSessionIDs extracts session IDs from a Sessions map, sorted by
+// timestamp descending (most recent first).
+func sortedSessionIDs(sessions map[string]types.SessionInfo) []string {
+	if len(sessions) == 0 {
+		return nil
+	}
+
+	type entry struct {
+		id        string
+		timestamp string
+	}
+	entries := make([]entry, 0, len(sessions))
+	for id, info := range sessions {
+		entries = append(entries, entry{id: id, timestamp: info.Timestamp})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].timestamp > entries[j].timestamp // descending
+	})
+
+	ids := make([]string, len(entries))
+	for i, e := range entries {
+		ids[i] = e.id
+	}
+	return ids
 }
 
 // extractTaskID extracts the task ID from a task path.

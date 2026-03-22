@@ -40,7 +40,10 @@ func (mc *MetricsCollector) UntrackProcess(pid int32) {
 	delete(mc.trackedPIDs, pid)
 }
 
-// Collect gathers current metrics from all tracked processes.
+// Collect gathers current metrics from all tracked processes and their
+// child process trees. For tmux-spawned tasks, the tracked PID is the
+// shell process, but the actual work is done by child processes
+// (opencode → node, etc.), so we must aggregate the full tree.
 func (mc *MetricsCollector) Collect() ResourceMetrics {
 	metrics := ResourceMetrics{}
 
@@ -55,23 +58,41 @@ func (mc *MetricsCollector) Collect() ResourceMetrics {
 
 		validPIDs[pid] = proc
 
-		// Collect CPU percentage
-		cpu, err := proc.CPUPercent()
-		if err == nil {
-			metrics.CPUPercent += cpu
-		}
-
-		// Collect memory info
-		mem, err := proc.MemoryInfo()
-		if err == nil {
-			metrics.MemoryMB += float64(mem.RSS) / 1024 / 1024
-		}
+		// Collect metrics for this process and all its descendants
+		cpu, mem := mc.collectTree(proc)
+		metrics.CPUPercent += cpu
+		metrics.MemoryMB += mem
 	}
 
 	mc.trackedPIDs = validPIDs
 	metrics.ProcessCount = len(validPIDs)
 
 	return metrics
+}
+
+// collectTree collects aggregate CPU and memory for a process and all its
+// descendants (children, grandchildren, etc.).
+func (mc *MetricsCollector) collectTree(proc *process.Process) (cpuTotal float64, memTotalMB float64) {
+	// Collect this process's metrics
+	if cpu, err := proc.CPUPercent(); err == nil {
+		cpuTotal += cpu
+	}
+	if mem, err := proc.MemoryInfo(); err == nil {
+		memTotalMB += float64(mem.RSS) / 1024 / 1024
+	}
+
+	// Recursively collect children
+	children, err := proc.Children()
+	if err != nil {
+		return // No children or error — just return this process's metrics
+	}
+	for _, child := range children {
+		childCPU, childMem := mc.collectTree(child)
+		cpuTotal += childCPU
+		memTotalMB += childMem
+	}
+
+	return
 }
 
 // Format returns formatted string: "CPU:12.3% Mem:524.2MB 3 procs"

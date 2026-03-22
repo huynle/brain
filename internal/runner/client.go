@@ -292,6 +292,26 @@ func (c *APIClient) UpdateEntry(ctx context.Context, entryPath string, updates m
 	return &entry, nil
 }
 
+// UpdateMetadata merges fields into the entry's metadata JSON column.
+// This uses the /metadata suffix endpoint which works directly on SQLite
+// without touching the filesystem.
+func (c *APIClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s/metadata", encodedPath)
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, apiPath, fields)
+	if err != nil {
+		return fmt.Errorf("update metadata: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+
+	return nil
+}
+
 // ClaimTask attempts to claim a task for a runner.
 func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/claim", projectID, taskID)

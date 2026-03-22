@@ -12,15 +12,12 @@ import (
 // Short timeout to avoid blocking the poll loop.
 var opcodeStatusClient = &http.Client{Timeout: 5 * time.Second}
 
-// opcodeStatusResponse represents the JSON response from OpenCode's /status endpoint.
-type opcodeStatusResponse struct {
-	Type string `json:"type"`
-}
-
 // checkOpencodeStatus queries the OpenCode HTTP API to check if it's idle or busy.
+// The /session/status endpoint returns a map of session IDs to statuses.
+// An empty map {} means all sessions are idle. Sessions that are busy appear in the map.
 // Returns "idle", "busy", or "unavailable".
 func checkOpencodeStatus(port int) string {
-	url := fmt.Sprintf("http://localhost:%d/status", port)
+	url := fmt.Sprintf("http://localhost:%d/session/status", port)
 	resp, err := opcodeStatusClient.Get(url)
 	if err != nil {
 		return "unavailable"
@@ -31,19 +28,17 @@ func checkOpencodeStatus(port int) string {
 		return "unavailable"
 	}
 
-	var status opcodeStatusResponse
-	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+	// Response is a map of sessionID -> status object.
+	// Empty map = all idle, any entries = at least one busy.
+	var statusMap map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&statusMap); err != nil {
 		return "unavailable"
 	}
 
-	switch status.Type {
-	case "idle":
+	if len(statusMap) == 0 {
 		return "idle"
-	case "busy":
-		return "busy"
-	default:
-		return "unavailable"
 	}
+	return "busy"
 }
 
 // idleDetectionThreshold returns the configured idle detection threshold,

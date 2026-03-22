@@ -843,6 +843,37 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "generated_by"); ok {
 		entry.GeneratedBy = v
 	}
+
+	// Sessions: map[string]SessionInfo from metadata JSON
+	if sessionsRaw, ok := meta["sessions"]; ok {
+		if sessionsMap, ok := sessionsRaw.(map[string]interface{}); ok {
+			sessions := make(map[string]types.SessionInfo, len(sessionsMap))
+			for sid, infoRaw := range sessionsMap {
+				si := types.SessionInfo{}
+				if infoMap, ok := infoRaw.(map[string]interface{}); ok {
+					if ts, ok := infoMap["timestamp"].(string); ok {
+						si.Timestamp = ts
+					}
+				}
+				sessions[sid] = si
+			}
+			entry.Sessions = sessions
+		}
+	}
+
+	// Schedule fields
+	if v, ok := metaString(meta, "schedule"); ok {
+		entry.Schedule = v
+	}
+	if v, ok := metaBool(meta, "schedule_enabled"); ok {
+		entry.ScheduleEnabled = &v
+	}
+	if v, ok := metaBool(meta, "complete_on_idle"); ok {
+		entry.CompleteOnIdle = &v
+	}
+	if v, ok := metaString(meta, "direct_prompt"); ok {
+		entry.DirectPrompt = v
+	}
 }
 
 // metaString extracts a string value from a metadata map.

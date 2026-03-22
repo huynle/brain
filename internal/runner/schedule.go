@@ -126,10 +126,9 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 
 // processScheduledTask resets a scheduled task to pending and advances next_run.
 func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
-	// Reset status to pending
-	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
-		"status": "pending",
-	}); err != nil {
+	// Reset status to pending via the proper status update endpoint
+	// (UpdateTaskStatus updates the DB status column, not just the metadata JSON)
+	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); err != nil {
 		tr.logger.Printf("cron: failed to reset status for %s: %v", task.ID, err)
 		return
 	}

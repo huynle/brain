@@ -52,3 +52,16 @@ type ProcessStoppedMsg struct {
 	PID    int
 	TaskID string
 }
+
+// LogEntryMsg is sent when a log entry should be added to the log viewer.
+// This bridges runner events and TUI actions to the log panel.
+type LogEntryMsg struct {
+	Entry LogEntry
+}
+
+// SessionDiscoveredMsg is sent when the runner discovers a session ID
+// for a running task. The TUI stores it in-memory on the task for "o"/"O" access.
+type SessionDiscoveredMsg struct {
+	TaskPath  string
+	SessionID string
+}

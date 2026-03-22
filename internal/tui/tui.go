@@ -275,6 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.syncPanelSizes()
 		return m, nil
 
 	case TasksUpdatedMsg:
@@ -339,6 +340,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SSEConnectedMsg:
 		m.connected = true
 		m.statusBar.Connected = true
+		m.addLog("info", "Connected to server")
 		// Continue listening for next SSE message
 		// Gap 4c: Route to per-project client if ProjectID is set
 		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
@@ -349,6 +351,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case SSEDisconnectedMsg:
 		m.connected = false
 		m.statusBar.Connected = false
+		m.addLog("warn", "Disconnected from server")
 		// Gap 4c: Route reconnect to per-project client if ProjectID is set
 		if msg.ProjectID != "" && m.sseClients[msg.ProjectID] != nil {
 			return m, m.sseClients[msg.ProjectID].Reconnect(DefaultReconnectDelay)
@@ -393,16 +396,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case taskCompletedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Failed to complete task: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Complete failed: %v", msg.err))
 		} else {
 			m.setStatusMessage("success", "Task completed successfully")
+			m.addLog("info", "Task marked completed")
 		}
 		return m, nil
 
 	case taskCancelledMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Failed to cancel task: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Cancel failed: %v", msg.err))
 		} else {
 			m.setStatusMessage("success", "Task cancelled successfully")
+			m.addLog("info", "Task cancelled")
 		}
 		// Close modal after cancel completes
 		m.modalManager.Close()
@@ -411,8 +418,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case batchTasksCompletedMsg:
 		if len(msg.errors) > 0 {
 			m.setStatusMessage("error", fmt.Sprintf("Completed %d tasks, %d failed", msg.successCount, msg.failedCount))
+			m.addLog("warn", fmt.Sprintf("Batch complete: %d succeeded, %d failed", msg.successCount, msg.failedCount))
 		} else {
 			m.setStatusMessage("success", fmt.Sprintf("Completed %d tasks successfully", msg.successCount))
+			m.addLog("info", fmt.Sprintf("Batch completed %d tasks", msg.successCount))
 			// Clear selection on success
 			m.clearSelection()
 		}
@@ -421,8 +430,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case batchTasksCancelledMsg:
 		if len(msg.errors) > 0 {
 			m.setStatusMessage("error", fmt.Sprintf("Cancelled %d tasks, %d failed", msg.successCount, msg.failedCount))
+			m.addLog("warn", fmt.Sprintf("Batch cancel: %d succeeded, %d failed", msg.successCount, msg.failedCount))
 		} else {
 			m.setStatusMessage("success", fmt.Sprintf("Cancelled %d tasks successfully", msg.successCount))
+			m.addLog("info", fmt.Sprintf("Batch cancelled %d tasks", msg.successCount))
 			// Clear selection on success
 			m.clearSelection()
 		}
@@ -430,15 +441,38 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modalManager.Close()
 		return m, nil
 
+	case LogEntryMsg:
+		m.logViewer.AddEntry(msg.Entry)
+		return m, nil
+
+	case SessionDiscoveredMsg:
+		// Store session ID on the matching task in-memory
+		for i := range m.tasks {
+			if m.tasks[i].Path == msg.TaskPath {
+				if m.tasks[i].Sessions == nil {
+					m.tasks[i].Sessions = make(map[string]types.SessionInfo)
+				}
+				m.tasks[i].Sessions[msg.SessionID] = types.SessionInfo{
+					Timestamp: time.Now().UTC().Format(time.RFC3339),
+				}
+				m.addLog("info", fmt.Sprintf("Session discovered: %s", msg.SessionID))
+				break
+			}
+		}
+		return m, nil
+
 	case taskExecutedMsg:
 		if msg.err != nil {
 			if msg.claimedBy != "" {
 				m.setStatusMessage("error", fmt.Sprintf("✗ Already claimed by %s", msg.claimedBy))
+				m.addTaskLog("error", fmt.Sprintf("Execute failed: already claimed by %s", msg.claimedBy), msg.taskID)
 			} else {
 				m.setStatusMessage("error", fmt.Sprintf("✗ Execute failed: %v", msg.err))
+				m.addTaskLog("error", fmt.Sprintf("Execute failed: %v", msg.err), msg.taskID)
 			}
 		} else {
-			m.setStatusMessage("success", "✓ Task claimed for execution")
+			m.setStatusMessage("success", "✓ Task executing")
+			m.addTaskLog("info", "Task claimed for execution", msg.taskID)
 		}
 		m.modalManager.Close()
 		return m, nil
@@ -466,10 +500,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case sessionsFetchedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("✗ Failed to fetch sessions: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Session fetch failed: %v", msg.err))
 			return m, nil
 		}
 		if len(msg.sessionIDs) == 0 {
-			m.setStatusMessage("warn", "No sessions available")
+			m.setStatusMessage("warn", "No sessions available for this task")
+			m.addLog("warn", "No sessions available for this task")
 			return m, nil
 		}
 		taskID := extractTaskID(msg.taskPath)
@@ -552,11 +588,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Revert optimistic update
 			m.pausedProjects[msg.projectID] = !msg.paused
 			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Pause toggle failed: %v", msg.err))
 		} else {
 			if msg.paused {
 				m.setStatusMessage("success", fmt.Sprintf("Project %s paused", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Project paused: %s", msg.projectID))
 			} else {
 				m.setStatusMessage("success", fmt.Sprintf("Project %s resumed", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Project resumed: %s", msg.projectID))
 			}
 		}
 		m.syncHelpBarPauseState()
@@ -566,11 +605,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.allPaused = !msg.paused
 			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle pause all: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Pause all toggle failed: %v", msg.err))
 		} else {
 			if msg.paused {
 				m.setStatusMessage("success", "All projects paused")
+				m.addLog("info", "All projects paused")
 			} else {
 				m.setStatusMessage("success", "All projects resumed")
+				m.addLog("info", "All projects resumed")
 			}
 		}
 		m.syncHelpBarPauseState()
@@ -636,11 +678,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// metadataUpdatedMsg, monitorTemplatesFetchedMsg, monitorToggleResultMsg).
 	// Key events are already routed via handleKeyMsg -> modalManager.HandleKey(),
 	// but async command results (tea.Cmd responses) need to be forwarded here.
+	//
+	// IMPORTANT: Don't consume messages that the main Update needs to handle
+	// (like sessionSelectedMsg, taskExecutedMsg, etc.). Only forward if the
+	// modal's Update actually produces a command.
 	if m.modalManager.IsOpen() {
-		var cmd tea.Cmd
-		m.modalManager, cmd = m.modalManager.Update(msg)
-		if cmd != nil {
-			return m, cmd
+		// Don't intercept messages that are results from modal actions —
+		// these need to flow through the main switch to close the modal
+		// and trigger the next action.
+		switch msg.(type) {
+		case sessionSelectedMsg, taskExecutedMsg, taskCompletedMsg, taskCancelledMsg,
+			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
+			sessionOpenedMsg:
+			// Let these fall through to the main switch above (they won't match
+			// because we're past it, so we need to handle them here)
+		default:
+			var cmd tea.Cmd
+			m.modalManager, cmd = m.modalManager.Update(msg)
+			if cmd != nil {
+				return m, cmd
+			}
 		}
 	}
 
@@ -651,15 +708,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// If modal is open, route keys to modal first
 	if m.modalManager.IsOpen() {
-		handled, cmd := m.modalManager.HandleKey(string(msg.Runes))
-		if msg.Type == tea.KeyEsc {
-			// Esc always closes modal
-			handled, cmd = m.modalManager.HandleKey("esc")
-		}
-		if msg.Type == tea.KeyTab {
-			// Tab cycles through modal tabs
-			handled, cmd = m.modalManager.HandleKey("tab")
-		}
+		// Convert tea.KeyMsg to a string key name for the modal
+		keyStr := tea.Key(msg).String()
+
+		handled, cmd := m.modalManager.HandleKey(keyStr)
 		if handled {
 			return m, cmd
 		}
@@ -928,7 +980,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "x":
-			// Execute task - claim for immediate execution (tasks view only)
+			// Execute task - claim and spawn for immediate execution (tasks view only)
 			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
 				return m, nil
 			}
@@ -938,18 +990,35 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
-			// Get runner ID from config or generate
-			runnerID := "manual-tui"
-			if m.config.RunnerID != "" {
-				runnerID = m.config.RunnerID
+			// Determine action label based on task status
+			actionLabel := "Execute"
+			if selectedTask.Status == "in_progress" {
+				actionLabel = "Resume"
 			}
 
-			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			// Determine project ID for execution
+			projectID := m.config.Project
+			if m.activeProjectID != "" && m.activeProjectID != "all" {
+				projectID = m.activeProjectID
+			}
 
-			message := fmt.Sprintf("Execute task '%s' now?\nThis will claim it for immediate execution.", selectedTask.Title)
-			modal := NewConfirmModal("Execute Task", message).
+			message := fmt.Sprintf("%s task '%s' now?", actionLabel, selectedTask.Title)
+			rc := m.runnerController
+			taskCopy := *selectedTask // copy for closure
+
+			modal := NewConfirmModal(actionLabel+" Task", message).
 				WithOnConfirm(func() tea.Msg {
-					return executeTaskCmd(apiClient, m.config.Project, selectedTask.ID, runnerID)()
+					if rc != nil {
+						// Use embedded runner for full pipeline (claim + spawn)
+						return executeTaskViaRunnerCmd(rc, &taskCopy, projectID)()
+					}
+					// Fallback: API-only claim (no spawn)
+					runnerID := "manual-tui"
+					if m.config.RunnerID != "" {
+						runnerID = m.config.RunnerID
+					}
+					apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+					return executeTaskCmd(apiClient, projectID, taskCopy.ID, runnerID)()
 				})
 			return m, m.modalManager.Open(modal)
 		case "d":
@@ -1057,8 +1126,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if selectedTask == nil {
 				return m, nil
 			}
-			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-			return m, fetchSessionsCmd(apiClient, selectedTask.Path, false)
+			return m, m.openSessionForTask(selectedTask, false)
 		case "O":
 			// Open session in tmux (tasks view only)
 			if m.viewMode != ViewModeTasks || m.activePanel != PanelTasks {
@@ -1068,8 +1136,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if selectedTask == nil {
 				return m, nil
 			}
-			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-			return m, fetchSessionsCmd(apiClient, selectedTask.Path, true)
+			return m, m.openSessionForTask(selectedTask, true)
 		case "/":
 			// Activate filter typing mode
 			if m.activePanel == PanelTasks {
@@ -1104,6 +1171,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if !m.logsVisible && m.activePanel == PanelLogs {
 				m.activePanel = PanelTasks
 			}
+			m.syncPanelSizes()
 			return m, nil
 		case "T":
 			m.detailVisible = !m.detailVisible
@@ -1114,7 +1182,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// When showing the detail panel, sync it with current selection
 			// so it doesn't show stale "No task selected" state
 			if m.detailVisible {
-				m.syncTaskDetail()
+				m.syncTaskDetail() // this calls syncPanelSizes internally
+			} else {
+				m.syncPanelSizes()
 			}
 			return m, nil
 		case "j":
@@ -1588,7 +1658,84 @@ func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
+	m.syncPanelSizes()
 	m.syncHelpBarSessionState()
+}
+
+// syncPanelSizes computes and sets the inner dimensions for detail/log panels.
+// This must be called whenever panel visibility, window size, or selected task changes,
+// so that ScrollDown/ScrollUp have accurate height and totalLines for scroll bounds.
+func (m *Model) syncPanelSizes() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+
+	// Replicate the height calculation from renderBaseView
+	// We need approximate fixed heights; use conservative estimates
+	statusBarHeight := 4 // 2 content + 2 border
+	helpBarHeight := 3   // typically 2-3 lines
+
+	fixedUIHeight := statusBarHeight + helpBarHeight
+	mainHeight := m.height - fixedUIHeight - 1
+	if mainHeight < 3 {
+		mainHeight = 3
+	}
+
+	hasBottomPanel := m.detailVisible || m.logsVisible
+	if !hasBottomPanel {
+		return
+	}
+
+	// Split: 60% tasks, 40% bottom
+	topHeight := mainHeight * 60 / 100
+	if topHeight < 10 {
+		topHeight = 10
+	}
+	bottomHeight := mainHeight - topHeight
+	if bottomHeight < 3 {
+		bottomHeight = 3
+		topHeight = mainHeight - bottomHeight
+	}
+
+	innerWidth := m.width - 4
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+
+	if m.detailVisible && m.logsVisible {
+		// Bottom split: 60% detail, 40% logs
+		detailHeight := bottomHeight * 60 / 100
+		if detailHeight < 4 {
+			detailHeight = 4
+		}
+		logHeight := bottomHeight - detailHeight
+		if logHeight < 4 {
+			logHeight = 4
+			detailHeight = bottomHeight - logHeight
+		}
+		detailInner := detailHeight - 2
+		logInner := logHeight - 2
+		if detailInner < 1 {
+			detailInner = 1
+		}
+		if logInner < 1 {
+			logInner = 1
+		}
+		m.taskDetail.SetSize(innerWidth, detailInner)
+		m.logViewer.SetSize(innerWidth, logInner)
+	} else if m.detailVisible {
+		detailInner := bottomHeight - 2
+		if detailInner < 1 {
+			detailInner = 1
+		}
+		m.taskDetail.SetSize(innerWidth, detailInner)
+	} else if m.logsVisible {
+		logInner := bottomHeight - 2
+		if logInner < 1 {
+			logInner = 1
+		}
+		m.logViewer.SetSize(innerWidth, logInner)
+	}
 }
 
 // syncScheduleDetail updates the schedule detail panel with the currently selected scheduled task.
@@ -1759,10 +1906,10 @@ func (m Model) renderBaseView() string {
 			DimStyle.Render("  Esc: clear")
 	}
 
-	// Calculate available height for main content by measuring all UI elements
-	// Fixed heights for UI elements that should be consistent
-	statusBarHeight := 4 // Status bar always takes 4 lines (2 border + 2 content)
-	helpBarHeight := 3   // Help bar wraps to 3 lines
+	// Calculate available height for main content by measuring actual rendered heights
+	// This avoids hardcoded estimates that can drift from reality
+	statusBarHeight := lipgloss.Height(statusBarView)
+	helpBarHeight := lipgloss.Height(helpBarView)
 
 	projectTabsHeight := lipgloss.Height(projectTabsView)
 	statusMessageHeight := lipgloss.Height(statusMessageView)
@@ -1806,27 +1953,30 @@ func (m Model) renderBaseView() string {
 		taskPanelStyle = ActiveBorder
 	}
 
-	innerWidth := m.width - 4 // account for border + padding, use full width
-	innerHeight := topHeight - 2
+	// Note: lipgloss Height() sets the INNER content height; border adds 2 more lines.
+	// So we subtract 2 from the allocated height to get the correct inner height,
+	// ensuring the total rendered height matches our allocation.
+	taskInnerHeight := topHeight - 2 // subtract border (top + bottom)
+	innerWidth := m.width - 4        // account for border + padding, use full width
 	if innerWidth < 10 {
 		innerWidth = 10
 	}
-	if innerHeight < 1 {
-		innerHeight = 1
+	if taskInnerHeight < 1 {
+		taskInnerHeight = 1
 	}
 
 	var taskContent string
 	if m.viewMode == ViewModeSchedules {
-		taskContent = m.scheduleList.View(innerWidth, innerHeight)
+		taskContent = m.scheduleList.View(innerWidth, taskInnerHeight)
 	} else {
-		taskContent = m.taskTree.ViewWithSelection(innerWidth, innerHeight, m.selectedTasks, m.activeProjectID)
+		taskContent = m.taskTree.ViewWithSelection(innerWidth, taskInnerHeight, m.selectedTasks, m.activeProjectID)
 	}
 	// Truncate task content to fit within allocated height (minus border)
-	taskContent = truncateToHeight(taskContent, innerHeight)
+	taskContent = truncateToHeight(taskContent, taskInnerHeight)
 
 	taskPanel := taskPanelStyle.
 		Width(m.width - 2).
-		Height(topHeight).
+		Height(taskInnerHeight).
 		Render(taskContent)
 
 	// Build main content
@@ -1848,20 +1998,33 @@ func (m Model) renderBaseView() string {
 		bottomPanels = append(bottomPanels, filterBarView)
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left,
-		statusBarView,
-		projectTabsView,
-		mainContent,
-		lipgloss.JoinVertical(lipgloss.Left, bottomPanels...),
-	)
+	// Build final layout, omitting empty sections to avoid blank lines
+	var sections []string
+	sections = append(sections, statusBarView)
+	if projectTabsView != "" {
+		sections = append(sections, projectTabsView)
+	}
+	sections = append(sections, mainContent)
+	sections = append(sections, lipgloss.JoinVertical(lipgloss.Left, bottomPanels...))
+
+	return lipgloss.JoinVertical(lipgloss.Left, sections...)
 }
 
 // renderBottomPanel renders the bottom panel(s) - detail and/or logs.
+// height is the total outer height for the bottom section.
 func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
 		// Stack vertically: detail on top (60%), logs on bottom (40%)
+		// Each sub-panel height includes its own border (2 lines each)
 		detailHeight := height * 60 / 100
+		if detailHeight < 4 {
+			detailHeight = 4 // minimum: 2 border + 2 content
+		}
 		logHeight := height - detailHeight
+		if logHeight < 4 {
+			logHeight = 4
+			detailHeight = height - logHeight
+		}
 		detailPanel := m.renderDetailPanel(width, detailHeight)
 		logPanel := m.renderLogPanel(width, logHeight)
 		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
@@ -1875,12 +2038,14 @@ func (m Model) renderBottomPanel(width, height int) string {
 }
 
 // renderDetailPanel renders the task detail panel with border.
+// height is the total outer height including borders.
 func (m Model) renderDetailPanel(width, height int) string {
 	style := InactiveBorder
 	if m.activePanel == PanelDetails {
 		style = ActiveBorder
 	}
 
+	// lipgloss Height() sets inner content height; border adds 2 lines
 	innerWidth := width - 4
 	innerHeight := height - 2
 	if innerWidth < 10 {
@@ -1907,17 +2072,19 @@ func (m Model) renderDetailPanel(width, height int) string {
 
 	return style.
 		Width(width - 2).
-		Height(height).
+		Height(innerHeight).
 		Render(content)
 }
 
 // renderLogPanel renders the log viewer panel with border.
+// height is the total outer height including borders.
 func (m Model) renderLogPanel(width, height int) string {
 	style := InactiveBorder
 	if m.activePanel == PanelLogs {
 		style = ActiveBorder
 	}
 
+	// lipgloss Height() sets inner content height; border adds 2 lines
 	innerWidth := width - 4
 	innerHeight := height - 2
 	if innerWidth < 10 {
@@ -1953,7 +2120,7 @@ func (m Model) renderLogPanel(width, height int) string {
 
 	return style.
 		Width(width - 2).
-		Height(height).
+		Height(innerHeight).
 		Render(content)
 }
 
@@ -2110,6 +2277,48 @@ func (m *Model) setStatusMessage(msgType, message string) {
 	m.statusMessage = message
 	m.statusMessageType = msgType
 	m.statusMessageTime = time.Now()
+}
+
+// openSessionForTask opens a session for the given task, using the task's
+// sessions data directly (no API fetch needed). If the task has no sessions,
+// falls back to fetching from the API.
+func (m *Model) openSessionForTask(task *types.ResolvedTask, tmuxMode bool) tea.Cmd {
+	// Use sessions from the already-loaded task data
+	sessionIDs := sortedSessionIDs(task.Sessions)
+
+	if len(sessionIDs) == 0 {
+		// Fallback: try fetching from API in case SSE data is stale
+		apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+		return fetchSessionsCmd(apiClient, task.Path, tmuxMode)
+	}
+
+	// Return a sessionsFetchedMsg directly (reuse existing handler)
+	return func() tea.Msg {
+		return sessionsFetchedMsg{
+			sessionIDs: sessionIDs,
+			taskPath:   task.Path,
+			tmuxMode:   tmuxMode,
+		}
+	}
+}
+
+// addLog adds a log entry to the log viewer for the Logs panel.
+func (m *Model) addLog(level, message string) {
+	m.logViewer.AddEntry(LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+	})
+}
+
+// addTaskLog adds a log entry with task context.
+func (m *Model) addTaskLog(level, message, taskID string) {
+	m.logViewer.AddEntry(LogEntry{
+		Timestamp: time.Now(),
+		Level:     level,
+		Message:   message,
+		TaskID:    taskID,
+	})
 }
 
 // =============================================================================
@@ -2300,7 +2509,17 @@ func batchCancelTasksCmd(cfg runner.RunnerConfig, taskPaths, taskIDs []string) t
 	}
 }
 
-// executeTaskCmd claims a task for immediate execution.
+// executeTaskViaRunnerCmd executes a task through the embedded runner controller.
+// This performs the full pipeline: claim → status update → workdir resolve → spawn.
+func executeTaskViaRunnerCmd(rc RunnerController, task *types.ResolvedTask, projectID string) tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		err := rc.ExecuteTask(ctx, task, projectID)
+		return taskExecutedMsg{taskID: task.ID, err: err}
+	}
+}
+
+// executeTaskCmd claims a task for immediate execution (API-only fallback).
 func executeTaskCmd(client *runner.APIClient, project, taskID, runnerID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()

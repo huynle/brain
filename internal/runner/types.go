@@ -138,19 +138,20 @@ type RunnerState struct {
 type RunnerEventType string
 
 const (
-	EventTaskStarted     RunnerEventType = "task_started"
-	EventTaskCompleted   RunnerEventType = "task_completed"
-	EventTaskFailed      RunnerEventType = "task_failed"
-	EventTaskCancelled   RunnerEventType = "task_cancelled"
-	EventPollComplete    RunnerEventType = "poll_complete"
-	EventStateSaved      RunnerEventType = "state_saved"
-	EventShutdown        RunnerEventType = "shutdown"
-	EventProjectPaused   RunnerEventType = "project_paused"
-	EventProjectResumed  RunnerEventType = "project_resumed"
-	EventAllPaused       RunnerEventType = "all_paused"
-	EventAllResumed      RunnerEventType = "all_resumed"
-	EventFeatureEnabled  RunnerEventType = "feature_enabled"
-	EventFeatureDisabled RunnerEventType = "feature_disabled"
+	EventTaskStarted       RunnerEventType = "task_started"
+	EventTaskCompleted     RunnerEventType = "task_completed"
+	EventTaskFailed        RunnerEventType = "task_failed"
+	EventTaskCancelled     RunnerEventType = "task_cancelled"
+	EventPollComplete      RunnerEventType = "poll_complete"
+	EventStateSaved        RunnerEventType = "state_saved"
+	EventShutdown          RunnerEventType = "shutdown"
+	EventProjectPaused     RunnerEventType = "project_paused"
+	EventProjectResumed    RunnerEventType = "project_resumed"
+	EventAllPaused         RunnerEventType = "all_paused"
+	EventAllResumed        RunnerEventType = "all_resumed"
+	EventFeatureEnabled    RunnerEventType = "feature_enabled"
+	EventFeatureDisabled   RunnerEventType = "feature_disabled"
+	EventSessionDiscovered RunnerEventType = "session_discovered"
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.
@@ -182,6 +183,9 @@ type RunnerEvent struct {
 
 	// Populated for feature_enabled/disabled events.
 	FeatureID string `json:"featureId,omitempty"`
+
+	// Populated for session_discovered events.
+	SessionID string `json:"sessionId,omitempty"`
 }
 
 // EventHandler is a callback for runner events.

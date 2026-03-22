@@ -92,7 +92,14 @@ func (h *Handler) HandleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.monitor.Create(r.Context(), req.TemplateID, scope, opts)
+	// Feature-review with feature scope uses special dependency-gated creation
+	var result *types.CreateMonitorResult
+	var err error
+	if req.TemplateID == "feature-review" && scope.Type == "feature" {
+		result, err = h.monitor.CreateForFeature(r.Context(), req.TemplateID, scope)
+	} else {
+		result, err = h.monitor.Create(r.Context(), req.TemplateID, scope, opts)
+	}
 	if err != nil {
 		// Classify error for appropriate HTTP status
 		errMsg := err.Error()

@@ -225,6 +225,30 @@ func (pm *ProcessManager) Get(taskID string) *ProcessInfo {
 	return pm.processes[taskID]
 }
 
+// UpdatePort updates the OpencodePort on a tracked task.
+func (pm *ProcessManager) UpdatePort(taskID string, port int) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.OpencodePort = port
+}
+
+// UpdateIdleSince updates the IdleSince timestamp on a tracked task.
+func (pm *ProcessManager) UpdateIdleSince(taskID string, idleSince string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.IdleSince = idleSince
+}
+
 // IsRunning checks if a process is still alive.
 func (pm *ProcessManager) IsRunning(taskID string) bool {
 	pm.mu.Lock()

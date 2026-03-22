@@ -492,11 +492,15 @@ type ResolvedTask struct {
 	Schedule        string `json:"schedule,omitempty"`
 	ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
 
-	DirectPrompt  string            `json:"direct_prompt"`
-	Agent         string            `json:"agent"`
-	Model         string            `json:"model"`
-	TargetWorkdir string            `json:"target_workdir,omitempty"`
-	Env           map[string]string `json:"env,omitempty"`
+	DirectPrompt   string            `json:"direct_prompt"`
+	Agent          string            `json:"agent"`
+	Model          string            `json:"model"`
+	CompleteOnIdle *bool             `json:"complete_on_idle,omitempty"`
+	TargetWorkdir  string            `json:"target_workdir,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+
+	// Session tracking
+	Sessions map[string]SessionInfo `json:"sessions,omitempty"`
 
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`

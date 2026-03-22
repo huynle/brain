@@ -149,6 +149,14 @@ func (m *mockClient) AppendToTask(ctx context.Context, taskPath, content string)
 	return m.appendErr
 }
 
+func (m *mockClient) UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error) {
+	return &types.BrainEntry{Path: entryPath}, nil
+}
+
+func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
+	return nil
+}
+
 func (m *mockClient) getClaimCalls() []claimCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -381,6 +389,22 @@ func (m *mockProcessMgr) ToProcessStates() []ProcessState {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return nil
+}
+
+func (m *mockProcessMgr) UpdatePort(taskID string, port int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.OpencodePort = port
+	}
+}
+
+func (m *mockProcessMgr) UpdateIdleSince(taskID string, idleSince string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.IdleSince = idleSince
+	}
 }
 
 // setCompletion sets the completion status for a task.
@@ -1487,5 +1511,168 @@ func TestTaskRunner_CheckRunningTasks_BlockedTask(t *testing.T) {
 	}
 	if updates[0].Status != "blocked" {
 		t.Errorf("API status = %q, want %q for blocked task", updates[0].Status, "blocked")
+	}
+}
+
+// =============================================================================
+// ExecuteTask Tests (manual execution from TUI)
+// =============================================================================
+
+func TestExecuteTask_ClaimsAndSpawns(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := &types.ResolvedTask{
+		ID:       "task-1",
+		Path:     "projects/proj-a/task/task-1.md",
+		Title:    "Test task",
+		Priority: "high",
+		Status:   "pending",
+	}
+
+	ctx := context.Background()
+	err := tr.ExecuteTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("ExecuteTask returned error: %v", err)
+	}
+
+	// Should claim the task
+	claims := client.getClaimCalls()
+	if len(claims) != 1 {
+		t.Fatalf("expected 1 claim call, got %d", len(claims))
+	}
+	if claims[0].TaskID != "task-1" {
+		t.Errorf("claimed task ID = %q, want %q", claims[0].TaskID, "task-1")
+	}
+
+	// Should update status to in_progress
+	updates := client.getUpdateStatusCalls()
+	if len(updates) != 1 {
+		t.Fatalf("expected 1 status update, got %d", len(updates))
+	}
+	if updates[0].Status != "in_progress" {
+		t.Errorf("status = %q, want %q", updates[0].Status, "in_progress")
+	}
+
+	// Should spawn the task
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task-1" {
+		t.Errorf("spawned task ID = %q, want %q", spawns[0].TaskID, "task-1")
+	}
+}
+
+func TestExecuteTask_AtCapacity_ReturnsError(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Fill up to max parallel (default is 2 from testRunnerConfig)
+	processMgr.processes["existing-1"] = &ProcessInfo{
+		Task: RunningTask{ID: "existing-1"},
+		Proc: newMockProcess(1001),
+	}
+	processMgr.processes["existing-2"] = &ProcessInfo{
+		Task: RunningTask{ID: "existing-2"},
+		Proc: newMockProcess(1002),
+	}
+
+	task := &types.ResolvedTask{
+		ID:       "task-1",
+		Path:     "projects/proj-a/task/task-1.md",
+		Title:    "Test task",
+		Priority: "high",
+		Status:   "pending",
+	}
+
+	ctx := context.Background()
+	err := tr.ExecuteTask(ctx, task, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when at capacity")
+	}
+
+	// Should NOT claim the task
+	claims := client.getClaimCalls()
+	if len(claims) != 0 {
+		t.Errorf("should not claim when at capacity, got %d claims", len(claims))
+	}
+}
+
+func TestExecuteTask_InProgress_SkipsClaimAndSpawns(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := &types.ResolvedTask{
+		ID:       "task-1",
+		Path:     "projects/proj-a/task/task-1.md",
+		Title:    "Resuming task",
+		Priority: "high",
+		Status:   "in_progress", // Already in progress — resume path
+	}
+
+	ctx := context.Background()
+	err := tr.ExecuteTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("ExecuteTask returned error: %v", err)
+	}
+
+	// Should NOT claim the task (skip claim for in_progress)
+	claims := client.getClaimCalls()
+	if len(claims) != 0 {
+		t.Errorf("should not claim in_progress task, got %d claims", len(claims))
+	}
+
+	// Should NOT update status (already in_progress)
+	updates := client.getUpdateStatusCalls()
+	if len(updates) != 0 {
+		t.Errorf("should not update status for in_progress task, got %d updates", len(updates))
+	}
+
+	// Should still spawn the task
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task-1" {
+		t.Errorf("spawned task ID = %q, want %q", spawns[0].TaskID, "task-1")
+	}
+}
+
+func TestExecuteTask_ClaimFails_ReturnsError(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner"}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := &types.ResolvedTask{
+		ID:       "task-1",
+		Path:     "projects/proj-a/task/task-1.md",
+		Title:    "Test task",
+		Priority: "high",
+		Status:   "pending",
+	}
+
+	ctx := context.Background()
+	err := tr.ExecuteTask(ctx, task, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when claim fails")
+	}
+
+	// Should NOT spawn the task
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 0 {
+		t.Errorf("should not spawn when claim fails, got %d spawns", len(spawns))
 	}
 }

@@ -4,10 +4,13 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -28,6 +31,8 @@ type Client interface {
 	ReleaseTask(ctx context.Context, projectID, taskID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
+	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
+	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -52,6 +57,8 @@ type TaskProcessManager interface {
 	Kill(ctx context.Context, taskID string) bool
 	KillAll(ctx context.Context)
 	ToProcessStates() []ProcessState
+	UpdatePort(taskID string, port int)
+	UpdateIdleSince(taskID string, idleSince string)
 }
 
 // TaskStateManager abstracts the StateManager for testability.
@@ -295,6 +302,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 2. Check running tasks for completion
 	tr.checkRunningTasks(ctx)
 
+	// 2.5. Check idle status for OpenCode agents
+	tr.checkIdleStatus(ctx)
+
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()
 	maxParallel := tr.config.MaxParallel
@@ -399,16 +409,17 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 
 	// Build running task record
 	runningTask := RunningTask{
-		ID:         task.ID,
-		Path:       task.Path,
-		Title:      task.Title,
-		Priority:   task.Priority,
-		ProjectID:  projectID,
-		PID:        spawnResult.PID,
-		PaneID:     spawnResult.PaneID,
-		WindowName: spawnResult.WindowName,
-		StartedAt:  time.Now(),
-		Workdir:    spawnResult.Workdir,
+		ID:             task.ID,
+		Path:           task.Path,
+		Title:          task.Title,
+		Priority:       task.Priority,
+		ProjectID:      projectID,
+		PID:            spawnResult.PID,
+		PaneID:         spawnResult.PaneID,
+		WindowName:     spawnResult.WindowName,
+		StartedAt:      time.Now(),
+		Workdir:        spawnResult.Workdir,
+		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 	}
 
 	// Track in process manager
@@ -429,7 +440,162 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Task: &runningTask,
 	})
 
+	// Discover opencode session ID and port in background
+	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+
 	return nil
+}
+
+// discoverAndSaveSession discovers the opencode port and session ID for a
+// spawned process and persists it on the task's entry for later "o"/"O" access.
+// The pid is typically a tmux shell PID; the actual opencode runs as a child.
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
+	if pid <= 0 {
+		return
+	}
+
+	// Wait for opencode to start its HTTP server
+	time.Sleep(5 * time.Second)
+
+	// Find opencode's port by checking child processes
+	var port int
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		port, err = discoverChildPort(pid)
+		if err == nil && port > 0 {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
+	if err != nil || port == 0 {
+		tr.logger.Printf("session discovery: failed to discover port for PID %d: %v", pid, err)
+		return
+	}
+
+	// Store the discovered port on the running task for idle detection
+	for _, info := range tr.processMgr.GetAll() {
+		if info.Task.Path == taskPath {
+			tr.processMgr.UpdatePort(info.Task.ID, port)
+			break
+		}
+	}
+
+	// Query opencode's session endpoint
+	sessionID, err := discoverSessionID(port)
+	if err != nil {
+		tr.logger.Printf("session discovery: failed to get session from port %d: %v", port, err)
+		return
+	}
+	if sessionID == "" {
+		return
+	}
+
+	// Persist session ID to the task's metadata in SQLite via API
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err = tr.client.UpdateMetadata(ctx, taskPath, map[string]interface{}{
+		"sessions": map[string]interface{}{
+			sessionID: map[string]interface{}{
+				"timestamp": time.Now().UTC().Format(time.RFC3339),
+			},
+		},
+	})
+	if err != nil {
+		tr.logger.Printf("session discovery: failed to persist session %s for %s: %v", sessionID, taskPath, err)
+	}
+
+	// Also emit event so the TUI updates in-memory immediately
+	tr.emitEvent(RunnerEvent{
+		Type:      EventSessionDiscovered,
+		TaskPath:  taskPath,
+		SessionID: sessionID,
+	})
+	tr.logger.Printf("session discovery: saved session %s for %s (port %d)", sessionID, taskPath, port)
+}
+
+// discoverChildPort finds the LISTEN port on any child process of the given PID.
+// This handles the tmux case where the tracked PID is the shell, but opencode
+// (the child) is the one listening on a port.
+func discoverChildPort(parentPID int) (int, error) {
+	// First try the parent itself
+	if port, err := DiscoverPort(parentPID); err == nil && port > 0 {
+		return port, nil
+	}
+
+	// Walk children using pgrep
+	cmd := exec.Command("pgrep", "-P", fmt.Sprintf("%d", parentPID))
+	output, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("pgrep failed: %w", err)
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		childPID := 0
+		if _, err := fmt.Sscanf(line, "%d", &childPID); err != nil || childPID <= 0 {
+			continue
+		}
+		if port, err := DiscoverPort(childPID); err == nil && port > 0 {
+			return port, nil
+		}
+		// Recurse one level deeper (opencode may be a grandchild)
+		if port, err := discoverChildPort(childPID); err == nil && port > 0 {
+			return port, nil
+		}
+	}
+
+	return 0, fmt.Errorf("no listening port found in process tree of PID %d", parentPID)
+}
+
+// discoverSessionID queries an opencode HTTP server for the active session ID.
+// The /session endpoint returns an array of sessions; we take the most recent.
+func discoverSessionID(port int) (string, error) {
+	url := fmt.Sprintf("http://localhost:%d/session", port)
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("GET %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+
+	// /session returns an array of sessions
+	var sessions []struct {
+		ID   string `json:"id"`
+		Time struct {
+			Updated int64 `json:"updated"`
+		} `json:"time"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
+		// Try single-object response as fallback
+		var single struct {
+			ID string `json:"id"`
+		}
+		if err2 := json.Unmarshal([]byte(err.Error()), &single); err2 != nil {
+			return "", fmt.Errorf("decode session response: %w", err)
+		}
+		return single.ID, nil
+	}
+
+	if len(sessions) == 0 {
+		return "", nil
+	}
+
+	// Return the most recently updated session
+	latest := sessions[0]
+	for _, s := range sessions[1:] {
+		if s.Time.Updated > latest.Time.Updated {
+			latest = s
+		}
+	}
+	return latest.ID, nil
 }
 
 // =============================================================================

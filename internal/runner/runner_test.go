@@ -153,6 +153,10 @@ func (m *mockClient) UpdateEntry(ctx context.Context, entryPath string, updates 
 	return &types.BrainEntry{Path: entryPath}, nil
 }
 
+func (m *mockClient) GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error) {
+	return nil, nil
+}
+
 func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
 	return nil
 }

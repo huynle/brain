@@ -491,6 +491,7 @@ type ResolvedTask struct {
 	// Schedule fields
 	Schedule        string `json:"schedule,omitempty"`
 	ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
+	NextRun         string `json:"next_run,omitempty"`
 
 	DirectPrompt   string            `json:"direct_prompt"`
 	Agent          string            `json:"agent"`

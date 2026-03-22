@@ -27,6 +27,7 @@ type Client interface {
 	ListProjects(ctx context.Context) ([]string, error)
 	GetReadyTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	GetNextTask(ctx context.Context, projectID string) (*types.ResolvedTask, error)
+	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	ReleaseTask(ctx context.Context, projectID, taskID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
@@ -133,10 +134,11 @@ type TaskRunner struct {
 	stateMgr   TaskStateManager
 
 	// Mutable state (protected by mu)
-	mu        sync.RWMutex
-	status    RunnerStatus
-	stats     RunnerStats
-	startedAt time.Time
+	mu              sync.RWMutex
+	status          RunnerStatus
+	stats           RunnerStats
+	startedAt       time.Time
+	lastCronCheckAt time.Time
 
 	// Pause state (protected by pauseMu)
 	pauseMu    sync.RWMutex
@@ -304,6 +306,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 2.5. Check idle status for OpenCode agents
 	tr.checkIdleStatus(ctx)
+
+	// 2.6. Check scheduled tasks (cron triggers)
+	tr.checkScheduledTasks(ctx, time.Now().UTC())
 
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()

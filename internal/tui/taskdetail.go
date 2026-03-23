@@ -160,6 +160,22 @@ func (td *TaskDetail) countContentLines() int {
 		count++ // header
 		count += len(task.Sessions)
 	}
+	// Frontmatter — compute actual count
+	fmLines := td.renderFrontmatter(task)
+	if len(fmLines) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(fmLines)
+	}
+	// Direct prompt
+	if task.DirectPrompt != "" {
+		count += 2 // blank line + header
+		prompt := task.DirectPrompt
+		if len(prompt) > 200 {
+			prompt = prompt[:200] + "..."
+		}
+		count += len(strings.Split(prompt, "\n"))
+	}
 	// Cycle warning
 	if task.InCycle {
 		count++ // blank line
@@ -316,11 +332,34 @@ func (td *TaskDetail) renderTask() string {
 		}
 	}
 
+	// Frontmatter — all metadata fields for deep understanding of the task
+	fmLines := td.renderFrontmatter(task)
+	if len(fmLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Frontmatter:"))
+		lines = append(lines, fmLines...)
+	}
+
 	// Cycle warning
 	if task.InCycle {
 		lines = append(lines, "")
 		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true).
 			Render("↺ Task is part of a dependency cycle"))
+	}
+
+	// Direct prompt (truncated preview)
+	if task.DirectPrompt != "" {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Direct Prompt:"))
+		prompt := task.DirectPrompt
+		maxLen := 200
+		if len(prompt) > maxLen {
+			prompt = prompt[:maxLen] + "..."
+		}
+		// Split by newlines and indent
+		for _, pLine := range strings.Split(prompt, "\n") {
+			lines = append(lines, DimStyle.Render("  "+pLine))
+		}
 	}
 
 	// Store total content lines
@@ -384,4 +423,81 @@ func (td *TaskDetail) renderTask() string {
 	result = append(result, headerLine)
 	result = append(result, lines...)
 	return strings.Join(result, "\n")
+}
+
+// renderFrontmatter renders all metadata fields as key: value pairs.
+// Only non-empty fields are shown. This matches origin/main's "Frontmatter:" section.
+func (td *TaskDetail) renderFrontmatter(task *types.ResolvedTask) []string {
+	var lines []string
+
+	keyStyle := DimStyle
+	valStyle := lipgloss.NewStyle()
+	boolStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+
+	addField := func(key, val string) {
+		if val != "" {
+			lines = append(lines, fmt.Sprintf("  %s %s", keyStyle.Render(key+":"), valStyle.Render(val)))
+		}
+	}
+
+	addBool := func(key string, val *bool) {
+		if val != nil {
+			lines = append(lines, fmt.Sprintf("  %s %s", keyStyle.Render(key+":"), boolStyle.Render(fmt.Sprintf("%v", *val))))
+		}
+	}
+
+	// Core fields (not already shown above)
+	addField("created", task.Created)
+	addField("execution_mode", task.ExecutionMode)
+	addField("user_original_request", task.UserOriginalRequest)
+	addField("feature_id", task.FeatureID)
+	addField("feature_priority", task.FeaturePriority)
+	addField("git_branch", task.GitBranch)
+	addField("git_remote", task.GitRemote)
+	addField("merge_target_branch", task.MergeTargetBranch)
+	addField("merge_policy", task.MergePolicy)
+	addField("merge_strategy", task.MergeStrategy)
+	addField("remote_branch_policy", task.RemoteBranchPolicy)
+	addBool("open_pr_before_merge", task.OpenPRBeforeMerge)
+	addField("target_workdir", task.TargetWorkdir)
+	addField("workdir", task.Workdir)
+	addField("resolved_workdir", task.ResolvedWorkdir)
+
+	// Agent/model
+	addField("agent", task.Agent)
+	addField("model", task.Model)
+	addBool("complete_on_idle", task.CompleteOnIdle)
+
+	// Schedule
+	addField("schedule", task.Schedule)
+	addBool("schedule_enabled", task.ScheduleEnabled)
+	addField("next_run", task.NextRun)
+	if task.MaxRuns != nil {
+		lines = append(lines, fmt.Sprintf("  %s %s", keyStyle.Render("max_runs:"), valStyle.Render(fmt.Sprintf("%d", *task.MaxRuns))))
+	}
+	if len(task.Runs) > 0 {
+		lines = append(lines, fmt.Sprintf("  %s %s", keyStyle.Render("runs:"), valStyle.Render(fmt.Sprintf("%d total", len(task.Runs)))))
+	}
+
+	// Generated
+	addBool("generated", task.Generated)
+	addField("generated_kind", task.GeneratedKind)
+	addField("generated_key", task.GeneratedKey)
+	addField("generated_by", task.GeneratedBy)
+
+	// Feature dependencies
+	if len(task.FeatureDependsOn) > 0 {
+		lines = append(lines, fmt.Sprintf("  %s %s", keyStyle.Render("feature_depends_on:"),
+			valStyle.Render(strings.Join(task.FeatureDependsOn, ", "))))
+	}
+
+	// Env vars
+	if len(task.Env) > 0 {
+		lines = append(lines, fmt.Sprintf("  %s", keyStyle.Render("env:")))
+		for k, v := range task.Env {
+			lines = append(lines, fmt.Sprintf("    %s=%s", k, DimStyle.Render(v)))
+		}
+	}
+
+	return lines
 }

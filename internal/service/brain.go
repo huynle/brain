@@ -486,16 +486,26 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		return nil, fmt.Errorf("write file %q: %w", absPath, err)
 	}
 
-	// Preserve runtime metadata (sessions, etc.) from the DB that the file
-	// system doesn't track. Read current metadata before re-indexing.
-	var preservedSessions map[string]interface{}
+	// Preserve runtime metadata from the DB that the filesystem doesn't track.
+	// The re-index reads from disk which only has frontmatter fields, so any
+	// runtime-only fields (sessions, schedule state, direct_prompt, etc.) would
+	// be lost without this preservation step.
+	var preservedFields map[string]interface{}
+	runtimeKeys := []string{
+		"sessions", "next_run", "schedule", "schedule_enabled",
+		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
-			if sess, ok := existingMeta["sessions"]; ok {
-				if sessMap, ok := sess.(map[string]interface{}); ok && len(sessMap) > 0 {
-					preservedSessions = sessMap
+			preservedFields = make(map[string]interface{})
+			for _, key := range runtimeKeys {
+				if val, ok := existingMeta[key]; ok {
+					preservedFields[key] = val
 				}
+			}
+			if len(preservedFields) == 0 {
+				preservedFields = nil
 			}
 		}
 	}
@@ -505,11 +515,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
 
-	// Restore preserved sessions into the re-indexed metadata
-	if preservedSessions != nil {
-		_, _ = s.storage.MergeMetadata(ctx, row.Path, map[string]interface{}{
-			"sessions": preservedSessions,
-		})
+	// Restore preserved runtime fields into the re-indexed metadata
+	if preservedFields != nil {
+		_, _ = s.storage.MergeMetadata(ctx, row.Path, preservedFields)
 	}
 
 	// Re-read and return

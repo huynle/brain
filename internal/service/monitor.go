@@ -32,6 +32,7 @@ var monitorTemplates = map[string]types.MonitorTemplate{
 		Label:           "Blocked Task Inspector",
 		Description:     "Periodically checks for blocked tasks and attempts to unblock them",
 		DefaultSchedule: "*/15 * * * *",
+		DefaultMaxRuns:  10,
 		Tags:            []string{"scheduled", "inspector", "monitoring"},
 	},
 	"feature-review": {
@@ -220,6 +221,13 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 	// Build the direct_prompt for the agent
 	directPrompt := buildMonitorPrompt(templateID, scope)
 
+	// Default max_runs for recurring monitors (prevents infinite cycling)
+	var maxRuns *int
+	if template.DefaultMaxRuns > 0 {
+		v := template.DefaultMaxRuns
+		maxRuns = &v
+	}
+
 	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:            "task",
 		Title:           title,
@@ -229,6 +237,7 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		CompleteOnIdle:  &completeOnIdle,
 		ExecutionMode:   "current_branch",
 		DirectPrompt:    directPrompt,
+		MaxRuns:         maxRuns,
 		Tags:            tags,
 		FeatureID:       scope.FeatureID,
 		Project:         project,

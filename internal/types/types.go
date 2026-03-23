@@ -489,16 +489,19 @@ type ResolvedTask struct {
 	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
 
 	// Schedule fields
-	Schedule        string `json:"schedule,omitempty"`
-	ScheduleEnabled *bool  `json:"schedule_enabled,omitempty"`
-	NextRun         string `json:"next_run,omitempty"`
+	Schedule        string    `json:"schedule,omitempty"`
+	ScheduleEnabled *bool     `json:"schedule_enabled,omitempty"`
+	NextRun         string    `json:"next_run,omitempty"`
+	MaxRuns         *int      `json:"max_runs,omitempty"`
+	Runs            []CronRun `json:"runs,omitempty"`
 
-	DirectPrompt   string            `json:"direct_prompt"`
-	Agent          string            `json:"agent"`
-	Model          string            `json:"model"`
-	CompleteOnIdle *bool             `json:"complete_on_idle,omitempty"`
-	TargetWorkdir  string            `json:"target_workdir,omitempty"`
-	Env            map[string]string `json:"env,omitempty"`
+	UserOriginalRequest string            `json:"user_original_request,omitempty"`
+	DirectPrompt        string            `json:"direct_prompt"`
+	Agent               string            `json:"agent"`
+	Model               string            `json:"model"`
+	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string            `json:"target_workdir,omitempty"`
+	Env                 map[string]string `json:"env,omitempty"`
 
 	// Session tracking
 	Sessions map[string]SessionInfo `json:"sessions,omitempty"`

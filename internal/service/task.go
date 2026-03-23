@@ -874,6 +874,39 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "direct_prompt"); ok {
 		entry.DirectPrompt = v
 	}
+	if v, ok := metaInt(meta, "max_runs"); ok {
+		entry.MaxRuns = &v
+	}
+	if v, ok := metaString(meta, "next_run"); ok {
+		entry.NextRun = v
+	}
+
+	// Runs: []CronRun from metadata JSON
+	if runsRaw, ok := meta["runs"]; ok {
+		if runsSlice, ok := runsRaw.([]interface{}); ok {
+			for _, runRaw := range runsSlice {
+				if runMap, ok := runRaw.(map[string]interface{}); ok {
+					run := types.CronRun{}
+					if v, ok := runMap["run_id"].(string); ok {
+						run.RunID = v
+					}
+					if v, ok := runMap["status"].(string); ok {
+						run.Status = v
+					}
+					if v, ok := runMap["started"].(string); ok {
+						run.Started = v
+					}
+					if v, ok := runMap["completed"].(string); ok {
+						run.Completed = v
+					}
+					if v, ok := runMap["skip_reason"].(string); ok {
+						run.SkipReason = v
+					}
+					entry.Runs = append(entry.Runs, run)
+				}
+			}
+		}
+	}
 }
 
 // metaString extracts a string value from a metadata map.

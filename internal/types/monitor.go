@@ -34,6 +34,7 @@ type MonitorTemplate struct {
 	Label           string   `json:"label"`
 	Description     string   `json:"description"`
 	DefaultSchedule string   `json:"default_schedule"`
+	DefaultMaxRuns  int      `json:"default_max_runs,omitempty"`
 	Tags            []string `json:"tags"`
 }
 

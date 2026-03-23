@@ -2,6 +2,9 @@ package runner
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
 	"time"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -114,6 +117,15 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 			continue
 		}
 
+		// Check max_runs: count completed/failed runs and stop if exhausted
+		if task.MaxRuns != nil && *task.MaxRuns > 0 {
+			runCount := countRuns(task.Runs)
+			if runCount >= *task.MaxRuns {
+				tr.disableSchedule(ctx, task, fmt.Sprintf("max_runs reached (%d/%d)", runCount, *task.MaxRuns))
+				continue
+			}
+		}
+
 		// Check if the schedule triggers now
 		if !shouldTrigger(task.Schedule, task.NextRun, now) {
 			continue
@@ -124,16 +136,74 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 	}
 }
 
-// processScheduledTask resets a scheduled task to pending and advances next_run.
-func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
-	// Reset status to pending via the proper status update endpoint
-	// (UpdateTaskStatus updates the DB status column, not just the metadata JSON)
-	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); err != nil {
-		tr.logger.Printf("cron: failed to reset status for %s: %v", task.ID, err)
-		return
+// countRuns counts the number of completed, failed, and skipped runs.
+func countRuns(runs []types.CronRun) int {
+	count := 0
+	for _, r := range runs {
+		switch r.Status {
+		case "completed", "failed", "skipped", "in_progress":
+			count++
+		}
+	}
+	return count
+}
+
+// generateRunID creates a unique run ID for a scheduled execution.
+func generateRunID(t time.Time) string {
+	suffix := make([]byte, 3)
+	rand.Read(suffix)
+	return fmt.Sprintf("%s-%s", t.UTC().Format("20060102-1504"), hex.EncodeToString(suffix))
+}
+
+// disableSchedule sets schedule_enabled=false and logs why.
+func (tr *TaskRunner) disableSchedule(ctx context.Context, task *types.ResolvedTask, reason string) {
+	tr.logger.Printf("cron: disabling schedule for %s: %s", task.ID, reason)
+
+	schedDisabled := false
+	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		"schedule_enabled": schedDisabled,
+	}); err != nil {
+		tr.logger.Printf("cron: failed to disable schedule for %s: %v", task.ID, err)
 	}
 
-	// Advance next_run
+	note := fmt.Sprintf("\n\n## Schedule Disabled\n- Reason: %s\n- Disabled at: %s\n", reason, time.Now().UTC().Format(time.RFC3339))
+	if err := tr.client.AppendToTask(ctx, task.Path, note); err != nil {
+		tr.logger.Printf("cron: failed to append disable note for %s: %v", task.ID, err)
+	}
+
+	// Emit event for TUI
+	tr.emitEvent(RunnerEvent{
+		Type:   EventTaskCancelled,
+		TaskID: task.ID,
+		Reason: "schedule disabled: " + reason,
+	})
+}
+
+// processScheduledTask resets a scheduled task to pending and advances next_run.
+// It records the run in the task's runs[] array for tracking and max_runs counting.
+func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	runID := generateRunID(now)
+
+	// Record the run as in_progress
+	newRun := map[string]interface{}{
+		"run_id":  runID,
+		"status":  "in_progress",
+		"started": now.UTC().Format(time.RFC3339),
+		"tasks":   1,
+	}
+	runs := make([]interface{}, 0, len(task.Runs)+1)
+	for _, r := range task.Runs {
+		runs = append(runs, map[string]interface{}{
+			"run_id":      r.RunID,
+			"status":      r.Status,
+			"started":     r.Started,
+			"completed":   r.Completed,
+			"skip_reason": r.SkipReason,
+		})
+	}
+	runs = append(runs, newRun)
+
+	// Update metadata: runs array + next_run
 	nextRun, err := getNextRun(task.Schedule, now)
 	if err != nil {
 		tr.logger.Printf("cron: failed to compute next_run for %s: %v", task.ID, err)
@@ -141,11 +211,18 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 	}
 
 	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		"runs":     runs,
 		"next_run": nextRun.Format(time.RFC3339),
 	}); err != nil {
-		tr.logger.Printf("cron: failed to update next_run for %s: %v", task.ID, err)
+		tr.logger.Printf("cron: failed to update runs/next_run for %s: %v", task.ID, err)
 	}
 
-	tr.logger.Printf("cron: triggered %s (schedule: %s), next_run: %s",
-		task.ID, task.Schedule, nextRun.Format(time.RFC3339))
+	// Reset status to pending
+	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); err != nil {
+		tr.logger.Printf("cron: failed to reset status for %s: %v", task.ID, err)
+		return
+	}
+
+	tr.logger.Printf("cron: triggered %s run=%s (schedule: %s), next_run: %s, runs=%d",
+		task.ID, runID, task.Schedule, nextRun.Format(time.RFC3339), len(runs))
 }

@@ -139,21 +139,22 @@ func TestCheckScheduledTasks_TriggersActiveTask(t *testing.T) {
 	ctx := context.Background()
 	tr.checkScheduledTasks(ctx, now)
 
-	calls := client.getUpdateMetadataCalls()
+	// Check status was reset to pending via UpdateTaskStatus
+	statusCalls := client.getUpdateStatusCalls()
 	foundStatusReset := false
-	for _, c := range calls {
-		if c.Path == "projects/proj-a/task/sched-1.md" {
-			if status, ok := c.Fields["status"]; ok && status == "pending" {
-				foundStatusReset = true
-			}
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-1.md" && c.Status == "pending" {
+			foundStatusReset = true
 		}
 	}
 	if !foundStatusReset {
 		t.Error("should reset scheduled task status to pending")
 	}
 
+	// Check next_run was set via UpdateMetadata
+	metaCalls := client.getUpdateMetadataCalls()
 	foundNextRun := false
-	for _, c := range calls {
+	for _, c := range metaCalls {
 		if c.Path == "projects/proj-a/task/sched-1.md" {
 			if _, ok := c.Fields["next_run"]; ok {
 				foundNextRun = true
@@ -280,10 +281,10 @@ func TestCheckScheduledTasks_TriggersCompletedTask(t *testing.T) {
 	ctx := context.Background()
 	tr.checkScheduledTasks(ctx, now)
 
-	calls := client.getUpdateMetadataCalls()
+	statusCalls := client.getUpdateStatusCalls()
 	foundStatusReset := false
-	for _, c := range calls {
-		if status, ok := c.Fields["status"]; ok && status == "pending" {
+	for _, c := range statusCalls {
+		if c.Status == "pending" {
 			foundStatusReset = true
 		}
 	}
@@ -309,10 +310,10 @@ func TestCheckScheduledTasks_TriggersBlockedTask(t *testing.T) {
 	ctx := context.Background()
 	tr.checkScheduledTasks(ctx, now)
 
-	calls := client.getUpdateMetadataCalls()
+	statusCalls := client.getUpdateStatusCalls()
 	foundStatusReset := false
-	for _, c := range calls {
-		if status, ok := c.Fields["status"]; ok && status == "pending" {
+	for _, c := range statusCalls {
+		if c.Status == "pending" {
 			foundStatusReset = true
 		}
 	}
@@ -385,11 +386,17 @@ type updateMetadataCall struct {
 	Fields map[string]interface{}
 }
 
+type schedStatusCall struct {
+	Path   string
+	Status string
+}
+
 type schedMockClient struct {
 	mu2                 sync.Mutex
 	allTasks            map[string][]types.ResolvedTask
 	allTasksErr         error
 	updateMetadataCalls []updateMetadataCall
+	updateStatusCalls   []schedStatusCall
 
 	// Embed base mock for all other Client methods
 	healthResult APIHealth
@@ -431,7 +438,18 @@ func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID str
 	return nil
 }
 func (m *schedMockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
+	m.mu2.Lock()
+	defer m.mu2.Unlock()
+	m.updateStatusCalls = append(m.updateStatusCalls, schedStatusCall{Path: taskPath, Status: status})
 	return nil
+}
+
+func (m *schedMockClient) getUpdateStatusCalls() []schedStatusCall {
+	m.mu2.Lock()
+	defer m.mu2.Unlock()
+	result := make([]schedStatusCall, len(m.updateStatusCalls))
+	copy(result, m.updateStatusCalls)
+	return result
 }
 func (m *schedMockClient) AppendToTask(ctx context.Context, taskPath, content string) error {
 	return nil

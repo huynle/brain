@@ -4718,6 +4718,34 @@ func (tt *TaskTree) getCurrentStatusName() string {
 	return tt.statusGroups[tt.selectedStatusIdx].Name
 }
 
+// ContentHeight returns the approximate number of visible content lines in the task tree.
+// Used by the layout engine to size the task panel based on actual content.
+func (tt *TaskTree) ContentHeight() int {
+	count := 0
+	for _, task := range tt.tasks {
+		count++ // each task is one line
+		_ = task
+	}
+	// Add lines for feature headers, status group headers, spacing
+	if tt.useFeatureView {
+		seen := make(map[string]bool)
+		for _, t := range tt.tasks {
+			if t.FeatureID != "" && !seen[t.FeatureID] {
+				seen[t.FeatureID] = true
+				count++ // feature header line
+			}
+		}
+		if len(seen) > 0 {
+			count++ // ungrouped or extra spacing
+		}
+	}
+	// Add status group headers if grouped view
+	if tt.useGroupedView {
+		count += len(tt.statusGroups) * 2 // header + spacing per group
+	}
+	return count
+}
+
 // =============================================================================
 // Dependency Relation Graph for Colored Lanes
 // =============================================================================

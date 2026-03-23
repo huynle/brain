@@ -223,3 +223,8 @@ func (sl *ScheduleList) renderTaskLine(task types.ResolvedTask, isSelected bool)
 
 	return fmt.Sprintf("%s%s %s%s%s%s", selMarker, indicatorStyled, title, badge, scheduleExpr, prioritySuffix)
 }
+
+// ContentHeight returns the number of content lines in the schedule list.
+func (sl *ScheduleList) ContentHeight() int {
+	return len(sl.tasks)
+}

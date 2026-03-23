@@ -1676,7 +1676,7 @@ func (m *Model) syncPanelSizes() {
 	helpBarHeight := 1   // single line: "? Help ... Focus: tasks"
 
 	fixedUIHeight := statusBarHeight + helpBarHeight
-	mainHeight := m.height - fixedUIHeight - 1
+	mainHeight := m.height - fixedUIHeight
 	if mainHeight < 3 {
 		mainHeight = 3
 	}
@@ -1919,16 +1919,25 @@ func (m Model) renderBaseView() string {
 	statusBarHeight := lipgloss.Height(statusBarView)
 	helpBarHeight := lipgloss.Height(helpBarView)
 
-	projectTabsHeight := lipgloss.Height(projectTabsView)
-	statusMessageHeight := lipgloss.Height(statusMessageView)
-	filterBarHeight := lipgloss.Height(filterBarView)
+	// lipgloss.Height("") returns 1, not 0, so use 0 for empty strings
+	projectTabsHeight := 0
+	if projectTabsView != "" {
+		projectTabsHeight = lipgloss.Height(projectTabsView)
+	}
+	statusMessageHeight := 0
+	if statusMessageView != "" {
+		statusMessageHeight = lipgloss.Height(statusMessageView)
+	}
+	filterBarHeight := 0
+	if filterBarView != "" {
+		filterBarHeight = lipgloss.Height(filterBarView)
+	}
 
 	// Total height consumed by fixed UI elements (header at top, footer at bottom)
 	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
 
 	// Available height for main content area (tasks + detail/logs panels)
-	// Subtract 1 for safety margin to prevent overflow
-	mainHeight := m.height - fixedUIHeight - 1
+	mainHeight := m.height - fixedUIHeight
 	if mainHeight < 3 {
 		mainHeight = 3
 	}
@@ -1939,18 +1948,35 @@ func (m Model) renderBaseView() string {
 	// Calculate heights - ensure total equals mainHeight exactly
 	var topHeight, bottomHeight int
 	if hasBottomPanel {
-		// Split available space: 60% for tasks, 40% for detail/logs
-		topHeight = mainHeight * 60 / 100
-		if topHeight < 10 {
-			topHeight = 10
+		// Calculate task panel height based on content, not fixed ratio.
+		// This avoids huge empty space when there are few tasks.
+		taskContentLines := 0
+		if m.viewMode == ViewModeSchedules {
+			taskContentLines = m.scheduleList.ContentHeight()
+		} else {
+			taskContentLines = m.taskTree.ContentHeight()
 		}
-		// Ensure bottomHeight + topHeight = mainHeight (prevent overflow)
+		// Add 2 for border, 1 for header ("Tasks (N)")
+		desiredTaskHeight := taskContentLines + 3
+		minTaskHeight := 8                    // minimum for usability
+		maxTaskRatio := mainHeight * 60 / 100 // cap at 60%
+
+		topHeight = desiredTaskHeight
+		if topHeight < minTaskHeight {
+			topHeight = minTaskHeight
+		}
+		if topHeight > maxTaskRatio {
+			topHeight = maxTaskRatio
+		}
+
+		// Give the rest to bottom panels
 		bottomHeight = mainHeight - topHeight
-		if bottomHeight < 3 {
-			bottomHeight = 3
+		if bottomHeight < 6 {
+			bottomHeight = 6
 			topHeight = mainHeight - bottomHeight
 		}
 	} else {
+		// No bottom panels — task panel fills all available space
 		topHeight = mainHeight
 		bottomHeight = 0
 	}
@@ -1996,26 +2022,27 @@ func (m Model) renderBaseView() string {
 		mainContent = taskPanel
 	}
 
-	// Compose layout vertically
-	var bottomPanels []string
-	if statusMessageView != "" {
-		bottomPanels = append(bottomPanels, statusMessageView)
-	}
-	bottomPanels = append(bottomPanels, helpBarView)
-	if filterBarView != "" {
-		bottomPanels = append(bottomPanels, filterBarView)
-	}
-
-	// Build final layout, omitting empty sections to avoid blank lines
+	// Build the main content (everything above the footer)
 	var sections []string
 	sections = append(sections, statusBarView)
 	if projectTabsView != "" {
 		sections = append(sections, projectTabsView)
 	}
 	sections = append(sections, mainContent)
-	sections = append(sections, lipgloss.JoinVertical(lipgloss.Left, bottomPanels...))
+	if statusMessageView != "" {
+		sections = append(sections, statusMessageView)
+	}
+	if filterBarView != "" {
+		sections = append(sections, filterBarView)
+	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+	// Join all content sections + footer
+	sections = append(sections, helpBarView)
+	output := lipgloss.JoinVertical(lipgloss.Left, sections...)
+
+	// Use lipgloss.Place to ensure output fills the full terminal.
+	// PlaceVertical positions content at top, fills remaining with spaces.
+	return lipgloss.PlaceVertical(m.height, lipgloss.Top, output)
 }
 
 // renderBottomPanel renders the bottom panel(s) - detail and/or logs.

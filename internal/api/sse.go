@@ -11,7 +11,9 @@ import (
 )
 
 // DefaultHeartbeatInterval is the default interval for SSE heartbeat events.
-var DefaultHeartbeatInterval = 30 * time.Second
+// Must be well below the server's WriteTimeout (30s) to prevent the server
+// from killing idle SSE connections before a heartbeat can keep them alive.
+var DefaultHeartbeatInterval = 15 * time.Second
 
 // HandleSSEStream handles GET /tasks/{projectId}/stream — SSE event stream.
 func (h *Handler) HandleSSEStream(w http.ResponseWriter, r *http.Request) {

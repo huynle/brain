@@ -114,11 +114,13 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
 	srv := &http.Server{
-		Addr:         addr,
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        addr,
+		Handler:     router,
+		ReadTimeout: 15 * time.Second,
+		// WriteTimeout disabled (0) to support SSE long-lived streaming connections.
+		// Heartbeats at 15s intervals keep SSE connections alive and detect dead clients.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Start server in background

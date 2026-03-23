@@ -210,20 +210,12 @@ func (c *APIClient) GetAllTasks(ctx context.Context, projectID string) ([]types.
 
 // UpdateTaskStatus changes the status of a task entry.
 func (c *APIClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
-	encodedPath := encodePathComponent(taskPath)
-	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
-
-	body := map[string]string{"status": status}
-	resp, err := c.doJSONRequest(ctx, http.MethodPatch, apiPath, body)
-	if err != nil {
-		return fmt.Errorf("update task status: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return c.readError(resp)
-	}
-	return nil
+	// Use the /metadata endpoint which updates both the metadata JSON and the
+	// status DB column directly, bypassing the file-read/write cycle that
+	// can clobber the status back to the frontmatter's original value.
+	return c.UpdateMetadata(ctx, taskPath, map[string]interface{}{
+		"status": status,
+	})
 }
 
 // AppendToTask appends content to a task entry.

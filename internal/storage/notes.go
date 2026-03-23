@@ -196,9 +196,19 @@ func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields ma
 		return nil, fmt.Errorf("marshal metadata: %w", err)
 	}
 
-	return s.UpdateNote(ctx, path, map[string]interface{}{
+	updates := map[string]interface{}{
 		"metadata": string(metaJSON),
-	})
+	}
+
+	// If "status" is in the fields, also update the status column directly.
+	// This ensures the DB status column stays in sync with the metadata JSON.
+	if statusVal, ok := fields["status"]; ok {
+		if statusStr, ok := statusVal.(string); ok && statusStr != "" {
+			updates["status"] = statusStr
+		}
+	}
+
+	return s.UpdateNote(ctx, path, updates)
 }
 
 // UpdateNote updates a note by path with the given field updates.

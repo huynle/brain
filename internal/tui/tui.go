@@ -1869,8 +1869,16 @@ func (m Model) renderBaseView() string {
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
-	// Pre-render bottom elements to calculate their heights
-	helpBarView := m.helpBar.View(m.width, m.config.IsMultiProject(), m.config.Project)
+	// Minimal bottom bar: just focus indicator + help hint
+	focusLabel := string(m.activePanel)
+	focusStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+	helpHint := DimStyle.Render("? Help")
+	rightSide := fmt.Sprintf("Focus: %s", focusStyle.Render(focusLabel))
+	leftPad := m.width - lipgloss.Width(helpHint) - lipgloss.Width(rightSide) - 2
+	if leftPad < 1 {
+		leftPad = 1
+	}
+	helpBarView := " " + helpHint + strings.Repeat(" ", leftPad) + rightSide
 
 	// Status message (if active and not expired)
 	var statusMessageView string

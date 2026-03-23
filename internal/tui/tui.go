@@ -1673,7 +1673,7 @@ func (m *Model) syncPanelSizes() {
 	// Replicate the height calculation from renderBaseView
 	// We need approximate fixed heights; use conservative estimates
 	statusBarHeight := 4 // 2 content + 2 border
-	helpBarHeight := 3   // typically 2-3 lines
+	helpBarHeight := 1   // single line: "? Help ... Focus: tasks"
 
 	fixedUIHeight := statusBarHeight + helpBarHeight
 	mainHeight := m.height - fixedUIHeight - 1

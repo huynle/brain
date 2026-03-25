@@ -302,7 +302,7 @@ func TestExecutor_SpawnBackground_CommandArgs(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:    ExecutionModeBackground,
+		Mode:    ExecutionModeHeadless,
 		Workdir: workdir,
 	}
 
@@ -368,7 +368,7 @@ func TestExecutor_SpawnBackground_TaskAgentOverride(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:    ExecutionModeBackground,
+		Mode:    ExecutionModeHeadless,
 		Workdir: t.TempDir(),
 	}
 
@@ -409,7 +409,7 @@ func TestExecutor_SpawnBackground_NoAgentNoModel(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:    ExecutionModeBackground,
+		Mode:    ExecutionModeHeadless,
 		Workdir: t.TempDir(),
 	}
 
@@ -446,7 +446,7 @@ func TestExecutor_SpawnBackground_RuntimeDefaultModel(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:                ExecutionModeBackground,
+		Mode:                ExecutionModeHeadless,
 		Workdir:             t.TempDir(),
 		RuntimeDefaultModel: "runtime-model",
 	}
@@ -481,7 +481,7 @@ func TestExecutor_SpawnBackground_PromptContent(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:    ExecutionModeBackground,
+		Mode:    ExecutionModeHeadless,
 		Workdir: t.TempDir(),
 	}
 
@@ -520,7 +520,7 @@ func TestExecutor_SpawnBackground_OutputLogFile(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode:    ExecutionModeBackground,
+		Mode:    ExecutionModeHeadless,
 		Workdir: t.TempDir(),
 	}
 
@@ -553,7 +553,7 @@ func TestExecutor_SpawnBackground_WorkdirResolution(t *testing.T) {
 
 	ctx := context.Background()
 	opts := SpawnOptions{
-		Mode: ExecutionModeBackground,
+		Mode: ExecutionModeHeadless,
 		// No explicit workdir — should resolve from task
 	}
 
@@ -726,7 +726,7 @@ func TestIsPidAlive_NegativePid(t *testing.T) {
 
 func TestSpawnOptions_Defaults(t *testing.T) {
 	opts := SpawnOptions{
-		Mode: ExecutionModeBackground,
+		Mode: ExecutionModeHeadless,
 	}
 	if opts.IsResume {
 		t.Error("IsResume should default to false")

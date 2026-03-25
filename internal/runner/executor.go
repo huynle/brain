@@ -358,8 +358,8 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 	}
 
 	switch opts.Mode {
-	case ExecutionModeBackground:
-		return e.spawnBackground(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
+	case ExecutionModeHeadless:
+		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
 	case ExecutionModeTUI:
 		return e.spawnTUI(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeDashboard:
@@ -373,8 +373,8 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 // Background Mode
 // =============================================================================
 
-// spawnBackground spawns an OpenCode process in background mode using `opencode run`.
-func (e *Executor) spawnBackground(
+// spawnHeadless spawns an OpenCode process in headless mode using `opencode run`.
+func (e *Executor) spawnHeadless(
 	ctx context.Context,
 	task *types.ResolvedTask,
 	projectID string,

@@ -152,11 +152,11 @@ func TestRunnerFlags(t *testing.T) {
 	})
 
 	t.Run("background flag", func(t *testing.T) {
-		args := []string{"--background"}
+		args := []string{"--headless"}
 		flags, err := ParseRunnerFlags(args)
 		require.NoError(t, err)
 
-		assert.True(t, flags.Background)
+		assert.True(t, flags.Headless)
 	})
 
 	t.Run("max-parallel flag", func(t *testing.T) {
@@ -275,8 +275,8 @@ func TestApplyFlagsToConfig(t *testing.T) {
 		ApplyFlagsToConfig(cfg, nil, runnerFlags)
 
 		assert.Equal(t, 10, cfg.Runner.MaxParallel)
-		assert.Equal(t, "explore", cfg.Runner.OpenCode.Agent)
-		assert.Equal(t, "claude-4", cfg.Runner.OpenCode.Model)
+		assert.Equal(t, "explore", cfg.Runner.Opencode.Agent)
+		assert.Equal(t, "claude-4", cfg.Runner.Opencode.Model)
 		assert.Equal(t, 5, cfg.Runner.PollInterval)
 		assert.Len(t, cfg.Runner.ExcludeProjects, 2)
 		assert.Contains(t, cfg.Runner.ExcludeProjects, "test-*")

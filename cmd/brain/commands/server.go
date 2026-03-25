@@ -9,11 +9,12 @@ import (
 
 	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/lifecycle"
+	"github.com/huynle/brain-api/internal/runner"
 )
 
 // UnifiedConfig represents the unified configuration structure.
-// This mirrors the type from cmd/brain/flags.go but is defined here
-// to avoid circular imports with the main package.
+// Runner uses runner.RunnerConfig directly so all fields pass through
+// without lossy field-by-field copying.
 type UnifiedConfig struct {
 	Server struct {
 		Port       int
@@ -33,22 +34,8 @@ type UnifiedConfig struct {
 		LogMaxBackups int
 		LogMaxAge     int // days
 	}
-	Runner struct {
-		BrainAPIURL     string
-		APIToken        string
-		MaxParallel     int
-		PollInterval    int
-		WorkDir         string
-		StateDir        string
-		LogDir          string
-		APITimeout      int
-		ExcludeProjects []string
-		OpenCode        struct {
-			Agent string
-			Model string
-		}
-	}
-	MCP struct {
+	Runner runner.RunnerConfig
+	MCP    struct {
 		APIURL string
 	}
 }

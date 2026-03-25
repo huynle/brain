@@ -13,24 +13,14 @@ import (
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
-// RunnerConfig holds configuration for the runner.
-type RunnerConfig struct {
-	BrainAPIURL  string
-	APIToken     string
-	MaxParallel  int
-	PollInterval int
-	WorkDir      string
-	StateDir     string
-	LogDir       string
-	APITimeout   int
-}
-
 // RunnerOptions holds options for running the task runner.
+// Config uses runner.RunnerConfig directly so all fields pass through
+// without lossy field-by-field copying.
 type RunnerOptions struct {
 	Projects    []string
 	Mode        string
 	StartPaused bool
-	Config      RunnerConfig
+	Config      runner.RunnerConfig
 }
 
 // RunTaskRunner starts the task runner in daemon mode and blocks until context is cancelled.
@@ -39,22 +29,10 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 		return fmt.Errorf("no projects specified")
 	}
 
-	// Convert RunnerConfig to runner.RunnerConfig
-	cfg := runner.RunnerConfig{
-		BrainAPIURL:  opts.Config.BrainAPIURL,
-		APIToken:     opts.Config.APIToken,
-		MaxParallel:  opts.Config.MaxParallel,
-		PollInterval: opts.Config.PollInterval,
-		WorkDir:      opts.Config.WorkDir,
-		StateDir:     opts.Config.StateDir,
-		LogDir:       opts.Config.LogDir,
-		APITimeout:   opts.Config.APITimeout,
-		Opencode: runner.OpencodeConfig{
-			Bin: "opencode",
-		},
-	}
+	// Use the full config directly — no lossy field-by-field copying
+	cfg := opts.Config
 
-	// Set defaults if not provided
+	// Apply defaults for required fields if not set
 	if cfg.MaxParallel == 0 {
 		cfg.MaxParallel = 3
 	}
@@ -64,6 +42,10 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	if cfg.APITimeout == 0 {
 		cfg.APITimeout = 5000
 	}
+	if cfg.Opencode.Bin == "" {
+		cfg.Opencode.Bin = "opencode"
+	}
+	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
 		cfg.Opencode.Bin = bin
 	}
@@ -121,6 +103,10 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 		}
 	}()
 
+	// Wire event logging for headless mode so task lifecycle events
+	// are visible via slog instead of silently discarded.
+	runner.RegisterEventLogger(tr)
+
 	// Start the runner (blocks until context cancelled or Stop called)
 	if err := tr.Start(runCtx); err != nil {
 		return fmt.Errorf("runner failed: %w", err)
@@ -136,22 +122,10 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		return fmt.Errorf("no projects specified")
 	}
 
-	// Convert RunnerConfig to runner.RunnerConfig
-	cfg := runner.RunnerConfig{
-		BrainAPIURL:  opts.Config.BrainAPIURL,
-		APIToken:     opts.Config.APIToken,
-		MaxParallel:  opts.Config.MaxParallel,
-		PollInterval: opts.Config.PollInterval,
-		WorkDir:      opts.Config.WorkDir,
-		StateDir:     opts.Config.StateDir,
-		LogDir:       opts.Config.LogDir,
-		APITimeout:   opts.Config.APITimeout,
-		Opencode: runner.OpencodeConfig{
-			Bin: "opencode", // Default; overridden by OPENCODE_BIN env var in LoadConfig
-		},
-	}
+	// Use the full config directly — no lossy field-by-field copying
+	cfg := opts.Config
 
-	// Set defaults
+	// Apply defaults for required fields if not set
 	if cfg.MaxParallel == 0 {
 		cfg.MaxParallel = 3
 	}
@@ -160,6 +134,9 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.APITimeout == 0 {
 		cfg.APITimeout = 5000
+	}
+	if cfg.Opencode.Bin == "" {
+		cfg.Opencode.Bin = "opencode"
 	}
 	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {

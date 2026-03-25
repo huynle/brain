@@ -139,7 +139,7 @@ USAGE:
 FLAGS:
   --tui                          Interactive TUI (default for shorthand)
   -f, --foreground               Foreground without TUI
-  -b, --background               Background daemon
+  -b, --headless                 Headless mode (no TUI, no tmux)
   -p, --max-parallel <N>         Max concurrent tasks (default: 3)
   --poll-interval <N>            Poll interval seconds (default: 5)
   -w, --workdir <dir>            Working directory

@@ -170,7 +170,7 @@ func TestCheckIdleStatus_IdleTask_CompleteOnIdle_MarksCompleted(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     cfg,
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -249,7 +249,7 @@ func TestCheckIdleStatus_IdleTask_NotCompleteOnIdle_MarksBlocked(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     cfg,
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -305,7 +305,7 @@ func TestCheckIdleStatus_IdleTask_FirstDetection_SetsIdleSince(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     cfg,
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -361,7 +361,7 @@ func TestCheckIdleStatus_BusyTask_ClearsIdleSince(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -406,7 +406,7 @@ func TestCheckIdleStatus_UnavailableStatus_NoAction(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -456,7 +456,7 @@ func TestCheckIdleStatus_NoPort_SkipsTask(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -505,7 +505,7 @@ func TestCheckIdleStatus_AppendCompletionNote(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     cfg,
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,

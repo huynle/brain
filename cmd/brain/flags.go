@@ -3,7 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
+
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	"github.com/huynle/brain-api/internal/runner"
 )
 
 // GlobalFlags contains flags applicable to all commands
@@ -205,8 +207,9 @@ func ParsePluginFlags(args []string) (*PluginFlags, error) {
 	return flags, nil
 }
 
-// UnifiedConfig is a placeholder for the future unified config system
-// This will be implemented in Phase 1.3
+// UnifiedConfig holds the unified configuration for the brain CLI.
+// Runner uses runner.RunnerConfig directly so all fields pass through
+// without lossy field-by-field copying.
 type UnifiedConfig struct {
 	Server struct {
 		Port       int
@@ -223,22 +226,8 @@ type UnifiedConfig struct {
 		PIDFile string
 		LogFile string
 	}
-	Runner struct {
-		BrainAPIURL     string
-		APIToken        string
-		MaxParallel     int
-		PollInterval    int
-		WorkDir         string
-		StateDir        string
-		LogDir          string
-		APITimeout      int
-		ExcludeProjects []string
-		OpenCode        struct {
-			Agent string
-			Model string
-		}
-	}
-	MCP struct {
+	Runner runner.RunnerConfig
+	MCP    struct {
 		APIURL string
 	}
 }
@@ -275,13 +264,16 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 			cfg.Runner.WorkDir = flags.Workdir
 		}
 		if flags.Agent != "" {
-			cfg.Runner.OpenCode.Agent = flags.Agent
+			cfg.Runner.Opencode.Agent = flags.Agent
 		}
 		if flags.Model != "" {
-			cfg.Runner.OpenCode.Model = flags.Model
+			cfg.Runner.Opencode.Model = flags.Model
 		}
 		if len(flags.Exclude) > 0 {
 			cfg.Runner.ExcludeProjects = append(cfg.Runner.ExcludeProjects, flags.Exclude...)
+		}
+		if len(flags.FeatureIDs) > 0 {
+			cfg.Runner.FeatureIDs = flags.FeatureIDs
 		}
 	}
 }

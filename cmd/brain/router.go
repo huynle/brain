@@ -375,18 +375,8 @@ func defaultConfig() *UnifiedConfig {
 		return cfg
 	}
 
-	// Populate runner section from loaded config
-	cfg.Runner.BrainAPIURL = runnerCfg.BrainAPIURL
-	cfg.Runner.APIToken = runnerCfg.APIToken
-	cfg.Runner.MaxParallel = runnerCfg.MaxParallel
-	cfg.Runner.PollInterval = runnerCfg.PollInterval
-	cfg.Runner.WorkDir = runnerCfg.WorkDir
-	cfg.Runner.StateDir = runnerCfg.StateDir
-	cfg.Runner.LogDir = runnerCfg.LogDir
-	cfg.Runner.APITimeout = runnerCfg.APITimeout
-	cfg.Runner.ExcludeProjects = runnerCfg.ExcludeProjects
-	cfg.Runner.OpenCode.Agent = runnerCfg.Opencode.Agent
-	cfg.Runner.OpenCode.Model = runnerCfg.Opencode.Model
+	// Store the FULL runner config — no lossy field-by-field copying
+	cfg.Runner = runnerCfg
 
 	// MCP defaults (use the same API URL as runner)
 	cfg.MCP.APIURL = runnerCfg.BrainAPIURL
@@ -411,18 +401,8 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
-	// Runner
-	cmdCfg.Runner.BrainAPIURL = cfg.Runner.BrainAPIURL
-	cmdCfg.Runner.APIToken = cfg.Runner.APIToken
-	cmdCfg.Runner.MaxParallel = cfg.Runner.MaxParallel
-	cmdCfg.Runner.PollInterval = cfg.Runner.PollInterval
-	cmdCfg.Runner.WorkDir = cfg.Runner.WorkDir
-	cmdCfg.Runner.StateDir = cfg.Runner.StateDir
-	cmdCfg.Runner.LogDir = cfg.Runner.LogDir
-	cmdCfg.Runner.APITimeout = cfg.Runner.APITimeout
-	cmdCfg.Runner.ExcludeProjects = cfg.Runner.ExcludeProjects
-	cmdCfg.Runner.OpenCode.Agent = cfg.Runner.OpenCode.Agent
-	cmdCfg.Runner.OpenCode.Model = cfg.Runner.OpenCode.Model
+	// Runner — assign the full config directly, no lossy field-by-field copying
+	cmdCfg.Runner = cfg.Runner
 
 	// MCP
 	cmdCfg.MCP.APIURL = cfg.MCP.APIURL
@@ -448,7 +428,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 	return &commands.RunnerFlags{
 		TUI:          flags.TUI,
 		Foreground:   flags.Foreground,
-		Background:   flags.Background,
+		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
@@ -457,6 +437,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Model:        flags.Model,
 		Include:      flags.Include,
 		Exclude:      flags.Exclude,
+		FeatureIDs:   flags.FeatureIDs,
 		Follow:       flags.Follow,
 	}
 }

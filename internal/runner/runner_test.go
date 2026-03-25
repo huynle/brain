@@ -1680,3 +1680,139 @@ func TestExecuteTask_ClaimFails_ReturnsError(t *testing.T) {
 		t.Errorf("should not spawn when claim fails, got %d spawns", len(spawns))
 	}
 }
+
+// =============================================================================
+// SSE Listener Wiring Tests
+// =============================================================================
+
+func TestTaskRunner_Start_CreatesSSEListener(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start in goroutine
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tr.Start(ctx)
+	}()
+
+	// Wait for it to start
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify SSE listener was created (config has BrainAPIURL and projects are set)
+	if tr.sseListener == nil {
+		t.Error("Start() should create SSE listener when BrainAPIURL is set and projects exist")
+	}
+
+	// Stop
+	cancel()
+	<-errCh
+}
+
+func TestTaskRunner_Start_NoSSEListener_WhenNoAPIURL(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.BrainAPIURL = "" // No API URL
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tr.Start(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Should NOT create SSE listener when no API URL
+	if tr.sseListener != nil {
+		t.Error("Start() should NOT create SSE listener when BrainAPIURL is empty")
+	}
+
+	cancel()
+	<-errCh
+}
+
+func TestTaskRunner_Start_NoSSEListener_WhenNoProjects(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{}, // No projects
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tr.Start(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Should NOT create SSE listener when no projects
+	if tr.sseListener != nil {
+		t.Error("Start() should NOT create SSE listener when no projects")
+	}
+
+	cancel()
+	<-errCh
+}
+
+func TestTaskRunner_Stop_StopsSSEListener(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		tr.Start(ctx)
+	}()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Cancel context and call Stop
+	cancel()
+	err := tr.Stop()
+	if err != nil {
+		t.Fatalf("Stop returned error: %v", err)
+	}
+
+	// After Stop, sseListener should still be non-nil (it was created)
+	// but its internal cancel should have been called.
+	// We verify it was created — Stop() calling sseListener.Stop() is
+	// tested by the fact that Stop() doesn't hang or panic.
+	if tr.sseListener == nil {
+		t.Error("sseListener should have been created during Start()")
+	}
+}

@@ -231,13 +231,13 @@ func (c *ConfigCommand) Execute() error {
 		}
 	}
 
-	if cfg.Runner.OpenCode.Agent != "" || cfg.Runner.OpenCode.Model != "" {
+	if cfg.Runner.Opencode.Agent != "" || cfg.Runner.Opencode.Model != "" {
 		fmt.Fprintf(out, "  OpenCode:\n")
-		if cfg.Runner.OpenCode.Agent != "" {
-			fmt.Fprintf(out, "    Agent:     %s\n", cfg.Runner.OpenCode.Agent)
+		if cfg.Runner.Opencode.Agent != "" {
+			fmt.Fprintf(out, "    Agent:     %s\n", cfg.Runner.Opencode.Agent)
 		}
-		if cfg.Runner.OpenCode.Model != "" {
-			fmt.Fprintf(out, "    Model:     %s\n", cfg.Runner.OpenCode.Model)
+		if cfg.Runner.Opencode.Model != "" {
+			fmt.Fprintf(out, "    Model:     %s\n", cfg.Runner.Opencode.Model)
 		}
 	}
 	fmt.Fprintln(out)

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -236,6 +237,18 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	// Start SSE listener for reactive polling
+	if tr.config.BrainAPIURL != "" && len(tr.projects) > 0 {
+		tr.sseListener = NewSSEListener(
+			tr.config.BrainAPIURL,
+			tr.config.APIToken,
+			tr.projects,
+			tr.wakeCh,
+		)
+		go tr.sseListener.Start(ctx)
+		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
+	}
+
 	// Run initial poll immediately
 	tr.poll(ctx)
 
@@ -264,6 +277,12 @@ func (tr *TaskRunner) Stop() error {
 
 	// Wait for the poll loop to exit
 	<-tr.done
+
+	// Stop SSE listener
+	if tr.sseListener != nil {
+		tr.sseListener.Stop()
+		slog.Info("SSE listener stopped")
+	}
 
 	// Clean up tmux windows for all running tasks, then kill processes
 	if tr.processMgr != nil {

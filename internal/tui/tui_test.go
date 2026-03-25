@@ -1708,7 +1708,7 @@ func TestUpdate_RunnerStatusMsg_Error_NoStateChange(t *testing.T) {
 func TestPauseProjectCmd_ReturnsPauseToggledMsg(t *testing.T) {
 	// Test that the command function returns the right message type
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"}
-	cmd := pauseProjectCmd(cfg, "test-project", false)
+	cmd := pauseProjectCmd(cfg, "test-project", false, nil)
 	if cmd == nil {
 		t.Fatal("expected non-nil command")
 	}
@@ -1733,7 +1733,7 @@ func TestPauseProjectCmd_ReturnsPauseToggledMsg(t *testing.T) {
 }
 
 func TestPauseProjectCmd_Resume_ReturnsPauseToggledMsg(t *testing.T) {
-	cmd := pauseProjectCmd(runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"}, "test-project", true)
+	cmd := pauseProjectCmd(runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"}, "test-project", true, nil)
 	result := cmd()
 	msg, ok := result.(pauseToggledMsg)
 	if !ok {
@@ -1746,7 +1746,7 @@ func TestPauseProjectCmd_Resume_ReturnsPauseToggledMsg(t *testing.T) {
 }
 
 func TestPauseAllCmd_ReturnsPauseAllToggledMsg(t *testing.T) {
-	cmd := pauseAllCmd(runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"}, false)
+	cmd := pauseAllCmd(runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"}, false, nil)
 	if cmd == nil {
 		t.Fatal("expected non-nil command")
 	}

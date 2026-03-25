@@ -1,15 +1,14 @@
 package tui
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/huynle/brain-api/internal/sse"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -29,6 +28,9 @@ type SSEClient struct {
 
 	// cancel stops the SSE goroutine.
 	cancel context.CancelFunc
+
+	// client is the underlying generic SSE client.
+	client *sse.Client
 }
 
 // NewSSEClient creates a new SSE client for the given API URL, token, and project.
@@ -53,11 +55,82 @@ func (c *SSEClient) Connect(ctx context.Context) tea.Cmd {
 	sseCtx, cancel := context.WithCancel(ctx)
 	c.cancel = cancel
 
-	// Start the SSE listener goroutine
-	go c.listenSSE(sseCtx, c.msgCh)
+	// Create the underlying SSE client and start listening
+	c.client = sse.NewClient(c.apiURL, c.apiToken, c.projectID)
+	eventCh := c.client.Connect(sseCtx)
+
+	// Start a goroutine that converts sse.Event → tea.Msg
+	go c.bridgeEvents(sseCtx, eventCh)
 
 	// Return a Cmd that waits for the first message
 	return c.waitForSSEMsg()
+}
+
+// bridgeEvents reads from the generic SSE event channel and converts
+// events to bubbletea messages on the internal msgCh.
+func (c *SSEClient) bridgeEvents(ctx context.Context, eventCh <-chan sse.Event) {
+	for event := range eventCh {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		msg := c.convertEvent(event)
+		if msg == nil {
+			continue
+		}
+
+		select {
+		case c.msgCh <- msg:
+		case <-ctx.Done():
+			return
+		}
+	}
+
+	// Channel closed — send disconnect
+	select {
+	case c.msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
+	case <-ctx.Done():
+	}
+}
+
+// convertEvent converts a generic sse.Event to a bubbletea tea.Msg.
+// Returns nil for events that should be ignored.
+func (c *SSEClient) convertEvent(event sse.Event) tea.Msg {
+	switch event.Type {
+	case "connected":
+		var data types.SSEConnectedData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return SSEErrorMsg{Err: fmt.Errorf("parse connected event: %w", err), ProjectID: c.projectID}
+		}
+		return SSEConnectedMsg{ProjectID: data.ProjectID}
+
+	case "tasks_snapshot":
+		var data types.SSETasksSnapshotData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return SSEErrorMsg{Err: fmt.Errorf("parse tasks_snapshot event: %w", err), ProjectID: c.projectID}
+		}
+		return TasksUpdatedMsg{
+			Tasks:     data.Tasks,
+			Stats:     data.Stats,
+			ProjectID: data.ProjectID,
+		}
+
+	case "error":
+		var data types.SSEErrorData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return SSEErrorMsg{Err: fmt.Errorf("parse error event: %w", err), ProjectID: c.projectID}
+		}
+		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message), ProjectID: data.ProjectID}
+
+	case "disconnected":
+		return SSEDisconnectedMsg{ProjectID: c.projectID}
+
+	default:
+		// Unknown or ignored event types (heartbeat, project_dirty handled by sse.Client)
+		return nil
+	}
 }
 
 // waitForSSEMsg returns a tea.Cmd that blocks until the next SSE message
@@ -84,6 +157,9 @@ func (c *SSEClient) Stop() {
 	if c.cancel != nil {
 		c.cancel()
 	}
+	if c.client != nil {
+		c.client.Close()
+	}
 }
 
 // Reconnect returns a tea.Cmd that waits for the given delay then
@@ -95,92 +171,13 @@ func (c *SSEClient) Reconnect(delay time.Duration) tea.Cmd {
 	}
 }
 
-// listenSSE connects to the SSE endpoint and sends parsed messages
-// to the provided channel. Blocks until context is cancelled or
-// the connection is lost. Sends SSEDisconnectedMsg on connection loss.
-func (c *SSEClient) listenSSE(ctx context.Context, msgCh chan<- tea.Msg) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
-	if err != nil {
-		select {
-		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
-		case <-ctx.Done():
-		}
-		return
-	}
-
-	req.Header.Set("Accept", "text/event-stream")
-	req.Header.Set("Cache-Control", "no-cache")
-	if c.apiToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.apiToken)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		// Connection refused, timeout, etc.
-		select {
-		case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
-		case <-ctx.Done():
-		}
-		return
-	}
-	defer resp.Body.Close()
-
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 2*1024*1024), 2*1024*1024)
-	var lines []string
-
-	for scanner.Scan() {
-		// Check context before processing
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		line := scanner.Text()
-
-		if line == "" {
-			// Empty line = end of event block
-			if len(lines) > 0 {
-				msg, err := parseSSEEvent(lines)
-				if err != nil {
-					// Parse error - send as SSEErrorMsg
-					select {
-					case msgCh <- SSEErrorMsg{Err: err}:
-					case <-ctx.Done():
-						return
-					}
-				} else if msg != nil {
-					// Valid message (nil means ignored, e.g. heartbeat)
-					select {
-					case msgCh <- msg:
-					case <-ctx.Done():
-						return
-					}
-				}
-				lines = nil
-			}
-		} else {
-			lines = append(lines, line)
-		}
-	}
-
-	// Scanner finished - connection lost or server closed
-	// Check if it was a context cancellation (graceful shutdown)
-	if ctx.Err() != nil {
-		return
-	}
-
-	select {
-	case msgCh <- SSEDisconnectedMsg{ProjectID: c.projectID}:
-	case <-ctx.Done():
-	}
-}
-
 // parseSSEEvent parses a collected set of SSE lines into a tea.Msg.
 // SSE format: "event: <type>\ndata: <json>\n\n"
 // Returns (nil, nil) for events that should be ignored (heartbeat, unknown).
 // Returns (nil, error) for parse errors.
+//
+// NOTE: This function is kept for backward compatibility with existing tests.
+// New code should use sse.ParseEvent() from the internal/sse package.
 func parseSSEEvent(lines []string) (tea.Msg, error) {
 	var eventType string
 	var dataStr string

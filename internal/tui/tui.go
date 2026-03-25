@@ -1870,7 +1870,7 @@ func (m Model) renderBaseView() string {
 	statusBarView := m.statusBar.View(m.width)
 
 	// Minimal bottom bar: just focus indicator + help hint
-	focusLabel := string(m.activePanel)
+	focusLabel := fmt.Sprintf("%d", m.activePanel)
 	focusStyle := lipgloss.NewStyle().Foreground(ColorCyan)
 	helpHint := DimStyle.Render("? Help")
 	rightSide := fmt.Sprintf("Focus: %s", focusStyle.Render(focusLabel))

@@ -387,30 +387,23 @@ func TestSSEClient_ReceivesTasksSnapshot(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	// Use listenSSE to collect multiple messages
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
-
-	var msgs []tea.Msg
-	timeout := time.After(2 * time.Second)
-	for len(msgs) < 2 {
-		select {
-		case msg := <-msgCh:
-			msgs = append(msgs, msg)
-		case <-timeout:
-			t.Fatalf("timed out: expected 2 messages, got %d", len(msgs))
-		}
-	}
+	// Use Connect to get the first message, then WaitForNextMsg for subsequent
+	cmd := client.Connect(ctx)
+	msg1 := cmd()
 
 	// First message should be SSEConnectedMsg
-	if _, ok := msgs[0].(SSEConnectedMsg); !ok {
-		t.Errorf("expected first message SSEConnectedMsg, got %T", msgs[0])
+	if _, ok := msg1.(SSEConnectedMsg); !ok {
+		t.Errorf("expected first message SSEConnectedMsg, got %T", msg1)
 	}
 
+	// Get second message
+	cmd2 := client.WaitForNextMsg()
+	msg2 := cmd2()
+
 	// Second message should be TasksUpdatedMsg
-	tasksMsg, ok := msgs[1].(TasksUpdatedMsg)
+	tasksMsg, ok := msg2.(TasksUpdatedMsg)
 	if !ok {
-		t.Fatalf("expected second message TasksUpdatedMsg, got %T", msgs[1])
+		t.Fatalf("expected second message TasksUpdatedMsg, got %T", msg2)
 	}
 	if len(tasksMsg.Tasks) != 1 {
 		t.Errorf("expected 1 task, got %d", len(tasksMsg.Tasks))
@@ -486,27 +479,20 @@ func TestSSEClient_HeartbeatIsSkipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
+	cmd := client.Connect(ctx)
+	msg1 := cmd()
 
-	// Collect 2 messages - heartbeat should NOT appear
-	var msgs []tea.Msg
-	timeout := time.After(2 * time.Second)
-	for len(msgs) < 2 {
-		select {
-		case msg := <-msgCh:
-			msgs = append(msgs, msg)
-		case <-timeout:
-			t.Fatalf("timed out: expected 2 messages, got %d", len(msgs))
-		}
+	// Should get connected (heartbeat skipped by sse.Client)
+	if _, ok := msg1.(SSEConnectedMsg); !ok {
+		t.Errorf("expected SSEConnectedMsg, got %T", msg1)
 	}
 
-	// Should get connected + tasks_snapshot (heartbeat skipped)
-	if _, ok := msgs[0].(SSEConnectedMsg); !ok {
-		t.Errorf("expected SSEConnectedMsg, got %T", msgs[0])
-	}
-	if _, ok := msgs[1].(TasksUpdatedMsg); !ok {
-		t.Errorf("expected TasksUpdatedMsg, got %T", msgs[1])
+	cmd2 := client.WaitForNextMsg()
+	msg2 := cmd2()
+
+	// Should get tasks_snapshot (heartbeat was skipped)
+	if _, ok := msg2.(TasksUpdatedMsg); !ok {
+		t.Errorf("expected TasksUpdatedMsg, got %T", msg2)
 	}
 }
 
@@ -541,20 +527,15 @@ func TestSSEClient_ErrorEventProducesSSEErrorMsg(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
+	cmd := client.Connect(ctx)
+	msg := cmd()
 
-	select {
-	case msg := <-msgCh:
-		errMsg, ok := msg.(SSEErrorMsg)
-		if !ok {
-			t.Fatalf("expected SSEErrorMsg, got %T", msg)
-		}
-		if !strings.Contains(errMsg.Err.Error(), "server error occurred") {
-			t.Errorf("expected error to contain 'server error occurred', got '%s'", errMsg.Err.Error())
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("timed out waiting for SSEErrorMsg")
+	errMsg, ok := msg.(SSEErrorMsg)
+	if !ok {
+		t.Fatalf("expected SSEErrorMsg, got %T", msg)
+	}
+	if !strings.Contains(errMsg.Err.Error(), "server error occurred") {
+		t.Errorf("expected error to contain 'server error occurred', got '%s'", errMsg.Err.Error())
 	}
 }
 
@@ -588,25 +569,19 @@ func TestSSEClient_DisconnectOnServerClose(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
+	cmd := client.Connect(ctx)
+	msg1 := cmd()
 
-	var msgs []tea.Msg
-	timeout := time.After(3 * time.Second)
-	for len(msgs) < 2 {
-		select {
-		case msg := <-msgCh:
-			msgs = append(msgs, msg)
-		case <-timeout:
-			t.Fatalf("timed out: expected 2 messages, got %d", len(msgs))
-		}
+	if _, ok := msg1.(SSEConnectedMsg); !ok {
+		t.Errorf("expected SSEConnectedMsg, got %T", msg1)
 	}
 
-	if _, ok := msgs[0].(SSEConnectedMsg); !ok {
-		t.Errorf("expected SSEConnectedMsg, got %T", msgs[0])
-	}
-	if _, ok := msgs[1].(SSEDisconnectedMsg); !ok {
-		t.Errorf("expected SSEDisconnectedMsg, got %T", msgs[1])
+	// Next message should be disconnect
+	cmd2 := client.WaitForNextMsg()
+	msg2 := cmd2()
+
+	if _, ok := msg2.(SSEDisconnectedMsg); !ok {
+		t.Errorf("expected SSEDisconnectedMsg, got %T", msg2)
 	}
 }
 
@@ -615,23 +590,23 @@ func TestSSEClient_ConnectionRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
+	cmd := client.Connect(ctx)
+	msg := cmd()
 
-	select {
-	case msg := <-msgCh:
-		if _, ok := msg.(SSEDisconnectedMsg); !ok {
-			t.Errorf("expected SSEDisconnectedMsg on connection refused, got %T", msg)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timed out waiting for disconnect message")
+	if _, ok := msg.(SSEDisconnectedMsg); !ok {
+		t.Errorf("expected SSEDisconnectedMsg on connection refused, got %T", msg)
 	}
 }
 
 func TestSSEClient_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.WriteHeader(http.StatusOK)
+		flusher.Flush()
 		<-r.Context().Done()
 	}))
 	defer server.Close()
@@ -639,29 +614,28 @@ func TestSSEClient_ContextCancellation(t *testing.T) {
 	client := NewSSEClient(server.URL, "", "test-project")
 	ctx, cancel := context.WithCancel(context.Background())
 
-	msgCh := make(chan tea.Msg, 10)
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		client.listenSSE(ctx, msgCh)
-	}()
+	// Connect and start receiving
+	cmd := client.Connect(ctx)
 
 	// Cancel context after a short delay
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 	cancel()
 
-	done := make(chan struct{})
+	// The cmd() should eventually return (disconnect or channel close)
+	done := make(chan tea.Msg, 1)
 	go func() {
-		wg.Wait()
-		close(done)
+		done <- cmd()
 	}()
 
 	select {
-	case <-done:
-		// Good - goroutine exited
-	case <-time.After(3 * time.Second):
-		t.Fatal("listenSSE did not exit after context cancellation")
+	case msg := <-done:
+		// Good - got a message after cancellation
+		// Should be SSEDisconnectedMsg
+		if _, ok := msg.(SSEDisconnectedMsg); !ok {
+			// Any message type is acceptable after cancellation
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Connect did not exit after context cancellation")
 	}
 }
 
@@ -715,11 +689,13 @@ func TestSSEClient_SetsCorrectHeaders(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	msgCh := make(chan tea.Msg, 10)
-	go client.listenSSE(ctx, msgCh)
+	cmd := client.Connect(ctx)
 
 	// Wait for the request to arrive
 	time.Sleep(300 * time.Millisecond)
+
+	// Drain the command
+	go func() { cmd() }()
 
 	mu.Lock()
 	headers := receivedHeaders

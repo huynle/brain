@@ -113,12 +113,17 @@ func (s *TaskServiceImpl) getAllTasks(ctx context.Context, projectId string) ([]
 }
 
 // GetReady returns tasks that are ready to execute.
-func (s *TaskServiceImpl) GetReady(ctx context.Context, projectId string) ([]types.ResolvedTask, error) {
+// If opts is non-nil and contains FeatureIDs, only tasks matching those features are returned.
+func (s *TaskServiceImpl) GetReady(ctx context.Context, projectId string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
-	return GetReadyTasks(result), nil
+	ready := GetReadyTasks(result)
+	if opts != nil && len(opts.FeatureIDs) > 0 {
+		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+	}
+	return ready, nil
 }
 
 // GetWaiting returns tasks waiting on dependencies.
@@ -140,12 +145,26 @@ func (s *TaskServiceImpl) GetBlocked(ctx context.Context, projectId string) ([]t
 }
 
 // GetNext returns the next task to execute (highest priority ready task).
-func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string) (*types.ResolvedTask, error) {
+// If opts is non-nil and contains FeatureIDs, only tasks matching those features are considered.
+func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *api.TaskFilterOptions) (*types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
-	return GetNextTask(result), nil
+	next := GetNextTask(result)
+	if next == nil {
+		return nil, nil
+	}
+	if opts != nil && len(opts.FeatureIDs) > 0 {
+		// Filter ready tasks by feature, then pick the next from the filtered set
+		ready := GetReadyTasks(result)
+		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+		if len(ready) == 0 {
+			return nil, nil
+		}
+		return pickHighestPriority(ready), nil
+	}
+	return next, nil
 }
 
 // ClaimTask claims a task for a runner. Returns ErrConflict if already claimed by another runner.

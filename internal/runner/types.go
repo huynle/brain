@@ -32,6 +32,11 @@ type RunnerConfig struct {
 	// Defaults: ["BRAIN_API_URL", "BRAIN_API_TOKEN"]
 	// Values are read from the runner's own environment at spawn time.
 	EnvPassthrough []string `yaml:"env_passthrough" json:"env_passthrough"`
+
+	// FeatureIDs constrains the runner to only execute tasks from specific features.
+	// When empty, all features are eligible. Supports multiple feature IDs.
+	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
+	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -49,9 +54,9 @@ type OpencodeConfig struct {
 type ExecutionMode string
 
 const (
-	ExecutionModeTUI        ExecutionMode = "tui"
-	ExecutionModeDashboard  ExecutionMode = "dashboard"
-	ExecutionModeBackground ExecutionMode = "background"
+	ExecutionModeTUI       ExecutionMode = "tui"
+	ExecutionModeDashboard ExecutionMode = "dashboard"
+	ExecutionModeHeadless  ExecutionMode = "headless"
 )
 
 // RunningTask represents a task currently being executed by the runner.

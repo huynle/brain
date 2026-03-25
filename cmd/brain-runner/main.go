@@ -40,7 +40,7 @@ Commands:
 
 Options:
   --tui               Use interactive TUI (default for start)
-  -b, --background    Run as background daemon
+  -b, --headless      Run in headless mode (no TUI, no tmux)
   --dashboard         Create tmux dashboard
   -p, --max-parallel N  Max concurrent tasks
   --poll-interval N   Seconds between polls
@@ -49,6 +49,7 @@ Options:
   -m, --model NAME    Model to use
   -i, --include PAT   Include project pattern (repeatable)
   -e, --exclude PAT   Exclude project pattern (repeatable)
+  -F, --feature-id ID Only run tasks from this feature (repeatable)
   -v, --verbose       Enable debug logging
   -h, --help          Show this help message
 
@@ -57,7 +58,7 @@ Examples:
   brain-runner my-project             Start TUI for my-project
   brain-runner start my-project       Same as above
   brain-runner start all -p 5         All projects, 5 concurrent tasks
-  brain-runner start my-project -b    Background daemon
+  brain-runner start my-project -b    Headless mode
   brain-runner ready my-project       Show ready tasks
   brain-runner config                 Show configuration
 `
@@ -67,20 +68,21 @@ Examples:
 // =============================================================================
 
 type parsedArgs struct {
-	command  string
-	project  string
-	help     bool
-	verbose  bool
-	tui      bool
-	bg       bool
-	dash     bool
-	parallel int
-	poll     int
-	workdir  string
-	agent    string
-	model    string
-	include  []string
-	exclude  []string
+	command    string
+	project    string
+	help       bool
+	verbose    bool
+	tui        bool
+	headless   bool
+	dash       bool
+	parallel   int
+	poll       int
+	workdir    string
+	agent      string
+	model      string
+	include    []string
+	exclude    []string
+	featureIDs []string
 }
 
 // =============================================================================
@@ -104,8 +106,8 @@ func parseArgs(argv []string) parsedArgs {
 			p.verbose = true
 		case arg == "--tui":
 			p.tui = true
-		case arg == "-b" || arg == "--background":
-			p.bg = true
+		case arg == "-b" || arg == "--headless":
+			p.headless = true
 		case arg == "--dashboard":
 			p.dash = true
 
@@ -144,6 +146,11 @@ func parseArgs(argv []string) parsedArgs {
 			if i+1 < len(argv) {
 				i++
 				p.exclude = append(p.exclude, argv[i])
+			}
+		case arg == "-F" || arg == "--feature-id":
+			if i+1 < len(argv) {
+				i++
+				p.featureIDs = append(p.featureIDs, argv[i])
 			}
 
 		// Positional arguments
@@ -192,7 +199,7 @@ func main() {
 	}
 
 	// Default: start uses TUI unless user chose another mode
-	if args.command == "start" && !args.bg && !args.dash {
+	if args.command == "start" && !args.headless && !args.dash {
 		args.tui = true
 	}
 
@@ -262,6 +269,10 @@ func cmdStart(args parsedArgs) int {
 	if len(args.exclude) > 0 {
 		cfg.ExcludeProjects = append(cfg.ExcludeProjects, args.exclude...)
 	}
+	// Apply feature ID filter
+	if len(args.featureIDs) > 0 {
+		cfg.FeatureIDs = args.featureIDs
+	}
 
 	// Re-validate after overrides
 	if err := runner.ValidateConfig(cfg); err != nil {
@@ -270,7 +281,7 @@ func cmdStart(args parsedArgs) int {
 	}
 
 	// Determine execution mode
-	mode := runner.ExecutionModeBackground
+	mode := runner.ExecutionModeHeadless
 	if args.tui {
 		mode = runner.ExecutionModeTUI
 	} else if args.dash {
@@ -412,6 +423,10 @@ func cmdStart(args parsedArgs) int {
 		}
 		return 0
 	}
+
+	// Wire event logging for headless mode so task lifecycle events
+	// are visible via slog instead of silently discarded.
+	runner.RegisterEventLogger(tr)
 
 	if err := tr.Start(ctx); err != nil {
 		slog.Error("runner failed", "error", err)

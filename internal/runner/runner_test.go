@@ -101,7 +101,7 @@ func (m *mockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
 
-func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error) {
+func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readyTasksErr != nil {
@@ -110,7 +110,7 @@ func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string) ([]typ
 	return m.readyTasks[projectID], nil
 }
 
-func (m *mockClient) GetNextTask(ctx context.Context, projectID string) (*types.ResolvedTask, error) {
+func (m *mockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.nextTaskErr != nil {
@@ -534,7 +534,7 @@ func newTestRunner(client *mockClient, executor *mockExecutor, processMgr *mockP
 	return NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a", "proj-b"},
 		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,
@@ -593,8 +593,8 @@ func TestNewTaskRunner_SetsDefaults(t *testing.T) {
 	if len(tr.projects) != 2 {
 		t.Errorf("projects len = %d, want 2", len(tr.projects))
 	}
-	if tr.mode != ExecutionModeBackground {
-		t.Errorf("mode = %q, want %q", tr.mode, ExecutionModeBackground)
+	if tr.mode != ExecutionModeHeadless {
+		t.Errorf("mode = %q, want %q", tr.mode, ExecutionModeHeadless)
 	}
 }
 
@@ -640,8 +640,8 @@ func TestNewTaskRunner_DefaultMode(t *testing.T) {
 		// Mode not set
 	})
 
-	if tr.mode != ExecutionModeBackground {
-		t.Errorf("default mode = %q, want %q", tr.mode, ExecutionModeBackground)
+	if tr.mode != ExecutionModeHeadless {
+		t.Errorf("default mode = %q, want %q", tr.mode, ExecutionModeHeadless)
 	}
 }
 
@@ -807,7 +807,7 @@ func TestTaskRunner_Poll_RespectsMaxParallel(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
 		Config:     cfg,
-		Mode:       ExecutionModeBackground,
+		Mode:       ExecutionModeHeadless,
 		Client:     client,
 		Executor:   executor,
 		ProcessMgr: processMgr,

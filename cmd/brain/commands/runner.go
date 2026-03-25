@@ -11,7 +11,7 @@ import (
 type RunnerFlags struct {
 	TUI          bool
 	Foreground   bool
-	Background   bool
+	Headless     bool
 	Dashboard    bool
 	MaxParallel  int
 	PollInterval int
@@ -20,6 +20,7 @@ type RunnerFlags struct {
 	Model        string
 	Include      []string
 	Exclude      []string
+	FeatureIDs   []string
 	Follow       bool
 }
 
@@ -137,8 +138,8 @@ func (c *RunCommand) runStart() error {
 	mode := "tui"
 	if c.Flags.Foreground {
 		mode = "foreground"
-	} else if c.Flags.Background {
-		mode = "background"
+	} else if c.Flags.Headless {
+		mode = "headless"
 	} else if c.Flags.Dashboard {
 		mode = "dashboard"
 	}

@@ -459,7 +459,7 @@ func TestGetReady(t *testing.T) {
 		"depends_on": []interface{}{"aaa11111"},
 	})
 
-	ready, err := svc.GetReady(ctx, "proj")
+	ready, err := svc.GetReady(ctx, "proj", nil)
 	if err != nil {
 		t.Fatalf("GetReady failed: %v", err)
 	}
@@ -524,7 +524,7 @@ func TestGetNext_ReturnsHighestPriority(t *testing.T) {
 	insertTaskNote(t, store, "low11111", "Low Task", "pending", "low", "proj", map[string]interface{}{})
 	insertTaskNote(t, store, "high1111", "High Task", "pending", "high", "proj", map[string]interface{}{})
 
-	next, err := svc.GetNext(ctx, "proj")
+	next, err := svc.GetNext(ctx, "proj", nil)
 	if err != nil {
 		t.Fatalf("GetNext failed: %v", err)
 	}
@@ -540,7 +540,7 @@ func TestGetNext_NoTasks(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	next, err := svc.GetNext(ctx, "empty-proj")
+	next, err := svc.GetNext(ctx, "empty-proj", nil)
 	if err != nil {
 		t.Fatalf("GetNext failed: %v", err)
 	}
@@ -832,11 +832,11 @@ func TestGetFeature_Found(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetFeature failed: %v", err)
 	}
-	if resp.FeatureID != "feat-1" {
-		t.Errorf("FeatureID = %q, want %q", resp.FeatureID, "feat-1")
+	if resp.Feature.FeatureID != "feat-1" {
+		t.Errorf("FeatureID = %q, want %q", resp.Feature.FeatureID, "feat-1")
 	}
-	if len(resp.Tasks) != 1 {
-		t.Errorf("expected 1 task in feature, got %d", len(resp.Tasks))
+	if len(resp.Feature.Tasks) != 1 {
+		t.Errorf("expected 1 task in feature, got %d", len(resp.Feature.Tasks))
 	}
 }
 

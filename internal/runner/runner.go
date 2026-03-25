@@ -25,8 +25,8 @@ import (
 type Client interface {
 	CheckHealth(ctx context.Context) (APIHealth, error)
 	ListProjects(ctx context.Context) ([]string, error)
-	GetReadyTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
-	GetNextTask(ctx context.Context, projectID string) (*types.ResolvedTask, error)
+	GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error)
+	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	ReleaseTask(ctx context.Context, projectID, taskID string) error
@@ -88,7 +88,7 @@ type TaskRunnerOptions struct {
 	// Config is the runner configuration.
 	Config RunnerConfig
 
-	// Mode is the execution mode (background, tui, dashboard).
+	// Mode is the execution mode (headless, tui, dashboard).
 	Mode ExecutionMode
 
 	// StartPaused starts the runner with all projects paused.
@@ -149,6 +149,10 @@ type TaskRunner struct {
 	eventMu  sync.RWMutex
 	handlers []EventHandler
 
+	// SSE reactive polling
+	wakeCh      chan struct{}
+	sseListener *SSEListener
+
 	// Lifecycle
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -170,7 +174,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	// Default mode
 	mode := opts.Mode
 	if mode == "" {
-		mode = ExecutionModeBackground
+		mode = ExecutionModeHeadless
 	}
 
 	// Default logger
@@ -191,6 +195,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		stateMgr:   opts.StateMgr,
 		status:     RunnerStatusIdle,
 		pauseCache: make(map[string]bool),
+		wakeCh:     make(chan struct{}, 1),
 		done:       make(chan struct{}),
 	}
 
@@ -244,6 +249,8 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			close(tr.done)
 			return nil
 		case <-ticker.C:
+			tr.poll(ctx)
+		case <-tr.wakeCh:
 			tr.poll(ctx)
 		}
 	}
@@ -347,8 +354,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			continue
 		}
 
-		// Get next task for this project
-		task, err := tr.client.GetNextTask(ctx, projectID)
+		// Get next task for this project (filtered by feature IDs if configured)
+		task, err := tr.client.GetNextTask(ctx, projectID, tr.config.FeatureIDs...)
 		if err != nil || task == nil {
 			continue
 		}

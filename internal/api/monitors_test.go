@@ -60,6 +60,10 @@ func (m *mockMonitorService) Delete(ctx context.Context, taskID string) (string,
 	return "", fmt.Errorf("deleteFunc not set")
 }
 
+func (m *mockMonitorService) CreateForFeature(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error) {
+	return nil, fmt.Errorf("createForFeatureFunc not set")
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================

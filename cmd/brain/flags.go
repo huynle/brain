@@ -28,7 +28,7 @@ type ServerFlags struct {
 type RunnerFlags struct {
 	TUI          bool
 	Foreground   bool
-	Background   bool
+	Headless     bool
 	Dashboard    bool
 	MaxParallel  int
 	PollInterval int
@@ -37,6 +37,7 @@ type RunnerFlags struct {
 	Model        string
 	Include      []string
 	Exclude      []string
+	FeatureIDs   []string
 	Follow       bool
 }
 
@@ -108,8 +109,8 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.BoolVar(&flags.TUI, "tui", false, "Interactive TUI")
 	fs.BoolVar(&flags.Foreground, "foreground", false, "Foreground without TUI")
 	fs.BoolVar(&flags.Foreground, "f", false, "Foreground (short)")
-	fs.BoolVar(&flags.Background, "background", false, "Background daemon")
-	fs.BoolVar(&flags.Background, "b", false, "Background (short)")
+	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no TUI, no tmux)")
+	fs.BoolVar(&flags.Headless, "b", false, "Headless (short)")
 	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Tmux dashboard")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Max parallel tasks")
 	fs.IntVar(&flags.MaxParallel, "p", 0, "Max parallel (short)")
@@ -136,6 +137,14 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	})
 	fs.Func("e", "Exclude pattern (short)", func(s string) error {
 		flags.Exclude = append(flags.Exclude, s)
+		return nil
+	})
+	fs.Func("feature-id", "Only run tasks from this feature (repeatable)", func(s string) error {
+		flags.FeatureIDs = append(flags.FeatureIDs, s)
+		return nil
+	})
+	fs.Func("F", "Feature ID filter (short)", func(s string) error {
+		flags.FeatureIDs = append(flags.FeatureIDs, s)
 		return nil
 	})
 

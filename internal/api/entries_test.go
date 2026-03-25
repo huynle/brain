@@ -164,6 +164,10 @@ func (m *mockBrainService) GenerateLink(ctx context.Context, req types.LinkReque
 	return nil, fmt.Errorf("generateLinkFunc not set")
 }
 
+func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	return nil, fmt.Errorf("updateMetadataFunc not set")
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================

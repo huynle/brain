@@ -122,8 +122,16 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]string, error) {
 }
 
 // GetReadyTasks returns tasks that are ready for execution in a project.
-func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error) {
+// Optional featureIDs filter results to specific features.
+func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID)
+	if len(featureIDs) > 0 {
+		params := url.Values{}
+		for _, fid := range featureIDs {
+			params.Add("feature_id", fid)
+		}
+		path += "?" + params.Encode()
+	}
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get ready tasks: %w", err)
@@ -142,8 +150,16 @@ func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string) ([]type
 }
 
 // GetNextTask returns the highest-priority ready task, or nil if none.
-func (c *APIClient) GetNextTask(ctx context.Context, projectID string) (*types.ResolvedTask, error) {
+// Optional featureIDs filter results to specific features.
+func (c *APIClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID)
+	if len(featureIDs) > 0 {
+		params := url.Values{}
+		for _, fid := range featureIDs {
+			params.Add("feature_id", fid)
+		}
+		path += "?" + params.Encode()
+	}
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get next task: %w", err)

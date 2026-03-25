@@ -75,6 +75,11 @@ type BrainService interface {
 	GenerateLink(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 }
 
+// TaskFilterOptions holds optional filters for task queries.
+type TaskFilterOptions struct {
+	FeatureIDs []string
+}
+
 // TaskService defines the interface for task queue operations.
 type TaskService interface {
 	// ListProjects returns all project IDs that have tasks.
@@ -84,7 +89,8 @@ type TaskService interface {
 	GetTasks(ctx context.Context, projectId string) (*types.TaskListResponse, error)
 
 	// GetReady returns tasks that are ready to execute.
-	GetReady(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
+	// Pass nil opts for no filtering (backward compatible).
+	GetReady(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error)
 
 	// GetWaiting returns tasks waiting on dependencies.
 	GetWaiting(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
@@ -93,7 +99,8 @@ type TaskService interface {
 	GetBlocked(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
 
 	// GetNext returns the next task to execute (highest priority ready task).
-	GetNext(ctx context.Context, projectId string) (*types.ResolvedTask, error)
+	// Pass nil opts for no filtering (backward compatible).
+	GetNext(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
 
 	// ClaimTask claims a task for a runner. Returns ErrConflict if already claimed.
 	ClaimTask(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)

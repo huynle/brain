@@ -9,6 +9,16 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// parseTaskFilterOptions extracts optional TaskFilterOptions from query parameters.
+// Returns nil if no filter parameters are present (backward compatible).
+func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
+	featureIDs := r.URL.Query()["feature_id"]
+	if len(featureIDs) == 0 {
+		return nil
+	}
+	return &TaskFilterOptions{FeatureIDs: featureIDs}
+}
+
 // HandleListProjects handles GET /tasks — list all projects.
 func (h *Handler) HandleListProjects(w http.ResponseWriter, r *http.Request) {
 	projects, err := h.tasks.ListProjects(r.Context())
@@ -33,7 +43,8 @@ func (h *Handler) HandleGetTasks(w http.ResponseWriter, r *http.Request) {
 // HandleGetReady handles GET /tasks/{projectId}/ready.
 func (h *Handler) HandleGetReady(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
-	tasks, err := h.tasks.GetReady(r.Context(), projectId)
+	opts := parseTaskFilterOptions(r)
+	tasks, err := h.tasks.GetReady(r.Context(), projectId, opts)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
@@ -66,7 +77,8 @@ func (h *Handler) HandleGetBlocked(w http.ResponseWriter, r *http.Request) {
 // HandleGetNext handles GET /tasks/{projectId}/next.
 func (h *Handler) HandleGetNext(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
-	task, err := h.tasks.GetNext(r.Context(), projectId)
+	opts := parseTaskFilterOptions(r)
+	task, err := h.tasks.GetNext(r.Context(), projectId, opts)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", "no ready tasks available")

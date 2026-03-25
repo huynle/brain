@@ -100,6 +100,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
+		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -201,6 +202,23 @@ func firstNonZero(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// getEnvCSVOrDefault reads a comma-separated env var and returns the split values.
+// Falls back to defaultValue if the env var is empty.
+func getEnvCSVOrDefault(key string, defaultValue []string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	var result []string
+	for _, s := range strings.Split(v, ",") {
+		s = strings.TrimSpace(s)
+		if s != "" {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 // defaultEnvPassthrough returns the env passthrough list, using defaults if empty.

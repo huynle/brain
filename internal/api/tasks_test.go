@@ -21,10 +21,10 @@ import (
 type mockTaskService struct {
 	listProjectsFunc     func(ctx context.Context) ([]string, error)
 	getTasksFunc         func(ctx context.Context, projectId string) (*types.TaskListResponse, error)
-	getReadyFunc         func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
+	getReadyFunc         func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error)
 	getWaitingFunc       func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
 	getBlockedFunc       func(ctx context.Context, projectId string) ([]types.ResolvedTask, error)
-	getNextFunc          func(ctx context.Context, projectId string) (*types.ResolvedTask, error)
+	getNextFunc          func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
 	claimTaskFunc        func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
 	releaseTaskFunc      func(ctx context.Context, projectId, taskId, runnerId string) error
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
@@ -50,9 +50,9 @@ func (m *mockTaskService) GetTasks(ctx context.Context, projectId string) (*type
 	return nil, fmt.Errorf("getTasksFunc not set")
 }
 
-func (m *mockTaskService) GetReady(ctx context.Context, projectId string) ([]types.ResolvedTask, error) {
+func (m *mockTaskService) GetReady(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
 	if m.getReadyFunc != nil {
-		return m.getReadyFunc(ctx, projectId)
+		return m.getReadyFunc(ctx, projectId, opts)
 	}
 	return nil, fmt.Errorf("getReadyFunc not set")
 }
@@ -71,9 +71,9 @@ func (m *mockTaskService) GetBlocked(ctx context.Context, projectId string) ([]t
 	return nil, fmt.Errorf("getBlockedFunc not set")
 }
 
-func (m *mockTaskService) GetNext(ctx context.Context, projectId string) (*types.ResolvedTask, error) {
+func (m *mockTaskService) GetNext(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
 	if m.getNextFunc != nil {
-		return m.getNextFunc(ctx, projectId)
+		return m.getNextFunc(ctx, projectId, opts)
 	}
 	return nil, fmt.Errorf("getNextFunc not set")
 }
@@ -388,7 +388,7 @@ func TestHandleGetTasks(t *testing.T) {
 
 func TestHandleGetReady(t *testing.T) {
 	taskMock := &mockTaskService{
-		getReadyFunc: func(ctx context.Context, projectId string) ([]types.ResolvedTask, error) {
+		getReadyFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
 			return []types.ResolvedTask{
 				{ID: "task1", Classification: "ready"},
 			}, nil
@@ -468,13 +468,13 @@ func TestHandleGetBlocked(t *testing.T) {
 func TestHandleGetNext(t *testing.T) {
 	tests := []struct {
 		name       string
-		mockFn     func(ctx context.Context, projectId string) (*types.ResolvedTask, error)
+		mockFn     func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
 		wantStatus int
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name: "success",
-			mockFn: func(ctx context.Context, projectId string) (*types.ResolvedTask, error) {
+			mockFn: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
 				return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -487,7 +487,7 @@ func TestHandleGetNext(t *testing.T) {
 		},
 		{
 			name: "no tasks available",
-			mockFn: func(ctx context.Context, projectId string) (*types.ResolvedTask, error) {
+			mockFn: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
 				return nil, ErrNotFound
 			},
 			wantStatus: http.StatusNotFound,

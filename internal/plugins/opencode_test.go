@@ -244,7 +244,7 @@ func TestOpenCodeTarget_Install_ForceOverwritesExistingFiles(t *testing.T) {
 	}
 }
 
-func TestOpenCodeTarget_Install_WithoutForceFailsIfFilesExist(t *testing.T) {
+func TestOpenCodeTarget_Install_WithoutForceSkipsExistingFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".config", "opencode")
 	pluginDir := filepath.Join(configPath, "plugin")
@@ -268,12 +268,15 @@ func TestOpenCodeTarget_Install_WithoutForceFailsIfFilesExist(t *testing.T) {
 	}
 	err := target.Install(opts)
 
-	if err == nil {
-		t.Fatal("Install() should fail when files exist without Force")
+	// Should succeed — existing files are skipped, new files still installed
+	if err != nil {
+		t.Fatalf("Install() should succeed (skip existing, install rest): %v", err)
 	}
 
-	if !strings.Contains(err.Error(), "exists") {
-		t.Errorf("Error should mention file exists, got: %v", err)
+	// Existing file should NOT be overwritten
+	content, _ := os.ReadFile(existingFile)
+	if string(content) != "existing" {
+		t.Errorf("Existing file should not be overwritten without --force")
 	}
 }
 

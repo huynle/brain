@@ -89,10 +89,9 @@ func InstallPlugin(targetID string, opts InstallOptions) error {
 		return fmt.Errorf("unknown target: %s", targetID)
 	}
 
-	if target.Exists() && !opts.Force {
-		return fmt.Errorf("target %s is already installed (use --force to overwrite)", targetID)
-	}
-
+	// Install always proceeds — individual files are skipped if they exist
+	// and --force is not set. This allows installing new components without
+	// requiring --force just because the config directory exists.
 	return target.Install(opts)
 }
 

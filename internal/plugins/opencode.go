@@ -47,119 +47,180 @@ func (t *OpenCodeTarget) Exists() bool {
 	return !os.IsNotExist(err)
 }
 
-// Install performs the installation
-func (t *OpenCodeTarget) Install(opts InstallOptions) error {
-	// 1. Ensure plugin directory exists
-	pluginDir := filepath.Join(t.configPath, "plugin")
-	if err := ensureDir(pluginDir); err != nil {
-		return fmt.Errorf("failed to create plugin directory: %w", err)
-	}
+// componentDir maps embedded asset prefixes to their opencode config subdirectories.
+var componentDir = map[string]string{
+	"plugin":  "plugin",
+	"skill":   "skill",
+	"command": "command",
+	"agent":   "agent",
+}
 
-	// 2. List all plugin files to install
-	files, err := assets.ListPluginFiles("opencode")
+// Install performs the installation of all brain components for OpenCode.
+func (t *OpenCodeTarget) Install(opts InstallOptions) error {
+	// List all embedded files recursively
+	files, err := assets.ListPluginFilesRecursive("opencode")
 	if err != nil {
 		return fmt.Errorf("failed to list plugin files: %w", err)
 	}
 
-	// 3. For each file:
-	for _, filename := range files {
-		// Skip README.md
-		if filename == "README.md" {
+	installed := 0
+	for _, relPath := range files {
+		// Skip README.md files
+		if filepath.Base(relPath) == "README.md" {
+			continue
+		}
+
+		// Determine destination directory based on file type
+		destPath := t.resolveDestPath(relPath)
+		if destPath == "" {
 			continue
 		}
 
 		// Read from assets
-		content, err := assets.GetPluginFile("opencode", filename)
+		content, err := assets.GetPluginFile("opencode", relPath)
 		if err != nil {
-			return fmt.Errorf("failed to read plugin file %s: %w", filename, err)
+			return fmt.Errorf("failed to read %s: %w", relPath, err)
 		}
 
-		// Add auto-generated header
-		header := generateHeader(filename)
-		fullContent := append([]byte(header), content...)
-
-		// Write to target
-		destPath := filepath.Join(pluginDir, filename)
+		// Add auto-generated header for code files (.ts, .js)
+		if isCodeFile(relPath) {
+			header := generateHeader(relPath)
+			content = append([]byte(header), content...)
+		} else if isMarkdownFile(relPath) {
+			header := generateMarkdownHeader(relPath)
+			content = append([]byte(header), content...)
+		}
 
 		// Check for existing file if not Force mode
 		if !opts.Force {
 			if _, err := os.Stat(destPath); !os.IsNotExist(err) {
-				return fmt.Errorf("file exists: %s (use --force to overwrite)", destPath)
+				if opts.DryRun {
+					fmt.Printf("  [DRY RUN] Would skip (exists): %s\n", relPath)
+				}
+				continue // skip silently instead of erroring — install all other files
 			}
 		}
 
 		// DryRun mode just prints
 		if opts.DryRun {
-			fmt.Printf("  [DRY RUN] Would install: %s\n", filename)
+			fmt.Printf("  [DRY RUN] Would install: %s -> %s\n", relPath, destPath)
+			installed++
 			continue
+		}
+
+		// Ensure parent directory exists
+		if err := ensureDir(filepath.Dir(destPath)); err != nil {
+			return fmt.Errorf("failed to create directory for %s: %w", relPath, err)
 		}
 
 		// Actually write
-		if err := os.WriteFile(destPath, fullContent, 0644); err != nil {
-			return fmt.Errorf("failed to write %s: %w", filename, err)
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
+			return fmt.Errorf("failed to write %s: %w", relPath, err)
 		}
 
-		fmt.Printf("  ✅ %s\n", filename)
+		installed++
+		fmt.Printf("  Installed: %s\n", relPath)
+	}
+
+	if opts.DryRun {
+		fmt.Printf("\n  [DRY RUN] Would install %d files\n", installed)
+	} else {
+		fmt.Printf("\n  %d files installed to %s\n", installed, t.configPath)
 	}
 
 	return nil
 }
 
-// Uninstall removes the installed plugin
+// resolveDestPath maps an embedded asset path to its destination in the opencode config.
+// Top-level .ts/.js files go to plugin/, subdirectories map by name.
+func (t *OpenCodeTarget) resolveDestPath(relPath string) string {
+	parts := strings.SplitN(relPath, string(os.PathSeparator), 2)
+
+	// Top-level files (e.g., brain.ts, brain-planning.ts) -> plugin/
+	if len(parts) == 1 {
+		return filepath.Join(t.configPath, "plugin", relPath)
+	}
+
+	// Subdirectory files (e.g., skill/brain-planning/SKILL.md -> skill/brain-planning/SKILL.md)
+	prefix := parts[0]
+	if _, ok := componentDir[prefix]; ok {
+		return filepath.Join(t.configPath, relPath)
+	}
+
+	// Unknown prefix — skip
+	return ""
+}
+
+func isCodeFile(path string) bool {
+	ext := filepath.Ext(path)
+	return ext == ".ts" || ext == ".js"
+}
+
+func isMarkdownFile(path string) bool {
+	return filepath.Ext(path) == ".md"
+}
+
+// generateMarkdownHeader creates auto-generated header for markdown files
+func generateMarkdownHeader(filename string) string {
+	return fmt.Sprintf(`<!--
+AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
+
+This file was installed by: brain install opencode
+To update: brain install opencode
+To check status: brain doctor
+Source: https://github.com/huynle/brain-api
+Generated: %s
+-->
+
+`, time.Now().Format(time.RFC3339))
+}
+
+// Uninstall removes all installed brain components.
 func (t *OpenCodeTarget) Uninstall() error {
-	pluginDir := filepath.Join(t.configPath, "plugin")
-
-	// List all plugin files that should be removed
-	files, err := assets.ListPluginFiles("opencode")
+	files, err := assets.ListPluginFilesRecursive("opencode")
 	if err != nil {
 		return fmt.Errorf("failed to list plugin files: %w", err)
 	}
 
-	// Remove each file (skip README.md)
-	for _, filename := range files {
-		if filename == "README.md" {
+	for _, relPath := range files {
+		if filepath.Base(relPath) == "README.md" {
 			continue
 		}
-
-		filePath := filepath.Join(pluginDir, filename)
-		if err := os.Remove(filePath); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("failed to remove %s: %w", filename, err)
+		destPath := t.resolveDestPath(relPath)
+		if destPath == "" {
+			continue
+		}
+		if err := os.Remove(destPath); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove %s: %w", relPath, err)
 		}
 	}
 
 	return nil
 }
 
-// Validate checks if the installation is valid and complete
+// Validate checks if the installation is valid and complete.
 func (t *OpenCodeTarget) Validate() error {
-	pluginDir := filepath.Join(t.configPath, "plugin")
-
-	// Check if plugin directory exists
-	if _, err := os.Stat(pluginDir); os.IsNotExist(err) {
-		return fmt.Errorf("plugin directory does not exist: %s", pluginDir)
-	}
-
-	// List expected plugin files
-	files, err := assets.ListPluginFiles("opencode")
+	files, err := assets.ListPluginFilesRecursive("opencode")
 	if err != nil {
 		return fmt.Errorf("failed to list plugin files: %w", err)
 	}
 
-	// Check each file exists (skip README.md)
-	missingFiles := []string{}
-	for _, filename := range files {
-		if filename == "README.md" {
+	var missing []string
+	for _, relPath := range files {
+		if filepath.Base(relPath) == "README.md" {
 			continue
 		}
-
-		filePath := filepath.Join(pluginDir, filename)
-		if _, err := os.Stat(filePath); os.IsNotExist(err) {
-			missingFiles = append(missingFiles, filename)
+		destPath := t.resolveDestPath(relPath)
+		if destPath == "" {
+			continue
+		}
+		if _, err := os.Stat(destPath); os.IsNotExist(err) {
+			missing = append(missing, relPath)
 		}
 	}
 
-	if len(missingFiles) > 0 {
-		return fmt.Errorf("missing plugin files: %s", strings.Join(missingFiles, ", "))
+	if len(missing) > 0 {
+		return fmt.Errorf("missing files: %s", strings.Join(missing, ", "))
 	}
 
 	return nil

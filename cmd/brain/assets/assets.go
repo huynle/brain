@@ -84,6 +84,28 @@ func ListPluginFiles(target string) ([]string, error) {
 	return files, nil
 }
 
+// ListPluginFilesRecursive returns all plugin files for a target, including nested directories.
+// Paths are relative to plugins/<target>/ (e.g., "skill/brain-planning/SKILL.md").
+func ListPluginFilesRecursive(target string) ([]string, error) {
+	pluginDir := filepath.Join("plugins", target)
+	var files []string
+	err := fs.WalkDir(embeddedFS, pluginDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			// Return path relative to plugins/<target>/
+			rel, _ := filepath.Rel(pluginDir, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("target %q not found: %w", target, err)
+	}
+	return files, nil
+}
+
 // GetPluginsFS returns the embedded filesystem for raw plugin access
 func GetPluginsFS() fs.FS {
 	return embeddedFS

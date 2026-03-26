@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -82,7 +82,8 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
   created_at TEXT DEFAULT (datetime('now')),
-  last_used TEXT
+  last_used TEXT,
+  revoked_at TEXT
 );`
 
 // ---------------------------------------------------------------------------
@@ -134,6 +135,53 @@ CREATE TRIGGER IF NOT EXISTS notes_au AFTER UPDATE ON notes BEGIN
 END;`
 
 // ---------------------------------------------------------------------------
+// Migrations
+// ---------------------------------------------------------------------------
+
+// migrateSchema applies incremental migrations for existing databases.
+// New databases get the latest DDL directly; this handles upgrades.
+func migrateSchema(db *sql.DB) error {
+	ver, err := GetSchemaVersion(db)
+	if err != nil {
+		// schema_version table doesn't exist yet — fresh DB, no migration needed.
+		return nil
+	}
+
+	if ver < 2 {
+		// v2: add revoked_at column to api_tokens for soft revocation.
+		_, err := db.Exec("ALTER TABLE api_tokens ADD COLUMN revoked_at TEXT")
+		if err != nil {
+			// Column may already exist (e.g., fresh DB with latest DDL).
+			// SQLite returns "duplicate column name" — safe to ignore.
+			if !isDuplicateColumnError(err) {
+				return fmt.Errorf("migrate v2 (add revoked_at): %w", err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// isDuplicateColumnError checks if an error is SQLite's "duplicate column name".
+func isDuplicateColumnError(err error) bool {
+	return err != nil && contains(err.Error(), "duplicate column name")
+}
+
+// contains is a simple substring check (avoids importing strings).
+func contains(s, substr string) bool {
+	return len(substr) <= len(s) && searchSubstring(s, substr)
+}
+
+func searchSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+// ---------------------------------------------------------------------------
 // Schema initialization
 // ---------------------------------------------------------------------------
 
@@ -178,6 +226,11 @@ func InitSchema(db *sql.DB) error {
 		if _, err := db.Exec(ddl); err != nil {
 			return fmt.Errorf("create trigger: %w", err)
 		}
+	}
+
+	// Run migrations for existing databases.
+	if err := migrateSchema(db); err != nil {
+		return fmt.Errorf("migrate schema: %w", err)
 	}
 
 	// Set schema version (idempotent: INSERT OR REPLACE)

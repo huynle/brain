@@ -36,12 +36,13 @@ type Token struct {
 	Token     string
 	CreatedAt string
 	LastUsed  string
+	RevokedAt string
 }
 
 // ListTokens returns all tokens.
 func (s *StorageLayer) ListTokens(ctx context.Context) ([]Token, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT name, token, created_at, COALESCE(last_used, '') FROM api_tokens ORDER BY created_at DESC",
+		"SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens ORDER BY created_at DESC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query tokens: %w", err)
@@ -51,7 +52,7 @@ func (s *StorageLayer) ListTokens(ctx context.Context) ([]Token, error) {
 	var tokens []Token
 	for rows.Next() {
 		var t Token
-		if err := rows.Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed); err != nil {
+		if err := rows.Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed, &t.RevokedAt); err != nil {
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
 		tokens = append(tokens, t)
@@ -70,9 +71,9 @@ func (s *StorageLayer) ListTokens(ctx context.Context) ([]Token, error) {
 func (s *StorageLayer) GetTokenByName(ctx context.Context, name string) (*Token, error) {
 	var t Token
 	err := s.db.QueryRowContext(ctx,
-		"SELECT name, token, created_at, COALESCE(last_used, '') FROM api_tokens WHERE name = ?",
+		"SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?",
 		name,
-	).Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed)
+	).Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed, &t.RevokedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("token not found: %s", name)
 	}

@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 2
+const CurrentSchemaVersion = 3
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -86,6 +86,57 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   revoked_at TEXT
 );`
 
+const createOAuthClientsTable = `
+CREATE TABLE IF NOT EXISTS oauth_clients (
+  client_id TEXT PRIMARY KEY,
+  client_secret TEXT NOT NULL,
+  redirect_uris TEXT NOT NULL,
+  client_name TEXT,
+  client_uri TEXT,
+  logo_uri TEXT,
+  scope TEXT,
+  grant_types TEXT NOT NULL,
+  response_types TEXT NOT NULL,
+  token_endpoint_auth_method TEXT NOT NULL DEFAULT 'client_secret_post',
+  created_at INTEGER NOT NULL
+);`
+
+const createOAuthAuthCodesTable = `
+CREATE TABLE IF NOT EXISTS oauth_auth_codes (
+  code TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  scope TEXT,
+  code_challenge TEXT NOT NULL,
+  code_challenge_method TEXT NOT NULL DEFAULT 'S256',
+  user_id TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+);`
+
+const createOAuthAccessTokensTable = `
+CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+  token TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  scope TEXT,
+  user_id TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+);`
+
+const createOAuthRefreshTokensTable = `
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+  token TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  scope TEXT,
+  user_id TEXT,
+  expires_at INTEGER NOT NULL,
+  created_at INTEGER NOT NULL,
+  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -101,6 +152,13 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
+	// OAuth indexes
+	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
+	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
+	"CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_client ON oauth_access_tokens(client_id);",
+	"CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires ON oauth_access_tokens(expires_at);",
+	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);",
+	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires ON oauth_refresh_tokens(expires_at);",
 }
 
 // ---------------------------------------------------------------------------
@@ -159,12 +217,35 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 3 {
+		// v3: add OAuth tables for OAuth 2.0 authorization server support.
+		oauthTables := []string{
+			createOAuthClientsTable,
+			createOAuthAuthCodesTable,
+			createOAuthAccessTokensTable,
+			createOAuthRefreshTokensTable,
+		}
+		for _, ddl := range oauthTables {
+			if _, err := db.Exec(ddl); err != nil {
+				// Tables may already exist (e.g., fresh DB with latest DDL).
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v3 (oauth tables): %w", err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
 // isDuplicateColumnError checks if an error is SQLite's "duplicate column name".
 func isDuplicateColumnError(err error) bool {
 	return err != nil && contains(err.Error(), "duplicate column name")
+}
+
+// isTableExistsError checks if an error is SQLite's "table already exists".
+func isTableExistsError(err error) bool {
+	return err != nil && contains(err.Error(), "already exists")
 }
 
 // contains is a simple substring check (avoids importing strings).
@@ -197,6 +278,10 @@ func InitSchema(db *sql.DB) error {
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
 		createAPITokensTable,
+		createOAuthClientsTable,
+		createOAuthAuthCodesTable,
+		createOAuthAccessTokensTable,
+		createOAuthRefreshTokensTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

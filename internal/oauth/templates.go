@@ -1,0 +1,58 @@
+package oauth
+
+import (
+	_ "embed"
+	"html/template"
+)
+
+//go:embed templates/consent.html
+var consentHTML string
+
+//go:embed templates/success.html
+var successHTML string
+
+// consentTmpl is the parsed consent page template.
+var consentTmpl = template.Must(template.New("consent").Parse(consentHTML))
+
+// successTmpl is the parsed success page template.
+var successTmpl = template.Must(template.New("success").Parse(successHTML))
+
+// ScopeInfo describes a scope for display on the consent page.
+type ScopeInfo struct {
+	Name        string
+	Description string
+}
+
+// ConsentData holds the data for the consent page template.
+type ConsentData struct {
+	ClientName          string
+	ClientID            string
+	RedirectURI         string
+	State               string
+	RawScope            string
+	CodeChallenge       string
+	CodeChallengeMethod string
+	Scopes              []ScopeInfo
+	PINRequired         bool
+	Error               string
+}
+
+// knownScopes maps scope names to human-readable descriptions.
+var knownScopes = map[string]string{
+	"mcp":       "Full access to the MCP server",
+	"mcp:read":  "Read-only access to brain entries and tasks",
+	"mcp:write": "Write access to brain entries and tasks",
+}
+
+// DescribeScopes returns ScopeInfo for each scope string.
+func DescribeScopes(scopes []string) []ScopeInfo {
+	infos := make([]ScopeInfo, 0, len(scopes))
+	for _, s := range scopes {
+		desc, ok := knownScopes[s]
+		if !ok {
+			desc = "Unknown scope"
+		}
+		infos = append(infos, ScopeInfo{Name: s, Description: desc})
+	}
+	return infos
+}

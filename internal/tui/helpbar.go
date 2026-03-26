@@ -67,7 +67,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 			if h.HasSelectedTasks {
 				shortcuts += fmt.Sprintf("%s Delete  ", bold("⌫"))
 			}
-			shortcuts += fmt.Sprintf("%s Meta/Feature  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Status  ", bold("s"))
+			shortcuts += fmt.Sprintf("%s Meta  ", bold("m"))
 			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 			if h.HasTaskSessions {
 				shortcuts += fmt.Sprintf("%s Session  ", bold("o"))

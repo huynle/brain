@@ -69,7 +69,9 @@ func (m *HelpModal) View() string {
 	// Actions shortcuts
 	b.WriteString(categoryStyle.Render("Actions:"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("s", "Set metadata (single)"))
+	b.WriteString(formatShortcut("s", "Change status"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("m", "Edit metadata"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("S", "Global settings"))
 	b.WriteString("\n")
@@ -168,9 +170,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
+	// Categories: Navigation (5), Actions (11), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
+	baseLines := 5 + 11 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

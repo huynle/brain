@@ -441,6 +441,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modalManager.Close()
 		return m, nil
 
+	case statusPickerResultMsg:
+		m.modalManager.Close()
+		if msg.err != nil {
+			if msg.failedCount > 0 && msg.successCount > 0 {
+				m.setStatusMessage("error", fmt.Sprintf("Status → %s: %d succeeded, %d failed", msg.newStatus, msg.successCount, msg.failedCount))
+				m.addLog("warn", fmt.Sprintf("Status change partial: %d/%d failed", msg.failedCount, msg.successCount+msg.failedCount))
+			} else {
+				m.setStatusMessage("error", fmt.Sprintf("Failed to change status: %v", msg.err))
+				m.addLog("error", fmt.Sprintf("Status change failed: %v", msg.err))
+			}
+		} else {
+			count := msg.successCount
+			if count == 1 {
+				m.setStatusMessage("success", fmt.Sprintf("Status changed to %s", msg.newStatus))
+				m.addLog("info", fmt.Sprintf("Status → %s", msg.newStatus))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Changed %d tasks to %s", count, msg.newStatus))
+				m.addLog("info", fmt.Sprintf("Batch status → %s (%d tasks)", msg.newStatus, count))
+				m.clearSelection()
+			}
+		}
+		return m, nil
+
 	case LogEntryMsg:
 		m.logViewer.AddEntry(msg.Entry)
 		return m, nil
@@ -689,7 +712,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case sessionSelectedMsg, taskExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
-			sessionOpenedMsg:
+			sessionOpenedMsg, statusPickerResultMsg:
 			// Let these fall through to the main switch above (they won't match
 			// because we're past it, so we need to handle them here)
 		default:
@@ -859,40 +882,93 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
-			// Open metadata modal for selected task(s) (tasks view only)
+			// Open status picker modal for selected task(s) (tasks view only)
 			if m.viewMode != ViewModeTasks {
 				return m, nil
 			}
 			if m.activePanel == PanelTasks {
-				// Create API client for modal
 				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
-				var modal Modal
-
-				// Case 0: Feature header selected (in feature view mode or status-grouped view)
+				// Case 0: Feature header selected → open MetadataModalFeature (unchanged)
 				featureID := m.taskTree.GetSelectedFeatureID()
 				if featureID != "" && featureID != "[Ungrouped]" {
-					modal = NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
-					if modal != nil {
-						// Pre-populate task paths from local task tree data
-						// so the modal doesn't need to fetch from API.
+					featureModal := NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
+					if featureModal != nil {
 						if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
 							taskPaths := make([]string, len(featureTasks))
 							for i, t := range featureTasks {
 								taskPaths[i] = t.Path
 							}
-							modal.(*MetadataModal).taskPaths = taskPaths
+							featureModal.taskPaths = taskPaths
 						}
-						cmd := m.modalManager.Open(modal)
+						cmd := m.modalManager.Open(featureModal)
 						return m, cmd
 					}
 				}
+
+				var modal Modal
+
+				// Case 1: Multi-select active → batch status picker
+				if len(m.selectedTasks) > 0 {
+					taskPaths := make([]string, 0, len(m.selectedTasks))
+					currentStatus := ""
+					for id := range m.selectedTasks {
+						for _, t := range m.tasks {
+							if t.ID == id {
+								taskPaths = append(taskPaths, t.Path)
+								if currentStatus == "" {
+									currentStatus = t.Status
+								}
+								break
+							}
+						}
+					}
+					modal = NewStatusPickerModalBatch(taskPaths, currentStatus, apiClient)
+				} else {
+					// Case 2: Single task selected → status picker
+					selectedTask := m.taskTree.SelectedTask()
+					if selectedTask != nil {
+						modal = NewStatusPickerModal(selectedTask.Path, selectedTask.Status, apiClient)
+					}
+				}
+
+				if modal != nil {
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+			}
+			return m, nil
+		case "m":
+			// Open full metadata modal for selected task(s) (tasks view only)
+			if m.viewMode != ViewModeTasks {
+				return m, nil
+			}
+			if m.activePanel == PanelTasks {
+				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+
+				// Case 0: Feature header selected
+				featureID := m.taskTree.GetSelectedFeatureID()
+				if featureID != "" && featureID != "[Ungrouped]" {
+					featureModal := NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
+					if featureModal != nil {
+						if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
+							taskPaths := make([]string, len(featureTasks))
+							for i, t := range featureTasks {
+								taskPaths[i] = t.Path
+							}
+							featureModal.taskPaths = taskPaths
+						}
+						cmd := m.modalManager.Open(featureModal)
+						return m, cmd
+					}
+				}
+
+				var modal Modal
 
 				// Case 1: Multi-select active - batch mode
 				if len(m.selectedTasks) > 0 {
 					taskPaths := make([]string, 0, len(m.selectedTasks))
 					for id := range m.selectedTasks {
-						// Find task to get its path
 						for _, t := range m.tasks {
 							if t.ID == id {
 								taskPaths = append(taskPaths, t.Path)

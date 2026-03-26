@@ -92,7 +92,7 @@ func TestGetEnumOptions(t *testing.T) {
 		{
 			"Status options",
 			FieldStatus,
-			[]string{"draft", "pending", "active", "in_progress", "blocked", "completed", "validated", "superseded", "archived"},
+			[]string{"draft", "pending", "active", "in_progress", "blocked", "cancelled", "completed", "validated", "superseded", "archived"},
 		},
 		{
 			"Priority options",

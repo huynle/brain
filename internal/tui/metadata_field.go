@@ -59,7 +59,7 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 		Label:       "Status",
 		Hint:        "Task status",
 		Type:        FieldTypeDropdown,
-		EnumOptions: []string{"draft", "pending", "active", "in_progress", "blocked", "completed", "validated", "superseded", "archived"},
+		EnumOptions: []string{"draft", "pending", "active", "in_progress", "blocked", "cancelled", "completed", "validated", "superseded", "archived"},
 	},
 	FieldPriority: {
 		Label:       "Priority",

@@ -38,8 +38,8 @@ func TestShowHelp(t *testing.T) {
 		if !strings.Contains(help, "SERVER:") {
 			t.Error("Main help should contain SERVER section")
 		}
-		if !strings.Contains(help, "RUNNER MODE:") {
-			t.Error("Main help should contain RUNNER MODE section")
+		if !strings.Contains(help, "RUNNER (TUI):") {
+			t.Error("Main help should contain RUNNER section")
 		}
 		if !strings.Contains(help, "MCP MODE:") {
 			t.Error("Main help should contain MCP MODE section")
@@ -203,8 +203,8 @@ func TestHelpContent(t *testing.T) {
 		if !strings.Contains(mainHelp, "SERVER:") {
 			t.Error("Main help missing SERVER")
 		}
-		if !strings.Contains(mainHelp, "RUNNER MODE:") {
-			t.Error("Main help missing RUNNER MODE")
+		if !strings.Contains(mainHelp, "RUNNER (TUI):") {
+			t.Error("Main help missing RUNNER")
 		}
 		if !strings.Contains(mainHelp, "MCP MODE:") {
 			t.Error("Main help missing MCP MODE")
@@ -214,12 +214,12 @@ func TestHelpContent(t *testing.T) {
 		}
 	})
 
-	t.Run("main help contains zero-arg shorthand", func(t *testing.T) {
-		if !strings.Contains(mainHelp, "ZERO-ARG SHORTHAND:") {
-			t.Error("Main help missing ZERO-ARG SHORTHAND section")
+	t.Run("main help contains runner TUI section", func(t *testing.T) {
+		if !strings.Contains(mainHelp, "RUNNER (TUI):") {
+			t.Error("Main help missing RUNNER (TUI) section")
 		}
-		if !strings.Contains(mainHelp, "brain                           Start runner TUI for all projects") {
-			t.Error("Main help missing zero-arg example")
+		if !strings.Contains(mainHelp, "brain start") {
+			t.Error("Main help missing brain start example")
 		}
 	})
 
@@ -370,7 +370,7 @@ func TestHelpOutputFormat(t *testing.T) {
 			ShowHelp("")
 		})
 
-		headers := []string{"USAGE:", "SERVER:", "RUNNER MODE:", "MCP MODE:", "FLAGS:", "EXAMPLES:"}
+		headers := []string{"USAGE:", "SERVER:", "RUNNER (TUI):", "MCP MODE:", "FLAGS:", "EXAMPLES:"}
 		for _, header := range headers {
 			if !strings.Contains(output, header) {
 				t.Errorf("Missing header: %s", header)

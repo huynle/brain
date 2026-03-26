@@ -11,10 +11,13 @@ A single command for server, runner, MCP, and management operations.
 USAGE:
   brain [global-flags] <command> [command-flags] [args]
 
-ZERO-ARG SHORTHAND:
+RUNNER (TUI):
   brain                           Start runner TUI for all projects
   brain <project>                 Start runner TUI for specific project
-  brain all --max-parallel 5      Start runner TUI for all projects with flags
+  brain start                     Start runner TUI for all projects
+  brain start <project>           Start runner TUI for specific project
+  brain start all                 Start runner TUI for all projects
+  brain start all --max-parallel 5  With custom parallelism
 
 SERVER:
   brain server                    Start API server (foreground)
@@ -26,12 +29,7 @@ SERVER:
   brain server health             Query /health endpoint
   brain server --port 3000        Start on custom port
 
-RUNNER MODE:
-  brain run <project>             Start runner for project
-  brain run start <project>       Start runner
-  brain run stop <project>        Stop runner
-  brain run status <project>      Show runner status
-  brain run logs [-f]             Show runner logs
+RUNNER MANAGEMENT:
   brain run list <project>        List all tasks
   brain run ready <project>       List ready tasks
   brain run features <project>    List features
@@ -39,14 +37,6 @@ RUNNER MODE:
 
 MCP MODE:
   brain mcp                       Start MCP stdio server
-
-SERVER LIFECYCLE (aliases):
-  brain start                     Alias for: brain server start
-  brain stop                      Alias for: brain server stop
-  brain restart                   Alias for: brain server restart
-  brain status                    Alias for: brain server status
-  brain health                    Alias for: brain server health
-  brain logs [-f]                 Alias for: brain server logs
 
 SETUP & CONFIG:
   brain init [--force]            Initialize ~/.brain directory
@@ -71,15 +61,23 @@ GLOBAL FLAGS:
 EXAMPLES:
   # Start runner TUI for all projects
   brain
+  brain start
+  brain start all
 
   # Start runner TUI for specific project
   brain myproject
+  brain start myproject
 
-  # Start API server
+  # Start API server (foreground)
   brain server
 
-  # Start API server as daemon on custom port
-  brain server --daemon --port 3000
+  # Start API server as background daemon
+  brain server start
+  brain server start --port 3000
+
+  # Stop/restart server
+  brain server stop
+  brain server restart
 
   # Initialize brain directory
   brain init

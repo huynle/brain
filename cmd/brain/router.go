@@ -70,12 +70,8 @@ var builtinCommands = map[string]bool{
 	"mcp":           true,
 	"run":           true,
 	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
-	"start":         true,
-	"stop":          true,
-	"restart":       true,
-	"status":        true,
-	"health":        true,
-	"logs":          true,
+	"start":         true, // start runner TUI for a project
+	"stop":          true, // stop runner for a project
 	"dev":           true,
 	"init":          true,
 	"doctor":        true,
@@ -175,17 +171,16 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	case "server":
 		return parseServerCommand(cmdArgs)
 	case "start":
-		return parseStartCommand(cmdArgs)
+		// "brain start <project>" → runner TUI for project
+		// "brain start all" → runner TUI for all projects
+		// "brain start" (no args) → runner TUI for all projects
+		if len(cmdArgs) == 0 {
+			return newRunnerTUICommand("all", []string{})
+		}
+		return newRunnerTUICommand(cmdArgs[0], cmdArgs[1:])
 	case "stop":
+		// "brain stop <project>" → stop runner for project (stub for now)
 		return parseStopCommand(cmdArgs)
-	case "restart":
-		return parseRestartCommand(cmdArgs)
-	case "status":
-		return parseStatusCommand(cmdArgs)
-	case "health":
-		return parseHealthCommand(cmdArgs)
-	case "logs":
-		return parseLogsCommand(cmdArgs)
 	case "init":
 		return parseInitCommand(cmdArgs)
 	case "doctor":

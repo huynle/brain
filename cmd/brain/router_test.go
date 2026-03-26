@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
@@ -57,14 +58,15 @@ func TestRoute_ProjectName_RoutesToRunnerTUI(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"server", "mcp", "run", "runner", "start", "stop", "restart",
-		"status", "health", "logs", "dev", "init", "doctor",
+		"server", "mcp", "run", "runner", "start", "stop",
+		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "help",
 	}
 
-	// "runner" is an alias for "run", so its Type() returns "run"
+	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
 		"runner": "run",
+		"start":  "runner_tui", // "brain start" → runner TUI for all projects
 	}
 
 	for _, builtin := range builtins {
@@ -75,11 +77,6 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			cmdType := cmd.Type()
-			// Built-in commands should not route to runner_tui
-			if cmdType == "runner_tui" {
-				t.Errorf("builtin %q should not route to runner_tui", builtin)
-			}
-			// Should route to the builtin command type (or its alias)
 			expected := builtin
 			if alias, ok := aliasExpected[builtin]; ok {
 				expected = alias
@@ -157,6 +154,39 @@ func TestRoute_ServerSubcommands(t *testing.T) {
 			}
 			if cmd.Type() != tt.wantType {
 				t.Errorf("Type() = %q, want %q", cmd.Type(), tt.wantType)
+			}
+		})
+	}
+}
+
+// Test: "brain start <project>" routes to runner TUI
+func TestRoute_StartProject(t *testing.T) {
+	tests := []struct {
+		args        []string
+		wantType    string
+		wantProject string
+	}{
+		{[]string{"start"}, "runner_tui", "all"},
+		{[]string{"start", "ft857"}, "runner_tui", "ft857"},
+		{[]string{"start", "all"}, "runner_tui", "all"},
+		{[]string{"start", "my-project"}, "runner_tui", "my-project"},
+	}
+
+	for _, tt := range tests {
+		name := strings.Join(tt.args, " ")
+		t.Run(name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd.Type() != tt.wantType {
+				t.Errorf("Type() = %q, want %q", cmd.Type(), tt.wantType)
+			}
+			// Verify the project is correct
+			if tuiCmd, ok := cmd.(*commands.RunnerTUICommand); ok {
+				if tuiCmd.Project != tt.wantProject {
+					t.Errorf("Project = %q, want %q", tuiCmd.Project, tt.wantProject)
+				}
 			}
 		})
 	}

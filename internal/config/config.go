@@ -23,6 +23,7 @@ type Config struct {
 	EnableAuth bool
 	CORSOrigin string
 	LogLevel   string
+	OAuthPIN   string // Optional PIN for consent page protection
 }
 
 // Load reads configuration from environment variables with sensible defaults.
@@ -37,6 +38,7 @@ func Load() Config {
 		EnableAuth: getEnvBool("ENABLE_AUTH", false),
 		CORSOrigin: getEnv("CORS_ORIGIN", "*"),
 		LogLevel:   getEnv("LOG_LEVEL", "info"),
+		OAuthPIN:   getEnv("OAUTH_PIN", ""),
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
@@ -110,6 +111,11 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
 
+	// ─── OAuth ─────────────────────────────────────────────────────
+	oauthStore := oauth.NewStore()
+	oauthHandler := oauth.NewHandler(oauthStore)
+	oauth.RegisterRoutes(router, oauthHandler)
+
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
 	srv := &http.Server{
@@ -130,6 +136,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			"brain_dir", opts.BrainDir,
 			"db_path", dbPath,
 			"auth_enabled", opts.EnableAuth,
+			"oauth_enabled", true,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err

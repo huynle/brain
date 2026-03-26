@@ -129,15 +129,24 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 		t.Fatalf("Execute() failed: %v", err)
 	}
 
-	// Verify it's gone
+	// Verify it's soft-revoked (still exists but has revoked_at set)
 	store, _ = storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
 	defer store.Close()
-	_, err = store.GetTokenByName(ctx, "revoke-me")
-	if err == nil {
-		t.Error("expected error after revoke, got nil")
+	retrieved, err := store.GetTokenByName(ctx, "revoke-me")
+	if err != nil {
+		t.Fatalf("GetTokenByName after revoke should still find token: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("expected 'not found' error, got: %v", err)
+	if retrieved.RevokedAt == "" {
+		t.Error("expected RevokedAt to be set after revoke")
+	}
+
+	// Verify it's excluded from default list
+	tokens, err := store.ListTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListTokens failed: %v", err)
+	}
+	if len(tokens) != 0 {
+		t.Errorf("expected 0 tokens in default list after revoke, got %d", len(tokens))
 	}
 }
 

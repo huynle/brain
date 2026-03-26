@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -123,6 +124,99 @@ func TestCreateToken_DuplicateToken(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ValidateToken
+// ---------------------------------------------------------------------------
+
+func TestValidateToken_Success(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "validate-me", tokenValue)
+
+	// Validate should return the token
+	token, err := s.ValidateToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+	if token == nil {
+		t.Fatal("expected token, got nil")
+	}
+	if token.Name != "validate-me" {
+		t.Errorf("name = %q, want %q", token.Name, "validate-me")
+	}
+	if token.Token != tokenValue {
+		t.Errorf("token value should be the full token")
+	}
+}
+
+func TestValidateToken_RevokedToken(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "revoke-validate", tokenValue)
+
+	// Revoke the token
+	err := s.RevokeToken(ctx, "revoke-validate")
+	if err != nil {
+		t.Fatalf("RevokeToken failed: %v", err)
+	}
+
+	// ValidateToken should fail for revoked token
+	token, err := s.ValidateToken(ctx, tokenValue)
+	if err == nil {
+		t.Fatal("expected error for revoked token, got nil")
+	}
+	if token != nil {
+		t.Errorf("expected nil token for revoked, got %v", token)
+	}
+}
+
+func TestValidateToken_UnknownToken(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// ValidateToken should fail for unknown token
+	token, err := s.ValidateToken(ctx, "nonexistent-token-value")
+	if err == nil {
+		t.Fatal("expected error for unknown token, got nil")
+	}
+	if token != nil {
+		t.Errorf("expected nil token for unknown, got %v", token)
+	}
+}
+
+func TestValidateToken_UpdatesLastUsed(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "last-used-test", tokenValue)
+
+	// Validate the token
+	_, err := s.ValidateToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+
+	// Give the async goroutine time to complete
+	time.Sleep(100 * time.Millisecond)
+
+	// Check that last_used was updated
+	var lastUsed string
+	err = s.DB().QueryRowContext(ctx,
+		"SELECT COALESCE(last_used, '') FROM api_tokens WHERE name = ?", "last-used-test",
+	).Scan(&lastUsed)
+	if err != nil {
+		t.Fatalf("query last_used failed: %v", err)
+	}
+	if lastUsed == "" {
+		t.Error("last_used should be set after ValidateToken")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ListTokens
 // ---------------------------------------------------------------------------
 
@@ -157,6 +251,75 @@ func TestListTokens_Success(t *testing.T) {
 	}
 	if tokens[0].CreatedAt == "" {
 		t.Error("token CreatedAt should not be empty")
+	}
+}
+
+func TestListTokens_ReturnsPrefix(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "prefix-test", tokenValue)
+
+	tokens, err := s.ListTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListTokens failed: %v", err)
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens, want 1", len(tokens))
+	}
+
+	// Token should be prefix only (8 chars)
+	if len(tokens[0].Token) != 8 {
+		t.Errorf("listed token length = %d, want 8 (prefix only)", len(tokens[0].Token))
+	}
+	if tokens[0].Token != tokenValue[:8] {
+		t.Errorf("listed token = %q, want prefix %q", tokens[0].Token, tokenValue[:8])
+	}
+}
+
+func TestListTokens_ExcludesRevokedByDefault(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token1, _ := s.GenerateToken()
+	token2, _ := s.GenerateToken()
+
+	_ = s.CreateToken(ctx, "active-token", token1)
+	_ = s.CreateToken(ctx, "revoked-token", token2)
+	_ = s.RevokeToken(ctx, "revoked-token")
+
+	// Default: exclude revoked
+	tokens, err := s.ListTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListTokens failed: %v", err)
+	}
+	if len(tokens) != 1 {
+		t.Fatalf("got %d tokens, want 1 (revoked should be excluded)", len(tokens))
+	}
+	if tokens[0].Name != "active-token" {
+		t.Errorf("name = %q, want %q", tokens[0].Name, "active-token")
+	}
+}
+
+func TestListTokens_IncludeRevoked(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token1, _ := s.GenerateToken()
+	token2, _ := s.GenerateToken()
+
+	_ = s.CreateToken(ctx, "active-token", token1)
+	_ = s.CreateToken(ctx, "revoked-token", token2)
+	_ = s.RevokeToken(ctx, "revoked-token")
+
+	// Include revoked
+	tokens, err := s.ListTokens(ctx, true)
+	if err != nil {
+		t.Fatalf("ListTokens(includeRevoked) failed: %v", err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("got %d tokens, want 2 (including revoked)", len(tokens))
 	}
 }
 
@@ -218,33 +381,101 @@ func TestGetTokenByName_NotFound(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// DeleteToken
+// RevokeToken (soft-revocation)
 // ---------------------------------------------------------------------------
 
-func TestDeleteToken_Success(t *testing.T) {
+func TestRevokeToken_Success(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "revoke-me", tokenValue)
+
+	err := s.RevokeToken(ctx, "revoke-me")
+	if err != nil {
+		t.Fatalf("RevokeToken failed: %v", err)
+	}
+
+	// Token should still exist in DB but have revoked_at set
+	var revokedAt string
+	err = s.DB().QueryRowContext(ctx,
+		"SELECT COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?", "revoke-me",
+	).Scan(&revokedAt)
+	if err != nil {
+		t.Fatalf("query revoked_at failed: %v", err)
+	}
+	if revokedAt == "" {
+		t.Error("revoked_at should be set after RevokeToken")
+	}
+
+	// Token should be retrievable by name (it's still in DB)
+	retrieved, err := s.GetTokenByName(ctx, "revoke-me")
+	if err != nil {
+		t.Fatalf("GetTokenByName after revoke should still work: %v", err)
+	}
+	if retrieved.RevokedAt == "" {
+		t.Error("RevokedAt field should be set on retrieved token")
+	}
+}
+
+func TestRevokeToken_NotFound(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	err := s.RevokeToken(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent token, got nil")
+	}
+}
+
+func TestRevokeToken_AlreadyRevoked(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "double-revoke", tokenValue)
+
+	// Revoke once
+	err := s.RevokeToken(ctx, "double-revoke")
+	if err != nil {
+		t.Fatalf("first RevokeToken failed: %v", err)
+	}
+
+	// Revoke again should fail (already revoked)
+	err = s.RevokeToken(ctx, "double-revoke")
+	if err == nil {
+		t.Fatal("expected error for already revoked token, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DeleteTokenPermanent
+// ---------------------------------------------------------------------------
+
+func TestDeleteTokenPermanent_Success(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
 	_ = s.CreateToken(ctx, "delete-me", token)
 
-	err := s.DeleteToken(ctx, "delete-me")
+	err := s.DeleteTokenPermanent(ctx, "delete-me")
 	if err != nil {
-		t.Fatalf("DeleteToken failed: %v", err)
+		t.Fatalf("DeleteTokenPermanent failed: %v", err)
 	}
 
 	// Verify token is gone
 	_, err = s.GetTokenByName(ctx, "delete-me")
 	if err == nil {
-		t.Error("token should be deleted")
+		t.Error("token should be permanently deleted")
 	}
 }
 
-func TestDeleteToken_NotFound(t *testing.T) {
+func TestDeleteTokenPermanent_NotFound(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
 
-	err := s.DeleteToken(ctx, "nonexistent")
+	err := s.DeleteTokenPermanent(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent token, got nil")
 	}

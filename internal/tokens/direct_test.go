@@ -115,10 +115,20 @@ func TestRevokeTokenDirect(t *testing.T) {
 	err = RevokeTokenDirect(brainDir, "revoke-me")
 	require.NoError(t, err)
 
-	// Verify it's gone
+	// Verify it's excluded from default list (soft-revoked, not deleted)
 	tokens, err := ListTokensDirect(brainDir)
 	require.NoError(t, err)
-	assert.Empty(t, tokens)
+	assert.Empty(t, tokens, "revoked tokens should be excluded from default list")
+
+	// Verify the token still exists in the database (soft revocation)
+	dbPath := filepath.Join(brainDir, ".zk", "brain.db")
+	store, err := storage.New(dbPath)
+	require.NoError(t, err)
+	defer store.Close()
+
+	retrieved, err := store.GetTokenByName(context.Background(), "revoke-me")
+	require.NoError(t, err)
+	assert.NotEmpty(t, retrieved.RevokedAt, "revoked_at should be set")
 }
 
 func TestRevokeTokenDirect_NotFound(t *testing.T) {

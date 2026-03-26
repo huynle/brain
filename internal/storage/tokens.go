@@ -33,17 +33,55 @@ func (s *StorageLayer) CreateToken(ctx context.Context, name, token string) erro
 // Token represents an API token.
 type Token struct {
 	Name      string
-	Token     string
+	Token     string // Full value on create/validate; prefix (8 chars) on list
 	CreatedAt string
 	LastUsed  string
 	RevokedAt string
 }
 
-// ListTokens returns all tokens.
-func (s *StorageLayer) ListTokens(ctx context.Context) ([]Token, error) {
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens ORDER BY created_at DESC",
-	)
+// tokenPrefix returns the first 8 characters of a token value for safe display.
+func tokenPrefix(token string) string {
+	if len(token) <= 8 {
+		return token
+	}
+	return token[:8]
+}
+
+// ValidateToken looks up a token by its value, rejects revoked tokens,
+// and updates last_used on success. Returns the full Token on success.
+func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*Token, error) {
+	var t Token
+	var revokedAt sql.NullString
+	err := s.db.QueryRowContext(ctx,
+		`SELECT name, token, created_at, COALESCE(last_used, '') 
+         FROM api_tokens WHERE token = ? AND revoked_at IS NULL`,
+		tokenValue,
+	).Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("token not found or revoked")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("validate token: %w", err)
+	}
+	_ = revokedAt // not scanned since WHERE filters it
+
+	// Update last_used asynchronously
+	go s.UpdateTokenLastUsed(context.Background(), t.Name)
+
+	return &t, nil
+}
+
+// ListTokens returns non-revoked tokens by default. Token values are masked
+// to show only the first 8 characters. Set includeRevoked to true to include
+// revoked tokens in the result.
+func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) ([]Token, error) {
+	query := "SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens"
+	if len(includeRevoked) == 0 || !includeRevoked[0] {
+		query += " WHERE revoked_at IS NULL"
+	}
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query tokens: %w", err)
 	}
@@ -55,6 +93,8 @@ func (s *StorageLayer) ListTokens(ctx context.Context) ([]Token, error) {
 		if err := rows.Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed, &t.RevokedAt); err != nil {
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
+		// Mask token value to prefix only
+		t.Token = tokenPrefix(t.Token)
 		tokens = append(tokens, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -83,8 +123,31 @@ func (s *StorageLayer) GetTokenByName(ctx context.Context, name string) (*Token,
 	return &t, nil
 }
 
-// DeleteToken deletes a token by name.
-func (s *StorageLayer) DeleteToken(ctx context.Context, name string) error {
+// RevokeToken soft-revokes a token by setting revoked_at. The token remains
+// in the database but will be rejected by ValidateToken and excluded from
+// ListTokens by default.
+func (s *StorageLayer) RevokeToken(ctx context.Context, name string) error {
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE api_tokens SET revoked_at = datetime('now') WHERE name = ? AND revoked_at IS NULL",
+		name,
+	)
+	if err != nil {
+		return fmt.Errorf("revoke token: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("get rows affected: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("token not found: %s", name)
+	}
+	return nil
+}
+
+// DeleteTokenPermanent permanently removes a token from the database.
+// For normal revocation, use RevokeToken instead.
+func (s *StorageLayer) DeleteTokenPermanent(ctx context.Context, name string) error {
 	result, err := s.db.ExecContext(ctx,
 		"DELETE FROM api_tokens WHERE name = ?",
 		name,

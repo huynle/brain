@@ -76,10 +76,10 @@ func RevokeTokenDirect(brainDir, name string) error {
 	}
 	defer store.Close()
 
-	// Delete the token
+	// Soft-revoke the token (sets revoked_at instead of deleting)
 	ctx := context.Background()
-	if err := store.DeleteToken(ctx, name); err != nil {
-		return fmt.Errorf("delete token: %w", err)
+	if err := store.RevokeToken(ctx, name); err != nil {
+		return fmt.Errorf("revoke token: %w", err)
 	}
 
 	return nil

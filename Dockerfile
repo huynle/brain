@@ -1,47 +1,61 @@
-# Brain API - Docker Image
-# Multi-stage build using official Bun image
+# Brain API - Multi-stage Docker Build
+# Produces a minimal image with just the brain-api binary.
 
-# --- Stage 1: Install dependencies ---
-FROM oven/bun:1 AS deps
+# Stage 1: Build
+FROM golang:1.24-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+
+# Cache dependencies
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy source and build
+COPY . .
+
+ARG VERSION=dev
+ARG COMMIT=unknown
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
+    -o /bin/brain-api ./cmd/brain-api
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
+    -o /bin/brain-runner ./cmd/brain-runner
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
+    -o /bin/brain ./cmd/brain
+
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
+    -o /bin/brain-mcp ./cmd/brain-mcp
+
+# Stage 2: Runtime
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -S brain && adduser -S brain -G brain
+
 WORKDIR /app
 
-COPY package.json bun.lock ./
-RUN bun install --frozen-lockfile --production
+# Copy binaries from builder
+COPY --from=builder /bin/brain-api /usr/local/bin/brain-api
+COPY --from=builder /bin/brain-runner /usr/local/bin/brain-runner
+COPY --from=builder /bin/brain /usr/local/bin/brain
+COPY --from=builder /bin/brain-mcp /usr/local/bin/brain-mcp
 
-# --- Stage 2: Download zk CLI ---
-FROM debian:bookworm-slim AS zk
-ARG ZK_VERSION=0.15.2
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && rm -rf /var/lib/apt/lists/*
-RUN ARCH=$(dpkg --print-architecture) && \
-    curl -fsSL "https://github.com/zk-org/zk/releases/download/v${ZK_VERSION}/zk-v${ZK_VERSION}-linux-${ARCH}.tar.gz" \
-    | tar -xz -C /usr/local/bin zk && \
-    chmod +x /usr/local/bin/zk
-
-# --- Stage 3: Production runtime ---
-FROM oven/bun:1 AS runtime
-WORKDIR /app
-
-# Install curl for healthcheck
-RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
-
-# Copy zk binary from builder
-COPY --from=zk /usr/local/bin/zk /usr/local/bin/zk
-
-COPY --from=deps /app/node_modules ./node_modules
-COPY package.json ./
-COPY tsconfig.json ./
-COPY src/ ./src/
-
-# Brain data volume mount point
-RUN mkdir -p /data/brain
-
+# Default brain directory
+RUN mkdir -p /data/brain && chown -R brain:brain /data/brain
 ENV BRAIN_DIR=/data/brain
-ENV PORT=3333
-ENV HOST=0.0.0.0
+
+USER brain
 
 EXPOSE 3333
 
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -sf http://localhost:3333/api/v1/health || exit 1
-
-CMD ["bun", "run", "src/index.ts"]
+ENTRYPOINT ["brain-api"]

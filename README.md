@@ -4,7 +4,7 @@
 
 Brain is a REST API + MCP server that gives AI coding agents (Claude Code, OpenCode, etc.) long-term memory, structured knowledge management, and an autonomous task runner that can execute multi-step plans while you sleep. Think of it as a second brain for your AI workflow — it remembers decisions, tracks dependencies, schedules recurring work, and orchestrates parallel execution across projects.
 
-Built with [Bun](https://bun.sh), [Hono](https://hono.dev), and [Ink](https://github.com/vadimdemedes/ink).
+Built with Go and [Bubbletea](https://github.com/charmbracelet/bubbletea).
 
 ## Why Brain?
 
@@ -84,49 +84,48 @@ AI coding agents are powerful but stateless — they forget everything between s
 ### Quick Install (Recommended)
 
 ```bash
-# Install globally with bun
-bun add -g @brain/api
+# Install with Go
+go install github.com/huynle/brain-api/cmd/brain@latest
+go install github.com/huynle/brain-api/cmd/brain-api@latest
+go install github.com/huynle/brain-api/cmd/brain-runner@latest
 
-# Or run directly with bunx (no install needed)
-bunx @brain/api brain --help
+# Or download pre-built binaries from GitHub Releases
+# https://github.com/huynle/brain-api/releases
 ```
 
-This installs the following CLI commands:
+This provides the following CLI commands:
 - `brain` - Server management and diagnostics
-- `brain-server` - API server (used internally)
+- `brain-api` - API server (used internally)
 - `brain-runner` - Task runner with TUI
 
 ### From Source
 
 ```bash
-# Clone and install dependencies
-git clone https://github.com/huynle/brain.git
-cd brain
-bun install
+# Clone and build
+git clone https://github.com/huynle/brain-api.git
+cd brain-api
+make build
 
-# Option 1: Link for development (updates automatically)
-bun link
+# Or use the justfile
+just go-build
 
-# Option 2: Build standalone binaries to ~/.local/bin
-just install
+# Binaries are created in ./bin/
+# Optionally, copy to your PATH:
+cp ./bin/* ~/.local/bin/
 ```
 
-If using `just install`, make sure `~/.local/bin` is in your `PATH`:
+If copying to `~/.local/bin`, make sure it's in your `PATH`:
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
 ### Requirements
 
-- [Bun](https://bun.sh) >= 1.0.0
-- [zk](https://github.com/mickael-menu/zk) CLI (for Zettelkasten operations)
+- [Go](https://go.dev) >= 1.21
 
 To verify your installation:
 
 ```bash
-# Check zk is available
-zk --version
-
 # Run diagnostics
 brain doctor -v
 ```
@@ -137,30 +136,36 @@ brain doctor -v
 
 ```bash
 # Start with hot reload
-bun run dev
+make dev
+
+# Or using justfile
+just go-dev
 ```
 
 ### Production
 
 ```bash
 # Start the server
-bun run start
+./bin/brain-api
 
 # Or build first
-bun run build
+make build
+./bin/brain-api
 ```
 
 ### Testing
 
 ```bash
 # Run tests
-bun test
+go test ./...
+make test
 
-# Type checking
-bun run typecheck
+# Type checking (static analysis)
+go vet ./...
+make typecheck
 
 # Linting
-bun run lint
+make lint
 ```
 
 ### API Endpoints
@@ -198,7 +203,10 @@ bun run lint
 
 ```bash
 # Start the API server
-bun run start
+./bin/brain-api
+
+# Or with make
+make dev
 
 # Get ready tasks for a project
 curl http://localhost:3333/api/v1/tasks/myproject/ready
@@ -209,7 +217,7 @@ curl -X POST http://localhost:3333/api/v1/tasks/abc123/start
 # Save a note to the brain
 curl -X POST http://localhost:3333/api/v1/entries \
   -H 'Content-Type: application/json' \
-  -d '{"type": "decision", "title": "Use Bun over Node", "content": "..."}'
+  -d '{"type": "decision", "title": "Use Go over TypeScript", "content": "..."}'
 
 # Search for related context
 curl 'http://localhost:3333/api/v1/search?q=authentication&type=decision'
@@ -285,7 +293,7 @@ mkcert -install       # One-time CA setup
 mkcert localhost 127.0.0.1  # Generates localhost.pem and localhost-key.pem
 
 # Start with TLS
-ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem bun run dev
+ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain-api
 ```
 
 **Note:** Local HTTPS works for browser access but NOT for Claude's custom connector (see above).
@@ -362,18 +370,18 @@ The built-in task runner (`brain-runner`) processes tasks with dependency tracki
 
 ```bash
 # Start the runner in foreground mode
-bun run src/runner/index.ts start my-project -f
+./bin/brain-runner start my-project -f
 
 # Run with interactive TUI dashboard
-bun run src/runner/index.ts start my-project --tui
+./bin/brain-runner start my-project --tui
 
 # List available commands
-bun run src/runner/index.ts --help
+./bin/brain-runner --help
 ```
 
 ### TUI Dashboard
 
-The `--tui` flag enables an interactive terminal dashboard built with [Ink](https://github.com/vadimdemedes/ink):
+The `--tui` flag enables an interactive terminal dashboard built with [Bubbletea](https://github.com/charmbracelet/bubbletea):
 
 ```
 ┌─ my-project ──────────────────────────────────────────────────────────────┐
@@ -493,30 +501,11 @@ brain doctor --fix --dry-run
 
 | Category | Checks |
 |----------|--------|
-| **ZK CLI** | CLI available, correct version |
-| **ZK Notebook** | `.zk` directory exists |
-| **ZK Config** | `id-length = 8`, `id-charset = alphanum` |
-| **Directory Structure** | `projects/`, `global/` directories |
-| **Templates** | All 12 entry type templates present and valid |
-
-#### Entry Templates
-
-Doctor validates these templates in `.zk/templates/`:
-
-| Template | Entry Type |
-|----------|------------|
-| `summary.md` | Session summaries, key decisions |
-| `report.md` | Analysis reports, code reviews |
-| `walkthrough.md` | Code explanations, architecture overviews |
-| `plan.md` | Implementation plans, designs |
-| `pattern.md` | Reusable patterns (supports `global: true`) |
-| `learning.md` | Best practices (supports `global: true`) |
-| `idea.md` | Ideas for future exploration |
-| `scratch.md` | Temporary working notes |
-| `decision.md` | Architectural decisions, ADRs |
-| `exploration.md` | Investigation notes, research |
-| `execution.md` | Execution tracking |
-| `task.md` | Task entries with dependencies |
+| **Storage Layer** | SQLite database accessible and healthy |
+| **Database Health** | Tables exist, migrations applied |
+| **Directory Permissions** | Brain directory readable and writable |
+| **Tool Versions** | Go version (optional, skippable) |
+| **OpenCode Integration** | Plugin installed and configured |
 
 ### Runner Commands
 
@@ -578,7 +567,7 @@ brain-runner logs [-f]
                                         │ MCP / HTTP
                            ┌────────────▼────────────┐
                            │     Brain API Server     │
-                           │  REST + MCP (Hono/Bun)   │
+                           │    (Go standard lib)     │
                            │  OAuth 2.1 + TLS         │
                            ├─────────────────────────┤
                             │  BrainService            │
@@ -589,8 +578,8 @@ brain-runner logs [-f]
                     ┌───────────────────┼───────────────────┐
                     ▼                   ▼                   ▼
            ┌──────────────┐   ┌──────────────┐   ┌──────────────┐
-           │  zk CLI      │   │  Markdown    │   │  SSE Stream  │
-           │  (CRUD)      │   │  ~/docs/brain│   │  (real-time) │
+           │  SQLite DB   │   │  Markdown    │   │  SSE Stream  │
+           │  (storage)   │   │  ~/docs/brain│   │  (real-time) │
            └──────────────┘   └──────────────┘   └──────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
@@ -606,7 +595,7 @@ brain-runner logs [-f]
 └──────────────────────────────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────────────────────────────┐
-│                         TUI Dashboard (Ink)                       │
+│                    TUI Dashboard (Bubbletea)                      │
 ├──────────────────────────────────────────────────────────────────┤
 │  StatusBar  │  TaskTree    │  LogViewer  │  TaskDetail           │
 │  (stats,    │  (lanes,     │  (real-time │  (properties,         │

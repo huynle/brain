@@ -1,0 +1,28 @@
+# Brain API - GoReleaser Docker Build
+# Used by goreleaser to create Docker images from pre-built binaries.
+# For manual builds, use the standard Dockerfile instead.
+
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata
+
+# Create non-root user
+RUN addgroup -S brain && adduser -S brain -G brain
+
+WORKDIR /app
+
+# Copy pre-built binaries from goreleaser
+COPY brain-api /usr/local/bin/brain-api
+COPY brain-runner /usr/local/bin/brain-runner
+COPY brain /usr/local/bin/brain
+COPY brain-mcp /usr/local/bin/brain-mcp
+
+# Default brain directory
+RUN mkdir -p /data/brain && chown -R brain:brain /data/brain
+ENV BRAIN_DIR=/data/brain
+
+USER brain
+
+EXPOSE 3333
+
+ENTRYPOINT ["brain-api"]

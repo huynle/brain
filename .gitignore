@@ -1,7 +1,7 @@
-node_modules/
-dist/
-*.log
+# macOS
 .DS_Store
+
+# Environment variables
 .env
 .env.local
 
@@ -10,3 +10,34 @@ dist/
 
 # Local git worktrees
 .worktrees/
+
+# Go build artifacts
+bin/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+coverage.out
+coverage.html
+*.coverprofile
+__debug_bin*
+vendor/
+
+# Compiled binaries at repo root (from go build without -o)
+/brain-api
+/brain-runner
+/brain-mcp
+/brain
+
+# GoReleaser output
+dist/
+
+# Benchmark and profiling
+*.prof
+*.bench
+runner-*.json
+runner-*.pid
+running-*.json

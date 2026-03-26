@@ -5,71 +5,60 @@ default:
     @just --list
 
 # =============================================================================
-# Development
+# Go Development
 # =============================================================================
 
-# Run API server (dev mode with hot reload)
-dev:
-    bun run --watch src/index.ts
+# Build all Go binaries
+go-build:
+    make build
 
-# Run API server (production mode)
-serve:
-    bun run src/index.ts
+# Run Go tests
+go-test:
+    make test
 
-# Run tests
-test:
-    bun test
+# Run Go tests with coverage
+go-cover:
+    make test-cover
 
-# Run tests in watch mode
-test-watch:
-    bun test --watch
+# Run Go linter (golangci-lint)
+go-lint:
+    make lint
 
-# Type check
-typecheck:
-    bun run typecheck
+# Run go vet (static analysis)
+go-vet:
+    make typecheck
 
-# Run all checks
-check: typecheck test
+# Run all Go checks (vet + test + lint)
+go-check:
+    make check
 
-# =============================================================================
-# Ad-hoc Testing
-# =============================================================================
+# Format Go code
+go-fmt:
+    make fmt
 
-# Test brain CLI
-brain *args:
-    bun run src/cli/brain.ts {{args}}
+# Tidy Go dependencies
+go-tidy:
+    make tidy
 
-# Test brain-runner CLI
-runner *args:
-    bun run src/runner/index.ts {{args}}
+# Clean Go build artifacts
+go-clean:
+    make clean
 
-# Check API health
-health:
-    curl -s http://localhost:3333/health | jq .
+# Run brain-api server (Go)
+go-dev:
+    go run ./cmd/brain-api
 
 # =============================================================================
 # Installation
 # =============================================================================
 
-# Build and install CLI tools to ~/.local/bin (replaces existing)
-install: build-cli
-    mkdir -p ~/.local/bin
-    cp dist/brain ~/.local/bin/brain
-    cp dist/brain-server ~/.local/bin/brain-server
-    cp dist/brain-runner ~/.local/bin/brain-runner
-    chmod +x ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/brain-runner
-    @echo "Installed brain, brain-server, and brain-runner to ~/.local/bin"
+# Install Go binaries to GOPATH/bin
+install:
+    make install
 
-# Build standalone CLI executables
-build-cli:
-    bun build src/cli/brain.ts --compile --outfile dist/brain
-    bun build src/index.ts --compile --outfile dist/brain-server
-    bun build src/runner/index.ts --compile --outfile dist/brain-runner
-
-# Uninstall CLI tools
-uninstall:
-    rm -f ~/.local/bin/brain ~/.local/bin/brain-server ~/.local/bin/brain-runner
-    @echo "Removed brain, brain-server, and brain-runner from ~/.local/bin"
+# Check API health
+health:
+    curl -s http://localhost:3333/health | jq .
 
 # =============================================================================
 # Tunnel (FRP)

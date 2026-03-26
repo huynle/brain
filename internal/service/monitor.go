@@ -1,0 +1,516 @@
+package service
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/types"
+)
+
+// Type aliases for backward compatibility within the service package.
+type (
+	MonitorScope         = types.MonitorScope
+	MonitorTagResult     = types.MonitorTagResult
+	MonitorInfo          = types.MonitorInfo
+	CreateMonitorResult  = types.CreateMonitorResult
+	CreateMonitorOptions = types.CreateMonitorOptions
+	MonitorListFilter    = types.MonitorListFilter
+	MonitorFindResult    = types.MonitorFindResult
+	MonitorTemplate      = types.MonitorTemplate
+)
+
+// =============================================================================
+// Monitor Templates
+// =============================================================================
+
+// monitorTemplates is the registry of known monitor templates.
+var monitorTemplates = map[string]types.MonitorTemplate{
+	"blocked-inspector": {
+		ID:              "blocked-inspector",
+		Label:           "Blocked Task Inspector",
+		Description:     "Periodically checks for blocked tasks and attempts to unblock them",
+		DefaultSchedule: "*/15 * * * *",
+		DefaultMaxRuns:  10,
+		Tags:            []string{"scheduled", "inspector", "monitoring"},
+	},
+	"feature-review": {
+		ID:              "feature-review",
+		Label:           "Feature Code Review",
+		Description:     "Two-phase review: completeness against original requests + code quality",
+		DefaultSchedule: "",
+		Tags:            []string{"monitor", "review"},
+	},
+}
+
+// =============================================================================
+// Tag/Title Helpers
+// =============================================================================
+
+// describeScopeShort returns a short description of the scope.
+func describeScopeShort(scope types.MonitorScope) string {
+	switch scope.Type {
+	case "all":
+		return "all projects"
+	case "project":
+		return "project " + scope.Project
+	case "feature":
+		return "feature " + scope.FeatureID
+	default:
+		return "unknown"
+	}
+}
+
+// BuildMonitorTag generates a deterministic tag for monitor lookup.
+// e.g., "monitor:blocked-inspector:project:brain-api"
+func BuildMonitorTag(templateID string, scope types.MonitorScope) string {
+	switch scope.Type {
+	case "all":
+		return "monitor:" + templateID + ":all"
+	case "project":
+		return "monitor:" + templateID + ":project:" + scope.Project
+	case "feature":
+		return "monitor:" + templateID + ":feature:" + scope.FeatureID + ":" + scope.Project
+	default:
+		return "monitor:" + templateID + ":unknown"
+	}
+}
+
+// ParseMonitorTag parses a monitor tag back into templateId + scope.
+// Returns nil if the tag doesn't match the expected format.
+func ParseMonitorTag(tag string) *types.MonitorTagResult {
+	const prefix = "monitor:"
+	if !strings.HasPrefix(tag, prefix) {
+		return nil
+	}
+
+	rest := tag[len(prefix):]
+
+	// Try "templateId:all"
+	if idx := strings.Index(rest, ":all"); idx > 0 && rest[idx:] == ":all" {
+		templateID := rest[:idx]
+		if templateID == "" {
+			return nil
+		}
+		return &types.MonitorTagResult{
+			TemplateID: templateID,
+			Scope:      types.MonitorScope{Type: "all"},
+		}
+	}
+
+	// Try "templateId:feature:featureId:projectName"
+	// Must check feature before project since "feature" contains more colons
+	if featureIdx := strings.Index(rest, ":feature:"); featureIdx > 0 {
+		templateID := rest[:featureIdx]
+		featurePart := rest[featureIdx+len(":feature:"):]
+		colonIdx := strings.Index(featurePart, ":")
+		if colonIdx <= 0 {
+			return nil
+		}
+		featureID := featurePart[:colonIdx]
+		project := featurePart[colonIdx+1:]
+		if featureID == "" || project == "" {
+			return nil
+		}
+		return &types.MonitorTagResult{
+			TemplateID: templateID,
+			Scope:      types.MonitorScope{Type: "feature", FeatureID: featureID, Project: project},
+		}
+	}
+
+	// Try "templateId:project:projectName"
+	if projectIdx := strings.Index(rest, ":project:"); projectIdx > 0 {
+		templateID := rest[:projectIdx]
+		project := rest[projectIdx+len(":project:"):]
+		if project == "" {
+			return nil
+		}
+		return &types.MonitorTagResult{
+			TemplateID: templateID,
+			Scope:      types.MonitorScope{Type: "project", Project: project},
+		}
+	}
+
+	return nil
+}
+
+// BuildMonitorTitle generates a deterministic title for a monitor task.
+// e.g., "Monitor: Blocked Task Inspector (project brain-api)"
+func BuildMonitorTitle(label string, scope types.MonitorScope) string {
+	scopeLabel := describeScopeShort(scope)
+	return fmt.Sprintf("Monitor: %s (%s)", label, scopeLabel)
+}
+
+// =============================================================================
+// MonitorServiceImpl
+// =============================================================================
+
+// MonitorServiceImpl implements monitor operations using a BrainService.
+type MonitorServiceImpl struct {
+	brain api.BrainService
+}
+
+// NewMonitorService creates a new MonitorServiceImpl.
+func NewMonitorService(brain api.BrainService) *MonitorServiceImpl {
+	return &MonitorServiceImpl{brain: brain}
+}
+
+// ListTemplates returns all available monitor templates.
+func (s *MonitorServiceImpl) ListTemplates() []types.MonitorTemplate {
+	templates := make([]types.MonitorTemplate, 0, len(monitorTemplates))
+	for _, t := range monitorTemplates {
+		templates = append(templates, t)
+	}
+	return templates
+}
+
+// Create creates a new monitor task from a template.
+func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error) {
+	template, ok := monitorTemplates[templateID]
+	if !ok {
+		return nil, fmt.Errorf("unknown monitor template: %s", templateID)
+	}
+
+	// Check for existing monitor
+	existing, err := s.Find(ctx, templateID, scope)
+	if err != nil {
+		return nil, fmt.Errorf("check existing monitor: %w", err)
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("monitor already exists for template %q with this scope (id: %s)", templateID, existing.ID)
+	}
+
+	tag := BuildMonitorTag(templateID, scope)
+	title := BuildMonitorTitle(template.Label, scope)
+
+	// Determine project
+	var project string
+	if scope.Type == "project" {
+		project = scope.Project
+	} else if scope.Type == "feature" {
+		project = scope.Project
+	} else if opts != nil {
+		project = opts.Project
+	}
+
+	// Determine schedule
+	schedule := template.DefaultSchedule
+	if opts != nil && opts.Schedule != "" {
+		schedule = opts.Schedule
+	}
+
+	schedEnabled := true
+	completeOnIdle := true
+
+	tags := make([]string, 0, len(template.Tags)+1)
+	tags = append(tags, template.Tags...)
+	tags = append(tags, tag)
+
+	// Determine status: Blocked Inspector is always "active" (it runs on schedule).
+	// Other monitors inherit from feature task status if feature-scoped.
+	status := "active"
+	if templateID != "blocked-inspector" && scope.Type == "feature" && scope.FeatureID != "" && project != "" {
+		featureStatus, err := s.resolveFeatureTaskStatus(ctx, project, scope.FeatureID)
+		if err != nil {
+			return nil, fmt.Errorf("resolve feature status: %w", err)
+		}
+		status = featureStatus
+	}
+
+	// Build the direct_prompt for the agent
+	directPrompt := buildMonitorPrompt(templateID, scope)
+
+	// Default max_runs for recurring monitors (prevents infinite cycling)
+	var maxRuns *int
+	if template.DefaultMaxRuns > 0 {
+		v := template.DefaultMaxRuns
+		maxRuns = &v
+	}
+
+	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
+		Type:            "task",
+		Title:           title,
+		Content:         fmt.Sprintf("## Monitor Task\n\nTemplate: %s\nScope: %s\n\nThis task was created from a monitor template. It runs on schedule with complete_on_idle.", template.Label, describeScopeShort(scope)),
+		Schedule:        schedule,
+		ScheduleEnabled: &schedEnabled,
+		CompleteOnIdle:  &completeOnIdle,
+		ExecutionMode:   "current_branch",
+		DirectPrompt:    directPrompt,
+		MaxRuns:         maxRuns,
+		Tags:            tags,
+		FeatureID:       scope.FeatureID,
+		Project:         project,
+		Status:          status,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save monitor entry: %w", err)
+	}
+
+	return &types.CreateMonitorResult{
+		ID:    result.ID,
+		Path:  result.Path,
+		Title: title,
+	}, nil
+}
+
+// CreateForFeature creates a feature-review monitor as a dependency-gated one-shot task.
+// Unlike Create(), this sets status="pending" with depends_on pointing to all non-generated
+// tasks in the feature, so it only becomes ready when all feature tasks complete.
+func (s *MonitorServiceImpl) CreateForFeature(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error) {
+	template, ok := monitorTemplates[templateID]
+	if !ok {
+		return nil, fmt.Errorf("unknown monitor template: %s", templateID)
+	}
+
+	// Check for existing monitor
+	existing, err := s.Find(ctx, templateID, scope)
+	if err != nil {
+		return nil, fmt.Errorf("check existing monitor: %w", err)
+	}
+	if existing != nil {
+		return nil, fmt.Errorf("monitor already exists for template %q with this scope (id: %s)", templateID, existing.ID)
+	}
+
+	tag := BuildMonitorTag(templateID, scope)
+	title := BuildMonitorTitle(template.Label, scope)
+
+	// Get all non-generated tasks in the feature for depends_on
+	featureTasks, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		FeatureID: scope.FeatureID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list feature tasks: %w", err)
+	}
+
+	var dependsOn []string
+	for _, entry := range featureTasks.Entries {
+		// Skip generated tasks (monitors, review tasks, etc.)
+		if entry.Generated != nil && *entry.Generated {
+			continue
+		}
+		dependsOn = append(dependsOn, entry.Path)
+	}
+
+	tags := make([]string, 0, len(template.Tags)+1)
+	tags = append(tags, template.Tags...)
+	tags = append(tags, tag)
+
+	completeOnIdle := true
+	generated := true
+
+	// Build the direct_prompt for the review agent
+	directPrompt := buildMonitorPrompt(templateID, scope)
+
+	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
+		Type:           "task",
+		Title:          title,
+		Content:        fmt.Sprintf("## Feature Review Task\n\nTemplate: %s\nFeature: %s\nProject: %s\n\nThis task was created as a one-shot feature review. It becomes ready when all dependency tasks complete.", template.Label, scope.FeatureID, scope.Project),
+		Status:         "pending",
+		CompleteOnIdle: &completeOnIdle,
+		ExecutionMode:  "current_branch",
+		DirectPrompt:   directPrompt,
+		Tags:           tags,
+		FeatureID:      scope.FeatureID,
+		Project:        scope.Project,
+		DependsOn:      dependsOn,
+		Generated:      &generated,
+		GeneratedKind:  "feature_review",
+		GeneratedKey:   fmt.Sprintf("feature-review:%s", scope.FeatureID),
+		GeneratedBy:    "feature-completion-hook",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("save feature review entry: %w", err)
+	}
+
+	return &types.CreateMonitorResult{
+		ID:    result.ID,
+		Path:  result.Path,
+		Title: title,
+	}, nil
+}
+
+// Find finds an existing monitor for a template+scope combo (by tag lookup).
+func (s *MonitorServiceImpl) Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+	tag := BuildMonitorTag(templateID, scope)
+	result, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type: "task",
+		Tags: tag,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list monitors: %w", err)
+	}
+
+	if len(result.Entries) == 0 {
+		return nil, nil
+	}
+
+	entry := result.Entries[0]
+	enabled := entry.ScheduleEnabled == nil || *entry.ScheduleEnabled
+	return &types.MonitorFindResult{
+		ID:       entry.ID,
+		Path:     entry.Path,
+		Enabled:  enabled,
+		Schedule: entry.Schedule,
+	}, nil
+}
+
+// List lists all active monitors, optionally filtered.
+func (s *MonitorServiceImpl) List(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error) {
+	result, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type: "task",
+		Tags: "monitor",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list monitors: %w", err)
+	}
+
+	var monitors []types.MonitorInfo
+	for _, entry := range result.Entries {
+		// Find the monitor tag in the entry's tags
+		var monitorTag string
+		for _, t := range entry.Tags {
+			if strings.HasPrefix(t, "monitor:") {
+				monitorTag = t
+				break
+			}
+		}
+		if monitorTag == "" {
+			continue
+		}
+
+		parsed := ParseMonitorTag(monitorTag)
+		if parsed == nil {
+			continue
+		}
+
+		// Apply filters
+		if filter != nil {
+			if filter.TemplateID != "" && parsed.TemplateID != filter.TemplateID {
+				continue
+			}
+			if filter.Project != "" {
+				if parsed.Scope.Type == "all" {
+					continue
+				}
+				if parsed.Scope.Type == "project" && parsed.Scope.Project != filter.Project {
+					continue
+				}
+				if parsed.Scope.Type == "feature" && parsed.Scope.Project != filter.Project {
+					continue
+				}
+			}
+			if filter.FeatureID != "" {
+				if parsed.Scope.Type != "feature" {
+					continue
+				}
+				if parsed.Scope.FeatureID != filter.FeatureID {
+					continue
+				}
+			}
+		}
+
+		enabled := entry.ScheduleEnabled == nil || *entry.ScheduleEnabled
+		monitors = append(monitors, types.MonitorInfo{
+			ID:         entry.ID,
+			Path:       entry.Path,
+			TemplateID: parsed.TemplateID,
+			Scope:      parsed.Scope,
+			Enabled:    enabled,
+			Schedule:   entry.Schedule,
+			Title:      entry.Title,
+		})
+	}
+
+	return monitors, nil
+}
+
+// Toggle toggles schedule_enabled on an existing monitor.
+func (s *MonitorServiceImpl) Toggle(ctx context.Context, taskID string, enabled bool) (string, error) {
+	entry, err := s.brain.Recall(ctx, taskID)
+	if err != nil {
+		return "", fmt.Errorf("recall monitor: %w", err)
+	}
+
+	_, err = s.brain.Update(ctx, entry.Path, types.UpdateEntryRequest{
+		ScheduleEnabled: &enabled,
+	})
+	if err != nil {
+		return "", fmt.Errorf("update monitor: %w", err)
+	}
+
+	return entry.Path, nil
+}
+
+// Delete deletes a monitor task by its ID.
+func (s *MonitorServiceImpl) Delete(ctx context.Context, taskID string) (string, error) {
+	entry, err := s.brain.Recall(ctx, taskID)
+	if err != nil {
+		return "", fmt.Errorf("recall monitor: %w", err)
+	}
+
+	if err := s.brain.Delete(ctx, entry.Path); err != nil {
+		return "", fmt.Errorf("delete monitor: %w", err)
+	}
+
+	return entry.Path, nil
+}
+
+// resolveFeatureTaskStatus determines what status a new monitor task should
+// inherit from the existing tasks in a feature. All non-monitor tasks must
+// share the same status; if they have mixed statuses, an error is returned.
+func (s *MonitorServiceImpl) resolveFeatureTaskStatus(ctx context.Context, project, featureID string) (string, error) {
+	result, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		FeatureID: featureID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("list feature tasks: %w", err)
+	}
+
+	// Filter to tasks in this project and exclude existing monitors
+	projectPrefix := "projects/" + project + "/"
+	statuses := make(map[string]int)
+	for _, entry := range result.Entries {
+		if !strings.HasPrefix(entry.Path, projectPrefix) {
+			continue
+		}
+		// Skip existing monitor tasks (they have schedule/monitor tags)
+		if isMonitorEntry(entry) {
+			continue
+		}
+		if entry.Status != "" {
+			statuses[entry.Status]++
+		}
+	}
+
+	if len(statuses) == 0 {
+		// No tasks found, default to "active"
+		return "active", nil
+	}
+
+	if len(statuses) == 1 {
+		// All tasks share the same status - inherit it
+		for status := range statuses {
+			return status, nil
+		}
+	}
+
+	// Mixed statuses - build error message
+	var parts []string
+	for status, count := range statuses {
+		parts = append(parts, fmt.Sprintf("%s(%d)", status, count))
+	}
+	return "", fmt.Errorf("feature %q has mixed task statuses: %s; all tasks must share the same status to create automated tasks", featureID, strings.Join(parts, ", "))
+}
+
+// isMonitorEntry checks if an entry is a monitor task (has monitor-related tags).
+func isMonitorEntry(entry types.BrainEntry) bool {
+	for _, tag := range entry.Tags {
+		if strings.HasPrefix(tag, "monitor:") {
+			return true
+		}
+	}
+	return false
+}

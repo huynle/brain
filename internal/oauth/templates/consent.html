@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorize Application</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0d1117;
+            color: #e6edf3;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            padding: 1rem;
+        }
+        .card {
+            background: #161b22;
+            border: 1px solid #30363d;
+            border-radius: 12px;
+            padding: 2rem;
+            max-width: 420px;
+            width: 100%;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+        .header h1 {
+            font-size: 1.25rem;
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+        .header p {
+            color: #8b949e;
+            font-size: 0.875rem;
+        }
+        .client-name {
+            color: #58a6ff;
+            font-weight: 600;
+        }
+        .scopes {
+            margin: 1.25rem 0;
+            padding: 1rem;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 8px;
+        }
+        .scopes h3 {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            color: #8b949e;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.75rem;
+        }
+        .scope-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.5rem;
+            padding: 0.5rem 0;
+        }
+        .scope-item + .scope-item {
+            border-top: 1px solid #21262d;
+        }
+        .scope-icon {
+            color: #3fb950;
+            font-size: 0.875rem;
+            margin-top: 0.125rem;
+        }
+        .scope-name {
+            font-family: 'SFMono-Regular', Consolas, monospace;
+            font-size: 0.8125rem;
+            color: #e6edf3;
+        }
+        .scope-desc {
+            font-size: 0.75rem;
+            color: #8b949e;
+        }
+        .pin-section {
+            margin: 1.25rem 0;
+        }
+        .pin-section label {
+            display: block;
+            font-size: 0.875rem;
+            color: #8b949e;
+            margin-bottom: 0.375rem;
+        }
+        .pin-section input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            color: #e6edf3;
+            font-size: 0.875rem;
+            font-family: 'SFMono-Regular', Consolas, monospace;
+        }
+        .pin-section input:focus {
+            outline: none;
+            border-color: #58a6ff;
+            box-shadow: 0 0 0 3px rgba(88,166,255,0.15);
+        }
+        .buttons {
+            display: flex;
+            gap: 0.75rem;
+            margin-top: 1.5rem;
+        }
+        .btn {
+            flex: 1;
+            padding: 0.625rem 1rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .btn-allow {
+            background: #238636;
+            color: #fff;
+        }
+        .btn-allow:hover { background: #2ea043; }
+        .btn-deny {
+            background: #21262d;
+            color: #e6edf3;
+            border: 1px solid #30363d;
+        }
+        .btn-deny:hover { background: #30363d; }
+        .error {
+            background: #3d1117;
+            border: 1px solid #f85149;
+            color: #f85149;
+            padding: 0.625rem 0.75rem;
+            border-radius: 6px;
+            font-size: 0.8125rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="header">
+            <h1>Authorize Application</h1>
+            <p><span class="client-name">{{.ClientName}}</span> is requesting access</p>
+        </div>
+
+        {{if .Error}}
+        <div class="error">{{.Error}}</div>
+        {{end}}
+
+        <div class="scopes">
+            <h3>Requested Permissions</h3>
+            {{range .Scopes}}
+            <div class="scope-item">
+                <span class="scope-icon">&#x2713;</span>
+                <div>
+                    <div class="scope-name">{{.Name}}</div>
+                    <div class="scope-desc">{{.Description}}</div>
+                </div>
+            </div>
+            {{end}}
+        </div>
+
+        <form method="POST" action="/authorize">
+            <input type="hidden" name="client_id" value="{{.ClientID}}">
+            <input type="hidden" name="redirect_uri" value="{{.RedirectURI}}">
+            <input type="hidden" name="state" value="{{.State}}">
+            <input type="hidden" name="scope" value="{{.RawScope}}">
+            <input type="hidden" name="code_challenge" value="{{.CodeChallenge}}">
+            <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
+            <input type="hidden" name="response_type" value="code">
+
+            {{if .PINRequired}}
+            <div class="pin-section">
+                <label for="pin">Authorization PIN</label>
+                <input type="password" id="pin" name="pin" placeholder="Enter PIN" required autocomplete="off">
+            </div>
+            {{end}}
+
+            <div class="buttons">
+                <button type="submit" name="action" value="deny" class="btn btn-deny">Deny</button>
+                <button type="submit" name="action" value="allow" class="btn btn-allow">Allow</button>
+            </div>
+        </form>
+    </div>
+</body>
+</html>

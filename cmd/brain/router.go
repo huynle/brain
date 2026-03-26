@@ -196,7 +196,12 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		// "brain run" without subcommand returns stub
 		return &stubCommand{cmdType: "run"}, nil
 	case "help":
-		return newHelpCommand(), nil
+		// "brain help server" → show server help
+		topic := ""
+		if len(cmdArgs) > 0 {
+			topic = cmdArgs[0]
+		}
+		return &HelpCommand{command: topic}, nil
 	default:
 		// For other built-in commands, return stub for now
 		return &stubCommand{cmdType: cmdName}, nil

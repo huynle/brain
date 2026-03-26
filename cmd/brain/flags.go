@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"os"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	"github.com/huynle/brain-api/internal/runner"
@@ -83,6 +84,14 @@ func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 
 // ParseServerFlags parses server-specific flags
 func ParseServerFlags(args []string) (*ServerFlags, error) {
+	// Intercept --help/-h before flag.Parse to show custom help
+	for _, a := range args {
+		if a == "--help" || a == "-h" || a == "help" {
+			ShowHelp("server")
+			os.Exit(0)
+		}
+	}
+
 	flags := &ServerFlags{}
 	fs := flag.NewFlagSet("server", flag.ExitOnError)
 

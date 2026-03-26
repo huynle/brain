@@ -1,5 +1,5 @@
 # Brain API - Multi-stage Docker Build
-# Produces a minimal image with just the brain-api binary.
+# Produces a minimal image with the brain binaries.
 
 # Stage 1: Build
 FROM golang:1.24-alpine AS builder
@@ -24,10 +24,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
-    -o /bin/brain-runner ./cmd/brain-runner
-
-RUN CGO_ENABLED=0 GOOS=linux go build \
-    -ldflags "-s -w -X github.com/huynle/brain-api/internal/config.Version=${VERSION} -X github.com/huynle/brain-api/internal/config.Commit=${COMMIT}" \
     -o /bin/brain ./cmd/brain
 
 RUN CGO_ENABLED=0 GOOS=linux go build \
@@ -46,7 +42,6 @@ WORKDIR /app
 
 # Copy binaries from builder
 COPY --from=builder /bin/brain-api /usr/local/bin/brain-api
-COPY --from=builder /bin/brain-runner /usr/local/bin/brain-runner
 COPY --from=builder /bin/brain /usr/local/bin/brain
 COPY --from=builder /bin/brain-mcp /usr/local/bin/brain-mcp
 

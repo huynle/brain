@@ -20,8 +20,8 @@ just go-test         # Run all tests
 just go-check        # Run all checks (vet + test + lint)
 
 # Task Runner
-./bin/brain-runner start <project> --tui    # TUI dashboard
-./bin/brain-runner list <project>           # List tasks
+brain start <project>                       # TUI dashboard
+brain run list <project>                    # List tasks
 
 # API Server
 ./bin/brain-api      # Start API server
@@ -32,7 +32,7 @@ go run ./cmd/brain-api  # Run API server without building
 
 ### Command-Line Tools (`cmd/`)
 - `brain-api/` - REST API server entry point
-- `brain-runner/` - Task queue processor with TUI
+
 - `brain/` - Main CLI with subcommands (server, runner, doctor, etc.)
 - `brain-mcp/` - MCP (Model Context Protocol) server
 
@@ -218,13 +218,13 @@ func TestTaskTree_Update(t *testing.T) {
 ### Debugging TUI
 ```bash
 # Run with verbose logging
-./bin/brain-runner start project --tui -v
+brain start project -v
 
 # Check logs
-./bin/brain-runner logs -f
+brain server logs -f
 
 # Run without TUI for direct output
-./bin/brain-runner start project
+brain start project
 ```
 
 ## File Conventions
@@ -243,11 +243,11 @@ The task runner supports monitoring multiple projects simultaneously with a shar
 
 ```bash
 # Monitor all projects
-./bin/brain-runner start all --tui
+brain start all
 
 # Filter with glob patterns
-./bin/brain-runner start all --include 'prod-*' --exclude 'prod-legacy'
-./bin/brain-runner start all -i 'brain-*' -e 'test-*'
+brain start all --include 'prod-*' --exclude 'prod-legacy'
+brain start all -i 'brain-*' -e 'test-*'
 
 # List all available projects
 curl http://localhost:3333/api/v1/tasks | jq '.projects'
@@ -294,13 +294,13 @@ TUI (Model)
 
 ```bash
 # Only production projects
-./bin/brain-runner start all -i 'prod-*'
+brain start all -i 'prod-*'
 
 # All except test projects
 ./bin/brain-runner start all -e 'test-*' -e '*-staging'
 
 # Brain projects except legacy
-./bin/brain-runner start all -i 'brain-*' -e 'brain-legacy'
+brain start all -i 'brain-*' -e 'brain-legacy'
 ```
 
 ## Build System

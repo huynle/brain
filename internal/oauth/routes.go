@@ -146,11 +146,24 @@ func NewHandler(store *Store) *Handler {
 // ──────────────────────────────────────────────────────────────
 
 // issuerURL returns the external base URL derived from the request,
-// respecting X-Forwarded-Proto and X-Forwarded-Host for reverse proxies.
+// respecting reverse proxy headers for scheme and host detection.
+//
+// Scheme detection priority:
+//  1. X-Forwarded-Proto header (standard)
+//  2. X-Forwarded-Ssl: on (common alternative)
+//  3. Front-End-Https: on (Microsoft/legacy)
+//  4. r.TLS (direct TLS connection)
+//  5. Default: "http"
+//
+// Host detection priority:
+//  1. X-Forwarded-Host header
+//  2. r.Host (from Host header or request URL)
 func issuerURL(r *http.Request) string {
 	scheme := "http"
 	if proto := r.Header.Get("X-Forwarded-Proto"); proto != "" {
 		scheme = proto
+	} else if r.Header.Get("X-Forwarded-Ssl") == "on" || r.Header.Get("Front-End-Https") == "on" {
+		scheme = "https"
 	} else if r.TLS != nil {
 		scheme = "https"
 	}

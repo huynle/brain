@@ -99,13 +99,98 @@ func TestHandleServerMetadata(t *testing.T) {
 }
 
 func TestHandleServerMetadata_ForwardedHeaders(t *testing.T) {
+	tests := []struct {
+		name       string
+		headers    map[string]string
+		wantIssuer string
+	}{
+		{
+			name: "X-Forwarded-Proto and X-Forwarded-Host",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "https",
+				"X-Forwarded-Host":  "brain.example.com",
+			},
+			wantIssuer: "https://brain.example.com",
+		},
+		{
+			name: "X-Forwarded-Ssl on",
+			headers: map[string]string{
+				"X-Forwarded-Ssl":  "on",
+				"X-Forwarded-Host": "brain.example.com",
+			},
+			wantIssuer: "https://brain.example.com",
+		},
+		{
+			name: "Front-End-Https on",
+			headers: map[string]string{
+				"Front-End-Https":  "on",
+				"X-Forwarded-Host": "brain.example.com",
+			},
+			wantIssuer: "https://brain.example.com",
+		},
+		{
+			name: "X-Forwarded-Proto takes priority over X-Forwarded-Ssl",
+			headers: map[string]string{
+				"X-Forwarded-Proto": "http",
+				"X-Forwarded-Ssl":   "on",
+				"X-Forwarded-Host":  "brain.example.com",
+			},
+			wantIssuer: "http://brain.example.com",
+		},
+		{
+			name:       "No proxy headers uses default host",
+			headers:    map[string]string{},
+			wantIssuer: "http://example.com",
+		},
+		{
+			name: "Only X-Forwarded-Host without scheme headers",
+			headers: map[string]string{
+				"X-Forwarded-Host": "proxy.example.com",
+			},
+			wantIssuer: "http://proxy.example.com",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := NewStore()
+			handler := NewHandler(store)
+			r := chi.NewRouter()
+			RegisterRoutes(r, handler)
+
+			req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+
+			var body map[string]any
+			json.NewDecoder(w.Body).Decode(&body)
+
+			issuer, _ := body["issuer"].(string)
+			if issuer != tt.wantIssuer {
+				t.Errorf("issuer = %q, want %q", issuer, tt.wantIssuer)
+			}
+
+			// Also verify endpoint URLs use the same base
+			authEndpoint, _ := body["authorization_endpoint"].(string)
+			if authEndpoint != tt.wantIssuer+"/authorize" {
+				t.Errorf("authorization_endpoint = %q, want %q", authEndpoint, tt.wantIssuer+"/authorize")
+			}
+		})
+	}
+}
+
+func TestHandleProtectedResourceMetadata_ForwardedHeaders(t *testing.T) {
 	store := NewStore()
 	handler := NewHandler(store)
 	r := chi.NewRouter()
 	RegisterRoutes(r, handler)
 
-	req := httptest.NewRequest("GET", "/.well-known/oauth-authorization-server", nil)
-	req.Header.Set("X-Forwarded-Proto", "https")
+	req := httptest.NewRequest("GET", "/.well-known/oauth-protected-resource/mcp", nil)
+	req.Header.Set("X-Forwarded-Ssl", "on")
 	req.Header.Set("X-Forwarded-Host", "brain.example.com")
 
 	w := httptest.NewRecorder()
@@ -114,9 +199,17 @@ func TestHandleServerMetadata_ForwardedHeaders(t *testing.T) {
 	var body map[string]any
 	json.NewDecoder(w.Body).Decode(&body)
 
-	issuer, _ := body["issuer"].(string)
-	if issuer != "https://brain.example.com" {
-		t.Errorf("issuer = %q, want https://brain.example.com", issuer)
+	resource, _ := body["resource"].(string)
+	if resource != "https://brain.example.com/mcp" {
+		t.Errorf("resource = %q, want https://brain.example.com/mcp", resource)
+	}
+
+	servers, ok := body["authorization_servers"].([]any)
+	if !ok || len(servers) == 0 {
+		t.Fatal("missing authorization_servers")
+	}
+	if servers[0] != "https://brain.example.com" {
+		t.Errorf("authorization_servers[0] = %v, want https://brain.example.com", servers[0])
 	}
 }
 

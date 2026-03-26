@@ -218,8 +218,27 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	}
 }
 
-// parseServerCommand creates a ServerCommand from args.
+// serverSubcommands maps server subcommand names to their parse functions.
+var serverSubcommands = map[string]func([]string) (Command, error){
+	"start":   parseStartCommand,
+	"stop":    parseStopCommand,
+	"restart": parseRestartCommand,
+	"status":  parseStatusCommand,
+	"logs":    parseLogsCommand,
+	"health":  parseHealthCommand,
+}
+
+// parseServerCommand creates a ServerCommand from args, or delegates to a
+// server subcommand (start/stop/restart/status/logs/health).
 func parseServerCommand(args []string) (Command, error) {
+	// Check if the first arg is a known subcommand
+	if len(args) > 0 {
+		if parseFn, ok := serverSubcommands[args[0]]; ok {
+			return parseFn(args[1:])
+		}
+	}
+
+	// Default: start server in foreground
 	cfg := defaultConfig()
 	flags, err := ParseServerFlags(args)
 	if err != nil {

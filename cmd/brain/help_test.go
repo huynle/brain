@@ -35,8 +35,8 @@ func TestShowHelp(t *testing.T) {
 		if !strings.Contains(help, "brain - Unified Brain API CLI") {
 			t.Error("Main help should contain title")
 		}
-		if !strings.Contains(help, "SERVER MODE:") {
-			t.Error("Main help should contain SERVER MODE section")
+		if !strings.Contains(help, "SERVER:") {
+			t.Error("Main help should contain SERVER section")
 		}
 		if !strings.Contains(help, "RUNNER MODE:") {
 			t.Error("Main help should contain RUNNER MODE section")
@@ -200,8 +200,8 @@ func TestShowHelp(t *testing.T) {
 
 func TestHelpContent(t *testing.T) {
 	t.Run("main help contains all modes", func(t *testing.T) {
-		if !strings.Contains(mainHelp, "SERVER MODE:") {
-			t.Error("Main help missing SERVER MODE")
+		if !strings.Contains(mainHelp, "SERVER:") {
+			t.Error("Main help missing SERVER")
 		}
 		if !strings.Contains(mainHelp, "RUNNER MODE:") {
 			t.Error("Main help missing RUNNER MODE")
@@ -370,7 +370,7 @@ func TestHelpOutputFormat(t *testing.T) {
 			ShowHelp("")
 		})
 
-		headers := []string{"USAGE:", "SERVER MODE:", "RUNNER MODE:", "MCP MODE:", "FLAGS:", "EXAMPLES:"}
+		headers := []string{"USAGE:", "SERVER:", "RUNNER MODE:", "MCP MODE:", "FLAGS:", "EXAMPLES:"}
 		for _, header := range headers {
 			if !strings.Contains(output, header) {
 				t.Errorf("Missing header: %s", header)

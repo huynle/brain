@@ -16,9 +16,14 @@ ZERO-ARG SHORTHAND:
   brain <project>                 Start runner TUI for specific project
   brain all --max-parallel 5      Start runner TUI for all projects with flags
 
-SERVER MODE:
+SERVER:
   brain server                    Start API server (foreground)
-  brain server --daemon           Start API server (background)
+  brain server start              Start server as background daemon
+  brain server stop               Stop the server daemon
+  brain server restart            Restart the server daemon
+  brain server status             Check server status
+  brain server logs [-f]          Show/follow server logs
+  brain server health             Query /health endpoint
   brain server --port 3000        Start on custom port
 
 RUNNER MODE:
@@ -35,14 +40,13 @@ RUNNER MODE:
 MCP MODE:
   brain mcp                       Start MCP stdio server
 
-SERVER LIFECYCLE:
-  brain start                     Start server daemon (legacy compat)
-  brain stop                      Stop server daemon
-  brain restart                   Restart server
-  brain status                    Check server status
-  brain health                    Query /health endpoint
-  brain logs [-f]                 Show/follow server logs
-  brain dev                       Start server in foreground
+SERVER LIFECYCLE (aliases):
+  brain start                     Alias for: brain server start
+  brain stop                      Alias for: brain server stop
+  brain restart                   Alias for: brain server restart
+  brain status                    Alias for: brain server status
+  brain health                    Alias for: brain server health
+  brain logs [-f]                 Alias for: brain server logs
 
 SETUP & CONFIG:
   brain init [--force]            Initialize ~/.brain directory
@@ -89,15 +93,20 @@ EXAMPLES:
 For command-specific help: brain <command> --help
 `
 
-const serverHelp = `brain server - Start the Brain API server
+const serverHelp = `brain server - Brain API server management
 
 USAGE:
-  brain server [flags]
+  brain server [flags]              Start server in foreground
+  brain server start [flags]        Start server as background daemon
+  brain server stop [flags]         Stop the server daemon
+  brain server restart [flags]      Restart the server daemon
+  brain server status [flags]       Check if server is running
+  brain server logs [flags]         Show/follow server logs
+  brain server health [flags]       Query the /health endpoint
 
-FLAGS:
+SERVER FLAGS:
   -p, --port <port>              Server port (default: 3333)
   --host <host>                  Server host (default: localhost)
-  -d, --daemon                   Run as background daemon
   --log-file <path>              Log file path
   --tls                          Enable HTTPS
   --tls-cert <path>              TLS certificate path
@@ -105,18 +114,27 @@ FLAGS:
 
 ENVIRONMENT:
   BRAIN_PORT                     Server port
-  BRAIN_DIR                      Brain data directory (default: ~/.brain)
+  BRAIN_DIR                      Brain data directory (default: ~/brain)
   BRAIN_API_URL                  API URL for clients
 
 EXAMPLES:
-  # Foreground server
+  # Start server in foreground
   brain server
 
-  # Background daemon
-  brain server --daemon
+  # Start as background daemon
+  brain server start
 
-  # Custom port
-  brain server --port 3000
+  # Start on custom port
+  brain server start --port 3000
+
+  # Stop the daemon
+  brain server stop
+
+  # Check status
+  brain server status
+
+  # Tail logs
+  brain server logs -f
 
   # HTTPS mode
   brain server --tls --tls-cert cert.pem --tls-key key.pem

@@ -131,6 +131,52 @@ func TestRoute_UnknownCommand_RoutesToHelp(t *testing.T) {
 // Test: isBuiltinCommand helper
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Test: "brain server <subcommand>" routes to the correct lifecycle command
+// ---------------------------------------------------------------------------
+
+func TestRoute_ServerSubcommands(t *testing.T) {
+	tests := []struct {
+		args     []string
+		wantType string
+	}{
+		{[]string{"server", "start"}, "start"},
+		{[]string{"server", "stop"}, "stop"},
+		{[]string{"server", "restart"}, "restart"},
+		{[]string{"server", "status"}, "status"},
+		{[]string{"server", "logs"}, "logs"},
+		{[]string{"server", "health"}, "health"},
+	}
+
+	for _, tt := range tests {
+		name := tt.args[0] + " " + tt.args[1]
+		t.Run(name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd.Type() != tt.wantType {
+				t.Errorf("Type() = %q, want %q", cmd.Type(), tt.wantType)
+			}
+		})
+	}
+}
+
+// Test: "brain server" with no subcommand still starts the server
+func TestRoute_ServerNoSubcommand_StartsServer(t *testing.T) {
+	cmd, err := route([]string{"server"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cmd.Type() != "server" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "server")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: isBuiltinCommand helper
+// ---------------------------------------------------------------------------
+
 func TestIsBuiltinCommand(t *testing.T) {
 	tests := []struct {
 		cmd  string

@@ -108,7 +108,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithHub(hub),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithTokenValidator(store))
+	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)

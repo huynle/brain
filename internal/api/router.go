@@ -234,9 +234,21 @@ func WithHandler(h *Handler) func(*routerOptions) {
 }
 
 // WithTokenValidator returns a router option that sets the TokenValidator
-// used by the Auth middleware.
+// used by the Auth middleware. For dual-auth (API token + OAuth fallback),
+// use WithDualAuth instead.
 func WithTokenValidator(v TokenValidator) func(*routerOptions) {
 	return func(o *routerOptions) {
 		o.validator = v
+	}
+}
+
+// WithDualAuth returns a router option that sets up a CompositeValidator
+// that tries API token validation first, then falls back to OAuth.
+func WithDualAuth(apiValidator TokenValidator, oauthValidator OAuthAccessTokenValidator) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.validator = &CompositeValidator{
+			APIValidator:   apiValidator,
+			OAuthValidator: oauthValidator,
+		}
 	}
 }

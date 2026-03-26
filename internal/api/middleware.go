@@ -20,6 +20,70 @@ type TokenValidator interface {
 	ValidateToken(ctx context.Context, tokenValue string) (*storage.Token, error)
 }
 
+// AuthResult carries authentication metadata after successful validation.
+// Downstream handlers read these values from the request context.
+type AuthResult struct {
+	Type     string // "api_token" or "oauth"
+	Name     string // token name (api) or client_id (oauth)
+	ClientID string // oauth only
+	Scope    string // oauth only
+}
+
+// context keys for auth info
+type authContextKey string
+
+const (
+	ctxAuthResult authContextKey = "authResult"
+)
+
+// AuthResultFromContext returns the AuthResult from the request context, if present.
+func AuthResultFromContext(ctx context.Context) (*AuthResult, bool) {
+	v, ok := ctx.Value(ctxAuthResult).(*AuthResult)
+	return v, ok
+}
+
+// OAuthAccessTokenValidator validates OAuth access tokens against a backing store.
+type OAuthAccessTokenValidator interface {
+	GetAccessToken(ctx context.Context, tokenValue string) (*storage.OAuthAccessToken, error)
+}
+
+// CompositeValidator tries an API token validator first, then falls back to an
+// OAuth access token validator. It records which validator succeeded in an AuthResult.
+type CompositeValidator struct {
+	APIValidator   TokenValidator
+	OAuthValidator OAuthAccessTokenValidator
+}
+
+// ValidateToken tries the API token validator first; on failure it falls back
+// to the OAuth validator. Returns a *storage.Token on success (for interface
+// compat) and stashes the full AuthResult in the returned token's Name field
+// encoded as a type prefix so the Auth middleware can reconstruct it.
+func (cv *CompositeValidator) ValidateToken(ctx context.Context, tokenValue string) (*storage.Token, error) {
+	// Try API token first
+	if cv.APIValidator != nil {
+		tok, err := cv.APIValidator.ValidateToken(ctx, tokenValue)
+		if err == nil {
+			return tok, nil
+		}
+	}
+
+	// Fallback to OAuth
+	if cv.OAuthValidator != nil {
+		oauthTok, err := cv.OAuthValidator.GetAccessToken(ctx, tokenValue)
+		if err == nil {
+			// Wrap in storage.Token for interface compatibility.
+			// Encode auth type in the Name field as "oauth:<clientID>" so Auth
+			// middleware can parse it.
+			return &storage.Token{
+				Name:  "oauth:" + oauthTok.ClientID + ":" + oauthTok.Scope,
+				Token: oauthTok.Token,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("no validator accepted the token")
+}
+
 // RequestID generates a UUID and sets the X-Request-ID header on both
 // the request context and the response.
 func RequestID(next http.Handler) http.Handler {
@@ -181,9 +245,10 @@ func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handle
 				return
 			}
 
-			// validToken is available for future context injection
-			_ = validToken
-			next.ServeHTTP(w, r)
+			// Build AuthResult from the validated token
+			authResult := buildAuthResult(validToken)
+			ctx := context.WithValue(r.Context(), ctxAuthResult, authResult)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
 }
@@ -197,4 +262,32 @@ func extractBearerToken(authHeader string) string {
 		return authHeader[7:]
 	}
 	return ""
+}
+
+// buildAuthResult inspects the validated token and produces an AuthResult.
+// If the token name starts with "oauth:" it was produced by CompositeValidator's
+// OAuth fallback path; otherwise it's a plain API token.
+func buildAuthResult(tok *storage.Token) *AuthResult {
+	if strings.HasPrefix(tok.Name, "oauth:") {
+		// Format: "oauth:<clientID>:<scope>"
+		parts := strings.SplitN(tok.Name, ":", 3)
+		clientID := ""
+		scope := ""
+		if len(parts) >= 2 {
+			clientID = parts[1]
+		}
+		if len(parts) >= 3 {
+			scope = parts[2]
+		}
+		return &AuthResult{
+			Type:     "oauth",
+			Name:     clientID,
+			ClientID: clientID,
+			Scope:    scope,
+		}
+	}
+	return &AuthResult{
+		Type: "api_token",
+		Name: tok.Name,
+	}
 }

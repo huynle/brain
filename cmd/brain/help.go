@@ -132,11 +132,6 @@ EXAMPLES:
 
   # HTTPS mode
   brain server --tls --tls-cert cert.pem --tls-key key.pem
-
-LEGACY COMPATIBILITY:
-  brain-api [flags]              → brain server [flags]
-  brain start                    → brain server --daemon
-  brain stop                     → Stop daemon
 `
 
 const runnerHelp = `brain start - Start the task runner TUI
@@ -204,8 +199,6 @@ CONFIGURATION:
     }
   }
 
-LEGACY COMPATIBILITY:
-  brain-mcp [flags]              → brain mcp [flags]
 `
 
 const initHelp = `brain init - Initialize the Brain directory structure

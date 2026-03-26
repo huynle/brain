@@ -60,11 +60,8 @@ func TestShowHelp(t *testing.T) {
 		if !strings.Contains(help, "--port") {
 			t.Error("Server help should contain --port flag")
 		}
-		if !strings.Contains(help, "--daemon") {
-			t.Error("Server help should contain --daemon flag")
-		}
-		if !strings.Contains(help, "LEGACY COMPATIBILITY:") {
-			t.Error("Server help should contain legacy compatibility section")
+		if !strings.Contains(help, "brain server start") {
+			t.Error("Server help should contain brain server start subcommand")
 		}
 	})
 

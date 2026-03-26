@@ -565,21 +565,21 @@ func (m *SettingsModal) HandleKey(key string) (bool, tea.Cmd) {
 	case "+":
 		if m.currentTab == TabLimits {
 			m.increaseLimit()
-			return true, nil
+			return true, m.saveSettingsCmd()
 		}
 		return false, nil
 
 	case "-":
 		if m.currentTab == TabLimits {
 			m.decreaseLimit()
-			return true, nil
+			return true, m.saveSettingsCmd()
 		}
 		return false, nil
 
 	case "0":
 		if m.currentTab == TabLimits {
 			m.setUnlimited()
-			return true, nil
+			return true, m.saveSettingsCmd()
 		}
 		return false, nil
 	}

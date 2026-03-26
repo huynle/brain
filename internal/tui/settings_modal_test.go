@@ -109,18 +109,24 @@ func TestSettingsModal_AdjustLimits(t *testing.T) {
 	modal := NewSettingsModal(settings)
 
 	// Increase global max-parallel with '+'
-	handled, _ := modal.HandleKey("+")
+	handled, cmd := modal.HandleKey("+")
 	if !handled {
 		t.Error("Expected '+' key to be handled")
+	}
+	if cmd == nil {
+		t.Error("Expected save command to be returned after '+'")
 	}
 	if modal.settings.GlobalMaxParallel != 5 {
 		t.Errorf("Expected GlobalMaxParallel 5, got %d", modal.settings.GlobalMaxParallel)
 	}
 
 	// Decrease with '-'
-	handled, _ = modal.HandleKey("-")
+	handled, cmd = modal.HandleKey("-")
 	if !handled {
 		t.Error("Expected '-' key to be handled")
+	}
+	if cmd == nil {
+		t.Error("Expected save command to be returned after '-'")
 	}
 	if modal.settings.GlobalMaxParallel != 4 {
 		t.Errorf("Expected GlobalMaxParallel 4, got %d", modal.settings.GlobalMaxParallel)

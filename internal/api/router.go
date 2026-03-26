@@ -35,7 +35,7 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
-			r.Use(Auth(cfg))
+			r.Use(Auth(cfg.EnableAuth, o.validator))
 
 			// ─── Health & Stats ──────────────────────────────────
 			if o.handler != nil {
@@ -209,12 +209,21 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 
 // routerOptions holds optional dependencies for the router.
 type routerOptions struct {
-	handler *Handler
+	handler   *Handler
+	validator TokenValidator
 }
 
 // WithHandler returns a router option that wires the given Handler.
 func WithHandler(h *Handler) func(*routerOptions) {
 	return func(o *routerOptions) {
 		o.handler = h
+	}
+}
+
+// WithTokenValidator returns a router option that sets the TokenValidator
+// used by the Auth middleware.
+func WithTokenValidator(v TokenValidator) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.validator = v
 	}
 }

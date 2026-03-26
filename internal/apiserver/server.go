@@ -24,7 +24,6 @@ type ServerOptions struct {
 	Port       int
 	BrainDir   string
 	EnableAuth bool
-	APIKey     string
 	LogLevel   string
 }
 
@@ -88,7 +87,6 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		Host:       opts.Host,
 		Port:       opts.Port,
 		EnableAuth: opts.EnableAuth,
-		APIKey:     opts.APIKey,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -109,7 +107,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithHub(hub),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler))
+	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithTokenValidator(store))
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)

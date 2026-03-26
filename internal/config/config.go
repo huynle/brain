@@ -21,7 +21,6 @@ type Config struct {
 	Port       int
 	Host       string
 	EnableAuth bool
-	APIKey     string
 	CORSOrigin string
 	LogLevel   string
 }
@@ -36,7 +35,6 @@ func Load() Config {
 		Port:       getEnvInt("PORT", 3000),
 		Host:       getEnv("HOST", "0.0.0.0"),
 		EnableAuth: getEnvBool("ENABLE_AUTH", false),
-		APIKey:     getEnv("API_KEY", ""),
 		CORSOrigin: getEnv("CORS_ORIGIN", "*"),
 		LogLevel:   getEnv("LOG_LEVEL", "info"),
 	}

@@ -394,7 +394,6 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.Host = cfg.Server.Host
 	cmdCfg.Server.BrainDir = cfg.Server.BrainDir
 	cmdCfg.Server.EnableAuth = cfg.Server.EnableAuth
-	cmdCfg.Server.APIKey = cfg.Server.APIKey
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile

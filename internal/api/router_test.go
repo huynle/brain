@@ -1,14 +1,29 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+// mockTokenValidator is a simple mock for testing auth middleware.
+type mockTokenValidator struct {
+	validToken string
+}
+
+func (m *mockTokenValidator) ValidateToken(_ context.Context, tokenValue string) (*storage.Token, error) {
+	if tokenValue == m.validToken {
+		return &storage.Token{Name: "test", Token: tokenValue}, nil
+	}
+	return nil, fmt.Errorf("invalid token")
+}
 
 func testConfig() config.Config {
 	return config.Config{
@@ -16,7 +31,6 @@ func testConfig() config.Config {
 		Port:       3000,
 		Host:       "0.0.0.0",
 		EnableAuth: false,
-		APIKey:     "",
 		CORSOrigin: "*",
 		LogLevel:   "info",
 	}
@@ -233,8 +247,10 @@ func TestAuthMiddleware_Disabled(t *testing.T) {
 func TestAuthMiddleware_Enabled(t *testing.T) {
 	cfg := testConfig()
 	cfg.EnableAuth = true
-	cfg.APIKey = "test-secret-key"
-	router := NewRouter(cfg)
+
+	// Use a mock validator that accepts "test-secret-key"
+	validator := &mockTokenValidator{validToken: "test-secret-key"}
+	router := NewRouter(cfg, WithTokenValidator(validator))
 	srv := httptest.NewServer(router)
 	defer srv.Close()
 

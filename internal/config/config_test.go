@@ -8,7 +8,7 @@ import (
 
 func TestLoadDefaults(t *testing.T) {
 	// Clear all env vars that might be set
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "API_KEY", "CORS_ORIGIN", "LOG_LEVEL"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -31,9 +31,6 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.EnableAuth != false {
 		t.Errorf("EnableAuth = %v, want false", cfg.EnableAuth)
 	}
-	if cfg.APIKey != "" {
-		t.Errorf("APIKey = %q, want empty", cfg.APIKey)
-	}
 	if cfg.CORSOrigin != "*" {
 		t.Errorf("CORSOrigin = %q, want %q", cfg.CORSOrigin, "*")
 	}
@@ -47,7 +44,6 @@ func TestLoadFromEnv(t *testing.T) {
 	t.Setenv("PORT", "8080")
 	t.Setenv("HOST", "127.0.0.1")
 	t.Setenv("ENABLE_AUTH", "true")
-	t.Setenv("API_KEY", "secret-key-123")
 	t.Setenv("CORS_ORIGIN", "https://example.com")
 	t.Setenv("LOG_LEVEL", "debug")
 
@@ -64,9 +60,6 @@ func TestLoadFromEnv(t *testing.T) {
 	}
 	if cfg.EnableAuth != true {
 		t.Errorf("EnableAuth = %v, want true", cfg.EnableAuth)
-	}
-	if cfg.APIKey != "secret-key-123" {
-		t.Errorf("APIKey = %q, want %q", cfg.APIKey, "secret-key-123")
 	}
 	if cfg.CORSOrigin != "https://example.com" {
 		t.Errorf("CORSOrigin = %q, want %q", cfg.CORSOrigin, "https://example.com")

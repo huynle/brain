@@ -1007,7 +1007,6 @@ exclude_projects:
   host: "custom-host"
   log_level: "debug"
   enable_auth: true
-  api_key: "secret123"
   cors_origin: "https://example.com"
   tls_cert: "/path/to/cert"
   tls_key: "/path/to/key"
@@ -1059,9 +1058,6 @@ plugins:
 		}
 		if cfg.Server.EnableAuth != true {
 			t.Errorf("Modified Server.EnableAuth = %v, want true", cfg.Server.EnableAuth)
-		}
-		if cfg.Server.APIKey != "secret123" {
-			t.Errorf("Modified Server.APIKey = %q, want secret123", cfg.Server.APIKey)
 		}
 		if cfg.Server.CORSOrigin != "https://example.com" {
 			t.Errorf("Modified Server.CORSOrigin = %q, want https://example.com", cfg.Server.CORSOrigin)

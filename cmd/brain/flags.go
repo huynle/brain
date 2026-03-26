@@ -216,7 +216,6 @@ type UnifiedConfig struct {
 		Host       string
 		BrainDir   string
 		EnableAuth bool
-		APIKey     string
 		LogLevel   string
 		TLS        struct {
 			Enabled  bool

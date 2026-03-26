@@ -20,9 +20,9 @@
 // # Configuration Precedence
 //
 // Config loading follows this precedence order:
-//   1. Unified config (~/.config/brain/config.yaml) - highest priority
-//   2. Legacy runner config (~/.config/brain-runner/config.yaml) - auto-migrated if found
-//   3. Default values - used if no config files exist
+//  1. Unified config (~/.config/brain/config.yaml) - highest priority
+//  2. Legacy runner config (~/.config/brain-runner/config.yaml) - auto-migrated if found
+//  3. Default values - used if no config files exist
 //
 // # Usage Example
 //
@@ -77,7 +77,6 @@ type ServerConfig struct {
 	Host       string `yaml:"host"`
 	BrainDir   string `yaml:"brain_dir"`
 	EnableAuth bool   `yaml:"enable_auth"`
-	APIKey     string `yaml:"api_key"`
 	CORSOrigin string `yaml:"cors_origin"`
 	LogLevel   string `yaml:"log_level"`
 	TLSCert    string `yaml:"tls_cert"`

@@ -21,7 +21,6 @@ type UnifiedConfig struct {
 		Host       string
 		BrainDir   string
 		EnableAuth bool
-		APIKey     string
 		LogLevel   string
 		TLS        struct {
 			Enabled  bool
@@ -70,7 +69,6 @@ func (c *ServerCommand) Execute() error {
 		Host:       c.Config.Server.Host,
 		BrainDir:   c.Config.Server.BrainDir,
 		EnableAuth: c.Config.Server.EnableAuth,
-		APIKey:     c.Config.Server.APIKey,
 		LogLevel:   c.Config.Server.LogLevel,
 	}
 

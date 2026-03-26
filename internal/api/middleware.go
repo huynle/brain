@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,7 +12,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/storage"
 )
+
+// TokenValidator validates authentication tokens against a backing store.
+type TokenValidator interface {
+	ValidateToken(ctx context.Context, tokenValue string) (*storage.Token, error)
+}
 
 // RequestID generates a UUID and sets the X-Request-ID header on both
 // the request context and the response.
@@ -138,12 +145,13 @@ func SecureHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// Auth returns middleware that validates Bearer tokens or ?token= query params.
+// Auth returns middleware that validates Bearer tokens or ?token= query params
+// against a TokenValidator (e.g. database-backed token store).
 // When enabled is false, all requests pass through.
-func Auth(cfg config.Config) func(http.Handler) http.Handler {
+func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if !cfg.EnableAuth {
+			if !enabled {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -163,8 +171,8 @@ func Auth(cfg config.Config) func(http.Handler) http.Handler {
 				return
 			}
 
-			// Validate against configured API key
-			if token != cfg.APIKey {
+			validToken, err := validator.ValidateToken(r.Context(), token)
+			if err != nil {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="brain-api", error="invalid_token"`)
 				WriteError(w, http.StatusUnauthorized,
 					"Unauthorized",
@@ -173,6 +181,8 @@ func Auth(cfg config.Config) func(http.Handler) http.Handler {
 				return
 			}
 
+			// validToken is available for future context injection
+			_ = validToken
 			next.ServeHTTP(w, r)
 		})
 	}

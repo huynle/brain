@@ -8,6 +8,7 @@ type Handler struct {
 	tasks   TaskService
 	runner  RunnerService
 	monitor MonitorService
+	tokens  TokenService
 	hub     *realtime.Hub
 }
 

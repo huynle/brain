@@ -104,6 +104,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
 		api.WithMonitorService(monitorSvc),
+		api.WithTokenService(store),
 		api.WithHub(hub),
 	)
 

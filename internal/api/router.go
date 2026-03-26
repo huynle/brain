@@ -185,6 +185,19 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				})
 			})
 
+			// ─── Tokens ──────────────────────────────────────────
+			r.Route("/tokens", func(r chi.Router) {
+				if o.handler != nil && o.handler.tokens != nil {
+					r.Post("/", o.handler.HandleCreateToken)
+					r.Get("/", o.handler.HandleListTokens)
+					r.Delete("/{name}", o.handler.HandleRevokeToken)
+				} else {
+					r.Post("/", notImplemented)
+					r.Get("/", notImplemented)
+					r.Delete("/{name}", notImplemented)
+				}
+			})
+
 			// ─── Monitors ────────────────────────────────────────
 			r.Route("/monitors", func(r chi.Router) {
 				if o.handler != nil && o.handler.monitor != nil {

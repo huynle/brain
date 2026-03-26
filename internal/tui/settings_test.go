@@ -17,11 +17,7 @@ func TestSettings_DefaultGroupVisibility(t *testing.T) {
 		"Active":      true,
 		"In Progress": true,
 		"Blocked":     true,
-		"Cancelled":   true,
-		"Completed":   true,
-		"Validated":   true,
-		"Superseded":  true,
-		"Archived":    true,
+		"Inactive":    true,
 	}
 
 	// Verify all expected defaults are set correctly
@@ -177,9 +173,9 @@ func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	originalSettings := Settings{
 		GroupCollapsed: make(map[string]bool),
 		GroupVisible: map[string]bool{
-			"Pending":   false, // Hide Pending
-			"Draft":     true,  // Show Draft (opposite of default)
-			"Completed": true,
+			"Pending":  false, // Hide Pending
+			"Draft":    true,  // Show Draft (opposite of default)
+			"Inactive": true,
 		},
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
@@ -205,7 +201,7 @@ func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	if loadedSettings.GroupVisible["Draft"] != true {
 		t.Error("Expected 'Draft' to be true after load")
 	}
-	if loadedSettings.GroupVisible["Completed"] != true {
-		t.Error("Expected 'Completed' to be true after load")
+	if loadedSettings.GroupVisible["Inactive"] != true {
+		t.Error("Expected 'Inactive' to be true after load")
 	}
 }

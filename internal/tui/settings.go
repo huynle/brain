@@ -20,7 +20,7 @@ type Settings struct {
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.
-// All status groups visible by default.
+// All status groups visible by default. Terminal statuses are consolidated under "Inactive".
 func getDefaultGroupVisible() map[string]bool {
 	return map[string]bool{
 		"Draft":       true,
@@ -28,11 +28,7 @@ func getDefaultGroupVisible() map[string]bool {
 		"Active":      true,
 		"In Progress": true,
 		"Blocked":     true,
-		"Cancelled":   true,
-		"Completed":   true,
-		"Validated":   true,
-		"Superseded":  true,
-		"Archived":    true,
+		"Inactive":    true,
 	}
 }
 

@@ -1725,8 +1725,8 @@ func TestTaskTree_ViewNestedGrouped_RendersThreeLevelHierarchy(t *testing.T) {
 	if !strings.Contains(view, "Ready") {
 		t.Errorf("Expected status header 'Ready' in view, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Completed") {
-		t.Errorf("Expected status header 'Completed' in view, got:\n%s", view)
+	if !strings.Contains(view, "Inactive") {
+		t.Errorf("Expected status header 'Inactive' in view, got:\n%s", view)
 	}
 
 	// Should show feature sub-headers with indentation

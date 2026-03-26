@@ -18,15 +18,36 @@ func TestStatusStyleWithState_InProgressStatus(t *testing.T) {
 
 func TestStatusStyleWithState_CompletedStatus(t *testing.T) {
 	style := StatusStyleWithState("completed", "ready")
-	if style.GetForeground() != ColorCompleted {
-		t.Errorf("expected ColorCompleted for completed status, got %v", style.GetForeground())
+	if style.GetForeground() != ColorInactiveCompleted {
+		t.Errorf("expected ColorInactiveCompleted for completed status, got %v", style.GetForeground())
 	}
 }
 
 func TestStatusStyleWithState_CancelledStatus(t *testing.T) {
 	style := StatusStyleWithState("cancelled", "ready")
-	if style.GetForeground() != ColorMagenta {
-		t.Errorf("expected ColorMagenta for cancelled status, got %v", style.GetForeground())
+	if style.GetForeground() != ColorInactiveCancelled {
+		t.Errorf("expected ColorInactiveCancelled for cancelled status, got %v", style.GetForeground())
+	}
+}
+
+func TestStatusStyleWithState_ValidatedStatus(t *testing.T) {
+	style := StatusStyleWithState("validated", "ready")
+	if style.GetForeground() != ColorInactiveValidated {
+		t.Errorf("expected ColorInactiveValidated for validated status, got %v", style.GetForeground())
+	}
+}
+
+func TestStatusStyleWithState_SupersededStatus(t *testing.T) {
+	style := StatusStyleWithState("superseded", "ready")
+	if style.GetForeground() != ColorInactiveSuperseded {
+		t.Errorf("expected ColorInactiveSuperseded for superseded status, got %v", style.GetForeground())
+	}
+}
+
+func TestStatusStyleWithState_ArchivedStatus(t *testing.T) {
+	style := StatusStyleWithState("archived", "ready")
+	if style.GetForeground() != ColorInactiveArchived {
+		t.Errorf("expected ColorInactiveArchived for archived status, got %v", style.GetForeground())
 	}
 }
 

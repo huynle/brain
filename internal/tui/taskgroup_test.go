@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -102,10 +103,10 @@ func TestNormalizeClassification_InProgress(t *testing.T) {
 			want:           "Blocked",
 		},
 		{
-			name:           "in_progress with no classification defaults to Completed",
+			name:           "in_progress with no classification defaults to Inactive",
 			classification: "",
 			status:         "in_progress",
-			want:           "Completed",
+			want:           "Inactive",
 		},
 		{
 			name:           "active status with ready classification",
@@ -170,7 +171,7 @@ func TestNormalizeClassification_Draft(t *testing.T) {
 
 func TestNormalizeClassification_Completed(t *testing.T) {
 	got := normalizeClassification("", "completed", "")
-	want := "Completed"
+	want := "Inactive"
 	if got != want {
 		t.Errorf("normalizeClassification(\"\", \"completed\", \"\") = %q, want %q", got, want)
 	}
@@ -178,7 +179,7 @@ func TestNormalizeClassification_Completed(t *testing.T) {
 
 func TestNormalizeClassification_Validated(t *testing.T) {
 	got := normalizeClassification("", "validated", "")
-	want := "Validated"
+	want := "Inactive"
 	if got != want {
 		t.Errorf("normalizeClassification(\"\", \"validated\", \"\") = %q, want %q", got, want)
 	}
@@ -186,7 +187,7 @@ func TestNormalizeClassification_Validated(t *testing.T) {
 
 func TestNormalizeClassification_Cancelled(t *testing.T) {
 	got := normalizeClassification("", "cancelled", "")
-	want := "Cancelled"
+	want := "Inactive"
 	if got != want {
 		t.Errorf("normalizeClassification(\"\", \"cancelled\", \"\") = %q, want %q", got, want)
 	}
@@ -194,7 +195,7 @@ func TestNormalizeClassification_Cancelled(t *testing.T) {
 
 func TestNormalizeClassification_Superseded(t *testing.T) {
 	got := normalizeClassification("", "superseded", "")
-	want := "Superseded"
+	want := "Inactive"
 	if got != want {
 		t.Errorf("normalizeClassification(\"\", \"superseded\", \"\") = %q, want %q", got, want)
 	}
@@ -202,9 +203,41 @@ func TestNormalizeClassification_Superseded(t *testing.T) {
 
 func TestNormalizeClassification_Archived(t *testing.T) {
 	got := normalizeClassification("", "archived", "")
-	want := "Archived"
+	want := "Inactive"
 	if got != want {
 		t.Errorf("normalizeClassification(\"\", \"archived\", \"\") = %q, want %q", got, want)
+	}
+}
+
+// Test that ALL inactive statuses map to the single "Inactive" group
+func TestNormalizeClassification_AllInactiveStatuses(t *testing.T) {
+	inactiveStatuses := []string{"completed", "validated", "cancelled", "superseded", "archived"}
+	for _, status := range inactiveStatuses {
+		got := normalizeClassification("", status, "")
+		if got != "Inactive" {
+			t.Errorf("normalizeClassification(\"\", %q, \"\") = %q, want \"Inactive\"", status, got)
+		}
+		// Also test with feature_id
+		got = normalizeClassification("", status, "feature-1")
+		if got != "Inactive" {
+			t.Errorf("normalizeClassification(\"\", %q, \"feature-1\") = %q, want \"Inactive\"", status, got)
+		}
+	}
+}
+
+// Test that IsInactiveStatus helper works correctly
+func TestIsInactiveStatus(t *testing.T) {
+	inactive := []string{"completed", "validated", "cancelled", "superseded", "archived"}
+	for _, s := range inactive {
+		if !IsInactiveStatus(s) {
+			t.Errorf("IsInactiveStatus(%q) = false, want true", s)
+		}
+	}
+	active := []string{"draft", "pending", "active", "in_progress", "blocked"}
+	for _, s := range active {
+		if IsInactiveStatus(s) {
+			t.Errorf("IsInactiveStatus(%q) = true, want false", s)
+		}
 	}
 }
 
@@ -276,7 +309,7 @@ func TestNormalizeClassification_Ungrouped(t *testing.T) {
 // GroupTasks Tests
 // =============================================================================
 
-func TestGroupTasks_TerminalStatesInSeparateGroups(t *testing.T) {
+func TestGroupTasks_TerminalStatesInInactiveGroup(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Draft task", Status: "draft", Priority: "medium", Classification: ""},
 		{ID: "t2", Title: "Completed task", Status: "completed", Priority: "medium", Classification: ""},
@@ -288,20 +321,26 @@ func TestGroupTasks_TerminalStatesInSeparateGroups(t *testing.T) {
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have 6 groups: Draft, Cancelled, Completed, Validated, Superseded, Archived
-	if len(groups) != 6 {
-		t.Fatalf("expected 6 groups, got %d", len(groups))
+	// Should have 2 groups: Draft (1 task) and Inactive (5 tasks)
+	if len(groups) != 2 {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = fmt.Sprintf("%s(%d)", g.Name, g.Count)
+		}
+		t.Fatalf("expected 2 groups, got %d: %v", len(groups), names)
 	}
 
-	// Verify group names in order
-	expectedOrder := []string{"Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
-	for i, expected := range expectedOrder {
-		if groups[i].Name != expected {
-			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
-		}
-		if groups[i].Count != 1 {
-			t.Errorf("group[%d] count = %d, want 1", i, groups[i].Count)
-		}
+	if groups[0].Name != "Draft" {
+		t.Errorf("group[0] name = %q, want %q", groups[0].Name, "Draft")
+	}
+	if groups[0].Count != 1 {
+		t.Errorf("group[0] count = %d, want 1", groups[0].Count)
+	}
+	if groups[1].Name != "Inactive" {
+		t.Errorf("group[1] name = %q, want %q", groups[1].Name, "Inactive")
+	}
+	if groups[1].Count != 5 {
+		t.Errorf("group[1] count = %d, want 5", groups[1].Count)
 	}
 }
 
@@ -321,11 +360,15 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have 9 groups in this specific order (no "Active" group - in_progress tasks stay in their classification groups)
-	expectedOrder := []string{"Ready", "Waiting", "Blocked", "Draft", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	// Should have 5 groups: Ready, Waiting, Blocked, Draft, Inactive
+	expectedOrder := []string{"Ready", "Waiting", "Blocked", "Draft", "Inactive"}
 
 	if len(groups) != len(expectedOrder) {
-		t.Fatalf("expected %d groups, got %d", len(expectedOrder), len(groups))
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = fmt.Sprintf("%s(%d)", g.Name, g.Count)
+		}
+		t.Fatalf("expected %d groups, got %d: %v", len(expectedOrder), len(groups), names)
 	}
 
 	for i, expected := range expectedOrder {
@@ -349,6 +392,24 @@ func TestGroupTasks_AllGroupsInCorrectOrder(t *testing.T) {
 	if !foundActive {
 		t.Errorf("expected in_progress task t3 to be in Ready group")
 	}
+
+	// Verify Inactive group contains all terminal statuses
+	inactiveGroup := groups[4]
+	if inactiveGroup.Name != "Inactive" {
+		t.Fatalf("expected last group to be Inactive, got %s", inactiveGroup.Name)
+	}
+	if inactiveGroup.Count != 5 {
+		t.Errorf("expected Inactive group to have 5 tasks, got %d", inactiveGroup.Count)
+	}
+	statusSet := make(map[string]bool)
+	for _, task := range inactiveGroup.Tasks {
+		statusSet[task.Status] = true
+	}
+	for _, expected := range []string{"cancelled", "completed", "validated", "superseded", "archived"} {
+		if !statusSet[expected] {
+			t.Errorf("expected Inactive group to contain status %q", expected)
+		}
+	}
 }
 
 // Phase 3: Visibility filtering tests (CORRECTED)
@@ -361,26 +422,26 @@ func TestGroupTasks_WithVisibility_HidesInvisibleGroups(t *testing.T) {
 		{ID: "t4", Title: "Archived", Status: "archived", Priority: "high", Classification: ""},
 	}
 
-	// Hide Draft and Archived
+	// Hide Draft and Inactive
 	visibleGroups := map[string]bool{
-		"Ready":     true,
-		"Completed": true,
-		"Draft":     false,
-		"Archived":  false,
+		"Ready":    true,
+		"Inactive": false,
+		"Draft":    false,
 	}
 
 	groups := GroupTasks(tasks, visibleGroups)
 
-	// Should only have 2 groups: Ready, Completed
-	if len(groups) != 2 {
-		t.Fatalf("expected 2 groups, got %d", len(groups))
+	// Should only have 1 group: Ready (Draft hidden, Inactive hidden)
+	if len(groups) != 1 {
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		t.Fatalf("expected 1 group, got %d: %v", len(groups), names)
 	}
 
 	if groups[0].Name != "Ready" {
 		t.Errorf("group[0] name = %q, want %q", groups[0].Name, "Ready")
-	}
-	if groups[1].Name != "Completed" {
-		t.Errorf("group[1].Name = %q, want %q", groups[1].Name, "Completed")
 	}
 }
 
@@ -393,12 +454,16 @@ func TestGroupTasks_WithVisibility_NilMapShowsAll(t *testing.T) {
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have all 3 groups
+	// Should have 3 groups: Ready, Draft, Inactive (archived maps to Inactive)
 	if len(groups) != 3 {
-		t.Fatalf("expected 3 groups, got %d", len(groups))
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = g.Name
+		}
+		t.Fatalf("expected 3 groups, got %d: %v", len(groups), names)
 	}
 
-	expectedNames := []string{"Ready", "Draft", "Archived"}
+	expectedNames := []string{"Ready", "Draft", "Inactive"}
 	for i, expected := range expectedNames {
 		if groups[i].Name != expected {
 			t.Errorf("group[%d] name = %q, want %q", i, groups[i].Name, expected)
@@ -428,7 +493,7 @@ func TestGroupTasks_WithVisibility_OnlyHiddenGroups(t *testing.T) {
 
 	visibleGroups := map[string]bool{
 		"Draft":    false,
-		"Archived": false,
+		"Inactive": false,
 	}
 
 	groups := GroupTasks(tasks, visibleGroups)
@@ -448,16 +513,19 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 		// Tasks WITHOUT feature_id - should be "Ungrouped"
 		{ID: "t3", Title: "Ready without feature", Status: "pending", Priority: "high", Classification: "ready"},
 		{ID: "t4", Title: "Waiting without feature", Status: "pending", Priority: "high", Classification: "waiting"},
-		// Terminal states without feature_id - should remain in their own groups
+		// Terminal states without feature_id - should go to Inactive
 		{ID: "t5", Title: "Completed without feature", Status: "completed", Priority: "high", Classification: ""},
 	}
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have 4 groups: Ready (1 task), Waiting (1 task), Ungrouped (2 tasks), Completed (1 task)
-	// Order follows GroupTasks: Ready, Waiting, Blocked, Ungrouped, Draft, ...
+	// Should have 4 groups: Ready (1 task), Waiting (1 task), Ungrouped (2 tasks), Inactive (1 task)
 	if len(groups) != 4 {
-		t.Fatalf("expected 4 groups, got %d", len(groups))
+		names := make([]string, len(groups))
+		for i, g := range groups {
+			names[i] = fmt.Sprintf("%s(%d)", g.Name, g.Count)
+		}
+		t.Fatalf("expected 4 groups, got %d: %v", len(groups), names)
 	}
 
 	// Check order and contents
@@ -465,7 +533,7 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 		"Ready":     1,
 		"Waiting":   1,
 		"Ungrouped": 2,
-		"Completed": 1,
+		"Inactive":  1,
 	}
 
 	for _, group := range groups {
@@ -479,7 +547,7 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 		}
 	}
 
-	// Verify order: Ready, Waiting, Ungrouped, Completed
+	// Verify order: Ready, Waiting, Ungrouped, Inactive
 	if groups[0].Name != "Ready" {
 		t.Errorf("expected first group to be Ready, got %s", groups[0].Name)
 	}
@@ -489,8 +557,8 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 	if groups[2].Name != "Ungrouped" {
 		t.Errorf("expected third group to be Ungrouped, got %s", groups[2].Name)
 	}
-	if groups[3].Name != "Completed" {
-		t.Errorf("expected fourth group to be Completed, got %s", groups[3].Name)
+	if groups[3].Name != "Inactive" {
+		t.Errorf("expected fourth group to be Inactive, got %s", groups[3].Name)
 	}
 
 	// Verify Ungrouped contains the correct tasks

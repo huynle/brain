@@ -526,8 +526,8 @@ func TestStatusBarView_ContainsStats(t *testing.T) {
 	if !strings.Contains(view, "1 active") {
 		t.Errorf("expected '1 active' in status bar, got:\n%s", view)
 	}
-	if !strings.Contains(view, "5 done") {
-		t.Errorf("expected '5 done' in status bar, got:\n%s", view)
+	if !strings.Contains(view, "5 inactive") {
+		t.Errorf("expected '5 inactive' in status bar, got:\n%s", view)
 	}
 }
 

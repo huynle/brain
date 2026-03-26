@@ -80,14 +80,14 @@ func (s StatusBar) renderFirstRow(width int) string {
 
 	// Middle: task stats
 	stats := fmt.Sprintf(
-		"%s %d ready  %s %d waiting  %s %d active  %s %d done",
+		"%s %d ready  %s %d waiting  %s %d active  %s %d inactive",
 		lipgloss.NewStyle().Foreground(ColorReady).Render(IndicatorReady),
 		s.Stats.Ready,
 		lipgloss.NewStyle().Foreground(ColorWaiting).Render(IndicatorWaiting),
 		s.Stats.Waiting,
 		lipgloss.NewStyle().Foreground(ColorActive).Render(IndicatorActive),
 		s.Stats.InProgress,
-		lipgloss.NewStyle().Foreground(ColorCompleted).Render(IndicatorCompleted),
+		lipgloss.NewStyle().Foreground(ColorDim).Render(IndicatorCompleted),
 		s.Stats.Completed,
 	)
 

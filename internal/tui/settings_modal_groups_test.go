@@ -72,7 +72,7 @@ func TestSettingsModal_TabSwitching(t *testing.T) {
 func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
-		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Active": true, "Blocked": true, "Completed": false, "In Progress": false}, // Completed and In Progress are hidden
+		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Active": true, "Blocked": true, "Inactive": false, "In Progress": false}, // Inactive and In Progress are hidden
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
@@ -89,7 +89,7 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	}
 
 	// Should contain group names
-	expectedGroups := []string{"Draft", "Pending", "Active", "Blocked", "Completed"}
+	expectedGroups := []string{"Draft", "Pending", "Active", "Blocked", "Inactive"}
 	for _, group := range expectedGroups {
 		if !containsString(view, group) {
 			t.Errorf("Expected view to contain group '%s'", group)
@@ -106,9 +106,9 @@ func TestSettingsModal_GroupsTabRendering(t *testing.T) {
 	if !containsString(view, "☑ ▾ Draft") {
 		t.Errorf("Expected 'Draft' to show checked box with collapse indicator (☑ ▾) when GroupVisible=true, got:\n%s", view)
 	}
-	// Completed should show ☐ (visible=false, no collapse indicator)
-	if !containsString(view, "☐") || !containsString(view, "Completed") {
-		t.Error("Expected 'Completed' to show unchecked box (☐) when GroupVisible=false")
+	// Inactive should show ☐ (visible=false, no collapse indicator)
+	if !containsString(view, "☐") || !containsString(view, "Inactive") {
+		t.Error("Expected 'Inactive' to show unchecked box (☐) when GroupVisible=false")
 	}
 }
 
@@ -153,16 +153,16 @@ func TestSettingsModal_GroupVisibilityToggle(t *testing.T) {
 func TestSettingsModal_GroupsTabTaskCounts(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    make(map[string]bool),
-		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Completed": true},
+		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Inactive": true},
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,
 	}
 
 	taskCounts := map[string]int{
-		"Draft":     3,
-		"Pending":   52,
-		"Completed": 10,
+		"Draft":    3,
+		"Pending":  52,
+		"Inactive": 10,
 	}
 
 	modal := NewSettingsModal(settings, taskCounts)
@@ -186,7 +186,7 @@ func TestSettingsModal_GroupsTabTaskCounts(t *testing.T) {
 func TestSettingsModal_GroupsTabCollapseIndicators(t *testing.T) {
 	settings := Settings{
 		GroupCollapsed:    map[string]bool{"Draft": true, "Pending": false},
-		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Completed": false},
+		GroupVisible:      map[string]bool{"Draft": true, "Pending": true, "Inactive": false},
 		FeatureCollapsed:  make(map[string]bool),
 		ProjectLimits:     make(map[string]int),
 		GlobalMaxParallel: 4,

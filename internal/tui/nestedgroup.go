@@ -18,7 +18,7 @@ func debugLog(format string, args ...interface{}) {
 // StatusGroup represents a collapsible group of tasks organized by status (classification),
 // with nested feature grouping within each status.
 type StatusGroup struct {
-	Name      string         // "Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string         // "Draft", "Pending", "Active", "In Progress", "Blocked", "Inactive", "Ungrouped"
 	Features  []FeatureGroup // Feature groups within this status
 	Ungrouped *FeatureGroup  // Tasks without feature_id (nil if none)
 	Collapsed bool           // Is the status group collapsed?
@@ -48,7 +48,7 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 
 	// Step 2: For each status group, create nested feature groups
 	var result []StatusGroup
-	statusOrder := []string{"Ungrouped", "Draft", "Ready", "Pending", "Waiting", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	statusOrder := []string{"Ungrouped", "Draft", "Ready", "Pending", "Waiting", "Active", "In Progress", "Blocked", "Inactive"}
 
 	for _, statusName := range statusOrder {
 		statusTasks, ok := statusMap[statusName]

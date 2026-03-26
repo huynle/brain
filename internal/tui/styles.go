@@ -26,6 +26,16 @@ var (
 	ColorPriorityLow    = lipgloss.Color("8") // gray
 )
 
+// Muted/inactive status colors — used within the "Inactive" group
+// to distinguish individual statuses while keeping them visually subdued.
+var (
+	ColorInactiveCompleted  = lipgloss.Color("#5a7a5a") // dim green
+	ColorInactiveValidated  = lipgloss.Color("#5a8a8a") // dim cyan
+	ColorInactiveCancelled  = lipgloss.Color("#8a5a5a") // dim red
+	ColorInactiveSuperseded = lipgloss.Color("#8a8a5a") // dim yellow
+	ColorInactiveArchived   = lipgloss.Color("#666666") // dark gray
+)
+
 // =============================================================================
 // Status Indicators (matching React TUI)
 // =============================================================================
@@ -103,9 +113,16 @@ var ArchivedHeaderStyle = lipgloss.NewStyle().
 	Padding(0, 1)
 
 // CompletedHeaderStyle is used for Completed status group headers (green color).
+// Deprecated: Use InactiveHeaderStyle instead — completed tasks are now in the Inactive group.
 var CompletedHeaderStyle = lipgloss.NewStyle().
 	Bold(true).
 	Foreground(lipgloss.Color("#66cc66")). // Green (matches TypeScript)
+	Padding(0, 1)
+
+// InactiveHeaderStyle is used for the Inactive status group header (muted gray).
+var InactiveHeaderStyle = lipgloss.NewStyle().
+	Bold(true).
+	Foreground(lipgloss.Color("#888888")). // Muted gray
 	Padding(0, 1)
 
 // FeatureHeaderStyle is used for "Feature: feature-name" headers (muted blue color).
@@ -183,16 +200,17 @@ func StatusStyleWithState(status, classification string) lipgloss.Style {
 		return lipgloss.NewStyle().Foreground(ColorActive) // cyan
 	case "blocked":
 		return lipgloss.NewStyle().Foreground(ColorBlocked) // red
+	// Inactive statuses use muted colors to be visually subdued
 	case "cancelled":
-		return lipgloss.NewStyle().Foreground(ColorMagenta) // magenta
+		return lipgloss.NewStyle().Foreground(ColorInactiveCancelled) // dim red
 	case "completed":
-		return lipgloss.NewStyle().Foreground(ColorCompleted) // green dim
+		return lipgloss.NewStyle().Foreground(ColorInactiveCompleted) // dim green
 	case "validated":
-		return lipgloss.NewStyle().Foreground(ColorReady) // green bright
+		return lipgloss.NewStyle().Foreground(ColorInactiveValidated) // dim cyan
 	case "superseded":
-		return lipgloss.NewStyle().Foreground(ColorDim) // gray
+		return lipgloss.NewStyle().Foreground(ColorInactiveSuperseded) // dim yellow
 	case "archived":
-		return lipgloss.NewStyle().Foreground(ColorDim) // gray
+		return lipgloss.NewStyle().Foreground(ColorInactiveArchived) // dark gray
 	}
 
 	// Priority 3: Fall back to classification (dependency state)

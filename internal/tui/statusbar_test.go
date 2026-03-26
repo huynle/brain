@@ -36,7 +36,8 @@ func TestStatusBarHeightWithBlockedTasks(t *testing.T) {
 		Blocked:    3,
 	}
 
-	rendered := sb.View(80)
+	// Use wider width to accommodate "inactive" label (longer than "done")
+	rendered := sb.View(100)
 	lineCount := strings.Count(rendered, "\n") + 1
 
 	// Without metrics: border-top + content-row + border-bottom = 3 lines
@@ -249,7 +250,7 @@ func TestStatusBarContentElements(t *testing.T) {
 		t.Error("Status bar should contain 'active' stat")
 	}
 
-	if !strings.Contains(rendered, "done") {
-		t.Error("Status bar should contain 'done' stat")
+	if !strings.Contains(rendered, "inactive") {
+		t.Error("Status bar should contain 'inactive' stat")
 	}
 }

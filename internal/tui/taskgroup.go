@@ -10,10 +10,21 @@ import (
 
 // TaskGroup represents a collapsible group of tasks organized by classification.
 type TaskGroup struct {
-	Name      string               // "Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"
+	Name      string               // "Draft", "Pending", "Active", "In Progress", "Blocked", "Inactive", "Ungrouped"
 	Tasks     []types.ResolvedTask // Tasks in this group
 	Collapsed bool                 // Is the group collapsed?
 	Count     int                  // Total tasks in group
+}
+
+// IsInactiveStatus returns true if the status is a terminal/inactive status
+// that should be grouped under the "Inactive" display group.
+func IsInactiveStatus(status string) bool {
+	switch status {
+	case "completed", "validated", "cancelled", "superseded", "archived":
+		return true
+	default:
+		return false
+	}
 }
 
 // GroupTasks organizes tasks into groups by classification with optional visibility filtering.
@@ -58,7 +69,7 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 	// Return in display order with visibility filtering
 	result := []TaskGroup{}
 	// Order: classification-based groups first (Ready, Waiting, Blocked, Ungrouped), then status-based groups
-	for _, groupName := range []string{"Ready", "Waiting", "Blocked", "Ungrouped", "Draft", "Pending", "Active", "In Progress", "Cancelled", "Completed", "Validated", "Superseded", "Archived"} {
+	for _, groupName := range []string{"Ready", "Waiting", "Blocked", "Ungrouped", "Draft", "Pending", "Active", "In Progress", "Inactive"} {
 		taskList, ok := groups[groupName]
 		if !ok || len(taskList) == 0 {
 			continue // Skip groups with no tasks
@@ -99,12 +110,11 @@ func GroupTasks(tasks []types.ResolvedTask, visibleGroups map[string]bool) []Tas
 // Tasks without featureID go to "Ungrouped" regardless of status/classification.
 // Terminal statuses (completed, validated, etc.) always use status groups.
 func normalizeClassification(classification, status, featureID string) string {
-	// Priority 1: Tasks without feature_id go to Ungrouped (except terminal states)
+	// Priority 1: Tasks without feature_id go to Ungrouped (except terminal/inactive states and draft)
 	if featureID == "" {
-		switch status {
-		case "completed", "validated", "cancelled", "superseded", "archived", "draft":
-			// Terminal states and draft stay in their own groups
-		default:
+		if IsInactiveStatus(status) || status == "draft" {
+			// Inactive states and draft stay in their own groups
+		} else {
 			// All other tasks without feature_id go to Ungrouped
 			debugLog("normalizeClassification: no feature_id, status=%s -> Ungrouped", status)
 			return "Ungrouped"
@@ -131,10 +141,10 @@ func normalizeClassification(classification, status, featureID string) string {
 			return "Ready"
 		}
 
-		// For in_progress with no classification, default to Completed
+		// For in_progress with no classification, default to Inactive
 		if status == "in_progress" {
-			debugLog("normalizeClassification: status=in_progress, no classification -> Completed group (default)")
-			return "Completed"
+			debugLog("normalizeClassification: status=in_progress, no classification -> Inactive group (default)")
+			return "Inactive"
 		}
 	}
 
@@ -161,20 +171,20 @@ func normalizeClassification(classification, status, featureID string) string {
 		debugLog("normalizeClassification: status=blocked -> Blocked group")
 		return "Blocked"
 	case "cancelled":
-		debugLog("normalizeClassification: status=cancelled -> Cancelled group")
-		return "Cancelled"
+		debugLog("normalizeClassification: status=cancelled -> Inactive group")
+		return "Inactive"
 	case "completed":
-		debugLog("normalizeClassification: status=completed -> Completed group")
-		return "Completed"
+		debugLog("normalizeClassification: status=completed -> Inactive group")
+		return "Inactive"
 	case "validated":
-		debugLog("normalizeClassification: status=validated -> Validated group")
-		return "Validated"
+		debugLog("normalizeClassification: status=validated -> Inactive group")
+		return "Inactive"
 	case "superseded":
-		debugLog("normalizeClassification: status=superseded -> Superseded group")
-		return "Superseded"
+		debugLog("normalizeClassification: status=superseded -> Inactive group")
+		return "Inactive"
 	case "archived":
-		debugLog("normalizeClassification: status=archived -> Archived group")
-		return "Archived"
+		debugLog("normalizeClassification: status=archived -> Inactive group")
+		return "Inactive"
 	}
 
 	// Priority 4: Fall back to classification if status is empty or unknown
@@ -189,13 +199,13 @@ func normalizeClassification(classification, status, featureID string) string {
 		debugLog("normalizeClassification: classification=blocked (no status) -> Blocked group")
 		return "Blocked"
 	case "not_pending":
-		debugLog("normalizeClassification: classification=not_pending -> Completed group (fallback)")
-		return "Completed"
+		debugLog("normalizeClassification: classification=not_pending -> Inactive group (fallback)")
+		return "Inactive"
 	}
 
-	// Default: unknown statuses/classifications go to Completed
-	debugLog("normalizeClassification: unknown status=%s, classification=%s -> Completed (default)", status, classification)
-	return "Completed"
+	// Default: unknown statuses/classifications go to Inactive
+	debugLog("normalizeClassification: unknown status=%s, classification=%s -> Inactive (default)", status, classification)
+	return "Inactive"
 }
 
 // FlattenGroupsToIDs returns a flat list of task IDs in visual order,

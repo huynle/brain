@@ -19,22 +19,20 @@ const (
 	TabMonitors
 )
 
-// StatusGroups represents the status groups available in the TUI
-var StatusGroups = []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+// StatusGroups represents the status groups available in the TUI.
+// Terminal statuses (completed, validated, cancelled, superseded, archived) are
+// consolidated under a single "Inactive" group.
+var StatusGroups = []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Inactive"}
 
-// statusGroupToAPIStatus maps display group names to API status values.
-// Used for counting tasks per status group.
-var statusGroupToAPIStatus = map[string]string{
-	"Draft":       "draft",
-	"Pending":     "pending",
-	"Active":      "active",
-	"In Progress": "in_progress",
-	"Blocked":     "blocked",
-	"Cancelled":   "cancelled",
-	"Completed":   "completed",
-	"Validated":   "validated",
-	"Superseded":  "superseded",
-	"Archived":    "archived",
+// statusGroupToAPIStatuses maps display group names to one or more API status values.
+// Used for counting tasks per status group. "Inactive" maps to all terminal statuses.
+var statusGroupToAPIStatuses = map[string][]string{
+	"Draft":       {"draft"},
+	"Pending":     {"pending"},
+	"Active":      {"active"},
+	"In Progress": {"in_progress"},
+	"Blocked":     {"blocked"},
+	"Inactive":    {"completed", "validated", "cancelled", "superseded", "archived"},
 }
 
 // SettingsModal allows editing project limits, global max parallel, group visibility, runtime settings, and monitors.

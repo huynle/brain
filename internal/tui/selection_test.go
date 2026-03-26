@@ -175,11 +175,11 @@ func TestStatusBar_ShowsSelectionCount(t *testing.T) {
 	}
 	statusBar.SelectedCount = 2
 
-	view := statusBar.View(80)
+	view := statusBar.View(100)
 
 	// Should contain "2 selected"
 	if !strings.Contains(view, "2 selected") {
-		t.Error("Expected status bar to show selection count")
+		t.Errorf("Expected status bar to show selection count, got:\n%s", view)
 	}
 }
 

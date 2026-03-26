@@ -89,8 +89,8 @@ func TestTaskTree_HybridView_AllActiveTasks(t *testing.T) {
 	if strings.Contains(view, "Draft") {
 		t.Error("Did not expect 'Draft' section when all tasks are active")
 	}
-	if strings.Contains(view, "Completed") {
-		t.Error("Did not expect 'Completed' section when all tasks are active")
+	if strings.Contains(view, "Inactive") {
+		t.Error("Did not expect 'Inactive' section when all tasks are active")
 	}
 }
 

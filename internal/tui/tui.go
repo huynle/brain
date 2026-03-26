@@ -2861,8 +2861,10 @@ func (m Model) computeTaskCountsByStatus() map[string]int {
 	counts := make(map[string]int)
 	// Build reverse mapping: API status -> display group name
 	apiToDisplay := make(map[string]string)
-	for display, api := range statusGroupToAPIStatus {
-		apiToDisplay[api] = display
+	for display, apiStatuses := range statusGroupToAPIStatuses {
+		for _, api := range apiStatuses {
+			apiToDisplay[api] = display
+		}
 	}
 
 	for _, task := range m.tasks {

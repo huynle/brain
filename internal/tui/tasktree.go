@@ -1052,13 +1052,9 @@ func (tt *TaskTree) selectFirstFeatureTask() {
 // Initializes 3-level navigation: status groups → feature groups → tasks.
 func (tt *TaskTree) selectFirstNestedTask() {
 	// Find first active (non-terminal) status group
-	// Terminal groups: Completed, Validated, Superseded, Archived, Cancelled
+	// Terminal groups: Inactive (contains completed, validated, superseded, archived, cancelled)
 	terminalStatuses := map[string]bool{
-		"Completed":  true,
-		"Validated":  true,
-		"Superseded": true,
-		"Archived":   true,
-		"Cancelled":  true,
+		"Inactive": true,
 	}
 
 	firstActiveIdx := -1

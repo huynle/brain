@@ -690,3 +690,131 @@ func TestAuth_DualAuth_InvalidToken_Returns401(t *testing.T) {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusUnauthorized)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// isTLS unit tests
+// ---------------------------------------------------------------------------
+
+func TestIsTLS(t *testing.T) {
+	tests := []struct {
+		name    string
+		headers map[string]string
+		want    bool
+	}{
+		{
+			name:    "plain HTTP no headers",
+			headers: nil,
+			want:    false,
+		},
+		{
+			name:    "X-Forwarded-Proto https",
+			headers: map[string]string{"X-Forwarded-Proto": "https"},
+			want:    true,
+		},
+		{
+			name:    "X-Forwarded-Proto http",
+			headers: map[string]string{"X-Forwarded-Proto": "http"},
+			want:    false,
+		},
+		{
+			name:    "X-Forwarded-Ssl on",
+			headers: map[string]string{"X-Forwarded-Ssl": "on"},
+			want:    true,
+		},
+		{
+			name:    "X-Forwarded-Ssl off",
+			headers: map[string]string{"X-Forwarded-Ssl": "off"},
+			want:    false,
+		},
+		{
+			name:    "Front-End-Https on",
+			headers: map[string]string{"Front-End-Https": "on"},
+			want:    true,
+		},
+		{
+			name:    "Front-End-Https off",
+			headers: map[string]string{"Front-End-Https": "off"},
+			want:    false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			got := isTLS(req)
+			if got != tt.want {
+				t.Errorf("isTLS() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SecureHeaders HSTS tests
+// ---------------------------------------------------------------------------
+
+func TestSecureHeaders_HSTS(t *testing.T) {
+	tests := []struct {
+		name     string
+		headers  map[string]string
+		wantHSTS bool
+	}{
+		{
+			name:     "plain HTTP - no HSTS",
+			headers:  nil,
+			wantHSTS: false,
+		},
+		{
+			name:     "behind TLS proxy - HSTS present",
+			headers:  map[string]string{"X-Forwarded-Proto": "https"},
+			wantHSTS: true,
+		},
+		{
+			name:     "X-Forwarded-Ssl on - HSTS present",
+			headers:  map[string]string{"X-Forwarded-Ssl": "on"},
+			wantHSTS: true,
+		},
+		{
+			name:     "Front-End-Https on - HSTS present",
+			headers:  map[string]string{"Front-End-Https": "on"},
+			wantHSTS: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler := SecureHeaders(okHandler)
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			for k, v := range tt.headers {
+				req.Header.Set(k, v)
+			}
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, req)
+
+			// Always-present security headers
+			if rec.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Error("missing X-Content-Type-Options header")
+			}
+			if rec.Header().Get("X-Frame-Options") != "DENY" {
+				t.Error("missing X-Frame-Options header")
+			}
+
+			hsts := rec.Header().Get("Strict-Transport-Security")
+			if tt.wantHSTS {
+				want := "max-age=31536000; includeSubDomains"
+				if hsts != want {
+					t.Errorf("Strict-Transport-Security = %q, want %q", hsts, want)
+				}
+			} else {
+				if hsts != "" {
+					t.Errorf("Strict-Transport-Security = %q, want empty (plain HTTP)", hsts)
+				}
+			}
+		})
+	}
+}

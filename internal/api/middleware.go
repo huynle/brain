@@ -205,8 +205,32 @@ func SecureHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
+
+		// Add HSTS when behind TLS proxy
+		if isTLS(r) {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isTLS returns true if the request was made over TLS, either directly
+// or via a TLS-terminating reverse proxy.
+func isTLS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	if r.Header.Get("X-Forwarded-Proto") == "https" {
+		return true
+	}
+	if r.Header.Get("X-Forwarded-Ssl") == "on" {
+		return true
+	}
+	if r.Header.Get("Front-End-Https") == "on" {
+		return true
+	}
+	return false
 }
 
 // Auth returns middleware that validates Bearer tokens or ?token= query params

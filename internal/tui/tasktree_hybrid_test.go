@@ -45,8 +45,8 @@ func TestTaskTree_HybridView_SeparatesDraftAndCompleted(t *testing.T) {
 	}
 
 	// Check that Completed status group exists
-	if !strings.Contains(view, "Completed (3)") {
-		t.Error("Expected 'Completed (3)' status group in view")
+	if !strings.Contains(view, "Inactive (3)") {
+		t.Error("Expected 'Inactive' status group in view")
 	}
 
 	// Verify that features show completion stats [completed/total complete]
@@ -111,13 +111,13 @@ func TestTaskTree_HybridView_CollapseStates(t *testing.T) {
 	}
 
 	// Completed should be collapsed by default (▶)
-	if !strings.Contains(view, "▶ Completed") {
-		t.Error("Expected Completed section to be collapsed (▶) by default")
+	if !strings.Contains(view, "▶ Inactive") {
+		t.Error("Expected Inactive section to be collapsed (▶) by default")
 	}
 }
 
 // TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted verifies that [Ungrouped]
-// appears as a collapsible sub-feature header with ▶/▾ in Draft and Completed sections,
+// appears as a collapsible sub-feature header with ▶/▾ in Draft and Inactive sections,
 // matching the behavior of named sub-features.
 func TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted(t *testing.T) {
 	tasks := []types.ResolvedTask{
@@ -190,7 +190,7 @@ func TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted(t *testing.T) 
 }
 
 // TestTaskTree_HybridView_UngroupedToggleCollapse verifies that Space toggles collapse
-// on [Ungrouped] sub-feature headers in Draft/Completed sections.
+// on [Ungrouped] sub-feature headers in Draft/Inactive sections.
 func TestTaskTree_HybridView_UngroupedToggleCollapse(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "task1", Title: "Draft Ungrouped 1", Status: "draft", FeatureID: ""},

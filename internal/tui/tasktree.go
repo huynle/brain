@@ -2070,11 +2070,11 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		ancestors, descendants = buildSelectedTaskRelationGraph(tt.tasks, tt.SelectedID)
 	}
 
-	// Split tasks into active, draft, cancelled, superseded, archived, and completed
+	// Split tasks into active, draft, and inactive
 	// Active tasks: pending, in_progress, blocked, ready, waiting, active
 	// Draft tasks: draft status
-	// Cancelled/Superseded/Archived/Completed: separate terminal status sections
-	var draftTasks, cancelledTasks, supersededTasks, archivedTasks, completedTasks []types.ResolvedTask
+	// Inactive: completed, validated, cancelled, superseded, archived
+	var draftTasks, inactiveTasks []types.ResolvedTask
 	activeFeatureGroups := make([]FeatureGroup, 0)
 	var activeUngrouped *FeatureGroup
 
@@ -2085,14 +2085,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			switch task.Status {
 			case "draft":
 				draftTasks = append(draftTasks, task)
-			case "cancelled":
-				cancelledTasks = append(cancelledTasks, task)
-			case "superseded":
-				supersededTasks = append(supersededTasks, task)
-			case "archived":
-				archivedTasks = append(archivedTasks, task)
-			case "completed", "validated":
-				completedTasks = append(completedTasks, task)
+			case "cancelled", "superseded", "archived", "completed", "validated":
+				inactiveTasks = append(inactiveTasks, task)
 			default:
 				// Active statuses: pending, in_progress, blocked, active
 				activeTasks = append(activeTasks, task)
@@ -2115,14 +2109,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			switch task.Status {
 			case "draft":
 				draftTasks = append(draftTasks, task)
-			case "cancelled":
-				cancelledTasks = append(cancelledTasks, task)
-			case "superseded":
-				supersededTasks = append(supersededTasks, task)
-			case "archived":
-				archivedTasks = append(archivedTasks, task)
-			case "completed", "validated":
-				completedTasks = append(completedTasks, task)
+			case "cancelled", "superseded", "archived", "completed", "validated":
+				inactiveTasks = append(inactiveTasks, task)
 			default:
 				activeUngroupedTasks = append(activeUngroupedTasks, task)
 			}
@@ -2302,12 +2290,12 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 	// Cache terminal section task existence for navigation
 	tt.hasDraftTasks = len(draftTasks) > 0
-	tt.hasCancelledTasks = len(cancelledTasks) > 0
-	tt.hasSupersededTasks = len(supersededTasks) > 0
-	tt.hasArchivedTasks = len(archivedTasks) > 0
-	tt.hasCompletedTasks = len(completedTasks) > 0
+	tt.hasCancelledTasks = false
+	tt.hasSupersededTasks = false
+	tt.hasArchivedTasks = false
+	tt.hasCompletedTasks = len(inactiveTasks) > 0
 
-	// Render terminal status sections in order: Draft → Cancelled → Superseded → Archived → Completed
+	// Render terminal status sections: Draft → Inactive (all terminal statuses merged)
 	type terminalSection struct {
 		label       string
 		tasks       []types.ResolvedTask
@@ -2323,10 +2311,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 	terminalSections := []terminalSection{
 		{"Draft", draftTasks, DraftHeaderStyle, func() bool { return tt.isOnDraftSection }, &tt.draftCollapsed, func() int { return tt.draftFeatureIdx }, func() int { return tt.draftTaskIdx }, func(ids []string) { tt.draftFeatureIDs = ids }, func() []string { return tt.draftFeatureIDs }, "draft"},
-		{"Cancelled", cancelledTasks, CancelledHeaderStyle, func() bool { return tt.isOnCancelledSection }, &tt.cancelledCollapsed, func() int { return tt.cancelledFeatureIdx }, func() int { return tt.cancelledTaskIdx }, func(ids []string) { tt.cancelledFeatureIDs = ids }, func() []string { return tt.cancelledFeatureIDs }, "cancelled"},
-		{"Superseded", supersededTasks, SupersededHeaderStyle, func() bool { return tt.isOnSupersededSection }, &tt.supersededCollapsed, func() int { return tt.supersededFeatureIdx }, func() int { return tt.supersededTaskIdx }, func(ids []string) { tt.supersededFeatureIDs = ids }, func() []string { return tt.supersededFeatureIDs }, "superseded"},
-		{"Archived", archivedTasks, ArchivedHeaderStyle, func() bool { return tt.isOnArchivedSection }, &tt.archivedCollapsed, func() int { return tt.archivedFeatureIdx }, func() int { return tt.archivedTaskIdx }, func(ids []string) { tt.archivedFeatureIDs = ids }, func() []string { return tt.archivedFeatureIDs }, "archived"},
-		{"Completed", completedTasks, CompletedHeaderStyle, func() bool { return tt.isOnCompletedSection }, &tt.completedCollapsed, func() int { return tt.completedFeatureIdx }, func() int { return tt.completedTaskIdx }, func(ids []string) { tt.completedFeatureIDs = ids }, func() []string { return tt.completedFeatureIDs }, "completed"},
+		{"Inactive", inactiveTasks, InactiveHeaderStyle, func() bool { return tt.isOnCompletedSection }, &tt.completedCollapsed, func() int { return tt.completedFeatureIdx }, func() int { return tt.completedTaskIdx }, func(ids []string) { tt.completedFeatureIDs = ids }, func() []string { return tt.completedFeatureIDs }, "completed"},
 	}
 
 	for _, sec := range terminalSections {
@@ -2432,10 +2417,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		// Build terminal section descriptors for line-finding
 		termSections := []terminalSectionLineInfo{
 			{tasks: draftTasks, isOn: tt.isOnDraftSection, collapsed: tt.draftCollapsed, featureIdx: tt.draftFeatureIdx, taskIdx: tt.draftTaskIdx, featureIDs: tt.draftFeatureIDs, sectionName: "draft", featureCollapsed: tt.featureCollapsed},
-			{tasks: cancelledTasks, isOn: tt.isOnCancelledSection, collapsed: tt.cancelledCollapsed, featureIdx: tt.cancelledFeatureIdx, taskIdx: tt.cancelledTaskIdx, featureIDs: tt.cancelledFeatureIDs, sectionName: "cancelled", featureCollapsed: tt.featureCollapsed},
-			{tasks: supersededTasks, isOn: tt.isOnSupersededSection, collapsed: tt.supersededCollapsed, featureIdx: tt.supersededFeatureIdx, taskIdx: tt.supersededTaskIdx, featureIDs: tt.supersededFeatureIDs, sectionName: "superseded", featureCollapsed: tt.featureCollapsed},
-			{tasks: archivedTasks, isOn: tt.isOnArchivedSection, collapsed: tt.archivedCollapsed, featureIdx: tt.archivedFeatureIdx, taskIdx: tt.archivedTaskIdx, featureIDs: tt.archivedFeatureIDs, sectionName: "archived", featureCollapsed: tt.featureCollapsed},
-			{tasks: completedTasks, isOn: tt.isOnCompletedSection, collapsed: tt.completedCollapsed, featureIdx: tt.completedFeatureIdx, taskIdx: tt.completedTaskIdx, featureIDs: tt.completedFeatureIDs, sectionName: "completed", featureCollapsed: tt.featureCollapsed},
+			{tasks: inactiveTasks, isOn: tt.isOnCompletedSection, collapsed: tt.completedCollapsed, featureIdx: tt.completedFeatureIdx, taskIdx: tt.completedTaskIdx, featureIDs: tt.completedFeatureIDs, sectionName: "completed", featureCollapsed: tt.featureCollapsed},
 		}
 		selectedLineIdx := findSelectedLineInFeatureView(
 			activeFeatureGroups,

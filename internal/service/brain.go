@@ -525,12 +525,30 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 }
 
 // =============================================================================
-// Metadata Updates (SQLite-only, no filesystem)
+// Metadata Updates
 // =============================================================================
 
+// durableMetadataFields is the set of metadata fields that should be persisted
+// back to the markdown file on disk. Fields not in this set are considered
+// transient/runtime-only and live only in SQLite.
+var durableMetadataFields = map[string]bool{
+	"status":             true,
+	"priority":           true,
+	"tags":               true,
+	"depends_on":         true,
+	"title":              true,
+	"feature_id":         true,
+	"feature_priority":   true,
+	"feature_depends_on": true,
+	"note":               true,
+	"append":             true,
+}
+
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
-// JSON column directly in SQLite. This bypasses the file-read/write logic
-// and is used for runtime state like session tracking.
+// JSON column in SQLite. If any "durable" fields are present (status, priority,
+// tags, depends_on, title, feature_id, feature_priority, feature_depends_on,
+// note, append), the changes are also written back to the markdown file on disk
+// and the file is re-indexed.
 func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
@@ -540,6 +558,25 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 		return nil, api.ErrNotFound
 	}
 
+	// Check if any durable fields are present
+	hasDurable := false
+	for key := range fields {
+		if durableMetadataFields[key] {
+			hasDurable = true
+			break
+		}
+	}
+
+	// If durable fields are present, write changes to the markdown file
+	if hasDurable {
+		if err := s.syncDurableFieldsToFile(ctx, row, fields); err != nil {
+			// Log warning but continue with DB update — file write failure
+			// should not block the metadata update
+			fmt.Fprintf(os.Stderr, "WARNING: failed to sync durable fields to file %q: %v\n", row.Path, err)
+		}
+	}
+
+	// Always do the DB update (existing behavior)
 	updated, err := s.storage.MergeMetadata(ctx, row.Path, fields)
 	if err != nil {
 		return nil, fmt.Errorf("merge metadata: %w", err)
@@ -550,6 +587,149 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 
 	entry := NoteRowToBrainEntry(updated)
 	return &entry, nil
+}
+
+// syncDurableFieldsToFile reads the markdown file, applies durable field
+// changes to the frontmatter, writes the file back, and re-indexes it.
+// This follows the same pattern as the Update() method.
+func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *storage.NoteRow, fields map[string]interface{}) error {
+	// Read file from disk
+	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	fileContent, err := os.ReadFile(absPath)
+	if err != nil {
+		return fmt.Errorf("read file %q: %w", absPath, err)
+	}
+
+	// Parse frontmatter
+	doc, err := frontmatter.Parse(string(fileContent))
+	if err != nil {
+		return fmt.Errorf("parse frontmatter: %w", err)
+	}
+
+	fm := &doc.Frontmatter
+	body := doc.Body
+
+	// Apply durable field changes to frontmatter
+	if v, ok := fields["status"]; ok {
+		if s, ok := v.(string); ok {
+			fm.Status = s
+		}
+	}
+	if v, ok := fields["priority"]; ok {
+		if s, ok := v.(string); ok {
+			fm.Priority = s
+		}
+	}
+	if v, ok := fields["title"]; ok {
+		if s, ok := v.(string); ok {
+			fm.Title = frontmatter.SanitizeTitle(s)
+		}
+	}
+	if v, ok := fields["feature_id"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureID = s
+		}
+	}
+	if v, ok := fields["feature_priority"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeaturePriority = s
+		}
+	}
+
+	// Slice fields: coerce from JSON's []interface{} or []string, then sanitize
+	if v, ok := fields["tags"]; ok {
+		fm.Tags = coerceStringSlice(v, func(s string) (string, bool) {
+			return frontmatter.SanitizeTag(s)
+		})
+	}
+	if v, ok := fields["depends_on"]; ok {
+		fm.DependsOn = coerceStringSlice(v, func(s string) (string, bool) {
+			sd := frontmatter.SanitizeDependsOnEntry(s)
+			return sd, sd != ""
+		})
+	}
+	if v, ok := fields["feature_depends_on"]; ok {
+		fm.FeatureDependsOn = coerceStringSlice(v, func(s string) (string, bool) {
+			sd := frontmatter.SanitizeDependsOnEntry(s)
+			return sd, sd != ""
+		})
+	}
+
+	// Handle append (add to body)
+	if v, ok := fields["append"]; ok {
+		if appendStr, ok := v.(string); ok && appendStr != "" {
+			if body != "" {
+				body = body + "\n\n" + appendStr
+			} else {
+				body = appendStr
+			}
+		}
+	}
+
+	// Handle note (timestamped status change note, appended to body)
+	if v, ok := fields["note"]; ok {
+		if noteStr, ok := v.(string); ok && noteStr != "" {
+			statusStr := fm.Status
+			if sv, ok := fields["status"]; ok {
+				if s, ok := sv.(string); ok {
+					statusStr = s
+				}
+			}
+			now := types.TimeNowUTC().Format(time.RFC3339)
+			noteText := fmt.Sprintf("\n\n---\n*Status changed to **%s** on %s*\n\n%s", statusStr, now, noteStr)
+			body = body + noteText
+		}
+	}
+
+	// Serialize updated frontmatter and write back
+	fmYAML := frontmatter.Serialize(fm)
+	var fileBuilder strings.Builder
+	fileBuilder.WriteString("---\n")
+	fileBuilder.WriteString(fmYAML)
+	fileBuilder.WriteString("---\n")
+	if body != "" {
+		fileBuilder.WriteString("\n")
+		fileBuilder.WriteString(body)
+		fileBuilder.WriteString("\n")
+	}
+
+	if err := os.WriteFile(absPath, []byte(fileBuilder.String()), 0o644); err != nil {
+		return fmt.Errorf("write file %q: %w", absPath, err)
+	}
+
+	// Preserve runtime metadata from the DB that the filesystem doesn't track.
+	// Same pattern as Update() method.
+	var preservedFields map[string]interface{}
+	runtimeKeys := []string{
+		"sessions", "next_run", "schedule", "schedule_enabled",
+		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+	}
+	if row.Metadata != "" && row.Metadata != "{}" {
+		var existingMeta map[string]interface{}
+		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
+			preservedFields = make(map[string]interface{})
+			for _, key := range runtimeKeys {
+				if val, ok := existingMeta[key]; ok {
+					preservedFields[key] = val
+				}
+			}
+			if len(preservedFields) == 0 {
+				preservedFields = nil
+			}
+		}
+	}
+
+	// Re-index the file
+	if err := s.indexer.IndexFile(row.Path); err != nil {
+		return fmt.Errorf("re-index file %q: %w", row.Path, err)
+	}
+
+	// Restore preserved runtime fields into the re-indexed metadata
+	if preservedFields != nil {
+		_, _ = s.storage.MergeMetadata(ctx, row.Path, preservedFields)
+	}
+
+	return nil
 }
 
 // =============================================================================
@@ -1211,4 +1391,31 @@ func derefStr(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// coerceStringSlice converts a value from JSON unmarshalling (either
+// []interface{} or []string) into a sanitized []string. The sanitize function
+// returns (sanitized, ok) — items where ok is false are dropped.
+func coerceStringSlice(v interface{}, sanitize func(string) (string, bool)) []string {
+	var raw []string
+	switch items := v.(type) {
+	case []interface{}:
+		for _, item := range items {
+			if s, ok := item.(string); ok {
+				raw = append(raw, s)
+			}
+		}
+	case []string:
+		raw = items
+	default:
+		return nil
+	}
+
+	var result []string
+	for _, s := range raw {
+		if sanitized, ok := sanitize(s); ok {
+			result = append(result, sanitized)
+		}
+	}
+	return result
 }

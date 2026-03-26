@@ -43,8 +43,8 @@ func TestInitCommand_Execute_CreatesDirectories(t *testing.T) {
 	// Verify directories were created
 	expectedDirs := []string{
 		tmpDir,
-		filepath.Join(tmpDir, ".zk"),
-		filepath.Join(tmpDir, ".zk", "templates"),
+		filepath.Join(tmpDir, ".brain-data"),
+		filepath.Join(tmpDir, ".brain-data", "templates"),
 		filepath.Join(tmpDir, "global"),
 		filepath.Join(tmpDir, "projects"),
 	}
@@ -80,7 +80,7 @@ func TestInitCommand_Execute_CopiesTemplates(t *testing.T) {
 	}
 
 	// Verify at least some templates were copied
-	templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+	templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 	entries, err := os.ReadDir(templatesDir)
 	if err != nil {
 		t.Fatalf("Failed to read templates dir: %v", err)
@@ -121,7 +121,7 @@ func TestInitCommand_Execute_CopiesConfig(t *testing.T) {
 	}
 
 	// Verify config was copied
-	configPath := filepath.Join(tmpDir, ".zk", "config.toml")
+	configPath := filepath.Join(tmpDir, ".brain-data", "config.toml")
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		t.Errorf("Expected config.toml not found")
 	}
@@ -160,9 +160,9 @@ func TestInitCommand_Execute_DryRun(t *testing.T) {
 	}
 
 	// Verify directories were NOT created
-	zkDir := filepath.Join(tmpDir, ".zk")
+	zkDir := filepath.Join(tmpDir, ".brain-data")
 	if _, err := os.Stat(zkDir); !os.IsNotExist(err) {
-		t.Errorf("Expected .zk directory not to be created in dry-run mode")
+		t.Errorf("Expected data directory not to be created in dry-run mode")
 	}
 
 	// Verify output mentions dry-run
@@ -186,7 +186,7 @@ func TestInitCommand_Execute_Force(t *testing.T) {
 	}
 
 	// Modify a template to test overwriting
-	taskTemplate := filepath.Join(tmpDir, ".zk", "templates", "task.md")
+	taskTemplate := filepath.Join(tmpDir, ".brain-data", "templates", "task.md")
 	originalContent, _ := os.ReadFile(taskTemplate)
 	modifiedContent := []byte("# MODIFIED")
 	if err := os.WriteFile(taskTemplate, modifiedContent, 0644); err != nil {

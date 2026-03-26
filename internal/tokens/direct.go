@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 )
 
-// openDatabase opens the database connection at brainDir/.zk/brain.db
+// openDatabase opens the database connection at brainDir/.brain-data/brain.db
 func openDatabase(brainDir string) (*storage.StorageLayer, error) {
-	dbPath := filepath.Join(brainDir, ".zk", "brain.db")
+	dbPath := filepath.Join(brainDir, config.DataDir, "brain.db")
 	store, err := storage.New(dbPath)
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)

@@ -54,7 +54,7 @@ func TestCheckBrainDirectory(t *testing.T) {
 func TestCheckTemplates(t *testing.T) {
 	t.Run("all templates present", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		// Create all expected templates
@@ -81,7 +81,7 @@ func TestCheckTemplates(t *testing.T) {
 
 	t.Run("missing templates", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		// Create only some templates
@@ -114,7 +114,7 @@ func TestCheckTemplates(t *testing.T) {
 func TestCheckConfig(t *testing.T) {
 	t.Run("config exists and valid", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		configPath := filepath.Join(zkDir, "config.toml")
@@ -148,7 +148,7 @@ id_length = 8
 
 	t.Run("config invalid TOML", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		configPath := filepath.Join(zkDir, "config.toml")

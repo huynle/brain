@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
@@ -372,7 +373,7 @@ func toLinkInputs(links []markdown.ExtractedLink) []storage.LinkInput {
 }
 
 // globMarkdownFiles walks brainDir and returns relative paths of all .md files,
-// excluding the .zk/ directory.
+// excluding the data directory.
 func globMarkdownFiles(brainDir string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(brainDir, func(path string, d fs.DirEntry, err error) error {
@@ -386,8 +387,9 @@ func globMarkdownFiles(brainDir string) ([]string, error) {
 			return err
 		}
 
-		// Skip .zk/ directory
-		if d.IsDir() && (relPath == ".zk" || strings.HasPrefix(relPath, ".zk"+string(os.PathSeparator))) {
+		// Skip .brain-data/ and legacy .zk/ directories
+		if d.IsDir() && (relPath == config.DataDir || strings.HasPrefix(relPath, config.DataDir+string(os.PathSeparator)) ||
+			relPath == config.LegacyDataDir || strings.HasPrefix(relPath, config.LegacyDataDir+string(os.PathSeparator))) {
 			return filepath.SkipDir
 		}
 

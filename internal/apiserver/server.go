@@ -50,9 +50,10 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// ─── Storage Layer ──────────────────────────────────────────────
 	// Expand ~ to home directory (Go does not do this automatically)
 	opts.BrainDir = pathutil.ExpandTilde(opts.BrainDir)
-	dbPath := filepath.Join(opts.BrainDir, ".zk", "brain.db")
+	dataDir := config.MigrateDataDir(opts.BrainDir)
+	dbPath := filepath.Join(dataDir, "brain.db")
 
-	// Ensure the .zk directory exists
+	// Ensure the data directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		return fmt.Errorf("failed to create database directory: %w", err)
 	}

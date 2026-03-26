@@ -7,6 +7,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/huynle/brain-api/cmd/brain/assets"
+	brainconfig "github.com/huynle/brain-api/internal/config"
 )
 
 // checkBrainDirectory checks if the brain directory exists and is writable.
@@ -56,7 +57,7 @@ func checkTemplates(brainDir string) Check {
 		Fixable: true,
 	}
 
-	templatesDir := filepath.Join(brainDir, ".zk", "templates")
+	templatesDir := filepath.Join(brainDir, brainconfig.DataDir, "templates")
 
 	// Check if templates directory exists
 	if _, err := os.Stat(templatesDir); os.IsNotExist(err) {
@@ -100,12 +101,12 @@ func checkConfig(brainDir string) Check {
 		Fixable: true,
 	}
 
-	configPath := filepath.Join(brainDir, ".zk", "config.toml")
+	configPath := filepath.Join(brainDir, brainconfig.DataDir, "config.toml")
 
 	// Check if config file exists
 	if _, err := os.Stat(configPath); os.IsNotExist(err) {
 		check.Status = CheckStatusFail
-		check.Message = "Config file does not exist: .zk/config.toml"
+		check.Message = "Config file does not exist: " + brainconfig.DataDir + "/config.toml"
 		return check
 	}
 

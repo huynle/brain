@@ -233,13 +233,13 @@ curl -s http://localhost:3333/api/v1/health || echo "TS server stopped"
 ```bash
 # Check the brain directory exists and has content
 ls -la ~/.brain/
-# Expected: markdown files, possibly .zk/ directory, possibly living-brain.db
+# Expected: markdown files, possibly .brain-data/ directory, possibly living-brain.db
 
 # Note the DB file situation:
 # - TS uses: $BRAIN_DIR/living-brain.db
-# - Go uses: $BRAIN_DIR/.zk/brain.db
+# - Go uses: $BRAIN_DIR/.brain-data/brain.db
 #
-# The Go server creates .zk/brain.db on first start and indexes
+# The Go server creates .brain-data/brain.db on first start and indexes
 # all markdown files from BRAIN_DIR. It does NOT read living-brain.db.
 # Both can coexist safely — they are separate files.
 ```
@@ -272,7 +272,7 @@ Watch the startup logs:
 # Expected output:
 # time=... level=INFO msg="indexing brain directory" dir=/home/user/.brain
 # time=... level=INFO msg="indexing complete" added=150 updated=0 deleted=0 skipped=0 errors=0 duration=1.2s
-# time=... level=INFO msg="starting brain-api" addr=0.0.0.0:3000 brain_dir=/home/user/.brain db_path=/home/user/.brain/.zk/brain.db auth_enabled=false
+# time=... level=INFO msg="starting brain-api" addr=0.0.0.0:3000 brain_dir=/home/user/.brain db_path=/home/user/.brain/.brain-data/brain.db auth_enabled=false
 ```
 
 **Important**: The Go server defaults to port `3000`, not `3333`. Set `PORT=3333` if you need the same port as the TS server.
@@ -422,15 +422,15 @@ bun run dev
 ### Data Compatibility
 
 - **SQLite schema is identical** between Go and TS — both use the same `notes`, `notes_fts`, `links`, `collections`, `entry_meta`, `generated_tasks` tables.
-- **Go writes to** `$BRAIN_DIR/.zk/brain.db`
+- **Go writes to** `$BRAIN_DIR/.brain-data/brain.db`
 - **TS reads from** `$BRAIN_DIR/living-brain.db`
-- These are **separate files**. Changes made while running the Go server are in `.zk/brain.db` and will NOT appear in the TS server's `living-brain.db`.
+- These are **separate files**. Changes made while running the Go server are in `.brain-data/brain.db` and will NOT appear in the TS server's `living-brain.db`.
 - **Markdown files are the source of truth**. The Go server re-indexes all markdown files on startup, so any entries created via the Go API (which writes markdown files) will be picked up by the TS server after it re-indexes.
-- **Task data** (entry_meta, generated_tasks) in `.zk/brain.db` will not be visible to the TS server unless migrated.
+- **Task data** (entry_meta, generated_tasks) in `.brain-data/brain.db` will not be visible to the TS server unless migrated.
 
 ### If You Need to Merge Data
 
-If tasks or metadata were created in the Go server's `.zk/brain.db` that you need in the TS server's `living-brain.db`:
+If tasks or metadata were created in the Go server's `.brain-data/brain.db` that you need in the TS server's `living-brain.db`:
 
 ```bash
 # Option 1: The Go server writes markdown files — TS will re-index them
@@ -438,7 +438,7 @@ If tasks or metadata were created in the Go server's `.zk/brain.db` that you nee
 
 # Option 2: For task metadata, manually copy between SQLite databases
 # (advanced — only if needed)
-sqlite3 ~/.brain/.zk/brain.db ".dump entry_meta" | sqlite3 ~/.brain/living-brain.db
+sqlite3 ~/.brain/.brain-data/brain.db ".dump entry_meta" | sqlite3 ~/.brain/living-brain.db
 ```
 
 ---
@@ -565,7 +565,7 @@ git push origin ts-final
 |----------|-----------|-----|--------|
 | DELETE response | `200` with JSON body | `204` No Content | MCP tools handle both; clients checking response body on DELETE need updating |
 | Default port | `3000` | `3000` | Same — both default to 3000 |
-| DB file path | `$BRAIN_DIR/living-brain.db` | `$BRAIN_DIR/.zk/brain.db` | Separate files; Go re-indexes markdown on startup |
+| DB file path | `$BRAIN_DIR/living-brain.db` | `$BRAIN_DIR/.brain-data/brain.db` | Separate files; Go re-indexes markdown on startup |
 
 ### Missing Features in Go
 
@@ -575,7 +575,7 @@ git push origin ts-final
 | OAuth/PKCE auth | Not implemented | `ENABLE_AUTH` + `API_KEY` work; OAuth consent flow does not. |
 | Multi-tenant mode | Not implemented | `ENABLE_TENANTS` env var is not supported. |
 | Built-in TLS | Not implemented | Use a reverse proxy (Caddy, nginx) for TLS termination. |
-| Migration tooling | Not implemented | TS has `brain migrate` to import from `living-brain.db` / `.zk/zk.db`. Go re-indexes markdown files instead. |
+| Migration tooling | Not implemented | TS has `brain migrate` to import from `living-brain.db` / `.brain-data/zk.db`. Go re-indexes markdown files instead. |
 | Doctor/diagnostics | Not implemented | TS has `brain doctor` for health checks. |
 
 ### Configuration Differences

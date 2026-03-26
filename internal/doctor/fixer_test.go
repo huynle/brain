@@ -54,8 +54,8 @@ func TestFixBrainDirectory(t *testing.T) {
 
 		// Verify expected subdirectories
 		subdirs := []string{
-			".zk",
-			filepath.Join(".zk", "templates"),
+			".brain-data",
+			filepath.Join(".brain-data", "templates"),
 			"global",
 			"projects",
 		}
@@ -75,7 +75,7 @@ func TestFixBrainDirectory(t *testing.T) {
 func TestFixTemplates(t *testing.T) {
 	t.Run("restore missing templates", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		err := fixTemplates(tmpDir, false, false)
@@ -103,7 +103,7 @@ func TestFixTemplates(t *testing.T) {
 
 	t.Run("skip existing templates without force", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		// Create one template with custom content
@@ -129,7 +129,7 @@ func TestFixTemplates(t *testing.T) {
 
 	t.Run("overwrite existing templates with force", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		// Create one template with custom content
@@ -155,7 +155,7 @@ func TestFixTemplates(t *testing.T) {
 
 	t.Run("dry run does not create files", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		os.MkdirAll(templatesDir, 0755)
 
 		err := fixTemplates(tmpDir, true, false)
@@ -175,7 +175,7 @@ func TestFixTemplates(t *testing.T) {
 func TestFixConfig(t *testing.T) {
 	t.Run("restore missing config", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		err := fixConfig(tmpDir, false, false)
@@ -193,7 +193,7 @@ func TestFixConfig(t *testing.T) {
 
 	t.Run("skip existing config without force", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		// Create config with custom content
@@ -219,7 +219,7 @@ func TestFixConfig(t *testing.T) {
 
 	t.Run("overwrite existing config with force", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		// Create config with custom content
@@ -245,7 +245,7 @@ func TestFixConfig(t *testing.T) {
 
 	t.Run("dry run does not create file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		zkDir := filepath.Join(tmpDir, ".zk")
+		zkDir := filepath.Join(tmpDir, ".brain-data")
 		os.MkdirAll(zkDir, 0755)
 
 		err := fixConfig(tmpDir, true, false)

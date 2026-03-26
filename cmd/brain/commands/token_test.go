@@ -19,7 +19,7 @@ func setupTestDB(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	brainDir := filepath.Join(tmpDir, "brain")
-	zkDir := filepath.Join(brainDir, ".zk")
+	zkDir := filepath.Join(brainDir, ".brain-data")
 	if err := os.MkdirAll(zkDir, 0755); err != nil {
 		t.Fatalf("mkdir failed: %v", err)
 	}
@@ -68,7 +68,7 @@ func TestTokenCommand_CreateToken(t *testing.T) {
 	}
 
 	// Verify token was created in database
-	store, err := storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestTokenCommand_ListTokens(t *testing.T) {
 	brainDir := setupTestDB(t)
 
 	// Create some test tokens directly
-	store, err := storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 	brainDir := setupTestDB(t)
 
 	// Create a token first
-	store, err := storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 	}
 
 	// Verify it's soft-revoked (still exists but has revoked_at set)
-	store, _ = storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
+	store, _ = storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 	defer store.Close()
 	retrieved, err := store.GetTokenByName(ctx, "revoke-me")
 	if err != nil {
@@ -522,7 +522,7 @@ func TestTokenCommand_FallbackToDirect(t *testing.T) {
 		}
 
 		// Verify token was created in DB
-		store, err := storage.New(filepath.Join(brainDir, ".zk", "brain.db"))
+		store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
 		if err != nil {
 			t.Fatalf("open database: %v", err)
 		}

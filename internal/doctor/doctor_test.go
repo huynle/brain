@@ -67,10 +67,10 @@ func TestDoctorService_Diagnose(t *testing.T) {
 
 	t.Run("detects missing templates", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		os.MkdirAll(filepath.Join(tmpDir, ".zk", "templates"), 0755)
+		os.MkdirAll(filepath.Join(tmpDir, ".brain-data", "templates"), 0755)
 
 		// Create only one template
-		os.WriteFile(filepath.Join(tmpDir, ".zk", "templates", "task.md"), []byte("test"), 0644)
+		os.WriteFile(filepath.Join(tmpDir, ".brain-data", "templates", "task.md"), []byte("test"), 0644)
 
 		opts := DoctorOptions{
 			BrainDir: tmpDir,
@@ -124,14 +124,14 @@ func TestDoctorService_Fix(t *testing.T) {
 		}
 
 		// Verify templates were created
-		templatesDir := filepath.Join(nonExistent, ".zk", "templates")
+		templatesDir := filepath.Join(nonExistent, ".brain-data", "templates")
 		entries, _ := os.ReadDir(templatesDir)
 		if len(entries) == 0 {
 			t.Error("templates should be created")
 		}
 
 		// Verify config was created
-		configPath := filepath.Join(nonExistent, ".zk", "config.toml")
+		configPath := filepath.Join(nonExistent, ".brain-data", "config.toml")
 		if _, statErr := os.Stat(configPath); statErr != nil {
 			t.Error("config should be created")
 		}
@@ -175,11 +175,11 @@ func TestDoctorService_Fix(t *testing.T) {
 		tmpDir := t.TempDir()
 
 		// Create directory structure but with missing templates
-		os.MkdirAll(filepath.Join(tmpDir, ".zk", "templates"), 0755)
+		os.MkdirAll(filepath.Join(tmpDir, ".brain-data", "templates"), 0755)
 
 		// Create only one template with custom content
 		customContent := "custom content"
-		taskPath := filepath.Join(tmpDir, ".zk", "templates", "task.md")
+		taskPath := filepath.Join(tmpDir, ".brain-data", "templates", "task.md")
 		os.WriteFile(taskPath, []byte(customContent), 0644)
 
 		opts := DoctorOptions{
@@ -205,7 +205,7 @@ func TestDoctorService_Fix(t *testing.T) {
 		}
 
 		// Verify all other templates were created
-		templatesDir := filepath.Join(tmpDir, ".zk", "templates")
+		templatesDir := filepath.Join(tmpDir, ".brain-data", "templates")
 		entries, _ := os.ReadDir(templatesDir)
 		if len(entries) < 10 {
 			t.Errorf("expected at least 10 templates, got %d", len(entries))
@@ -228,8 +228,8 @@ func setupCompleteBrain(t *testing.T, brainDir string) {
 	// Create directory structure
 	dirs := []string{
 		brainDir,
-		filepath.Join(brainDir, ".zk"),
-		filepath.Join(brainDir, ".zk", "templates"),
+		filepath.Join(brainDir, ".brain-data"),
+		filepath.Join(brainDir, ".brain-data", "templates"),
 		filepath.Join(brainDir, "global"),
 		filepath.Join(brainDir, "projects"),
 	}
@@ -250,14 +250,14 @@ func setupCompleteBrain(t *testing.T, brainDir string) {
 	}
 
 	for _, tmpl := range templates {
-		path := filepath.Join(brainDir, ".zk", "templates", tmpl)
+		path := filepath.Join(brainDir, ".brain-data", "templates", tmpl)
 		if err := os.WriteFile(path, []byte("---\ntitle: test\n---\n"), 0644); err != nil {
 			t.Fatalf("failed to create template %s: %v", tmpl, err)
 		}
 	}
 
 	// Create config
-	configPath := filepath.Join(brainDir, ".zk", "config.toml")
+	configPath := filepath.Join(brainDir, ".brain-data", "config.toml")
 	configContent := `[note]
 id_length = 8
 `

@@ -40,9 +40,10 @@ func main() {
 	})))
 
 	// ─── Storage Layer ──────────────────────────────────────────────
-	dbPath := filepath.Join(cfg.BrainDir, ".zk", "brain.db")
+	dataDir := config.MigrateDataDir(cfg.BrainDir)
+	dbPath := filepath.Join(dataDir, "brain.db")
 
-	// Ensure the .zk directory exists
+	// Ensure the data directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
 		slog.Error("failed to create database directory", "error", err)
 		os.Exit(1)

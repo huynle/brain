@@ -112,7 +112,7 @@ func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
 		"note1.md":      noteContent("Note One"),
-		".zk/config.md": noteContent("ZK Config"),
+		".brain-data/config.md": noteContent("ZK Config"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -122,7 +122,7 @@ func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 	}
 
 	if result.Added != 1 {
-		t.Errorf("Added = %d, want 1 (should exclude .zk/)", result.Added)
+		t.Errorf("Added = %d, want 1 (should exclude .brain-data/)", result.Added)
 	}
 }
 

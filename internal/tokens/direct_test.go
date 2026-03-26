@@ -20,8 +20,8 @@ func setupTestDB(t *testing.T) (string, func()) {
 	tmpDir, err := os.MkdirTemp("", "brain-tokens-test-*")
 	require.NoError(t, err)
 
-	// Create .zk directory
-	zkDir := filepath.Join(tmpDir, ".zk")
+	// Create data directory
+	zkDir := filepath.Join(tmpDir, ".brain-data")
 	err = os.MkdirAll(zkDir, 0755)
 	require.NoError(t, err)
 
@@ -52,7 +52,7 @@ func TestCreateTokenDirect(t *testing.T) {
 	assert.Len(t, token.Token, 43) // base64 URL-encoded 32 bytes = 43 chars
 
 	// Verify token exists in database
-	dbPath := filepath.Join(brainDir, ".zk", "brain.db")
+	dbPath := filepath.Join(brainDir, ".brain-data", "brain.db")
 	store, err := storage.New(dbPath)
 	require.NoError(t, err)
 	defer store.Close()
@@ -121,7 +121,7 @@ func TestRevokeTokenDirect(t *testing.T) {
 	assert.Empty(t, tokens, "revoked tokens should be excluded from default list")
 
 	// Verify the token still exists in the database (soft revocation)
-	dbPath := filepath.Join(brainDir, ".zk", "brain.db")
+	dbPath := filepath.Join(brainDir, ".brain-data", "brain.db")
 	store, err := storage.New(dbPath)
 	require.NoError(t, err)
 	defer store.Close()

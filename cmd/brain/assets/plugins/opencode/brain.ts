@@ -2,7 +2,7 @@
 /**
  * Brain API Client Plugin for OpenCode
  *
- * A thin API client that calls the Brain API instead of using direct zk CLI
+ * A thin API client that calls the Brain API instead of direct database access
  * and SQLite access. This is a drop-in replacement for the original brain.ts
  * plugin with identical tool interfaces.
  *
@@ -1551,8 +1551,8 @@ Use \`brain_recall\` with the new path to verify.`;
         async execute(args) {
           try {
             const response = await apiRequest<{
-              zkAvailable: boolean;
-              zkVersion: string | null;
+              dataAvailable: boolean;
+              dataVersion: string | null;
               notebookExists: boolean;
               brainDir: string;
               dbPath: string;
@@ -1571,7 +1571,7 @@ Use \`brain_recall\` with the new path to verify.`;
               "## Brain Statistics",
               "",
               "### System",
-              `- **zk CLI:** ${response.zkAvailable ? `v${response.zkVersion}` : "Not available"}`,
+              `- **Data Store:** ${response.dataAvailable ? `v${response.dataVersion}` : "Not available"}`,
               `- **Notebook:** ${response.notebookExists ? `${response.brainDir}` : "Not initialized"}`,
               `- **Database:** ${response.dbPath}`,
               "",

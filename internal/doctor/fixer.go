@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/huynle/brain-api/cmd/brain/assets"
+	"github.com/huynle/brain-api/internal/config"
 )
 
 // fixBrainDirectory creates the brain directory structure.
@@ -17,8 +18,8 @@ func fixBrainDirectory(brainDir string, dryRun bool) error {
 	// Create main directories
 	dirs := []string{
 		brainDir,
-		filepath.Join(brainDir, ".zk"),
-		filepath.Join(brainDir, ".zk", "templates"),
+		filepath.Join(brainDir, config.DataDir),
+		filepath.Join(brainDir, config.DataDir, "templates"),
 		filepath.Join(brainDir, "global"),
 		filepath.Join(brainDir, "projects"),
 	}
@@ -38,7 +39,7 @@ func fixTemplates(brainDir string, dryRun bool, force bool) error {
 		return nil
 	}
 
-	templatesDir := filepath.Join(brainDir, ".zk", "templates")
+	templatesDir := filepath.Join(brainDir, config.DataDir, "templates")
 
 	// Ensure templates directory exists
 	if err := os.MkdirAll(templatesDir, 0755); err != nil {
@@ -78,8 +79,8 @@ func fixConfig(brainDir string, dryRun bool, force bool) error {
 		return nil
 	}
 
-	zkDir := filepath.Join(brainDir, ".zk")
-	configPath := filepath.Join(zkDir, "config.toml")
+	dataDir := filepath.Join(brainDir, config.DataDir)
+	configPath := filepath.Join(dataDir, "config.toml")
 
 	// Check if file exists
 	if _, err := os.Stat(configPath); err == nil && !force {
@@ -87,9 +88,9 @@ func fixConfig(brainDir string, dryRun bool, force bool) error {
 		return nil
 	}
 
-	// Ensure .zk directory exists
-	if err := os.MkdirAll(zkDir, 0755); err != nil {
-		return fmt.Errorf("failed to create .zk directory: %w", err)
+	// Ensure data directory exists
+	if err := os.MkdirAll(dataDir, 0755); err != nil {
+		return fmt.Errorf("failed to create data directory: %w", err)
 	}
 
 	// Get reference config from assets

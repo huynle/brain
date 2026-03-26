@@ -8,6 +8,14 @@ import (
 	"strings"
 )
 
+// DataDir is the name of the internal data directory within the brain directory.
+// This holds the SQLite database, config, and templates.
+// Previously this was ".zk" (inherited from the zk tool); renamed to ".brain-data".
+const DataDir = ".brain-data"
+
+// LegacyDataDir is the old data directory name for migration purposes.
+const LegacyDataDir = ".zk"
+
 // Build-time variables set via -ldflags.
 var (
 	Version   = "dev"

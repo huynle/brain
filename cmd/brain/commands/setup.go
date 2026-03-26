@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/huynle/brain-api/cmd/brain/assets"
+	"github.com/huynle/brain-api/internal/config"
 )
 
 // InitFlags holds flags for the init command.
@@ -45,8 +46,8 @@ func (c *InitCommand) Execute() error {
 	// Define directories to create
 	dirs := []string{
 		brainDir,
-		filepath.Join(brainDir, ".zk"),
-		filepath.Join(brainDir, ".zk", "templates"),
+		filepath.Join(brainDir, config.DataDir),
+		filepath.Join(brainDir, config.DataDir, "templates"),
 		filepath.Join(brainDir, "global"),
 		filepath.Join(brainDir, "projects"),
 	}
@@ -67,7 +68,7 @@ func (c *InitCommand) Execute() error {
 
 	// Copy templates from embedded assets
 	templates := assets.ListTemplates()
-	templatesDir := filepath.Join(brainDir, ".zk", "templates")
+	templatesDir := filepath.Join(brainDir, config.DataDir, "templates")
 
 	for _, templateName := range templates {
 		destPath := filepath.Join(templatesDir, templateName)
@@ -111,7 +112,7 @@ func (c *InitCommand) Execute() error {
 	}
 
 	// Copy config.toml
-	configPath := filepath.Join(brainDir, ".zk", "config.toml")
+	configPath := filepath.Join(brainDir, config.DataDir, "config.toml")
 	configExists := fileExists(configPath)
 
 	if configExists && !c.Flags.Force {

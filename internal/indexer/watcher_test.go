@@ -256,17 +256,17 @@ func TestFileWatcher_IgnoresZkDirectory(t *testing.T) {
 	}
 	defer fw.Stop()
 
-	// Create a file in .zk/ directory
-	zkDir := filepath.Join(brainDir, ".zk")
+	// Create a file in .brain-data/ directory
+	zkDir := filepath.Join(brainDir, ".brain-data")
 	os.MkdirAll(zkDir, 0o755)
 	os.WriteFile(filepath.Join(zkDir, "config.md"), []byte(noteContent("ZK Config")), 0o644)
 
 	// Wait for debounce + processing
 	time.Sleep(500 * time.Millisecond)
 
-	// Should still be only 1 note (the .zk/ file should be ignored)
+	// Should still be only 1 note (the .brain-data/ file should be ignored)
 	if countNotes(t, store) != 1 {
-		t.Errorf("DB note count = %d, want 1 (.zk/ files should be ignored)", countNotes(t, store))
+		t.Errorf("DB note count = %d, want 1 (.brain-data/ files should be ignored)", countNotes(t, store))
 	}
 }
 
@@ -363,7 +363,7 @@ func TestShouldIgnore(t *testing.T) {
 		path   string
 		ignore bool
 	}{
-		{".zk/config.md", true},
+		{".brain-data/config.md", true},
 		{"node_modules/pkg/readme.md", true},
 		{"custom/note.md", true},
 		{"sub/custom/note.md", true},

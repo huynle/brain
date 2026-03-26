@@ -169,8 +169,8 @@ func setupTestBrain(t *testing.T, brainDir string) {
 	// Create directory structure
 	dirs := []string{
 		brainDir,
-		filepath.Join(brainDir, ".zk"),
-		filepath.Join(brainDir, ".zk", "templates"),
+		filepath.Join(brainDir, ".brain-data"),
+		filepath.Join(brainDir, ".brain-data", "templates"),
 		filepath.Join(brainDir, "global"),
 		filepath.Join(brainDir, "projects"),
 	}
@@ -191,14 +191,14 @@ func setupTestBrain(t *testing.T, brainDir string) {
 	}
 
 	for _, tmpl := range templates {
-		path := filepath.Join(brainDir, ".zk", "templates", tmpl)
+		path := filepath.Join(brainDir, ".brain-data", "templates", tmpl)
 		if err := os.WriteFile(path, []byte("---\ntitle: test\n---\n"), 0644); err != nil {
 			t.Fatalf("failed to create template %s: %v", tmpl, err)
 		}
 	}
 
 	// Create config
-	configPath := filepath.Join(brainDir, ".zk", "config.toml")
+	configPath := filepath.Join(brainDir, ".brain-data", "config.toml")
 	configContent := `[note]
 id_length = 8
 `

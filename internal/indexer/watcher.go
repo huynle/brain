@@ -12,7 +12,7 @@ import (
 )
 
 // defaultIgnorePatterns are always ignored by the file watcher.
-var defaultIgnorePatterns = []string{".zk/", "node_modules/"}
+var defaultIgnorePatterns = []string{".brain-data/", ".zk/", "node_modules/"}
 
 // FileWatcherOptions configures the file watcher.
 type FileWatcherOptions struct {

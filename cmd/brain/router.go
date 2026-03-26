@@ -90,37 +90,27 @@ var builtinCommands = map[string]bool{
 // route determines which command to execute based on CLI arguments.
 //
 // Routing priority:
-//  1. Zero args → runner TUI for all projects
-//  2. Built-in commands (server, mcp, etc.)
-//  3. "all" keyword → runner TUI for all projects
-//  4. Valid project name → runner TUI for that project
-//  5. Unknown/invalid input → help
+//  1. Zero args → help
+//  2. Built-in commands (server, start, mcp, etc.)
+//  3. Unknown/invalid input → help
+//
+// Use "brain start <project>" or "brain start all" to launch the runner TUI.
 func route(args []string) (Command, error) {
-	// Zero args → runner TUI for all projects
+	// Zero args → help
 	if len(args) == 0 {
-		return newRunnerTUICommand("all", []string{})
+		return newHelpCommand(), nil
 	}
 
 	firstArg := args[0]
 
-	// Built-in commands take precedence
+	// Built-in commands
 	if isBuiltinCommand(firstArg) {
 		return parseBuiltinCommand(args)
-	}
-
-	// "all" keyword → runner TUI for all projects
-	if firstArg == "all" {
-		return newRunnerTUICommand("all", args[1:])
 	}
 
 	// Flags without a command → help
 	if len(firstArg) > 0 && firstArg[0] == '-' {
 		return newHelpCommand(), nil
-	}
-
-	// Check if it looks like a valid project name
-	if looksLikeProjectName(firstArg) {
-		return newRunnerTUICommand(firstArg, args[1:])
 	}
 
 	// Unknown → help
@@ -330,39 +320,6 @@ func isFlag(s string) bool {
 // =============================================================================
 // Project Name Validation
 // =============================================================================
-
-// looksLikeProjectName checks if a string matches typical project name patterns.
-//
-// Valid project names are lowercase alphanumeric with hyphens/underscores.
-// We exclude strings ending with 5+ consecutive digits, as those are more likely
-// to be test strings or invalid identifiers (e.g., "unknown-command-12345").
-func looksLikeProjectName(s string) bool {
-	if s == "" {
-		return false
-	}
-
-	// Check if string ends with 5+ consecutive digits (likely a test string)
-	digitCount := 0
-	for i := len(s) - 1; i >= 0 && digitCount < 5; i-- {
-		if s[i] >= '0' && s[i] <= '9' {
-			digitCount++
-		} else {
-			break
-		}
-	}
-	if digitCount >= 5 {
-		return false
-	}
-
-	// Check if all characters are valid project name characters
-	for _, r := range s {
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' || r == '_') {
-			return false
-		}
-	}
-
-	return true
-}
 
 // =============================================================================
 // Config and Conversion Helpers

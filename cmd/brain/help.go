@@ -12,8 +12,6 @@ USAGE:
   brain [global-flags] <command> [command-flags] [args]
 
 RUNNER (TUI):
-  brain                           Start runner TUI for all projects
-  brain <project>                 Start runner TUI for specific project
   brain start                     Start runner TUI for all projects
   brain start <project>           Start runner TUI for specific project
   brain start all                 Start runner TUI for all projects
@@ -60,12 +58,10 @@ GLOBAL FLAGS:
 
 EXAMPLES:
   # Start runner TUI for all projects
-  brain
   brain start
   brain start all
 
   # Start runner TUI for specific project
-  brain myproject
   brain start myproject
 
   # Start API server (foreground)
@@ -143,17 +139,15 @@ LEGACY COMPATIBILITY:
   brain stop                     → Stop daemon
 `
 
-const runnerHelp = `brain run - Start the task runner
+const runnerHelp = `brain start - Start the task runner TUI
 
 USAGE:
-  brain <project>                     Start TUI for project (shorthand)
-  brain run <project> [flags]         Start runner for project
-  brain run start <project>           Start runner
-  brain run stop <project>            Stop runner
-  brain run status <project>          Show runner status
+  brain start                         Start TUI for all projects
+  brain start <project>               Start TUI for specific project
+  brain start all                     Start TUI for all projects
 
 FLAGS:
-  --tui                          Interactive TUI (default for shorthand)
+  --tui                          Interactive TUI (default)
   -f, --foreground               Foreground without TUI
   -b, --headless                 Headless mode (no TUI, no tmux)
   -p, --max-parallel <N>         Max concurrent tasks (default: 3)
@@ -166,23 +160,16 @@ FLAGS:
 
 EXAMPLES:
   # TUI for all projects
-  brain
+  brain start
 
   # TUI for specific project
-  brain myproject
-
-  # Foreground without TUI
-  brain run myproject --foreground
+  brain start myproject
 
   # All projects with filtering
-  brain all -i 'prod-*' -e 'test-*'
+  brain start all -i 'prod-*' -e 'test-*'
 
   # Custom concurrency
-  brain myproject --max-parallel 5
-
-LEGACY COMPATIBILITY:
-  brain-runner <project>         → brain <project>
-  brain-runner start <project>   → brain run start <project>
+  brain start all --max-parallel 5
 `
 
 const mcpHelp = `brain mcp - Start the MCP (Model Context Protocol) server

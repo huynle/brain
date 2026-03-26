@@ -8,47 +8,36 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Test: Zero args routes to runner TUI
+// Test: Zero args routes to help
 // ---------------------------------------------------------------------------
 
-func TestRoute_ZeroArgs_RoutesToRunnerTUI(t *testing.T) {
+func TestRoute_ZeroArgs_RoutesToHelp(t *testing.T) {
 	args := []string{}
 	cmd, err := route(args)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cmd.Type() != "runner_tui" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "runner_tui")
+	if cmd.Type() != "help" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
 	}
 }
 
 // ---------------------------------------------------------------------------
-// Test: "all" keyword routes to runner TUI
+// Test: Unknown args route to help (not runner TUI)
 // ---------------------------------------------------------------------------
 
-func TestRoute_AllKeyword_RoutesToRunnerTUI(t *testing.T) {
-	args := []string{"all"}
-	cmd, err := route(args)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd.Type() != "runner_tui" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "runner_tui")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Test: Project name routes to runner TUI
-// ---------------------------------------------------------------------------
-
-func TestRoute_ProjectName_RoutesToRunnerTUI(t *testing.T) {
-	args := []string{"my-project"}
-	cmd, err := route(args)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cmd.Type() != "runner_tui" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "runner_tui")
+func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
+	// "all" without "start" prefix should be help, not runner TUI
+	for _, arg := range []string{"all", "my-project", "ft857"} {
+		t.Run(arg, func(t *testing.T) {
+			cmd, err := route([]string{arg})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd.Type() != "help" {
+				t.Errorf("route(%q) Type() = %q, want %q", arg, cmd.Type(), "help")
+			}
+		})
 	}
 }
 

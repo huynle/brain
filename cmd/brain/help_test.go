@@ -73,17 +73,14 @@ func TestShowHelp(t *testing.T) {
 			ShowHelp("run")
 		})
 
-		if !strings.Contains(help, "brain run") {
-			t.Error("Runner help should contain command name")
+		if !strings.Contains(help, "brain start") {
+			t.Error("Runner help should contain 'brain start'")
 		}
 		if !strings.Contains(help, "--tui") {
 			t.Error("Runner help should contain --tui flag")
 		}
 		if !strings.Contains(help, "--max-parallel") {
 			t.Error("Runner help should contain --max-parallel flag")
-		}
-		if !strings.Contains(help, "brain myproject") {
-			t.Error("Runner help should contain example")
 		}
 	})
 
@@ -92,7 +89,7 @@ func TestShowHelp(t *testing.T) {
 			ShowHelp("runner")
 		})
 
-		if !strings.Contains(help, "brain run") {
+		if !strings.Contains(help, "brain start") {
 			t.Error("Runner alias should show same help as 'run'")
 		}
 	})
@@ -270,7 +267,7 @@ func ExampleShowHelp_server() {
 
 func ExampleShowHelp_runner() {
 	ShowHelp("run")
-	// Output contains: brain run - Start the task runner
+	// Output contains: brain start - Start the task runner TUI
 }
 
 func ExampleShowHelp_mcp() {
@@ -384,7 +381,7 @@ func TestHelpOutputFormat(t *testing.T) {
 			want    string
 		}{
 			{"server", "brain server"},
-			{"run", "brain run"},
+			{"run", "brain start"},
 			{"mcp", "brain mcp"},
 		}
 
@@ -406,9 +403,9 @@ func TestHelpExamples(t *testing.T) {
 		command string
 		example string
 	}{
-		{"", "brain myproject"},
-		{"server", "brain server --daemon"},
-		{"run", "brain myproject --max-parallel 5"},
+		{"", "brain start myproject"},
+		{"server", "brain server start"},
+		{"run", "brain start all --max-parallel 5"},
 		{"mcp", "brain mcp"},
 	}
 

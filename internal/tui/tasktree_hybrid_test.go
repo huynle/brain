@@ -140,15 +140,15 @@ func TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted(t *testing.T) 
 	view := tt.ViewWithProject(120, 50, "test-project")
 
 	// [Ungrouped] should appear as a sub-feature header in Draft section with collapse arrow
-	if !strings.Contains(view, "Feature: [Ungrouped]") {
-		t.Errorf("Expected 'Feature: [Ungrouped]' sub-feature header, got view:\n%s", view)
+	if !strings.Contains(view, "[Ungrouped]") {
+		t.Errorf("Expected '[Ungrouped]' sub-feature header, got view:\n%s", view)
 	}
 
 	// Verify [Ungrouped] in Draft section has collapse indicator (▾ when expanded)
 	// Both draft and completed ungrouped start expanded by default
 	draftUngroupedExpanded := false
 	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, "Feature: [Ungrouped]") && strings.Contains(line, "▾") {
+		if strings.Contains(line, "[Ungrouped]") && strings.Contains(line, "▾") {
 			draftUngroupedExpanded = true
 			break
 		}
@@ -172,7 +172,7 @@ func TestTaskTree_HybridView_UngroupedCollapsibleInDraftCompleted(t *testing.T) 
 	// Should show ▶ for collapsed [Ungrouped]
 	draftUngroupedCollapsed := false
 	for _, line := range strings.Split(view, "\n") {
-		if strings.Contains(line, "Feature: [Ungrouped]") && strings.Contains(line, "▶") {
+		if strings.Contains(line, "[Ungrouped]") && strings.Contains(line, "▶") {
 			draftUngroupedCollapsed = true
 			break
 		}

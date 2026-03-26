@@ -18,11 +18,12 @@ import (
 // =============================================================================
 
 type mockMonitorService struct {
-	listTemplatesFunc func() []types.MonitorTemplate
-	listFunc          func(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error)
-	createFunc        func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
-	toggleFunc        func(ctx context.Context, taskID string, enabled bool) (string, error)
-	deleteFunc        func(ctx context.Context, taskID string) (string, error)
+	listTemplatesFunc    func() []types.MonitorTemplate
+	listFunc             func(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error)
+	createFunc           func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
+	createForFeatureFunc func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error)
+	toggleFunc           func(ctx context.Context, taskID string, enabled bool) (string, error)
+	deleteFunc           func(ctx context.Context, taskID string) (string, error)
 }
 
 func (m *mockMonitorService) ListTemplates() []types.MonitorTemplate {
@@ -61,6 +62,9 @@ func (m *mockMonitorService) Delete(ctx context.Context, taskID string) (string,
 }
 
 func (m *mockMonitorService) CreateForFeature(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error) {
+	if m.createForFeatureFunc != nil {
+		return m.createForFeatureFunc(ctx, templateID, scope)
+	}
 	return nil, fmt.Errorf("createForFeatureFunc not set")
 }
 
@@ -276,11 +280,12 @@ func TestHandleListMonitors(t *testing.T) {
 
 func TestHandleCreateMonitor(t *testing.T) {
 	tests := []struct {
-		name       string
-		body       any
-		mockCreate func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
-		wantStatus int
-		checkBody  func(t *testing.T, resp *http.Response)
+		name                 string
+		body                 any
+		mockCreate           func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
+		mockCreateForFeature func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error)
+		wantStatus           int
+		checkBody            func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name: "success - project scope",
@@ -324,7 +329,7 @@ func TestHandleCreateMonitor(t *testing.T) {
 				"feature_id":  "auth",
 				"scope_type":  "feature",
 			},
-			mockCreate: func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error) {
+			mockCreateForFeature: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error) {
 				if scope.Type != "feature" {
 					return nil, fmt.Errorf("scope.Type = %q, want %q", scope.Type, "feature")
 				}
@@ -414,7 +419,10 @@ func TestHandleCreateMonitor(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockMonitorService{createFunc: tt.mockCreate}
+			mock := &mockMonitorService{
+				createFunc:           tt.mockCreate,
+				createForFeatureFunc: tt.mockCreateForFeature,
+			}
 			router := newMonitorTestRouter(mock)
 			srv := httptest.NewServer(router)
 			defer srv.Close()

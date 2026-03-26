@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
@@ -248,7 +249,11 @@ func parseMCPCommand(args []string) (Command, error) {
 // parseTokenCommand creates a TokenCommand from args.
 func parseTokenCommand(args []string) (Command, error) {
 	if len(args) == 0 {
-		return newHelpCommand(), nil
+		return &commands.TokenCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(defaultConfig()),
+			Flags:      &commands.TokenFlags{},
+		}, nil
 	}
 
 	subcommand := args[0]
@@ -363,6 +368,34 @@ func defaultConfig() *UnifiedConfig {
 	homeDir, _ := os.UserHomeDir()
 	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
 	cfg.Server.LogFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+
+	// Load unified config for server settings (enable_auth, cors_origin, etc.)
+	ucfg, err := uconfig.LoadConfig()
+	if err != nil {
+		slog.Warn("failed to load unified config, using defaults", "error", err)
+	} else {
+		// Apply server settings from unified config (non-zero values override defaults)
+		if ucfg.Server.Port != 0 {
+			cfg.Server.Port = ucfg.Server.Port
+		}
+		if ucfg.Server.Host != "" {
+			cfg.Server.Host = ucfg.Server.Host
+		}
+		if ucfg.Server.BrainDir != "" {
+			cfg.Server.BrainDir = ucfg.Server.BrainDir
+		}
+		if ucfg.Server.LogLevel != "" {
+			cfg.Server.LogLevel = ucfg.Server.LogLevel
+		}
+		if ucfg.Server.PIDFile != "" {
+			cfg.Server.PIDFile = ucfg.Server.PIDFile
+		}
+		if ucfg.Server.LogFile != "" {
+			cfg.Server.LogFile = ucfg.Server.LogFile
+		}
+		// Bool fields: always apply from config (can't distinguish zero from "not set")
+		cfg.Server.EnableAuth = ucfg.Server.EnableAuth
+	}
 
 	// Load runner config from config file + env vars
 	runnerCfg, err := runner.LoadConfig()

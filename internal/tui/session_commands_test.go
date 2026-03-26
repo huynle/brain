@@ -109,9 +109,7 @@ func TestFetchSessionsCmd_Success(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"entry": entry,
-		})
+		json.NewEncoder(w).Encode(entry)
 	}))
 	defer server.Close()
 
@@ -170,9 +168,7 @@ func TestFetchSessionsCmd_NoSessions(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"entry": entry,
-		})
+		json.NewEncoder(w).Encode(entry)
 	}))
 	defer server.Close()
 
@@ -238,9 +234,7 @@ func TestFetchSessionsCmd_TmuxModePassthrough(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"entry": entry,
-		})
+		json.NewEncoder(w).Encode(entry)
 	}))
 	defer server.Close()
 

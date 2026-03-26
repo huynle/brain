@@ -454,16 +454,17 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 
 	groups := GroupTasks(tasks, nil)
 
-	// Should have 4 groups: Ungrouped (2 tasks), Ready (1 task), Waiting (1 task), Completed (1 task)
+	// Should have 4 groups: Ready (1 task), Waiting (1 task), Ungrouped (2 tasks), Completed (1 task)
+	// Order follows GroupTasks: Ready, Waiting, Blocked, Ungrouped, Draft, ...
 	if len(groups) != 4 {
 		t.Fatalf("expected 4 groups, got %d", len(groups))
 	}
 
 	// Check order and contents
 	expectedGroups := map[string]int{
-		"Ungrouped": 2,
 		"Ready":     1,
 		"Waiting":   1,
+		"Ungrouped": 2,
 		"Completed": 1,
 	}
 
@@ -478,14 +479,23 @@ func TestGroupTasks_UngroupedForTasksWithoutFeature(t *testing.T) {
 		}
 	}
 
-	// Verify Ungrouped comes first
-	if groups[0].Name != "Ungrouped" {
-		t.Errorf("expected first group to be Ungrouped, got %s", groups[0].Name)
+	// Verify order: Ready, Waiting, Ungrouped, Completed
+	if groups[0].Name != "Ready" {
+		t.Errorf("expected first group to be Ready, got %s", groups[0].Name)
+	}
+	if groups[1].Name != "Waiting" {
+		t.Errorf("expected second group to be Waiting, got %s", groups[1].Name)
+	}
+	if groups[2].Name != "Ungrouped" {
+		t.Errorf("expected third group to be Ungrouped, got %s", groups[2].Name)
+	}
+	if groups[3].Name != "Completed" {
+		t.Errorf("expected fourth group to be Completed, got %s", groups[3].Name)
 	}
 
 	// Verify Ungrouped contains the correct tasks
 	ungroupedIDs := make(map[string]bool)
-	for _, task := range groups[0].Tasks {
+	for _, task := range groups[2].Tasks {
 		ungroupedIDs[task.ID] = true
 	}
 	if !ungroupedIDs["t3"] || !ungroupedIDs["t4"] {

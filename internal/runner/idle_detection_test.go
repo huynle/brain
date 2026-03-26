@@ -17,10 +17,11 @@ import (
 
 func TestCheckOpencodeStatus_Idle(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/status" {
+		if r.URL.Path != "/session/status" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(map[string]string{"type": "idle"})
+		// Production code: empty map {} means all sessions idle
+		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
 	defer server.Close()
 
@@ -35,7 +36,10 @@ func TestCheckOpencodeStatus_Idle(t *testing.T) {
 
 func TestCheckOpencodeStatus_Busy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "busy"})
+		// Production code: non-empty map means at least one session is busy
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ses_abc123": map[string]interface{}{"type": "busy"},
+		})
 	}))
 	defer server.Close()
 
@@ -152,9 +156,9 @@ func TestIdleDetectionThreshold_Custom(t *testing.T) {
 // =============================================================================
 
 func TestCheckIdleStatus_IdleTask_CompleteOnIdle_MarksCompleted(t *testing.T) {
-	// Set up a mock OpenCode server that returns "idle"
+	// Set up a mock OpenCode server that returns "idle" (empty map = all idle)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "idle"})
+		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -232,8 +236,9 @@ func TestCheckIdleStatus_IdleTask_CompleteOnIdle_MarksCompleted(t *testing.T) {
 }
 
 func TestCheckIdleStatus_IdleTask_NotCompleteOnIdle_MarksBlocked(t *testing.T) {
+	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "idle"})
+		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -288,8 +293,9 @@ func TestCheckIdleStatus_IdleTask_NotCompleteOnIdle_MarksBlocked(t *testing.T) {
 }
 
 func TestCheckIdleStatus_IdleTask_FirstDetection_SetsIdleSince(t *testing.T) {
+	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "idle"})
+		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -347,8 +353,11 @@ func TestCheckIdleStatus_IdleTask_FirstDetection_SetsIdleSince(t *testing.T) {
 }
 
 func TestCheckIdleStatus_BusyTask_ClearsIdleSince(t *testing.T) {
+	// Non-empty map = at least one session busy
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "busy"})
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ses_abc123": map[string]interface{}{"type": "busy"},
+		})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)
@@ -488,8 +497,9 @@ func TestCheckIdleStatus_NoPort_SkipsTask(t *testing.T) {
 }
 
 func TestCheckIdleStatus_AppendCompletionNote(t *testing.T) {
+	// Empty map = all sessions idle
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"type": "idle"})
+		json.NewEncoder(w).Encode(map[string]interface{}{})
 	}))
 	defer server.Close()
 	port := serverPort(t, server)

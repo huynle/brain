@@ -25,8 +25,8 @@ func TestStatusStyleWithState_CompletedStatus(t *testing.T) {
 
 func TestStatusStyleWithState_CancelledStatus(t *testing.T) {
 	style := StatusStyleWithState("cancelled", "ready")
-	if style.GetForeground() != ColorBlocked {
-		t.Errorf("expected ColorBlocked for cancelled status, got %v", style.GetForeground())
+	if style.GetForeground() != ColorMagenta {
+		t.Errorf("expected ColorMagenta for cancelled status, got %v", style.GetForeground())
 	}
 }
 
@@ -53,9 +53,9 @@ func TestStatusStyleWithState_BlockedClassification(t *testing.T) {
 }
 
 func TestStatusStyleWithState_DefaultToCompleted(t *testing.T) {
-	// Unknown classification should default to completed
+	// Unknown classification should default to waiting
 	style := StatusStyleWithState("pending", "unknown")
-	if style.GetForeground() != ColorCompleted {
-		t.Errorf("expected ColorCompleted for unknown classification, got %v", style.GetForeground())
+	if style.GetForeground() != ColorWaiting {
+		t.Errorf("expected ColorWaiting for unknown classification, got %v", style.GetForeground())
 	}
 }

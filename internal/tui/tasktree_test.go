@@ -724,6 +724,11 @@ func TestTaskTree_FeatureView_CollapsibleFeatures(t *testing.T) {
 		t.Errorf("Expected expanded indicator ▾, got:\n%s", view)
 	}
 
+	// Move cursor to feature header before toggling
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = -1
+	tt.SelectedID = ""
+
 	// Toggle collapse
 	tt.ToggleCollapse()
 
@@ -1805,13 +1810,14 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 		t.Errorf("Expected selection indicator → for feature header, got:\n%s", view)
 	}
 
-	// Test 3: Task selected
+	// Test 3: Task selected — in nested mode, the selected task line uses → indicator
 	tt.selectedTaskIdx = 0
 	tt.SelectedID = "t1"
 
 	view = tt.View(80, 30)
-	if !strings.Contains(view, "▸") {
-		t.Errorf("Expected task selection indicator ▸, got:\n%s", view)
+	// In nested grouped view, selected task lines are rendered with → prefix
+	if !strings.Contains(view, "→") {
+		t.Errorf("Expected task selection indicator → for selected task, got:\n%s", view)
 	}
 }
 
@@ -1864,27 +1870,24 @@ func TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation(t *testing.T)
 
 	view := tt.View(80, 30)
 
-	// The selected task line should contain "Feature2 Task1" with indicator "▸"
-	// BUG: Without the fix, this will FAIL because:
-	// - We pass fIdx=1 as groupIdx to renderGroupTaskTree
-	// - But it checks groupIdx(1) == tt.selectedGroupIdx(0) -> false
-	// - So the highlight appears on wrong line or not at all
+	// The selected task line should contain "Feature2 Task1" with indicator "→"
+	// In nested grouped view, selected task lines are rendered with → prefix
 	lines := strings.Split(view, "\n")
 	selectedLineFound := false
 	wrongLineHighlighted := false
 
 	for _, line := range lines {
-		if strings.Contains(line, "▸") && strings.Contains(line, "Feature2 Task1") {
+		if strings.Contains(line, "→") && strings.Contains(line, "Feature2 Task1") {
 			selectedLineFound = true
 		}
 		// Check if wrong task is highlighted (Feature1 tasks)
-		if strings.Contains(line, "▸") && strings.Contains(line, "Feature1") {
+		if strings.Contains(line, "→") && strings.Contains(line, "Feature1") {
 			wrongLineHighlighted = true
 		}
 	}
 
 	if !selectedLineFound {
-		t.Errorf("Expected selection indicator ▸ on 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
+		t.Errorf("Expected selection indicator → on 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
 	}
 	if wrongLineHighlighted {
 		t.Errorf("Wrong task highlighted - expected Feature2 Task1 but Feature1 task has indicator:\n%s", view)
@@ -2135,8 +2138,8 @@ func TestStatusIndicator_CompletedStatus(t *testing.T) {
 
 func TestStatusIndicator_CancelledStatus(t *testing.T) {
 	indicator := statusIndicator("cancelled", "ready")
-	if indicator != IndicatorBlocked {
-		t.Errorf("expected IndicatorBlocked (✗) for cancelled status, got %q", indicator)
+	if indicator != IndicatorCancelled {
+		t.Errorf("expected IndicatorCancelled (⊘) for cancelled status, got %q", indicator)
 	}
 }
 
@@ -2163,10 +2166,15 @@ func TestStatusIndicator_BlockedClassification(t *testing.T) {
 }
 
 func TestStatusIndicator_DefaultToCompleted(t *testing.T) {
-	// Unknown classification should default to completed
+	// For pending status with unknown classification, production defaults to waiting
 	indicator := statusIndicator("pending", "unknown")
+	if indicator != IndicatorWaiting {
+		t.Errorf("expected IndicatorWaiting (○) for pending with unknown classification, got %q", indicator)
+	}
+	// For non-pending status with unknown classification, falls through to completed
+	indicator = statusIndicator("", "unknown")
 	if indicator != IndicatorCompleted {
-		t.Errorf("expected IndicatorCompleted (✓) for unknown classification, got %q", indicator)
+		t.Errorf("expected IndicatorCompleted (✓) for empty status with unknown classification, got %q", indicator)
 	}
 }
 

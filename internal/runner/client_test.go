@@ -46,7 +46,7 @@ func testConfig(serverURL string) RunnerConfig {
 
 func TestAPIClient_CheckHealth(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/health" {
+		if r.URL.Path != "/api/v1/health" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		if r.Method != http.MethodGet {
@@ -247,9 +247,8 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"task": types.ResolvedTask{ID: "xyz789", Title: "Next task"},
-		})
+		// Production code unmarshals directly into ResolvedTask (no wrapper)
+		json.NewEncoder(w).Encode(types.ResolvedTask{ID: "xyz789", Title: "Next task"})
 	}))
 	defer srv.Close()
 
@@ -336,8 +335,9 @@ func TestAPIClient_UpdateTaskStatus(t *testing.T) {
 	if gotMethod != http.MethodPatch {
 		t.Errorf("method = %q, want PATCH", gotMethod)
 	}
-	// RequestURI preserves percent-encoding (r.URL.Path decodes it)
-	wantURI := "/api/v1/entries/projects%2Fbrain-api%2Ftask%2Fabc123.md"
+	// UpdateTaskStatus now uses UpdateMetadata which hits /metadata endpoint
+	// encodePathComponent keeps slashes intact (each segment is PathEscaped)
+	wantURI := "/api/v1/entries/projects/brain-api/task/abc123.md/metadata"
 	if gotRequestURI != wantURI {
 		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
 	}
@@ -511,8 +511,8 @@ func TestAPIClient_GetEntry(t *testing.T) {
 	if entry == nil {
 		t.Fatal("expected non-nil entry")
 	}
-	// Check path encoding via RequestURI (r.URL.Path decodes it)
-	wantURI := "/api/v1/entries/projects%2Fbrain-api%2Ftask%2Fabc123def.md"
+	// encodePathComponent keeps slashes intact (each segment is PathEscaped)
+	wantURI := "/api/v1/entries/projects/brain-api/task/abc123def.md"
 	if gotRequestURI != wantURI {
 		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
 	}
@@ -592,8 +592,8 @@ func TestAPIClient_UpdateEntry(t *testing.T) {
 		t.Fatal("expected non-nil entry")
 	}
 
-	// Check path encoding
-	wantURI := "/api/v1/entries/projects%2Fbrain-api%2Ftask%2Fabc123def.md"
+	// encodePathComponent keeps slashes intact (each segment is PathEscaped)
+	wantURI := "/api/v1/entries/projects/brain-api/task/abc123def.md"
 	if gotRequestURI != wantURI {
 		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
 	}
@@ -661,35 +661,38 @@ func TestAPIClient_GetFeature_Success(t *testing.T) {
 			t.Errorf("unexpected method: %s", r.Method)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		// Server returns FeatureResponse directly (no "feature" wrapper)
+		// Production decodes into FeatureResponse{Feature Feature `json:"feature"`}
+		// so the API response must be wrapped in {"feature": {...}}
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"featureId": "dark-mode",
-			"tasks": []map[string]interface{}{
-				{
-					"id":         "abc123",
-					"title":      "Add dark mode toggle",
-					"status":     "active",
-					"priority":   "high",
-					"featureId":  "dark-mode",
-					"dependsOn":  []string{},
-					"dependents": []string{},
+			"feature": map[string]interface{}{
+				"featureId": "dark-mode",
+				"tasks": []map[string]interface{}{
+					{
+						"id":         "abc123",
+						"title":      "Add dark mode toggle",
+						"status":     "active",
+						"priority":   "high",
+						"featureId":  "dark-mode",
+						"dependsOn":  []string{},
+						"dependents": []string{},
+					},
+					{
+						"id":         "def456",
+						"title":      "Update theme colors",
+						"status":     "pending",
+						"priority":   "medium",
+						"featureId":  "dark-mode",
+						"dependsOn":  []string{"abc123"},
+						"dependents": []string{},
+					},
 				},
-				{
-					"id":         "def456",
-					"title":      "Update theme colors",
-					"status":     "pending",
-					"priority":   "medium",
-					"featureId":  "dark-mode",
-					"dependsOn":  []string{"abc123"},
-					"dependents": []string{},
+				"ready": true,
+				"stats": map[string]int{
+					"ready":     1,
+					"waiting":   0,
+					"blocked":   0,
+					"completed": 0,
 				},
-			},
-			"ready": true,
-			"stats": map[string]int{
-				"ready":     1,
-				"waiting":   0,
-				"blocked":   0,
-				"completed": 0,
 			},
 		})
 	}))

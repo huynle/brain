@@ -46,13 +46,17 @@ echo "Daemon finished" >> ` + logFile + `
 		t.Fatalf("Invalid PID returned: %d", pid)
 	}
 
-	// Wait for PID file to be written
-	time.Sleep(100 * time.Millisecond)
-
-	// Verify PID file was created
-	writtenPID, err := ReadPID(pidFile)
+	// Wait for PID file to be written (poll with timeout for CI/parallel-test resilience)
+	var writtenPID int
+	for i := 0; i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		writtenPID, err = ReadPID(pidFile)
+		if err == nil && writtenPID > 0 {
+			break
+		}
+	}
 	if err != nil {
-		t.Fatalf("Failed to read PID file: %v", err)
+		t.Fatalf("Failed to read PID file after 2s: %v", err)
 	}
 
 	if writtenPID <= 0 {
@@ -64,15 +68,20 @@ echo "Daemon finished" >> ` + logFile + `
 		t.Error("Daemon process should be running")
 	}
 
-	// Verify log file was created and contains output
-	time.Sleep(100 * time.Millisecond)
-	logData, err := os.ReadFile(logFile)
-	if err != nil {
-		t.Fatalf("Failed to read log file: %v", err)
+	// Verify log file was created and contains output (poll for CI resilience)
+	var logData []byte
+	for i := 0; i < 20; i++ {
+		time.Sleep(100 * time.Millisecond)
+		logData, err = os.ReadFile(logFile)
+		if err == nil && len(logData) > 0 {
+			break
+		}
 	}
-
+	if err != nil {
+		t.Fatalf("Failed to read log file after 2s: %v", err)
+	}
 	if len(logData) == 0 {
-		t.Error("Log file should contain output")
+		t.Error("Log file should contain output after 2s")
 	}
 
 	// Clean up: kill the daemon

@@ -48,7 +48,7 @@ func GroupTasksByStatusAndFeature(tasks []types.ResolvedTask, visibleGroups map[
 
 	// Step 2: For each status group, create nested feature groups
 	var result []StatusGroup
-	statusOrder := []string{"Draft", "Pending", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
+	statusOrder := []string{"Ungrouped", "Draft", "Ready", "Pending", "Waiting", "Active", "In Progress", "Blocked", "Cancelled", "Completed", "Validated", "Superseded", "Archived"}
 
 	for _, statusName := range statusOrder {
 		statusTasks, ok := statusMap[statusName]

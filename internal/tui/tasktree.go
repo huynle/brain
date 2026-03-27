@@ -1907,10 +1907,11 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 
 		groupHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, group.Name, group.Count)
 
-		// Selection marker (distinct from collapse indicator)
+		// Keep indentation fixed; selection is shown by highlight only
 		if isGroupSelected {
 			groupHeader = GroupHeaderStyle.Render(groupHeader)
-			groupHeader = fmt.Sprintf("→ %s", groupHeader) // Use arrow for selection
+			groupHeader = fmt.Sprintf("  %s", groupHeader)
+			groupHeader = SelectedRowStyle.Render(groupHeader)
 		} else {
 			groupHeader = GroupHeaderStyle.Render(groupHeader)
 			groupHeader = fmt.Sprintf("  %s", groupHeader) // Two spaces for alignment
@@ -2183,11 +2184,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				collapseIndicator, feature.Name, execIndicator, statsStr)
 		}
 
-		// Selection marker (2 spaces for alignment, → when selected)
+		// Selection marker keeps fixed width to avoid visual shift when highlighted
 		selMarker := "  "
-		if isFeatureSelected {
-			selMarker = "→ "
-		}
 
 		// Apply blue background if selected, otherwise muted blue text (no background)
 		if isFeatureSelected {
@@ -2246,11 +2244,8 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 		ungroupedHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, ungrouped.Name, len(ungrouped.Tasks))
 
-		// Selection marker (2 spaces for alignment, → when selected)
+		// Selection marker keeps fixed width to avoid visual shift when highlighted
 		selMarker := "  "
-		if isUngroupedSelected {
-			selMarker = "→ "
-		}
 
 		// Apply blue background if selected, otherwise dark blue background
 		if isUngroupedSelected {
@@ -2329,9 +2324,10 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 
 		sectionHeader := fmt.Sprintf("%s %s (%d)", collapseIndicator, sec.label, len(sec.tasks))
 		if sec.isOn() && sec.featureIdx() == -1 {
-			// Selected section header — show → arrow
+			// Selected section header — preserve same styled width/padding, highlight only
+			sectionHeader = sec.style.Render(sectionHeader)
+			sectionHeader = fmt.Sprintf("  %s", sectionHeader)
 			sectionHeader = SelectedRowStyle.Render(sectionHeader)
-			sectionHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), sectionHeader)
 		} else {
 			sectionHeader = sec.style.Render(sectionHeader)
 			sectionHeader = fmt.Sprintf("  %s", sectionHeader)
@@ -2372,15 +2368,15 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				statusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
 				var featureHeader string
 				if featureID == "[Ungrouped]" {
-					featureHeader = fmt.Sprintf("  %s %s %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s %s %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
 				} else {
-					featureHeader = fmt.Sprintf("  %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
 				}
 
 				// Highlight if this sub-feature header is selected (not when navigated into its tasks)
 				if sec.isOn() && sec.featureIdx() == fIdx && sec.taskIdx() == -1 {
+					// Keep feature header indentation fixed when selected
 					featureHeader = SelectedRowStyle.Render(featureHeader)
-					featureHeader = fmt.Sprintf("%s%s", SelectedRowStyle.Render("→ "), featureHeader)
 				} else {
 					featureHeader = DimStyle.Render(featureHeader)
 				}
@@ -2620,7 +2616,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 		// Selection marker for status header
 		if isStatusSelected {
 			statusHeader = GroupHeaderStyle.Render(statusHeader)
-			statusHeader = fmt.Sprintf("→ %s", statusHeader)
+			statusHeader = fmt.Sprintf("  %s", statusHeader)
+			statusHeader = SelectedRowStyle.Render(statusHeader)
 		} else {
 			statusHeader = GroupHeaderStyle.Render(statusHeader)
 			statusHeader = fmt.Sprintf("  %s", statusHeader)
@@ -2663,7 +2660,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				// Selection marker for feature header (with indentation)
 				if isFeatureSelected {
 					featureHeader = FeatureHeaderStyle.Render(featureHeader)
-					featureHeader = fmt.Sprintf("  → %s", featureHeader)
+					featureHeader = fmt.Sprintf("    %s", featureHeader)
+					featureHeader = SelectedRowStyle.Render(featureHeader)
 				} else {
 					featureHeader = FeatureHeaderStyle.Render(featureHeader)
 					featureHeader = fmt.Sprintf("    %s", featureHeader)
@@ -2708,7 +2706,8 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 				// Selection marker for ungrouped header
 				if isUngroupedSelected {
 					ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
-					ungroupedHeader = fmt.Sprintf("  → %s", ungroupedHeader)
+					ungroupedHeader = fmt.Sprintf("    %s", ungroupedHeader)
+					ungroupedHeader = SelectedRowStyle.Render(ungroupedHeader)
 				} else {
 					ungroupedHeader = GroupHeaderStyle.Render(ungroupedHeader)
 					ungroupedHeader = fmt.Sprintf("    %s", ungroupedHeader)
@@ -3101,11 +3100,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		relationColor = ColorMagenta
 	}
 
-	// Selection marker
+	// Selection marker keeps fixed width to avoid visual shift when highlighted
 	selMarker := "  "
-	if isSelected {
-		selMarker = "→ "
-	}
 
 	// Checkbox indicator (ONLY when multi-select active)
 	checkboxPart := ""

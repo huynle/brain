@@ -1793,8 +1793,11 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 	tt.SelectedID = ""
 
 	view := tt.View(80, 30)
-	if !strings.Contains(view, "→") {
-		t.Errorf("Expected selection indicator → for status header, got:\n%s", view)
+	if !strings.Contains(view, "▾ Ready (1)") {
+		t.Errorf("Expected selected status header to be rendered, got:\n%s", view)
+	}
+	if strings.Contains(view, "→") {
+		t.Errorf("Expected no arrow selection marker for highlighted status header, got:\n%s", view)
 	}
 
 	// Test 2: Feature header selected
@@ -1804,10 +1807,11 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 	tt.SelectedID = ""
 
 	view = tt.View(80, 30)
-	// Should have selection indicator for feature header
-	count := strings.Count(view, "→")
-	if count == 0 {
-		t.Errorf("Expected selection indicator → for feature header, got:\n%s", view)
+	if !strings.Contains(view, "Feature: auth-system") {
+		t.Errorf("Expected feature header to be rendered, got:\n%s", view)
+	}
+	if strings.Contains(view, "→") {
+		t.Errorf("Expected no arrow selection marker for highlighted feature header, got:\n%s", view)
 	}
 
 	// Test 3: Task selected — in nested mode, the selected task line uses → indicator
@@ -1815,9 +1819,11 @@ func TestTaskTree_ViewNestedGrouped_SelectionIndicatorsAtAllLevels(t *testing.T)
 	tt.SelectedID = "t1"
 
 	view = tt.View(80, 30)
-	// In nested grouped view, selected task lines are rendered with → prefix
-	if !strings.Contains(view, "→") {
-		t.Errorf("Expected task selection indicator → for selected task, got:\n%s", view)
+	if !strings.Contains(view, "Auth Task") {
+		t.Errorf("Expected selected task to be rendered, got:\n%s", view)
+	}
+	if strings.Contains(view, "→") {
+		t.Errorf("Expected no arrow selection marker for highlighted task, got:\n%s", view)
 	}
 }
 
@@ -1870,27 +1876,21 @@ func TestTaskTree_ViewNestedGrouped_TaskHighlightMatchesNavigation(t *testing.T)
 
 	view := tt.View(80, 30)
 
-	// The selected task line should contain "Feature2 Task1" with indicator "→"
-	// In nested grouped view, selected task lines are rendered with → prefix
+	// The selected task line should contain "Feature2 Task1" and no arrow marker.
 	lines := strings.Split(view, "\n")
 	selectedLineFound := false
-	wrongLineHighlighted := false
 
 	for _, line := range lines {
-		if strings.Contains(line, "→") && strings.Contains(line, "Feature2 Task1") {
+		if strings.Contains(line, "Feature2 Task1") {
 			selectedLineFound = true
-		}
-		// Check if wrong task is highlighted (Feature1 tasks)
-		if strings.Contains(line, "→") && strings.Contains(line, "Feature1") {
-			wrongLineHighlighted = true
 		}
 	}
 
 	if !selectedLineFound {
-		t.Errorf("Expected selection indicator → on 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
+		t.Errorf("Expected 'Feature2 Task1' (selectedFeatureIdx=1, selectedTaskIdx=0), got:\n%s", view)
 	}
-	if wrongLineHighlighted {
-		t.Errorf("Wrong task highlighted - expected Feature2 Task1 but Feature1 task has indicator:\n%s", view)
+	if strings.Contains(view, "→") {
+		t.Errorf("Expected no arrow selection marker in nested view, got:\n%s", view)
 	}
 }
 

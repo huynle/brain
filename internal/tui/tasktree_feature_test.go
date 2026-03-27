@@ -352,6 +352,37 @@ func TestMoveDownFeatureGrouped_SkipsInactiveTasks(t *testing.T) {
 	}
 }
 
+func TestMoveDownFeatureGrouped_DraftToInactiveSection_MatchesRenderedOrder(t *testing.T) {
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+
+	// No active tasks, only two rendered terminal sections in feature view: Draft + Inactive.
+	tasks := []types.ResolvedTask{
+		{ID: "d1", Title: "Draft task", Status: "draft", Priority: "medium", FeatureID: "feat-a"},
+		{ID: "c1", Title: "Cancelled task", Status: "cancelled", Priority: "medium", FeatureID: "feat-b"},
+	}
+	tt.SetTasks(tasks)
+
+	// Stay on section headers so navigation moves section-to-section.
+	tt.draftCollapsed = true
+	tt.completedCollapsed = true
+	tt.clearTerminalSectionNav()
+	tt.isOnDraftSection = true
+	tt.draftFeatureIdx = -1
+	tt.draftTaskIdx = -1
+	tt.SelectedID = ""
+
+	tt.MoveDown()
+
+	if !tt.isOnCompletedSection {
+		t.Fatalf("expected one j press to move from Draft header to Inactive header")
+	}
+	if tt.isOnCancelledSection || tt.isOnSupersededSection || tt.isOnArchivedSection {
+		t.Fatalf("expected hidden legacy sections to be skipped during navigation")
+	}
+}
+
 func TestRestoreFeatureSelection_UsesActiveTreeOrderIndex(t *testing.T) {
 	tt := newFeatureViewTree([]FeatureGroup{
 		{

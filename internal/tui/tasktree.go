@@ -925,6 +925,11 @@ func (tt *TaskTree) collectTerminalSectionTasks(sectionName string) []types.Reso
 	case "archived":
 		statusFilter["archived"] = true
 	case "completed":
+		// "completed" section is rendered as merged "Inactive" in feature view.
+		// Include all terminal non-draft statuses to keep navigation aligned with the UI.
+		statusFilter["cancelled"] = true
+		statusFilter["superseded"] = true
+		statusFilter["archived"] = true
 		statusFilter["completed"] = true
 		statusFilter["validated"] = true
 	}
@@ -3902,16 +3907,18 @@ func (tt *TaskTree) updateTerminalSectionFlags() {
 		switch task.Status {
 		case "draft":
 			tt.hasDraftTasks = true
-		case "cancelled":
-			tt.hasCancelledTasks = true
-		case "superseded":
-			tt.hasSupersededTasks = true
-		case "archived":
-			tt.hasArchivedTasks = true
+		case "cancelled", "superseded", "archived":
+			// Hidden legacy terminal sections are merged into "Inactive" (completed).
+			tt.hasCompletedTasks = true
 		case "completed", "validated":
 			tt.hasCompletedTasks = true
 		}
 	}
+
+	// Keep legacy section flags disabled so keyboard navigation follows rendered sections.
+	tt.hasCancelledTasks = false
+	tt.hasSupersededTasks = false
+	tt.hasArchivedTasks = false
 }
 
 // refreshTerminalSectionFeatureIDs rebuilds the sorted feature ID lists for each
@@ -3929,7 +3936,7 @@ func (tt *TaskTree) refreshTerminalSectionFeatureIDs() {
 		{statuses: []string{"cancelled"}, setIDs: func(ids []string) { tt.cancelledFeatureIDs = ids }},
 		{statuses: []string{"superseded"}, setIDs: func(ids []string) { tt.supersededFeatureIDs = ids }},
 		{statuses: []string{"archived"}, setIDs: func(ids []string) { tt.archivedFeatureIDs = ids }},
-		{statuses: []string{"completed", "validated"}, setIDs: func(ids []string) { tt.completedFeatureIDs = ids }},
+		{statuses: []string{"cancelled", "superseded", "archived", "completed", "validated"}, setIDs: func(ids []string) { tt.completedFeatureIDs = ids }},
 	}
 
 	for _, sec := range sections {
@@ -3991,8 +3998,9 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			setTaskIdx: func(i int) { tt.draftTaskIdx = i },
 		},
 		{
-			name:       "cancelled",
-			hasTasks:   func() bool { return tt.hasCancelledTasks },
+			name: "cancelled",
+			// Hidden in feature view (merged into "Inactive"). Keep entry for legacy state compatibility.
+			hasTasks:   func() bool { return false },
 			moveTo:     tt.moveToCancelledSection,
 			isOn:       func() bool { return tt.isOnCancelledSection },
 			collapsed:  func() bool { return tt.cancelledCollapsed },
@@ -4003,8 +4011,9 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			setTaskIdx: func(i int) { tt.cancelledTaskIdx = i },
 		},
 		{
-			name:       "superseded",
-			hasTasks:   func() bool { return tt.hasSupersededTasks },
+			name: "superseded",
+			// Hidden in feature view (merged into "Inactive"). Keep entry for legacy state compatibility.
+			hasTasks:   func() bool { return false },
 			moveTo:     tt.moveToSupersededSection,
 			isOn:       func() bool { return tt.isOnSupersededSection },
 			collapsed:  func() bool { return tt.supersededCollapsed },
@@ -4015,8 +4024,9 @@ func (tt *TaskTree) terminalSections() []terminalSectionInfo {
 			setTaskIdx: func(i int) { tt.supersededTaskIdx = i },
 		},
 		{
-			name:       "archived",
-			hasTasks:   func() bool { return tt.hasArchivedTasks },
+			name: "archived",
+			// Hidden in feature view (merged into "Inactive"). Keep entry for legacy state compatibility.
+			hasTasks:   func() bool { return false },
 			moveTo:     tt.moveToArchivedSection,
 			isOn:       func() bool { return tt.isOnArchivedSection },
 			collapsed:  func() bool { return tt.archivedCollapsed },

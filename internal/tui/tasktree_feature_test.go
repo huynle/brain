@@ -163,7 +163,7 @@ func TestGetSelectedFeatureID_OutOfBounds(t *testing.T) {
 // --- Tests for moveToTopFeatureGrouped / moveToBottomFeatureGrouped ---
 
 // helper to build a feature-view TaskTree with given features and optional ungrouped.
-func newFeatureViewTree(features []FeatureGroup, ungrouped *FeatureGroup) TaskTree {
+func newFeatureViewTree(features []FeatureGroup, ungrouped *FeatureGroup) *TaskTree {
 	tt := NewTaskTree()
 	tt.useGroupedView = true
 	tt.useFeatureView = true
@@ -380,6 +380,44 @@ func TestMoveDownFeatureGrouped_DraftToInactiveSection_MatchesRenderedOrder(t *t
 	}
 	if tt.isOnCancelledSection || tt.isOnSupersededSection || tt.isOnArchivedSection {
 		t.Fatalf("expected hidden legacy sections to be skipped during navigation")
+	}
+}
+
+func TestMoveDownFeatureGrouped_SkipsHiddenInactiveOnlyFeatures(t *testing.T) {
+	tt := NewTaskTree()
+	tt.useGroupedView = true
+	tt.useFeatureView = true
+
+	// middle feature has only draft tasks and is not rendered in active feature list
+	tasks := []types.ResolvedTask{
+		{ID: "a1", Title: "A active", Status: "pending", Classification: "ready", FeatureID: "feature-a", Priority: "medium"},
+		{ID: "b1", Title: "B draft", Status: "draft", FeatureID: "feature-b", Priority: "medium"},
+		{ID: "c1", Title: "C active", Status: "pending", Classification: "ready", FeatureID: "feature-c", Priority: "medium"},
+	}
+	tt.SetTasks(tasks)
+
+	// keep headers only for deterministic movement
+	for i := range tt.featureGroups.Features {
+		tt.featureGroups.Features[i].Collapsed = true
+	}
+
+	// Start on feature-a header
+	tt.selectedFeatureIdx = 0
+	tt.selectedFeatureTaskIdx = -1
+	tt.isOnUngrouped = false
+	tt.clearTerminalSectionNav()
+	tt.SelectedID = ""
+
+	tt.moveDownFeatureGrouped()
+
+	if tt.selectedFeatureIdx != 2 {
+		t.Fatalf("expected moveDown to skip hidden feature-b and land on feature-c (idx 2), got idx %d", tt.selectedFeatureIdx)
+	}
+
+	tt.moveUpFeatureGrouped()
+
+	if tt.selectedFeatureIdx != 0 {
+		t.Fatalf("expected moveUp to skip hidden feature-b and return to feature-a (idx 0), got idx %d", tt.selectedFeatureIdx)
 	}
 }
 
@@ -968,9 +1006,9 @@ func TestTerminalSectionTaskSelection_AllSections_SSE(t *testing.T) {
 
 			// Navigate to terminal section task
 			tt.clearTerminalSectionNav()
-			tc.setSection(&tt)
-			tc.setFeatureIdx(&tt, 0)
-			tc.setTaskIdx(&tt, 0)
+			tc.setSection(tt)
+			tc.setFeatureIdx(tt, 0)
+			tc.setTaskIdx(tt, 0)
 			tt.SelectedID = "terminal1"
 			tt.selectedFeatureIdx = -1
 			tt.selectedFeatureTaskIdx = -1
@@ -982,14 +1020,14 @@ func TestTerminalSectionTaskSelection_AllSections_SSE(t *testing.T) {
 			if tt.SelectedID != "terminal1" {
 				t.Fatalf("after SSE: expected SelectedID=terminal1, got %s", tt.SelectedID)
 			}
-			if !tc.checkSection(&tt) {
+			if !tc.checkSection(tt) {
 				t.Fatalf("after SSE: section flag was cleared")
 			}
-			if tc.getFeatureIdx(&tt) != 0 {
-				t.Fatalf("after SSE: expected featureIdx=0, got %d", tc.getFeatureIdx(&tt))
+			if tc.getFeatureIdx(tt) != 0 {
+				t.Fatalf("after SSE: expected featureIdx=0, got %d", tc.getFeatureIdx(tt))
 			}
-			if tc.getTaskIdx(&tt) != 0 {
-				t.Fatalf("after SSE: expected taskIdx=0, got %d", tc.getTaskIdx(&tt))
+			if tc.getTaskIdx(tt) != 0 {
+				t.Fatalf("after SSE: expected taskIdx=0, got %d", tc.getTaskIdx(tt))
 			}
 		})
 	}

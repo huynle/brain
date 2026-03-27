@@ -429,10 +429,13 @@ type TaskTree struct {
 
 	// Text wrap/truncation
 	TextWrap bool // if true, show full titles; if false, truncate to fit width
+
+	// Viewport state for stable scrolling behavior (shared across task-list views).
+	viewportStart int
 }
 
 // NewTaskTree creates a new empty TaskTree component.
-func NewTaskTree() TaskTree {
+func NewTaskTree() *TaskTree {
 	// Load collapsed state from settings
 	settings, _ := LoadSettings()
 
@@ -442,7 +445,7 @@ func NewTaskTree() TaskTree {
 		featureCollapsed = make(map[string]bool)
 	}
 
-	return TaskTree{
+	return &TaskTree{
 		useGroupedView:      true, // Enable grouped view by default
 		useFeatureView:      true, // Use feature-grouped view by default (matches origin/main)
 		groupCollapsed:      settings.GroupCollapsed,
@@ -456,6 +459,7 @@ func NewTaskTree() TaskTree {
 		supersededCollapsed: true,  // Superseded section collapsed by default
 		archivedCollapsed:   true,  // Archived section collapsed by default
 		completedCollapsed:  true,  // Completed section collapsed by default
+		viewportStart:       0,
 	}
 }
 
@@ -878,6 +882,52 @@ func featureActiveTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
 
 func featureActiveTreeOrder(tasks []types.ResolvedTask) []string {
 	return FlattenTreeOrder(featureActiveTasks(tasks))
+}
+
+type activeFeatureNav struct {
+	features      []FeatureGroup
+	originalIndex []int
+	ungrouped     *FeatureGroup
+}
+
+// buildActiveFeatureNav builds the same active-only feature data used by rendering,
+// plus index mapping back to tt.featureGroups.Features.
+func (tt *TaskTree) buildActiveFeatureNav() activeFeatureNav {
+	nav := activeFeatureNav{
+		features:      make([]FeatureGroup, 0, len(tt.featureGroups.Features)),
+		originalIndex: make([]int, 0, len(tt.featureGroups.Features)),
+	}
+
+	for i, feature := range tt.featureGroups.Features {
+		activeTasks := featureActiveTasks(feature.Tasks)
+		if len(activeTasks) == 0 {
+			continue
+		}
+		f := feature
+		f.Tasks = activeTasks
+		nav.features = append(nav.features, f)
+		nav.originalIndex = append(nav.originalIndex, i)
+	}
+
+	if tt.featureGroups.Ungrouped != nil {
+		activeUngrouped := featureActiveTasks(tt.featureGroups.Ungrouped.Tasks)
+		if len(activeUngrouped) > 0 {
+			u := *tt.featureGroups.Ungrouped
+			u.Tasks = activeUngrouped
+			nav.ungrouped = &u
+		}
+	}
+
+	return nav
+}
+
+func (tt *TaskTree) activeFeaturePosForSelectedIdx(nav activeFeatureNav) int {
+	for pos, originalIdx := range nav.originalIndex {
+		if originalIdx == tt.selectedFeatureIdx {
+			return pos
+		}
+	}
+	return -1
 }
 
 // terminalSubFeatureTreeOrder returns the flattened task IDs for a terminal
@@ -1874,16 +1924,38 @@ func (tt *TaskTree) viewLegacy(width, height int) string {
 	// Truncate to height with scroll overflow indicators
 	if height > 0 && len(lines) > height {
 		// Ensure selected item is visible
-		start := 0
-		if tt.Cursor >= height {
+		start := tt.viewportStart
+		maxStart := len(lines) - height
+		if maxStart < 0 {
+			maxStart = 0
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > maxStart {
+			start = maxStart
+		}
+		if tt.Cursor >= start+height {
 			start = tt.Cursor - height + 1
 		}
+		if tt.Cursor < start {
+			start = tt.Cursor
+		}
+		if start < 0 {
+			start = 0
+		}
+		if start > maxStart {
+			start = maxStart
+		}
+		tt.viewportStart = start
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
 		}
 		totalLines := len(lines)
-		lines = applyViewportWithIndicators(lines, start, end, totalLines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines, tt.Cursor)
+	} else {
+		tt.viewportStart = 0
 	}
 
 	return strings.Join(lines, "\n")
@@ -1896,6 +1968,12 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 	}
 
 	var lines []string
+
+	// Compute relation graph for highlighting dependencies around selected task
+	var ancestors, descendants map[string]bool
+	if tt.SelectedID != "" && tt.selectedTaskIdx >= 0 {
+		ancestors, descendants = buildSelectedTaskRelationGraph(tt.tasks, tt.SelectedID)
+	}
 
 	// Compute whether to show checkboxes (only when multi-select is active)
 	showCheckboxes := len(tt.selectedTasks) > 0
@@ -1942,7 +2020,8 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 				showCheckboxes,
 				activeProjectID,
 				tt.selectedGroupIdx, // 2-level view uses selectedGroupIdx
-				nil, nil,            // no relation highlighting in 2-level grouped view
+				ancestors,
+				descendants,
 			)
 		}
 	}
@@ -1975,33 +2054,17 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible with padding
-		// Add padding to prevent selected line from being hidden in empty space at edges
-		const viewportPadding = 2
-		start := 0
-
-		// If selected line is too far down, scroll down to show it with padding
-		if selectedLineIdx >= start+height-viewportPadding {
-			start = selectedLineIdx - height + viewportPadding + 1
-			if start < 0 {
-				start = 0
-			}
-		}
-
-		// If selected line is too far up, scroll up to show it with padding
-		if selectedLineIdx < start+viewportPadding {
-			start = selectedLineIdx - viewportPadding
-			if start < 0 {
-				start = 0
-			}
-		}
+		start := computeViewportStart("grouped", tt.viewportStart, selectedLineIdx, len(lines), height)
+		tt.viewportStart = start
 
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
 		}
 		totalLines := len(lines)
-		lines = applyViewportWithIndicators(lines, start, end, totalLines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines, selectedLineIdx)
+	} else {
+		tt.viewportStart = 0
 	}
 
 	return strings.Join(lines, "\n")
@@ -2424,6 +2487,7 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			activeFeatureGroups,
 			activeUngrouped,
 			tt.tasks,
+			tt.SelectedID,
 			selectedFeatureID,
 			tt.selectedFeatureTaskIdx,
 			tt.isOnUngrouped,
@@ -2431,33 +2495,17 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			termSections,
 		)
 
-		// Calculate viewport start to keep selected line visible with padding
-		// Add padding to prevent selected line from being hidden in empty space at edges
-		const viewportPadding = 2
-		start := 0
-
-		// If selected line is too far down, scroll down to show it with padding
-		if selectedLineIdx >= start+height-viewportPadding {
-			start = selectedLineIdx - height + viewportPadding + 1
-			if start < 0 {
-				start = 0
-			}
-		}
-
-		// If selected line is too far up, scroll up to show it with padding
-		if selectedLineIdx < start+viewportPadding {
-			start = selectedLineIdx - viewportPadding
-			if start < 0 {
-				start = 0
-			}
-		}
+		start := computeViewportStart("feature", tt.viewportStart, selectedLineIdx, len(lines), height)
+		tt.viewportStart = start
 
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
 		}
 		totalLines := len(lines)
-		lines = applyViewportWithIndicators(lines, start, end, totalLines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines, selectedLineIdx)
+	} else {
+		tt.viewportStart = 0
 	}
 
 	return strings.Join(lines, "\n")
@@ -2482,6 +2530,7 @@ func findSelectedLineInFeatureView(
 	activeFeatureGroups []FeatureGroup,
 	activeUngrouped *FeatureGroup,
 	allTasks []types.ResolvedTask,
+	selectedID string,
 	selectedFeatureID string,
 	selectedFeatureTaskIdx int,
 	isOnUngrouped bool,
@@ -2503,6 +2552,14 @@ func findSelectedLineInFeatureView(
 		// Count tasks in this feature if not collapsed
 		if !feature.Collapsed {
 			taskLineCount := countGroupTaskLines(BuildTree(feature.Tasks, allTasks))
+			treeOrder := featureActiveTreeOrder(feature.Tasks)
+			if selectedID != "" {
+				for idx, id := range treeOrder {
+					if id == selectedID {
+						return lineIdx + idx
+					}
+				}
+			}
 
 			// If selected task is in this feature
 			if isThisFeature && selectedFeatureTaskIdx >= 0 && !isOnUngrouped && !isOnAnyTerminal {
@@ -2522,6 +2579,14 @@ func findSelectedLineInFeatureView(
 
 		if !activeUngrouped.Collapsed {
 			taskLineCount := countGroupTaskLines(BuildTree(activeUngrouped.Tasks, allTasks))
+			treeOrder := featureActiveTreeOrder(activeUngrouped.Tasks)
+			if selectedID != "" {
+				for idx, id := range treeOrder {
+					if id == selectedID {
+						return lineIdx + idx
+					}
+				}
+			}
 			if isOnUngrouped && selectedFeatureTaskIdx >= 0 && !isOnAnyTerminal {
 				return lineIdx + selectedFeatureTaskIdx
 			}
@@ -2569,6 +2634,14 @@ func findSelectedLineInFeatureView(
 				// Count task lines if sub-feature is expanded
 				if !isSubCollapsed {
 					taskLineCount := countGroupTaskLines(BuildTree(featureTasks, allTasks))
+					treeOrder := terminalSubFeatureTreeOrder(featureTasks)
+					if selectedID != "" {
+						for idx, id := range treeOrder {
+							if id == selectedID {
+								return lineIdx + idx
+							}
+						}
+					}
 
 					// If on a task within this sub-feature
 					if sec.isOn && sec.featureIdx == fIdx && sec.taskIdx >= 0 {
@@ -2580,8 +2653,67 @@ func findSelectedLineInFeatureView(
 		}
 	}
 
-	// Fallback: if nothing matched, return 0 (top of viewport)
-	return 0
+	// Fallback: if nothing matched, return -1 so caller preserves viewport.
+	return -1
+}
+
+// featureViewTotalLineCount returns total rendered line count for the feature view
+// (excluding the outer "Tasks (N)" header + blank line), using the same structure
+// as viewFeatureGrouped.
+func featureViewTotalLineCount(
+	activeFeatureGroups []FeatureGroup,
+	activeUngrouped *FeatureGroup,
+	allTasks []types.ResolvedTask,
+	termSections []terminalSectionLineInfo,
+) int {
+	lineIdx := 0
+
+	for _, feature := range activeFeatureGroups {
+		lineIdx++ // feature header
+		if !feature.Collapsed {
+			lineIdx += countGroupTaskLines(BuildTree(feature.Tasks, allTasks))
+		}
+	}
+
+	if activeUngrouped != nil {
+		lineIdx++ // ungrouped header
+		if !activeUngrouped.Collapsed {
+			lineIdx += countGroupTaskLines(BuildTree(activeUngrouped.Tasks, allTasks))
+		}
+	}
+
+	for _, sec := range termSections {
+		if len(sec.tasks) == 0 {
+			continue
+		}
+
+		lineIdx++ // blank line before section
+		lineIdx++ // section header
+
+		if !sec.collapsed {
+			byFeature := make(map[string][]types.ResolvedTask)
+			for _, task := range sec.tasks {
+				fid := task.FeatureID
+				if fid == "" {
+					fid = "[Ungrouped]"
+				}
+				byFeature[fid] = append(byFeature[fid], task)
+			}
+
+			for _, featureID := range sec.featureIDs {
+				lineIdx++ // sub-feature header
+				isSubCollapsed := false
+				if sec.featureCollapsed != nil {
+					isSubCollapsed = sec.featureCollapsed[sec.sectionName+":"+featureID]
+				}
+				if !isSubCollapsed {
+					lineIdx += countGroupTaskLines(BuildTree(byFeature[featureID], allTasks))
+				}
+			}
+		}
+	}
+
+	return lineIdx
 }
 
 // viewNestedGrouped renders tasks in 3-level nested hierarchy: Status → Feature → Tasks
@@ -2809,33 +2941,17 @@ func (tt *TaskTree) viewNestedGrouped(width, height int, activeProjectID string)
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible with padding
-		// Add padding to prevent selected line from being hidden in empty space at edges
-		const viewportPadding = 2
-		start := 0
-
-		// If selected line is too far down, scroll down to show it with padding
-		if selectedLineIdx >= start+height-viewportPadding {
-			start = selectedLineIdx - height + viewportPadding + 1
-			if start < 0 {
-				start = 0
-			}
-		}
-
-		// If selected line is too far up, scroll up to show it with padding
-		if selectedLineIdx < start+viewportPadding {
-			start = selectedLineIdx - viewportPadding
-			if start < 0 {
-				start = 0
-			}
-		}
+		start := computeViewportStart("nested", tt.viewportStart, selectedLineIdx, len(lines), height)
+		tt.viewportStart = start
 
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
 		}
 		totalLines := len(lines)
-		lines = applyViewportWithIndicators(lines, start, end, totalLines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines, selectedLineIdx)
+	} else {
+		tt.viewportStart = 0
 	}
 
 	return strings.Join(lines, "\n")
@@ -3070,7 +3186,7 @@ func flattenTreeToVisualOrder(nodes []TreeNode) []string {
 // renderGroupedTaskLineWithTree renders a single task line in grouped view with tree connectors.
 // The prefix parameter contains ancestor line state, isLast determines the branch character.
 // ancestors and descendants are optional maps from buildSelectedTaskRelationGraph for
-// relation highlighting (cyan for ancestors, magenta for descendants).
+// relation highlighting (depends-on tasks in purple, dependents in blue).
 func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	node TreeNode,
 	prefix string,
@@ -3095,15 +3211,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		treeConnector = treeBranch + " "
 	}
 
-	// Determine relation highlight color for this task's tree connectors
-	var relationColor lipgloss.Color
-	isAncestor := ancestors[task.ID]
-	isDescendant := descendants[task.ID]
-	if isAncestor {
-		relationColor = ColorCyan
-	} else if isDescendant {
-		relationColor = ColorMagenta
-	}
+	// Determine relation highlight color for this task's tree connectors/text
+	relationColor, hasRelation, _, _ := relationHighlight(task.ID, ancestors, descendants)
 
 	// Selection marker keeps fixed width to avoid visual shift when highlighted
 	selMarker := "  "
@@ -3175,8 +3284,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	}
 
 	// Not selected - apply default styling, with optional relation highlighting
-	// Color tree connectors cyan (ancestor) or magenta (descendant)
-	if isAncestor || isDescendant {
+	// Color only tree lines/connectors for related tasks (not task text).
+	if hasRelation {
 		relationStyle := lipgloss.NewStyle().Foreground(relationColor)
 		prefix = relationStyle.Render(prefix)
 		treeConnector = relationStyle.Render(treeConnector)
@@ -3197,6 +3306,21 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
 		selMarker, prefix, treeConnector, checkboxPart,
 		indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
+}
+
+// relationHighlight returns relation color metadata for a task ID relative to the selected task.
+// Depends-on tasks (upstream ancestors) are purple; dependent tasks (downstream descendants) are blue.
+func relationHighlight(taskID string, ancestors, descendants map[string]bool) (color lipgloss.Color, hasRelation bool, isAncestor bool, isDescendant bool) {
+	isAncestor = ancestors[taskID]
+	isDescendant = descendants[taskID]
+
+	if isAncestor {
+		return ColorMagenta, true, true, false
+	}
+	if isDescendant {
+		return lipgloss.Color("4"), true, false, true
+	}
+	return "", false, false, false
 }
 
 // SetLaneViewMode enables or disables lane-based git-graph rendering.
@@ -3231,33 +3355,17 @@ func (tt *TaskTree) viewLaneTree(width, height int) string {
 			}
 		}
 
-		// Calculate viewport start to keep selected line visible with padding
-		// Add padding to prevent selected line from being hidden in empty space at edges
-		const viewportPadding = 2
-		start := 0
-
-		// If selected line is too far down, scroll down to show it with padding
-		if selectedIdx >= start+height-viewportPadding {
-			start = selectedIdx - height + viewportPadding + 1
-			if start < 0 {
-				start = 0
-			}
-		}
-
-		// If selected line is too far up, scroll up to show it with padding
-		if selectedIdx < start+viewportPadding {
-			start = selectedIdx - viewportPadding
-			if start < 0 {
-				start = 0
-			}
-		}
+		start := computeViewportStart("lane", tt.viewportStart, selectedIdx, len(lines), height)
+		tt.viewportStart = start
 
 		end := start + height
 		if end > len(lines) {
 			end = len(lines)
 		}
 		totalLines := len(lines)
-		lines = applyViewportWithIndicators(lines, start, end, totalLines)
+		lines = applyViewportWithIndicators(lines, start, end, totalLines, selectedIdx)
+	} else {
+		tt.viewportStart = 0
 	}
 
 	return strings.Join(lines, "\n")
@@ -3282,9 +3390,11 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 		styledText := seg.Text
 		switch seg.Kind {
 		case KindUpstream:
-			styledText = lipgloss.NewStyle().Foreground(ColorCyan).Render(seg.Text)
-		case KindDownstream:
+			// Depends-on tasks (upstream)
 			styledText = lipgloss.NewStyle().Foreground(ColorMagenta).Render(seg.Text)
+		case KindDownstream:
+			// Dependent tasks (downstream)
+			styledText = lipgloss.NewStyle().Foreground(lipgloss.Color("4")).Render(seg.Text)
 			// KindNeutral: no color
 		}
 		prefixRendered += styledText
@@ -3874,7 +3984,8 @@ func (tt *TaskTree) moveToCompletedSection() {
 
 // moveToNextSectionAfterActiveFeatures moves past ungrouped → draft → cancelled → superseded → archived → completed.
 func (tt *TaskTree) moveToNextSectionAfterActiveFeatures() {
-	if tt.featureGroups.Ungrouped != nil {
+	nav := tt.buildActiveFeatureNav()
+	if nav.ungrouped != nil {
 		tt.selectedFeatureIdx = -1
 		tt.selectedFeatureTaskIdx = -1
 		tt.isOnUngrouped = true
@@ -4190,10 +4301,11 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 
 	// Handle ungrouped group
 	if tt.isOnUngrouped {
-		if tt.featureGroups.Ungrouped == nil {
+		nav := tt.buildActiveFeatureNav()
+		if nav.ungrouped == nil {
 			return
 		}
-		ungrouped := tt.featureGroups.Ungrouped
+		ungrouped := nav.ungrouped
 
 		if tt.selectedFeatureTaskIdx == -1 {
 			// On ungrouped header
@@ -4226,23 +4338,28 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 	}
 
 	// Handle regular features
-	if len(tt.featureGroups.Features) == 0 {
+	nav := tt.buildActiveFeatureNav()
+	if len(nav.features) == 0 {
+		return
+	}
+	currentPos := tt.activeFeaturePosForSelectedIdx(nav)
+	if currentPos < 0 {
+		// Recover to first active feature header to match rendered list.
+		tt.selectedFeatureIdx = nav.originalIndex[0]
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
 		return
 	}
 
-	// Bounds check
-	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
-		return
-	}
-
-	feature := tt.featureGroups.Features[tt.selectedFeatureIdx]
+	feature := nav.features[currentPos]
 
 	if tt.selectedFeatureTaskIdx == -1 {
 		// On feature header
 		if feature.Collapsed {
 			// Rule 1: On FEATURE HEADER, COLLAPSED → Jump to next feature header
-			if tt.selectedFeatureIdx < len(tt.featureGroups.Features)-1 {
-				tt.selectedFeatureIdx++
+			if currentPos < len(nav.features)-1 {
+				tt.selectedFeatureIdx = nav.originalIndex[currentPos+1]
 				tt.selectedFeatureTaskIdx = -1
 				tt.SelectedID = ""
 			} else {
@@ -4275,8 +4392,8 @@ func (tt *TaskTree) moveDownFeatureGrouped() {
 			tt.SelectedID = treeOrder[tt.selectedFeatureTaskIdx]
 		} else {
 			// Rule 4: At END of FEATURE → Move to next feature header
-			if tt.selectedFeatureIdx < len(tt.featureGroups.Features)-1 {
-				tt.selectedFeatureIdx++
+			if currentPos < len(nav.features)-1 {
+				tt.selectedFeatureIdx = nav.originalIndex[currentPos+1]
 				tt.selectedFeatureTaskIdx = -1
 				tt.SelectedID = ""
 			} else {
@@ -4306,8 +4423,9 @@ func (tt *TaskTree) hasActiveFeatureContent() bool {
 
 // moveUpToEndOfActiveContent moves cursor to the last item before draft/completed sections.
 func (tt *TaskTree) moveUpToEndOfActiveContent() {
-	if tt.featureGroups.Ungrouped != nil {
-		ungrouped := tt.featureGroups.Ungrouped
+	nav := tt.buildActiveFeatureNav()
+	if nav.ungrouped != nil {
+		ungrouped := nav.ungrouped
 		tt.isOnUngrouped = true
 		tt.selectedFeatureIdx = -1
 
@@ -4324,10 +4442,10 @@ func (tt *TaskTree) moveUpToEndOfActiveContent() {
 		return
 	}
 
-	if len(tt.featureGroups.Features) > 0 {
-		lastIdx := len(tt.featureGroups.Features) - 1
-		lastFeature := tt.featureGroups.Features[lastIdx]
-		tt.selectedFeatureIdx = lastIdx
+	if len(nav.features) > 0 {
+		lastPos := len(nav.features) - 1
+		lastFeature := nav.features[lastPos]
+		tt.selectedFeatureIdx = nav.originalIndex[lastPos]
 		tt.isOnUngrouped = false
 
 		if !lastFeature.Collapsed && len(lastFeature.Tasks) > 0 {
@@ -4357,19 +4475,23 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 
 			if taskIdx >= 0 {
 				// Within tasks of a sub-feature
+				sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+				subTasks, _ := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), featIdx, tt.featureCollapsed, sec.name)
+				treeOrder := terminalSubFeatureTreeOrder(subTasks)
+
+				// Clamp taskIdx if out of bounds (can happen after expand/collapse)
+				if taskIdx >= len(treeOrder) {
+					taskIdx = len(treeOrder) - 1
+					sec.setTaskIdx(taskIdx)
+					if taskIdx >= 0 {
+						tt.SelectedID = treeOrder[taskIdx]
+					}
+				}
+
 				if taskIdx > 0 {
 					// Move to previous task
-					sectionTasks := tt.collectTerminalSectionTasks(sec.name)
-					subTasks, _ := getTerminalSubFeatureTasks(sectionTasks, sec.featureIDs(), featIdx, tt.featureCollapsed, sec.name)
-					treeOrder := terminalSubFeatureTreeOrder(subTasks)
-					if taskIdx < len(treeOrder) {
-						sec.setTaskIdx(taskIdx - 1)
-						tt.SelectedID = treeOrder[taskIdx-1]
-					} else {
-						// Index out of bounds — return to sub-feature header
-						sec.setTaskIdx(-1)
-						tt.SelectedID = ""
-					}
+					sec.setTaskIdx(taskIdx - 1)
+					tt.SelectedID = treeOrder[taskIdx-1]
 				} else {
 					// At first task → move back to sub-feature header
 					sec.setTaskIdx(-1)
@@ -4379,39 +4501,83 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 				// On section header → go up to previous section's last task/sub-feature, or active content
 				if !tt.moveToPrevTerminalSection() {
 					// No previous terminal section → try to go to end of active content.
-					// But only move if there IS active content to move to; otherwise stay put (no-op).
 					if tt.hasActiveFeatureContent() {
 						tt.clearTerminalSectionNav()
 						tt.moveUpToEndOfActiveContent()
-					}
-					// else: no active content above → stay put (no-op), cursor remains on first terminal section header
-				} else {
-					// Moved to previous section header. Now position on its last sub-feature's last task if expanded.
-					prevSections := tt.terminalSections()
-					for _, ps := range prevSections {
-						if ps.isOn() {
-							if !ps.collapsed() {
-								fids := ps.featureIDs()
-								if len(fids) > 0 {
-									lastFeatIdx := len(fids) - 1
-									ps.setFeatIdx(lastFeatIdx)
-									// Try to land on last task of last sub-feature
-									sectionTasks := tt.collectTerminalSectionTasks(ps.name)
-									subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, fids, lastFeatIdx, tt.featureCollapsed, ps.name)
-									if !isCollapsed && len(subTasks) > 0 {
-										treeOrder := terminalSubFeatureTreeOrder(subTasks)
-										if len(treeOrder) > 0 {
-											ps.setTaskIdx(len(treeOrder) - 1)
-											tt.SelectedID = treeOrder[len(treeOrder)-1]
+					} else {
+						// No active content either → try to jump to the last item of the
+						// previous rendered terminal section (e.g., Draft before Inactive).
+						// Use terminalSections() to find a section above the current one
+						// by walking all sections in order and landing on the one just before.
+						sections := tt.terminalSections()
+						currentIdx := -1
+						for i, s := range sections {
+							if s.isOn() {
+								currentIdx = i
+								break
+							}
+						}
+						if currentIdx > 0 {
+							for i := currentIdx - 1; i >= 0; i-- {
+								if sections[i].hasTasks() || (sec.name != sections[i].name) {
+									sections[i].moveTo()
+									// Position on last sub-feature's last task if expanded
+									ps := sections[i]
+									if !ps.collapsed() {
+										fids := ps.featureIDs()
+										if len(fids) > 0 {
+											lastFeatIdx := len(fids) - 1
+											ps.setFeatIdx(lastFeatIdx)
+											sectionTasks := tt.collectTerminalSectionTasks(ps.name)
+											subTasks, isCollapsed := getTerminalSubFeatureTasks(sectionTasks, fids, lastFeatIdx, tt.featureCollapsed, ps.name)
+											if !isCollapsed && len(subTasks) > 0 {
+												treeOrder := terminalSubFeatureTreeOrder(subTasks)
+												if len(treeOrder) > 0 {
+													ps.setTaskIdx(len(treeOrder) - 1)
+													tt.SelectedID = treeOrder[len(treeOrder)-1]
+												}
+											} else {
+												ps.setTaskIdx(-1)
+												tt.SelectedID = ""
+											}
 										}
-									} else {
-										ps.setTaskIdx(-1)
-										tt.SelectedID = ""
 									}
+									break
 								}
 							}
+						}
+					}
+				} else {
+					// Moved to previous section header. Now position on its last
+					// sub-feature's last task if expanded. Re-read sections to get
+					// closures that mutate actual tt fields.
+					for _, ps := range tt.terminalSections() {
+						if !ps.isOn() {
+							continue
+						}
+						if ps.collapsed() {
+							// Collapsed → stay on section header (featIdx=-1, taskIdx=-1)
 							break
 						}
+						fids := ps.featureIDs()
+						if len(fids) == 0 {
+							break
+						}
+						lastFeatIdx := len(fids) - 1
+						ps.setFeatIdx(lastFeatIdx)
+						sectionTasks := tt.collectTerminalSectionTasks(ps.name)
+						subTasks, isSubCollapsed := getTerminalSubFeatureTasks(sectionTasks, fids, lastFeatIdx, tt.featureCollapsed, ps.name)
+						if !isSubCollapsed && len(subTasks) > 0 {
+							treeOrder := terminalSubFeatureTreeOrder(subTasks)
+							if len(treeOrder) > 0 {
+								ps.setTaskIdx(len(treeOrder) - 1)
+								tt.SelectedID = treeOrder[len(treeOrder)-1]
+							}
+						} else {
+							ps.setTaskIdx(-1)
+							tt.SelectedID = ""
+						}
+						break
 					}
 				}
 			} else if featIdx > 0 {
@@ -4446,16 +4612,18 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 
 	// Handle ungrouped group
 	if tt.isOnUngrouped {
-		if tt.featureGroups.Ungrouped == nil {
+		nav := tt.buildActiveFeatureNav()
+		if nav.ungrouped == nil {
 			return
 		}
-		ungrouped := tt.featureGroups.Ungrouped
+		ungrouped := nav.ungrouped
 
 		if tt.selectedFeatureTaskIdx == -1 {
 			// On ungrouped header → move to last task of last feature
-			if len(tt.featureGroups.Features) > 0 {
-				lastFeatureIdx := len(tt.featureGroups.Features) - 1
-				lastFeature := tt.featureGroups.Features[lastFeatureIdx]
+			if len(nav.features) > 0 {
+				lastPos := len(nav.features) - 1
+				lastFeature := nav.features[lastPos]
+				lastFeatureIdx := nav.originalIndex[lastPos]
 
 				tt.selectedFeatureIdx = lastFeatureIdx
 				tt.isOnUngrouped = false
@@ -4500,22 +4668,27 @@ func (tt *TaskTree) moveUpFeatureGrouped() {
 	}
 
 	// Handle regular features
-	if len(tt.featureGroups.Features) == 0 {
+	nav := tt.buildActiveFeatureNav()
+	if len(nav.features) == 0 {
+		return
+	}
+	currentPos := tt.activeFeaturePosForSelectedIdx(nav)
+	if currentPos < 0 {
+		// Recover to first active feature header to match rendered list.
+		tt.selectedFeatureIdx = nav.originalIndex[0]
+		tt.selectedFeatureTaskIdx = -1
+		tt.isOnUngrouped = false
+		tt.SelectedID = ""
 		return
 	}
 
-	// Bounds check
-	if tt.selectedFeatureIdx < 0 || tt.selectedFeatureIdx >= len(tt.featureGroups.Features) {
-		return
-	}
-
-	feature := tt.featureGroups.Features[tt.selectedFeatureIdx]
+	feature := nav.features[currentPos]
 
 	if tt.selectedFeatureTaskIdx == -1 {
 		// On feature header → move to previous feature
-		if tt.selectedFeatureIdx > 0 {
-			tt.selectedFeatureIdx--
-			prevFeature := tt.featureGroups.Features[tt.selectedFeatureIdx]
+		if currentPos > 0 {
+			tt.selectedFeatureIdx = nav.originalIndex[currentPos-1]
+			prevFeature := nav.features[currentPos-1]
 
 			if !prevFeature.Collapsed && len(prevFeature.Tasks) > 0 {
 				// Land on last task of previous feature
@@ -4823,10 +4996,92 @@ func buildSelectedTaskRelationLanes(assignments []LaneAssignment, ancestors, des
 	return ctx
 }
 
+// computeViewportStart returns the next viewport start index while keeping
+// selectedLineIdx visible with stable padding behavior.
+//
+// The top overflow indicator replaces the first visible row, so when scrolled
+// (start > 0) we reserve one additional top row before scrolling up.
+func computeViewportStart(view string, currentStart, selectedLineIdx, totalLines, height int) int {
+	if height <= 0 || totalLines <= height {
+		appendScrollDebug(view, currentStart, selectedLineIdx, totalLines, height, currentStart, false, false, 0)
+		return 0
+	}
+
+	const viewportPadding = 2
+	maxStart := totalLines - height
+	if maxStart < 0 {
+		maxStart = 0
+	}
+
+	start := currentStart
+	if start < 0 {
+		start = 0
+	}
+	if start > maxStart {
+		start = maxStart
+	}
+
+	if selectedLineIdx < 0 {
+		appendScrollDebug(view, currentStart, selectedLineIdx, totalLines, height, start, false, false, 0)
+		return start
+	}
+
+	downTriggered := false
+	upTriggered := false
+
+	// Symmetric vim-like scrolling: scroll when the highlight reaches the
+	// second row from either edge. The overflow indicators (↑N more / ↓N more)
+	// each consume one visible row, so when they are present the second visual
+	// row from the edge is the first actual content row.
+	//
+	// topPadding/bottomPadding = 1 when no indicator, 2 when indicator present.
+	// This makes both directions trigger at the same visual distance from the edge.
+	topPadding := 1 // scroll when highlight reaches second row from top
+	if start > 0 {
+		topPadding = 2 // first row is "↑N more" indicator, so second visual row = start+2
+	}
+
+	end := start + height
+	if end > totalLines {
+		end = totalLines
+	}
+	bottomPadding := 1 // scroll when highlight reaches second row from bottom
+	if end < totalLines {
+		bottomPadding = 2 // last row is "↓N more" indicator
+	}
+
+	if selectedLineIdx >= start+height-bottomPadding {
+		downTriggered = true
+		start = selectedLineIdx - (height - bottomPadding - 1)
+	}
+	if selectedLineIdx < start+topPadding {
+		upTriggered = true
+		start = selectedLineIdx - topPadding
+	}
+
+	if start < 0 {
+		start = 0
+	}
+	if start > maxStart {
+		start = maxStart
+	}
+
+	appendScrollDebug(view, currentStart, selectedLineIdx, totalLines, height, start, downTriggered, upTriggered, topPadding)
+
+	return start
+}
+
+func appendScrollDebug(_ string, _, _, _, _, _ int, _, _ bool, _ int) {
+	// Debug logging disabled. To enable, uncomment:
+	// path := "/tmp/brain-tui-scroll-debug.log"
+	// f, _ := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	// if f != nil { defer f.Close(); fmt.Fprintf(f, "%s view=%s current=%d selected=%d total=%d height=%d next=%d down=%t up=%t topPad=%d\n", time.Now().Format("15:04:05.000"), view, currentStart, selectedLineIdx, totalLines, height, nextStart, downTriggered, upTriggered, topPadding) }
+}
+
 // applyViewportWithIndicators slices lines to fit within height and adds scroll
 // overflow indicators (↑N more / ↓N more) when content overflows, matching the
 // TS TUI behavior. It replaces the first/last visible lines with indicators.
-func applyViewportWithIndicators(lines []string, start, end, totalLines int) []string {
+func applyViewportWithIndicators(lines []string, start, end, totalLines int, selectedLineIdx int) []string {
 	if start >= end || totalLines <= 0 {
 		return lines
 	}
@@ -4836,12 +5091,17 @@ func applyViewportWithIndicators(lines []string, start, end, totalLines int) []s
 	hasAbove := start > 0
 	hasBelow := end < totalLines
 
-	// Replace first/last lines with indicators when there's overflow
+	// Replace first/last lines with indicators when there's overflow.
+	// Keep selection visible if it lands on boundary rows.
 	if hasAbove && len(visible) > 0 {
-		visible[0] = DimStyle.Render(fmt.Sprintf("  ↑%d more", start))
+		if selectedLineIdx != start {
+			visible[0] = DimStyle.Render(fmt.Sprintf("  ↑%d more", start))
+		}
 	}
 	if hasBelow && len(visible) > 0 {
-		visible[len(visible)-1] = DimStyle.Render(fmt.Sprintf("  ↓%d more", totalLines-end))
+		if selectedLineIdx != end-1 {
+			visible[len(visible)-1] = DimStyle.Render(fmt.Sprintf("  ↓%d more", totalLines-end))
+		}
 	}
 
 	return visible

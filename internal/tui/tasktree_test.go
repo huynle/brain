@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -12,7 +13,7 @@ import (
 // Helper: make a minimal ResolvedTask
 // =============================================================================
 
-func makeTaskTree() TaskTree {
+func makeTaskTree() *TaskTree {
 	tt := NewTaskTree()
 	// Use legacy tree view for most tests (backward compatibility)
 	tt.SetViewMode(false)
@@ -2266,6 +2267,35 @@ func TestBuildSelectedTaskRelationGraph_MultiLevel(t *testing.T) {
 	}
 	if !descendants["d"] {
 		t.Errorf("expected 'd' in descendants")
+	}
+}
+
+func TestRelationHighlight_ColorMapping(t *testing.T) {
+	ancestors := map[string]bool{"a": true}
+	descendants := map[string]bool{"c": true}
+
+	color, hasRelation, isAncestor, isDescendant := relationHighlight("a", ancestors, descendants)
+	if !hasRelation || !isAncestor || isDescendant {
+		t.Fatalf("expected ancestor relation for task 'a'")
+	}
+	if color != ColorMagenta {
+		t.Fatalf("expected ancestor color %q, got %q", ColorMagenta, color)
+	}
+
+	color, hasRelation, isAncestor, isDescendant = relationHighlight("c", ancestors, descendants)
+	if !hasRelation || isAncestor || !isDescendant {
+		t.Fatalf("expected descendant relation for task 'c'")
+	}
+	if color != lipgloss.Color("4") {
+		t.Fatalf("expected descendant color %q, got %q", lipgloss.Color("4"), color)
+	}
+
+	color, hasRelation, isAncestor, isDescendant = relationHighlight("x", ancestors, descendants)
+	if hasRelation || isAncestor || isDescendant {
+		t.Fatalf("expected no relation for task 'x'")
+	}
+	if color != "" {
+		t.Fatalf("expected empty color for unrelated task, got %q", color)
 	}
 }
 

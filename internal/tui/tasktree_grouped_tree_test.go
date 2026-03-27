@@ -440,6 +440,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 1: Selecting beta feature header (the first active feature, line 0)
 	lineIdx := findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
+		"",
 		"beta", -1, false, false, noTasks,
 	)
 	if lineIdx != 0 {
@@ -449,6 +450,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 2: Selecting first task in beta (b1, line 1 = after header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
+		"",
 		"beta", 0, false, false, noTasks,
 	)
 	if lineIdx != 1 {
@@ -458,6 +460,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 3: Selecting delta feature header (line 3 = beta header + 2 beta tasks + delta header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
+		"",
 		"delta", -1, false, false, noTasks,
 	)
 	if lineIdx != 3 {
@@ -467,6 +470,7 @@ func TestFindSelectedLineInFeatureView_MixedStatusFeatures(t *testing.T) {
 	// Test 4: Selecting delta's first task (line 4 = after delta header)
 	lineIdx = findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
+		"",
 		"delta", 0, false, false, noTasks,
 	)
 	if lineIdx != 4 {
@@ -505,6 +509,7 @@ func TestFindSelectedLineInFeatureView_DraftAndCompletedSections(t *testing.T) {
 	}
 	lineIdx := findSelectedLineInFeatureView(
 		activeFeatureGroups, nil, allTasks,
+		"",
 		"", -1, false, true, termSections, // isOnAnyTerminal=true
 	)
 	if lineIdx != 3 {

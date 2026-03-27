@@ -47,7 +47,7 @@ type Model struct {
 	// Sub-models
 	statusBar  StatusBar
 	helpBar    HelpBar
-	taskTree   TaskTree
+	taskTree   *TaskTree
 	taskDetail TaskDetail
 	logViewer  LogViewer
 
@@ -1460,76 +1460,167 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // handleMouseClick handles left mouse button clicks.
 func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
 
-	// Detect which panel was clicked
-	// Status bar is at top (lines 0-2)
-	// Project tabs (if multi-project) is next line
-	// Main content starts after that
-	// Help bar is at bottom
-
-	statusBarHeight := 4 // Status bar now has 2 content rows + 2 border lines
-	projectTabsHeight := 0
-	if m.config.IsMultiProject() {
-		projectTabsHeight = 1
+	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+		// Click in top task panel (full-width in current layout)
+		m.activePanel = PanelTasks
+		m.helpBar.ActivePanel = m.activePanel
+		lineInPanel := y - mainContentStartY
+		return m.handleTaskPanelClick(lineInPanel, x)
 	}
-	mainContentStartY := statusBarHeight + projectTabsHeight
 
-	// Click in main content area
-	if y >= mainContentStartY && y < m.height-1 {
-		// Determine if click is in task panel or right panels
-		hasRightPanel := m.detailVisible || m.logsVisible
-		var leftWidth, rightWidth int
-		if hasRightPanel {
-			rightWidth = m.width * 40 / 100
-			if rightWidth < 20 {
-				rightWidth = 20
+	// Click in bottom panel area (detail/logs) if visible
+	if y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+		if m.detailVisible && m.logsVisible {
+			bottomStart := mainContentStartY + taskPanelOuterHeight
+			bottomOuterHeight := m.height - bottomStart - 1 // reserve footer line
+			detailHeight := bottomOuterHeight * 60 / 100
+			if detailHeight < 4 {
+				detailHeight = 4
 			}
-			leftWidth = m.width - rightWidth
-		} else {
-			leftWidth = m.width
-		}
-
-		if x < leftWidth {
-			// Click in task panel
-			m.activePanel = PanelTasks
-			m.helpBar.ActivePanel = m.activePanel
-
-			// Detect task/group clicked
-			lineInPanel := y - mainContentStartY
-			return m.handleTaskPanelClick(lineInPanel, x)
-		} else {
-			// Click in right panel
-			mainHeight := m.height - 4
-			if m.detailVisible && m.logsVisible {
-				halfHeight := mainHeight / 2
-				if y < mainContentStartY+halfHeight {
-					// Click in detail panel
-					m.activePanel = PanelDetails
-				} else {
-					// Click in logs panel
-					m.activePanel = PanelLogs
-				}
-			} else if m.detailVisible {
+			if y < bottomStart+detailHeight {
 				m.activePanel = PanelDetails
-			} else if m.logsVisible {
+			} else {
 				m.activePanel = PanelLogs
 			}
-			m.helpBar.ActivePanel = m.activePanel
+		} else if m.detailVisible {
+			m.activePanel = PanelDetails
+		} else if m.logsVisible {
+			m.activePanel = PanelLogs
 		}
+		m.helpBar.ActivePanel = m.activePanel
 	}
 
 	return m, nil
 }
 
+// computeTaskPanelMetrics mirrors renderBaseView layout math for click hit-testing.
+func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeight, taskInnerHeight int) {
+	// Mirror renderBaseView calculations so hit-testing stays aligned with what is drawn.
+	var projectTabsView string
+	if m.config.IsMultiProject() {
+		projectTabsView = m.projectTabs.View(m.width)
+	}
+	statusBarView := m.statusBar.View(m.width)
+
+	focusLabel := fmt.Sprintf("%d", m.activePanel)
+	focusStyle := lipgloss.NewStyle().Foreground(ColorCyan)
+	helpHint := DimStyle.Render("? Help")
+	rightSide := fmt.Sprintf("Focus: %s", focusStyle.Render(focusLabel))
+	leftPad := m.width - lipgloss.Width(helpHint) - lipgloss.Width(rightSide) - 2
+	if leftPad < 1 {
+		leftPad = 1
+	}
+	helpBarView := " " + helpHint + strings.Repeat(" ", leftPad) + rightSide
+
+	var statusMessageView string
+	if m.statusMessage != "" && time.Since(m.statusMessageTime) < 3*time.Second {
+		style := lipgloss.NewStyle().Padding(0, 1)
+		switch m.statusMessageType {
+		case "success":
+			style = style.Foreground(lipgloss.Color("10"))
+		case "error":
+			style = style.Foreground(lipgloss.Color("9"))
+		case "info":
+			style = style.Foreground(lipgloss.Color("12"))
+		}
+		statusMessageView = style.Render(m.statusMessage)
+	}
+
+	var filterBarView string
+	switch m.filterState {
+	case FilterTyping:
+		matchCount := len(m.filteredTasks())
+		matchWord := "matches"
+		if matchCount == 1 {
+			matchWord = "match"
+		}
+		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+	case FilterLocked:
+		totalCount := len(m.tasks)
+		matchCount := len(m.filteredTasks())
+		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) + DimStyle.Render("  Esc: clear")
+	}
+
+	statusBarHeight := lipgloss.Height(statusBarView)
+	helpBarHeight := lipgloss.Height(helpBarView)
+	projectTabsHeight := 0
+	if projectTabsView != "" {
+		projectTabsHeight = lipgloss.Height(projectTabsView)
+	}
+	statusMessageHeight := 0
+	if statusMessageView != "" {
+		statusMessageHeight = lipgloss.Height(statusMessageView)
+	}
+	filterBarHeight := 0
+	if filterBarView != "" {
+		filterBarHeight = lipgloss.Height(filterBarView)
+	}
+
+	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+	mainHeight := m.height - fixedUIHeight
+	if mainHeight < 3 {
+		mainHeight = 3
+	}
+
+	hasBottomPanel := m.detailVisible || m.logsVisible
+	topHeight := mainHeight
+	if hasBottomPanel {
+		taskContentLines := 0
+		if m.viewMode == ViewModeSchedules {
+			taskContentLines = m.scheduleList.ContentHeight()
+		} else {
+			taskContentLines = m.taskTree.ContentHeight()
+		}
+
+		desiredTaskHeight := taskContentLines + 3
+		minTaskHeight := 8
+		maxTaskRatio := mainHeight * 60 / 100
+		topHeight = desiredTaskHeight
+		if topHeight < minTaskHeight {
+			topHeight = minTaskHeight
+		}
+		if topHeight > maxTaskRatio {
+			topHeight = maxTaskRatio
+		}
+
+		bottomHeight := mainHeight - topHeight
+		if bottomHeight < 6 {
+			bottomHeight = 6
+			topHeight = mainHeight - bottomHeight
+		}
+	}
+
+	mainContentStartY = statusBarHeight + projectTabsHeight
+	taskPanelOuterHeight = topHeight
+	taskInnerHeight = topHeight - 2
+	if taskInnerHeight < 1 {
+		taskInnerHeight = 1
+	}
+	return mainContentStartY, taskPanelOuterHeight, taskInnerHeight
+}
+
 // handleTaskPanelClick handles clicks within the task panel.
 func (m Model) handleTaskPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	// Convert from panel-relative line (includes top border) to task-list line
+	// within taskTree view content (excludes "Tasks (N)" + blank line).
+	contentLine := lineInPanel - 1
+	if contentLine < 0 {
+		return m, nil
+	}
+	lineInList := contentLine - 2
+	if lineInList < 0 {
+		return m, nil
+	}
+
 	if m.taskTree.useGroupedView {
-		return m.handleGroupedViewClick(lineInPanel, x)
+		return m.handleGroupedViewClick(lineInList, x)
 	}
 	// Legacy tree view - simple task selection by line
-	if lineInPanel >= 0 && lineInPanel < len(m.taskTree.order) {
-		m.taskTree.Cursor = lineInPanel
-		m.taskTree.SelectedID = m.taskTree.order[lineInPanel]
+	if lineInList >= 0 && lineInList < len(m.taskTree.order) {
+		m.taskTree.Cursor = lineInList
+		m.taskTree.SelectedID = m.taskTree.order[lineInList]
 		m.syncTaskDetail()
 	}
 	return m, nil
@@ -1599,22 +1690,128 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 	currentLine := 0
 	showCheckboxes := len(m.selectedTasks) > 0
 
+	// Build the same filtered sections as viewFeatureGrouped so click hit-testing
+	// matches exactly what is rendered.
+	var draftTasks, inactiveTasks []types.ResolvedTask
+	activeFeatureGroups := make([]FeatureGroup, 0)
+	var activeUngrouped *FeatureGroup
+
+	for _, feature := range m.taskTree.featureGroups.Features {
+		var activeTasks []types.ResolvedTask
+		for _, task := range feature.Tasks {
+			switch task.Status {
+			case "draft":
+				draftTasks = append(draftTasks, task)
+			case "cancelled", "superseded", "archived", "completed", "validated":
+				inactiveTasks = append(inactiveTasks, task)
+			default:
+				activeTasks = append(activeTasks, task)
+			}
+		}
+		if len(activeTasks) > 0 {
+			activeFeature := feature
+			activeFeature.Tasks = activeTasks
+			activeFeatureGroups = append(activeFeatureGroups, activeFeature)
+		}
+	}
+
+	if m.taskTree.featureGroups.Ungrouped != nil {
+		var activeUngroupedTasks []types.ResolvedTask
+		for _, task := range m.taskTree.featureGroups.Ungrouped.Tasks {
+			switch task.Status {
+			case "draft":
+				draftTasks = append(draftTasks, task)
+			case "cancelled", "superseded", "archived", "completed", "validated":
+				inactiveTasks = append(inactiveTasks, task)
+			default:
+				activeUngroupedTasks = append(activeUngroupedTasks, task)
+			}
+		}
+		if len(activeUngroupedTasks) > 0 {
+			activeUngrouped = &FeatureGroup{ID: "", Name: "[Ungrouped]", Tasks: activeUngroupedTasks}
+		}
+	}
+
+	termSections := []terminalSectionLineInfo{
+		{tasks: draftTasks, isOn: m.taskTree.isOnDraftSection, collapsed: m.taskTree.draftCollapsed, featureIdx: m.taskTree.draftFeatureIdx, taskIdx: m.taskTree.draftTaskIdx, featureIDs: m.taskTree.draftFeatureIDs, sectionName: "draft", featureCollapsed: m.taskTree.featureCollapsed},
+		{tasks: inactiveTasks, isOn: m.taskTree.isOnCompletedSection, collapsed: m.taskTree.completedCollapsed, featureIdx: m.taskTree.completedFeatureIdx, taskIdx: m.taskTree.completedTaskIdx, featureIDs: m.taskTree.completedFeatureIDs, sectionName: "completed", featureCollapsed: m.taskTree.featureCollapsed},
+	}
+
+	// Convert viewport-visible line to absolute rendered line (before viewport slicing).
+	_, _, taskInnerHeight := m.computeTaskPanelMetrics()
+	listHeight := taskInnerHeight - 2 // task list viewport excludes "Tasks (N)" + blank
+	if listHeight < 1 {
+		listHeight = 1
+	}
+
+	clickedLine := lineInPanel
+	totalLines := featureViewTotalLineCount(activeFeatureGroups, activeUngrouped, m.taskTree.tasks, termSections)
+	if totalLines > listHeight {
+		start := m.taskTree.viewportStart
+		if start < 0 {
+			start = 0
+		}
+		maxStart := totalLines - listHeight
+		if maxStart < 0 {
+			maxStart = 0
+		}
+		if start > maxStart {
+			start = maxStart
+		}
+		end := start + listHeight
+		if end > totalLines {
+			end = totalLines
+		}
+
+		if start > 0 {
+			// Top overflow indicator replaces the first visible line.
+			if clickedLine == 0 {
+				return m, nil
+			}
+		}
+
+		windowLines := end - start
+		if clickedLine < 0 || clickedLine >= windowLines {
+			// Outside visible window
+			return m, nil
+		}
+		if end < totalLines && clickedLine == windowLines-1 {
+			// Bottom overflow indicator replaces the last visible line.
+			return m, nil
+		}
+
+		clickedLine = start + clickedLine
+	}
+
 	// Check features
-	for fIdx, feature := range m.taskTree.featureGroups.Features {
+	for _, feature := range activeFeatureGroups {
 		// Feature header line
-		if currentLine == lineInPanel {
+		if currentLine == clickedLine {
 			if x >= 0 && x <= 2 {
 				// Click on collapse indicator
-				m.taskTree.selectedFeatureIdx = fIdx
+				// Map back to unfiltered feature index
+				for i, original := range m.taskTree.featureGroups.Features {
+					if original.ID == feature.ID {
+						m.taskTree.selectedFeatureIdx = i
+						break
+					}
+				}
 				m.taskTree.selectedFeatureTaskIdx = -1
 				m.taskTree.isOnUngrouped = false
+				m.taskTree.clearTerminalSectionNav()
 				m.taskTree.SelectedID = ""
 				m.taskTree.ToggleCollapse()
 			} else {
 				// Select feature header
-				m.taskTree.selectedFeatureIdx = fIdx
+				for i, original := range m.taskTree.featureGroups.Features {
+					if original.ID == feature.ID {
+						m.taskTree.selectedFeatureIdx = i
+						break
+					}
+				}
 				m.taskTree.selectedFeatureTaskIdx = -1
 				m.taskTree.isOnUngrouped = false
+				m.taskTree.clearTerminalSectionNav()
 				m.taskTree.SelectedID = ""
 				m.syncTaskDetail()
 			}
@@ -1624,21 +1821,34 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 		// Task lines (if not collapsed)
 		if !feature.Collapsed {
-			for tIdx, task := range feature.Tasks {
-				if currentLine == lineInPanel {
+			treeOrder := featureActiveTreeOrder(feature.Tasks)
+			for tIdx, taskID := range treeOrder {
+				if currentLine == clickedLine {
 					if showCheckboxes && x >= 2 && x <= 4 {
 						// Click on checkbox
-						m.taskTree.selectedFeatureIdx = fIdx
+						for i, original := range m.taskTree.featureGroups.Features {
+							if original.ID == feature.ID {
+								m.taskTree.selectedFeatureIdx = i
+								break
+							}
+						}
 						m.taskTree.selectedFeatureTaskIdx = tIdx
 						m.taskTree.isOnUngrouped = false
-						m.taskTree.SelectedID = task.ID
+						m.taskTree.clearTerminalSectionNav()
+						m.taskTree.SelectedID = taskID
 						m.toggleTaskSelection()
 					} else {
 						// Select task
-						m.taskTree.selectedFeatureIdx = fIdx
+						for i, original := range m.taskTree.featureGroups.Features {
+							if original.ID == feature.ID {
+								m.taskTree.selectedFeatureIdx = i
+								break
+							}
+						}
 						m.taskTree.selectedFeatureTaskIdx = tIdx
 						m.taskTree.isOnUngrouped = false
-						m.taskTree.SelectedID = task.ID
+						m.taskTree.clearTerminalSectionNav()
+						m.taskTree.SelectedID = taskID
 						m.syncTaskDetail()
 					}
 					return m, nil
@@ -1649,16 +1859,17 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 	}
 
 	// Check ungrouped
-	if m.taskTree.featureGroups.Ungrouped != nil {
-		ungrouped := m.taskTree.featureGroups.Ungrouped
+	if activeUngrouped != nil {
+		ungrouped := activeUngrouped
 
 		// Ungrouped header line
-		if currentLine == lineInPanel {
+		if currentLine == clickedLine {
 			if x >= 0 && x <= 2 {
 				// Click on collapse indicator
 				m.taskTree.selectedFeatureIdx = -1
 				m.taskTree.selectedFeatureTaskIdx = -1
 				m.taskTree.isOnUngrouped = true
+				m.taskTree.clearTerminalSectionNav()
 				m.taskTree.SelectedID = ""
 				m.taskTree.ToggleCollapse()
 			} else {
@@ -1666,6 +1877,7 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 				m.taskTree.selectedFeatureIdx = -1
 				m.taskTree.selectedFeatureTaskIdx = -1
 				m.taskTree.isOnUngrouped = true
+				m.taskTree.clearTerminalSectionNav()
 				m.taskTree.SelectedID = ""
 				m.syncTaskDetail()
 			}
@@ -1675,26 +1887,113 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 		// Ungrouped task lines (if not collapsed)
 		if !ungrouped.Collapsed {
-			for tIdx, task := range ungrouped.Tasks {
-				if currentLine == lineInPanel {
+			treeOrder := featureActiveTreeOrder(ungrouped.Tasks)
+			for tIdx, taskID := range treeOrder {
+				if currentLine == clickedLine {
 					if showCheckboxes && x >= 2 && x <= 4 {
 						// Click on checkbox
 						m.taskTree.selectedFeatureIdx = -1
 						m.taskTree.selectedFeatureTaskIdx = tIdx
 						m.taskTree.isOnUngrouped = true
-						m.taskTree.SelectedID = task.ID
+						m.taskTree.clearTerminalSectionNav()
+						m.taskTree.SelectedID = taskID
 						m.toggleTaskSelection()
 					} else {
 						// Select task
 						m.taskTree.selectedFeatureIdx = -1
 						m.taskTree.selectedFeatureTaskIdx = tIdx
 						m.taskTree.isOnUngrouped = true
-						m.taskTree.SelectedID = task.ID
+						m.taskTree.clearTerminalSectionNav()
+						m.taskTree.SelectedID = taskID
 						m.syncTaskDetail()
 					}
 					return m, nil
 				}
 				currentLine++
+			}
+		}
+	}
+
+	// Check terminal sections (Draft, Inactive) with the same rendered order.
+	for _, sec := range termSections {
+		if len(sec.tasks) == 0 {
+			continue
+		}
+
+		// blank line before section
+		if currentLine == clickedLine {
+			return m, nil
+		}
+		currentLine++
+
+		// section header
+		if currentLine == clickedLine {
+			switch sec.sectionName {
+			case "draft":
+				m.taskTree.moveToDraftSection()
+			case "completed":
+				m.taskTree.moveToCompletedSection()
+			}
+			m.syncTaskDetail()
+			return m, nil
+		}
+		currentLine++
+
+		if sec.collapsed {
+			continue
+		}
+
+		byFeature := make(map[string][]types.ResolvedTask)
+		for _, task := range sec.tasks {
+			fid := task.FeatureID
+			if fid == "" {
+				fid = "[Ungrouped]"
+			}
+			byFeature[fid] = append(byFeature[fid], task)
+		}
+
+		for fIdx, featureID := range sec.featureIDs {
+			isSubCollapsed := false
+			if sec.featureCollapsed != nil {
+				isSubCollapsed = sec.featureCollapsed[sec.sectionName+":"+featureID]
+			}
+
+			if currentLine == clickedLine {
+				switch sec.sectionName {
+				case "draft":
+					m.taskTree.moveToDraftSection()
+					m.taskTree.draftFeatureIdx = fIdx
+					m.taskTree.draftTaskIdx = -1
+				case "completed":
+					m.taskTree.moveToCompletedSection()
+					m.taskTree.completedFeatureIdx = fIdx
+					m.taskTree.completedTaskIdx = -1
+				}
+				m.syncTaskDetail()
+				return m, nil
+			}
+			currentLine++
+
+			if !isSubCollapsed {
+				treeOrder := terminalSubFeatureTreeOrder(byFeature[featureID])
+				for tIdx, taskID := range treeOrder {
+					if currentLine == clickedLine {
+						switch sec.sectionName {
+						case "draft":
+							m.taskTree.moveToDraftSection()
+							m.taskTree.draftFeatureIdx = fIdx
+							m.taskTree.draftTaskIdx = tIdx
+						case "completed":
+							m.taskTree.moveToCompletedSection()
+							m.taskTree.completedFeatureIdx = fIdx
+							m.taskTree.completedTaskIdx = tIdx
+						}
+						m.taskTree.SelectedID = taskID
+						m.syncTaskDetail()
+						return m, nil
+					}
+					currentLine++
+				}
 			}
 		}
 	}

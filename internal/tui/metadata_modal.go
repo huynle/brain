@@ -189,8 +189,11 @@ func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.A
 		height:              25,
 		focusedMonitorIndex: -1,
 	}
-	// Set field list based on mode
+	// Set field list based on mode and initialize focused field
 	m.fieldList = m.buildFieldList()
+	if len(m.fieldList) > 0 {
+		m.focusedField = m.fieldList[0]
+	}
 	return m
 }
 

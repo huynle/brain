@@ -140,6 +140,7 @@ type TaskRunner struct {
 	stats           RunnerStats
 	startedAt       time.Time
 	lastCronCheckAt time.Time
+	maxParallel     int // runtime-adjustable max parallel (0 = use config.MaxParallel)
 
 	// Pause state (protected by pauseMu)
 	pauseMu    sync.RWMutex
@@ -338,7 +339,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()
-	maxParallel := tr.config.MaxParallel
+	maxParallel := tr.getMaxParallel()
 	if running >= maxParallel {
 		tr.emitPollComplete()
 		return
@@ -821,6 +822,33 @@ func (tr *TaskRunner) IsAllPaused() bool {
 }
 
 // =============================================================================
+// Max Parallel
+// =============================================================================
+
+// SetMaxParallel updates the maximum number of parallel tasks at runtime.
+// Values <= 0 are clamped to 1.
+func (tr *TaskRunner) SetMaxParallel(n int) {
+	if n <= 0 {
+		n = 1
+	}
+	tr.mu.Lock()
+	tr.maxParallel = n
+	tr.mu.Unlock()
+}
+
+// getMaxParallel returns the current effective max parallel limit.
+// Uses the runtime-adjusted value if set, otherwise falls back to config.
+func (tr *TaskRunner) getMaxParallel() int {
+	tr.mu.RLock()
+	n := tr.maxParallel
+	tr.mu.RUnlock()
+	if n > 0 {
+		return n
+	}
+	return tr.config.MaxParallel
+}
+
+// =============================================================================
 // Status
 // =============================================================================
 
@@ -850,7 +878,7 @@ func (tr *TaskRunner) GetStatus() RunnerStatusInfo {
 		Projects:    tr.projects,
 		Stats:       stats,
 		Running:     tr.processMgr.RunningCount(),
-		MaxParallel: tr.config.MaxParallel,
+		MaxParallel: tr.getMaxParallel(),
 		Paused:      paused,
 		StartedAt:   startedAt,
 	}

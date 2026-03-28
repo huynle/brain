@@ -170,6 +170,11 @@ func NewModel(cfg Config) Model {
 	m.taskTree.TextWrap = settings.TextWrap
 	m.helpBar.TextWrap = settings.TextWrap
 
+	// Propagate max parallel setting to the runner on startup
+	if cfg.Runner != nil && settings.GlobalMaxParallel > 0 {
+		cfg.Runner.SetMaxParallel(settings.GlobalMaxParallel)
+	}
+
 	// Create SSE clients for multi-project mode
 	// Initialize ProjectTabs for multi-project mode
 	if cfg.IsMultiProject() {
@@ -693,6 +698,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if err == nil {
 			m.settings = settings
 			m.taskTree.SetTasks(m.tasks)
+
+			// Propagate max parallel setting to the runner
+			if m.runnerController != nil && settings.GlobalMaxParallel > 0 {
+				m.runnerController.SetMaxParallel(settings.GlobalMaxParallel)
+			}
 		}
 		return m, nil
 	}
@@ -882,14 +892,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
-			// Open status picker modal for selected task(s) (tasks view only)
+			// Open metadata modal for selected task(s) (tasks view only)
 			if m.viewMode != ViewModeTasks {
 				return m, nil
 			}
 			if m.activePanel == PanelTasks {
 				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
 
-				// Case 0: Feature header selected → open MetadataModalFeature (unchanged)
+				// Case 0: Feature header selected → open MetadataModalFeature
 				featureID := m.taskTree.GetSelectedFeatureID()
 				if featureID != "" && featureID != "[Ungrouped]" {
 					featureModal := NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
@@ -908,64 +918,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 				var modal Modal
 
-				// Case 1: Multi-select active → batch status picker
-				if len(m.selectedTasks) > 0 {
-					taskPaths := make([]string, 0, len(m.selectedTasks))
-					currentStatus := ""
-					for id := range m.selectedTasks {
-						for _, t := range m.tasks {
-							if t.ID == id {
-								taskPaths = append(taskPaths, t.Path)
-								if currentStatus == "" {
-									currentStatus = t.Status
-								}
-								break
-							}
-						}
-					}
-					modal = NewStatusPickerModalBatch(taskPaths, currentStatus, apiClient)
-				} else {
-					// Case 2: Single task selected → status picker
-					selectedTask := m.taskTree.SelectedTask()
-					if selectedTask != nil {
-						modal = NewStatusPickerModal(selectedTask.Path, selectedTask.Status, apiClient)
-					}
-				}
-
-				if modal != nil {
-					cmd := m.modalManager.Open(modal)
-					return m, cmd
-				}
-			}
-			return m, nil
-		case "m":
-			// Open full metadata modal for selected task(s) (tasks view only)
-			if m.viewMode != ViewModeTasks {
-				return m, nil
-			}
-			if m.activePanel == PanelTasks {
-				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-
-				// Case 0: Feature header selected
-				featureID := m.taskTree.GetSelectedFeatureID()
-				if featureID != "" && featureID != "[Ungrouped]" {
-					featureModal := NewMetadataModalFeature(featureID, m.config.Project, apiClient, m.monitorClient)
-					if featureModal != nil {
-						if featureTasks := m.taskTree.GetSelectedFeatureTasks(); len(featureTasks) > 0 {
-							taskPaths := make([]string, len(featureTasks))
-							for i, t := range featureTasks {
-								taskPaths[i] = t.Path
-							}
-							featureModal.taskPaths = taskPaths
-						}
-						cmd := m.modalManager.Open(featureModal)
-						return m, cmd
-					}
-				}
-
-				var modal Modal
-
-				// Case 1: Multi-select active - batch mode
+				// Case 1: Multi-select active → batch metadata editor
 				if len(m.selectedTasks) > 0 {
 					taskPaths := make([]string, 0, len(m.selectedTasks))
 					for id := range m.selectedTasks {
@@ -978,7 +931,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					modal = NewMetadataModalBatch(taskPaths, apiClient)
 				} else {
-					// Case 2: Single task selected
+					// Case 2: Single task selected → full metadata editor
 					selectedTask := m.taskTree.SelectedTask()
 					if selectedTask != nil {
 						modal = NewMetadataModal(selectedTask.Path, apiClient)
@@ -2189,11 +2142,9 @@ func (m Model) View() string {
 	// Render base UI
 	baseView := m.renderBaseView()
 
-	// Overlay modal if open
+	// Overlay modal if open (replaces base view since modal is full-screen overlay)
 	if m.modalManager.IsOpen() {
-		modalOverlay := m.modalManager.View(m.width, m.height)
-		// Combine base view with modal overlay (modal handles centering)
-		return baseView + "\n" + modalOverlay
+		return m.modalManager.View(m.width, m.height)
 	}
 
 	return baseView

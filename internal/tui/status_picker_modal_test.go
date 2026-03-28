@@ -155,10 +155,10 @@ func TestStatusPickerModal_EscCancels(t *testing.T) {
 	apiClient := runner.NewAPIClient(runner.RunnerConfig{BrainAPIURL: "http://localhost:9999"})
 	modal := NewStatusPickerModal("projects/test/task/abc.md", "draft", apiClient)
 
-	// Esc should be handled (ModalManager closes on esc)
+	// Esc returns false so ModalManager can close the modal
 	handled, cmd := modal.HandleKey("esc")
-	if !handled {
-		t.Error("expected esc to be handled")
+	if handled {
+		t.Error("expected esc to return handled=false so ModalManager closes")
 	}
 	if cmd != nil {
 		t.Error("expected nil command from esc")

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -329,6 +331,356 @@ func TestModalManager_NestedModals(t *testing.T) {
 	mgr.Close()
 	if mgr.IsOpen() {
 		t.Error("No modal should be open")
+	}
+}
+
+// ============================================================================
+// Modal Scroll/Clamp Tests
+// ============================================================================
+
+func TestModalManager_View_ClampsToTerminalHeight(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Create a modal with very tall content (30 lines)
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("Tall Modal", lines)
+	mgr.Open(modal)
+
+	// Render in a small terminal (20 rows)
+	view := mgr.View(80, 20)
+
+	// Count output lines - should not exceed terminal height
+	outputLines := strings.Split(view, "\n")
+	if len(outputLines) > 20 {
+		t.Errorf("View() produced %d lines, should not exceed terminal height of 20", len(outputLines))
+	}
+}
+
+func TestModalManager_View_ShowsScrollIndicator(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Create a modal with tall content that will overflow
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("Tall Modal", lines)
+	mgr.Open(modal)
+
+	// Render in a small terminal
+	view := mgr.View(80, 20)
+
+	// Should show a scroll indicator (▼ or similar)
+	if !strings.Contains(view, "▼") && !strings.Contains(view, "more") {
+		t.Error("View() should show a scroll-down indicator when content overflows")
+	}
+}
+
+func TestModalManager_ScrollDown(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Create a modal with tall content
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("Tall Modal", lines)
+	mgr.Open(modal)
+
+	// Initial scroll offset should be 0
+	if mgr.scrollOffset != 0 {
+		t.Errorf("initial scrollOffset = %d, want 0", mgr.scrollOffset)
+	}
+
+	// Scroll down - should be handled by modal manager when content overflows
+	// First render to establish content height
+	mgr.View(80, 20)
+
+	mgr.ScrollDown()
+	if mgr.scrollOffset <= 0 {
+		t.Error("scrollOffset should increase after ScrollDown()")
+	}
+}
+
+func TestModalManager_ScrollUp(t *testing.T) {
+	mgr := NewModalManager()
+
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("Tall Modal", lines)
+	mgr.Open(modal)
+
+	// Render to establish content height
+	mgr.View(80, 20)
+
+	// Scroll down first
+	mgr.ScrollDown()
+	mgr.ScrollDown()
+	offset := mgr.scrollOffset
+
+	// Scroll up
+	mgr.ScrollUp()
+	if mgr.scrollOffset >= offset {
+		t.Error("scrollOffset should decrease after ScrollUp()")
+	}
+}
+
+func TestModalManager_ScrollUp_ClampsToZero(t *testing.T) {
+	mgr := NewModalManager()
+
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("Tall Modal", lines)
+	mgr.Open(modal)
+
+	mgr.View(80, 20)
+
+	// Scroll up from 0 should stay at 0
+	mgr.ScrollUp()
+	if mgr.scrollOffset != 0 {
+		t.Errorf("scrollOffset = %d, want 0 (should not go negative)", mgr.scrollOffset)
+	}
+}
+
+func TestModalManager_Open_ResetsScroll(t *testing.T) {
+	mgr := NewModalManager()
+
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal1 := newTestModal("First", lines)
+	mgr.Open(modal1)
+	mgr.View(80, 20)
+	mgr.ScrollDown()
+	mgr.ScrollDown()
+
+	if mgr.scrollOffset == 0 {
+		t.Fatal("scrollOffset should be non-zero after scrolling")
+	}
+
+	// Open a new modal - scroll should reset
+	modal2 := newTestModal("Second", "short content")
+	mgr.Open(modal2)
+
+	if mgr.scrollOffset != 0 {
+		t.Errorf("scrollOffset = %d, want 0 after opening new modal", mgr.scrollOffset)
+	}
+}
+
+func TestModalManager_View_NoScrollForShortContent(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Short content that fits in terminal
+	modal := newTestModal("Short", "Just one line")
+	mgr.Open(modal)
+
+	view := mgr.View(80, 40)
+
+	// Should NOT show scroll indicators
+	if strings.Contains(view, "▼") || strings.Contains(view, "▲") {
+		t.Error("View() should not show scroll indicators when content fits")
+	}
+}
+
+func TestModalManager_View_WidthClamped(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Create a modal with wide content
+	modal := newTestModal("Wide", strings.Repeat("X", 200))
+	mgr.Open(modal)
+
+	// Render in narrow terminal
+	view := mgr.View(40, 20)
+
+	// Each line should not exceed terminal width
+	for i, line := range strings.Split(view, "\n") {
+		// Count visible characters (strip ANSI)
+		if len(line) > 200 { // generous limit accounting for ANSI codes
+			t.Errorf("line %d has %d chars, may exceed terminal width", i, len(line))
+			break
+		}
+	}
+}
+
+// ============================================================================
+// Auto-Scroll to Focused Item Tests
+// ============================================================================
+
+// focusableTestModal simulates a modal with navigable items using → indicator
+type focusableTestModal struct {
+	items      []string
+	focusedIdx int
+	totalItems int
+}
+
+func newFocusableTestModal(n int) *focusableTestModal {
+	items := make([]string, n)
+	for i := 0; i < n; i++ {
+		items[i] = fmt.Sprintf("Item %d", i)
+	}
+	return &focusableTestModal{items: items, focusedIdx: 0, totalItems: n}
+}
+
+func (m *focusableTestModal) Init() tea.Cmd                       { return nil }
+func (m *focusableTestModal) Update(msg tea.Msg) (Modal, tea.Cmd) { return m, nil }
+func (m *focusableTestModal) Title() string                       { return "Focusable" }
+func (m *focusableTestModal) Width() int                          { return 40 }
+func (m *focusableTestModal) Height() int                         { return m.totalItems + 2 }
+
+func (m *focusableTestModal) View() string {
+	var b strings.Builder
+	for i, item := range m.items {
+		if i == m.focusedIdx {
+			b.WriteString(fmt.Sprintf("→ %s\n", item))
+		} else {
+			b.WriteString(fmt.Sprintf("  %s\n", item))
+		}
+	}
+	return b.String()
+}
+
+func (m *focusableTestModal) HandleKey(key string) (bool, tea.Cmd) {
+	switch key {
+	case "j":
+		if m.focusedIdx < m.totalItems-1 {
+			m.focusedIdx++
+		}
+		return true, nil
+	case "k":
+		if m.focusedIdx > 0 {
+			m.focusedIdx--
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+func TestModalManager_AutoScrollFollowsFocus(t *testing.T) {
+	mgr := NewModalManager()
+
+	// 30 items, terminal height 15 → only ~9 items visible (15 - border/padding/title/indicator)
+	modal := newFocusableTestModal(30)
+	mgr.Open(modal)
+
+	// Initial render - focus on item 0, scroll at 0
+	mgr.View(80, 15)
+	if mgr.scrollOffset != 0 {
+		t.Fatalf("initial scrollOffset = %d, want 0", mgr.scrollOffset)
+	}
+
+	// Navigate down past the visible viewport
+	for i := 0; i < 12; i++ {
+		mgr.HandleKey("j")
+		mgr.View(80, 15) // re-render to trigger auto-scroll
+	}
+
+	// Focus is now on item 12 - scroll should have adjusted to keep it visible
+	if mgr.scrollOffset == 0 {
+		t.Error("scrollOffset should have auto-scrolled to follow focus to item 12")
+	}
+
+	// The focused item (→ Item 12) should be in the rendered output
+	view := mgr.View(80, 15)
+	if !strings.Contains(view, "Item 12") {
+		t.Error("focused item 'Item 12' should be visible in the viewport after auto-scroll")
+	}
+}
+
+func TestModalManager_AutoScrollFollowsFocusUp(t *testing.T) {
+	mgr := NewModalManager()
+
+	modal := newFocusableTestModal(30)
+	modal.focusedIdx = 20 // start focused near bottom
+	mgr.Open(modal)
+
+	// Render to establish scroll
+	mgr.View(80, 15)
+
+	// Navigate up past the visible viewport top
+	for i := 0; i < 15; i++ {
+		mgr.HandleKey("k")
+		mgr.View(80, 15)
+	}
+
+	// Focus is now on item 5 - should be visible
+	view := mgr.View(80, 15)
+	if !strings.Contains(view, "Item 5") {
+		t.Error("focused item 'Item 5' should be visible after scrolling up")
+	}
+}
+
+func TestModalManager_TitleAlwaysVisible(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Create a modal with tall content that overflows
+	var lines string
+	for i := 0; i < 30; i++ {
+		lines += fmt.Sprintf("Line %d\n", i)
+	}
+	modal := newTestModal("My Title", lines)
+	mgr.Open(modal)
+
+	// Render in small terminal
+	view := mgr.View(80, 15)
+
+	// Title should always be visible regardless of scroll
+	if !strings.Contains(view, "My Title") {
+		t.Error("title should always be visible even when content overflows")
+	}
+
+	// Border should be visible (top border character)
+	if !strings.Contains(view, "╭") {
+		t.Error("top border should be visible")
+	}
+	if !strings.Contains(view, "╰") {
+		t.Error("bottom border should be visible")
+	}
+}
+
+func TestModalManager_TitleVisibleAfterScroll(t *testing.T) {
+	mgr := NewModalManager()
+
+	modal := newFocusableTestModal(30)
+	mgr.Open(modal)
+
+	// Navigate down to trigger scroll
+	for i := 0; i < 15; i++ {
+		mgr.HandleKey("j")
+		mgr.View(80, 15)
+	}
+
+	// Title should still be visible after scrolling
+	view := mgr.View(80, 15)
+	if !strings.Contains(view, "Focusable") {
+		t.Error("title should remain visible after scrolling down")
+	}
+}
+
+func TestModalManager_NoAutoScrollWhenContentFits(t *testing.T) {
+	mgr := NewModalManager()
+
+	// Only 5 items - fits in any reasonable terminal
+	modal := newFocusableTestModal(5)
+	mgr.Open(modal)
+
+	// Navigate to last item
+	for i := 0; i < 4; i++ {
+		mgr.HandleKey("j")
+	}
+
+	mgr.View(80, 40)
+
+	// Should not need scrolling
+	if mgr.scrollOffset != 0 {
+		t.Errorf("scrollOffset = %d, want 0 (content fits in terminal)", mgr.scrollOffset)
 	}
 }
 

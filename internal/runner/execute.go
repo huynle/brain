@@ -14,10 +14,7 @@ import (
 // For other tasks, it delegates to claimAndSpawn for the full pipeline.
 func (tr *TaskRunner) ExecuteTask(ctx context.Context, task *types.ResolvedTask, projectID string) error {
 	// Check capacity
-	maxParallel := tr.config.MaxParallel
-	if maxParallel <= 0 {
-		maxParallel = 2 // default
-	}
+	maxParallel := tr.getMaxParallel()
 	running := tr.processMgr.RunningCount()
 	if running >= maxParallel {
 		return fmt.Errorf("at capacity: %d/%d slots in use", running, maxParallel)

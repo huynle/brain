@@ -130,12 +130,12 @@ func TestHelpModal_HandleKey(t *testing.T) {
 		{
 			name:        "? closes modal",
 			key:         "?",
-			wantHandled: true,
+			wantHandled: true, // consumed to prevent passthrough
 		},
 		{
 			name:        "q closes modal",
 			key:         "q",
-			wantHandled: true,
+			wantHandled: true, // consumed to prevent passthrough
 		},
 		{
 			name:        "other keys consumed",
@@ -145,7 +145,7 @@ func TestHelpModal_HandleKey(t *testing.T) {
 		{
 			name:        "esc consumed",
 			key:         "esc",
-			wantHandled: true,
+			wantHandled: false, // returns false so ModalManager closes
 		},
 	}
 

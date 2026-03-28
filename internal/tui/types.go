@@ -63,6 +63,9 @@ type RunnerController interface {
 	// ExecuteTask manually executes a task (TUI "x" key).
 	// Performs the full claim → status update → workdir resolve → spawn pipeline.
 	ExecuteTask(ctx context.Context, task *types.ResolvedTask, projectID string) error
+	// SetMaxParallel updates the maximum number of parallel tasks at runtime.
+	// Values <= 0 are clamped to 1.
+	SetMaxParallel(n int)
 }
 
 // Config holds the configuration passed to the TUI from the runner.

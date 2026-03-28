@@ -145,7 +145,7 @@ func (m *ConfirmModal) HandleKey(key string) (bool, tea.Cmd) {
 		return true, func() tea.Msg {
 			return confirmResultMsg{confirmed: true}
 		}
-	case "n", "esc":
+	case "n":
 		m.cancelled = true
 		m.confirmed = false
 		if m.onCancel != nil {
@@ -153,9 +153,18 @@ func (m *ConfirmModal) HandleKey(key string) (bool, tea.Cmd) {
 				return m.onCancel()
 			}
 		}
-		return true, func() tea.Msg {
-			return confirmResultMsg{cancelled: true}
+		// Let ModalManager handle close
+		return false, nil
+	case "esc":
+		m.cancelled = true
+		m.confirmed = false
+		if m.onCancel != nil {
+			return true, func() tea.Msg {
+				return m.onCancel()
+			}
 		}
+		// Let ModalManager handle close
+		return false, nil
 	default:
 		// Consume other keys to prevent passthrough
 		return true, nil

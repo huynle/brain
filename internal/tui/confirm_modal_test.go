@@ -105,14 +105,11 @@ func TestConfirmModal_HandleKey_CapitalYes(t *testing.T) {
 func TestConfirmModal_HandleKey_No(t *testing.T) {
 	modal := NewConfirmModal("Confirm", "Proceed?")
 
-	handled, cmd := modal.HandleKey("n")
+	handled, _ := modal.HandleKey("n")
 
-	if !handled {
-		t.Error("HandleKey('n') should return handled=true")
-	}
-
-	if cmd == nil {
-		t.Error("HandleKey('n') should return a command")
+	// Returns false so ModalManager can close the modal
+	if handled {
+		t.Error("HandleKey('n') should return handled=false to let ModalManager close")
 	}
 
 	if modal.confirmed {
@@ -129,8 +126,9 @@ func TestConfirmModal_HandleKey_CapitalNo(t *testing.T) {
 
 	handled, _ := modal.HandleKey("N")
 
-	if !handled {
-		t.Error("HandleKey('N') should return handled=true")
+	// Returns false so ModalManager can close the modal
+	if handled {
+		t.Error("HandleKey('N') should return handled=false to let ModalManager close")
 	}
 
 	if !modal.cancelled {
@@ -141,11 +139,11 @@ func TestConfirmModal_HandleKey_CapitalNo(t *testing.T) {
 func TestConfirmModal_HandleKey_Escape(t *testing.T) {
 	modal := NewConfirmModal("Confirm", "Proceed?")
 
-	// Escape should be handled by ModalManager, but modal can handle it too
 	handled, _ := modal.HandleKey("esc")
 
-	if !handled {
-		t.Error("HandleKey('esc') should return handled=true")
+	// Returns false so ModalManager can close the modal
+	if handled {
+		t.Error("HandleKey('esc') should return handled=false to let ModalManager close")
 	}
 
 	if !modal.cancelled {

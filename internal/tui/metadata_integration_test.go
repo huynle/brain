@@ -58,10 +58,10 @@ func TestMetadataIntegration_OpenModalWithSKey(t *testing.T) {
 		t.Error("Expected modal to be open after pressing 's'")
 	}
 
-	// Verify it's a StatusPickerModal (s key now opens status picker)
+	// Verify it's a MetadataModal (s key opens full metadata editor)
 	modal := m.modalManager.activeModal
-	if _, ok := modal.(*StatusPickerModal); !ok {
-		t.Errorf("Expected StatusPickerModal, got %T", modal)
+	if _, ok := modal.(*MetadataModal); !ok {
+		t.Errorf("Expected MetadataModal, got %T", modal)
 	}
 }
 
@@ -296,10 +296,10 @@ func TestMetadataIntegration_SKey_TerminalSectionTask(t *testing.T) {
 		t.Fatal("Expected modal to be open after pressing 's' on terminal section task")
 	}
 
-	// Verify it's a StatusPickerModal (s key now opens status picker)
+	// Verify it's a MetadataModal (s key opens full metadata editor)
 	modal := m.modalManager.activeModal
-	if _, ok := modal.(*StatusPickerModal); !ok {
-		t.Errorf("Expected *StatusPickerModal, got %T", modal)
+	if _, ok := modal.(*MetadataModal); !ok {
+		t.Errorf("Expected *MetadataModal, got %T", modal)
 	}
 }
 
@@ -393,9 +393,9 @@ func TestMetadataIntegration_SKey_TerminalSectionTask_ViaJNavigation(t *testing.
 		t.Fatal("Expected modal to open after pressing 's' on draft task reached via j navigation")
 	}
 
-	// Verify it's a StatusPickerModal (s key now opens status picker)
-	if _, ok := m.modalManager.activeModal.(*StatusPickerModal); !ok {
-		t.Errorf("Expected *StatusPickerModal, got %T", m.modalManager.activeModal)
+	// Verify it's a MetadataModal (s key opens full metadata editor)
+	if _, ok := m.modalManager.activeModal.(*MetadataModal); !ok {
+		t.Errorf("Expected *MetadataModal, got %T", m.modalManager.activeModal)
 	}
 }
 
@@ -643,8 +643,8 @@ func TestMetadataIntegration_SKey_CompletedSectionTask(t *testing.T) {
 		t.Fatal("Expected modal to open after pressing 's' on completed task")
 	}
 
-	if _, ok := m.modalManager.activeModal.(*StatusPickerModal); !ok {
-		t.Errorf("Expected *StatusPickerModal, got %T", m.modalManager.activeModal)
+	if _, ok := m.modalManager.activeModal.(*MetadataModal); !ok {
+		t.Errorf("Expected *MetadataModal, got %T", m.modalManager.activeModal)
 	}
 }
 

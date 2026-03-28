@@ -1343,6 +1343,90 @@ func TestTaskRunner_GetStatus_WithPaused(t *testing.T) {
 }
 
 // =============================================================================
+// SetMaxParallel Tests
+// =============================================================================
+
+func TestTaskRunner_SetMaxParallel(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	// Default is 2 from testRunnerConfig
+	status := tr.GetStatus()
+	if status.MaxParallel != 2 {
+		t.Fatalf("initial MaxParallel = %d, want 2", status.MaxParallel)
+	}
+
+	// Update to 1
+	tr.SetMaxParallel(1)
+
+	status = tr.GetStatus()
+	if status.MaxParallel != 1 {
+		t.Errorf("after SetMaxParallel(1), MaxParallel = %d, want 1", status.MaxParallel)
+	}
+}
+
+func TestTaskRunner_SetMaxParallel_EnforcedByPoll(t *testing.T) {
+	client := newMockClient()
+	task1 := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task1
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.MaxParallel = 2 // start with 2
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// Reduce to 1 at runtime
+	tr.SetMaxParallel(1)
+
+	// Add a running process to fill the single slot
+	proc := newMockProcess(100)
+	processMgr.Add("existing", testRunningTask("existing"), proc)
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should not spawn because at capacity (1/1)
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("should not spawn when at max parallel capacity after SetMaxParallel(1)")
+	}
+}
+
+func TestTaskRunner_SetMaxParallel_ZeroDefaultsToOne(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	// Setting 0 should be treated as minimum 1
+	tr.SetMaxParallel(0)
+
+	status := tr.GetStatus()
+	if status.MaxParallel != 1 {
+		t.Errorf("after SetMaxParallel(0), MaxParallel = %d, want 1 (minimum)", status.MaxParallel)
+	}
+}
+
+func TestTaskRunner_SetMaxParallel_NegativeDefaultsToOne(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	// Setting negative should be treated as minimum 1
+	tr.SetMaxParallel(-5)
+
+	status := tr.GetStatus()
+	if status.MaxParallel != 1 {
+		t.Errorf("after SetMaxParallel(-5), MaxParallel = %d, want 1 (minimum)", status.MaxParallel)
+	}
+}
+
+// =============================================================================
 // Event Handler Tests
 // =============================================================================
 

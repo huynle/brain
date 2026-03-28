@@ -69,9 +69,7 @@ func (m *HelpModal) View() string {
 	// Actions shortcuts
 	b.WriteString(categoryStyle.Render("Actions:"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("s", "Change status"))
-	b.WriteString("\n")
-	b.WriteString(formatShortcut("m", "Edit metadata"))
+	b.WriteString(formatShortcut("s", "Edit task settings"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("S", "Global settings"))
 	b.WriteString("\n")
@@ -147,11 +145,11 @@ func (m *HelpModal) View() string {
 // HandleKey implements Modal.
 func (m *HelpModal) HandleKey(key string) (bool, tea.Cmd) {
 	switch key {
-	case "?", "q":
-		// Close modal on '?' or 'q'
-		return true, nil
+	case "esc":
+		// Let ModalManager handle close
+		return false, nil
 	default:
-		// Consume other keys to prevent passthrough
+		// Consume all other keys to prevent passthrough
 		return true, nil
 	}
 }
@@ -170,9 +168,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (11), Multi-Select (3), Views (4), Other (2)
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
 	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 11 + 3 + 4 + 2 + 5 + 2
+	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

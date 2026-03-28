@@ -178,8 +178,8 @@ func (m *StatusPickerModal) HandleKey(key string) (bool, tea.Cmd) {
 		}
 
 	case "esc":
-		// ModalManager handles close on esc
-		return true, nil
+		// Let ModalManager handle close
+		return false, nil
 
 	default:
 		// Consume all keys while modal is open

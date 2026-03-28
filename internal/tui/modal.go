@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 )
@@ -37,8 +39,11 @@ type DestructiveModal interface {
 
 // ModalManager manages modal lifecycle and rendering.
 type ModalManager struct {
-	activeModal Modal
-	stack       []Modal
+	activeModal  Modal
+	stack        []Modal
+	scrollOffset int // vertical scroll offset when content overflows
+	contentLines int // total content lines from last render (for scroll bounds)
+	viewportH    int // available viewport height from last render
 }
 
 // SettingsChangedMsg is sent when the Settings modal closes
@@ -60,11 +65,37 @@ func (m *ModalManager) Open(modal Modal) tea.Cmd {
 		m.stack = append(m.stack, m.activeModal)
 	}
 
-	// Set new modal as active
+	// Set new modal as active and reset scroll
 	m.activeModal = modal
+	m.scrollOffset = 0
+	m.contentLines = 0
+	m.viewportH = 0
 
 	// Initialize the modal
 	return modal.Init()
+}
+
+// ScrollDown scrolls the modal content down by one line.
+func (m *ModalManager) ScrollDown() {
+	maxOffset := m.contentLines - m.viewportH
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset < maxOffset {
+		m.scrollOffset++
+	}
+}
+
+// ScrollUp scrolls the modal content up by one line.
+func (m *ModalManager) ScrollUp() {
+	if m.scrollOffset > 0 {
+		m.scrollOffset--
+	}
+}
+
+// NeedsScroll returns true if the modal content exceeds the viewport.
+func (m *ModalManager) NeedsScroll() bool {
+	return m.contentLines > m.viewportH && m.viewportH > 0
 }
 
 // Close closes the active modal.
@@ -120,20 +151,42 @@ func (m ModalManager) Update(msg tea.Msg) (ModalManager, tea.Cmd) {
 
 // HandleKey routes key presses to the active modal.
 // Returns true if the key was handled, false otherwise.
-// Esc key closes the modal by default.
+// Esc key is routed to the modal first; if unhandled, closes the modal.
 func (m *ModalManager) HandleKey(key string) (bool, tea.Cmd) {
 	if m.activeModal == nil {
 		return false, nil
 	}
 
-	// Handle Esc key to close modal
+	// Handle scroll keys when content overflows (before routing to modal)
+	if m.NeedsScroll() {
+		switch key {
+		case "ctrl+d":
+			// Half-page down
+			for i := 0; i < m.viewportH/2; i++ {
+				m.ScrollDown()
+			}
+			return true, nil
+		case "ctrl+u":
+			// Half-page up
+			for i := 0; i < m.viewportH/2; i++ {
+				m.ScrollUp()
+			}
+			return true, nil
+		}
+	}
+
+	// Route key to modal first (including Esc)
+	handled, cmd := m.activeModal.HandleKey(key)
+	if handled {
+		return true, cmd
+	}
+
+	// If modal didn't handle Esc, close the modal
 	if key == "esc" {
 		return true, m.Close()
 	}
 
-	// Route key to modal
-	handled, cmd := m.activeModal.HandleKey(key)
-	return handled, cmd
+	return false, nil
 }
 
 // View renders the modal overlay.
@@ -143,7 +196,7 @@ func (m *ModalManager) View(width, height int) string {
 		return ""
 	}
 
-	// Get modal content
+	// Get modal content (without title — title is rendered separately and pinned)
 	content := m.activeModal.View()
 
 	// Determine border color based on destructive flag
@@ -152,20 +205,126 @@ func (m *ModalManager) View(width, height int) string {
 		borderColor = ColorBlocked // red
 	}
 
-	// Apply modal styling with border and title
-	modalStyle := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(borderColor).
-		Padding(1, 2)
-
-	// Add title if present
+	// Render title separately (pinned, never scrolled)
 	title := m.activeModal.Title()
+	titleRendered := ""
+	titleLines := 0
 	if title != "" {
 		titleStyle := lipgloss.NewStyle().
 			Bold(true).
 			Foreground(borderColor)
-		content = titleStyle.Render(title) + "\n\n" + content
+		titleRendered = titleStyle.Render(title) + "\n\n"
+		titleLines = 2 // title + blank line
 	}
+
+	// Overhead: border (2) + padding (2) + title lines
+	overhead := 4 + titleLines
+
+	// Calculate available viewport for scrollable content
+	maxContentH := height - overhead
+	if maxContentH < 3 {
+		maxContentH = 3 // minimum usable height
+	}
+
+	// Split content into lines and track dimensions
+	contentLineSlice := strings.Split(content, "\n")
+	// Remove trailing empty line from split
+	if len(contentLineSlice) > 0 && contentLineSlice[len(contentLineSlice)-1] == "" {
+		contentLineSlice = contentLineSlice[:len(contentLineSlice)-1]
+	}
+	m.contentLines = len(contentLineSlice)
+	m.viewportH = maxContentH
+
+	// Auto-scroll to keep focused item visible.
+	// Scan for the → indicator to find the focused line.
+	if m.contentLines > maxContentH {
+		focusedLine := -1
+		for i, line := range contentLineSlice {
+			if strings.Contains(line, "→") {
+				focusedLine = i
+				break
+			}
+		}
+
+		if focusedLine >= 0 {
+			// Reserve 1 line for scroll indicator
+			viewH := maxContentH - 1
+			if viewH < 1 {
+				viewH = 1
+			}
+
+			// If focused line is below the viewport, scroll down
+			if focusedLine >= m.scrollOffset+viewH {
+				m.scrollOffset = focusedLine - viewH + 1
+			}
+			// If focused line is above the viewport, scroll up
+			if focusedLine < m.scrollOffset {
+				m.scrollOffset = focusedLine
+			}
+		}
+	}
+
+	// Clamp scroll offset
+	maxOffset := m.contentLines - maxContentH
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if m.scrollOffset > maxOffset {
+		m.scrollOffset = maxOffset
+	}
+
+	// Apply viewport: slice content lines if they overflow
+	if m.contentLines > maxContentH {
+		// Reserve 1 line for scroll indicator
+		viewH := maxContentH - 1
+		if viewH < 1 {
+			viewH = 1
+		}
+
+		end := m.scrollOffset + viewH
+		if end > m.contentLines {
+			end = m.contentLines
+		}
+
+		visibleLines := contentLineSlice[m.scrollOffset:end]
+
+		// Build scroll indicator
+		scrollInfo := ""
+		if m.scrollOffset > 0 && end < m.contentLines {
+			scrollInfo = lipgloss.NewStyle().Foreground(ColorDim).Render("▲ ▼ scroll")
+		} else if m.scrollOffset > 0 {
+			scrollInfo = lipgloss.NewStyle().Foreground(ColorDim).Render("▲ scroll up")
+		} else {
+			remaining := m.contentLines - end
+			scrollInfo = lipgloss.NewStyle().Foreground(ColorDim).Render(
+				"▼ " + strings.Repeat("·", min(remaining, 10)) + " more")
+		}
+
+		content = strings.Join(visibleLines, "\n") + "\n" + scrollInfo
+	}
+
+	// Combine pinned title with scrollable content
+	content = titleRendered + content
+
+	// Determine fixed modal width from the modal's declared width,
+	// clamped to terminal bounds. This prevents the box from resizing
+	// as content scrolls in and out of view.
+	modalW := m.activeModal.Width()
+	maxW := width - 6 - 2 // subtract horizontal overhead (border+padding) and margin
+	if modalW > maxW {
+		modalW = maxW
+	}
+	if modalW < 20 {
+		modalW = 20
+	}
+
+	// Apply modal styling with border and fixed width
+	modalStyle := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(borderColor).
+		Padding(1, 2).
+		Width(modalW).      // fixed content width — box won't resize on scroll
+		MaxWidth(width - 2) // hard clamp for terminal edges
 
 	// Render modal with border
 	modal := modalStyle.Render(content)

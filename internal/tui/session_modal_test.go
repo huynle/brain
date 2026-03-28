@@ -239,10 +239,10 @@ func TestSessionSelectModal_HandleKey_Esc(t *testing.T) {
 	modal := NewSessionSelectModal([]string{"ses_a"}, false, func(id string) tea.Msg { return nil })
 
 	handled, cmd := modal.HandleKey("esc")
-	if !handled {
-		t.Error("HandleKey('esc') should return handled=true")
+	// Returns false so ModalManager can close the modal
+	if handled {
+		t.Error("HandleKey('esc') should return handled=false so ModalManager closes")
 	}
-	// esc returns nil cmd — ModalManager handles close
 	if cmd != nil {
 		t.Error("HandleKey('esc') should return nil command (ModalManager handles close)")
 	}

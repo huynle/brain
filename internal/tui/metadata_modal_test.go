@@ -955,6 +955,139 @@ func TestAllEqual(t *testing.T) {
 }
 
 // ===========================================================================
+// Bug Fix: focusedField must be initialized to first field
+// ===========================================================================
+
+func TestMetadataModal_FocusedFieldInitialized(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModal("task123", apiClient)
+
+	// focusedField should be initialized to the first field (Status)
+	if modal.focusedField != FieldStatus {
+		t.Errorf("focusedField = %q, want %q (first field in list)", modal.focusedField, FieldStatus)
+	}
+}
+
+func TestMetadataModal_EnterOnStatusOpensDropdown(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Without navigating, press Enter on the first field (Status)
+	// Status is a dropdown field, so it should enter ModeEditDropdown
+	modal.enterEditMode()
+
+	if modal.interactionMode != ModeEditDropdown {
+		t.Errorf("interactionMode = %d, want %d (ModeEditDropdown). Status field should open dropdown, not text input",
+			modal.interactionMode, ModeEditDropdown)
+	}
+}
+
+func TestMetadataModalBatch_FocusedFieldInitialized(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModalBatch([]string{"task1", "task2"}, apiClient)
+
+	if modal.focusedField != FieldStatus {
+		t.Errorf("focusedField = %q, want %q (first field in list)", modal.focusedField, FieldStatus)
+	}
+}
+
+// ===========================================================================
+// Bug Fix: Esc in edit mode should return to navigate, not close modal
+// ===========================================================================
+
+func TestModalManager_EscInEditMode_ReturnsToNavigate(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModal("task123", apiClient)
+	// Simulate being in dropdown edit mode (e.g., editing Status)
+	modal.interactionMode = ModeEditDropdown
+	modal.focusedField = FieldStatus
+
+	mgr := NewModalManager()
+	mgr.Open(modal)
+
+	// Press Esc while in dropdown edit mode
+	handled, _ := mgr.HandleKey("esc")
+
+	// Key should be handled
+	if !handled {
+		t.Error("expected Esc to be handled")
+	}
+
+	// Modal should still be open (Esc should return to navigate mode, not close)
+	if !mgr.IsOpen() {
+		t.Error("expected modal to remain open after Esc in edit mode - should return to navigate mode, not close")
+	}
+
+	// Modal should be back in navigate mode
+	if modal.interactionMode != ModeNavigate {
+		t.Errorf("interactionMode = %d, want %d (ModeNavigate)", modal.interactionMode, ModeNavigate)
+	}
+}
+
+func TestModalManager_EscInTextEditMode_ReturnsToNavigate(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModal("task123", apiClient)
+	// Simulate being in text edit mode (e.g., editing Git Branch)
+	modal.interactionMode = ModeEditText
+	modal.focusedField = FieldGitBranch
+	modal.editBuffer = "some-branch"
+
+	mgr := NewModalManager()
+	mgr.Open(modal)
+
+	// Press Esc while in text edit mode
+	handled, _ := mgr.HandleKey("esc")
+
+	if !handled {
+		t.Error("expected Esc to be handled")
+	}
+
+	// Modal should still be open
+	if !mgr.IsOpen() {
+		t.Error("expected modal to remain open after Esc in text edit mode")
+	}
+
+	// Should be back in navigate mode
+	if modal.interactionMode != ModeNavigate {
+		t.Errorf("interactionMode = %d, want %d (ModeNavigate)", modal.interactionMode, ModeNavigate)
+	}
+}
+
+func TestModalManager_EscInNavigateMode_ClosesModal(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModal("task123", apiClient)
+	// In navigate mode (default)
+	modal.interactionMode = ModeNavigate
+
+	mgr := NewModalManager()
+	mgr.Open(modal)
+
+	// Press Esc in navigate mode
+	handled, _ := mgr.HandleKey("esc")
+
+	if !handled {
+		t.Error("expected Esc to be handled")
+	}
+
+	// Modal should be closed
+	if mgr.IsOpen() {
+		t.Error("expected modal to close after Esc in navigate mode")
+	}
+}
+
+// ===========================================================================
 // Test Helper
 // ===========================================================================
 

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -14,6 +16,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/cron"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
@@ -689,13 +692,133 @@ func sortStrings(s []string) {
 	}
 }
 
-// TriggerTask manually triggers a scheduled task. Stub implementation.
+// TriggerTask manually triggers a scheduled task. It validates the schedule,
+// creates a run record, computes next_run, and resets the task to pending.
 func (s *TaskServiceImpl) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
+	// 1. Find the task
+	tasks, err := s.getAllTasks(ctx, projectId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get tasks: %w", err)
+	}
+
+	var task *types.BrainEntry
+	for i := range tasks {
+		if tasks[i].ID == taskId {
+			task = &tasks[i]
+			break
+		}
+	}
+	if task == nil {
+		return nil, fmt.Errorf("task not found: %s/%s", projectId, taskId)
+	}
+
+	// 2. Validate schedule exists
+	if task.Schedule == "" {
+		return &types.TriggerResponse{
+			Success: true, TaskID: taskId, Triggered: false,
+			Reason: "task has no schedule",
+		}, nil
+	}
+
+	// 3. Validate schedule_enabled
+	if task.ScheduleEnabled != nil && !*task.ScheduleEnabled {
+		return &types.TriggerResponse{
+			Success: true, TaskID: taskId, Triggered: false,
+			Reason: "schedule is disabled",
+		}, nil
+	}
+
+	// 4. Validate eligible status (active, completed, blocked)
+	eligibleStatuses := map[string]bool{"active": true, "completed": true, "blocked": true}
+	if !eligibleStatuses[task.Status] {
+		return &types.TriggerResponse{
+			Success: true, TaskID: taskId, Triggered: false,
+			Reason: fmt.Sprintf("task status %q is not eligible for triggering", task.Status),
+		}, nil
+	}
+
+	// 5. Check max_runs
+	if task.MaxRuns != nil && *task.MaxRuns > 0 {
+		runCount := countCompletedRuns(task.Runs)
+		if runCount >= *task.MaxRuns {
+			return &types.TriggerResponse{
+				Success: true, TaskID: taskId, Triggered: false,
+				Reason: fmt.Sprintf("max_runs reached (%d/%d)", runCount, *task.MaxRuns),
+			}, nil
+		}
+	}
+
+	// 6. Parse cron expression and compute next_run
+	sched, err := cron.Parse(task.Schedule)
+	if err != nil {
+		return nil, fmt.Errorf("invalid schedule expression %q: %w", task.Schedule, err)
+	}
+	now := time.Now().UTC()
+	nextRun := sched.NextAfter(now)
+
+	// 7. Generate run ID and create run record
+	runID := generateTriggerRunID(now)
+
+	// Build updated runs array
+	runs := make([]interface{}, 0, len(task.Runs)+1)
+	for _, r := range task.Runs {
+		runMap := map[string]interface{}{
+			"run_id":  r.RunID,
+			"status":  r.Status,
+			"started": r.Started,
+		}
+		if r.Completed != "" {
+			runMap["completed"] = r.Completed
+		}
+		if r.SkipReason != "" {
+			runMap["skip_reason"] = r.SkipReason
+		}
+		runs = append(runs, runMap)
+	}
+	runs = append(runs, map[string]interface{}{
+		"run_id":  runID,
+		"status":  "in_progress",
+		"started": now.Format(time.RFC3339),
+		"tasks":   1,
+	})
+
+	// 8. Update metadata: runs + next_run + status
+	if _, err := s.storage.MergeMetadata(ctx, task.Path, map[string]interface{}{
+		"runs":     runs,
+		"next_run": nextRun.Format(time.RFC3339),
+		"status":   "pending",
+	}); err != nil {
+		return nil, fmt.Errorf("failed to update task metadata: %w", err)
+	}
+
 	return &types.TriggerResponse{
 		Success:   true,
 		TaskID:    taskId,
 		Triggered: true,
+		RunID:     runID,
+		NextRun:   nextRun.Format(time.RFC3339),
 	}, nil
+}
+
+// countCompletedRuns counts runs with terminal-ish statuses.
+// Mirrors countRuns in internal/runner/schedule.go.
+func countCompletedRuns(runs []types.CronRun) int {
+	count := 0
+	for _, r := range runs {
+		switch r.Status {
+		case "completed", "failed", "skipped", "in_progress":
+			count++
+		}
+	}
+	return count
+}
+
+// generateTriggerRunID creates a unique run identifier.
+// Format: YYYYMMDD-HHmm-XXXXXX (6 hex chars).
+func generateTriggerRunID(t time.Time) string {
+	b := make([]byte, 3)
+	rand.Read(b)
+	return fmt.Sprintf("%s-%s", t.Format("20060102-1504"), hex.EncodeToString(b))
 }
 
 // =============================================================================

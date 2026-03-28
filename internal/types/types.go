@@ -613,6 +613,9 @@ type TriggerResponse struct {
 	Success   bool   `json:"success"`
 	TaskID    string `json:"taskId"`
 	Triggered bool   `json:"triggered"`
+	RunID     string `json:"runId,omitempty"`   // ID of the created run
+	NextRun   string `json:"nextRun,omitempty"` // when the next run is scheduled
+	Reason    string `json:"reason,omitempty"`  // why trigger was skipped
 }
 
 // FeatureCheckoutOptions contains options for creating a checkout task.

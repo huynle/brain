@@ -872,19 +872,122 @@ func TestCheckoutFeature_Stub(t *testing.T) {
 	}
 }
 
-func TestTriggerTask_Stub(t *testing.T) {
-	svc, _, _ := newTestTaskService(t)
+func TestTriggerTask_ScheduledTask(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
 	ctx := context.Background()
 
-	resp, err := svc.TriggerTask(ctx, "proj", "task1")
+	// Create required project directory
+	createProjectDir(t, brainDir, "proj")
+
+	// Create a scheduled task with status=active
+	trueVal := true
+	insertTaskNote(t, store, "sched1", "Test Scheduled Task", "active", "medium", "proj", map[string]interface{}{
+		"schedule":         "*/5 * * * *",
+		"schedule_enabled": trueVal,
+	})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "sched1")
 	if err != nil {
-		t.Fatalf("TriggerTask stub failed: %v", err)
+		t.Fatalf("TriggerTask failed: %v", err)
 	}
 	if !resp.Success {
 		t.Error("expected success=true")
 	}
-	if resp.TaskID != "task1" {
-		t.Errorf("TaskID = %q, want %q", resp.TaskID, "task1")
+	if !resp.Triggered {
+		t.Errorf("expected Triggered=true, got false. Reason: %s", resp.Reason)
+	}
+	if resp.RunID == "" {
+		t.Error("expected non-empty RunID")
+	}
+	if resp.NextRun == "" {
+		t.Error("expected non-empty NextRun")
+	}
+	if resp.TaskID != "sched1" {
+		t.Errorf("TaskID = %q, want %q", resp.TaskID, "sched1")
+	}
+}
+
+func TestTriggerTask_NoSchedule(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	// Task without schedule
+	insertTaskNote(t, store, "nosched", "No Schedule Task", "active", "medium", "proj", map[string]interface{}{})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "nosched")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if resp.Triggered {
+		t.Error("expected Triggered=false for task with no schedule")
+	}
+	if resp.Reason != "task has no schedule" {
+		t.Errorf("Reason = %q, want %q", resp.Reason, "task has no schedule")
+	}
+}
+
+func TestTriggerTask_DisabledSchedule(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	falseVal := false
+	insertTaskNote(t, store, "disabled1", "Disabled Schedule", "active", "medium", "proj", map[string]interface{}{
+		"schedule":         "*/5 * * * *",
+		"schedule_enabled": falseVal,
+	})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "disabled1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if resp.Triggered {
+		t.Error("expected Triggered=false for disabled schedule")
+	}
+	if resp.Reason != "schedule is disabled" {
+		t.Errorf("Reason = %q, want %q", resp.Reason, "schedule is disabled")
+	}
+}
+
+func TestTriggerTask_IneligibleStatus(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	trueVal := true
+	insertTaskNote(t, store, "pending1", "Pending Task", "pending", "medium", "proj", map[string]interface{}{
+		"schedule":         "*/5 * * * *",
+		"schedule_enabled": trueVal,
+	})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "pending1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if resp.Triggered {
+		t.Error("expected Triggered=false for pending status")
+	}
+	if resp.Reason == "" {
+		t.Error("expected non-empty Reason for ineligible status")
+	}
+}
+
+func TestTriggerTask_NotFound(t *testing.T) {
+	svc, _, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	_, err := svc.TriggerTask(ctx, "proj", "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for nonexistent task")
 	}
 }
 

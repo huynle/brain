@@ -957,12 +957,14 @@ func TestHandleTriggerTask(t *testing.T) {
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
-			name: "success",
+			name: "success - triggered",
 			mockFn: func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
 				return &types.TriggerResponse{
 					Success:   true,
 					TaskID:    taskId,
 					Triggered: true,
+					RunID:     "20250101-0000-abc123",
+					NextRun:   "2025-01-01T00:05:00Z",
 				}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -974,6 +976,36 @@ func TestHandleTriggerTask(t *testing.T) {
 				if !body.Triggered {
 					t.Error("expected triggered = true")
 				}
+				if body.RunID == "" {
+					t.Error("expected non-empty RunID")
+				}
+				if body.NextRun == "" {
+					t.Error("expected non-empty NextRun")
+				}
+			},
+		},
+		{
+			name: "success - not triggered (schedule disabled)",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
+				return &types.TriggerResponse{
+					Success:   true,
+					TaskID:    taskId,
+					Triggered: false,
+					Reason:    "schedule is disabled",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.TriggerResponse](t, resp)
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.Triggered {
+					t.Error("expected triggered = false")
+				}
+				if body.Reason == "" {
+					t.Error("expected non-empty Reason")
+				}
 			},
 		},
 		{
@@ -982,6 +1014,13 @@ func TestHandleTriggerTask(t *testing.T) {
 				return nil, ErrNotFound
 			},
 			wantStatus: http.StatusNotFound,
+		},
+		{
+			name: "internal server error",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
+				return nil, fmt.Errorf("database connection lost")
+			},
+			wantStatus: http.StatusInternalServerError,
 		},
 	}
 

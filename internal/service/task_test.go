@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -902,8 +903,45 @@ func TestTriggerTask_ScheduledTask(t *testing.T) {
 	if resp.NextRun == "" {
 		t.Error("expected non-empty NextRun")
 	}
+	// Validate NextRun is valid RFC3339
+	if _, parseErr := time.Parse(time.RFC3339, resp.NextRun); parseErr != nil {
+		t.Errorf("NextRun %q is not valid RFC3339: %v", resp.NextRun, parseErr)
+	}
 	if resp.TaskID != "sched1" {
 		t.Errorf("TaskID = %q, want %q", resp.TaskID, "sched1")
+	}
+
+	// Verify side effects: task status should now be "pending"
+	tasks, err := svc.getAllTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("getAllTasks failed: %v", err)
+	}
+	var found bool
+	for _, task := range tasks {
+		if task.ID == "sched1" {
+			found = true
+			if task.Status != "pending" {
+				t.Errorf("task status after trigger = %q, want %q", task.Status, "pending")
+			}
+			// Verify a run entry was created
+			if len(task.Runs) == 0 {
+				t.Fatal("expected at least one run entry after trigger")
+			}
+			lastRun := task.Runs[len(task.Runs)-1]
+			if lastRun.RunID != resp.RunID {
+				t.Errorf("last run RunID = %q, want %q", lastRun.RunID, resp.RunID)
+			}
+			if lastRun.Status != "in_progress" {
+				t.Errorf("last run status = %q, want %q", lastRun.Status, "in_progress")
+			}
+			if lastRun.Started == "" {
+				t.Error("expected non-empty Started timestamp on run")
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatal("triggered task not found in getAllTasks result")
 	}
 }
 
@@ -976,6 +1014,52 @@ func TestTriggerTask_IneligibleStatus(t *testing.T) {
 	}
 	if resp.Reason == "" {
 		t.Error("expected non-empty Reason for ineligible status")
+	}
+}
+
+func TestTriggerTask_MaxRunsReached(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	trueVal := true
+	maxRuns := 2
+	insertTaskNote(t, store, "maxed1", "Max Runs Task", "active", "medium", "proj", map[string]interface{}{
+		"schedule":         "*/5 * * * *",
+		"schedule_enabled": trueVal,
+		"max_runs":         maxRuns,
+		"runs": []interface{}{
+			map[string]interface{}{
+				"run_id":    "run-001",
+				"status":    "completed",
+				"started":   "2025-01-01T00:00:00Z",
+				"completed": "2025-01-01T00:05:00Z",
+			},
+			map[string]interface{}{
+				"run_id":    "run-002",
+				"status":    "completed",
+				"started":   "2025-01-01T01:00:00Z",
+				"completed": "2025-01-01T01:05:00Z",
+			},
+		},
+	})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "maxed1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if resp.Triggered {
+		t.Error("expected Triggered=false when max_runs reached")
+	}
+	if resp.Reason == "" {
+		t.Error("expected non-empty Reason for max_runs")
+	}
+	if !strings.Contains(resp.Reason, "max_runs") {
+		t.Errorf("Reason = %q, expected to contain 'max_runs'", resp.Reason)
 	}
 }
 

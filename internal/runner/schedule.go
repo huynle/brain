@@ -136,6 +136,17 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 	}
 }
 
+// latestInProgressRunID returns the RunID of the most recent run with status "in_progress".
+// Returns empty string if no in-progress run is found.
+func latestInProgressRunID(runs []types.CronRun) string {
+	for i := len(runs) - 1; i >= 0; i-- {
+		if runs[i].Status == "in_progress" {
+			return runs[i].RunID
+		}
+	}
+	return ""
+}
+
 // countRuns counts the number of completed, failed, and skipped runs.
 func countRuns(runs []types.CronRun) int {
 	count := 0

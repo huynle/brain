@@ -452,6 +452,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
+		RunID:          latestInProgressRunID(task.Runs),
 	}
 
 	// Track in process manager

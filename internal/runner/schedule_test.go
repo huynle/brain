@@ -499,3 +499,58 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 
 // Verify interface compliance
 var _ Client = (*schedMockClient)(nil)
+
+// =============================================================================
+// latestInProgressRunID Tests
+// =============================================================================
+
+func TestLatestInProgressRunID_Found(t *testing.T) {
+	runs := []types.CronRun{
+		{RunID: "run-001", Status: "completed"},
+		{RunID: "run-002", Status: "in_progress"},
+		{RunID: "run-003", Status: "completed"},
+	}
+
+	got := latestInProgressRunID(runs)
+	if got != "run-002" {
+		t.Errorf("latestInProgressRunID = %q, want %q", got, "run-002")
+	}
+}
+
+func TestLatestInProgressRunID_Empty(t *testing.T) {
+	got := latestInProgressRunID(nil)
+	if got != "" {
+		t.Errorf("latestInProgressRunID(nil) = %q, want empty", got)
+	}
+
+	got = latestInProgressRunID([]types.CronRun{})
+	if got != "" {
+		t.Errorf("latestInProgressRunID([]) = %q, want empty", got)
+	}
+}
+
+func TestLatestInProgressRunID_NoInProgress(t *testing.T) {
+	runs := []types.CronRun{
+		{RunID: "run-001", Status: "completed"},
+		{RunID: "run-002", Status: "failed"},
+		{RunID: "run-003", Status: "skipped"},
+	}
+
+	got := latestInProgressRunID(runs)
+	if got != "" {
+		t.Errorf("latestInProgressRunID = %q, want empty", got)
+	}
+}
+
+func TestLatestInProgressRunID_MultipleInProgress(t *testing.T) {
+	runs := []types.CronRun{
+		{RunID: "run-001", Status: "in_progress"},
+		{RunID: "run-002", Status: "completed"},
+		{RunID: "run-003", Status: "in_progress"},
+	}
+
+	got := latestInProgressRunID(runs)
+	if got != "run-003" {
+		t.Errorf("latestInProgressRunID = %q, want %q (last in_progress)", got, "run-003")
+	}
+}

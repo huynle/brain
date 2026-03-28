@@ -57,6 +57,9 @@ type mockClient struct {
 
 	appendErr   error
 	appendCalls []appendCall
+
+	getEntryResult map[string]*types.BrainEntry
+	getEntryErr    error
 }
 
 type claimCall struct {
@@ -159,6 +162,20 @@ func (m *mockClient) GetAllTasks(ctx context.Context, projectID string) ([]types
 
 func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
 	return nil
+}
+
+func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getEntryErr != nil {
+		return nil, m.getEntryErr
+	}
+	if m.getEntryResult != nil {
+		if entry, ok := m.getEntryResult[entryPath]; ok {
+			return entry, nil
+		}
+	}
+	return &types.BrainEntry{Path: entryPath}, nil
 }
 
 func (m *mockClient) getClaimCalls() []claimCall {

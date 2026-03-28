@@ -35,6 +35,7 @@ type Client interface {
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
+	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -684,6 +685,11 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		tr.logger.Printf("failed to update task status for %s: %v", taskID, err)
 	}
 
+	// Update run record if this was a scheduled task
+	if task.RunID != "" {
+		tr.finalizeRun(ctx, task, status)
+	}
+
 	// Update stats
 	tr.mu.Lock()
 	if status == CompletionCompleted {
@@ -712,6 +718,71 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		Result: result,
 		TaskID: taskID,
 	})
+}
+
+// =============================================================================
+// Run Finalization
+// =============================================================================
+
+// finalizeRun updates the run record in the entry's runs[] array with completion
+// status, timestamp, and duration. Called when a scheduled task finishes execution.
+func (tr *TaskRunner) finalizeRun(ctx context.Context, task RunningTask, status CompletionStatus) {
+	// 1. Fetch current entry to get latest runs array
+	entry, err := tr.client.GetEntry(ctx, task.Path)
+	if err != nil {
+		tr.logger.Printf("cron: failed to fetch entry for run finalization %s: %v", task.ID, err)
+		return
+	}
+
+	// 2. Map CompletionStatus to run status string
+	var runStatus string
+	switch status {
+	case CompletionCompleted:
+		runStatus = "completed"
+	case CompletionBlocked:
+		runStatus = "failed"
+	case CompletionCancelled:
+		runStatus = "completed"
+	default:
+		runStatus = "failed"
+	}
+
+	// 3. Rebuild runs array with the matching run updated
+	now := time.Now().UTC()
+	runs := make([]interface{}, 0, len(entry.Runs))
+	for _, r := range entry.Runs {
+		runMap := map[string]interface{}{
+			"run_id":    r.RunID,
+			"status":    r.Status,
+			"started":   r.Started,
+			"completed": r.Completed,
+		}
+		if r.SkipReason != "" {
+			runMap["skip_reason"] = r.SkipReason
+		}
+		if r.Duration != nil {
+			runMap["duration"] = *r.Duration
+		}
+		// Update the matching run
+		if r.RunID == task.RunID {
+			runMap["status"] = runStatus
+			runMap["completed"] = now.Format(time.RFC3339)
+			if started, err := time.Parse(time.RFC3339, r.Started); err == nil {
+				dur := int(now.Sub(started).Seconds())
+				runMap["duration"] = dur
+			}
+		}
+		runs = append(runs, runMap)
+	}
+
+	// 4. Persist the updated runs array
+	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		"runs": runs,
+	}); err != nil {
+		tr.logger.Printf("cron: failed to update run completion for %s run=%s: %v", task.ID, task.RunID, err)
+	} else {
+		tr.logger.Printf("cron: finalized run %s for %s: status=%s", task.RunID, task.ID, runStatus)
+	}
 }
 
 // =============================================================================

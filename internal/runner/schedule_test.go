@@ -398,6 +398,10 @@ type schedMockClient struct {
 	updateMetadataCalls []updateMetadataCall
 	updateStatusCalls   []schedStatusCall
 
+	// GetEntry support for run finalization tests
+	getEntryResult map[string]*types.BrainEntry
+	getEntryErr    error
+
 	// Embed base mock for all other Client methods
 	healthResult APIHealth
 	healthErr    error
@@ -455,6 +459,19 @@ func (m *schedMockClient) AppendToTask(ctx context.Context, taskPath, content st
 	return nil
 }
 func (m *schedMockClient) UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error) {
+	return &types.BrainEntry{Path: entryPath}, nil
+}
+func (m *schedMockClient) GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error) {
+	m.mu2.Lock()
+	defer m.mu2.Unlock()
+	if m.getEntryErr != nil {
+		return nil, m.getEntryErr
+	}
+	if m.getEntryResult != nil {
+		if entry, ok := m.getEntryResult[entryPath]; ok {
+			return entry, nil
+		}
+	}
 	return &types.BrainEntry{Path: entryPath}, nil
 }
 func (m *schedMockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
@@ -552,5 +569,163 @@ func TestLatestInProgressRunID_MultipleInProgress(t *testing.T) {
 	got := latestInProgressRunID(runs)
 	if got != "run-003" {
 		t.Errorf("latestInProgressRunID = %q, want %q (last in_progress)", got, "run-003")
+	}
+}
+
+// =============================================================================
+// finalizeRun Tests
+// =============================================================================
+
+func TestFinalizeRun_UpdatesRunRecord(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Set up a mock entry with an in_progress run
+	started := time.Now().UTC().Add(-5 * time.Minute).Format(time.RFC3339)
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/sched-1.md": {
+			Path: "projects/proj-a/task/sched-1.md",
+			Runs: []types.CronRun{
+				{RunID: "run-old", Status: "completed", Started: "2026-03-22T10:00:00Z", Completed: "2026-03-22T10:01:00Z"},
+				{RunID: "run-123", Status: "in_progress", Started: started},
+			},
+		},
+	}
+
+	task := RunningTask{
+		ID:        "sched-1",
+		Path:      "projects/proj-a/task/sched-1.md",
+		ProjectID: "proj-a",
+		RunID:     "run-123",
+	}
+
+	ctx := context.Background()
+	tr.finalizeRun(ctx, task, CompletionCompleted)
+
+	// Verify UpdateMetadata was called with the runs array
+	metaCalls := client.getUpdateMetadataCalls()
+	if len(metaCalls) == 0 {
+		t.Fatal("expected UpdateMetadata call for run finalization")
+	}
+
+	var runCall *updateMetadataCall
+	for i, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/sched-1.md" {
+			if _, ok := c.Fields["runs"]; ok {
+				runCall = &metaCalls[i]
+				break
+			}
+		}
+	}
+	if runCall == nil {
+		t.Fatal("expected UpdateMetadata call with 'runs' field")
+	}
+
+	runs, ok := runCall.Fields["runs"].([]interface{})
+	if !ok {
+		t.Fatalf("runs field should be []interface{}, got %T", runCall.Fields["runs"])
+	}
+	if len(runs) != 2 {
+		t.Fatalf("expected 2 runs, got %d", len(runs))
+	}
+
+	// Check the updated run (run-123)
+	updatedRun, ok := runs[1].(map[string]interface{})
+	if !ok {
+		t.Fatalf("run should be map[string]interface{}, got %T", runs[1])
+	}
+
+	if updatedRun["run_id"] != "run-123" {
+		t.Errorf("run_id = %v, want run-123", updatedRun["run_id"])
+	}
+	if updatedRun["status"] != "completed" {
+		t.Errorf("status = %v, want completed", updatedRun["status"])
+	}
+	if updatedRun["completed"] == "" || updatedRun["completed"] == nil {
+		t.Error("completed timestamp should be set")
+	}
+	if dur, ok := updatedRun["duration"].(int); !ok || dur <= 0 {
+		t.Errorf("duration should be a positive int, got %v (%T)", updatedRun["duration"], updatedRun["duration"])
+	}
+
+	// Check the old run was NOT modified
+	oldRun, ok := runs[0].(map[string]interface{})
+	if !ok {
+		t.Fatalf("run should be map[string]interface{}, got %T", runs[0])
+	}
+	if oldRun["status"] != "completed" {
+		t.Errorf("old run status = %v, want completed (unchanged)", oldRun["status"])
+	}
+}
+
+func TestFinalizeRun_NoOpWhenRunIDEmpty(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	task := RunningTask{
+		ID:        "sched-1",
+		Path:      "projects/proj-a/task/sched-1.md",
+		ProjectID: "proj-a",
+		RunID:     "", // empty - should not be called, but test defense
+	}
+
+	ctx := context.Background()
+	// finalizeRun is only called when RunID != "", but test the guard
+	// in handleTaskCompletion by calling handleTaskCompletion directly
+	// with an empty RunID task.
+	proc := newMockProcess(100)
+	pm := tr.processMgr.(*mockProcessMgr)
+	pm.Add("sched-1", task, proc)
+	pm.setCompletion("sched-1", CompletionCompleted)
+
+	tr.handleTaskCompletion(ctx, "sched-1", task, CompletionCompleted)
+
+	// Should NOT have any UpdateMetadata calls with "runs"
+	metaCalls := client.getUpdateMetadataCalls()
+	for _, c := range metaCalls {
+		if _, ok := c.Fields["runs"]; ok {
+			t.Error("should NOT call UpdateMetadata with 'runs' when RunID is empty")
+		}
+	}
+}
+
+func TestFinalizeRun_BlockedStatusMapsFailed(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	started := time.Now().UTC().Add(-2 * time.Minute).Format(time.RFC3339)
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/sched-1.md": {
+			Path: "projects/proj-a/task/sched-1.md",
+			Runs: []types.CronRun{
+				{RunID: "run-456", Status: "in_progress", Started: started},
+			},
+		},
+	}
+
+	task := RunningTask{
+		ID:        "sched-1",
+		Path:      "projects/proj-a/task/sched-1.md",
+		ProjectID: "proj-a",
+		RunID:     "run-456",
+	}
+
+	ctx := context.Background()
+	tr.finalizeRun(ctx, task, CompletionBlocked)
+
+	metaCalls := client.getUpdateMetadataCalls()
+	var runCall *updateMetadataCall
+	for i, c := range metaCalls {
+		if _, ok := c.Fields["runs"]; ok {
+			runCall = &metaCalls[i]
+			break
+		}
+	}
+	if runCall == nil {
+		t.Fatal("expected UpdateMetadata call with 'runs' field")
+	}
+
+	runs := runCall.Fields["runs"].([]interface{})
+	updatedRun := runs[0].(map[string]interface{})
+
+	if updatedRun["status"] != "failed" {
+		t.Errorf("blocked completion should map to 'failed', got %v", updatedRun["status"])
 	}
 }

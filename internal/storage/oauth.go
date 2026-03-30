@@ -352,6 +352,17 @@ func (s *StorageLayer) CreateAccessToken(ctx context.Context, token *OAuthAccess
 	return nil
 }
 
+// SaveAccessToken is a convenience method that persists an OAuth access token.
+// Satisfies the oauth.AccessTokenStore interface.
+func (s *StorageLayer) SaveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error {
+	return s.CreateAccessToken(ctx, &OAuthAccessToken{
+		Token:     token,
+		ClientID:  clientID,
+		Scope:     scope,
+		ExpiresAt: expiresAt,
+	})
+}
+
 // GetAccessToken retrieves an access token and checks expiry.
 // Returns an error if the token is expired or not found.
 func (s *StorageLayer) GetAccessToken(ctx context.Context, tokenValue string) (*OAuthAccessToken, error) {

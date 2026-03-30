@@ -200,8 +200,8 @@ func TestHandleProtectedResourceMetadata_ForwardedHeaders(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&body)
 
 	resource, _ := body["resource"].(string)
-	if resource != "https://brain.example.com/mcp" {
-		t.Errorf("resource = %q, want https://brain.example.com/mcp", resource)
+	if resource != "https://brain.example.com" {
+		t.Errorf("resource = %q, want https://brain.example.com", resource)
 	}
 
 	servers, ok := body["authorization_servers"].([]any)
@@ -231,8 +231,8 @@ func TestHandleProtectedResourceMetadata(t *testing.T) {
 
 	body := decodeJSONBody(t, resp)
 	resource, _ := body["resource"].(string)
-	if resource != srv.URL+"/mcp" {
-		t.Errorf("resource = %q, want %q", resource, srv.URL+"/mcp")
+	if resource != srv.URL {
+		t.Errorf("resource = %q, want %q", resource, srv.URL)
 	}
 }
 

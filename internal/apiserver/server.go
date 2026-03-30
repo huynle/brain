@@ -9,9 +9,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
@@ -114,8 +116,29 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	// ─── OAuth ─────────────────────────────────────────────────────
 	oauthStore := oauth.NewStore()
-	oauthHandler := oauth.NewHandler(oauthStore)
+	oauthHandler := oauth.NewHandler(oauthStore, oauth.WithAccessTokenStore(store))
 	oauth.RegisterRoutes(router, oauthHandler)
+
+	// ─── MCP Streamable HTTP Transport ──────────────────────────────
+	mcpClient := mcppkg.NewAPIClient(fmt.Sprintf("http://localhost:%d", opts.Port))
+	mcpHTTP := mcppkg.NewHTTPHandler(mcpClient)
+	authValidator := &api.CompositeValidator{
+		APIValidator:   store,
+		OAuthValidator: store,
+	}
+	router.Route("/mcp", func(r chi.Router) {
+		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Post("/", mcpHTTP.ServeHTTP)
+		r.Get("/", mcpHTTP.ServeHTTP)
+		r.Delete("/", mcpHTTP.ServeHTTP)
+	})
+	// MCP at root / (for clients that use the base URL as the MCP endpoint)
+	router.Group(func(r chi.Router) {
+		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Post("/", mcpHTTP.ServeHTTP)
+		r.Get("/", mcpHTTP.ServeHTTP)
+		r.Delete("/", mcpHTTP.ServeHTTP)
+	})
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)

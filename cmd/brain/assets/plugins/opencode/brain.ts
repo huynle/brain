@@ -548,6 +548,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."
             ),
+          max_runs: tool.schema
+            .number()
+            .optional()
+            .describe(
+              "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false and a note is appended. Omit or set to 0 for unlimited runs."
+            ),
         },
         async execute(args) {
           try {
@@ -605,6 +611,7 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               // Cron scheduling for tasks
               schedule: args.type === "task" ? args.schedule : undefined,
               schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
+              max_runs: args.type === "task" ? args.max_runs : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";
@@ -1368,6 +1375,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .boolean()
             .optional()
             .describe("Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."),
+          max_runs: tool.schema
+            .number()
+            .optional()
+            .describe("Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."),
           direct_prompt: tool.schema
             .string()
             .optional()
@@ -1382,8 +1393,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, direct_prompt, agent, model`;
           }
 
           try {
@@ -1415,6 +1426,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               remote_branch_policy: args.remote_branch_policy,
               schedule: args.schedule,
               schedule_enabled: args.schedule_enabled,
+              max_runs: args.max_runs,
               direct_prompt: args.direct_prompt,
               agent: args.agent,
               model: args.model,
@@ -1461,6 +1473,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Schedule: ${args.schedule}`);
             if (args.schedule_enabled !== undefined)
               changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
+            if (args.max_runs !== undefined)
+              changes.push(`Max Runs: ${args.max_runs === 0 ? "unlimited" : args.max_runs}`);
             if (args.direct_prompt)
               changes.push(`Direct Prompt: set`);
             if (args.agent)
@@ -2648,6 +2662,105 @@ Example - wait for completion:
           }
         },
       }),
+
+      // ========================================
+      // brain_monitor_enable (generic)
+      // ========================================
+      brain_monitor_enable: tool({
+        description:
+          "Enable a monitor template for a feature. Creates an automated task (scheduled or dependency-gated depending on the template). Available templates can be discovered via GET /monitors/templates.",
+        args: {
+          template_id: tool.schema
+            .string()
+            .describe("Monitor template ID (e.g., 'blocked-inspector', 'feature-review')"),
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID to monitor"),
+          schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Optional cron schedule override (for scheduled templates only)"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          const body: Record<string, unknown> = { templateId: args.template_id, scope };
+          if (args.schedule) body.schedule = args.schedule;
+
+          try {
+            const response = await apiRequest<{
+              id: string;
+              path: string;
+              title: string;
+            }>("POST", "/monitors", body);
+
+            return [
+              `Monitor "${args.template_id}" enabled for feature "${args.feature_id}":`,
+              `- **Task ID:** ${response.id}`,
+              `- **Title:** ${response.title}`,
+            ].join("\n");
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("409") || msg.toLowerCase().includes("conflict")) {
+              return `Monitor "${args.template_id}" is already enabled for feature "${args.feature_id}". Disable first to reset.`;
+            }
+            return `Failed to enable monitor: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_monitor_disable (generic)
+      // ========================================
+      brain_monitor_disable: tool({
+        description:
+          "Disable a monitor template for a feature. Permanently removes the monitor task. Can be re-enabled with brain_monitor_enable.",
+        args: {
+          template_id: tool.schema
+            .string()
+            .describe("Monitor template ID (e.g., 'blocked-inspector', 'feature-review')"),
+          project: tool.schema
+            .string()
+            .describe("Project containing the feature"),
+          feature_id: tool.schema
+            .string()
+            .describe("Feature ID"),
+        },
+        async execute(args) {
+          const scope = {
+            type: "feature",
+            project: args.project,
+            feature_id: args.feature_id,
+          };
+
+          try {
+            const response = await apiRequest<{
+              message: string;
+              taskId: string;
+              path: string;
+            }>("DELETE", "/monitors/by-scope", { templateId: args.template_id, scope });
+
+            return `Monitor "${args.template_id}" disabled for feature "${args.feature_id}" (task ${response.taskId} deleted).`;
+          } catch (error) {
+            const msg = error instanceof Error ? error.message : String(error);
+            if (msg.includes("404") || msg.toLowerCase().includes("not found")) {
+              return `Monitor "${args.template_id}" is not currently enabled for feature "${args.feature_id}". Nothing to disable.`;
+            }
+            return `Failed to disable monitor: ${msg}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // Legacy aliases (backward compatibility)
+      // ========================================
 
       // ========================================
       // brain_feature_review_enable

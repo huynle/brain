@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -11,9 +12,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	mcppkg "github.com/huynle/brain-api/internal/mcp"
+	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
@@ -84,24 +88,61 @@ func main() {
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
 
+	// ─── OAuth Store ────────────────────────────────────────────────
+	oauthStore := oauth.NewStore()
+
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
 		api.WithMonitorService(monitorSvc),
+		api.WithTokenService(store),
 		api.WithHub(hub),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler))
+	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
+
+	// ─── OAuth Routes ───────────────────────────────────────────────
+	oauthHandler := oauth.NewHandler(oauthStore, oauth.WithAccessTokenStore(store))
+	oauth.RegisterRoutes(router, oauthHandler)
+
+	// ─── MCP Streamable HTTP Transport ──────────────────────────────
+	// Create an MCP HTTP handler that creates per-request MCP servers.
+	// Each request gets an API client with the caller's auth token forwarded.
+	mcpClient := mcppkg.NewAPIClient(fmt.Sprintf("http://localhost:%d", cfg.Port))
+	mcpHTTP := mcppkg.NewHTTPHandler(mcpClient)
+
+	// Register MCP endpoint with auth middleware.
+	// The auth middleware validates the Bearer token, then the MCP handler
+	// forwards that token to the internal API client for tool execution.
+	authValidator := &api.CompositeValidator{
+		APIValidator:   store,
+		OAuthValidator: store,
+	}
+	// MCP at /mcp/ (canonical path, referenced in protected resource metadata)
+	router.Route("/mcp", func(r chi.Router) {
+		r.Use(api.Auth(cfg.EnableAuth, authValidator))
+		r.Post("/", mcpHTTP.ServeHTTP)
+		r.Get("/", mcpHTTP.ServeHTTP)
+		r.Delete("/", mcpHTTP.ServeHTTP)
+	})
+	// MCP at root / (for clients that use the base URL as the MCP endpoint)
+	router.Group(func(r chi.Router) {
+		r.Use(api.Auth(cfg.EnableAuth, authValidator))
+		r.Post("/", mcpHTTP.ServeHTTP)
+		r.Get("/", mcpHTTP.ServeHTTP)
+		r.Delete("/", mcpHTTP.ServeHTTP)
+	})
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	srv := &http.Server{
-		Addr:         cfg.Addr(),
-		Handler:      router,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 30 * time.Second,
-		IdleTimeout:  60 * time.Second,
+		Addr:        cfg.Addr(),
+		Handler:     router,
+		ReadTimeout: 15 * time.Second,
+		// WriteTimeout disabled (0) to support SSE long-lived streaming connections.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	// Start server in background
@@ -111,6 +152,8 @@ func main() {
 			"brain_dir", cfg.BrainDir,
 			"db_path", dbPath,
 			"auth_enabled", cfg.EnableAuth,
+			"oauth_enabled", true,
+			"cors_origin", cfg.CORSOrigin,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("server error", "error", err)

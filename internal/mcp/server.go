@@ -68,26 +68,31 @@ func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.tools[tool.Name] = registeredTool{tool: tool, handler: handler}
 }
 
-// jsonrpcRequest represents an incoming JSON-RPC 2.0 request or notification.
-type jsonrpcRequest struct {
+// JSONRPCRequest represents an incoming JSON-RPC 2.0 request or notification.
+type JSONRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"` // nil for notifications
 	Method  string          `json:"method"`
 	Params  json.RawMessage `json:"params,omitempty"`
 }
 
-// jsonrpcResponse represents an outgoing JSON-RPC 2.0 response.
-type jsonrpcResponse struct {
+// JSONRPCResponse represents an outgoing JSON-RPC 2.0 response.
+type JSONRPCResponse struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id"`
 	Result  any             `json:"result,omitempty"`
-	Error   *jsonrpcError   `json:"error,omitempty"`
+	Error   *JSONRPCError   `json:"error,omitempty"`
 }
 
-// jsonrpcError represents a JSON-RPC 2.0 error object.
-type jsonrpcError struct {
+// JSONRPCError represents a JSON-RPC 2.0 error object.
+type JSONRPCError struct {
 	Code    int    `json:"code"`
 	Message string `json:"message"`
+}
+
+// IsNotification returns true if the request has no ID (i.e., is a JSON-RPC notification).
+func (r *JSONRPCRequest) IsNotification() bool {
+	return len(r.ID) == 0 || string(r.ID) == "null"
 }
 
 // toolCallParams represents the params for a tools/call request.
@@ -126,7 +131,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		}
 
 		// Parse the request
-		var req jsonrpcRequest
+		var req JSONRPCRequest
 		if err := json.Unmarshal(body, &req); err != nil {
 			continue // Skip malformed JSON
 		}
@@ -137,7 +142,7 @@ func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
 		}
 
 		// Handle the request
-		resp := s.handleRequest(ctx, &req)
+		resp := s.HandleRequest(ctx, &req)
 
 		// Write the response
 		if err := writeMessage(w, resp); err != nil {
@@ -194,10 +199,12 @@ func writeMessage(w io.Writer, msg any) error {
 }
 
 // handleRequest dispatches a JSON-RPC request to the appropriate handler.
-func (s *Server) handleRequest(ctx context.Context, req *jsonrpcRequest) *jsonrpcResponse {
+// HandleRequest dispatches a JSON-RPC request to the appropriate method handler.
+// Exported for use by HTTP transport.
+func (s *Server) HandleRequest(ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
 	switch req.Method {
 	case "initialize":
-		return &jsonrpcResponse{
+		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
@@ -219,10 +226,10 @@ func (s *Server) handleRequest(ctx context.Context, req *jsonrpcRequest) *jsonrp
 		return s.handleToolsCall(ctx, req)
 
 	default:
-		return &jsonrpcResponse{
+		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error: &jsonrpcError{
+			Error: &JSONRPCError{
 				Code:    -32601,
 				Message: fmt.Sprintf("Method not found: %s", req.Method),
 			},
@@ -231,7 +238,7 @@ func (s *Server) handleRequest(ctx context.Context, req *jsonrpcRequest) *jsonrp
 }
 
 // handleToolsList returns the list of registered tools.
-func (s *Server) handleToolsList(req *jsonrpcRequest) *jsonrpcResponse {
+func (s *Server) handleToolsList(req *JSONRPCRequest) *JSONRPCResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
@@ -240,7 +247,7 @@ func (s *Server) handleToolsList(req *jsonrpcRequest) *jsonrpcResponse {
 		tools = append(tools, rt.tool)
 	}
 
-	return &jsonrpcResponse{
+	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{
@@ -250,14 +257,14 @@ func (s *Server) handleToolsList(req *jsonrpcRequest) *jsonrpcResponse {
 }
 
 // handleToolsCall dispatches a tool call to the registered handler.
-func (s *Server) handleToolsCall(ctx context.Context, req *jsonrpcRequest) *jsonrpcResponse {
+func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSONRPCResponse {
 	var params toolCallParams
 	if req.Params != nil {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
-			return &jsonrpcResponse{
+			return &JSONRPCResponse{
 				JSONRPC: "2.0",
 				ID:      req.ID,
-				Error: &jsonrpcError{
+				Error: &JSONRPCError{
 					Code:    -32602,
 					Message: fmt.Sprintf("Invalid params: %v", err),
 				},
@@ -270,10 +277,10 @@ func (s *Server) handleToolsCall(ctx context.Context, req *jsonrpcRequest) *json
 	s.mu.RUnlock()
 
 	if !ok {
-		return &jsonrpcResponse{
+		return &JSONRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
-			Error: &jsonrpcError{
+			Error: &JSONRPCError{
 				Code:    -32602,
 				Message: fmt.Sprintf("Unknown tool: %s", params.Name),
 			},
@@ -291,7 +298,7 @@ func (s *Server) handleToolsCall(ctx context.Context, req *jsonrpcRequest) *json
 		text = fmt.Sprintf("Error: %v", err)
 	}
 
-	return &jsonrpcResponse{
+	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
 		Result: map[string]any{

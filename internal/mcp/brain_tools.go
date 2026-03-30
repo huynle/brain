@@ -73,6 +73,7 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
+				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false. Omit or set to 0 for unlimited runs."},
 				"git_branch":            {Type: "string", Description: "Git branch for the task"},
 				"merge_target_branch":   {Type: "string", Description: "Branch to merge completed work into"},
 				"merge_policy":          {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
@@ -117,6 +118,7 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["model"] = args["model"]
 			body["schedule"] = args["schedule"]
 			body["schedule_enabled"] = args["schedule_enabled"]
+			body["max_runs"] = args["max_runs"]
 			body["merge_target_branch"] = args["merge_target_branch"]
 			body["merge_policy"] = args["merge_policy"]
 			body["merge_strategy"] = args["merge_strategy"]
@@ -430,6 +432,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"complete_on_idle":     {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
 				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
 				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
+				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on"},
@@ -461,6 +464,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"complete_on_idle":     args["complete_on_idle"],
 			"schedule":             args["schedule"],
 			"schedule_enabled":     args["schedule_enabled"],
+			"max_runs":             args["max_runs"],
 			"feature_id":           args["feature_id"],
 			"feature_priority":     args["feature_priority"],
 			"feature_depends_on":   args["feature_depends_on"],
@@ -536,6 +540,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 		if _, ok := args["schedule_enabled"]; ok {
 			changes = append(changes, fmt.Sprintf("Schedule Enabled: %v", args["schedule_enabled"]))
+		}
+		if _, ok := args["max_runs"]; ok {
+			changes = append(changes, fmt.Sprintf("Max Runs: %v", args["max_runs"]))
 		}
 		if v := StringArg(args, "feature_id", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature ID: %s", v))

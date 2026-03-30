@@ -838,29 +838,27 @@ func TestOAuthForeignKeys_AuthCodeRequiresClient(t *testing.T) {
 	}
 }
 
-func TestOAuthForeignKeys_AccessTokenRequiresClient(t *testing.T) {
+func TestOAuthTokens_InsertWithoutClient(t *testing.T) {
+	// OAuth clients are stored in-memory (oauth.Store), not SQLite.
+	// Access/refresh tokens must be insertable without a matching client row.
 	s := newTestStorage(t)
 
 	_, err := s.DB().Exec(`
 		INSERT INTO oauth_access_tokens 
 			(token, client_id, scope, expires_at, created_at)
-		VALUES ('test', 'nonexistent', 'read', 9999999999, 1000000000)
+		VALUES ('test_access', 'ephemeral_client', 'mcp', 9999999999, 1000000000)
 	`)
-	if err == nil {
-		t.Fatal("expected foreign key error for invalid client_id, got nil")
+	if err != nil {
+		t.Fatalf("inserting access token without client should succeed, got: %v", err)
 	}
-}
 
-func TestOAuthForeignKeys_RefreshTokenRequiresClient(t *testing.T) {
-	s := newTestStorage(t)
-
-	_, err := s.DB().Exec(`
+	_, err = s.DB().Exec(`
 		INSERT INTO oauth_refresh_tokens 
 			(token, client_id, scope, expires_at, created_at)
-		VALUES ('test', 'nonexistent', 'read', 9999999999, 1000000000)
+		VALUES ('test_refresh', 'ephemeral_client', 'mcp', 9999999999, 1000000000)
 	`)
-	if err == nil {
-		t.Fatal("expected foreign key error for invalid client_id, got nil")
+	if err != nil {
+		t.Fatalf("inserting refresh token without client should succeed, got: %v", err)
 	}
 }
 
@@ -868,7 +866,7 @@ func TestOAuthForeignKeys_RefreshTokenRequiresClient(t *testing.T) {
 // Schema version is updated to 3
 // ---------------------------------------------------------------------------
 
-func TestSchemaVersion_IsThree(t *testing.T) {
+func TestSchemaVersion_IsCurrent(t *testing.T) {
 	s := newTestStorage(t)
 
 	var ver int
@@ -876,7 +874,7 @@ func TestSchemaVersion_IsThree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("query schema version failed: %v", err)
 	}
-	if ver != 3 {
-		t.Errorf("schema version = %d, want 3", ver)
+	if ver != CurrentSchemaVersion {
+		t.Errorf("schema version = %d, want %d", ver, CurrentSchemaVersion)
 	}
 }

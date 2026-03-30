@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 3
+const CurrentSchemaVersion = 4
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -122,8 +122,7 @@ CREATE TABLE IF NOT EXISTS oauth_access_tokens (
   scope TEXT,
   user_id TEXT,
   expires_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+  created_at INTEGER NOT NULL
 );`
 
 const createOAuthRefreshTokensTable = `
@@ -133,8 +132,7 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   scope TEXT,
   user_id TEXT,
   expires_at INTEGER NOT NULL,
-  created_at INTEGER NOT NULL,
-  FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id)
+  created_at INTEGER NOT NULL
 );`
 
 // ---------------------------------------------------------------------------
@@ -235,6 +233,46 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 4 {
+		// v4: drop FK constraints from oauth_access_tokens and oauth_refresh_tokens.
+		// OAuth clients are stored in-memory (oauth.Store), not in SQLite, so the
+		// FK constraint prevents inserting access tokens. Recreate without FK.
+		migrations := []string{
+			// Recreate oauth_access_tokens without FK
+			`CREATE TABLE IF NOT EXISTS oauth_access_tokens_new (
+				token TEXT PRIMARY KEY,
+				client_id TEXT NOT NULL,
+				scope TEXT,
+				user_id TEXT,
+				expires_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT OR IGNORE INTO oauth_access_tokens_new SELECT * FROM oauth_access_tokens`,
+			`DROP TABLE oauth_access_tokens`,
+			`ALTER TABLE oauth_access_tokens_new RENAME TO oauth_access_tokens`,
+			// Recreate oauth_refresh_tokens without FK
+			`CREATE TABLE IF NOT EXISTS oauth_refresh_tokens_new (
+				token TEXT PRIMARY KEY,
+				client_id TEXT NOT NULL,
+				scope TEXT,
+				user_id TEXT,
+				expires_at INTEGER NOT NULL,
+				created_at INTEGER NOT NULL
+			)`,
+			`INSERT OR IGNORE INTO oauth_refresh_tokens_new SELECT * FROM oauth_refresh_tokens`,
+			`DROP TABLE oauth_refresh_tokens`,
+			`ALTER TABLE oauth_refresh_tokens_new RENAME TO oauth_refresh_tokens`,
+			// Recreate indexes
+			`CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_client ON oauth_access_tokens(client_id)`,
+			`CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires ON oauth_access_tokens(expires_at)`,
+		}
+		for _, stmt := range migrations {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v4 (drop oauth FKs): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -289,13 +327,6 @@ func InitSchema(db *sql.DB) error {
 		}
 	}
 
-	// Indexes
-	for _, ddl := range createIndexes {
-		if _, err := db.Exec(ddl); err != nil {
-			return fmt.Errorf("create index: %w", err)
-		}
-	}
-
 	// FTS5 virtual table
 	if _, err := db.Exec(createFTS5Table); err != nil {
 		return fmt.Errorf("create FTS5 table: %w", err)
@@ -313,9 +344,16 @@ func InitSchema(db *sql.DB) error {
 		}
 	}
 
-	// Run migrations for existing databases.
+	// Run migrations for existing databases (may drop/recreate tables).
 	if err := migrateSchema(db); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+
+	// Indexes (after migrations, so they apply to final table state)
+	for _, ddl := range createIndexes {
+		if _, err := db.Exec(ddl); err != nil {
+			return fmt.Errorf("create index: %w", err)
+		}
 	}
 
 	// Set schema version (idempotent: INSERT OR REPLACE)

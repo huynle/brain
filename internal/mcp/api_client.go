@@ -14,6 +14,7 @@ import (
 // APIClient is an HTTP client for the Brain API REST endpoints.
 type APIClient struct {
 	baseURL    string
+	authToken  string // optional Bearer token for authenticated APIs
 	httpClient *http.Client
 }
 
@@ -25,6 +26,16 @@ func NewAPIClient(baseURL string) *APIClient {
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
+	}
+}
+
+// WithAuthToken returns a copy of the client with the given Bearer token set.
+// Requests made with this client will include an Authorization header.
+func (c *APIClient) WithAuthToken(token string) *APIClient {
+	return &APIClient{
+		baseURL:    c.baseURL,
+		authToken:  token,
+		httpClient: c.httpClient,
 	}
 }
 
@@ -72,6 +83,9 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 		return fmt.Errorf("create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
 
 	// Execute
 	resp, err := c.httpClient.Do(req)

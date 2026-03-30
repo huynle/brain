@@ -3,6 +3,7 @@
 package oauth
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -130,15 +131,34 @@ func (s *Store) ConsumeRefreshToken(token string) (*RefreshEntry, bool) {
 //  Handler
 // ──────────────────────────────────────────────────────────────
 
+// AccessTokenStore persists OAuth access tokens so they survive across
+// requests and can be validated by the auth middleware.
+type AccessTokenStore interface {
+	SaveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error
+}
+
 // Handler serves the OAuth endpoints. It uses an in-memory Store
-// and derives the issuer URL from the request (or reverse proxy headers).
+// for transient OAuth flow state (auth codes, clients) and an
+// AccessTokenStore to persist issued access tokens.
 type Handler struct {
-	store *Store
+	store            *Store
+	accessTokenStore AccessTokenStore
 }
 
 // NewHandler creates an OAuth handler backed by the given store.
-func NewHandler(store *Store) *Handler {
-	return &Handler{store: store}
+func NewHandler(store *Store, opts ...func(*Handler)) *Handler {
+	h := &Handler{store: store}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+// WithAccessTokenStore sets the persistent store for OAuth access tokens.
+func WithAccessTokenStore(ats AccessTokenStore) func(*Handler) {
+	return func(h *Handler) {
+		h.accessTokenStore = ats
+	}
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -228,7 +248,7 @@ func (h *Handler) HandleServerMetadata(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleProtectedResourceMetadata(w http.ResponseWriter, r *http.Request) {
 	base := issuerURL(r)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"resource":                 base + "/mcp",
+		"resource":                 base,
 		"authorization_servers":    []string{base},
 		"scopes_supported":         []string{"mcp", "mcp:read", "mcp:write"},
 		"bearer_methods_supported": []string{"header"},
@@ -584,10 +604,20 @@ func (h *Handler) handleAuthCodeGrant(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: time.Now().Add(30 * 24 * time.Hour), // 30 days
 	})
 
+	// Persist access token to SQLite so the auth middleware can validate it
+	expiresIn := 3600
+	if h.accessTokenStore != nil {
+		expiresAt := time.Now().Unix() + int64(expiresIn)
+		if err := h.accessTokenStore.SaveAccessToken(context.Background(), accessToken, clientID, ac.Scope, expiresAt); err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to persist access token")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, TokenPair{
 		AccessToken:  accessToken,
 		TokenType:    "Bearer",
-		ExpiresIn:    3600,
+		ExpiresIn:    expiresIn,
 		RefreshToken: refreshToken,
 		Scope:        ac.Scope,
 	})
@@ -650,6 +680,15 @@ func (h *Handler) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 		ExpiresAt: time.Now().Add(30 * 24 * time.Hour),
 	})
 
+	// Persist new access token to SQLite
+	if h.accessTokenStore != nil {
+		expiresAt := time.Now().Unix() + 3600
+		if err := h.accessTokenStore.SaveAccessToken(context.Background(), newAccess, entry.ClientID, entry.Scope, expiresAt); err != nil {
+			writeOAuthError(w, http.StatusInternalServerError, "server_error", "failed to persist access token")
+			return
+		}
+	}
+
 	writeJSON(w, http.StatusOK, TokenPair{
 		AccessToken:  newAccess,
 		TokenType:    "Bearer",
@@ -667,6 +706,7 @@ func (h *Handler) handleRefreshGrant(w http.ResponseWriter, r *http.Request) {
 // These are top-level routes (not under /api/v1) per OAuth conventions.
 func RegisterRoutes(r chi.Router, h *Handler) {
 	r.Get("/.well-known/oauth-authorization-server", h.HandleServerMetadata)
+	r.Get("/.well-known/oauth-protected-resource", h.HandleProtectedResourceMetadata)
 	r.Get("/.well-known/oauth-protected-resource/mcp", h.HandleProtectedResourceMetadata)
 	r.Post("/register", h.HandleRegister)
 	r.Get("/authorize", h.HandleAuthorizeGET)

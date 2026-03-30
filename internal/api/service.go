@@ -153,6 +153,9 @@ type MonitorService interface {
 	// ListTemplates returns all available monitor templates.
 	ListTemplates() []types.MonitorTemplate
 
+	// GetTemplate returns a template by ID, or nil if not found.
+	GetTemplate(templateID string) *types.MonitorTemplate
+
 	// List returns monitors matching the given filter.
 	List(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error)
 

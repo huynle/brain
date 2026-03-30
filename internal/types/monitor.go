@@ -28,7 +28,17 @@ type MonitorInfo struct {
 	Title      string       `json:"title"`
 }
 
+// CreationMode determines how a monitor task is created and triggered.
+const (
+	// CreationModeScheduled creates a cron-scheduled recurring task (e.g., blocked-inspector).
+	CreationModeScheduled = "scheduled"
+	// CreationModeDependencyGated creates a one-shot task gated on feature task completion (e.g., feature-review).
+	CreationModeDependencyGated = "dependency-gated"
+)
+
 // MonitorTemplate defines a reusable template for recurring monitoring tasks.
+// All behavioral attributes are stored here so adding a new template requires
+// only adding an entry to the registry — no if/else or switch/case changes.
 type MonitorTemplate struct {
 	ID              string   `json:"id"`
 	Label           string   `json:"label"`
@@ -36,6 +46,12 @@ type MonitorTemplate struct {
 	DefaultSchedule string   `json:"default_schedule"`
 	DefaultMaxRuns  int      `json:"default_max_runs,omitempty"`
 	Tags            []string `json:"tags"`
+
+	// Behavioral attributes (drive creation logic without hardcoded if/else)
+	CreationMode  string `json:"creation_mode"`            // "scheduled" or "dependency-gated"
+	AlwaysActive  bool   `json:"always_active,omitempty"`  // true = status always "active" regardless of feature status
+	GeneratedKind string `json:"generated_kind,omitempty"` // for dependency-gated: the generated_kind value (e.g. "feature_review")
+	GeneratedBy   string `json:"generated_by,omitempty"`   // for dependency-gated: the generated_by value
 }
 
 // CreateMonitorResult holds the result of creating a monitor.

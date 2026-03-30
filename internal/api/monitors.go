@@ -92,10 +92,11 @@ func (h *Handler) HandleCreateMonitor(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Feature-review with feature scope uses special dependency-gated creation
+	// Route creation based on template's CreationMode
 	var result *types.CreateMonitorResult
 	var err error
-	if req.TemplateID == "feature-review" && scope.Type == "feature" {
+	tmpl := h.monitor.GetTemplate(req.TemplateID)
+	if tmpl != nil && tmpl.CreationMode == types.CreationModeDependencyGated && scope.Type == "feature" {
 		result, err = h.monitor.CreateForFeature(r.Context(), req.TemplateID, scope)
 	} else {
 		result, err = h.monitor.Create(r.Context(), req.TemplateID, scope, opts)

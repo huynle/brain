@@ -286,9 +286,6 @@ func TestSettingsModal_Update_HandlesSaveMessage(t *testing.T) {
 	newModal, cmd := modal.Update(successMsg)
 
 	updatedModal := newModal.(*SettingsModal)
-	if !updatedModal.saveSuccess {
-		t.Error("Expected saveSuccess to be true after successful save message")
-	}
 	if updatedModal.saveError != nil {
 		t.Error("Expected saveError to be nil after successful save message")
 	}
@@ -303,9 +300,6 @@ func TestSettingsModal_Update_HandlesSaveMessage(t *testing.T) {
 	newModal2, cmd2 := modal2.Update(failMsg)
 
 	updatedModal2 := newModal2.(*SettingsModal)
-	if updatedModal2.saveSuccess {
-		t.Error("Expected saveSuccess to be false after failed save message")
-	}
 	if updatedModal2.saveError == nil {
 		t.Error("Expected saveError to be set after failed save message")
 	}
@@ -345,40 +339,6 @@ func TestSettingsModal_SaveSettingsCmdHelper(t *testing.T) {
 	// Since SaveSettings should succeed with valid settings, error should be nil
 	if savedMsg.err != nil {
 		t.Errorf("Expected no error from saveSettingsCmd, got %v", savedMsg.err)
-	}
-}
-
-func TestSettingsModal_ViewShowsSaveSuccess(t *testing.T) {
-	settings := Settings{
-		GroupCollapsed:    make(map[string]bool),
-		FeatureCollapsed:  make(map[string]bool),
-		GroupVisible:      getDefaultGroupVisible(),
-		ProjectLimits:     map[string]int{},
-		GlobalMaxParallel: 4,
-	}
-
-	modal := NewSettingsModal(settings)
-
-	// Set saveSuccess to true
-	modal.saveSuccess = true
-
-	// Render view
-	view := modal.View()
-
-	// Should contain success message
-	if !strings.Contains(view, "✓ Settings saved") {
-		t.Error("Expected view to contain success message")
-	}
-
-	// After rendering once, saveSuccess should be cleared (displayed and cleared)
-	if modal.saveSuccess {
-		t.Error("Expected saveSuccess to be cleared after View() displays it")
-	}
-
-	// Second render should NOT show success message
-	view2 := modal.View()
-	if strings.Contains(view2, "✓ Settings saved") {
-		t.Error("Expected view to NOT contain success message after clearing")
 	}
 }
 

@@ -39,6 +39,37 @@ func NewMonitorClient(apiURL, apiToken string) *MonitorClient {
 	}
 }
 
+// MonitorTemplateInfo holds template data fetched from the API.
+type MonitorTemplateInfo struct {
+	ID              string `json:"id"`
+	Label           string `json:"label"`
+	Description     string `json:"description"`
+	DefaultSchedule string `json:"default_schedule"`
+	CreationMode    string `json:"creation_mode"`
+}
+
+// FetchTemplates fetches available monitor templates from the API.
+func (c *MonitorClient) FetchTemplates(ctx context.Context) ([]MonitorTemplateInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/monitors/templates", nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch monitor templates: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Templates []MonitorTemplateInfo `json:"templates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode templates response: %w", err)
+	}
+
+	return data.Templates, nil
+}
+
 // monitorTag returns the tag string for a monitor entry.
 // Format: monitor:<templateID>:feature:<featureID>
 func monitorTag(templateID, featureID string) string {

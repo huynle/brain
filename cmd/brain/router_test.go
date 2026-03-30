@@ -192,6 +192,38 @@ func TestRoute_ServerNoSubcommand_StartsServer(t *testing.T) {
 	}
 }
 
+func TestRoute_HelpFlagsRouteToHelpCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		args      []string
+		helpTopic string
+	}{
+		{name: "server help", args: []string{"server", "--help"}, helpTopic: "server"},
+		{name: "server logs help", args: []string{"server", "logs", "--help"}, helpTopic: "server logs"},
+		{name: "server health short help", args: []string{"server", "health", "-h"}, helpTopic: "server health"},
+		{name: "start help", args: []string{"start", "--help"}, helpTopic: "start"},
+		{name: "run start help", args: []string{"run", "start", "--help"}, helpTopic: "run start"},
+		{name: "token create help", args: []string{"token", "create", "--help"}, helpTopic: "token create"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			h, ok := cmd.(*HelpCommand)
+			if !ok {
+				t.Fatalf("expected *HelpCommand, got %T", cmd)
+			}
+			if h.command != tt.helpTopic {
+				t.Fatalf("help topic = %q, want %q", h.command, tt.helpTopic)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test: isBuiltinCommand helper
 // ---------------------------------------------------------------------------

@@ -35,6 +35,12 @@ type monitorTemplatesFetchedMsg struct {
 	err       error
 }
 
+// monitorTemplatesListedMsg is sent when the template list has been fetched from the API.
+type monitorTemplatesListedMsg struct {
+	templates []MonitorTemplateState
+	err       error
+}
+
 // monitorToggleResultMsg is sent when a monitor template toggle completes.
 type monitorToggleResultMsg struct {
 	index     int
@@ -54,13 +60,6 @@ type MonitorTemplateState struct {
 	Status     string // "loading", "enabled", "create"
 	Schedule   string
 	TaskPath   string // path for deletion when enabled
-	IsMonitor  bool   // true=monitor API (feature-review), false=entries API (blocked-inspector)
-}
-
-// defaultMonitorTemplates defines the known monitor templates.
-var defaultMonitorTemplates = []MonitorTemplateState{
-	{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "loading", Schedule: "*/30 * * * *", IsMonitor: false},
-	{TemplateID: "feature-review", Label: "Feature Review", Status: "loading", Schedule: "one-shot", IsMonitor: true},
 }
 
 // ============================================================================
@@ -147,10 +146,7 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 		mc = monitorClients[0]
 	}
 
-	// Copy default monitor templates
-	templates := make([]MonitorTemplateState, len(defaultMonitorTemplates))
-	copy(templates, defaultMonitorTemplates)
-
+	// Templates are fetched from API in Init() — start empty
 	m := &MetadataModal{
 		featureID:           featureID,
 		projectID:           projectID,
@@ -163,8 +159,8 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 		interactionMode:     ModeNavigate,
 		focusedIndex:        0,
 		width:               60,
-		height:              24, // Base 20 + separator(1) + templates(2) + spacing(1)
-		monitorTemplates:    templates,
+		height:              24,
+		monitorTemplates:    nil, // fetched from API in Init
 		monitorLoading:      true,
 		focusedMonitorIndex: -1,
 		monitorClient:       mc,
@@ -614,6 +610,34 @@ func (m *MetadataModal) Init() tea.Cmd {
 }
 
 // fetchMonitorStatusesCmd returns a tea.Cmd that fetches monitor template statuses.
+// fetchMonitorTemplatesCmd fetches available templates from the API.
+func (m *MetadataModal) fetchMonitorTemplatesCmd() tea.Cmd {
+	client := m.monitorClient
+	return func() tea.Msg {
+		ctx := context.Background()
+		apiTemplates, err := client.FetchTemplates(ctx)
+		if err != nil {
+			return monitorTemplatesListedMsg{err: err}
+		}
+
+		templates := make([]MonitorTemplateState, len(apiTemplates))
+		for i, t := range apiTemplates {
+			schedule := t.DefaultSchedule
+			if schedule == "" {
+				schedule = "one-shot"
+			}
+			templates[i] = MonitorTemplateState{
+				TemplateID: t.ID,
+				Label:      t.Label,
+				Status:     "loading",
+				Schedule:   schedule,
+			}
+		}
+
+		return monitorTemplatesListedMsg{templates: templates, err: nil}
+	}
+}
+
 func (m *MetadataModal) fetchMonitorStatusesCmd() tea.Cmd {
 	client := m.monitorClient
 	featureID := m.featureID
@@ -625,28 +649,25 @@ func (m *MetadataModal) fetchMonitorStatusesCmd() tea.Cmd {
 		ctx := context.Background()
 
 		for i, tmpl := range templates {
-			if tmpl.IsMonitor {
-				result, err := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, projectID)
-				if err != nil {
+			// Unified find: try monitors API first, fall back to entries API (for legacy)
+			result, err := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, projectID)
+			if err != nil {
+				// Fall back to entries API for backward compat with pre-registry monitors
+				legacyResult, legacyErr := client.FindScheduledTask(ctx, tmpl.TemplateID, featureID)
+				if legacyErr != nil {
 					return monitorTemplatesFetchedMsg{err: err}
 				}
-				if result != nil {
+				if legacyResult != nil {
 					templates[i].Status = "enabled"
-					templates[i].TaskPath = result.TaskID
-				} else {
-					templates[i].Status = "create"
+					templates[i].TaskPath = legacyResult.Path
+					continue
 				}
+			}
+			if result != nil {
+				templates[i].Status = "enabled"
+				templates[i].TaskPath = result.TaskID
 			} else {
-				result, err := client.FindScheduledTask(ctx, tmpl.TemplateID, featureID)
-				if err != nil {
-					return monitorTemplatesFetchedMsg{err: err}
-				}
-				if result != nil {
-					templates[i].Status = "enabled"
-					templates[i].TaskPath = result.Path
-				} else {
-					templates[i].Status = "create"
-				}
+				templates[i].Status = "create"
 			}
 		}
 
@@ -696,9 +717,9 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.boolValues[FieldOpenPRBeforeMerge] = *entry.OpenPRBeforeMerge
 		}
 
-		// In feature mode, kick off monitor template status fetch
-		if m.mode == ModeFeature && m.monitorClient != nil && len(m.monitorTemplates) > 0 {
-			return m, m.fetchMonitorStatusesCmd()
+		// In feature mode, kick off template list fetch from API
+		if m.mode == ModeFeature && m.monitorClient != nil {
+			return m, m.fetchMonitorTemplatesCmd()
 		}
 
 		return m, nil
@@ -715,6 +736,16 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.mixedFields[msg.field] = false
 		}
 		return m, nil
+
+	case monitorTemplatesListedMsg:
+		if msg.err != nil {
+			// Template fetch failed — proceed without monitor rows
+			m.monitorLoading = false
+			return m, nil
+		}
+		m.monitorTemplates = msg.templates
+		// Now fetch statuses for each template
+		return m, m.fetchMonitorStatusesCmd()
 
 	case monitorTemplatesFetchedMsg:
 		m.monitorLoading = false
@@ -1015,45 +1046,32 @@ func (m *MetadataModal) toggleMonitorTemplate() (bool, tea.Cmd) {
 }
 
 // toggleMonitorTemplateCmd creates a tea.Cmd that toggles a monitor template.
+// All templates are created/deleted via the unified monitors API.
 func toggleMonitorTemplateCmd(client *MonitorClient, index int, tmpl MonitorTemplateState, featureID, project, prevStatus string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
 		if prevStatus == "create" {
-			// Create the monitor/scheduled task
-			var err error
-			if tmpl.IsMonitor {
-				err = client.CreateMonitorTask(ctx, tmpl.TemplateID, featureID, project)
-			} else {
-				prompt := fmt.Sprintf("Check for blocked tasks in feature %s", featureID)
-				err = client.CreateScheduledTask(ctx, tmpl.TemplateID, featureID, project, tmpl.Schedule, prompt)
-			}
+			// Create via monitors API (handles both scheduled and dependency-gated)
+			err := client.CreateMonitorTask(ctx, tmpl.TemplateID, featureID, project)
 			if err != nil {
 				return monitorToggleResultMsg{index: index, newStatus: prevStatus, err: err}
 			}
 
 			// Find the created task to get its path
 			var taskPath string
-			if tmpl.IsMonitor {
-				result, findErr := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, project)
-				if findErr == nil && result != nil {
-					taskPath = result.TaskID
-				}
-			} else {
-				result, findErr := client.FindScheduledTask(ctx, tmpl.TemplateID, featureID)
-				if findErr == nil && result != nil {
-					taskPath = result.Path
-				}
+			result, findErr := client.FindMonitorTask(ctx, tmpl.TemplateID, featureID, project)
+			if findErr == nil && result != nil {
+				taskPath = result.TaskID
 			}
 
 			return monitorToggleResultMsg{index: index, newStatus: "enabled", taskPath: taskPath, err: nil}
 		}
 
-		// Delete the monitor/scheduled task
-		var err error
-		if tmpl.IsMonitor {
-			err = client.DeleteMonitorTask(ctx, tmpl.TaskPath)
-		} else {
+		// Delete via monitors API
+		err := client.DeleteMonitorTask(ctx, tmpl.TaskPath)
+		if err != nil {
+			// Fall back to entries API for legacy monitors
 			err = client.DeleteScheduledTask(ctx, tmpl.TaskPath)
 		}
 		if err != nil {

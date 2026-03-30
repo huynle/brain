@@ -11,51 +11,40 @@ import (
 )
 
 // =============================================================================
+// Test Helpers
+// =============================================================================
+
+// setupTestMonitorTemplates populates the modal with default monitor templates
+// for testing. Since templates are now fetched from the API in production,
+// tests need to pre-populate them.
+func setupTestMonitorTemplates(modal *MetadataModal) {
+	modal.monitorTemplates = []MonitorTemplateState{
+		{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "loading", Schedule: "*/30 * * * *"},
+		{TemplateID: "feature-review", Label: "Feature Review", Status: "loading", Schedule: "one-shot"},
+	}
+	modal.monitorLoading = false
+}
+
+// =============================================================================
 // Monitor Template Initialization Tests
 // =============================================================================
 
-func TestMetadataModalFeature_InitializesMonitorTemplates(t *testing.T) {
+func TestMetadataModalFeature_InitializesEmpty(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
 
-	// Should have 2 default monitor templates
-	if len(modal.monitorTemplates) != 2 {
-		t.Fatalf("monitorTemplates length = %d, want 2", len(modal.monitorTemplates))
+	// Templates are now fetched from API in Init(), so they start empty
+	if modal.monitorTemplates != nil {
+		t.Errorf("monitorTemplates should be nil initially, got %d items", len(modal.monitorTemplates))
 	}
 
-	// Check blocked-inspector template
-	bi := modal.monitorTemplates[0]
-	if bi.TemplateID != "blocked-inspector" {
-		t.Errorf("template[0].TemplateID = %q, want %q", bi.TemplateID, "blocked-inspector")
+	// monitorLoading should be true (will fetch in Init)
+	if !modal.monitorLoading {
+		t.Error("monitorLoading should be true initially")
 	}
-	if bi.Label != "Blocked Inspector" {
-		t.Errorf("template[0].Label = %q, want %q", bi.Label, "Blocked Inspector")
-	}
-	if bi.Status != "loading" {
-		t.Errorf("template[0].Status = %q, want %q", bi.Status, "loading")
-	}
-	if bi.IsMonitor {
-		t.Error("template[0].IsMonitor should be false (uses entries API)")
-	}
-
-	// Check feature-review template
-	fr := modal.monitorTemplates[1]
-	if fr.TemplateID != "feature-review" {
-		t.Errorf("template[1].TemplateID = %q, want %q", fr.TemplateID, "feature-review")
-	}
-	if fr.Label != "Feature Review" {
-		t.Errorf("template[1].Label = %q, want %q", fr.Label, "Feature Review")
-	}
-	if fr.Status != "loading" {
-		t.Errorf("template[1].Status = %q, want %q", fr.Status, "loading")
-	}
-	if !fr.IsMonitor {
-		t.Error("template[1].IsMonitor should be true (uses monitors API)")
-	}
-
 	// focusedMonitorIndex should be -1 (not focused)
 	if modal.focusedMonitorIndex != -1 {
 		t.Errorf("focusedMonitorIndex = %d, want -1", modal.focusedMonitorIndex)
@@ -94,20 +83,33 @@ func TestMetadataModalFeature_HandleMonitorFetchedMsg(t *testing.T) {
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("dark-mode", "brain-api", apiClient, monitorClient)
 
-	// Simulate receiving monitor templates fetched message
-	monitorMsg := monitorTemplatesFetchedMsg{
+	// Step 1: Simulate template list fetch (sets template structure)
+	listMsg := monitorTemplatesListedMsg{
 		templates: []MonitorTemplateState{
-			{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "enabled", Schedule: "*/30 * * * *", TaskPath: "projects/brain-api/task/monitor123.md", IsMonitor: false},
-			{TemplateID: "feature-review", Label: "Feature Review", Status: "create", Schedule: "one-shot", IsMonitor: true},
+			{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "loading", Schedule: "*/30 * * * *"},
+			{TemplateID: "feature-review", Label: "Feature Review", Status: "loading", Schedule: "one-shot"},
 		},
 		err: nil,
 	}
+	modal.Update(listMsg)
 
-	modal.Update(monitorMsg)
+	if len(modal.monitorTemplates) != 2 {
+		t.Fatalf("monitorTemplates length = %d, want 2 after list fetch", len(modal.monitorTemplates))
+	}
 
-	// Check that templates were updated
+	// Step 2: Simulate status fetch (updates each template's status)
+	statusMsg := monitorTemplatesFetchedMsg{
+		templates: []MonitorTemplateState{
+			{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "enabled", Schedule: "*/30 * * * *", TaskPath: "projects/brain-api/task/monitor123.md"},
+			{TemplateID: "feature-review", Label: "Feature Review", Status: "create", Schedule: "one-shot"},
+		},
+		err: nil,
+	}
+	modal.Update(statusMsg)
+
+	// Check that templates were updated with statuses
 	if modal.monitorLoading {
-		t.Error("monitorLoading should be false after fetch")
+		t.Error("monitorLoading should be false after status fetch")
 	}
 	if modal.monitorTemplates[0].Status != "enabled" {
 		t.Errorf("blocked-inspector status = %q, want %q", modal.monitorTemplates[0].Status, "enabled")
@@ -129,6 +131,7 @@ func TestMetadataModalFeature_NavigateFromFieldsToMonitors(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set monitor templates to non-loading state
 	modal.monitorTemplates[0].Status = "enabled"
@@ -159,6 +162,7 @@ func TestMetadataModalFeature_NavigateFromMonitorsToFields(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set monitor templates to non-loading state
 	modal.monitorTemplates[0].Status = "enabled"
@@ -191,6 +195,7 @@ func TestMetadataModalFeature_NavigateBetweenMonitorRows(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set monitor templates to non-loading state
 	modal.monitorTemplates[0].Status = "enabled"
@@ -228,6 +233,7 @@ func TestMetadataModalFeature_NavigateUp_WrapsFromFirstFieldToLastMonitor(t *tes
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set monitor templates to non-loading state
 	modal.monitorTemplates[0].Status = "enabled"
@@ -279,6 +285,7 @@ func TestMetadataModalFeature_ToggleMonitor_Create(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set feature-review to "create" status
 	modal.monitorTemplates[1].Status = "create"
@@ -342,6 +349,7 @@ func TestMetadataModalFeature_ToggleMonitor_Delete(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set feature-review to "enabled" status with a task path
 	modal.monitorTemplates[1].Status = "enabled"
@@ -385,12 +393,14 @@ func TestMetadataModalFeature_ToggleScheduledTask_Create(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
-		// Entries create endpoint (for scheduled tasks)
-		if r.URL.Path == "/api/v1/entries" && r.Method == http.MethodPost {
+		// Monitors create endpoint (unified path for all templates)
+		if r.URL.Path == "/api/v1/monitors" && r.Method == http.MethodPost {
 			createCalled = true
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"path": "projects/brain-api/task/scheduled123.md",
+				"id":    "scheduled123",
+				"path":  "projects/brain-api/task/scheduled123.md",
+				"title": "Blocked Inspector: feat-auth",
 			})
 			return
 		}
@@ -403,6 +413,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Create(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set blocked-inspector to "create" status
 	modal.monitorTemplates[0].Status = "create"
@@ -461,6 +472,7 @@ func TestMetadataModalFeature_ToggleScheduledTask_Delete(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient(srv.URL, "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set blocked-inspector to "enabled" status with a task path
 	modal.monitorTemplates[0].Status = "enabled"
@@ -508,6 +520,7 @@ func TestMetadataModalFeature_HandleToggleResult_Success(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set initial state
 	modal.monitorTemplates[1].Status = "loading"
@@ -535,6 +548,7 @@ func TestMetadataModalFeature_HandleToggleResult_Revert(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set initial state - was "create", toggling to create it
 	modal.monitorTemplates[1].Status = "loading"
@@ -563,6 +577,7 @@ func TestMetadataModalFeature_View_ShowsMonitorSection(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.loading = false
@@ -592,6 +607,7 @@ func TestMetadataModalFeature_View_ShowsStatusIcons(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.loading = false
@@ -616,6 +632,7 @@ func TestMetadataModalFeature_View_ShowsLoadingState(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up: main data loaded but monitors still loading
 	modal.loading = false
@@ -634,6 +651,7 @@ func TestMetadataModalFeature_View_FocusedMonitorRow(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.loading = false
@@ -658,6 +676,7 @@ func TestMetadataModalFeature_View_ShowsStatusTags(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.loading = false
@@ -703,6 +722,7 @@ func TestMetadataModalFeature_EnterOnMonitorRow_DoesNotEnterEditMode(t *testing.
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.monitorTemplates[0].Status = "create"
@@ -730,6 +750,7 @@ func TestMetadataModalFeature_SpaceToggle(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+	setupTestMonitorTemplates(modal)
 
 	// Set up loaded state
 	modal.monitorTemplates[0].Status = "create"

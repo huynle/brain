@@ -3323,19 +3323,8 @@ func TestAutoCreateMonitorsCmd_ReturnsAutoMonitorCreatedMsg(t *testing.T) {
 	}
 }
 
-func TestBlockedInspectorPrompt_ContainsFeatureAndProject(t *testing.T) {
-	prompt := blockedInspectorPrompt("my-feature", "my-project")
-
-	if !strings.Contains(prompt, "my-feature") {
-		t.Errorf("expected prompt to contain feature ID 'my-feature', got: %s", prompt)
-	}
-	if !strings.Contains(prompt, "my-project") {
-		t.Errorf("expected prompt to contain project 'my-project', got: %s", prompt)
-	}
-	if !strings.Contains(prompt, "blocked") {
-		t.Errorf("expected prompt to contain 'blocked', got: %s", prompt)
-	}
-}
+// TestBlockedInspectorPrompt removed — prompts are now generated server-side
+// via buildMonitorPrompt() in internal/service/monitor_prompts.go
 
 // =============================================================================
 // Update Tests - Backspace Key Deletion

@@ -18,6 +18,9 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 	registerBrainTaskMetadata(s, client)
 	registerBrainTasksStatus(s, client)
 	registerBrainTaskTrigger(s, client)
+	registerBrainMonitorEnable(s, client)
+	registerBrainMonitorDisable(s, client)
+	// Legacy aliases for backward compatibility
 	registerBrainFeatureReviewEnable(s, client)
 	registerBrainFeatureReviewDisable(s, client)
 	registerBrainBlockedInspectorEnable(s, client)
@@ -837,6 +840,117 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 		return string(data), nil
 	})
 }
+
+// =============================================================================
+// brain_monitor_enable (generic)
+// =============================================================================
+
+func registerBrainMonitorEnable(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_monitor_enable",
+		Description: "Enable a monitor template for a feature. Creates an automated task (scheduled or dependency-gated depending on the template). Use GET /monitors/templates to discover available templates.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"template_id": {Type: "string", Description: "Monitor template ID (e.g., 'blocked-inspector', 'feature-review')"},
+				"project":     {Type: "string", Description: "Project containing the feature"},
+				"feature_id":  {Type: "string", Description: "Feature ID to monitor"},
+				"schedule":    {Type: "string", Description: "Optional cron schedule override (for scheduled templates only)"},
+			},
+			Required: []string{"template_id", "project", "feature_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		templateID := StringArg(args, "template_id", "")
+		project := StringArg(args, "project", "")
+		featureID := StringArg(args, "feature_id", "")
+
+		scope := map[string]string{
+			"type":       "feature",
+			"project":    project,
+			"feature_id": featureID,
+		}
+
+		body := map[string]any{
+			"templateId": templateID,
+			"scope":      scope,
+		}
+		if schedule := StringArg(args, "schedule", ""); schedule != "" {
+			body["schedule"] = schedule
+		}
+
+		var resp struct {
+			ID    string `json:"id"`
+			Path  string `json:"path"`
+			Title string `json:"title"`
+		}
+		err := client.Request(ctx, "POST", "/monitors", body, nil, &resp)
+
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") {
+				return fmt.Sprintf("Monitor %q is already enabled for feature %q. Disable first to reset.", templateID, featureID), nil
+			}
+			return "", err
+		}
+
+		return fmt.Sprintf("Monitor %q enabled for feature %q:\n- **Task ID:** %s\n- **Title:** %s",
+			templateID, featureID, resp.ID, resp.Title), nil
+	})
+}
+
+// =============================================================================
+// brain_monitor_disable (generic)
+// =============================================================================
+
+func registerBrainMonitorDisable(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_monitor_disable",
+		Description: "Disable a monitor template for a feature. Permanently removes the monitor task. Can be re-enabled with brain_monitor_enable.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"template_id": {Type: "string", Description: "Monitor template ID (e.g., 'blocked-inspector', 'feature-review')"},
+				"project":     {Type: "string", Description: "Project containing the feature"},
+				"feature_id":  {Type: "string", Description: "Feature ID"},
+			},
+			Required: []string{"template_id", "project", "feature_id"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		templateID := StringArg(args, "template_id", "")
+		project := StringArg(args, "project", "")
+		featureID := StringArg(args, "feature_id", "")
+
+		scope := map[string]string{
+			"type":       "feature",
+			"project":    project,
+			"feature_id": featureID,
+		}
+
+		var resp struct {
+			Message string `json:"message"`
+			TaskID  string `json:"taskId"`
+			Path    string `json:"path"`
+		}
+		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
+			"templateId": templateID,
+			"scope":      scope,
+		}, nil, &resp)
+
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "404") || strings.Contains(strings.ToLower(msg), "not found") {
+				return fmt.Sprintf("Monitor %q is not currently enabled for feature %q. Nothing to disable.", templateID, featureID), nil
+			}
+			return "", err
+		}
+
+		return fmt.Sprintf("Monitor %q disabled for feature %q (task %s deleted).", templateID, featureID, resp.TaskID), nil
+	})
+}
+
+// =============================================================================
+// Legacy aliases (backward compatibility)
+// =============================================================================
 
 // =============================================================================
 // brain_feature_review_enable

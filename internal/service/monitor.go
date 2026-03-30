@@ -26,6 +26,7 @@ type (
 // =============================================================================
 
 // monitorTemplates is the registry of known monitor templates.
+// Adding a new automated task type = add one entry here + one prompt builder in monitor_prompts.go.
 var monitorTemplates = map[string]types.MonitorTemplate{
 	"blocked-inspector": {
 		ID:              "blocked-inspector",
@@ -34,13 +35,17 @@ var monitorTemplates = map[string]types.MonitorTemplate{
 		DefaultSchedule: "*/15 * * * *",
 		DefaultMaxRuns:  10,
 		Tags:            []string{"scheduled", "inspector", "monitoring"},
+		CreationMode:    types.CreationModeScheduled,
+		AlwaysActive:    true, // runs on schedule regardless of feature status
 	},
 	"feature-review": {
-		ID:              "feature-review",
-		Label:           "Feature Code Review",
-		Description:     "Two-phase review: completeness against original requests + code quality",
-		DefaultSchedule: "",
-		Tags:            []string{"monitor", "review"},
+		ID:            "feature-review",
+		Label:         "Feature Code Review",
+		Description:   "Two-phase review: completeness against original requests + code quality",
+		Tags:          []string{"monitor", "review"},
+		CreationMode:  types.CreationModeDependencyGated,
+		GeneratedKind: "feature_review",
+		GeneratedBy:   "feature-completion-hook",
 	},
 }
 
@@ -165,6 +170,14 @@ func (s *MonitorServiceImpl) ListTemplates() []types.MonitorTemplate {
 	return templates
 }
 
+// GetTemplate returns a template by ID, or nil if not found.
+func (s *MonitorServiceImpl) GetTemplate(templateID string) *types.MonitorTemplate {
+	if t, ok := monitorTemplates[templateID]; ok {
+		return &t
+	}
+	return nil
+}
+
 // Create creates a new monitor task from a template.
 func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error) {
 	template, ok := monitorTemplates[templateID]
@@ -207,10 +220,10 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 	tags = append(tags, template.Tags...)
 	tags = append(tags, tag)
 
-	// Determine status: Blocked Inspector is always "active" (it runs on schedule).
+	// Determine status: templates with AlwaysActive are always "active" (they run on schedule).
 	// Other monitors inherit from feature task status if feature-scoped.
 	status := "active"
-	if templateID != "blocked-inspector" && scope.Type == "feature" && scope.FeatureID != "" && project != "" {
+	if !template.AlwaysActive && scope.Type == "feature" && scope.FeatureID != "" && project != "" {
 		featureStatus, err := s.resolveFeatureTaskStatus(ctx, project, scope.FeatureID)
 		if err != nil {
 			return nil, fmt.Errorf("resolve feature status: %w", err)
@@ -316,9 +329,9 @@ func (s *MonitorServiceImpl) CreateForFeature(ctx context.Context, templateID st
 		Project:        scope.Project,
 		DependsOn:      dependsOn,
 		Generated:      &generated,
-		GeneratedKind:  "feature_review",
-		GeneratedKey:   fmt.Sprintf("feature-review:%s", scope.FeatureID),
-		GeneratedBy:    "feature-completion-hook",
+		GeneratedKind:  template.GeneratedKind,
+		GeneratedKey:   fmt.Sprintf("%s:%s", templateID, scope.FeatureID),
+		GeneratedBy:    template.GeneratedBy,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("save feature review entry: %w", err)

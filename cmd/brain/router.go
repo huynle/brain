@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	uconfig "github.com/huynle/brain-api/internal/config"
@@ -161,6 +162,9 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	case "server":
 		return parseServerCommand(cmdArgs)
 	case "start":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "start"}, nil
+		}
 		// "brain start <project>" → runner TUI for project
 		// "brain start all" → runner TUI for all projects
 		// "brain start" (no args) → runner TUI for all projects
@@ -169,38 +173,61 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		}
 		return newRunnerTUICommand(cmdArgs[0], cmdArgs[1:])
 	case "stop":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "stop"}, nil
+		}
 		// "brain stop <project>" → stop runner for project (stub for now)
 		return parseStopCommand(cmdArgs)
 	case "init":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "init"}, nil
+		}
 		return parseInitCommand(cmdArgs)
 	case "doctor":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "doctor"}, nil
+		}
 		return parseDoctorCommand(cmdArgs)
 	case "config":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "config"}, nil
+		}
 		return parseConfigCommand(cmdArgs)
 	case "mcp":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "mcp"}, nil
+		}
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
 	case "install":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "install"}, nil
+		}
 		return parseInstallCommand(cmdArgs)
 	case "uninstall":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "uninstall"}, nil
+		}
 		return parseUninstallCommand(cmdArgs)
 	case "plugin-status":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "plugin-status"}, nil
+		}
 		return parsePluginStatusCommand(cmdArgs)
 	case "run", "runner":
+		if len(cmdArgs) == 0 {
+			return &stubCommand{cmdType: "run"}, nil
+		}
+		if isHelpArg(cmdArgs[0]) {
+			return &HelpCommand{command: "run"}, nil
+		}
 		// Handle "brain run <subcommand>" and "brain runner <subcommand>" patterns
 		// "runner" is a backwards-compat alias for "run" (from old Node.js CLI)
-		if len(cmdArgs) > 0 {
-			return parseRunCommand(cmdArgs)
-		}
-		// "brain run" without subcommand returns stub
-		return &stubCommand{cmdType: "run"}, nil
+		return parseRunCommand(cmdArgs)
 	case "help":
-		// "brain help server" → show server help
-		topic := ""
-		if len(cmdArgs) > 0 {
-			topic = cmdArgs[0]
-		}
+		// "brain help server" / "brain help server start" → show contextual help
+		topic := strings.TrimSpace(strings.Join(cmdArgs, " "))
 		return &HelpCommand{command: topic}, nil
 	default:
 		// For other built-in commands, return stub for now
@@ -221,11 +248,22 @@ var serverSubcommands = map[string]func([]string) (Command, error){
 // parseServerCommand creates a ServerCommand from args, or delegates to a
 // server subcommand (start/stop/restart/status/logs/health).
 func parseServerCommand(args []string) (Command, error) {
+	if len(args) > 0 && isHelpArg(args[0]) {
+		return &HelpCommand{command: "server"}, nil
+	}
+
 	// Check if the first arg is a known subcommand
 	if len(args) > 0 {
 		if parseFn, ok := serverSubcommands[args[0]]; ok {
+			if wantsHelp(args[1:]) {
+				return &HelpCommand{command: "server " + args[0]}, nil
+			}
 			return parseFn(args[1:])
 		}
+	}
+
+	if wantsHelp(args) {
+		return &HelpCommand{command: "server"}, nil
 	}
 
 	// Default: start server in foreground
@@ -266,6 +304,12 @@ func parseTokenCommand(args []string) (Command, error) {
 	}
 
 	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "token"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "token " + subcommand}, nil
+	}
 	subArgs := args[1:]
 
 	cfg := defaultConfig()
@@ -291,10 +335,16 @@ func parseTokenCommand(args []string) (Command, error) {
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
-		return newHelpCommand(), nil
+		return &HelpCommand{command: "run"}, nil
 	}
 
 	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "run"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "run " + subcommand}, nil
+	}
 	subArgs := args[1:]
 
 	cfg := defaultConfig()
@@ -320,6 +370,19 @@ func parseRunCommand(args []string) (Command, error) {
 // isFlag checks if a string looks like a flag.
 func isFlag(s string) bool {
 	return len(s) > 0 && s[0] == '-'
+}
+
+func isHelpArg(s string) bool {
+	return s == "--help" || s == "-h" || s == "help"
+}
+
+func wantsHelp(args []string) bool {
+	for _, arg := range args {
+		if isHelpArg(arg) {
+			return true
+		}
+	}
+	return false
 }
 
 // =============================================================================
@@ -555,6 +618,8 @@ func parseLogsCommand(args []string) (Command, error) {
 	// Parse flags
 	followFlag := false
 	lines := 100
+	since := ""
+	level := ""
 	for i, arg := range args {
 		if arg == "-f" || arg == "--follow" {
 			followFlag = true
@@ -562,12 +627,23 @@ func parseLogsCommand(args []string) (Command, error) {
 		if (arg == "-n" || arg == "--lines") && i+1 < len(args) {
 			fmt.Sscanf(args[i+1], "%d", &lines)
 		}
+		if arg == "--since" && i+1 < len(args) {
+			since = args[i+1]
+		}
+		if arg == "--level" && i+1 < len(args) {
+			level = args[i+1]
+		}
 	}
 
 	return &commands.LogsCommand{
 		Config: convertToCommandsConfig(cfg),
-		Flags:  &commands.LogsFlags{Follow: followFlag, Lines: lines},
-		Out:    nil, // Will use os.Stdout in Execute if nil
+		Flags: &commands.LogsFlags{
+			Follow: followFlag,
+			Lines:  lines,
+			Since:  since,
+			Level:  level,
+		},
+		Out: nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }
 

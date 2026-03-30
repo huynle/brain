@@ -2,299 +2,502 @@ package main
 
 import (
 	"fmt"
+	"strings"
 )
 
-const mainHelp = `brain - Unified Brain API CLI
+const mainHelp = `brain - Unified Brain CLI
 
-A single command for server, runner, MCP, and management operations.
+Manage the Brain API server, runner, MCP mode, tokens, and plugin integration.
 
 USAGE:
-  brain [global-flags] <command> [command-flags] [args]
+  brain <command> [subcommand] [flags] [args]
+  brain help <command>
 
-RUNNER (TUI):
-  brain start                     Start runner TUI for all projects
-  brain start <project>           Start runner TUI for specific project
-  brain start all                 Start runner TUI for all projects
-  brain start all --max-parallel 5  With custom parallelism
+CORE COMMANDS:
+  server                         Run API server in foreground
+  server start                   Start server as daemon
+  server stop                    Stop daemonized server
+  server restart                 Restart daemonized server
+  server status                  Show server process status
+  server logs                    Show server logs
+  server health                  Call /api/v1/health
 
-SERVER:
-  brain server                    Start API server (foreground)
-  brain server start              Start server as background daemon
-  brain server stop               Stop the server daemon
-  brain server restart            Restart the server daemon
-  brain server status             Check server status
-  brain server logs [-f]          Show/follow server logs
-  brain server health             Query /health endpoint
-  brain server --port 3000        Start on custom port
+RUNNER COMMANDS:
+  start [project|all]            Open runner TUI (default project: all)
+  run <subcommand> [project]     Runner management subcommands
+  runner <subcommand> [project]  Alias for run
 
-RUNNER MANAGEMENT:
-  brain run list <project>        List all tasks
-  brain run ready <project>       List ready tasks
-  brain run features <project>    List features
-  brain run config                Show runner config
+SETUP & DIAGNOSTICS:
+  init                           Initialize brain directory and templates
+  doctor                         Diagnose or fix local brain setup
+  config                         Print resolved runtime config
 
-MCP MODE:
-  brain mcp                       Start MCP stdio server
+INTEGRATION:
+  mcp                            Run MCP stdio server
+  install <target>               Install plugin for target app
+  uninstall <target>             Uninstall plugin from target app
+  plugin-status                  Check plugin installation status
 
-SETUP & CONFIG:
-  brain init [--force]            Initialize ~/.brain directory
-  brain doctor [-v] [--fix]       Diagnose configuration
-  brain config                    Show current configuration
+TOKENS:
+  token create --name <name>     Create API token
+  token list                     List API tokens
+  token revoke <name>            Revoke API token
 
-PLUGIN MANAGEMENT:
-  brain install <target>          Install plugin to AI assistant
-  brain uninstall <target>        Remove plugin from target
-  brain plugin-status             Show installation status
-
-TOKEN MANAGEMENT:
-  brain token create --name <n>   Create API token
-  brain token list                List API tokens
-  brain token revoke <name>       Revoke API token
-
-GLOBAL FLAGS:
-  -h, --help                      Show help
-  -v, --verbose                   Verbose output
-  --version                       Show version
+GLOBAL HELP:
+  -h, --help                     Show help for current command
 
 EXAMPLES:
-  # Start runner TUI for all projects
   brain start
-  brain start all
-
-  # Start runner TUI for specific project
-  brain start myproject
-
-  # Start API server (foreground)
-  brain server
-
-  # Start API server as background daemon
-  brain server start
-  brain server start --port 3000
-
-  # Stop/restart server
-  brain server stop
-  brain server restart
-
-  # Initialize brain directory
-  brain init
-
-  # Install to OpenCode
-  brain install opencode
-
-  # Create API token
+  brain start my-project --max-parallel 5
+  brain server --port 3000
+  brain server start --dry-run
+  brain server logs -f -n 200
   brain token create --name dev
-
-For command-specific help: brain <command> --help
+  brain help run
 `
 
-const serverHelp = `brain server - Brain API server management
+const serverHelp = `brain server - API server operations
 
 USAGE:
-  brain server [flags]              Start server in foreground
-  brain server start [flags]        Start server as background daemon
-  brain server stop [flags]         Stop the server daemon
-  brain server restart [flags]      Restart the server daemon
-  brain server status [flags]       Check if server is running
-  brain server logs [flags]         Show/follow server logs
-  brain server health [flags]       Query the /health endpoint
+  brain server [flags]
+  brain server <subcommand> [flags]
 
-SERVER FLAGS:
-  -p, --port <port>              Server port (default: 3333)
-  --host <host>                  Server host (default: localhost)
-  --log-file <path>              Log file path
-  --tls                          Enable HTTPS
+SUBCOMMANDS:
+  start                          Start daemon in background
+  stop                           Stop daemon process
+  restart                        Restart daemon process
+  status                         Show daemon status
+  logs                           Show/follow daemon logs
+  health                         Query API health endpoint
+
+FLAGS (brain server):
+  -p, --port <port>              Listen port (foreground mode)
+  --host <host>                  Listen host (foreground mode)
+  -d, --daemon                   Run as daemon
+  --log-file <path>              Log file path for daemon mode
+  --tls                          Enable TLS (foreground mode)
   --tls-cert <path>              TLS certificate path
   --tls-key <path>               TLS private key path
+  -h, --help                     Show this help
 
-ENVIRONMENT:
-  BRAIN_PORT                     Server port
-  BRAIN_DIR                      Brain data directory (default: ~/brain)
-  BRAIN_API_URL                  API URL for clients
+SUBCOMMAND HELP:
+  brain help server start
+  brain help server stop
+  brain help server restart
+  brain help server status
+  brain help server logs
+  brain help server health
 
 EXAMPLES:
-  # Start server in foreground
   brain server
-
-  # Start as background daemon
-  brain server start
-
-  # Start on custom port
-  brain server start --port 3000
-
-  # Stop the daemon
-  brain server stop
-
-  # Check status
-  brain server status
-
-  # Tail logs
-  brain server logs -f
-
-  # HTTPS mode
+  brain server --port 4000 --host 0.0.0.0
   brain server --tls --tls-cert cert.pem --tls-key key.pem
+  brain server start
+  brain server status
 `
 
-const runnerHelp = `brain start - Start the task runner TUI
+const serverStartHelp = `brain server start - Start daemonized API server
 
 USAGE:
-  brain start                         Start TUI for all projects
-  brain start <project>               Start TUI for specific project
-  brain start all                     Start TUI for all projects
+  brain server start [flags]
 
 FLAGS:
-  --tui                          Interactive TUI (default)
-  -f, --foreground               Foreground without TUI
-  -b, --headless                 Headless mode (no TUI, no tmux)
-  -p, --max-parallel <N>         Max concurrent tasks (default: 3)
-  --poll-interval <N>            Poll interval seconds (default: 5)
-  -w, --workdir <dir>            Working directory
-  --agent <name>                 OpenCode agent to use
-  -m, --model <name>             Model to use
-  -i, --include <pattern>        Include project pattern (repeatable)
-  -e, --exclude <pattern>        Exclude project pattern (repeatable)
+  --pid-file <path>              PID file path override
+  --log-file <path>              Log file path override
+  --dry-run                      Show what would start, do not execute
+  -h, --help                     Show this help
+
+NOTES:
+  - Port/host are loaded from config, not from start flags.
+  - Daemon mode launches: brain server --daemon ...
 
 EXAMPLES:
-  # TUI for all projects
-  brain start
-
-  # TUI for specific project
-  brain start myproject
-
-  # All projects with filtering
-  brain start all -i 'prod-*' -e 'test-*'
-
-  # Custom concurrency
-  brain start all --max-parallel 5
+  brain server start
+  brain server start --log-file ~/.local/state/brain-api/brain-api.log
+  brain server start --dry-run
 `
 
-const mcpHelp = `brain mcp - Start the MCP (Model Context Protocol) server
+const serverStopHelp = `brain server stop - Stop daemonized API server
+
+USAGE:
+  brain server stop [flags]
+  brain stop [flags]
+
+FLAGS:
+  --pid-file <path>              PID file path override
+  --timeout <sec>                Graceful shutdown timeout (default: 10)
+  -f, --force                    Send SIGKILL after timeout
+  --dry-run                      Show what would stop, do not execute
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain server stop
+  brain server stop --timeout 30
+  brain server stop --force
+`
+
+const serverRestartHelp = `brain server restart - Restart daemonized API server
+
+USAGE:
+  brain server restart [flags]
+
+FLAGS:
+  --pid-file <path>              PID file path override
+  --log-file <path>              Log file path override for next start
+  --timeout <sec>                Graceful stop timeout (default: 10)
+  -f, --force                    Force kill when stop times out
+  --dry-run                      Show what would restart, do not execute
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain server restart
+  brain server restart --timeout 20 --force
+`
+
+const serverStatusHelp = `brain server status - Show daemon status
+
+USAGE:
+  brain server status [flags]
+
+FLAGS:
+  --json                         JSON output
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain server status
+  brain server status --json
+`
+
+const serverLogsHelp = `brain server logs - Show or follow daemon logs
+
+USAGE:
+  brain server logs [flags]
+
+FLAGS:
+  -f, --follow                   Stream new log lines
+  -n, --lines <n>                Number of lines to show (default: 100)
+  --since <duration>             Filter by recency (e.g. 30m, 2h, 1d)
+  --level <level>                Filter by level: debug|info|warn|error
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain server logs
+  brain server logs -n 300
+  brain server logs --since 2h --level error
+  brain server logs -f --level warn
+`
+
+const serverHealthHelp = `brain server health - Query API health endpoint
+
+USAGE:
+  brain server health [flags]
+
+FLAGS:
+  --wait                         Wait until healthy
+  --timeout <sec>                Wait timeout in seconds (default: 30)
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain server health
+  brain server health --wait --timeout 60
+`
+
+const startHelp = `brain start - Open runner TUI
+
+USAGE:
+  brain start
+  brain start <project>
+  brain start all [filters]
+
+FLAGS:
+  --tui                          TUI mode (default behavior)
+  -f, --foreground               Foreground mode without TUI
+  -b, --headless                 Headless mode (no TUI, no tmux)
+  --dashboard                    Dashboard mode
+  -p, --max-parallel <n>         Override max parallel tasks
+  --poll-interval <sec>          Override poll interval
+  -w, --workdir <dir>            Override execution workdir
+  --agent <name>                 Override OpenCode agent
+  -m, --model <name>             Override OpenCode model
+  -i, --include <pattern>        Include projects (repeatable)
+  -e, --exclude <pattern>        Exclude projects (repeatable)
+  -F, --feature-id <id>          Limit execution to feature IDs (repeatable)
+  --follow                       Follow logs mode
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain start
+  brain start my-project
+  brain start all -i 'prod-*' -e 'legacy-*'
+  brain start all --max-parallel 5 --poll-interval 3
+`
+
+const runHelp = `brain run - Runner management commands
+
+USAGE:
+  brain run <subcommand> [project|all] [flags]
+  brain runner <subcommand> [project|all] [flags]
+
+SUBCOMMANDS:
+  start                          Start runner (implemented)
+  stop                           Stop runner (placeholder)
+  status                         Show runner status (placeholder)
+  list                           List tasks (placeholder)
+  ready                          List ready tasks (placeholder)
+  features                       List features (placeholder)
+  logs                           Stream runner logs (placeholder)
+  config                         Show runner config (placeholder)
+
+COMMON FLAGS:
+  Same flags as: brain start --help
+
+SUBCOMMAND HELP:
+  brain help run start
+
+EXAMPLES:
+  brain run start
+  brain run start my-project --foreground
+  brain runner start all --max-parallel 4
+`
+
+const runStartHelp = `brain run start - Start runner via run command
+
+USAGE:
+  brain run start [project|all] [flags]
+
+FLAGS:
+  Same runner flags as: brain start
+
+EXAMPLES:
+  brain run start
+  brain run start my-project --headless
+`
+
+const mcpHelp = `brain mcp - Start MCP stdio server
 
 USAGE:
   brain mcp [flags]
 
 FLAGS:
-  --api-url <url>                Brain API URL (default: http://localhost:3333)
-
-ENVIRONMENT:
-  BRAIN_API_URL                  API URL to connect to
+  --api-url <url>                Brain API URL
+  -h, --help                     Show this help
 
 EXAMPLES:
-  # Start MCP server
   brain mcp
-
-  # Custom API URL
-  brain mcp --api-url http://localhost:3000
-
-CONFIGURATION:
-  Add to your MCP client config (~/.config/claude/config.json):
-  {
-    "mcpServers": {
-      "brain": {
-        "command": "brain",
-        "args": ["mcp"],
-        "env": {
-          "BRAIN_API_URL": "http://localhost:3333"
-        }
-      }
-    }
-  }
-
+  brain mcp --api-url http://localhost:3333
 `
 
-const initHelp = `brain init - Initialize the Brain directory structure
+const initHelp = `brain init - Initialize brain directory structure
 
 USAGE:
   brain init [flags]
 
 FLAGS:
-  --force                        Overwrite existing configuration
+  -f, --force                    Overwrite existing templates/config
+  --dry-run                      Show planned file operations only
+  -h, --help                     Show this help
 
 EXAMPLES:
-  # Initialize brain directory
   brain init
-
-  # Force reinitialize
+  brain init --dry-run
   brain init --force
 `
 
-const doctorHelp = `brain doctor - Diagnose Brain configuration issues
+const doctorHelp = `brain doctor - Diagnose and repair local setup
 
 USAGE:
   brain doctor [flags]
 
 FLAGS:
-  -v, --verbose                  Show detailed diagnostic information
-  --fix                          Attempt to fix detected issues
+  --fix                          Apply automatic fixes where possible
+  -f, --force                    Force replacement of generated files
+  --dry-run                      Show changes without applying
+  -v, --verbose                  Show all checks (including passes)
+  --skip-version-check           Skip tool version checks
+  -h, --help                     Show this help
 
 EXAMPLES:
-  # Basic health check
   brain doctor
-
-  # Detailed diagnostics
   brain doctor -v
-
-  # Diagnose and attempt fixes
   brain doctor --fix
+  brain doctor --fix --dry-run
 `
 
-const installHelp = `brain install - Install Brain plugin to AI assistant
+const configHelp = `brain config - Show resolved runtime configuration
 
 USAGE:
-  brain install <target>
+  brain config
 
-TARGETS:
-  opencode                       Install to OpenCode
-  cursor                         Install to Cursor
-  windsurf                       Install to Windsurf
+DESCRIPTION:
+  Prints resolved server, runner, and MCP settings from defaults,
+  config files, environment, and CLI overrides.
 
 EXAMPLES:
-  # Install to OpenCode
-  brain install opencode
+  brain config
+`
 
-  # Check installation status
+const installHelp = `brain install - Install brain plugin integration
+
+USAGE:
+  brain install <target> [flags]
+
+TARGETS:
+  opencode                       Install OpenCode integration
+
+FLAGS:
+  -f, --force                    Overwrite existing target files
+  --dry-run                      Show planned changes only
+  --api-url <url>                API URL to embed in generated config
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain install opencode
+  brain install opencode --dry-run
+  brain install opencode --api-url http://localhost:3333
+`
+
+const uninstallHelp = `brain uninstall - Remove brain plugin integration
+
+USAGE:
+  brain uninstall <target>
+
+TARGETS:
+  opencode                       Remove OpenCode integration
+
+EXAMPLES:
+  brain uninstall opencode
+`
+
+const pluginStatusHelp = `brain plugin-status - Check plugin installation state
+
+USAGE:
+  brain plugin-status
+
+DESCRIPTION:
+  Reports whether each known target is installed, incomplete,
+  unavailable on this machine, or missing.
+
+EXAMPLES:
   brain plugin-status
 `
 
-const tokenHelp = `brain token - Manage API authentication tokens
+const tokenHelp = `brain token - API token management
 
 USAGE:
-  brain token <subcommand> [flags]
+  brain token <subcommand> [flags] [args]
 
 SUBCOMMANDS:
-  create --name <name>           Create a new API token
-  list                           List all API tokens
-  revoke <name>                  Revoke an API token
+  create --name <name>           Create token
+  list                           List tokens
+  revoke <name>                  Revoke token by name
 
 EXAMPLES:
-  # Create token
   brain token create --name dev
-
-  # List tokens
   brain token list
-
-  # Revoke token
   brain token revoke dev
 `
 
-// ShowHelp displays help based on command
+const tokenCreateHelp = `brain token create - Create API token
+
+USAGE:
+  brain token create --name <name>
+  brain token create <name>
+
+FLAGS:
+  --name <name>                  Token name
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain token create --name dev
+  brain token create ci-bot
+`
+
+const tokenListHelp = `brain token list - List API tokens
+
+USAGE:
+  brain token list
+
+EXAMPLES:
+  brain token list
+`
+
+const tokenRevokeHelp = `brain token revoke - Revoke API token
+
+USAGE:
+  brain token revoke <name>
+
+EXAMPLES:
+  brain token revoke dev
+`
+
+const stopHelp = `brain stop - Alias for "brain server stop"
+
+USAGE:
+  brain stop [flags]
+
+See: brain help server stop
+`
+
+func normalizeHelpTopic(command string) string {
+	topic := strings.ToLower(strings.TrimSpace(command))
+	topic = strings.Join(strings.Fields(topic), " ")
+	if topic == "runner" {
+		return "run"
+	}
+	if topic == "tokens" {
+		return "token"
+	}
+	return topic
+}
+
 func ShowHelp(command string) {
-	switch command {
+	switch normalizeHelpTopic(command) {
 	case "":
 		fmt.Print(mainHelp)
 	case "server":
 		fmt.Print(serverHelp)
-	case "run", "runner":
-		fmt.Print(runnerHelp)
+	case "server start":
+		fmt.Print(serverStartHelp)
+	case "server stop":
+		fmt.Print(serverStopHelp)
+	case "server restart":
+		fmt.Print(serverRestartHelp)
+	case "server status":
+		fmt.Print(serverStatusHelp)
+	case "server logs":
+		fmt.Print(serverLogsHelp)
+	case "server health":
+		fmt.Print(serverHealthHelp)
+	case "start":
+		fmt.Print(startHelp)
+	case "run":
+		fmt.Print(runHelp)
+	case "run start":
+		fmt.Print(runStartHelp)
 	case "mcp":
 		fmt.Print(mcpHelp)
 	case "init":
 		fmt.Print(initHelp)
 	case "doctor":
 		fmt.Print(doctorHelp)
+	case "config":
+		fmt.Print(configHelp)
 	case "install":
 		fmt.Print(installHelp)
-	case "token", "tokens":
+	case "uninstall":
+		fmt.Print(uninstallHelp)
+	case "plugin-status":
+		fmt.Print(pluginStatusHelp)
+	case "token":
 		fmt.Print(tokenHelp)
+	case "token create":
+		fmt.Print(tokenCreateHelp)
+	case "token list":
+		fmt.Print(tokenListHelp)
+	case "token revoke":
+		fmt.Print(tokenRevokeHelp)
+	case "stop":
+		fmt.Print(stopHelp)
 	default:
 		fmt.Printf("No help available for command: %s\n\n", command)
 		fmt.Print(mainHelp)

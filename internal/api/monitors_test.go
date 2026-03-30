@@ -19,6 +19,7 @@ import (
 
 type mockMonitorService struct {
 	listTemplatesFunc    func() []types.MonitorTemplate
+	getTemplateFunc      func(templateID string) *types.MonitorTemplate
 	listFunc             func(ctx context.Context, filter *types.MonitorListFilter) ([]types.MonitorInfo, error)
 	createFunc           func(ctx context.Context, templateID string, scope types.MonitorScope, opts *types.CreateMonitorOptions) (*types.CreateMonitorResult, error)
 	createForFeatureFunc func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error)
@@ -29,6 +30,13 @@ type mockMonitorService struct {
 func (m *mockMonitorService) ListTemplates() []types.MonitorTemplate {
 	if m.listTemplatesFunc != nil {
 		return m.listTemplatesFunc()
+	}
+	return nil
+}
+
+func (m *mockMonitorService) GetTemplate(templateID string) *types.MonitorTemplate {
+	if m.getTemplateFunc != nil {
+		return m.getTemplateFunc(templateID)
 	}
 	return nil
 }
@@ -422,6 +430,17 @@ func TestHandleCreateMonitor(t *testing.T) {
 			mock := &mockMonitorService{
 				createFunc:           tt.mockCreate,
 				createForFeatureFunc: tt.mockCreateForFeature,
+				getTemplateFunc: func(templateID string) *types.MonitorTemplate {
+					// Return templates with correct CreationMode for routing
+					switch templateID {
+					case "feature-review":
+						return &types.MonitorTemplate{ID: "feature-review", CreationMode: types.CreationModeDependencyGated}
+					case "blocked-inspector":
+						return &types.MonitorTemplate{ID: "blocked-inspector", CreationMode: types.CreationModeScheduled}
+					default:
+						return &types.MonitorTemplate{ID: templateID, CreationMode: types.CreationModeScheduled}
+					}
+				},
 			}
 			router := newMonitorTestRouter(mock)
 			srv := httptest.NewServer(router)

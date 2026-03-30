@@ -6,17 +6,20 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// promptBuilders maps template IDs to their prompt builder functions.
+// Adding a new template's prompt = add one entry here + write the builder function.
+var promptBuilders = map[string]func(scope types.MonitorScope) string{
+	"blocked-inspector": buildBlockedInspectorPrompt,
+	"feature-review":    buildFeatureReviewPrompt,
+}
+
 // buildMonitorPrompt generates the direct_prompt for a monitor task based on
-// the template and scope. This matches origin/main's monitor-templates.ts.
+// the template and scope.
 func buildMonitorPrompt(templateID string, scope types.MonitorScope) string {
-	switch templateID {
-	case "blocked-inspector":
-		return buildBlockedInspectorPrompt(scope)
-	case "feature-review":
-		return buildFeatureReviewPrompt(scope)
-	default:
-		return ""
+	if builder, ok := promptBuilders[templateID]; ok {
+		return builder(scope)
 	}
+	return ""
 }
 
 func buildBlockedInspectorPrompt(scope types.MonitorScope) string {

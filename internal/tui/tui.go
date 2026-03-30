@@ -3059,50 +3059,42 @@ func (m *Model) processAutoMonitors(msg TasksUpdatedMsg) []tea.Cmd {
 	return cmds
 }
 
-// autoCreateMonitorsCmd returns a tea.Cmd that creates both a blocked-inspector
-// scheduled task and a feature-review monitor task for the given feature.
+// autoCreateMonitorsCmd returns a tea.Cmd that creates all monitor templates
+// for a feature. Templates are fetched from the API, so adding a new template
+// to the server registry automatically includes it in auto-creation.
 // Errors are returned in the message (not panicked) for silent handling.
 func autoCreateMonitorsCmd(client *MonitorClient, featureID, projectID string) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
-		// Create blocked-inspector scheduled task
-		prompt := blockedInspectorPrompt(featureID, projectID)
-		err := client.CreateScheduledTask(ctx, "blocked-inspector", featureID, projectID, "*/30 * * * *", prompt)
+		// Fetch available templates from API
+		templates, err := client.FetchTemplates(ctx)
 		if err != nil {
 			return autoMonitorCreatedMsg{
 				featureID:  featureID,
-				templateID: "blocked-inspector",
-				err:        err,
+				templateID: "all",
+				err:        fmt.Errorf("fetch templates: %w", err),
 			}
 		}
 
-		// Create feature-review monitor task
-		err = client.CreateMonitorTask(ctx, "feature-review", featureID, projectID)
-		if err != nil {
-			return autoMonitorCreatedMsg{
-				featureID:  featureID,
-				templateID: "feature-review",
-				err:        err,
+		// Create each template via the monitors API
+		var created []string
+		for _, tmpl := range templates {
+			err := client.CreateMonitorTask(ctx, tmpl.ID, featureID, projectID)
+			if err != nil {
+				// Log but continue — don't fail all because one failed
+				continue
 			}
+			created = append(created, tmpl.ID)
 		}
 
+		templateIDs := strings.Join(created, "+")
 		return autoMonitorCreatedMsg{
 			featureID:  featureID,
-			templateID: "blocked-inspector+feature-review",
+			templateID: templateIDs,
 			err:        nil,
 		}
 	}
-}
-
-// blockedInspectorPrompt generates the prompt text for a blocked-inspector
-// scheduled task, including the feature ID and project for context.
-func blockedInspectorPrompt(featureID, project string) string {
-	return fmt.Sprintf(
-		"Check for blocked tasks in feature '%s' (project: %s). "+
-			"Analyze dependencies, suggest fixes, or escalate if tasks remain blocked.",
-		featureID, project,
-	)
 }
 
 // computeTaskCountsByStatus computes task counts per display status group name.

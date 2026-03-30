@@ -55,7 +55,6 @@ type SettingsModal struct {
 	editMode          bool           // true when editing the default model field
 	editBuffer        string         // buffer for editing the default model
 	saveError         error          // error from last save attempt
-	saveSuccess       bool           // true if last save was successful
 	taskCounts        map[string]int // status group name -> task count (e.g., "Draft" -> 3)
 	runningPerProject map[string]int // project ID -> number of in_progress tasks
 }
@@ -133,9 +132,7 @@ func (m *SettingsModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	case settingsSavedMsg:
 		if msg.err != nil {
 			m.saveError = msg.err
-			m.saveSuccess = false
 		} else {
-			m.saveSuccess = true
 			m.saveError = nil
 		}
 		return m, nil
@@ -172,13 +169,7 @@ func (m *SettingsModal) getMaxIndex() int {
 func (m *SettingsModal) View() string {
 	var s strings.Builder
 
-	// Show success/error at top (like MetadataModal)
-	if m.saveSuccess {
-		successStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
-		s.WriteString(successStyle.Render("✓ Settings saved"))
-		s.WriteString("\n\n")
-		m.saveSuccess = false // Clear after displaying
-	}
+	// Show save errors at top
 	if m.saveError != nil {
 		errorStyle := lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true)
 		s.WriteString(errorStyle.Render(fmt.Sprintf("✗ Error: %v", m.saveError)))

@@ -1,4 +1,10 @@
-// Package config loads Brain API configuration from environment variables.
+// Package config loads Brain API configuration from config file and
+// environment variables.
+//
+// Priority order (highest wins):
+//  1. Environment variables (PORT, HOST, BRAIN_DIR, ENABLE_AUTH, CORS_ORIGIN, etc.)
+//  2. Config file (~/.config/brain/config.yaml, server section)
+//  3. Built-in defaults
 package config
 
 import (
@@ -34,51 +40,85 @@ type Config struct {
 	OAuthPIN   string // Optional PIN for consent page protection
 }
 
-// Load reads configuration from environment variables with sensible defaults.
+// Load reads configuration with the following priority (highest wins):
+//  1. Environment variables
+//  2. Config file (~/.config/brain/config.yaml)
+//  3. Built-in defaults
+//
+// This ensures all brain clients (brain-api standalone, brain server start,
+// brain-mcp, OpenCode plugin) can share the same config file while still
+// allowing per-deployment env var overrides (e.g., Docker).
 func Load() Config {
 	homeDir, _ := os.UserHomeDir()
-	defaultBrainDir := filepath.Join(homeDir, ".brain")
 
-	return Config{
-		BrainDir:   getEnv("BRAIN_DIR", defaultBrainDir),
-		Port:       getEnvInt("PORT", 3000),
-		Host:       getEnv("HOST", "0.0.0.0"),
-		EnableAuth: getEnvBool("ENABLE_AUTH", false),
-		CORSOrigin: getEnv("CORS_ORIGIN", "*"),
-		LogLevel:   getEnv("LOG_LEVEL", "info"),
-		OAuthPIN:   getEnv("OAUTH_PIN", ""),
+	// Layer 1: Built-in defaults (aligned with unified.go defaults)
+	cfg := Config{
+		BrainDir:   filepath.Join(homeDir, ".brain"),
+		Port:       3333,
+		Host:       "localhost",
+		EnableAuth: false,
+		CORSOrigin: "*",
+		LogLevel:   "info",
+		OAuthPIN:   "",
 	}
+
+	// Layer 2: Config file overrides
+	ucfg, err := LoadConfig()
+	if err == nil {
+		s := ucfg.Server
+		if s.BrainDir != "" {
+			cfg.BrainDir = s.BrainDir
+		}
+		if s.Port != 0 {
+			cfg.Port = s.Port
+		}
+		if s.Host != "" {
+			cfg.Host = s.Host
+		}
+		if s.EnableAuth {
+			cfg.EnableAuth = true
+		}
+		if s.CORSOrigin != "" {
+			cfg.CORSOrigin = s.CORSOrigin
+		}
+		if s.LogLevel != "" {
+			cfg.LogLevel = s.LogLevel
+		}
+		if s.OAuthPIN != "" {
+			cfg.OAuthPIN = s.OAuthPIN
+		}
+	}
+
+	// Layer 3: Environment variable overrides (highest priority)
+	if v := os.Getenv("BRAIN_DIR"); v != "" {
+		cfg.BrainDir = v
+	}
+	if v := os.Getenv("PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Port = n
+		}
+	}
+	if v := os.Getenv("HOST"); v != "" {
+		cfg.Host = v
+	}
+	if v := os.Getenv("ENABLE_AUTH"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.EnableAuth = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("CORS_ORIGIN"); v != "" {
+		cfg.CORSOrigin = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.LogLevel = v
+	}
+	if v := os.Getenv("OAUTH_PIN"); v != "" {
+		cfg.OAuthPIN = v
+	}
+
+	return cfg
 }
 
 // Addr returns the listen address as "host:port".
 func (c Config) Addr() string {
 	return c.Host + ":" + strconv.Itoa(c.Port)
-}
-
-func getEnv(key, defaultValue string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return defaultValue
-}
-
-func getEnvInt(key string, defaultValue int) int {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultValue
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return defaultValue
-	}
-	return n
-}
-
-func getEnvBool(key string, defaultValue bool) bool {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultValue
-	}
-	lower := strings.ToLower(v)
-	return lower == "true" || lower == "1"
 }

@@ -79,6 +79,7 @@ type ServerConfig struct {
 	EnableAuth bool   `yaml:"enable_auth"`
 	CORSOrigin string `yaml:"cors_origin"`
 	LogLevel   string `yaml:"log_level"`
+	OAuthPIN   string `yaml:"oauth_pin"`
 	TLSCert    string `yaml:"tls_cert"`
 	TLSKey     string `yaml:"tls_key"`
 	PIDFile    string `yaml:"pid_file"`

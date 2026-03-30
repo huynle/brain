@@ -6,9 +6,18 @@
  * and SQLite access. This is a drop-in replacement for the original brain.ts
  * plugin with identical tool interfaces.
  *
- * Configuration:
+ * Configuration (reads from config file first, env vars override):
+ *
+ * Config file: ~/.config/brain/config.yaml
+ *   mcp:
+ *       api_url: https://brain.huynle.com      # Brain API URL
+ *   runner:
+ *       brain_api_url: https://brain.huynle.com # Fallback if mcp.api_url not set
+ *       api_token: <token>                      # Auth token for protected endpoints
+ *
+ * Environment variables (override config file):
  * - BRAIN_API_URL: Base URL for the Brain API (default: http://localhost:3333)
- * - BRAIN_API_TOKEN: Optional auth token for protected Brain API endpoints
+ * - BRAIN_API_TOKEN: Auth token for protected Brain API endpoints
  *
  * ============================================================================
  * AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
@@ -23,7 +32,9 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { execSync } from "child_process";
+import { readFileSync } from "fs";
 import { homedir } from "os";
+import { join } from "path";
 
 // ============================================================================
 // Types
@@ -57,11 +68,78 @@ type BrainEntryStatus =
 type TaskPriority = "high" | "medium" | "low";
 
 // ============================================================================
-// Constants
+// Configuration
 // ============================================================================
 
-const BRAIN_API_URL = process.env.BRAIN_API_URL || "http://localhost:3333";
-const BRAIN_API_TOKEN = process.env.BRAIN_API_TOKEN;
+/**
+ * Load brain config from ~/.config/brain/config.yaml, falling back to env vars.
+ *
+ * Priority order (highest wins):
+ * 1. Environment variables: BRAIN_API_URL, BRAIN_API_TOKEN
+ * 2. Config file: ~/.config/brain/config.yaml
+ *    - mcp.api_url → API URL
+ *    - runner.api_token → API token
+ *    - runner.brain_api_url → API URL (fallback if mcp.api_url not set)
+ * 3. Default: http://localhost:3333
+ */
+function loadBrainConfig(): { apiUrl: string; apiToken?: string } {
+  let fileApiUrl: string | undefined;
+  let fileApiToken: string | undefined;
+
+  try {
+    const configPath = join(homedir(), ".config", "brain", "config.yaml");
+    const raw = readFileSync(configPath, "utf-8");
+
+    // Minimal YAML parser - extract the fields we need without a YAML dependency.
+    // Handles the two config structures:
+    //   mcp:
+    //       api_url: https://...
+    //   runner:
+    //       brain_api_url: https://...
+    //       api_token: ...
+    let currentSection = "";
+    for (const line of raw.split("\n")) {
+      const trimmed = line.trimEnd();
+
+      // Detect top-level section headers (no leading whitespace)
+      if (/^[a-z_]+:\s*$/.test(trimmed)) {
+        currentSection = trimmed.replace(":", "").trim();
+        continue;
+      }
+
+      // Extract key: value pairs under known sections
+      const kvMatch = trimmed.match(/^\s+([a-z_]+):\s*(.+)$/);
+      if (!kvMatch) continue;
+
+      const [, key, value] = kvMatch;
+      // Strip surrounding quotes if present
+      const cleanValue = value.replace(/^["']|["']$/g, "").trim();
+      if (!cleanValue) continue;
+
+      if (currentSection === "mcp" && key === "api_url") {
+        fileApiUrl = cleanValue;
+      } else if (currentSection === "runner") {
+        if (key === "brain_api_url" && !fileApiUrl) {
+          fileApiUrl = cleanValue;
+        }
+        if (key === "api_token") {
+          fileApiToken = cleanValue;
+        }
+      }
+    }
+  } catch {
+    // Config file not found or unreadable — fall through to defaults
+  }
+
+  return {
+    apiUrl: process.env.BRAIN_API_URL || fileApiUrl || "http://localhost:3333",
+    apiToken: process.env.BRAIN_API_TOKEN || fileApiToken,
+  };
+}
+
+const BRAIN_CONFIG = loadBrainConfig();
+const BRAIN_API_URL = BRAIN_CONFIG.apiUrl;
+const BRAIN_API_TOKEN = BRAIN_CONFIG.apiToken;
 
 function getAuthHeaders(): Record<string, string> {
   if (!BRAIN_API_TOKEN) {

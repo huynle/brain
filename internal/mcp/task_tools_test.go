@@ -481,17 +481,22 @@ func TestBrainTaskGet_Handler(t *testing.T) {
 						"id": "abc12345", "title": "Target Task", "path": "projects/test/task/abc12345.md",
 						"status": "pending", "priority": "high", "classification": "ready",
 						"resolved_deps": []string{},
-						"dependsOn": []map[string]any{
-							{"id": "dep1", "title": "Dep Task", "status": "completed"},
-						},
+						"depends_on":    []string{"dep1"},
+					},
+					{
+						"id": "dep1", "title": "Dep Task", "path": "projects/test/task/dep1.md",
+						"status": "completed", "priority": "high", "classification": "ready",
+						"resolved_deps": []string{},
+						"depends_on":    []string{},
 					},
 					{
 						"id": "xyz99999", "title": "Dependent Task", "path": "projects/test/task/xyz99999.md",
 						"status": "pending", "priority": "medium", "classification": "waiting",
 						"resolved_deps": []string{"abc12345"},
+						"depends_on":    []string{"abc12345"},
 					},
 				},
-				"count": 2,
+				"count": 3,
 			})
 			return
 		}
@@ -553,6 +558,158 @@ func TestBrainTaskGet_Handler(t *testing.T) {
 	// Check content
 	if !strings.Contains(result, "Task content here") {
 		t.Errorf("result should contain content, got: %s", result)
+	}
+}
+
+func TestBrainTaskGet_DeepDependencyChain(t *testing.T) {
+	cachedContext = &ExecutionContext{ProjectID: "test-depends"}
+	defer func() { cachedContext = nil }()
+
+	// Simulate the test-depends project with deep dependency chains:
+	// Level 0: db-schema, auth-module, api-framework (no deps)
+	// Level 1: registration, login (depend on all 3 foundations)
+	// Level 2: auth-middleware, profile (depend on registration + login)
+	// Level 3: protected-routes (depends on middleware + profile)
+	// Level 4: e2e-tests (depends on middleware + profile + registration + login)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+
+		if r.URL.Path == "/api/v1/tasks/test-depends" {
+			json.NewEncoder(w).Encode(map[string]any{
+				"tasks": []map[string]any{
+					// Level 0 - foundations
+					{"id": "nt9htpts", "title": "Setup database schema", "path": "projects/test-depends/task/nt9htpts.md",
+						"status": "pending", "priority": "high", "classification": "ready",
+						"depends_on": []string{}, "resolved_deps": []string{}},
+					{"id": "ef9u5d82", "title": "Setup authentication module", "path": "projects/test-depends/task/ef9u5d82.md",
+						"status": "pending", "priority": "high", "classification": "ready",
+						"depends_on": []string{}, "resolved_deps": []string{}},
+					{"id": "rnjjcchj", "title": "Setup API framework", "path": "projects/test-depends/task/rnjjcchj.md",
+						"status": "pending", "priority": "high", "classification": "ready",
+						"depends_on": []string{}, "resolved_deps": []string{}},
+					// Level 1 - depend on all 3 foundations
+					{"id": "yvrsnpf2", "title": "Build user registration endpoint", "path": "projects/test-depends/task/yvrsnpf2.md",
+						"status": "pending", "priority": "high", "classification": "waiting",
+						"depends_on": []string{"nt9htpts", "ef9u5d82", "rnjjcchj"}, "resolved_deps": []string{"nt9htpts", "ef9u5d82", "rnjjcchj"}},
+					{"id": "q4bqjmoh", "title": "Build login endpoint", "path": "projects/test-depends/task/q4bqjmoh.md",
+						"status": "pending", "priority": "high", "classification": "waiting",
+						"depends_on": []string{"nt9htpts", "ef9u5d82", "rnjjcchj"}, "resolved_deps": []string{"nt9htpts", "ef9u5d82", "rnjjcchj"}},
+					// Level 2 - depend on level 1
+					{"id": "pfa6dv3h", "title": "Build auth middleware", "path": "projects/test-depends/task/pfa6dv3h.md",
+						"status": "pending", "priority": "medium", "classification": "waiting",
+						"depends_on": []string{"yvrsnpf2", "q4bqjmoh"}, "resolved_deps": []string{"yvrsnpf2", "q4bqjmoh"}},
+					{"id": "nhrol3mx", "title": "Build user profile endpoint", "path": "projects/test-depends/task/nhrol3mx.md",
+						"status": "pending", "priority": "medium", "classification": "waiting",
+						"depends_on": []string{"yvrsnpf2", "q4bqjmoh"}, "resolved_deps": []string{"yvrsnpf2", "q4bqjmoh"}},
+					// Level 3 - depends on level 2
+					{"id": "z5gahc9i", "title": "Build protected API routes", "path": "projects/test-depends/task/z5gahc9i.md",
+						"status": "pending", "priority": "medium", "classification": "waiting",
+						"depends_on": []string{"pfa6dv3h", "nhrol3mx"}, "resolved_deps": []string{"pfa6dv3h", "nhrol3mx"}},
+					// Level 4 - depends on levels 1+2
+					{"id": "0if2p4bc", "title": "End-to-end integration tests", "path": "projects/test-depends/task/0if2p4bc.md",
+						"status": "pending", "priority": "low", "classification": "waiting",
+						"depends_on": []string{"pfa6dv3h", "nhrol3mx", "yvrsnpf2", "q4bqjmoh"}, "resolved_deps": []string{"pfa6dv3h", "nhrol3mx", "yvrsnpf2", "q4bqjmoh"}},
+				},
+				"count": 9,
+			})
+			return
+		}
+
+		if strings.HasPrefix(r.URL.Path, "/api/v1/entries/") {
+			// Return content for whichever task is requested
+			taskPath := strings.TrimPrefix(r.URL.Path, "/api/v1/entries/")
+			json.NewEncoder(w).Encode(map[string]any{
+				"id": "0if2p4bc", "path": taskPath,
+				"title": "End-to-end integration tests", "type": "task", "status": "pending",
+				"content": "Write comprehensive integration tests.", "tags": []string{},
+			})
+			return
+		}
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	// Test the deepest task (level 4) - has 4 dependencies
+	handler := s.tools["brain_task_get"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"taskId": "0if2p4bc",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	t.Logf("=== brain_task_get output for deepest task ===\n%s", result)
+
+	// Must show all 4 dependencies (the bug was: always showed "No dependencies")
+	if strings.Contains(result, "*No dependencies*") {
+		t.Fatal("BUG: still showing 'No dependencies' - JSON deserialization mismatch not fixed")
+	}
+	if !strings.Contains(result, "Build auth middleware") {
+		t.Error("missing dependency: Build auth middleware")
+	}
+	if !strings.Contains(result, "Build user profile endpoint") {
+		t.Error("missing dependency: Build user profile endpoint")
+	}
+	if !strings.Contains(result, "Build user registration endpoint") {
+		t.Error("missing dependency: Build user registration endpoint")
+	}
+	if !strings.Contains(result, "Build login endpoint") {
+		t.Error("missing dependency: Build login endpoint")
+	}
+
+	// Verify no tasks depend on the deepest task
+	if !strings.Contains(result, "*No tasks depend on this one*") {
+		t.Error("deepest task should have no dependents")
+	}
+
+	// Now test a mid-level task (level 1 registration) - has 3 deps, 3 dependents
+	result2, err := handler(context.Background(), map[string]any{
+		"taskId": "yvrsnpf2",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	t.Logf("=== brain_task_get output for mid-level task ===\n%s", result2)
+
+	if strings.Contains(result2, "*No dependencies*") {
+		t.Fatal("BUG: mid-level task still showing 'No dependencies'")
+	}
+	// Should show 3 foundation deps
+	if !strings.Contains(result2, "Setup database schema") {
+		t.Error("missing dependency: Setup database schema")
+	}
+	if !strings.Contains(result2, "Setup authentication module") {
+		t.Error("missing dependency: Setup authentication module")
+	}
+	if !strings.Contains(result2, "Setup API framework") {
+		t.Error("missing dependency: Setup API framework")
+	}
+	// Should show dependents
+	if !strings.Contains(result2, "Build auth middleware") {
+		t.Error("missing dependent: Build auth middleware")
+	}
+
+	// Test a foundation task (level 0) - no deps, has dependents
+	result3, err := handler(context.Background(), map[string]any{
+		"taskId": "nt9htpts",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	t.Logf("=== brain_task_get output for foundation task ===\n%s", result3)
+
+	// Foundation task correctly has no dependencies
+	if !strings.Contains(result3, "*No dependencies*") {
+		t.Error("foundation task should have no dependencies")
+	}
+	// But should have dependents
+	if strings.Contains(result3, "*No tasks depend on this one*") {
+		t.Error("foundation task should have dependents")
 	}
 }
 

@@ -495,12 +495,21 @@ Use this to get detailed information about a specific task including:
 			"",
 		}
 
-		// Dependencies section
+		// Dependencies section - look up each dependency ID in the task list for title/status
+		taskLookup := make(map[string]*resolvedTaskWithDeps, len(tasksResp.Tasks))
+		for i := range tasksResp.Tasks {
+			taskLookup[tasksResp.Tasks[i].ID] = &tasksResp.Tasks[i]
+		}
+
 		lines = append(lines, "### Dependencies (what this task needs)")
 		if len(task.DependsOn) > 0 {
-			for _, dep := range task.DependsOn {
-				emoji := statusEmoji(dep.Status)
-				lines = append(lines, fmt.Sprintf("- %s **%s** (%s) - %s", emoji, dep.Title, dep.ID, dep.Status))
+			for _, depID := range task.DependsOn {
+				if dep, ok := taskLookup[depID]; ok {
+					emoji := statusEmoji(dep.Status)
+					lines = append(lines, fmt.Sprintf("- %s **%s** (%s) - %s", emoji, dep.Title, dep.ID, dep.Status))
+				} else {
+					lines = append(lines, fmt.Sprintf("- ? **%s** (unresolved)", depID))
+				}
 			}
 		} else {
 			lines = append(lines, "*No dependencies*")
@@ -1167,11 +1176,7 @@ type resolvedTaskWithDeps struct {
 	ResolvedDeps   []string `json:"resolved_deps"`
 	WaitingOn      []string `json:"waiting_on"`
 	BlockedBy      []string `json:"blocked_by"`
-	DependsOn      []struct {
-		ID     string `json:"id"`
-		Title  string `json:"title"`
-		Status string `json:"status"`
-	} `json:"dependsOn"`
+	DependsOn      []string `json:"depends_on"`
 }
 
 // fullTask is used by brain_task_metadata for the complete task representation.

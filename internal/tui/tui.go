@@ -773,6 +773,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// All other keys fall through to normal handling
 	}
 
+	// Esc clears multi-select mode when tasks are selected
+	if msg.Type == tea.KeyEsc && len(m.selectedTasks) > 0 {
+		m.selectedTasks = make(map[string]bool)
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyBackspace:
 		// Delete task(s) - with confirmation modal (tasks view only)
@@ -912,6 +918,20 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 							featureModal.taskPaths = taskPaths
 						}
 						cmd := m.modalManager.Open(featureModal)
+						return m, cmd
+					}
+				}
+
+				// Case 0b: Non-feature group header (Ungrouped, Draft, Inactive, terminal sub-features)
+				// → open batch metadata editor for all tasks in the group
+				if m.taskTree.IsOnGroupHeader() {
+					if groupTasks := m.taskTree.GetSelectedGroupTasks(); len(groupTasks) > 0 {
+						taskPaths := make([]string, 0, len(groupTasks))
+						for _, t := range groupTasks {
+							taskPaths = append(taskPaths, t.Path)
+						}
+						modal := NewMetadataModalBatch(taskPaths, apiClient)
+						cmd := m.modalManager.Open(modal)
 						return m, cmd
 					}
 				}
@@ -2147,6 +2167,14 @@ func (m Model) View() string {
 		return m.modalManager.View(m.width, m.height)
 	}
 
+	// Safety: ensure final output never exceeds terminal height.
+	// lipgloss.PlaceVertical is a noop when content is taller than the given height,
+	// which causes the terminal to scroll and produces visual glitches (status bar
+	// content appearing in the middle of the task tree, missing borders, etc.).
+	if m.height > 0 {
+		baseView = truncateToHeight(baseView, m.height)
+	}
+
 	return baseView
 }
 
@@ -2337,6 +2365,7 @@ func (m Model) renderBaseView() string {
 	taskPanel := taskPanelStyle.
 		Width(m.width - 2).
 		Height(taskInnerHeight).
+		MaxHeight(topHeight).
 		Render(taskContent)
 
 	// Build main content
@@ -2434,6 +2463,7 @@ func (m Model) renderDetailPanel(width, height int) string {
 	return style.
 		Width(width - 2).
 		Height(innerHeight).
+		MaxHeight(height).
 		Render(content)
 }
 
@@ -2482,6 +2512,7 @@ func (m Model) renderLogPanel(width, height int) string {
 	return style.
 		Width(width - 2).
 		Height(innerHeight).
+		MaxHeight(height).
 		Render(content)
 }
 

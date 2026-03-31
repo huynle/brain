@@ -1804,6 +1804,61 @@ func (tt *TaskTree) GetSelectedFeatureTasks() []types.ResolvedTask {
 	return nil
 }
 
+// GetSelectedGroupTasks returns all tasks in the currently selected group header.
+// This handles all group header types: feature headers, [Ungrouped] headers,
+// and terminal section headers (Draft, Inactive). Returns nil if not on a group header.
+func (tt *TaskTree) GetSelectedGroupTasks() []types.ResolvedTask {
+	if !tt.IsOnGroupHeader() {
+		return nil
+	}
+
+	// Feature header → delegate to GetSelectedFeatureTasks
+	if featureID := tt.GetSelectedFeatureID(); featureID != "" {
+		return tt.GetSelectedFeatureTasks()
+	}
+
+	// [Ungrouped] header in feature view
+	if tt.useFeatureView && tt.isOnUngrouped && tt.featureGroups.Ungrouped != nil {
+		return tt.featureGroups.Ungrouped.Tasks
+	}
+
+	// Terminal section headers (Draft, Inactive)
+	if tt.isOnAnyTerminalSection() {
+		// On a terminal section header (featureIdx == -1) → all tasks in that section
+		// On a terminal sub-feature header → just that sub-feature's tasks
+		for _, sec := range tt.terminalSections() {
+			if !sec.isOn() {
+				continue
+			}
+			sectionTasks := tt.collectTerminalSectionTasks(sec.name)
+			idx := sec.featureIdx()
+			if idx < 0 {
+				// On the section header itself → return all tasks in the section
+				return sectionTasks
+			}
+			// On a sub-feature header → return tasks for that sub-feature
+			ids := sec.featureIDs()
+			if idx < len(ids) {
+				featureID := ids[idx]
+				var subTasks []types.ResolvedTask
+				for _, t := range sectionTasks {
+					fid := t.FeatureID
+					if fid == "" {
+						fid = "[Ungrouped]"
+					}
+					if fid == featureID {
+						subTasks = append(subTasks, t)
+					}
+				}
+				return subTasks
+			}
+			return sectionTasks
+		}
+	}
+
+	return nil
+}
+
 // statusIndicator returns the status icon for a task.
 // For pending tasks, classification (dependency state) takes precedence to show readiness.
 // For other statuses, status (execution state) takes precedence.

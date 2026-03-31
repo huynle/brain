@@ -961,6 +961,11 @@ func (m *MetadataModal) renderDropdown() string {
 
 // getFieldDisplayValue returns the display value for a field.
 func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
+	// In batch/feature mode, show "(mixed)" for fields that differ across tasks
+	if m.mixedFields[field] {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9900")).Italic(true).Render("(mixed)")
+	}
+
 	fieldType := getFieldType(field)
 
 	switch fieldType {

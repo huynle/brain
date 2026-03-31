@@ -144,13 +144,13 @@ func ClassifyTask(
 		return "not_pending", nil, nil
 	}
 
-	// Check for blocked dependencies
+	// Check for hard-blocked dependencies (cancelled or in cycle — these can't resolve on their own)
 	for _, depID := range resolvedDeps {
 		status := effectiveStatuses[depID]
 		if status == "" {
 			status = "unknown"
 		}
-		if status == "blocked" || status == "cancelled" || inCycle[depID] {
+		if status == "cancelled" || inCycle[depID] {
 			blockedBy = append(blockedBy, depID)
 		}
 	}
@@ -158,13 +158,16 @@ func ClassifyTask(
 		return "blocked", blockedBy, nil
 	}
 
-	// Check for waiting dependencies (pending or in_progress)
+	// Check for waiting dependencies (pending, in_progress, or blocked)
+	// "blocked" deps are treated as waiting rather than hard-blocking, because
+	// they may be retried (e.g., runner marked them blocked after idle timeout).
+	// This prevents cascading "blocked" status through the entire dependency chain.
 	for _, depID := range resolvedDeps {
 		status := effectiveStatuses[depID]
 		if status == "" {
 			status = "unknown"
 		}
-		if status == "pending" || status == "in_progress" {
+		if status == "pending" || status == "in_progress" || status == "blocked" {
 			waitingOn = append(waitingOn, depID)
 		}
 	}

@@ -93,11 +93,12 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 
 	// Step 2b: Build reverse dependency map: parent -> children (existing)
 	// If B depends on A, then A is parent of B
+	// NOTE: Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings).
 	children := make(map[string][]string)
 	hasParent := make(map[string]bool)
 
 	for _, t := range tasks {
-		for _, depID := range t.DependsOn {
+		for _, depID := range t.ResolvedDeps {
 			if _, exists := taskMap[depID]; exists {
 				children[depID] = append(children[depID], t.ID)
 				hasParent[t.ID] = true
@@ -170,14 +171,15 @@ func BuildTree(tasks []types.ResolvedTask, allTasks []types.ResolvedTask) []Tree
 			b := taskMap[ids[j]]
 
 			// Check if B depends on A (A should come first)
-			for _, depID := range b.DependsOn {
+			// Use ResolvedDeps (task IDs) not DependsOn (titles)
+			for _, depID := range b.ResolvedDeps {
 				if depID == ids[i] {
 					return true
 				}
 			}
 
 			// Check if A depends on B (B should come first)
-			for _, depID := range a.DependsOn {
+			for _, depID := range a.ResolvedDeps {
 				if depID == ids[j] {
 					return false
 				}
@@ -4919,12 +4921,13 @@ func buildSelectedTaskRelationGraph(tasks []types.ResolvedTask, selectedID strin
 	}
 
 	// Build task lookup and reverse dependency index
+	// Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings)
 	taskByID := make(map[string]*types.ResolvedTask)
 	dependentsByTask := make(map[string][]string)
 	for i := range tasks {
 		task := &tasks[i]
 		taskByID[task.ID] = task
-		for _, depID := range task.DependsOn {
+		for _, depID := range task.ResolvedDeps {
 			dependentsByTask[depID] = append(dependentsByTask[depID], task.ID)
 		}
 	}
@@ -4941,7 +4944,7 @@ func buildSelectedTaskRelationGraph(tasks []types.ResolvedTask, selectedID strin
 		if !ok {
 			return
 		}
-		for _, depID := range task.DependsOn {
+		for _, depID := range task.ResolvedDeps {
 			ancestors[depID] = true
 			walkUp(depID)
 		}

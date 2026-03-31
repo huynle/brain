@@ -28,6 +28,7 @@ func makeTask(id, title, classification, priority string, dependsOn []string) ty
 		Priority:       priority,
 		Status:         "pending",
 		DependsOn:      dependsOn,
+		ResolvedDeps:   dependsOn, // BuildTree uses ResolvedDeps (task IDs)
 	}
 }
 
@@ -751,7 +752,7 @@ func TestBuildTree_WithAllTasksParameter_BackwardCompat(t *testing.T) {
 	// Test that BuildTree works with new signature, empty allTasks (backward compat)
 	tasks := []types.ResolvedTask{
 		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", Status: "pending"},
-		{ID: "t2", Title: "Task 2", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"t1"}},
+		{ID: "t2", Title: "Task 2", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"t1"}, ResolvedDeps: []string{"t1"}},
 	}
 
 	// Call with empty allTasks - should behave like before
@@ -1000,9 +1001,9 @@ func TestBuildTree_Phase4_ParentIDTakesPrecedence(t *testing.T) {
 	// D should appear under C (parent_id wins), NOT under B
 	tasks := []types.ResolvedTask{
 		{ID: "a", Title: "Task A", Classification: "ready", Priority: "high", Status: "pending"},
-		{ID: "b", Title: "Task B", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}},
-		{ID: "c", Title: "Task C", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}},
-		{ID: "d", Title: "Task D", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "c", DependsOn: []string{"b"}},
+		{ID: "b", Title: "Task B", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}, ResolvedDeps: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "ready", Priority: "high", Status: "pending", DependsOn: []string{"a"}, ResolvedDeps: []string{"a"}},
+		{ID: "d", Title: "Task D", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "c", DependsOn: []string{"b"}, ResolvedDeps: []string{"b"}},
 	}
 
 	nodes := BuildTree(tasks, tasks)
@@ -1064,7 +1065,7 @@ func TestBuildTree_Phase4_ParentIDTakesPrecedence(t *testing.T) {
 func TestBuildTree_Phase4_DependsOnOnlyAppears(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "pending"},
-		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"parent"}},
+		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"parent"}, ResolvedDeps: []string{"parent"}},
 	}
 
 	nodes := BuildTree(tasks, tasks)
@@ -1110,9 +1111,9 @@ func TestBuildTree_Phase4_ParentIDOnlyAppears(t *testing.T) {
 func TestBuildTree_Phase4_MixedRelationships(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
-		{ID: "dep_child", Title: "Dep Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"root"}},
+		{ID: "dep_child", Title: "Dep Child", Classification: "waiting", Priority: "medium", Status: "pending", DependsOn: []string{"root"}, ResolvedDeps: []string{"root"}},
 		{ID: "parent_child", Title: "Parent Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
-		{ID: "both_child", Title: "Both Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"dep_child"}},
+		{ID: "both_child", Title: "Both Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"dep_child"}, ResolvedDeps: []string{"dep_child"}},
 	}
 
 	nodes := BuildTree(tasks, tasks)
@@ -1265,7 +1266,7 @@ func TestBuildTree_Phase8_DeepHierarchyWithCrossEdges(t *testing.T) {
 		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
 		{ID: "parent", Title: "Parent", Classification: "waiting", Priority: "high", Status: "pending", ParentID: "root"},
 		{ID: "sibling", Title: "Sibling Task", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
-		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"sibling"}},
+		{ID: "child", Title: "Child", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"sibling"}, ResolvedDeps: []string{"sibling"}},
 		{ID: "grandchild", Title: "Grandchild", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "child"},
 	}
 	nodes := BuildTree(tasks, tasks)
@@ -1326,9 +1327,9 @@ func TestBuildTree_Phase8_DiamondWithMixedRelationships(t *testing.T) {
 	// Verify: No duplication, correct placement, proper sorting
 	tasks := []types.ResolvedTask{
 		{ID: "root", Title: "Root", Classification: "ready", Priority: "high", Status: "pending"},
-		{ID: "child_a", Title: "Child A", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"child_b"}},
+		{ID: "child_a", Title: "Child A", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root", DependsOn: []string{"child_b"}, ResolvedDeps: []string{"child_b"}},
 		{ID: "child_b", Title: "Child B", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "root"},
-		{ID: "leaf", Title: "Leaf", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "child_b", DependsOn: []string{"child_a"}},
+		{ID: "leaf", Title: "Leaf", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "child_b", DependsOn: []string{"child_a"}, ResolvedDeps: []string{"child_a"}},
 	}
 	nodes := BuildTree(tasks, tasks)
 
@@ -1423,10 +1424,10 @@ func TestBuildTree_Phase8_MultipleSiblingsWithDependencyChain(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "parent", Title: "Parent", Classification: "ready", Priority: "high", Status: "pending"},
 		{ID: "a", Title: "Task A", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent"},
-		{ID: "b", Title: "Task B", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"a"}},
-		{ID: "c", Title: "Task C", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"b"}},
+		{ID: "b", Title: "Task B", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"a"}, ResolvedDeps: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "waiting", Priority: "low", Status: "pending", ParentID: "parent", DependsOn: []string{"b"}, ResolvedDeps: []string{"b"}},
 		{ID: "d", Title: "Task D", Classification: "waiting", Priority: "high", Status: "pending", ParentID: "parent"},
-		{ID: "e", Title: "Task E", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"d"}},
+		{ID: "e", Title: "Task E", Classification: "waiting", Priority: "medium", Status: "pending", ParentID: "parent", DependsOn: []string{"d"}, ResolvedDeps: []string{"d"}},
 	}
 	nodes := BuildTree(tasks, tasks)
 
@@ -1491,7 +1492,7 @@ func TestBuildTree_Phase8_CycleAcrossBothRelationshipTypes(t *testing.T) {
 	// Verify: All marked with InCycle = true
 	tasks := []types.ResolvedTask{
 		{ID: "a", Title: "Task A", Classification: "blocked", Priority: "medium", Status: "pending", ParentID: "b"},
-		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}},
+		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}, ResolvedDeps: []string{"c"}},
 		{ID: "c", Title: "Task C", Classification: "blocked", Priority: "medium", Status: "pending", ParentID: "a"},
 	}
 	nodes := BuildTree(tasks, tasks)
@@ -1558,9 +1559,9 @@ func TestBuildTree_Phase8_EdgeCase_SingleTaskNoRelationships(t *testing.T) {
 func TestBuildTree_Phase8_EdgeCase_AllTasksInCycle(t *testing.T) {
 	// A → B → C → A (all in cycle)
 	tasks := []types.ResolvedTask{
-		{ID: "a", Title: "Task A", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}},
-		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"a"}},
-		{ID: "c", Title: "Task C", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"b"}},
+		{ID: "a", Title: "Task A", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"c"}, ResolvedDeps: []string{"c"}},
+		{ID: "b", Title: "Task B", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"a"}, ResolvedDeps: []string{"a"}},
+		{ID: "c", Title: "Task C", Classification: "blocked", Priority: "medium", Status: "pending", DependsOn: []string{"b"}, ResolvedDeps: []string{"b"}},
 	}
 	nodes := BuildTree(tasks, tasks)
 
@@ -1618,6 +1619,7 @@ func TestBuildTree_Phase8_EdgeCase_LargeTreePerformance(t *testing.T) {
 			Priority:       "low",
 			Status:         "pending",
 			DependsOn:      deps,
+			ResolvedDeps:   deps,
 		}
 	}
 
@@ -1664,7 +1666,7 @@ func TestBuildTree_Phase8_EdgeCase_LargeTreePerformance(t *testing.T) {
 func TestBuildTree_Phase8_EdgeCase_NonExistentReferences(t *testing.T) {
 	tasks := []types.ResolvedTask{
 		{ID: "orphan1", Title: "Orphan 1", Classification: "ready", Priority: "medium", Status: "pending", ParentID: "nonexistent_parent"},
-		{ID: "orphan2", Title: "Orphan 2", Classification: "ready", Priority: "medium", Status: "pending", DependsOn: []string{"nonexistent_dep"}},
+		{ID: "orphan2", Title: "Orphan 2", Classification: "ready", Priority: "medium", Status: "pending", DependsOn: []string{"nonexistent_dep"}, ResolvedDeps: []string{"nonexistent_dep"}},
 		{ID: "valid", Title: "Valid Task", Classification: "ready", Priority: "high", Status: "pending"},
 	}
 	nodes := BuildTree(tasks, tasks)
@@ -1912,6 +1914,7 @@ func BenchmarkBuildTree_SmallTree(b *testing.B) {
 		}
 		if i > 0 {
 			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+			tasks[i].ResolvedDeps = []string{fmt.Sprintf("t%d", i-1)}
 		}
 	}
 
@@ -1934,6 +1937,7 @@ func BenchmarkBuildTree_MediumTree(b *testing.B) {
 		}
 		if i > 0 && i%10 != 0 {
 			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+			tasks[i].ResolvedDeps = []string{fmt.Sprintf("t%d", i-1)}
 		}
 	}
 
@@ -1970,6 +1974,7 @@ func BenchmarkBuildTree_LargeTree(b *testing.B) {
 		} else if i > 1 {
 			// Use depends_on for others
 			tasks[i].DependsOn = []string{fmt.Sprintf("t%d", i-1)}
+			tasks[i].ResolvedDeps = []string{fmt.Sprintf("t%d", i-1)}
 		}
 	}
 

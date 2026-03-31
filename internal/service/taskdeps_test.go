@@ -265,11 +265,11 @@ func TestClassifyTask(t *testing.T) {
 			wantClass:    "ready",
 		},
 		{
-			name:           "dep blocked",
+			name:           "dep blocked (treated as waiting, not hard-blocked)",
 			task:           makeTask("x", "X", "pending", "high", nil),
 			resolvedDeps:   []string{"dep3"},
-			wantClass:      "blocked",
-			wantBlockedLen: 1,
+			wantClass:      "waiting",
+			wantWaitingLen: 1,
 		},
 		{
 			name:           "dep cancelled",
@@ -293,11 +293,11 @@ func TestClassifyTask(t *testing.T) {
 			wantWaitingLen: 1,
 		},
 		{
-			name:           "blocked takes precedence over waiting",
+			name:           "blocked dep and pending dep both contribute to waiting",
 			task:           makeTask("x", "X", "pending", "high", nil),
 			resolvedDeps:   []string{"dep2", "dep3"},
-			wantClass:      "blocked",
-			wantBlockedLen: 1,
+			wantClass:      "waiting",
+			wantWaitingLen: 2,
 		},
 	}
 
@@ -474,11 +474,13 @@ func TestResolveDependencies_DepOnBlockedTask(t *testing.T) {
 		taskMap[rt.ID] = rt
 	}
 
-	if taskMap["b"].Classification != "blocked" {
-		t.Errorf("b classification = %q, want 'blocked'", taskMap["b"].Classification)
+	// Blocked deps are treated as "waiting" — they don't cascade as hard blockers.
+	// The blocked dep may be retried (e.g., runner marked it blocked after idle timeout).
+	if taskMap["b"].Classification != "waiting" {
+		t.Errorf("b classification = %q, want 'waiting'", taskMap["b"].Classification)
 	}
-	if len(taskMap["b"].BlockedBy) != 1 || taskMap["b"].BlockedBy[0] != "a" {
-		t.Errorf("b blocked_by = %v, want [a]", taskMap["b"].BlockedBy)
+	if len(taskMap["b"].WaitingOn) != 1 || taskMap["b"].WaitingOn[0] != "a" {
+		t.Errorf("b waiting_on = %v, want [a]", taskMap["b"].WaitingOn)
 	}
 }
 

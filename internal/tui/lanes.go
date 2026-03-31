@@ -79,8 +79,9 @@ func TopoSort(tasks []types.ResolvedTask) []types.ResolvedTask {
 	}
 
 	// Build the graph
+	// Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings)
 	for _, task := range tasks {
-		for _, depID := range task.DependsOn {
+		for _, depID := range task.ResolvedDeps {
 			// Only count in-tree dependencies
 			if !taskSet[depID] {
 				continue
@@ -151,11 +152,12 @@ func DetectMergePoints(tasks []types.ResolvedTask) map[string]bool {
 	}
 
 	// Identify merge points
+	// Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings)
 	merges := make(map[string]bool)
 	for _, task := range tasks {
 		// Count in-tree dependencies
 		inTreeDepCount := 0
-		for _, depID := range task.DependsOn {
+		for _, depID := range task.ResolvedDeps {
 			if taskSet[depID] {
 				inTreeDepCount++
 			}
@@ -207,10 +209,11 @@ func AssignLanes(sortedTasks []types.ResolvedTask) []LaneAssignment {
 	remainingDependents := make(map[string]int, len(sortedTasks))
 
 	// Pre-compute in-tree dependents count for each task
+	// Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings)
 	for _, task := range sortedTasks {
 		count := 0
 		for _, otherTask := range sortedTasks {
-			for _, depID := range otherTask.DependsOn {
+			for _, depID := range otherTask.ResolvedDeps {
 				if depID == task.ID {
 					count++
 					break
@@ -265,8 +268,9 @@ func AssignLanes(sortedTasks []types.ResolvedTask) []LaneAssignment {
 
 	for _, task := range sortedTasks {
 		// Filter in-tree dependencies
+		// Use ResolvedDeps (task IDs) not DependsOn (which contains titles/strings)
 		inTreeDeps := []string{}
-		for _, depID := range task.DependsOn {
+		for _, depID := range task.ResolvedDeps {
 			if taskSet[depID] {
 				inTreeDeps = append(inTreeDeps, depID)
 			}
@@ -377,13 +381,13 @@ func AssignLanes(sortedTasks []types.ResolvedTask) []LaneAssignment {
 
 // Box-drawing characters for git-graph rendering
 var laneChars = struct {
-	Vertical    string
-	Branch      string
-	LastBranch  string
-	MergeStart  string
-	MergeJoin   string
-	Empty       string
-	Connector   string
+	Vertical   string
+	Branch     string
+	LastBranch string
+	MergeStart string
+	MergeJoin  string
+	Empty      string
+	Connector  string
 }{
 	Vertical:   "│ ",
 	Branch:     "├─",
@@ -406,11 +410,12 @@ type LanePrefixSegmentContext struct {
 // marker (○) and task name. Pure function with no side effects.
 //
 // Examples:
-//   Normal child:     │ ├─
-//   Last child:       │ └─
-//   Merge (2 lanes):  ╰─┴─
-//   Merge (3 lanes):  ╰─┴─┴─
-//   Active lanes:     │ │ ├─  (lane 0 + lane 1 active, branch at lane 2)
+//
+//	Normal child:     │ ├─
+//	Last child:       │ └─
+//	Merge (2 lanes):  ╰─┴─
+//	Merge (3 lanes):  ╰─┴─┴─
+//	Active lanes:     │ │ ├─  (lane 0 + lane 1 active, branch at lane 2)
 func GeneratePrefix(assignment LaneAssignment, index int, allAssignments []LaneAssignment, context *LanePrefixSegmentContext) string {
 	segments := GeneratePrefixSegments(assignment, index, allAssignments, context)
 	result := ""
@@ -529,7 +534,7 @@ func buildMergePrefixSegments(assignment LaneAssignment, index int, allAssignmen
 
 	// All lanes involved in the merge (the task's own lane + merge-from lanes)
 	allMergeLanes := append([]int{lane}, mergeFromLanes...)
-	
+
 	// Sort allMergeLanes
 	for i := 0; i < len(allMergeLanes); i++ {
 		for j := i + 1; j < len(allMergeLanes); j++ {

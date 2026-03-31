@@ -497,7 +497,29 @@ func TestGetBlocked(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()
 
+	// A task depending on a "blocked" dep is classified as "waiting", not "blocked".
+	// Only cancelled deps and cycles cause hard-blocking.
+	// So GetBlocked should NOT return bbb22222 here.
 	insertTaskNote(t, store, "aaa11111", "Blocked Dep", "blocked", "high", "proj", map[string]interface{}{})
+	insertTaskNote(t, store, "bbb22222", "Waiting Task", "pending", "low", "proj", map[string]interface{}{
+		"depends_on": []interface{}{"aaa11111"},
+	})
+
+	blocked, err := svc.GetBlocked(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetBlocked failed: %v", err)
+	}
+	if len(blocked) != 0 {
+		t.Fatalf("expected 0 blocked tasks (blocked deps cause waiting, not blocking), got %d", len(blocked))
+	}
+}
+
+func TestGetBlocked_CancelledDepCausesBlocked(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// A task depending on a "cancelled" dep IS hard-blocked.
+	insertTaskNote(t, store, "aaa11111", "Cancelled Dep", "cancelled", "high", "proj", map[string]interface{}{})
 	insertTaskNote(t, store, "bbb22222", "Blocked Task", "pending", "low", "proj", map[string]interface{}{
 		"depends_on": []interface{}{"aaa11111"},
 	})

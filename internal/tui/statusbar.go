@@ -43,10 +43,15 @@ func (s StatusBar) View(width int) string {
 	// Always include second row for metrics display (matches origin/main TS TUI)
 	// Shows "CPU:0.0% Mem:0.0MB 0 procs" when no processes are tracked
 	content := firstRow
+	expectedContentLines := 1
 	if s.Metrics != nil {
 		secondRow := s.renderSecondRow(width)
 		content = firstRow + "\n" + secondRow
+		expectedContentLines = 2
 	}
+	// MaxHeight prevents overflow if content wraps beyond expected lines.
+	// Expected: contentLines + 2 (top/bottom border).
+	barStyle = barStyle.MaxHeight(expectedContentLines + 2)
 	rendered := barStyle.Render(content)
 
 	return rendered

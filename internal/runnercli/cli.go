@@ -3,8 +3,11 @@ package runnercli
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -149,6 +152,24 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	processMgr := runner.NewProcessManager(cfg)
 	stateMgr := runner.NewStateManager(cfg.StateDir, opts.Projects[0])
 
+	// In TUI mode, redirect the runner's log.Logger to a file (or discard)
+	// so it doesn't write to stderr and corrupt Bubbletea's alternate screen.
+	var runnerLogger *log.Logger
+	if cfg.LogDir != "" {
+		if err := os.MkdirAll(cfg.LogDir, 0o755); err == nil {
+			logPath := filepath.Join(cfg.LogDir, "runner.log")
+			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+			if err == nil {
+				defer logFile.Close()
+				runnerLogger = log.New(logFile, "", log.LstdFlags)
+			}
+		}
+	}
+	if runnerLogger == nil {
+		// Fallback: discard all runner logs rather than corrupt the TUI
+		runnerLogger = log.New(io.Discard, "", 0)
+	}
+
 	// Build runner options
 	runnerOpts := runner.TaskRunnerOptions{
 		ProjectID:   opts.Projects[0],
@@ -156,6 +177,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		Config:      cfg,
 		Mode:        runner.ExecutionModeTUI,
 		StartPaused: true,
+		Logger:      runnerLogger,
 		Client:      client,
 		Executor:    executor,
 		ProcessMgr:  processMgr,

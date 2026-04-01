@@ -47,6 +47,16 @@ var monitorTemplates = map[string]types.MonitorTemplate{
 		GeneratedKind: "feature_review",
 		GeneratedBy:   "feature-completion-hook",
 	},
+	"dream": {
+		ID:              "dream",
+		Label:           "Dream Consolidation",
+		Description:     "Periodically consolidates project knowledge into a single injectable context file",
+		DefaultSchedule: "0 3 * * *",
+		DefaultMaxRuns:  0,
+		Tags:            []string{"scheduled", "dream", "consolidation"},
+		CreationMode:    types.CreationModeScheduled,
+		AlwaysActive:    true,
+	},
 }
 
 // =============================================================================

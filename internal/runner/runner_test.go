@@ -2435,6 +2435,179 @@ func TestTaskRunner_Poll_AllPaused_MultipleEnabledFeatures(t *testing.T) {
 }
 
 // =============================================================================
+// EnableFeature / DisableFeature / GetEnabledFeatures Tests
+// =============================================================================
+
+func TestTaskRunner_EnableFeature_AddsToMap(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+
+	enabled := tr.GetEnabledFeatures()
+	if !enabled["feat-auth"] {
+		t.Error("EnableFeature should add feature to enabled map")
+	}
+}
+
+func TestTaskRunner_EnableFeature_MultipleFeaturesCoexist(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+	tr.EnableFeature("feat-deploy")
+	tr.EnableFeature("feat-metrics")
+
+	enabled := tr.GetEnabledFeatures()
+	if len(enabled) != 3 {
+		t.Fatalf("expected 3 enabled features, got %d", len(enabled))
+	}
+	for _, id := range []string{"feat-auth", "feat-deploy", "feat-metrics"} {
+		if !enabled[id] {
+			t.Errorf("expected %q to be enabled", id)
+		}
+	}
+}
+
+func TestTaskRunner_EnableFeature_Idempotent(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+	tr.EnableFeature("feat-auth") // enable again — should be no-op
+
+	enabled := tr.GetEnabledFeatures()
+	if len(enabled) != 1 {
+		t.Errorf("expected 1 enabled feature after duplicate enable, got %d", len(enabled))
+	}
+}
+
+func TestTaskRunner_EnableFeature_EmitsEvent(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	var events []RunnerEvent
+	var mu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	})
+
+	tr.EnableFeature("feat-auth")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != EventFeatureEnabled {
+		t.Errorf("event type = %q, want %q", events[0].Type, EventFeatureEnabled)
+	}
+	if events[0].FeatureID != "feat-auth" {
+		t.Errorf("event FeatureID = %q, want %q", events[0].FeatureID, "feat-auth")
+	}
+}
+
+func TestTaskRunner_DisableFeature_RemovesFromMap(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+	tr.EnableFeature("feat-deploy")
+
+	tr.DisableFeature("feat-auth")
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["feat-auth"] {
+		t.Error("DisableFeature should remove feature from enabled map")
+	}
+	if !enabled["feat-deploy"] {
+		t.Error("DisableFeature should not affect other features")
+	}
+}
+
+func TestTaskRunner_DisableFeature_NonExistent_NoOp(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	// Disabling a feature that was never enabled should not panic or error
+	tr.DisableFeature("does-not-exist")
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled != nil {
+		t.Errorf("expected nil enabled features, got %v", enabled)
+	}
+}
+
+func TestTaskRunner_DisableFeature_EmitsEvent(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	var events []RunnerEvent
+	var mu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		mu.Lock()
+		events = append(events, event)
+		mu.Unlock()
+	})
+
+	tr.EnableFeature("feat-auth")
+	tr.DisableFeature("feat-auth")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+	if events[1].Type != EventFeatureDisabled {
+		t.Errorf("event type = %q, want %q", events[1].Type, EventFeatureDisabled)
+	}
+	if events[1].FeatureID != "feat-auth" {
+		t.Errorf("event FeatureID = %q, want %q", events[1].FeatureID, "feat-auth")
+	}
+}
+
+func TestTaskRunner_GetEnabledFeatures_ReturnsNilWhenEmpty(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled != nil {
+		t.Errorf("expected nil for empty enabled features, got %v", enabled)
+	}
+}
+
+func TestTaskRunner_GetEnabledFeatures_ReturnsCopy(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+
+	// Get a copy
+	copy1 := tr.GetEnabledFeatures()
+	if !copy1["feat-auth"] {
+		t.Fatal("copy should contain feat-auth")
+	}
+
+	// Mutate the copy — should NOT affect the internal state
+	copy1["feat-injected"] = true
+	delete(copy1, "feat-auth")
+
+	// Get fresh copy — should still have original state
+	copy2 := tr.GetEnabledFeatures()
+	if !copy2["feat-auth"] {
+		t.Error("mutating copy should not affect internal map — feat-auth missing")
+	}
+	if copy2["feat-injected"] {
+		t.Error("mutating copy should not affect internal map — feat-injected leaked in")
+	}
+}
+
+func TestTaskRunner_GetEnabledFeatures_AllDisabled_ReturnsNil(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-auth")
+	tr.DisableFeature("feat-auth")
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled != nil {
+		t.Errorf("expected nil after disabling all features, got %v", enabled)
+	}
+}
+
+// =============================================================================
 // getEnabledFeatureIDsLocked Tests
 // =============================================================================
 

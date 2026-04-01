@@ -73,7 +73,7 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("S", "Global settings"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("x", "Execute task"))
+	b.WriteString(formatShortcut("x", "Execute task / toggle feature"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("c", "Complete task"))
 	b.WriteString("\n")

@@ -231,6 +231,13 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// Save initial state
 	tr.saveState()
 
+	// Emit runner started event
+	tr.emitEvent(RunnerEvent{
+		Type:     EventRunnerStarted,
+		Projects: tr.projects,
+		Mode:     string(tr.mode),
+	})
+
 	pollInterval := time.Duration(tr.config.PollInterval) * time.Second
 	if pollInterval < time.Second {
 		pollInterval = time.Second
@@ -409,8 +416,21 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("claim task: %w", err)
 	}
 	if !result.Success {
+		tr.emitEvent(RunnerEvent{
+			Type:      EventTaskClaimRejected,
+			TaskID:    task.ID,
+			ProjectID: projectID,
+			ClaimedBy: result.ClaimedBy,
+		})
 		return fmt.Errorf("task already claimed by %s", result.ClaimedBy)
 	}
+
+	tr.emitEvent(RunnerEvent{
+		Type:      EventTaskClaimed,
+		TaskID:    task.ID,
+		ProjectID: projectID,
+		TaskPath:  task.Path,
+	})
 
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
@@ -419,10 +439,33 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("update task status: %w", err)
 	}
 
+	tr.emitEvent(RunnerEvent{
+		Type:       EventTaskStatusChanged,
+		TaskID:     task.ID,
+		ProjectID:  projectID,
+		TaskPath:   task.Path,
+		FromStatus: "pending",
+		ToStatus:   "in_progress",
+	})
+
 	// Resolve workdir (may create git worktree)
 	workdir, err := tr.executor.ResolveWorkdir(task)
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
+		tr.emitEvent(RunnerEvent{
+			Type:       EventTaskStatusChanged,
+			TaskID:     task.ID,
+			ProjectID:  projectID,
+			TaskPath:   task.Path,
+			FromStatus: "in_progress",
+			ToStatus:   "blocked",
+		})
+		tr.emitEvent(RunnerEvent{
+			Type:      EventTaskReleased,
+			TaskID:    task.ID,
+			ProjectID: projectID,
+			Reason:    "workdir resolution failed",
+		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID)
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("resolve workdir: %w", err)
@@ -436,6 +479,12 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		// Release the claim on failure
+		tr.emitEvent(RunnerEvent{
+			Type:      EventTaskReleased,
+			TaskID:    task.ID,
+			ProjectID: projectID,
+			Reason:    "spawn failed",
+		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID)
 		return fmt.Errorf("spawn task: %w", err)
 	}
@@ -679,6 +728,16 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		apiStatus = "pending" // failed/crashed/timeout → back to pending for retry
 		eventType = EventTaskFailed
 	}
+
+	// Emit status change before the API update
+	tr.emitEvent(RunnerEvent{
+		Type:       EventTaskStatusChanged,
+		TaskID:     taskID,
+		ProjectID:  task.ProjectID,
+		TaskPath:   task.Path,
+		FromStatus: "in_progress",
+		ToStatus:   apiStatus,
+	})
 
 	// Update API status
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, apiStatus); err != nil {
@@ -968,7 +1027,10 @@ func (tr *TaskRunner) OnEvent(handler EventHandler) {
 }
 
 // emitEvent sends an event to all registered handlers.
+// It auto-stamps RunnerID on every event so callers don't need to set it.
 func (tr *TaskRunner) emitEvent(event RunnerEvent) {
+	event.RunnerID = tr.runnerID
+
 	tr.eventMu.RLock()
 	handlers := make([]EventHandler, len(tr.handlers))
 	copy(handlers, tr.handlers)

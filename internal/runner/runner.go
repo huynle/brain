@@ -144,9 +144,10 @@ type TaskRunner struct {
 	maxParallel     int // runtime-adjustable max parallel (0 = use config.MaxParallel)
 
 	// Pause state (protected by pauseMu)
-	pauseMu    sync.RWMutex
-	pauseCache map[string]bool
-	allPaused  bool
+	pauseMu         sync.RWMutex
+	pauseCache      map[string]bool
+	allPaused       bool
+	enabledFeatures map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -187,19 +188,20 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	tr := &TaskRunner{
-		runnerID:   runnerID,
-		projects:   projects,
-		config:     opts.Config,
-		mode:       mode,
-		logger:     logger,
-		client:     opts.Client,
-		executor:   opts.Executor,
-		processMgr: opts.ProcessMgr,
-		stateMgr:   opts.StateMgr,
-		status:     RunnerStatusIdle,
-		pauseCache: make(map[string]bool),
-		wakeCh:     make(chan struct{}, 1),
-		done:       make(chan struct{}),
+		runnerID:        runnerID,
+		projects:        projects,
+		config:          opts.Config,
+		mode:            mode,
+		logger:          logger,
+		client:          opts.Client,
+		executor:        opts.Executor,
+		processMgr:      opts.ProcessMgr,
+		stateMgr:        opts.StateMgr,
+		status:          RunnerStatusIdle,
+		pauseCache:      make(map[string]bool),
+		enabledFeatures: make(map[string]bool),
+		wakeCh:          make(chan struct{}, 1),
+		done:            make(chan struct{}),
 	}
 
 	if opts.StartPaused {
@@ -950,6 +952,70 @@ func (tr *TaskRunner) IsAllPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
 	return tr.allPaused
+}
+
+// =============================================================================
+// Feature Toggle
+// =============================================================================
+
+// EnableFeature adds a feature to the enabled whitelist.
+// When a project is paused, the poll loop will still pick up tasks
+// from enabled features.
+func (tr *TaskRunner) EnableFeature(featureID string) {
+	tr.pauseMu.Lock()
+	tr.enabledFeatures[featureID] = true
+	tr.pauseMu.Unlock()
+
+	tr.emitEvent(RunnerEvent{
+		Type:      EventFeatureEnabled,
+		FeatureID: featureID,
+	})
+}
+
+// DisableFeature removes a feature from the enabled whitelist.
+// Running tasks continue, but no new tasks from this feature
+// will be auto-picked when the project is paused.
+func (tr *TaskRunner) DisableFeature(featureID string) {
+	tr.pauseMu.Lock()
+	delete(tr.enabledFeatures, featureID)
+	tr.pauseMu.Unlock()
+
+	tr.emitEvent(RunnerEvent{
+		Type:      EventFeatureDisabled,
+		FeatureID: featureID,
+	})
+}
+
+// GetEnabledFeatures returns a copy of the enabled features map.
+func (tr *TaskRunner) GetEnabledFeatures() map[string]bool {
+	tr.pauseMu.RLock()
+	defer tr.pauseMu.RUnlock()
+
+	if len(tr.enabledFeatures) == 0 {
+		return nil
+	}
+
+	cp := make(map[string]bool, len(tr.enabledFeatures))
+	for k, v := range tr.enabledFeatures {
+		cp[k] = v
+	}
+	return cp
+}
+
+// getEnabledFeatureIDs returns enabled feature IDs as a slice.
+// Thread-safe — acquires pauseMu internally.
+func (tr *TaskRunner) getEnabledFeatureIDs() []string {
+	tr.pauseMu.RLock()
+	defer tr.pauseMu.RUnlock()
+
+	if len(tr.enabledFeatures) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(tr.enabledFeatures))
+	for id := range tr.enabledFeatures {
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // =============================================================================

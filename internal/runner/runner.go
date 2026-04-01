@@ -358,8 +358,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 4. Check if all paused
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
+	enabledIDs := tr.getEnabledFeatureIDsLocked()
 	tr.pauseMu.RUnlock()
-	if allPaused {
+	if allPaused && len(enabledIDs) == 0 {
 		tr.emitPollComplete()
 		return
 	}
@@ -376,11 +377,26 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			break
 		}
 
-		// Skip paused projects
+		// Skip paused projects (unless features are enabled)
 		tr.pauseMu.RLock()
 		paused := tr.pauseCache[projectID]
+		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
-		if paused {
+
+		if paused || allPaused {
+			if len(projEnabledIDs) == 0 {
+				continue // fully paused, no enabled features
+			}
+			// Paused but features enabled: poll only enabled features
+			task, err := tr.client.GetNextTask(ctx, projectID, projEnabledIDs...)
+			if err != nil || task == nil {
+				continue
+			}
+			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
+				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
+				continue
+			}
+			filled++
 			continue
 		}
 
@@ -1007,7 +1023,12 @@ func (tr *TaskRunner) GetEnabledFeatures() map[string]bool {
 func (tr *TaskRunner) getEnabledFeatureIDs() []string {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
+	return tr.getEnabledFeatureIDsLocked()
+}
 
+// getEnabledFeatureIDsLocked returns enabled feature IDs as a slice.
+// Caller MUST hold pauseMu (at least RLock).
+func (tr *TaskRunner) getEnabledFeatureIDsLocked() []string {
 	if len(tr.enabledFeatures) == 0 {
 		return nil
 	}

@@ -42,8 +42,9 @@ type mockClient struct {
 	readyTasks    map[string][]types.ResolvedTask
 	readyTasksErr error
 
-	nextTask    map[string]*types.ResolvedTask
-	nextTaskErr error
+	nextTask      map[string]*types.ResolvedTask
+	nextTaskErr   error
+	nextTaskCalls []nextTaskCall
 
 	claimResult ClaimResult
 	claimErr    error
@@ -60,6 +61,11 @@ type mockClient struct {
 
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
+}
+
+type nextTaskCall struct {
+	ProjectID  string
+	FeatureIDs []string
 }
 
 type claimCall struct {
@@ -116,6 +122,10 @@ func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featur
 func (m *mockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	// Record the call with feature IDs for verification
+	idsCopy := make([]string, len(featureIDs))
+	copy(idsCopy, featureIDs)
+	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: idsCopy})
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
@@ -176,6 +186,14 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 		}
 	}
 	return &types.BrainEntry{Path: entryPath}, nil
+}
+
+func (m *mockClient) getNextTaskCalls() []nextTaskCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]nextTaskCall, len(m.nextTaskCalls))
+	copy(result, m.nextTaskCalls)
+	return result
 }
 
 func (m *mockClient) getClaimCalls() []claimCall {
@@ -1783,6 +1801,263 @@ func TestExecuteTask_ClaimFails_ReturnsError(t *testing.T) {
 }
 
 // =============================================================================
+// ExecuteFeature Tests
+// =============================================================================
+
+func TestExecuteFeature_FiltersToReadyTasks(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "Ready task", Priority: "high", Status: "pending", Classification: "ready"},
+		{ID: "task-2", Path: "projects/proj-a/task/task-2.md", Title: "Waiting task", Priority: "high", Status: "pending", Classification: "waiting"},
+		{ID: "task-3", Path: "projects/proj-a/task/task-3.md", Title: "Blocked task", Priority: "high", Status: "blocked", Classification: "blocked"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	if err != nil {
+		t.Fatalf("ExecuteFeature returned error: %v", err)
+	}
+	if started != 1 {
+		t.Fatalf("expected 1 started, got %d", started)
+	}
+
+	// Should only spawn the ready task
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task-1" {
+		t.Errorf("spawned task ID = %q, want %q", spawns[0].TaskID, "task-1")
+	}
+}
+
+func TestExecuteFeature_NoReadyTasks_ReturnsZeroNil(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "Waiting", Priority: "high", Status: "pending", Classification: "waiting"},
+		{ID: "task-2", Path: "projects/proj-a/task/task-2.md", Title: "Blocked", Priority: "high", Status: "blocked", Classification: "blocked"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if started != 0 {
+		t.Fatalf("expected 0 started, got %d", started)
+	}
+
+	// Should not spawn anything
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 0 {
+		t.Errorf("expected no spawn calls, got %d", len(spawns))
+	}
+}
+
+func TestExecuteFeature_EmptyTasks_ReturnsZeroNil(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, nil, "proj-a")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if started != 0 {
+		t.Fatalf("expected 0 started, got %d", started)
+	}
+}
+
+func TestExecuteFeature_SortsByPriorityThenTitle(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	// Need more capacity for this test
+	cfg := testRunnerConfig()
+	cfg.MaxParallel = 5
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tasks := []types.ResolvedTask{
+		{ID: "low-b", Path: "projects/proj-a/task/low-b.md", Title: "Beta", Priority: "low", Status: "pending", Classification: "ready"},
+		{ID: "high-a", Path: "projects/proj-a/task/high-a.md", Title: "Alpha", Priority: "high", Status: "pending", Classification: "ready"},
+		{ID: "med-c", Path: "projects/proj-a/task/med-c.md", Title: "Charlie", Priority: "medium", Status: "pending", Classification: "ready"},
+		{ID: "high-d", Path: "projects/proj-a/task/high-d.md", Title: "Delta", Priority: "high", Status: "pending", Classification: "ready"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	if err != nil {
+		t.Fatalf("ExecuteFeature returned error: %v", err)
+	}
+	if started != 4 {
+		t.Fatalf("expected 4 started, got %d", started)
+	}
+
+	// Should spawn in priority order: high(Alpha, Delta), medium(Charlie), low(Beta)
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 4 {
+		t.Fatalf("expected 4 spawn calls, got %d", len(spawns))
+	}
+	expectedOrder := []string{"high-a", "high-d", "med-c", "low-b"}
+	for i, expected := range expectedOrder {
+		if spawns[i].TaskID != expected {
+			t.Errorf("spawn[%d].TaskID = %q, want %q", i, spawns[i].TaskID, expected)
+		}
+	}
+}
+
+func TestExecuteFeature_RespectsCapacity(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr) // maxParallel = 2
+
+	// Fill 1 slot, leaving 1 available
+	processMgr.processes["existing-1"] = &ProcessInfo{
+		Task: RunningTask{ID: "existing-1"},
+		Proc: newMockProcess(1001),
+	}
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "First", Priority: "high", Status: "pending", Classification: "ready"},
+		{ID: "task-2", Path: "projects/proj-a/task/task-2.md", Title: "Second", Priority: "high", Status: "pending", Classification: "ready"},
+		{ID: "task-3", Path: "projects/proj-a/task/task-3.md", Title: "Third", Priority: "high", Status: "pending", Classification: "ready"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	if err != nil {
+		t.Fatalf("ExecuteFeature returned error: %v", err)
+	}
+	// Only 1 slot available (maxParallel=2, running=1), so only 1 should start
+	if started != 1 {
+		t.Fatalf("expected 1 started (capacity limited), got %d", started)
+	}
+}
+
+func TestExecuteFeature_AtCapacity_ReturnsError(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr) // maxParallel = 2
+
+	// Fill all slots
+	processMgr.processes["existing-1"] = &ProcessInfo{
+		Task: RunningTask{ID: "existing-1"},
+		Proc: newMockProcess(1001),
+	}
+	processMgr.processes["existing-2"] = &ProcessInfo{
+		Task: RunningTask{ID: "existing-2"},
+		Proc: newMockProcess(1002),
+	}
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "Task", Priority: "high", Status: "pending", Classification: "ready"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when at capacity")
+	}
+	if started != 0 {
+		t.Errorf("expected 0 started when at capacity, got %d", started)
+	}
+}
+
+func TestExecuteFeature_ContextCancelled_StopsLoop(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.MaxParallel = 10
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "First", Priority: "high", Status: "pending", Classification: "ready"},
+		{ID: "task-2", Path: "projects/proj-a/task/task-2.md", Title: "Second", Priority: "high", Status: "pending", Classification: "ready"},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately
+
+	started, _ := tr.ExecuteFeature(ctx, tasks, "proj-a")
+	// With cancelled context, should start 0 tasks
+	if started != 0 {
+		t.Errorf("expected 0 started with cancelled context, got %d", started)
+	}
+}
+
+func TestExecuteFeature_PartialFailure_ContinuesAndReportsError(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.MaxParallel = 5
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// Make claims fail
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner"}
+
+	tasks := []types.ResolvedTask{
+		{ID: "task-1", Path: "projects/proj-a/task/task-1.md", Title: "Fails claim", Priority: "high", Status: "pending", Classification: "ready"},
+	}
+
+	ctx := context.Background()
+	started, err := tr.ExecuteFeature(ctx, tasks, "proj-a")
+
+	// Task failed to claim, so 0 started but error reported
+	if started != 0 {
+		t.Errorf("expected 0 started (claim failed), got %d", started)
+	}
+	if err == nil {
+		t.Error("expected error when task fails to start")
+	}
+}
+
+// =============================================================================
 // SSE Listener Wiring Tests
 // =============================================================================
 
@@ -1915,5 +2190,304 @@ func TestTaskRunner_Stop_StopsSSEListener(t *testing.T) {
 	// tested by the fact that Stop() doesn't hang or panic.
 	if tr.sseListener == nil {
 		t.Error("sseListener should have been created during Start()")
+	}
+}
+
+// =============================================================================
+// Feature Toggle + Poll Integration Tests
+// =============================================================================
+
+func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAll()
+	tr.EnableFeature("feat-auth")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should spawn — enabled features override all-paused
+	spawnCalls := executor.getSpawnCalls()
+	if len(spawnCalls) == 0 {
+		t.Error("should spawn tasks when all-paused but features are enabled")
+	}
+
+	// Verify GetNextTask was called with the enabled feature IDs
+	nextCalls := client.getNextTaskCalls()
+	if len(nextCalls) == 0 {
+		t.Fatal("expected at least 1 GetNextTask call")
+	}
+	found := false
+	for _, call := range nextCalls {
+		for _, fid := range call.FeatureIDs {
+			if fid == "feat-auth" {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Error("GetNextTask should be called with enabled feature ID 'feat-auth'")
+	}
+}
+
+func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_ReturnsEarly(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAll()
+	// No enabled features
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should NOT spawn — existing behavior preserved
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("should not spawn when all-paused with no enabled features")
+	}
+	// Should NOT even call GetNextTask
+	if len(client.getNextTaskCalls()) > 0 {
+		t.Error("should not call GetNextTask when all-paused with no enabled features")
+	}
+}
+
+func TestTaskRunner_Poll_ProjectPaused_WithEnabledFeatures_PollsEnabledFeatures(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+	tr.EnableFeature("feat-deploy")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should spawn from proj-a using enabled features
+	spawnCalls := executor.getSpawnCalls()
+	if len(spawnCalls) == 0 {
+		t.Error("should spawn tasks for paused project when features are enabled")
+	}
+
+	// Verify GetNextTask was called with enabled feature IDs (not config feature IDs)
+	nextCalls := client.getNextTaskCalls()
+	foundEnabled := false
+	for _, call := range nextCalls {
+		if call.ProjectID == "proj-a" {
+			for _, fid := range call.FeatureIDs {
+				if fid == "feat-deploy" {
+					foundEnabled = true
+				}
+			}
+		}
+	}
+	if !foundEnabled {
+		t.Error("GetNextTask for paused proj-a should use enabled feature ID 'feat-deploy'")
+	}
+}
+
+func TestTaskRunner_Poll_ProjectPaused_NoEnabledFeatures_SkipsProject(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+	// No enabled features
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should NOT spawn from proj-a — existing behavior preserved
+	// (proj-b is unpaused but has no task)
+	spawnCalls := executor.getSpawnCalls()
+	if len(spawnCalls) > 0 {
+		t.Error("should not spawn tasks for paused project with no enabled features")
+	}
+}
+
+func TestTaskRunner_Poll_Unpaused_UsesConfigFeatureIDs(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.FeatureIDs = []string{"config-feat-1", "config-feat-2"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// Enable a feature (should NOT be used when unpaused)
+	tr.EnableFeature("toggled-feat")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should spawn normally
+	spawnCalls := executor.getSpawnCalls()
+	if len(spawnCalls) == 0 {
+		t.Fatal("should spawn tasks when unpaused")
+	}
+
+	// Verify GetNextTask was called with config feature IDs, not enabled feature IDs
+	nextCalls := client.getNextTaskCalls()
+	if len(nextCalls) == 0 {
+		t.Fatal("expected GetNextTask call")
+	}
+	call := nextCalls[0]
+	if len(call.FeatureIDs) != 2 {
+		t.Fatalf("expected 2 config feature IDs, got %d: %v", len(call.FeatureIDs), call.FeatureIDs)
+	}
+	hasConfig1 := false
+	hasConfig2 := false
+	for _, fid := range call.FeatureIDs {
+		if fid == "config-feat-1" {
+			hasConfig1 = true
+		}
+		if fid == "config-feat-2" {
+			hasConfig2 = true
+		}
+	}
+	if !hasConfig1 || !hasConfig2 {
+		t.Errorf("expected config feature IDs [config-feat-1, config-feat-2], got %v", call.FeatureIDs)
+	}
+}
+
+func TestTaskRunner_Poll_AllPaused_MultipleEnabledFeatures(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAll()
+	tr.EnableFeature("feat-auth")
+	tr.EnableFeature("feat-deploy")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Verify both feature IDs were passed
+	nextCalls := client.getNextTaskCalls()
+	if len(nextCalls) == 0 {
+		t.Fatal("expected GetNextTask calls")
+	}
+
+	featureSet := make(map[string]bool)
+	for _, call := range nextCalls {
+		for _, fid := range call.FeatureIDs {
+			featureSet[fid] = true
+		}
+	}
+	if !featureSet["feat-auth"] || !featureSet["feat-deploy"] {
+		t.Errorf("expected both feat-auth and feat-deploy in feature IDs, got %v", featureSet)
+	}
+}
+
+// =============================================================================
+// getEnabledFeatureIDsLocked Tests
+// =============================================================================
+
+func TestTaskRunner_GetEnabledFeatureIDsLocked_Empty(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.pauseMu.RLock()
+	ids := tr.getEnabledFeatureIDsLocked()
+	tr.pauseMu.RUnlock()
+
+	if ids != nil {
+		t.Errorf("expected nil for empty enabledFeatures, got %v", ids)
+	}
+}
+
+func TestTaskRunner_GetEnabledFeatureIDsLocked_WithFeatures(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-a")
+	tr.EnableFeature("feat-b")
+
+	tr.pauseMu.RLock()
+	ids := tr.getEnabledFeatureIDsLocked()
+	tr.pauseMu.RUnlock()
+
+	if len(ids) != 2 {
+		t.Fatalf("expected 2 IDs, got %d", len(ids))
+	}
+
+	idSet := make(map[string]bool)
+	for _, id := range ids {
+		idSet[id] = true
+	}
+	if !idSet["feat-a"] || !idSet["feat-b"] {
+		t.Errorf("expected feat-a and feat-b, got %v", ids)
+	}
+}
+
+func TestTaskRunner_GetEnabledFeatureIDsLocked_AfterDisable(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.EnableFeature("feat-a")
+	tr.EnableFeature("feat-b")
+	tr.DisableFeature("feat-a")
+
+	tr.pauseMu.RLock()
+	ids := tr.getEnabledFeatureIDsLocked()
+	tr.pauseMu.RUnlock()
+
+	if len(ids) != 1 {
+		t.Fatalf("expected 1 ID after disable, got %d", len(ids))
+	}
+	if ids[0] != "feat-b" {
+		t.Errorf("expected feat-b, got %s", ids[0])
 	}
 }

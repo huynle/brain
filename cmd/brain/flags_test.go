@@ -315,6 +315,79 @@ func TestApplyFlagsToConfig(t *testing.T) {
 	})
 }
 
+func TestParseDreamFlags(t *testing.T) {
+	t.Run("default values", func(t *testing.T) {
+		args := []string{}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.False(t, flags.Enable)
+		assert.False(t, flags.Disable)
+		assert.False(t, flags.Now)
+		assert.Empty(t, flags.Schedule)
+	})
+
+	t.Run("now flag", func(t *testing.T) {
+		args := []string{"--now"}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Now)
+	})
+
+	t.Run("enable flag", func(t *testing.T) {
+		args := []string{"--enable"}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Enable)
+	})
+
+	t.Run("disable flag", func(t *testing.T) {
+		args := []string{"--disable"}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Disable)
+	})
+
+	t.Run("schedule flag", func(t *testing.T) {
+		args := []string{"--schedule", "0 2 * * *"}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "0 2 * * *", flags.Schedule)
+	})
+
+	t.Run("all flags combined", func(t *testing.T) {
+		args := []string{"--enable", "--now", "--schedule", "daily"}
+		flags, err := ParseDreamFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Enable)
+		assert.True(t, flags.Now)
+		assert.Equal(t, "daily", flags.Schedule)
+	})
+}
+
+func TestConvertToCommandsDreamFlags(t *testing.T) {
+	t.Run("maps all fields correctly", func(t *testing.T) {
+		flags := &DreamFlags{
+			Enable:   true,
+			Disable:  false,
+			Now:      true,
+			Schedule: "0 3 * * *",
+		}
+
+		result := convertToCommandsDreamFlags(flags)
+
+		assert.True(t, result.Enable)
+		assert.False(t, result.Disable)
+		assert.True(t, result.Now)
+		assert.Equal(t, "0 3 * * *", result.Schedule)
+	})
+}
+
 func TestParsePluginFlags(t *testing.T) {
 	t.Run("default values", func(t *testing.T) {
 		args := []string{}

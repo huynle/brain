@@ -372,6 +372,48 @@ func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleF
 	}
 }
 
+// DreamFlags for dream command
+type DreamFlags struct {
+	Enable   bool
+	Disable  bool
+	Now      bool
+	Schedule string
+}
+
+// ParseDreamFlags parses dream command flags from args.
+func ParseDreamFlags(args []string) (*DreamFlags, error) {
+	flags := &DreamFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--enable":
+			flags.Enable = true
+		case "--disable":
+			flags.Disable = true
+		case "--now":
+			flags.Now = true
+		case "--schedule":
+			if i+1 < len(args) {
+				flags.Schedule = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsDreamFlags converts main.DreamFlags to commands.DreamFlags.
+func convertToCommandsDreamFlags(flags *DreamFlags) *commands.DreamFlags {
+	return &commands.DreamFlags{
+		Enable:   flags.Enable,
+		Disable:  flags.Disable,
+		Now:      flags.Now,
+		Schedule: flags.Schedule,
+	}
+}
+
 // ParseInitFlags parses init command flags from args.
 func ParseInitFlags(args []string) (*InitFlags, error) {
 	flags := &InitFlags{}

@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
 
 	_ "github.com/glebarez/go-sqlite"
 )
@@ -1165,6 +1166,228 @@ func TestLifecycle_SaveRecallUpdateDelete(t *testing.T) {
 	_, err = svc.Recall(ctx, saved.ID)
 	if err == nil {
 		t.Fatal("expected error after delete")
+	}
+}
+
+// =============================================================================
+// RecallFull tests
+// =============================================================================
+
+func TestRecallFull_ReturnsRawContent(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Save an entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Full Content Test",
+		Content: "The body content.",
+		Tags:    []string{"test"},
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// RecallFull should return the full file with frontmatter
+	fullContent, err := svc.RecallFull(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("RecallFull failed: %v", err)
+	}
+
+	// Must contain frontmatter delimiters
+	if !strings.HasPrefix(fullContent, "---\n") {
+		t.Error("expected full content to start with frontmatter delimiter")
+	}
+	if !strings.Contains(fullContent, "title: Full Content Test") {
+		t.Error("expected full content to contain title in frontmatter")
+	}
+	if !strings.Contains(fullContent, "type: plan") {
+		t.Error("expected full content to contain type in frontmatter")
+	}
+	if !strings.Contains(fullContent, "The body content.") {
+		t.Error("expected full content to contain body")
+	}
+}
+
+func TestRecallFull_ByPath(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Path Lookup Test",
+		Content: "Lookup by path.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	fullContent, err := svc.RecallFull(ctx, resp.Path)
+	if err != nil {
+		t.Fatalf("RecallFull by path failed: %v", err)
+	}
+
+	if !strings.Contains(fullContent, "title: Path Lookup Test") {
+		t.Error("expected full content to contain title")
+	}
+}
+
+func TestRecallFull_ByTitle(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "idea",
+		Title:   "Unique Title For RecallFull",
+		Content: "Some idea content.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	fullContent, err := svc.RecallFull(ctx, "Unique Title For RecallFull")
+	if err != nil {
+		t.Fatalf("RecallFull by title failed: %v", err)
+	}
+
+	if !strings.Contains(fullContent, "title: Unique Title For RecallFull") {
+		t.Error("expected full content to contain title")
+	}
+}
+
+func TestRecallFull_NotFound(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := svc.RecallFull(ctx, "nonexistent")
+	if err == nil {
+		t.Fatal("expected error for non-existent entry")
+	}
+}
+
+func TestRecallFull_EmptyPathOrID(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := svc.RecallFull(ctx, "")
+	if err == nil {
+		t.Fatal("expected error for empty pathOrID")
+	}
+}
+
+func TestRecallFull_RoundTrips(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Save an entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Round Trip Test",
+		Content: "Round trip content with special chars: *bold* and `code`.",
+		Tags:    []string{"go", "test"},
+		Status:  "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Get the full content via RecallFull
+	fullContent, err := svc.RecallFull(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("RecallFull failed: %v", err)
+	}
+
+	// Read the actual file from disk
+	absPath := filepath.Join(brainDir, filepath.FromSlash(resp.Path))
+	diskContent, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("failed to read file from disk: %v", err)
+	}
+
+	// The full content should match what's on disk
+	if fullContent != string(diskContent) {
+		t.Errorf("RecallFull content does not match disk content.\nRecallFull:\n%s\nDisk:\n%s", fullContent, string(diskContent))
+	}
+}
+
+func TestRecallFull_FallbackReconstruction(t *testing.T) {
+	svc, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Save an entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Fallback Test",
+		Content: "Fallback body content.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Clear the raw_content in DB to force fallback reconstruction
+	_, err = store.DB().ExecContext(ctx, `UPDATE notes SET raw_content = NULL WHERE short_id = ?`, resp.ID)
+	if err != nil {
+		t.Fatalf("failed to clear raw_content: %v", err)
+	}
+
+	// RecallFull should still work via reconstruction
+	fullContent, err := svc.RecallFull(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("RecallFull with fallback failed: %v", err)
+	}
+
+	// Must contain frontmatter
+	if !strings.HasPrefix(fullContent, "---\n") {
+		t.Error("reconstructed content should start with frontmatter delimiter")
+	}
+	if !strings.Contains(fullContent, "title: Fallback Test") {
+		t.Error("reconstructed content should contain title")
+	}
+	if !strings.Contains(fullContent, "type: plan") {
+		t.Error("reconstructed content should contain type")
+	}
+	if !strings.Contains(fullContent, "Fallback body content.") {
+		t.Error("reconstructed content should contain body")
+	}
+
+	// Verify the reconstructed content round-trips through Parse
+	doc, err := frontmatter.Parse(fullContent)
+	if err != nil {
+		t.Fatalf("failed to parse reconstructed content: %v", err)
+	}
+	if doc.Frontmatter.Title != "Fallback Test" {
+		t.Errorf("expected title 'Fallback Test', got %q", doc.Frontmatter.Title)
+	}
+	if doc.Frontmatter.Type != "plan" {
+		t.Errorf("expected type 'plan', got %q", doc.Frontmatter.Type)
+	}
+	if !strings.Contains(doc.Body, "Fallback body content.") {
+		t.Errorf("expected body to contain 'Fallback body content.', got %q", doc.Body)
+	}
+}
+
+func TestRecallFull_EmptyBody(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:  "scratch",
+		Title: "Empty Body Test",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	fullContent, err := svc.RecallFull(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("RecallFull failed: %v", err)
+	}
+
+	if !strings.HasPrefix(fullContent, "---\n") {
+		t.Error("expected full content to start with frontmatter delimiter")
+	}
+	if !strings.Contains(fullContent, "title: Empty Body Test") {
+		t.Error("expected full content to contain title")
 	}
 }
 

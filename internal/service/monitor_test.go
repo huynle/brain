@@ -276,6 +276,10 @@ func (m *mockBrainForMonitor) UpdateMetadata(_ context.Context, _ string, _ map[
 	return nil, nil
 }
 
+func (m *mockBrainForMonitor) RecallFull(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+
 // =============================================================================
 // MonitorService.Create Tests
 // =============================================================================

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
@@ -192,6 +193,7 @@ func (pm *ProcessManager) Add(taskID string, task RunningTask, proc Process) err
 	defer pm.mu.Unlock()
 
 	if _, exists := pm.processes[taskID]; exists {
+		slog.Warn("process already tracked", "task_id", taskID)
 		return fmt.Errorf("task %s is already being tracked", taskID)
 	}
 
@@ -200,6 +202,7 @@ func (pm *ProcessManager) Add(taskID string, task RunningTask, proc Process) err
 		Proc: proc,
 	}
 
+	slog.Info("process tracked", "task_id", taskID, "pid", proc.Pid(), "project", task.ProjectID)
 	return nil
 }
 
@@ -214,6 +217,7 @@ func (pm *ProcessManager) Remove(taskID string) *ProcessInfo {
 	}
 
 	delete(pm.processes, taskID)
+	slog.Info("process removed", "task_id", taskID, "pid", info.Proc.Pid())
 	return info
 }
 
@@ -335,6 +339,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	if pm.config.TaskTimeout > 0 {
 		elapsed := time.Since(info.Task.StartedAt)
 		if elapsed > time.Duration(pm.config.TaskTimeout)*time.Millisecond {
+			slog.Warn("task timeout detected", "task_id", taskID, "elapsed_ms", elapsed.Milliseconds(), "timeout_ms", pm.config.TaskTimeout)
 			return CompletionTimeout
 		}
 	}
@@ -353,6 +358,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	if checkTaskFile {
 		entry := pm.getTaskEntry(info.Task.Path)
 		if entry != nil {
+			slog.Debug("task file status", "task_id", taskID, "status", entry.Status)
 			// Check direct status
 			switch entry.Status {
 			case "completed":
@@ -387,6 +393,8 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	}
 
 	// Process exited but task file didn't update to completion.
+	slog.Info("process exited", "task_id", taskID, "exit_code", info.Proc.ExitCode())
+
 	// For complete_on_idle tasks (e.g. direct_prompt), process exit means the
 	// agent finished the prompt and the TUI closed — treat as completed.
 	// Note: PidProcess always returns ExitCode() == -1 since we can't determine
@@ -465,6 +473,7 @@ func (pm *ProcessManager) Kill(ctx context.Context, taskID string) bool {
 	}
 
 	// Send SIGTERM
+	slog.Info("process kill SIGTERM", "task_id", taskID, "pid", info.Proc.Pid())
 	info.Proc.Kill(syscall.SIGTERM)
 
 	// Wait for exit with timeout
@@ -473,6 +482,7 @@ func (pm *ProcessManager) Kill(ctx context.Context, taskID string) bool {
 	}
 
 	// Force kill if didn't exit
+	slog.Warn("process kill SIGKILL (force)", "task_id", taskID, "pid", info.Proc.Pid())
 	info.Proc.Kill(syscall.SIGKILL)
 	pm.waitForExit(info.Proc, 2*time.Second)
 
@@ -487,6 +497,8 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		taskIDs = append(taskIDs, id)
 	}
 	pm.mu.Unlock()
+
+	slog.Info("killing all processes", "count", len(taskIDs))
 
 	// Send SIGTERM to all
 	for _, id := range taskIDs {
@@ -523,6 +535,8 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 			info.Proc.Kill(syscall.SIGKILL)
 		}
 	}
+
+	slog.Info("all processes killed")
 }
 
 // waitForExit polls until the process exits or timeout is reached.

@@ -18,6 +18,7 @@ Convert a structured implementation plan into executable tasks with proper depen
   <rule id="no_parent_task">Do NOT create parent/container tasks - only create executable tasks</rule>
   <rule id="depends_on_field">Use the `depends_on` field in brain_save - do NOT put dependencies in content</rule>
   <rule id="draft_then_promote">Create ALL tasks as "draft" first, then batch-promote to "pending" after the LAST task is created</rule>
+  <rule id="use_feature_id">ALWAYS assign a feature_id to ALL tasks - derive it by slugifying the plan title (e.g., "OAuth Implementation" -> "oauth-implementation"). All tasks from the same plan share one feature_id.</rule>
 </critical_rules>
 
 ## What This Command Does
@@ -26,10 +27,11 @@ Convert a structured implementation plan into executable tasks with proper depen
 2. **Validates plan exists** - Exits if no structured plan found
 3. **Dispatches validation agent** - Checks feasibility against codebase
 4. **Extracts task structure** - Phases, steps, dependencies
-5. **Presents task graph** - Interactive editing before commit
-6. **Creates tasks as drafts** - All tasks created with `status: "draft"` first
-7. **Batch promotes to pending** - After ALL tasks created, promotes them to `status: "pending"`
-8. **Hands off to brain-runner** - Ready for autonomous execution
+5. **Derives feature_id** - Slugifies plan title into a shared feature_id for all tasks
+6. **Presents task graph** - Interactive editing before commit
+7. **Creates tasks as drafts** - All tasks created with `status: "draft"` and shared `feature_id`
+8. **Batch promotes to pending** - After ALL tasks created, promotes them to `status: "pending"`
+9. **Hands off to brain-runner** - Ready for autonomous execution
 
 **Why draft-then-promote?**
 - Prevents race condition where brain-runner executes tasks before all dependencies are filed
@@ -354,11 +356,37 @@ Parse input like `"1,2" "3,4" "5,6,7" "8"` into task groups.
 
 User can adjust in edit phase.
 
+### Step 7b: Derive Feature ID
+
+All tasks from a plan share a single `feature_id` derived by slugifying the plan title:
+
+```
+FEATURE_ID = slugify(PLAN_TITLE)
+
+Examples:
+  "OAuth Implementation"       -> "oauth-implementation"
+  "Add Dark Mode Support"      -> "dark-mode-support"
+  "Fix User Auth Flow"         -> "fix-user-auth-flow"
+  "Phase 2: Payment Gateway"   -> "phase-2-payment-gateway"
+
+Rules:
+  - Lowercase
+  - Replace spaces with hyphens
+  - Strip special characters (except hyphens)
+  - Collapse multiple hyphens
+```
+
+This `feature_id` is assigned to every task created from this plan, enabling:
+- Visual grouping in the TUI dashboard
+- Feature-level pause/resume controls
+- Feature checkout validation (`feature-checkout` skill)
+
 ### Step 8: Present Task Graph
 
 ```
 Task Graph: "$PLAN_TITLE"
 Project: $PROJECT_DISPLAY
+Feature ID: $FEATURE_ID
 
   1. [high] $TASK_1_TITLE
      Files: $FILES
@@ -515,6 +543,7 @@ for each task in sorted_tasks:
     status: "draft",  # DRAFT first - not visible to brain-runner yet
     priority: "$PRIORITY",
     project: PROJECT,  # omit if null
+    feature_id: FEATURE_ID,  # Groups all tasks from this plan together
     depends_on: ["$DEP_TASK_TITLE_1", "$DEP_TASK_TITLE_2"],  # USE THIS FIELD - omit if empty
     tags: ["brain-runner", slugify("$PLAN_TITLE")],
     user_original_request: "$PLAN_TITLE: $TASK_DESCRIPTION",
@@ -536,6 +565,7 @@ for each path in task_paths:
 - Do NOT create a parent/container task
 - Do NOT put dependencies in the content - use the `depends_on` field
 - The `depends_on` field accepts task titles or IDs
+- ALWAYS set `feature_id` on every task - derived from slugified plan title
 - Each task should be independently executable
 - ALL tasks start as draft, ALL promoted to pending at the end
 
@@ -561,6 +591,7 @@ All N tasks promoted to pending.
 
 ```
 Queued: "$PLAN_TITLE" (N tasks)
+Feature ID: $FEATURE_ID
 
   1. $TASK_1 [pending] (ready)
   2. $TASK_2 [pending] (blocked -> #1)
@@ -604,6 +635,7 @@ $TASK_DESCRIPTION_FROM_PLAN
 
 ## Context
 Plan: $PLAN_TITLE
+Feature: $FEATURE_ID
 Task $N of $TOTAL
 
 ## Files Involved
@@ -766,6 +798,7 @@ How granular should tasks be?
 
 Task Graph: "OAuth Implementation"
 Project: myproject
+Feature ID: oauth-implementation
 
   1. [high] Add OAuth config schema
      Files: src/config/oauth.ts
@@ -840,6 +873,7 @@ All 9 tasks created as drafts. Promoting to pending...
   ✓ All 9 tasks promoted to pending
 
 Queued: "OAuth Implementation" (9 tasks)
+Feature ID: oauth-implementation
 
   1. Add OAuth config schema [pending] (ready)
   2. Create OAuth provider interface [pending] (blocked -> #1)

@@ -204,12 +204,15 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 					r.Get("/templates", o.handler.HandleListMonitorTemplates)
 					r.Get("/", o.handler.HandleListMonitors)
 					r.Post("/", o.handler.HandleCreateMonitor)
+					// by-scope must be registered BEFORE {taskId} wildcard
+					r.Delete("/by-scope", o.handler.HandleDeleteMonitorByScope)
 					r.Patch("/{taskId}/toggle", o.handler.HandleToggleMonitor)
 					r.Delete("/{taskId}", o.handler.HandleDeleteMonitor)
 				} else {
 					r.Get("/templates", notImplemented)
 					r.Get("/", notImplemented)
 					r.Post("/", notImplemented)
+					r.Delete("/by-scope", notImplemented)
 					r.Patch("/{taskId}/toggle", notImplemented)
 					r.Delete("/{taskId}", notImplemented)
 				}

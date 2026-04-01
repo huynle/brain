@@ -170,4 +170,7 @@ type MonitorService interface {
 
 	// Delete removes a monitor by task ID.
 	Delete(ctx context.Context, taskID string) (string, error)
+
+	// Find finds an existing monitor for a template+scope combo.
+	Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error)
 }

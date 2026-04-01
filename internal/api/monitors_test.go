@@ -25,6 +25,7 @@ type mockMonitorService struct {
 	createForFeatureFunc func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.CreateMonitorResult, error)
 	toggleFunc           func(ctx context.Context, taskID string, enabled bool) (string, error)
 	deleteFunc           func(ctx context.Context, taskID string) (string, error)
+	findFunc             func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error)
 }
 
 func (m *mockMonitorService) ListTemplates() []types.MonitorTemplate {
@@ -76,6 +77,13 @@ func (m *mockMonitorService) CreateForFeature(ctx context.Context, templateID st
 	return nil, fmt.Errorf("createForFeatureFunc not set")
 }
 
+func (m *mockMonitorService) Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+	if m.findFunc != nil {
+		return m.findFunc(ctx, templateID, scope)
+	}
+	return nil, fmt.Errorf("findFunc not set")
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -87,6 +95,8 @@ func newMonitorTestRouter(mock *mockMonitorService) *chi.Mux {
 		r.Get("/templates", h.HandleListMonitorTemplates)
 		r.Get("/", h.HandleListMonitors)
 		r.Post("/", h.HandleCreateMonitor)
+		// by-scope must be registered BEFORE {taskId} wildcard
+		r.Delete("/by-scope", h.HandleDeleteMonitorByScope)
 		r.Patch("/{taskId}/toggle", h.HandleToggleMonitor)
 		r.Delete("/{taskId}", h.HandleDeleteMonitor)
 	})
@@ -658,5 +668,242 @@ func TestHandleDeleteMonitor(t *testing.T) {
 				tt.checkBody(t, resp)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Delete Monitor By Scope Tests
+// =============================================================================
+
+func TestHandleDeleteMonitorByScope(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       any
+		mockFind   func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error)
+		mockDelete func(ctx context.Context, taskID string) (string, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name: "success with camelCase templateId",
+			body: map[string]any{
+				"templateId": "blocked-inspector",
+				"scope": map[string]any{
+					"type":    "project",
+					"project": "test",
+				},
+			},
+			mockFind: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+				if templateID != "blocked-inspector" {
+					return nil, fmt.Errorf("templateID = %q, want %q", templateID, "blocked-inspector")
+				}
+				if scope.Type != "project" || scope.Project != "test" {
+					return nil, fmt.Errorf("scope = %+v, want project/test", scope)
+				}
+				return &types.MonitorFindResult{
+					ID:   "abc12def",
+					Path: "projects/test/task/monitor.md",
+				}, nil
+			},
+			mockDelete: func(ctx context.Context, taskID string) (string, error) {
+				if taskID != "abc12def" {
+					return "", fmt.Errorf("taskID = %q, want %q", taskID, "abc12def")
+				}
+				return "projects/test/task/monitor.md", nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				var body types.MonitorDeleteByScopeResponse
+				if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+					t.Fatalf("failed to decode: %v", err)
+				}
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.Path != "projects/test/task/monitor.md" {
+					t.Errorf("path = %q, want %q", body.Path, "projects/test/task/monitor.md")
+				}
+				if body.TaskID != "abc12def" {
+					t.Errorf("taskId = %q, want %q", body.TaskID, "abc12def")
+				}
+			},
+		},
+		{
+			name: "success with snake_case template_id",
+			body: map[string]any{
+				"template_id": "feature-review",
+				"scope": map[string]any{
+					"type":       "feature",
+					"project":    "myproject",
+					"feature_id": "auth",
+				},
+			},
+			mockFind: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+				if templateID != "feature-review" {
+					return nil, fmt.Errorf("templateID = %q, want %q", templateID, "feature-review")
+				}
+				if scope.Type != "feature" || scope.FeatureID != "auth" {
+					return nil, fmt.Errorf("scope = %+v, want feature/auth", scope)
+				}
+				return &types.MonitorFindResult{
+					ID:   "xyz98765",
+					Path: "projects/myproject/task/monitor.md",
+				}, nil
+			},
+			mockDelete: func(ctx context.Context, taskID string) (string, error) {
+				return "projects/myproject/task/monitor.md", nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				var body types.MonitorDeleteByScopeResponse
+				if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+					t.Fatalf("failed to decode: %v", err)
+				}
+				if body.TaskID != "xyz98765" {
+					t.Errorf("taskId = %q, want %q", body.TaskID, "xyz98765")
+				}
+			},
+		},
+		{
+			name: "not found - no monitor for scope",
+			body: map[string]any{
+				"templateId": "blocked-inspector",
+				"scope": map[string]any{
+					"type":    "project",
+					"project": "nonexistent",
+				},
+			},
+			mockFind: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+				return nil, nil // not found
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:       "invalid JSON body",
+			body:       "not json",
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "missing templateId and template_id",
+			body: map[string]any{
+				"scope": map[string]any{
+					"type":    "project",
+					"project": "test",
+				},
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "missing scope",
+			body: map[string]any{
+				"templateId": "blocked-inspector",
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "find service error",
+			body: map[string]any{
+				"templateId": "blocked-inspector",
+				"scope": map[string]any{
+					"type":    "project",
+					"project": "test",
+				},
+			},
+			mockFind: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+				return nil, fmt.Errorf("database error")
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "delete service error",
+			body: map[string]any{
+				"templateId": "blocked-inspector",
+				"scope": map[string]any{
+					"type":    "project",
+					"project": "test",
+				},
+			},
+			mockFind: func(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error) {
+				return &types.MonitorFindResult{
+					ID:   "abc12def",
+					Path: "projects/test/task/monitor.md",
+				}, nil
+			},
+			mockDelete: func(ctx context.Context, taskID string) (string, error) {
+				return "", fmt.Errorf("database error")
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockMonitorService{
+				findFunc:   tt.mockFind,
+				deleteFunc: tt.mockDelete,
+			}
+			router := newMonitorTestRouter(mock)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var body *bytes.Buffer
+			switch v := tt.body.(type) {
+			case string:
+				body = bytes.NewBufferString(v)
+			default:
+				body = jsonBody(t, v)
+			}
+
+			req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/monitors/by-scope", body)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("DELETE /monitors/by-scope failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+// TestDeleteMonitorByIdStillWorks verifies that the existing DELETE /monitors/{taskId}
+// endpoint continues to work after adding the /by-scope route.
+func TestDeleteMonitorByIdStillWorks(t *testing.T) {
+	mock := &mockMonitorService{
+		deleteFunc: func(ctx context.Context, taskID string) (string, error) {
+			if taskID != "abc12def" {
+				return "", fmt.Errorf("taskID = %q, want %q", taskID, "abc12def")
+			}
+			return "projects/test/task/monitor.md", nil
+		},
+	}
+	router := newMonitorTestRouter(mock)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/monitors/abc12def", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /monitors/abc12def failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var body types.MonitorDeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode: %v", err)
+	}
+	if !body.Success {
+		t.Error("expected success = true")
 	}
 }

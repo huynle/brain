@@ -149,6 +149,80 @@ func (h *Handler) HandleToggleMonitor(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleDeleteMonitorByScope handles DELETE /monitors/by-scope.
+// Accepts a JSON body with templateId (or template_id) and scope, finds the
+// matching monitor, and deletes it. This is the endpoint used by MCP tools
+// like brain_blocked_inspector_disable and brain_feature_review_disable.
+func (h *Handler) HandleDeleteMonitorByScope(w http.ResponseWriter, r *http.Request) {
+	// Decode into a flexible map to handle both camelCase and snake_case
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+		return
+	}
+
+	// Extract templateId — accept both camelCase and snake_case
+	var templateID string
+	if v, ok := raw["templateId"]; ok {
+		if err := json.Unmarshal(v, &templateID); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid templateId")
+			return
+		}
+	} else if v, ok := raw["template_id"]; ok {
+		if err := json.Unmarshal(v, &templateID); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid template_id")
+			return
+		}
+	}
+
+	if templateID == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "templateId or template_id is required")
+		return
+	}
+
+	// Extract scope
+	var scope types.MonitorScope
+	if v, ok := raw["scope"]; ok {
+		if err := json.Unmarshal(v, &scope); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid scope")
+			return
+		}
+	} else {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "scope is required")
+		return
+	}
+
+	// Find the monitor
+	result, err := h.monitor.Find(r.Context(), templateID, scope)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	if result == nil {
+		WriteError(w, http.StatusNotFound, "Not Found",
+			fmt.Sprintf("No monitor found for template %q with given scope", templateID))
+		return
+	}
+
+	// Delete the monitor
+	path, err := h.monitor.Delete(r.Context(), result.ID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found",
+				fmt.Sprintf("Monitor not found: %s", result.ID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, types.MonitorDeleteByScopeResponse{
+		Success: true,
+		Path:    path,
+		TaskID:  result.ID,
+	})
+}
+
 // HandleDeleteMonitor handles DELETE /monitors/{taskId}.
 func (h *Handler) HandleDeleteMonitor(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")

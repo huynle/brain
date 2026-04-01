@@ -112,6 +112,20 @@ type MonitorDeleteResponse struct {
 	Path    string `json:"path"`
 }
 
+// DeleteMonitorByScopeRequest is the HTTP request body for deleting a monitor by scope.
+// Accepts both camelCase (as MCP tools send) and snake_case field names.
+type DeleteMonitorByScopeRequest struct {
+	TemplateID string       `json:"templateId"`
+	Scope      MonitorScope `json:"scope"`
+}
+
+// MonitorDeleteByScopeResponse is the HTTP response for deleting a monitor by scope.
+type MonitorDeleteByScopeResponse struct {
+	Success bool   `json:"success"`
+	Path    string `json:"path"`
+	TaskID  string `json:"taskId"`
+}
+
 // MonitorTemplatesResponse is the HTTP response for listing templates.
 type MonitorTemplatesResponse struct {
 	Templates []MonitorTemplate `json:"templates"`

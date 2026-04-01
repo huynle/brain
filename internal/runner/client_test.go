@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -1007,5 +1008,443 @@ func TestAPIClient_GetRunnerStatus_NotPaused(t *testing.T) {
 	}
 	if len(status.PausedProjects) != 0 {
 		t.Errorf("expected 0 paused projects, got %d", len(status.PausedProjects))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// CreateEntry
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_CreateEntry(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(types.CreateEntryResponse{
+			ID:     "abc12345",
+			Path:   "projects/brain-api/task/abc12345.md",
+			Title:  "New Task",
+			Type:   "task",
+			Status: "pending",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	req := types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "New Task",
+		Content: "# New Task\n\nTask content",
+		Tags:    []string{"test"},
+	}
+	result, err := client.CreateEntry(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/entries" {
+		t.Errorf("path = %q, want /api/v1/entries", gotPath)
+	}
+	if gotBody.Type != "task" {
+		t.Errorf("body type = %q, want %q", gotBody.Type, "task")
+	}
+	if gotBody.Title != "New Task" {
+		t.Errorf("body title = %q, want %q", gotBody.Title, "New Task")
+	}
+	if result.ID != "abc12345" {
+		t.Errorf("result ID = %q, want %q", result.ID, "abc12345")
+	}
+	if result.Path != "projects/brain-api/task/abc12345.md" {
+		t.Errorf("result Path = %q, want expected path", result.Path)
+	}
+}
+
+func TestAPIClient_CreateEntry_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"missing required field: type"}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.CreateEntry(context.Background(), types.CreateEntryRequest{})
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SearchEntries
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_SearchEntries(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.SearchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.SearchResponse{
+			Results: []types.SearchResult{
+				{ID: "r1", Path: "projects/p/task/r1.md", Title: "Result 1", Snippet: "match here"},
+				{ID: "r2", Path: "projects/p/task/r2.md", Title: "Result 2", Snippet: "another match"},
+			},
+			Total: 2,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	result, err := client.SearchEntries(context.Background(), types.SearchRequest{
+		Query: "test query",
+		Type:  "task",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/search" {
+		t.Errorf("path = %q, want /api/v1/search", gotPath)
+	}
+	if gotBody.Query != "test query" {
+		t.Errorf("body query = %q, want %q", gotBody.Query, "test query")
+	}
+	if result.Total != 2 {
+		t.Errorf("total = %d, want 2", result.Total)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result.Results))
+	}
+	if result.Results[0].ID != "r1" {
+		t.Errorf("Results[0].ID = %q, want %q", result.Results[0].ID, "r1")
+	}
+}
+
+func TestAPIClient_SearchEntries_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.SearchEntries(context.Background(), types.SearchRequest{Query: "test"})
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ListEntries
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ListEntries(t *testing.T) {
+	var gotMethod string
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotQuery = r.URL.RawQuery
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{
+			Entries: []types.BrainEntry{
+				{ID: "e1", Title: "Entry 1", Type: "task"},
+				{ID: "e2", Title: "Entry 2", Type: "task"},
+			},
+			Total:  2,
+			Limit:  50,
+			Offset: 0,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	result, err := client.ListEntries(context.Background(), map[string]string{
+		"type":   "task",
+		"status": "pending",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want GET", gotMethod)
+	}
+	// Check query params are present (order may vary)
+	if gotQuery == "" {
+		t.Error("expected query params, got empty")
+	}
+	if result.Total != 2 {
+		t.Errorf("total = %d, want 2", result.Total)
+	}
+	if len(result.Entries) != 2 {
+		t.Fatalf("expected 2 entries, got %d", len(result.Entries))
+	}
+}
+
+func TestAPIClient_ListEntries_NoParams(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{
+			Entries: []types.BrainEntry{},
+			Total:   0,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.ListEntries(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotRequestURI != "/api/v1/entries" {
+		t.Errorf("RequestURI = %q, want /api/v1/entries (no query params)", gotRequestURI)
+	}
+}
+
+func TestAPIClient_ListEntries_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.ListEntries(context.Background(), nil)
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetEntryRaw
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetEntryRaw(t *testing.T) {
+	var gotAccept string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "text/markdown")
+		w.Header().Set("X-Brain-Id", "abc123")
+		w.Header().Set("X-Brain-Title", "Test Entry")
+		w.Header().Set("X-Brain-Type", "task")
+		w.Header().Set("X-Brain-Status", "pending")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("# Test Entry\n\nRaw markdown content"))
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	content, headers, err := client.GetEntryRaw(context.Background(), "projects/brain-api/task/abc123.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAccept != "text/markdown" {
+		t.Errorf("Accept header = %q, want %q", gotAccept, "text/markdown")
+	}
+	if content != "# Test Entry\n\nRaw markdown content" {
+		t.Errorf("content = %q, want raw markdown", content)
+	}
+	if headers.Get("X-Brain-Id") != "abc123" {
+		t.Errorf("X-Brain-Id = %q, want %q", headers.Get("X-Brain-Id"), "abc123")
+	}
+	if headers.Get("X-Brain-Title") != "Test Entry" {
+		t.Errorf("X-Brain-Title = %q, want %q", headers.Get("X-Brain-Title"), "Test Entry")
+	}
+}
+
+func TestAPIClient_GetEntryRaw_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, _, err := client.GetEntryRaw(context.Background(), "nonexistent.md")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// GetEntryFull
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetEntryFull(t *testing.T) {
+	var gotAccept string
+	fullContent := "---\ntitle: Test Entry\ntype: task\nstatus: pending\n---\n\n# Test Entry\n\nFull content"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		if r.Method != http.MethodGet {
+			t.Errorf("unexpected method: %s", r.Method)
+		}
+		w.Header().Set("Content-Type", "text/x-brain-full")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fullContent))
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	content, err := client.GetEntryFull(context.Background(), "projects/brain-api/task/abc123.md")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotAccept != "text/x-brain-full" {
+		t.Errorf("Accept header = %q, want %q", gotAccept, "text/x-brain-full")
+	}
+	if content != fullContent {
+		t.Errorf("content = %q, want full frontmatter+body", content)
+	}
+}
+
+func TestAPIClient_GetEntryFull_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetEntryFull(context.Background(), "nonexistent.md")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UpdateEntryRaw
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_UpdateEntryRaw(t *testing.T) {
+	var gotMethod string
+	var gotContentType string
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+		bodyBytes, _ := io.ReadAll(r.Body)
+		gotBody = string(bodyBytes)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	newContent := "# Updated\n\nNew raw markdown"
+	err := client.UpdateEntryRaw(context.Background(), "projects/brain-api/task/abc123.md", newContent)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotContentType != "text/markdown" {
+		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/markdown")
+	}
+	if gotBody != newContent {
+		t.Errorf("body = %q, want raw markdown content", gotBody)
+	}
+}
+
+func TestAPIClient_UpdateEntryRaw_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.UpdateEntryRaw(context.Background(), "task.md", "content")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// UpdateEntryFull
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_UpdateEntryFull(t *testing.T) {
+	var gotMethod string
+	var gotContentType string
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotContentType = r.Header.Get("Content-Type")
+		bodyBytes, _ := io.ReadAll(r.Body)
+		gotBody = string(bodyBytes)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	fullContent := "---\ntitle: Updated\nstatus: completed\n---\n\n# Updated\n\nNew content"
+	err := client.UpdateEntryFull(context.Background(), "projects/brain-api/task/abc123.md", fullContent)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotContentType != "text/x-brain-full" {
+		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/x-brain-full")
+	}
+	if gotBody != fullContent {
+		t.Errorf("body = %q, want full frontmatter+body content", gotBody)
+	}
+}
+
+func TestAPIClient_UpdateEntryFull_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.UpdateEntryFull(context.Background(), "task.md", "content")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// doRequestWithHeaders
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_DoRequestWithHeaders_OverridesDefaults(t *testing.T) {
+	var gotAccept, gotContentType, gotAuth string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAccept = r.Header.Get("Accept")
+		gotContentType = r.Header.Get("Content-Type")
+		gotAuth = r.Header.Get("Authorization")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	resp, err := client.doRequestWithHeaders(context.Background(), http.MethodGet, "/test", nil, map[string]string{
+		"Accept": "text/markdown",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if gotAccept != "text/markdown" {
+		t.Errorf("Accept = %q, want %q", gotAccept, "text/markdown")
+	}
+	// Content-Type should still be the default since we only overrode Accept
+	if gotContentType != "application/json" {
+		t.Errorf("Content-Type = %q, want %q (default)", gotContentType, "application/json")
+	}
+	// Auth should still be present
+	if gotAuth != "Bearer test-token" {
+		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer test-token")
 	}
 }

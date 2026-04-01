@@ -43,6 +43,14 @@ TOKENS:
   token list                     List API tokens
   token revoke <name>            Revoke API token
 
+ENTRIES:
+  save                           Create a new brain entry
+  get <id-or-path>               Read a brain entry (cat is an alias)
+  update <id> --status <s>       Update an existing entry
+  edit <id-or-path>              Open entry in $EDITOR for editing
+  search <query>                 Search brain entries
+  list                           List brain entries with filters
+
 DREAM MODE:
   dream                          List dream-enabled projects
   dream <project>                Print dream content for project
@@ -59,6 +67,9 @@ EXAMPLES:
   brain server start --dry-run
   brain server logs -f -n 200
   brain token create --name dev
+  brain save --type task --title "Fix auth bug"
+  brain edit abc12def
+  brain edit -i --type task
   brain help run
 `
 
@@ -467,6 +478,254 @@ EXAMPLES:
   brain dream my-project --enable --now
 `
 
+const saveHelp = `brain save - Create a new brain entry
+
+USAGE:
+  brain save --type <type> --title <title> [flags]
+
+DESCRIPTION:
+  Creates a new brain entry. Opens $EDITOR by default for content entry
+  (zk-inspired pattern). Supports inline content, stdin, and file input
+  for automation.
+
+REQUIRED FLAGS:
+  --type <type>                  Entry type (task, plan, decision, etc.)
+  --title <title>                Entry title
+
+CONTENT FLAGS:
+  --content <text>               Inline content
+  --content -                    Read content from stdin
+  --content @<path>              Read content from file
+  --no-edit                      Skip opening $EDITOR
+
+OPTIONAL FLAGS:
+  --tags <t1,t2,...>             Comma-separated tags
+  --status <status>              Initial status (default: active, tasks: draft)
+  --priority <level>             Priority: high, medium, low
+  --depends-on <id1,id2,...>     Comma-separated task dependency IDs
+  --feature-id <id>              Feature group identifier
+  --global                       Save to global brain (not project-scoped)
+  --project <name>               Override auto-detected project
+  -h, --help                     Show this help
+
+EDITOR:
+  Uses $VISUAL, then $EDITOR, then vi as fallback.
+  Save and quit to create the entry. Empty content cancels.
+
+EXAMPLES:
+  brain save --type task --title "Fix auth bug"
+  brain save --type task --title "Fix auth bug" --content "Description" --no-edit
+  echo "content" | brain save --type task --title "My Task" --content - --no-edit
+  brain save --type plan --title "Q2 Roadmap" --content @roadmap.md --no-edit
+  brain save --type task --title "Fix" --priority high --tags "bug,auth"
+  brain save --type learning --title "Go patterns" --global
+`
+
+const updateHelp = `brain update - Update an existing brain entry
+
+USAGE:
+  brain update <id-or-path> [flags]
+
+DESCRIPTION:
+  Updates an existing brain entry. Supports metadata changes (status, tags,
+  priority), content replacement (inline, stdin, file), and content append.
+  Enables powerful pipe-based editing: brain get id | sed | brain update id --content -
+
+REQUIRED:
+  <id-or-path>                   Entry ID (8-char) or full brain path
+
+UPDATE FLAGS:
+  --status <status>              New status (draft, pending, active, in_progress,
+                                 blocked, completed, validated, superseded, archived)
+  --title <title>                New title
+  --content <text>               Replace content (inline text)
+  --content -                    Replace content from stdin
+  --content @<path>              Replace content from file
+  --append <text>                Append to existing content
+  --note <text>                  Timestamped status-change note
+  --tags <t1,t2,...>             Comma-separated tags (replaces existing)
+  --priority <level>             Priority: high, medium, low
+  --depends-on <id1,id2,...>     Comma-separated task dependency IDs
+  --feature-id <id>              Feature group identifier
+  -h, --help                     Show this help
+
+RULES:
+  - At least one flag must be provided
+  - --content and --append are mutually exclusive
+  - Multiple flags can be combined in one call
+
+EXAMPLES:
+  brain update abc12def --status completed
+  brain update abc12def --status blocked --note "Waiting on API design"
+  brain update abc12def --append "## Progress\n- Done with auth module"
+  brain update abc12def --title "New Title" --priority high
+  brain update abc12def --tags "api,auth,v2"
+  brain update abc12def --depends-on "task1,task2"
+  brain update abc12def --content -           # Read from stdin
+  brain update abc12def --content @file.md    # Read from file
+  brain get abc12def | sed 's/old/new/g' | brain update abc12def --content -
+`
+
+const getHelp = `brain get - Read a brain entry
+
+USAGE:
+  brain get <id-or-path> [--format <format>]
+  brain cat <id-or-path> [--format <format>]
+
+DESCRIPTION:
+  Read a brain entry by short ID or full path. "cat" is an alias for "get".
+  TTY-aware: shows formatted metadata + content in terminal, raw markdown
+  when piped.
+
+POSITIONAL:
+  <id-or-path>                   Entry short ID (8-char) or full brain path
+
+FLAGS:
+  --format <format>              Output format (see below)
+  -q, --quiet                    Suppress metadata/counts
+  --no-color                     Disable color output
+  -h, --help                     Show this help
+
+NAMED FORMATS:
+  path                           Just the entry path
+  id                             Just the short ID
+  short                          Compact one-line summary
+  full                           YAML frontmatter + body (on-disk format)
+  json                           Full JSON representation
+  jsonl                          Single JSON line
+
+CUSTOM TEMPLATES:
+  --format "{{.Title}}"                    Just the title
+  --format "{{.Title}} [{{.Status}}]"      Title with status
+  --format "{{.Path}}"                     Just the path
+
+TTY BEHAVIOR:
+  Interactive terminal:           Metadata header + content
+  Piped (non-TTY):               Raw markdown body only
+
+EXAMPLES:
+  brain get abc12def
+  brain cat abc12def
+  brain get abc12def --format json
+  brain get abc12def --format full
+  brain get abc12def --format path
+  brain get abc12def --format id
+  brain get abc12def --format "{{.Title}} [{{.Status}}]"
+  brain get abc12def | wc -l
+  brain get abc12def | grep "pattern"
+  brain get abc12def | sed 's/old/new/g' | brain update abc12def --content -
+`
+
+const editHelp = `brain edit - Open brain entry in $EDITOR
+
+USAGE:
+  brain edit <id-or-path>
+  brain edit -i [filters]
+
+DESCRIPTION:
+  Opens a brain entry in your $EDITOR with full YAML frontmatter and
+  markdown body. All frontmatter fields are editable. On save, changes
+  are diffed against the original and sent back via the API.
+
+POSITIONAL:
+  <id-or-path>                   Entry short ID (8-char) or full brain path
+
+FLAGS:
+  -i, --interactive              Use fzf to select entry interactively
+  --force                        Skip safety confirmations
+  --type <type>                  Filter by entry type (with -i)
+  --status <status>              Filter by status (with -i)
+  --tags <tags>                  Filter by tags (with -i)
+  --priority <priority>          Filter by priority (with -i)
+  --feature-id <id>              Filter by feature ID (with -i)
+  --limit <n>                    Max filter results (default: 20)
+  --no-color                     Disable color output
+  -h, --help                     Show this help
+
+EDITOR:
+  Uses $VISUAL, then $EDITOR, then vi as fallback.
+  Save and quit to apply changes. No changes = no API call.
+
+DANGEROUS CHANGES:
+  Modifying type or project triggers a confirmation prompt.
+  Use --force to skip all confirmations.
+
+EXAMPLES:
+  brain edit abc12def
+  brain edit projects/brain-api/task/abc12def.md
+  brain edit -i --type task
+  brain edit -i --type task --status active
+  brain edit -i --type task --status active --force
+`
+
+const searchHelp = `brain search - Search brain entries
+
+USAGE:
+  brain search <query> [flags]
+
+FLAGS:
+  --type <type>                  Filter by entry type (task, plan, note, etc.)
+  --status <status>              Filter by status (active, pending, completed, etc.)
+  --tags <tags>                  Comma-separated tags to filter by
+  --priority <priority>          Filter by priority (high, medium, low)
+  --feature-id <id>              Filter by feature ID
+  --limit <n>                    Max results (default: 20)
+  --sort <field>                 Sort by: created, modified, priority
+  --format <fmt>                 Output: path, id, short, full, json, jsonl, or Go template
+  -q, --quiet                    Suppress "Found N entries" count
+  --no-color                     Disable color output
+  -0                             NUL-delimited output (for xargs -0)
+  -i, --interactive              Post-filter with fzf
+  -h, --help                     Show this help
+
+FORMATS:
+  path    One path per line (default when piped)
+  id      One ID per line
+  short   Table: title, path, status, priority (default in terminal)
+  full    Frontmatter-style metadata + body
+  json    JSON array
+  jsonl   One JSON object per line
+
+EXAMPLES:
+  brain search "auth module"
+  brain search "auth" --type task --status active --limit 5
+  brain search "auth" --format json
+  brain search "auth" --format path -0 | xargs -0 brain get
+  brain search "auth" -i
+`
+
+const listHelp = `brain list - List brain entries
+
+USAGE:
+  brain list [flags]
+
+FLAGS:
+  --type <type>                  Filter by entry type (task, plan, note, etc.)
+  --status <status>              Filter by status (active, pending, completed, etc.)
+  --tags <tags>                  Comma-separated tags to filter by
+  --priority <priority>          Filter by priority (high, medium, low)
+  --feature-id <id>              Filter by feature ID
+  --limit <n>                    Max results (default: 20)
+  --sort <field>                 Sort by: created, modified, priority
+  -m, --match <query>            Search query filter
+  --format <fmt>                 Output: path, id, short, full, json, jsonl, or Go template
+  -q, --quiet                    Suppress "Found N entries" count
+  --no-color                     Disable color output
+  -0                             NUL-delimited output (for xargs -0)
+  -i, --interactive              Post-filter with fzf
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain list
+  brain list --type task --status pending
+  brain list --type task --feature-id auth-system
+  brain list --tags "api,v2"
+  brain list --sort modified
+  brain list --format json
+  brain list --format path -0 | xargs -0 brain get
+  brain list -i --type task
+`
+
 const stopHelp = `brain stop - Alias for "brain server stop"
 
 USAGE:
@@ -483,6 +742,9 @@ func normalizeHelpTopic(command string) string {
 	}
 	if topic == "tokens" {
 		return "token"
+	}
+	if topic == "cat" {
+		return "get"
 	}
 	return topic
 }
@@ -535,6 +797,18 @@ func ShowHelp(command string) {
 		fmt.Print(tokenRevokeHelp)
 	case "dream":
 		fmt.Print(dreamHelp)
+	case "save":
+		fmt.Print(saveHelp)
+	case "get":
+		fmt.Print(getHelp)
+	case "update":
+		fmt.Print(updateHelp)
+	case "edit":
+		fmt.Print(editHelp)
+	case "search":
+		fmt.Print(searchHelp)
+	case "list":
+		fmt.Print(listHelp)
 	case "stop":
 		fmt.Print(stopHelp)
 	default:

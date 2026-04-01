@@ -2307,20 +2307,26 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			execIndicator = " ⚡"
 		}
 
+		// Enabled feature indicator (toggled via x key)
+		enabledIndicator := ""
+		if tt.enabledFeatures[feature.ID] {
+			enabledIndicator = " ★"
+		}
+
 		// Stats: [completed/total complete] using original (unfiltered) stats
 		origStats := originalFeatureStats[feature.ID]
 		statsStr := fmt.Sprintf("[%d/%d complete]", origStats.Completed, origStats.Total)
 
-		// Feature header: collapse indicator + name + execution indicator + stats
+		// Feature header: collapse indicator + enabled indicator + name + execution indicator + stats
 		// Status icon is omitted to avoid visual clutter with the → cursor and ▾/▶ collapse icon
 		_ = statusIcon // used only for terminal section sub-features
 		var featureHeader string
 		if feature.Name == "[Ungrouped]" {
-			featureHeader = fmt.Sprintf("%s %s%s %s",
-				collapseIndicator, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s%s %s%s %s",
+				collapseIndicator, enabledIndicator, feature.Name, execIndicator, statsStr)
 		} else {
-			featureHeader = fmt.Sprintf("%s Feature: %s%s %s",
-				collapseIndicator, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s%s Feature: %s%s %s",
+				collapseIndicator, enabledIndicator, feature.Name, execIndicator, statsStr)
 		}
 
 		// Selection marker keeps fixed width to avoid visual shift when highlighted
@@ -2505,11 +2511,18 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 					collapseIcon = "▶"
 				}
 				statusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
+
+				// Enabled feature indicator (toggled via x key)
+				enabledIcon := ""
+				if tt.enabledFeatures[featureID] {
+					enabledIcon = " ★"
+				}
+
 				var featureHeader string
 				if featureID == "[Ungrouped]" {
-					featureHeader = fmt.Sprintf("    %s %s %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s%s %s %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
 				} else {
-					featureHeader = fmt.Sprintf("    %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s%s %s Feature: %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
 				}
 
 				// Highlight if this sub-feature header is selected (not when navigated into its tasks)

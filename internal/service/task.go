@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,6 +181,7 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 	if existing, ok := s.claims[key]; ok {
 		stale := isStale(existing)
 		if !stale && existing.RunnerID != runnerId {
+			slog.Warn("claim conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "held_by", existing.RunnerID)
 			return &types.ClaimResponse{
 				Success:   false,
 				TaskID:    taskId,
@@ -191,6 +193,9 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 			}, api.ErrConflict
 		}
 		// Stale claim or same runner — allow re-claim
+		if stale {
+			slog.Info("stale claim overridden", "project", projectId, "task_id", taskId, "new_runner", runnerId, "old_runner", existing.RunnerID)
+		}
 	}
 
 	now := time.Now().UnixMilli()
@@ -200,6 +205,7 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 	}
 
 	claimedAt := time.UnixMilli(now).UTC().Format(time.RFC3339)
+	slog.Info("task claimed", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return &types.ClaimResponse{
 		Success:   true,
 		TaskID:    taskId,
@@ -225,6 +231,7 @@ func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	}
 
 	delete(s.claims, key)
+	slog.Info("task released", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return nil
 }
 

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -117,6 +118,7 @@ func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	slog.Info("claim request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID, "success", resp.Success)
 	WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -147,6 +149,7 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	slog.Info("release request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

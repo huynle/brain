@@ -20,6 +20,7 @@ import (
 type mockBrainService struct {
 	saveFunc         func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
 	recallFunc       func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	recallFullFunc   func(ctx context.Context, pathOrID string) (string, error)
 	updateFunc       func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
 	deleteFunc       func(ctx context.Context, pathOrID string) error
 	listFunc         func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
@@ -50,6 +51,13 @@ func (m *mockBrainService) Recall(ctx context.Context, pathOrID string) (*types.
 		return m.recallFunc(ctx, pathOrID)
 	}
 	return nil, fmt.Errorf("recallFunc not set")
+}
+
+func (m *mockBrainService) RecallFull(ctx context.Context, pathOrID string) (string, error) {
+	if m.recallFullFunc != nil {
+		return m.recallFullFunc(ctx, pathOrID)
+	}
+	return "", fmt.Errorf("recallFullFunc not set")
 }
 
 func (m *mockBrainService) Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
@@ -845,6 +853,290 @@ func TestHandleUpdateEntry(t *testing.T) {
 
 			req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/entries/"+tt.id, body)
 			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("PATCH /entries/%s failed: %v", tt.id, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Update Entry Content Negotiation Tests
+// =============================================================================
+
+func TestHandleUpdateEntry_ContentNegotiation(t *testing.T) {
+	tests := []struct {
+		name        string
+		id          string
+		contentType string
+		body        string
+		mockUpdate  func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
+		wantStatus  int
+		checkBody   func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:        "text/markdown replaces content",
+			id:          "abc12def",
+			contentType: "text/markdown",
+			body:        "# Updated Content\n\nThis is new markdown.",
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if pathOrID != "abc12def" {
+					t.Errorf("pathOrID = %q, want %q", pathOrID, "abc12def")
+				}
+				if req.Content == nil {
+					t.Fatal("expected Content to be set")
+				}
+				if *req.Content != "# Updated Content\n\nThis is new markdown." {
+					t.Errorf("content = %q, want %q", *req.Content, "# Updated Content\n\nThis is new markdown.")
+				}
+				// Other fields should be nil
+				if req.Title != nil {
+					t.Errorf("expected Title to be nil, got %q", *req.Title)
+				}
+				if req.Status != nil {
+					t.Errorf("expected Status to be nil, got %q", *req.Status)
+				}
+				return &types.BrainEntry{
+					ID:      "abc12def",
+					Path:    "projects/default/plan/test.md",
+					Title:   "Test Entry",
+					Type:    "plan",
+					Status:  "active",
+					Content: "# Updated Content\n\nThis is new markdown.",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BrainEntry](t, resp)
+				if body.Content != "# Updated Content\n\nThis is new markdown." {
+					t.Errorf("content = %q, want updated markdown", body.Content)
+				}
+			},
+		},
+		{
+			name:        "text/plain replaces content",
+			id:          "abc12def",
+			contentType: "text/plain",
+			body:        "Plain text content replacement",
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Content == nil || *req.Content != "Plain text content replacement" {
+					t.Errorf("content = %v, want %q", req.Content, "Plain text content replacement")
+				}
+				return &types.BrainEntry{
+					ID:      "abc12def",
+					Path:    "projects/default/plan/test.md",
+					Title:   "Test Entry",
+					Type:    "plan",
+					Status:  "active",
+					Content: "Plain text content replacement",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "text/x-brain-full parses frontmatter and body",
+			id:          "abc12def",
+			contentType: "text/x-brain-full",
+			body: `---
+title: New Title
+type: task
+status: completed
+tags:
+  - api
+  - go
+priority: high
+feature_id: auth-feature
+git_branch: feature/auth
+agent: tdd-dev
+model: claude-sonnet
+direct_prompt: Fix the auth bug
+---
+## Updated Body
+
+This is the new content from a full brain file.`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Title == nil || *req.Title != "New Title" {
+					t.Errorf("Title = %v, want %q", req.Title, "New Title")
+				}
+				if req.Status == nil || *req.Status != "completed" {
+					t.Errorf("Status = %v, want %q", req.Status, "completed")
+				}
+				if len(req.Tags) != 2 || req.Tags[0] != "api" || req.Tags[1] != "go" {
+					t.Errorf("Tags = %v, want [api go]", req.Tags)
+				}
+				if req.Priority == nil || *req.Priority != "high" {
+					t.Errorf("Priority = %v, want %q", req.Priority, "high")
+				}
+				if req.FeatureID == nil || *req.FeatureID != "auth-feature" {
+					t.Errorf("FeatureID = %v, want %q", req.FeatureID, "auth-feature")
+				}
+				if req.GitBranch == nil || *req.GitBranch != "feature/auth" {
+					t.Errorf("GitBranch = %v, want %q", req.GitBranch, "feature/auth")
+				}
+				if req.Agent == nil || *req.Agent != "tdd-dev" {
+					t.Errorf("Agent = %v, want %q", req.Agent, "tdd-dev")
+				}
+				if req.Model == nil || *req.Model != "claude-sonnet" {
+					t.Errorf("Model = %v, want %q", req.Model, "claude-sonnet")
+				}
+				if req.DirectPrompt == nil || *req.DirectPrompt != "Fix the auth bug" {
+					t.Errorf("DirectPrompt = %v, want %q", req.DirectPrompt, "Fix the auth bug")
+				}
+				if req.Content == nil || *req.Content != "## Updated Body\n\nThis is the new content from a full brain file." {
+					t.Errorf("Content = %v, want body text", req.Content)
+				}
+				return &types.BrainEntry{
+					ID:      "abc12def",
+					Path:    "projects/default/task/test.md",
+					Title:   "New Title",
+					Type:    "task",
+					Status:  "completed",
+					Content: "## Updated Body\n\nThis is the new content from a full brain file.",
+					Tags:    []string{"api", "go"},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BrainEntry](t, resp)
+				if body.Title != "New Title" {
+					t.Errorf("title = %q, want %q", body.Title, "New Title")
+				}
+				if body.Status != "completed" {
+					t.Errorf("status = %q, want %q", body.Status, "completed")
+				}
+			},
+		},
+		{
+			name:        "text/x-brain-full with invalid frontmatter returns 400",
+			id:          "abc12def",
+			contentType: "text/x-brain-full",
+			body:        "---\ninvalid: [yaml: broken\n---\nBody text",
+			wantStatus:  http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Bad Request" {
+					t.Errorf("error = %q, want %q", body.Error, "Bad Request")
+				}
+			},
+		},
+		{
+			name:        "text/x-brain-full with only body (no frontmatter) sets content only",
+			id:          "abc12def",
+			contentType: "text/x-brain-full",
+			body:        "Just a plain body with no frontmatter delimiters.",
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Content == nil || *req.Content != "Just a plain body with no frontmatter delimiters." {
+					t.Errorf("Content = %v, want body text", req.Content)
+				}
+				return &types.BrainEntry{
+					ID:      "abc12def",
+					Path:    "projects/default/plan/test.md",
+					Title:   "Test Entry",
+					Type:    "plan",
+					Status:  "active",
+					Content: "Just a plain body with no frontmatter delimiters.",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "text/x-brain-full maps depends_on",
+			id:          "abc12def",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Task with deps
+type: task
+status: pending
+depends_on:
+  - task-1
+  - task-2
+---
+Content here`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.DependsOn == nil || len(*req.DependsOn) != 2 || (*req.DependsOn)[0] != "task-1" {
+					t.Errorf("DependsOn = %v, want [task-1 task-2]", req.DependsOn)
+				}
+				return &types.BrainEntry{
+					ID:    "abc12def",
+					Path:  "projects/default/task/test.md",
+					Title: "Task with deps",
+					Type:  "task",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "text/x-brain-full maps boolean fields",
+			id:          "abc12def",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Bool test
+type: task
+status: active
+schedule_enabled: true
+complete_on_idle: false
+open_pr_before_merge: true
+---
+Body`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.ScheduleEnabled == nil || *req.ScheduleEnabled != true {
+					t.Errorf("ScheduleEnabled = %v, want true", req.ScheduleEnabled)
+				}
+				if req.CompleteOnIdle == nil || *req.CompleteOnIdle != false {
+					t.Errorf("CompleteOnIdle = %v, want false", req.CompleteOnIdle)
+				}
+				if req.OpenPRBeforeMerge == nil || *req.OpenPRBeforeMerge != true {
+					t.Errorf("OpenPRBeforeMerge = %v, want true", req.OpenPRBeforeMerge)
+				}
+				return &types.BrainEntry{
+					ID:    "abc12def",
+					Path:  "projects/default/task/test.md",
+					Title: "Bool test",
+					Type:  "task",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "default JSON still works unchanged",
+			id:          "abc12def",
+			contentType: "application/json",
+			body:        `{"status":"completed"}`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Status == nil || *req.Status != "completed" {
+					t.Errorf("Status = %v, want %q", req.Status, "completed")
+				}
+				return &types.BrainEntry{
+					ID:     "abc12def",
+					Path:   "projects/default/plan/test.md",
+					Title:  "Test Entry",
+					Type:   "plan",
+					Status: "completed",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockBrainService{updateFunc: tt.mockUpdate}
+			router := newTestRouter(mock)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			req, _ := http.NewRequest(http.MethodPatch, srv.URL+"/entries/"+tt.id, bytes.NewBufferString(tt.body))
+			req.Header.Set("Content-Type", tt.contentType)
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatalf("PATCH /entries/%s failed: %v", tt.id, err)

@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
 // HandleCreateEntry handles POST /entries.
@@ -193,9 +195,36 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req types.UpdateEntryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
-		return
+	contentType := r.Header.Get("Content-Type")
+
+	if strings.Contains(contentType, "text/markdown") || strings.Contains(contentType, "text/plain") {
+		// Raw markdown/text body = full content replacement
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+			return
+		}
+		content := string(bodyBytes)
+		req = types.UpdateEntryRequest{Content: &content}
+	} else if strings.Contains(contentType, "text/x-brain-full") {
+		// Full file with YAML frontmatter + body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+			return
+		}
+		doc, err := frontmatter.Parse(string(bodyBytes))
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to parse frontmatter: "+err.Error())
+			return
+		}
+		req = mapFrontmatterToUpdateRequest(doc.Frontmatter, doc.Body)
+	} else {
+		// Default: JSON (existing behavior, unchanged)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+			return
+		}
 	}
 
 	// Validate optional enum fields
@@ -448,4 +477,76 @@ func isValidSortBy(s string) bool {
 		return true
 	}
 	return false
+}
+
+// strPtr returns a pointer to the given string, or nil if empty.
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// mapFrontmatterToUpdateRequest converts parsed frontmatter fields and body
+// into an UpdateEntryRequest. Only non-empty/non-nil fields are set so that
+// the update is a partial merge (matching JSON PATCH semantics).
+func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) types.UpdateEntryRequest {
+	req := types.UpdateEntryRequest{
+		Title:              strPtr(fm.Title),
+		Status:             strPtr(fm.Status),
+		Priority:           strPtr(fm.Priority),
+		FeatureID:          strPtr(fm.FeatureID),
+		FeaturePriority:    strPtr(fm.FeaturePriority),
+		GitBranch:          strPtr(fm.GitBranch),
+		TargetWorkdir:      strPtr(fm.TargetWorkdir),
+		MergeTargetBranch:  strPtr(fm.MergeTargetBranch),
+		MergePolicy:        strPtr(fm.MergePolicy),
+		MergeStrategy:      strPtr(fm.MergeStrategy),
+		RemoteBranchPolicy: strPtr(fm.RemoteBranchPolicy),
+		ExecutionMode:      strPtr(fm.ExecutionMode),
+		DirectPrompt:       strPtr(fm.DirectPrompt),
+		Agent:              strPtr(fm.Agent),
+		Model:              strPtr(fm.Model),
+		Schedule:           strPtr(fm.Schedule),
+	}
+
+	// Body → Content
+	if body != "" {
+		req.Content = &body
+	}
+
+	// Tags (slice — set if non-empty)
+	if len(fm.Tags) > 0 {
+		req.Tags = fm.Tags
+	}
+
+	// DependsOn (pointer to slice)
+	if len(fm.DependsOn) > 0 {
+		deps := fm.DependsOn
+		req.DependsOn = &deps
+	}
+
+	// FeatureDependsOn (pointer to slice)
+	if len(fm.FeatureDependsOn) > 0 {
+		fdeps := fm.FeatureDependsOn
+		req.FeatureDependsOn = &fdeps
+	}
+
+	// Boolean pointer fields — only set when present in frontmatter
+	if fm.ScheduleEnabled != nil {
+		req.ScheduleEnabled = fm.ScheduleEnabled
+	}
+	if fm.CompleteOnIdle != nil {
+		req.CompleteOnIdle = fm.CompleteOnIdle
+	}
+	if fm.OpenPRBeforeMerge != nil {
+		req.OpenPRBeforeMerge = fm.OpenPRBeforeMerge
+	}
+
+	// Integer pointer fields
+	if fm.MaxRuns != nil {
+		req.MaxRuns = fm.MaxRuns
+	}
+
+	return req
 }

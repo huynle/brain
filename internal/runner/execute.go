@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -84,4 +85,77 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
 
 	return nil
+}
+
+// ExecuteFeature batch-executes all ready tasks from a feature group.
+// Filters to ready tasks, sorts by priority, and executes up to available
+// capacity. Returns the number of tasks successfully started.
+func (tr *TaskRunner) ExecuteFeature(ctx context.Context, tasks []types.ResolvedTask, projectID string) (int, error) {
+	// 1. Filter to only ready tasks
+	var readyTasks []types.ResolvedTask
+	for _, task := range tasks {
+		if task.Classification == "ready" {
+			readyTasks = append(readyTasks, task)
+		}
+	}
+
+	if len(readyTasks) == 0 {
+		return 0, nil
+	}
+
+	// 2. Sort by priority (high > medium > low), then title for stability
+	sort.Slice(readyTasks, func(i, j int) bool {
+		pi := priorityOrder(readyTasks[i].Priority)
+		pj := priorityOrder(readyTasks[j].Priority)
+		if pi != pj {
+			return pi < pj // lower order = higher priority
+		}
+		return readyTasks[i].Title < readyTasks[j].Title
+	})
+
+	// 3. Check available capacity
+	maxParallel := tr.getMaxParallel()
+	running := tr.processMgr.RunningCount()
+	available := maxParallel - running
+	if available <= 0 {
+		return 0, fmt.Errorf("at capacity: %d/%d slots in use", running, maxParallel)
+	}
+
+	// 4. Execute up to available slots
+	started := 0
+	var firstErr error
+	for _, task := range readyTasks {
+		if started >= available {
+			break
+		}
+		if ctx.Err() != nil {
+			break
+		}
+
+		taskCopy := task // copy for closure safety
+		if err := tr.claimAndSpawn(ctx, &taskCopy, projectID); err != nil {
+			tr.logger.Printf("feature execute: claim and spawn failed for %s/%s: %v", projectID, task.ID, err)
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue // try next task, don't fail the whole batch
+		}
+		started++
+	}
+
+	return started, firstErr
+}
+
+// priorityOrder maps priority strings to sort order (lower = higher priority).
+func priorityOrder(priority string) int {
+	switch priority {
+	case "high":
+		return 0
+	case "medium":
+		return 1
+	case "low":
+		return 2
+	default:
+		return 1 // default to medium
+	}
 }

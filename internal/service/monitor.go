@@ -53,7 +53,7 @@ var monitorTemplates = map[string]types.MonitorTemplate{
 		Description:     "Periodically consolidates project knowledge into a single injectable context file",
 		DefaultSchedule: "0 3 * * *",
 		DefaultMaxRuns:  0,
-		Tags:            []string{"scheduled", "dream", "consolidation"},
+		Tags:            []string{"scheduled", "dream", "consolidation", "monitor"},
 		CreationMode:    types.CreationModeScheduled,
 		AlwaysActive:    true,
 	},

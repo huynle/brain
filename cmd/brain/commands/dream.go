@@ -223,10 +223,14 @@ func (c *DreamCommand) listDreamProjects() error {
 
 	var resp struct {
 		Monitors []struct {
-			TaskID   string `json:"task_id"`
-			Project  string `json:"project"`
+			ID    string `json:"id"`
+			Scope struct {
+				Type    string `json:"type"`
+				Project string `json:"project"`
+			} `json:"scope"`
+			Enabled  bool   `json:"enabled"`
 			Schedule string `json:"schedule"`
-			Status   string `json:"status"`
+			Title    string `json:"title"`
 		} `json:"monitors"`
 	}
 	if err := json.Unmarshal(data, &resp); err != nil {
@@ -247,15 +251,19 @@ func (c *DreamCommand) listDreamProjects() error {
 	fmt.Println(strings.Repeat("─", 70))
 
 	for _, m := range resp.Monitors {
+		project := m.Scope.Project
+		if project == "" {
+			project = "(all)"
+		}
 		schedule := m.Schedule
 		if schedule == "" {
 			schedule = "(default)"
 		}
-		status := m.Status
-		if status == "" {
-			status = "active"
+		status := "enabled"
+		if !m.Enabled {
+			status = "disabled"
 		}
-		fmt.Printf("%-25s %-25s %s\n", m.Project, schedule, status)
+		fmt.Printf("%-25s %-25s %s\n", project, schedule, status)
 	}
 
 	fmt.Println(strings.Repeat("─", 70))
@@ -264,37 +272,35 @@ func (c *DreamCommand) listDreamProjects() error {
 }
 
 // showDreamContent prints dream content for a specific project.
-// Searches for a dream entry via GET /api/v1/search?query=Project+Dream&type=dream,
-// finds the one matching this project, then fetches full content via GET /api/v1/entries/<path>.
+// Lists entries with type=dream to find the dream file, then fetches full content.
 func (c *DreamCommand) showDreamContent() error {
-	// Search for dream entries matching the project
-	query := url.QueryEscape("Project Dream")
-	searchPath := fmt.Sprintf("/api/v1/search?query=%s&type=dream&project=%s", query, url.QueryEscape(c.Project))
-	data, status, err := c.apiRequest("GET", searchPath, nil)
+	// List dream entries for this project
+	listPath := fmt.Sprintf("/api/v1/entries?type=dream&project=%s", url.QueryEscape(c.Project))
+	data, status, err := c.apiRequest("GET", listPath, nil)
 	if err != nil {
-		return fmt.Errorf("search dream content: %w", err)
+		return fmt.Errorf("list dream entries: %w", err)
 	}
 
 	if status != http.StatusOK {
-		return fmt.Errorf("search dream content: API returned status %d", status)
+		return fmt.Errorf("list dream entries: API returned status %d", status)
 	}
 
-	var searchResp struct {
-		Results []struct {
-			Path    string `json:"path"`
-			Title   string `json:"title"`
-			Project string `json:"project"`
-		} `json:"results"`
+	var listResp struct {
+		Entries []struct {
+			Path      string `json:"path"`
+			Title     string `json:"title"`
+			ProjectID string `json:"project_id"`
+		} `json:"entries"`
 	}
-	if err := json.Unmarshal(data, &searchResp); err != nil {
-		return fmt.Errorf("parse search response: %w", err)
+	if err := json.Unmarshal(data, &listResp); err != nil {
+		return fmt.Errorf("parse list response: %w", err)
 	}
 
 	// Find matching entry for this project
 	var entryPath string
-	for _, r := range searchResp.Results {
-		if r.Project == c.Project || strings.Contains(r.Path, c.Project) {
-			entryPath = r.Path
+	for _, e := range listResp.Entries {
+		if e.ProjectID == c.Project || strings.Contains(e.Path, "projects/"+c.Project+"/") {
+			entryPath = e.Path
 			break
 		}
 	}

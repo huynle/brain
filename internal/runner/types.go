@@ -157,11 +157,19 @@ const (
 	EventFeatureEnabled    RunnerEventType = "feature_enabled"
 	EventFeatureDisabled   RunnerEventType = "feature_disabled"
 	EventSessionDiscovered RunnerEventType = "session_discovered"
+	EventTaskClaimed       RunnerEventType = "task_claimed"
+	EventTaskClaimRejected RunnerEventType = "task_claim_rejected"
+	EventTaskStatusChanged RunnerEventType = "task_status_changed"
+	EventTaskReleased      RunnerEventType = "task_released"
+	EventRunnerStarted     RunnerEventType = "runner_started"
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.
 type RunnerEvent struct {
 	Type RunnerEventType `json:"type"`
+
+	// Populated on ALL events by emitEvent().
+	RunnerID string `json:"runnerId,omitempty"`
 
 	// Populated for task_started events.
 	Task *RunningTask `json:"task,omitempty"`
@@ -191,6 +199,17 @@ type RunnerEvent struct {
 
 	// Populated for session_discovered events.
 	SessionID string `json:"sessionId,omitempty"`
+
+	// Populated for task_status_changed events.
+	FromStatus string `json:"fromStatus,omitempty"`
+	ToStatus   string `json:"toStatus,omitempty"`
+
+	// Populated for task_claim_rejected events.
+	ClaimedBy string `json:"claimedBy,omitempty"`
+
+	// Populated for runner_started events.
+	Projects []string `json:"projects,omitempty"`
+	Mode     string   `json:"mode,omitempty"`
 }
 
 // EventHandler is a callback for runner events.

@@ -25,6 +25,7 @@ var EntryTypes = []string{
 	"exploration",
 	"execution",
 	"task",
+	"dream",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.

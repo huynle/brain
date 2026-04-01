@@ -19,6 +19,7 @@ func TestIsValidEntryType(t *testing.T) {
 		{"exploration", true},
 		{"execution", true},
 		{"task", true},
+		{"dream", true},
 		{"invalid", false},
 		{"", false},
 		{"SUMMARY", false}, // case-sensitive
@@ -110,8 +111,8 @@ func TestIsValidTaskClassification(t *testing.T) {
 
 func TestEntryTypeConstants(t *testing.T) {
 	// Verify the count matches TypeScript source (12 types)
-	if len(EntryTypes) != 12 {
-		t.Errorf("expected 12 entry types, got %d", len(EntryTypes))
+	if len(EntryTypes) != 13 {
+		t.Errorf("expected 13 entry types, got %d", len(EntryTypes))
 	}
 }
 

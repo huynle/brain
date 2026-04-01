@@ -49,7 +49,7 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
 		"server", "mcp", "run", "runner", "start", "stop",
 		"dev", "init", "doctor",
-		"config", "install", "uninstall", "plugin-status", "token", "help",
+		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
 
 	// Commands that return a different Type() than their name
@@ -239,6 +239,7 @@ func TestIsBuiltinCommand(t *testing.T) {
 		{"run", true},
 		{"start", true},
 		{"stop", true},
+		{"dream", true},
 		{"my-project", false},
 		{"all", false},
 		{"unknown", false},
@@ -250,6 +251,55 @@ func TestIsBuiltinCommand(t *testing.T) {
 			got := isBuiltinCommand(tt.cmd)
 			if got != tt.want {
 				t.Errorf("isBuiltinCommand(%q) = %v, want %v", tt.cmd, got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: "brain dream" routes to DreamCommand
+// ---------------------------------------------------------------------------
+
+func TestRoute_DreamCommand(t *testing.T) {
+	tests := []struct {
+		name        string
+		args        []string
+		wantType    string
+		wantProject string
+	}{
+		{"dream bare", []string{"dream"}, "dream", ""},
+		{"dream project", []string{"dream", "brain-api"}, "dream", "brain-api"},
+		{"dream enable", []string{"dream", "brain-api", "--enable"}, "dream", "brain-api"},
+		{"dream disable", []string{"dream", "brain-api", "--disable"}, "dream", "brain-api"},
+		{"dream help", []string{"dream", "--help"}, "help", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd.Type() != tt.wantType {
+				t.Errorf("Type() = %q, want %q", cmd.Type(), tt.wantType)
+			}
+
+			// Verify project on DreamCommand
+			if dc, ok := cmd.(*commands.DreamCommand); ok {
+				if dc.Project != tt.wantProject {
+					t.Errorf("Project = %q, want %q", dc.Project, tt.wantProject)
+				}
+			}
+
+			// Verify help command for --help
+			if tt.wantType == "help" {
+				h, ok := cmd.(*HelpCommand)
+				if !ok {
+					t.Fatalf("expected *HelpCommand, got %T", cmd)
+				}
+				if h.command != "dream" {
+					t.Errorf("help topic = %q, want %q", h.command, "dream")
+				}
 			}
 		})
 	}

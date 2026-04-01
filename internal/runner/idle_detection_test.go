@@ -9,6 +9,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -615,6 +617,330 @@ func TestProcessManager_UpdateIdleSince_Clear(t *testing.T) {
 	}
 	if info.Task.IdleSince != "" {
 		t.Errorf("IdleSince should be empty, got %q", info.Task.IdleSince)
+	}
+}
+
+// =============================================================================
+// handleIdleThresholdExceeded: Terminal Status Guard Tests
+// =============================================================================
+
+func TestHandleIdleThresholdExceeded_SkipsAlreadyCompletedTask_BlockedBranch(t *testing.T) {
+	// Scenario: Agent already marked the task as "completed" via Brain API,
+	// but the runner's idle detection fires and tries to mark it "blocked".
+	// The runner should re-fetch the status and skip the overwrite.
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	// Pre-configure the mock to return "completed" status for this entry
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/task1.md": {
+			Path:   "projects/proj-a/task/task1.md",
+			Status: "completed",
+		},
+	}
+
+	cfg := testRunnerConfig()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Test Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		CompleteOnIdle: false, // Would normally mark "blocked"
+		OpencodePort:   4100,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("task1", task, proc)
+
+	// Track events
+	var events []RunnerEvent
+	var eventMu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		eventMu.Lock()
+		events = append(events, event)
+		eventMu.Unlock()
+	})
+
+	ctx := context.Background()
+	tr.handleIdleThresholdExceeded(ctx, task)
+
+	// Verify: NO status update calls (should not overwrite "completed" with "blocked")
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should NOT update status when task is already completed, got updates: %+v", updates)
+	}
+
+	// Verify: task was removed from process manager (cleanup still happens)
+	info := processMgr.Get("task1")
+	if info != nil {
+		t.Error("task should be removed from process manager after early return")
+	}
+
+	// Verify: cleanup was called
+	executor.mu.Lock()
+	cleanups := make([]cleanupCall, len(executor.cleanupCalls))
+	copy(cleanups, executor.cleanupCalls)
+	executor.mu.Unlock()
+	if len(cleanups) == 0 {
+		t.Error("expected cleanup to be called for the task")
+	}
+
+	// Verify: completion event emitted (task was already completed)
+	eventMu.Lock()
+	defer eventMu.Unlock()
+	foundCompletedEvent := false
+	for _, e := range events {
+		if e.Type == EventTaskCompleted {
+			foundCompletedEvent = true
+		}
+	}
+	if !foundCompletedEvent {
+		t.Error("expected task_completed event for already-completed task")
+	}
+}
+
+func TestHandleIdleThresholdExceeded_SkipsAlreadyCompletedTask_CompleteBranch(t *testing.T) {
+	// Scenario: Agent already marked the task as "completed" via Brain API,
+	// and CompleteOnIdle is true. The runner should NOT double-complete it.
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/task1.md": {
+			Path:   "projects/proj-a/task/task1.md",
+			Status: "completed",
+		},
+	}
+
+	cfg := testRunnerConfig()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Test Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		CompleteOnIdle: true, // Would normally auto-complete
+		OpencodePort:   4100,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("task1", task, proc)
+
+	ctx := context.Background()
+	tr.handleIdleThresholdExceeded(ctx, task)
+
+	// Verify: NO status update calls (should not double-complete)
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should NOT update status when task is already completed, got updates: %+v", updates)
+	}
+
+	// Verify: NO append calls (should not append auto-complete note)
+	client.mu.Lock()
+	appendCalls := make([]appendCall, len(client.appendCalls))
+	copy(appendCalls, client.appendCalls)
+	client.mu.Unlock()
+	if len(appendCalls) > 0 {
+		t.Errorf("should NOT append note when task is already completed, got appends: %+v", appendCalls)
+	}
+
+	// Verify: task was removed from process manager
+	info := processMgr.Get("task1")
+	if info != nil {
+		t.Error("task should be removed from process manager after early return")
+	}
+}
+
+func TestHandleIdleThresholdExceeded_SkipsValidatedTask(t *testing.T) {
+	// "validated" is also a terminal status — should not overwrite
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/task1.md": {
+			Path:   "projects/proj-a/task/task1.md",
+			Status: "validated",
+		},
+	}
+
+	cfg := testRunnerConfig()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Test Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		CompleteOnIdle: false,
+		OpencodePort:   4100,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("task1", task, proc)
+
+	ctx := context.Background()
+	tr.handleIdleThresholdExceeded(ctx, task)
+
+	// Verify: NO status update calls
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should NOT update status when task is already validated, got updates: %+v", updates)
+	}
+
+	// Verify: task was removed from process manager
+	info := processMgr.Get("task1")
+	if info != nil {
+		t.Error("task should be removed from process manager after early return")
+	}
+}
+
+func TestHandleIdleThresholdExceeded_APIError_FallsThrough(t *testing.T) {
+	// If the API call fails, we should proceed with existing behavior (graceful degradation)
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	// Simulate API error
+	client.getEntryErr = fmt.Errorf("connection refused")
+
+	cfg := testRunnerConfig()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Test Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		CompleteOnIdle: false, // Will try to mark "blocked"
+		OpencodePort:   4100,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("task1", task, proc)
+
+	ctx := context.Background()
+	tr.handleIdleThresholdExceeded(ctx, task)
+
+	// Verify: should still mark as blocked (fallthrough on API error)
+	updates := client.getUpdateStatusCalls()
+	foundBlocked := false
+	for _, u := range updates {
+		if u.TaskPath == "projects/proj-a/task/task1.md" && u.Status == "blocked" {
+			foundBlocked = true
+		}
+	}
+	if !foundBlocked {
+		t.Errorf("should fall through to marking blocked when API errors, got updates: %+v", updates)
+	}
+}
+
+func TestHandleIdleThresholdExceeded_InProgressTask_ProceedsNormally(t *testing.T) {
+	// If the task is still "in_progress", the runner should proceed with its normal logic
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"projects/proj-a/task/task1.md": {
+			Path:   "projects/proj-a/task/task1.md",
+			Status: "in_progress",
+		},
+	}
+
+	cfg := testRunnerConfig()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Test Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		CompleteOnIdle: false,
+		OpencodePort:   4100,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("task1", task, proc)
+
+	ctx := context.Background()
+	tr.handleIdleThresholdExceeded(ctx, task)
+
+	// Verify: should proceed to mark as blocked (normal behavior)
+	updates := client.getUpdateStatusCalls()
+	foundBlocked := false
+	for _, u := range updates {
+		if u.TaskPath == "projects/proj-a/task/task1.md" && u.Status == "blocked" {
+			foundBlocked = true
+		}
+	}
+	if !foundBlocked {
+		t.Errorf("should mark in_progress task as blocked, got updates: %+v", updates)
 	}
 }
 

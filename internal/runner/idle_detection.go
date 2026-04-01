@@ -116,8 +116,77 @@ func (tr *TaskRunner) checkIdleStatus(ctx context.Context) {
 	}
 }
 
+// isTerminalStatus returns true if the given status is a terminal state
+// that should not be overwritten by the idle detection logic.
+func isTerminalStatus(status string) bool {
+	switch status {
+	case "completed", "validated", "blocked", "cancelled", "archived", "superseded":
+		return true
+	}
+	return false
+}
+
 // handleIdleThresholdExceeded handles a task that has been idle longer than the threshold.
 func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task RunningTask) {
+	// Guard: re-fetch the task status from the Brain API before overwriting.
+	// This prevents a race condition where the agent already marked the task
+	// as completed (or another terminal status) via brain_update, but the
+	// runner's idle detection fires and overwrites it.
+	entry, err := tr.client.GetEntry(ctx, task.Path)
+	if err != nil {
+		// API error — log and proceed with existing behavior (graceful degradation)
+		tr.logger.Printf("idle detection: failed to re-fetch task %s status: %v (proceeding with idle handling)", task.ID, err)
+	} else if isTerminalStatus(entry.Status) {
+		tr.logger.Printf("idle detection: task %s already in terminal status %q, skipping overwrite", task.ID, entry.Status)
+
+		// Determine the appropriate event type based on the actual status
+		eventType := EventTaskCompleted
+		if entry.Status == "blocked" || entry.Status == "cancelled" {
+			eventType = EventTaskFailed
+		}
+
+		// Create task result
+		completedAt := time.Now()
+		duration := completedAt.Sub(task.StartedAt).Milliseconds()
+		exitCode := 0
+		result := &TaskResult{
+			TaskID:      task.ID,
+			Status:      TaskResultCompleted,
+			StartedAt:   task.StartedAt,
+			CompletedAt: completedAt,
+			Duration:    duration,
+			ExitCode:    &exitCode,
+		}
+		if entry.Status == "blocked" || entry.Status == "cancelled" {
+			result.Status = TaskResultBlocked
+		}
+
+		// Cleanup: remove from process manager, tmux, temp files
+		tr.processMgr.Remove(task.ID)
+
+		tr.mu.Lock()
+		if entry.Status == "completed" || entry.Status == "validated" {
+			tr.stats.Completed++
+		} else {
+			tr.stats.Failed++
+		}
+		tr.stats.TotalRuntime += duration
+		if tr.processMgr.RunningCount() == 0 {
+			tr.status = RunnerStatusPolling
+		}
+		tr.mu.Unlock()
+
+		tr.cleanupTaskTmux(task)
+		tr.executor.Cleanup(task.ID, task.ProjectID)
+
+		tr.emitEvent(RunnerEvent{
+			Type:   eventType,
+			Result: result,
+			TaskID: task.ID,
+		})
+		return
+	}
+
 	if task.CompleteOnIdle {
 		// Auto-complete the task
 		tr.logger.Printf("idle detection: task %s idle threshold exceeded, marking completed", task.ID)

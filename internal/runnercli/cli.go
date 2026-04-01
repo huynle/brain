@@ -162,12 +162,19 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 			if err == nil {
 				defer logFile.Close()
 				runnerLogger = log.New(logFile, "", log.LstdFlags)
+				// Redirect slog to the same log file so structured logging
+				// (slog.Info/Warn/Debug) doesn't write to stderr and corrupt
+				// Bubbletea's alternate screen.
+				slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				})))
 			}
 		}
 	}
 	if runnerLogger == nil {
 		// Fallback: discard all runner logs rather than corrupt the TUI
 		runnerLogger = log.New(io.Discard, "", 0)
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	}
 
 	// Build runner options
@@ -185,6 +192,11 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 
 	tr := runner.NewTaskRunner(runnerOpts)
+
+	// Register event logger for durable file-based logging alongside the TUI panel.
+	// Both the TUI OnEvent bridge (for the log panel) and the event logger (for
+	// the log file) run — they serve different purposes.
+	runner.RegisterEventLogger(tr)
 
 	// Setup signal handler
 	sigHandler := runner.SetupSignalHandler(ctx, runner.SignalHandlerOptions{
@@ -246,10 +258,31 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		entry.Timestamp = time.Now()
 
 		switch event.Type {
+		case runner.EventRunnerStarted:
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Runner %s started (%s, projects=%v)", event.RunnerID, event.Mode, event.Projects)
+		case runner.EventTaskClaimed:
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Task claimed: %s [%s]", event.TaskID, event.RunnerID)
+			entry.TaskID = event.TaskID
+			entry.ProjectID = event.ProjectID
+		case runner.EventTaskClaimRejected:
+			entry.Level = "warn"
+			entry.Message = fmt.Sprintf("Claim rejected: %s (held by %s)", event.TaskID, event.ClaimedBy)
+			entry.TaskID = event.TaskID
+		case runner.EventTaskStatusChanged:
+			entry.Level = "info"
+			entry.Message = fmt.Sprintf("Status: %s %s → %s", event.TaskID, event.FromStatus, event.ToStatus)
+			entry.TaskID = event.TaskID
+			entry.ProjectID = event.ProjectID
+		case runner.EventTaskReleased:
+			entry.Level = "warn"
+			entry.Message = fmt.Sprintf("Task released: %s", event.TaskID)
+			entry.TaskID = event.TaskID
 		case runner.EventTaskStarted:
 			if event.Task != nil {
 				entry.Level = "info"
-				entry.Message = fmt.Sprintf("Task started: %s", event.Task.Title)
+				entry.Message = fmt.Sprintf("Task started: %s [%s] pid=%d", event.Task.Title, event.RunnerID, event.Task.PID)
 				entry.TaskID = event.Task.ID
 				entry.ProjectID = event.Task.ProjectID
 				// Track the process PID for metrics (CPU/mem/proc count)
@@ -267,7 +300,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 				if event.Result.ExitCode != nil {
 					exitCode = *event.Result.ExitCode
 				}
-				entry.Message = fmt.Sprintf("Task completed: %s (exit %d)", event.Result.TaskID, exitCode)
+				entry.Message = fmt.Sprintf("Task completed: %s [%s] (exit %d, %dms)", event.Result.TaskID, event.RunnerID, exitCode, event.Result.Duration)
 				entry.TaskID = event.Result.TaskID
 			}
 		case runner.EventTaskFailed:
@@ -277,12 +310,12 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 				if event.Result.ExitCode != nil {
 					exitCode = *event.Result.ExitCode
 				}
-				entry.Message = fmt.Sprintf("Task failed: %s (exit %d)", event.Result.TaskID, exitCode)
+				entry.Message = fmt.Sprintf("Task failed: %s [%s] (exit %d)", event.Result.TaskID, event.RunnerID, exitCode)
 				entry.TaskID = event.Result.TaskID
 			}
 		case runner.EventTaskCancelled:
 			entry.Level = "warn"
-			entry.Message = fmt.Sprintf("Task cancelled: %s", event.TaskID)
+			entry.Message = fmt.Sprintf("Task cancelled: %s [%s]", event.TaskID, event.RunnerID)
 			entry.TaskID = event.TaskID
 		case runner.EventProjectPaused:
 			entry.Level = "info"

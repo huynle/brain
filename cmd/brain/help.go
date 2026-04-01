@@ -43,6 +43,12 @@ TOKENS:
   token list                     List API tokens
   token revoke <name>            Revoke API token
 
+DREAM MODE:
+  dream                          List dream-enabled projects
+  dream <project>                Print dream content for project
+  dream <project> --enable       Enable dream mode for project
+  dream <project> --disable      Disable dream mode for project
+
 GLOBAL HELP:
   -h, --help                     Show help for current command
 
@@ -430,6 +436,32 @@ EXAMPLES:
   brain token revoke dev
 `
 
+const dreamHelp = `brain dream - Dream mode management
+
+USAGE:
+  brain dream
+  brain dream <project>
+  brain dream <project> --enable [--schedule "<cron>"]
+  brain dream <project> --disable
+
+DESCRIPTION:
+  Manage dream mode (knowledge consolidation) for projects.
+  Dream mode periodically consolidates and synthesizes project knowledge.
+
+FLAGS:
+  --enable                       Enable dream mode for project
+  --disable                      Disable dream mode for project
+  --schedule "<cron>"            Custom cron schedule (with --enable)
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain dream
+  brain dream my-project
+  brain dream my-project --enable
+  brain dream my-project --enable --schedule "0 6 * * *"
+  brain dream my-project --disable
+`
+
 const stopHelp = `brain stop - Alias for "brain server stop"
 
 USAGE:
@@ -496,6 +528,8 @@ func ShowHelp(command string) {
 		fmt.Print(tokenListHelp)
 	case "token revoke":
 		fmt.Print(tokenRevokeHelp)
+	case "dream":
+		fmt.Print(dreamHelp)
 	case "stop":
 		fmt.Print(stopHelp)
 	default:

@@ -53,6 +53,13 @@ type TokenFlags struct {
 	Name string
 }
 
+// DreamFlags for dream command
+type DreamFlags struct {
+	Enable   bool
+	Disable  bool
+	Schedule string
+}
+
 // PluginFlags for plugin commands (install, uninstall, plugin-status)
 type PluginFlags struct {
 	Force  bool
@@ -183,6 +190,37 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 	}
 
 	return flags, nil
+}
+
+// ParseDreamFlags parses dream-specific flags
+func ParseDreamFlags(args []string) (*DreamFlags, error) {
+	flags := &DreamFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--enable":
+			flags.Enable = true
+		case "--disable":
+			flags.Disable = true
+		case "--schedule":
+			if i+1 < len(args) {
+				flags.Schedule = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsDreamFlags converts main.DreamFlags to commands.DreamFlags.
+func convertToCommandsDreamFlags(flags *DreamFlags) *commands.DreamFlags {
+	return &commands.DreamFlags{
+		Enable:   flags.Enable,
+		Disable:  flags.Disable,
+		Schedule: flags.Schedule,
+	}
 }
 
 // ParsePluginFlags parses plugin-specific flags

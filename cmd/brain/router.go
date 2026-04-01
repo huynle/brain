@@ -81,6 +81,7 @@ var builtinCommands = map[string]bool{
 	"uninstall":     true,
 	"plugin-status": true,
 	"token":         true,
+	"dream":         true,
 	"help":          true,
 }
 
@@ -200,6 +201,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
+	case "dream":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "dream"}, nil
+		}
+		return parseDreamCommand(cmdArgs)
 	case "install":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "install"}, nil
@@ -364,6 +370,30 @@ func parseRunCommand(args []string) (Command, error) {
 		Project:    project,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsRunnerFlags(flags),
+	}, nil
+}
+
+// parseDreamCommand creates a DreamCommand from args.
+func parseDreamCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseDreamFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine project from positional args (first non-flag arg)
+	project := ""
+	for _, arg := range args {
+		if !isFlag(arg) {
+			project = arg
+			break
+		}
+	}
+
+	return &commands.DreamCommand{
+		Project: project,
+		Config:  convertToCommandsConfig(cfg),
+		Flags:   convertToCommandsDreamFlags(flags),
 	}, nil
 }
 

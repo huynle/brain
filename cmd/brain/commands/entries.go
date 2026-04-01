@@ -864,6 +864,353 @@ func (c *ListCommand) getListAPIClient() *runner.APIClient {
 }
 
 // =============================================================================
+// Entry Edit Command
+// =============================================================================
+
+// EntryEditFlags holds flags for the brain edit command.
+type EntryEditFlags struct {
+	Filter      BrainFilter
+	Interactive bool   // -i / --interactive: fzf selection
+	Force       bool   // --force: skip safety confirmation
+	NoColor     bool   // --no-color
+	Quiet       bool   // -q, --quiet
+	Format      string // --format for output
+}
+
+// EditCommand implements the Command interface for editing brain entries in $EDITOR.
+type EditCommand struct {
+	IDOrPath string
+	Config   *UnifiedConfig
+	Flags    *EntryEditFlags
+	Out      io.Writer
+
+	// apiClient is injectable for testing; nil means create from config.
+	apiClient *runner.APIClient
+}
+
+// Type returns the command type identifier.
+func (c *EditCommand) Type() string {
+	return "edit"
+}
+
+// Execute runs the edit command.
+func (c *EditCommand) Execute() error {
+	out := c.Out
+	if out == nil {
+		out = os.Stdout
+	}
+
+	client := c.getEditAPIClient()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Determine target entry path(s)
+	entryPath, err := c.resolveTarget(ctx, client, out)
+	if err != nil {
+		return err
+	}
+	if entryPath == "" {
+		return nil // User cancelled
+	}
+
+	// Fetch full entry content (YAML frontmatter + body)
+	original, err := client.GetEntryFull(ctx, entryPath)
+	if err != nil {
+		return fmt.Errorf("get entry: %w", err)
+	}
+
+	// Write to temp file
+	shortID := extractShortID(entryPath)
+	tmpFile, err := os.CreateTemp("", fmt.Sprintf("brain-edit-%s-*.md", shortID))
+	if err != nil {
+		return fmt.Errorf("create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmpFile.WriteString(original); err != nil {
+		tmpFile.Close()
+		return fmt.Errorf("write temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Open in $EDITOR
+	editor := os.Getenv("VISUAL")
+	if editor == "" {
+		editor = os.Getenv("EDITOR")
+	}
+	if editor == "" {
+		editor = "vi"
+	}
+
+	cmd := exec.Command(editor, tmpPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("editor failed: %w", err)
+	}
+
+	// Read modified file
+	modified, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return fmt.Errorf("read modified file: %w", err)
+	}
+
+	// Compare with original (byte-level diff)
+	if string(modified) == original {
+		fmt.Fprintln(out, "No changes made")
+		return nil
+	}
+
+	// Check for dangerous field changes
+	if !c.Flags.Force {
+		if warn := c.checkDangerousChanges(original, string(modified)); warn != "" {
+			fmt.Fprintf(out, "WARNING: %s\n", warn)
+			fmt.Fprint(out, "Continue? [y/N] ")
+
+			var answer string
+			fmt.Fscan(os.Stdin, &answer)
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				fmt.Fprintln(out, "Cancelled")
+				return nil
+			}
+		}
+	}
+
+	// Send update via API
+	if err := client.UpdateEntryFull(ctx, entryPath, string(modified)); err != nil {
+		return fmt.Errorf("update entry: %w", err)
+	}
+
+	// Print summary of changes
+	c.printEditSummary(out, original, string(modified))
+	return nil
+}
+
+// resolveTarget determines which entry to edit based on flags and positional args.
+func (c *EditCommand) resolveTarget(ctx context.Context, client *runner.APIClient, out io.Writer) (string, error) {
+	// Direct ID/path provided
+	if c.IDOrPath != "" && !c.Flags.Interactive {
+		return c.IDOrPath, nil
+	}
+
+	// Interactive mode or filter-based selection
+	if c.Flags.Interactive || c.hasFilterFlags() {
+		// Validate filter flags
+		if err := c.Flags.Filter.Validate(); err != nil {
+			return "", err
+		}
+
+		params := c.Flags.Filter.ToQueryParams()
+		resp, err := client.ListEntries(ctx, params)
+		if err != nil {
+			return "", fmt.Errorf("list entries: %w", err)
+		}
+
+		if len(resp.Entries) == 0 {
+			fmt.Fprintln(out, "No entries found matching filters")
+			return "", nil
+		}
+
+		// If interactive, always use fzf
+		if c.Flags.Interactive {
+			selected, err := fzfSelect(resp.Entries)
+			if err != nil {
+				return "", err
+			}
+			if len(selected) == 0 {
+				return "", nil
+			}
+			return selected[0].Path, nil
+		}
+
+		// Non-interactive with filters: safety check for >5 entries
+		if len(resp.Entries) > 5 && !c.Flags.Force {
+			fmt.Fprintf(out, "Are you sure you want to open %d entries? [y/N] ", len(resp.Entries))
+
+			var answer string
+			fmt.Fscan(os.Stdin, &answer)
+			answer = strings.TrimSpace(strings.ToLower(answer))
+			if answer != "y" && answer != "yes" {
+				fmt.Fprintln(out, "Cancelled (use --force to skip confirmation)")
+				return "", nil
+			}
+		}
+
+		// For non-interactive multi-entry: edit first matching entry
+		// (batch editing is complex; single entry is the primary use case)
+		if len(resp.Entries) == 1 {
+			return resp.Entries[0].Path, nil
+		}
+
+		// Multiple entries without interactive: suggest using -i
+		fmt.Fprintf(out, "Found %d entries. Use -i to select interactively.\n", len(resp.Entries))
+		return "", nil
+	}
+
+	// No ID and no flags
+	if c.IDOrPath != "" {
+		return c.IDOrPath, nil
+	}
+	return "", fmt.Errorf("usage: brain edit <id-or-path> or brain edit -i [filters]")
+}
+
+// hasFilterFlags returns true if any filter flags are set.
+func (c *EditCommand) hasFilterFlags() bool {
+	f := c.Flags.Filter
+	return f.Type != "" || f.Status != "" || f.Tags != "" ||
+		f.Priority != "" || f.FeatureID != ""
+}
+
+// checkDangerousChanges compares frontmatter fields that are dangerous to change.
+// Returns a warning string if dangerous changes detected, empty string otherwise.
+func (c *EditCommand) checkDangerousChanges(original, modified string) string {
+	origFields := extractFrontmatterField(original)
+	modFields := extractFrontmatterField(modified)
+
+	var warnings []string
+
+	dangerousFields := []string{"type", "project"}
+	for _, field := range dangerousFields {
+		origVal := origFields[field]
+		modVal := modFields[field]
+		if origVal != modVal && origVal != "" && modVal != "" {
+			warnings = append(warnings, fmt.Sprintf("%s changed: %q -> %q", field, origVal, modVal))
+		}
+	}
+
+	if len(warnings) == 0 {
+		return ""
+	}
+	return "Dangerous field changes detected: " + strings.Join(warnings, "; ")
+}
+
+// extractFrontmatterField extracts simple key: value pairs from YAML frontmatter.
+func extractFrontmatterField(content string) map[string]string {
+	fields := make(map[string]string)
+	if !strings.HasPrefix(content, "---") {
+		return fields
+	}
+
+	// Find closing ---
+	rest := content[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return fields
+	}
+	frontmatter := rest[:idx]
+
+	for _, line := range strings.Split(frontmatter, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			fields[key] = val
+		}
+	}
+
+	return fields
+}
+
+// printEditSummary prints a human-readable summary of what changed.
+func (c *EditCommand) printEditSummary(out io.Writer, original, modified string) {
+	origFields := extractFrontmatterField(original)
+	modFields := extractFrontmatterField(modified)
+
+	var changes []string
+
+	// Check frontmatter field changes
+	allKeys := make(map[string]bool)
+	for k := range origFields {
+		allKeys[k] = true
+	}
+	for k := range modFields {
+		allKeys[k] = true
+	}
+
+	for key := range allKeys {
+		origVal := origFields[key]
+		modVal := modFields[key]
+		if origVal != modVal {
+			if origVal == "" {
+				changes = append(changes, fmt.Sprintf("%s: (added) %s", key, modVal))
+			} else if modVal == "" {
+				changes = append(changes, fmt.Sprintf("%s: (removed) %s", key, origVal))
+			} else {
+				changes = append(changes, fmt.Sprintf("%s: %s -> %s", key, origVal, modVal))
+			}
+		}
+	}
+
+	// Check body changes
+	origBody := extractBody(original)
+	modBody := extractBody(modified)
+	if origBody != modBody {
+		origLines := strings.Count(origBody, "\n")
+		modLines := strings.Count(modBody, "\n")
+		diff := modLines - origLines
+		if diff > 0 {
+			changes = append(changes, fmt.Sprintf("body: +%d lines", diff))
+		} else if diff < 0 {
+			changes = append(changes, fmt.Sprintf("body: %d lines", diff))
+		} else {
+			changes = append(changes, "body: modified")
+		}
+	}
+
+	if len(changes) > 0 {
+		fmt.Fprintf(out, "Updated: %s\n", strings.Join(changes, ", "))
+	} else {
+		fmt.Fprintln(out, "Updated (whitespace changes)")
+	}
+}
+
+// extractBody extracts the markdown body after the YAML frontmatter.
+func extractBody(content string) string {
+	if !strings.HasPrefix(content, "---") {
+		return content
+	}
+	rest := content[3:]
+	idx := strings.Index(rest, "\n---")
+	if idx < 0 {
+		return content
+	}
+	// Skip past "---\n"
+	body := rest[idx+4:]
+	if strings.HasPrefix(body, "\n") {
+		body = body[1:]
+	}
+	return body
+}
+
+// extractShortID extracts a short identifier from a path for temp file naming.
+func extractShortID(pathOrID string) string {
+	// If it's a full path like projects/brain-api/task/abc12def.md, extract abc12def
+	parts := strings.Split(pathOrID, "/")
+	last := parts[len(parts)-1]
+	last = strings.TrimSuffix(last, ".md")
+	if len(last) > 12 {
+		return last[:12]
+	}
+	return last
+}
+
+// getEditAPIClient returns the API client, creating one from config if not injected.
+func (c *EditCommand) getEditAPIClient() *runner.APIClient {
+	if c.apiClient != nil {
+		return c.apiClient
+	}
+	return runner.NewAPIClient(c.Config.Runner)
+}
+
+// =============================================================================
 // Shared Helpers
 // =============================================================================
 

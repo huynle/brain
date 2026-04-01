@@ -873,6 +873,104 @@ func ParseEntryListFlags(args []string) (*EntryListFlags, error) {
 	return flags, nil
 }
 
+// EntryEditFlags holds flags for the brain edit command (main package mirror).
+type EntryEditFlags struct {
+	Type        string
+	Status      string
+	Tags        string
+	Priority    string
+	FeatureID   string
+	Limit       int
+	Interactive bool
+	Force       bool
+	NoColor     bool
+	Quiet       bool
+	Format      string
+}
+
+// ParseEntryEditFlags parses brain edit flags and the positional id-or-path argument.
+// Returns the flags, the positional argument (id-or-path), and any error.
+func ParseEntryEditFlags(args []string) (*EntryEditFlags, string, error) {
+	flags := &EntryEditFlags{Limit: 20}
+	var idOrPath string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--type":
+			if i+1 < len(args) {
+				flags.Type = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--tags":
+			if i+1 < len(args) {
+				flags.Tags = args[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(args) {
+				flags.Priority = args[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(args) {
+				flags.FeatureID = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "-i", "--interactive":
+			flags.Interactive = true
+		case "--force":
+			flags.Force = true
+		case "--no-color":
+			flags.NoColor = true
+		case "-q", "--quiet":
+			flags.Quiet = true
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		default:
+			// First non-flag argument is the id-or-path
+			if !isFlag(arg) && idOrPath == "" {
+				idOrPath = arg
+			}
+		}
+	}
+
+	return flags, idOrPath, nil
+}
+
+// convertToCommandsEntryEditFlags converts main.EntryEditFlags to commands.EntryEditFlags.
+func convertToCommandsEntryEditFlags(flags *EntryEditFlags) *commands.EntryEditFlags {
+	f := &commands.EntryEditFlags{
+		Interactive: flags.Interactive,
+		Force:       flags.Force,
+		NoColor:     flags.NoColor,
+		Quiet:       flags.Quiet,
+		Format:      flags.Format,
+	}
+	f.Filter.Type = flags.Type
+	f.Filter.Status = flags.Status
+	f.Filter.Tags = flags.Tags
+	f.Filter.Priority = flags.Priority
+	f.Filter.FeatureID = flags.FeatureID
+	f.Filter.Limit = flags.Limit
+	return f
+}
+
 // convertToCommandsEntryListFlags converts main.EntryListFlags to commands.EntryListFlags.
 func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListFlags {
 	f := &commands.EntryListFlags{

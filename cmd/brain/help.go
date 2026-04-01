@@ -47,6 +47,7 @@ ENTRIES:
   save                           Create a new brain entry
   get <id-or-path>               Read a brain entry (cat is an alias)
   update <id> --status <s>       Update an existing entry
+  edit <id-or-path>              Open entry in $EDITOR for editing
   search <query>                 Search brain entries
   list                           List brain entries with filters
 
@@ -67,6 +68,8 @@ EXAMPLES:
   brain server logs -f -n 200
   brain token create --name dev
   brain save --type task --title "Fix auth bug"
+  brain edit abc12def
+  brain edit -i --type task
   brain help run
 `
 
@@ -608,6 +611,48 @@ EXAMPLES:
   brain get abc12def | sed 's/old/new/g' | brain update abc12def --content -
 `
 
+const editHelp = `brain edit - Open brain entry in $EDITOR
+
+USAGE:
+  brain edit <id-or-path>
+  brain edit -i [filters]
+
+DESCRIPTION:
+  Opens a brain entry in your $EDITOR with full YAML frontmatter and
+  markdown body. All frontmatter fields are editable. On save, changes
+  are diffed against the original and sent back via the API.
+
+POSITIONAL:
+  <id-or-path>                   Entry short ID (8-char) or full brain path
+
+FLAGS:
+  -i, --interactive              Use fzf to select entry interactively
+  --force                        Skip safety confirmations
+  --type <type>                  Filter by entry type (with -i)
+  --status <status>              Filter by status (with -i)
+  --tags <tags>                  Filter by tags (with -i)
+  --priority <priority>          Filter by priority (with -i)
+  --feature-id <id>              Filter by feature ID (with -i)
+  --limit <n>                    Max filter results (default: 20)
+  --no-color                     Disable color output
+  -h, --help                     Show this help
+
+EDITOR:
+  Uses $VISUAL, then $EDITOR, then vi as fallback.
+  Save and quit to apply changes. No changes = no API call.
+
+DANGEROUS CHANGES:
+  Modifying type or project triggers a confirmation prompt.
+  Use --force to skip all confirmations.
+
+EXAMPLES:
+  brain edit abc12def
+  brain edit projects/brain-api/task/abc12def.md
+  brain edit -i --type task
+  brain edit -i --type task --status active
+  brain edit -i --type task --status active --force
+`
+
 const searchHelp = `brain search - Search brain entries
 
 USAGE:
@@ -753,6 +798,8 @@ func ShowHelp(command string) {
 		fmt.Print(getHelp)
 	case "update":
 		fmt.Print(updateHelp)
+	case "edit":
+		fmt.Print(editHelp)
 	case "search":
 		fmt.Print(searchHelp)
 	case "list":

@@ -86,6 +86,7 @@ var builtinCommands = map[string]bool{
 	"get":           true,
 	"cat":           true, // alias for "get"
 	"update":        true,
+	"edit":          true,
 	"search":        true,
 	"list":          true,
 	"help":          true,
@@ -227,6 +228,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "update"}, nil
 		}
 		return parseUpdateCommand(cmdArgs)
+	case "edit":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "edit"}, nil
+		}
+		return parseEditCommand(cmdArgs)
 	case "search":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "search"}, nil
@@ -860,6 +866,21 @@ func parsePluginStatusCommand(args []string) (Command, error) {
 		Target:     "",
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parseEditCommand creates an EditCommand from args.
+func parseEditCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryEditFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.EditCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryEditFlags(flags),
 	}, nil
 }
 

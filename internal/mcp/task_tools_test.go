@@ -19,8 +19,8 @@ func TestRegisterTaskTools_Count(t *testing.T) {
 	RegisterTaskTools(s, client)
 
 	count := len(s.tools)
-	if count != 12 {
-		t.Errorf("expected 12 task tools registered, got %d", count)
+	if count != 14 {
+		t.Errorf("expected 14 task tools registered, got %d", count)
 	}
 }
 
@@ -40,6 +40,8 @@ func TestRegisterTaskTools_Names(t *testing.T) {
 		"brain_feature_review_disable",
 		"brain_blocked_inspector_enable",
 		"brain_blocked_inspector_disable",
+		"brain_dream_enable",
+		"brain_dream_disable",
 	}
 
 	for _, name := range expectedTools {
@@ -1267,6 +1269,228 @@ func TestBrainBlockedInspectorDisable_Handler(t *testing.T) {
 	}
 }
 
+func TestBrainDreamEnable_Schema(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterTaskTools(s, client)
+
+	tool := s.tools["brain_dream_enable"].tool
+
+	// Required: project only
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "project" {
+		t.Errorf("brain_dream_enable required = %v, want [project]", tool.InputSchema.Required)
+	}
+
+	// Has optional schedule
+	if _, ok := tool.InputSchema.Properties["schedule"]; !ok {
+		t.Error("brain_dream_enable missing 'schedule' property")
+	}
+
+	// Has project property
+	if _, ok := tool.InputSchema.Properties["project"]; !ok {
+		t.Error("brain_dream_enable missing 'project' property")
+	}
+}
+
+func TestBrainDreamDisable_Schema(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterTaskTools(s, client)
+
+	tool := s.tools["brain_dream_disable"].tool
+
+	// Required: project only
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "project" {
+		t.Errorf("brain_dream_disable required = %v, want [project]", tool.InputSchema.Required)
+	}
+
+	// Has project property
+	if _, ok := tool.InputSchema.Properties["project"]; !ok {
+		t.Error("brain_dream_disable missing 'project' property")
+	}
+}
+
+func TestBrainDreamEnable_Handler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/monitors" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["templateId"] != "dream" {
+			t.Errorf("templateId = %v, want dream", body["templateId"])
+		}
+
+		// Verify scope is project-scoped (not feature-scoped)
+		scope, ok := body["scope"].(map[string]any)
+		if !ok {
+			t.Fatal("missing scope in request body")
+		}
+		if scope["type"] != "project" {
+			t.Errorf("scope.type = %v, want project", scope["type"])
+		}
+		if scope["project"] != "my-project" {
+			t.Errorf("scope.project = %v, want my-project", scope["project"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":    "dream123",
+			"path":  "projects/my-project/task/dream123.md",
+			"title": "Dream: my-project",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["brain_dream_enable"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"project": "my-project",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "Dream Mode enabled") {
+		t.Errorf("result should confirm enablement, got: %s", result)
+	}
+	if !strings.Contains(result, "dream123") {
+		t.Errorf("result should contain task ID, got: %s", result)
+	}
+}
+
+func TestBrainDreamEnable_WithSchedule(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id": "dream123", "path": "p/task/dream123.md", "title": "Dream",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["brain_dream_enable"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"project":  "my-project",
+		"schedule": "0 3 * * *",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if capturedBody["schedule"] != "0 3 * * *" {
+		t.Errorf("schedule = %v, want 0 3 * * *", capturedBody["schedule"])
+	}
+}
+
+func TestBrainDreamEnable_Conflict(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": "conflict", "message": "409 conflict: monitor already exists"})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["brain_dream_enable"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"project": "my-project",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "already enabled") {
+		t.Errorf("result should indicate already enabled, got: %s", result)
+	}
+}
+
+func TestBrainDreamDisable_Handler(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "DELETE" || r.URL.Path != "/api/v1/monitors/by-scope" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		json.NewDecoder(r.Body).Decode(&body)
+		if body["templateId"] != "dream" {
+			t.Errorf("templateId = %v, want dream", body["templateId"])
+		}
+
+		// Verify scope is project-scoped
+		scope, ok := body["scope"].(map[string]any)
+		if !ok {
+			t.Fatal("missing scope in request body")
+		}
+		if scope["type"] != "project" {
+			t.Errorf("scope.type = %v, want project", scope["type"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"message": "deleted",
+			"taskId":  "dream123",
+			"path":    "projects/my-project/task/dream123.md",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["brain_dream_disable"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"project": "my-project",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "Dream Mode disabled") {
+		t.Errorf("result should confirm disablement, got: %s", result)
+	}
+	if !strings.Contains(result, "dream123") {
+		t.Errorf("result should contain task ID, got: %s", result)
+	}
+}
+
+func TestBrainDreamDisable_NotEnabled(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "not_found", "message": "not found"})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["brain_dream_disable"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"project": "my-project",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "not currently enabled") {
+		t.Errorf("result should indicate not enabled, got: %s", result)
+	}
+}
+
 // =============================================================================
 // Helper function tests
 // =============================================================================
@@ -1378,7 +1602,7 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 	totalCount := len(s.tools)
 	taskToolCount := totalCount - brainToolCount
 
-	if taskToolCount != 12 {
-		t.Errorf("expected 12 new task tools (no overlap), got %d new tools", taskToolCount)
+	if taskToolCount != 14 {
+		t.Errorf("expected 14 new task tools (no overlap), got %d new tools", taskToolCount)
 	}
 }

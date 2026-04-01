@@ -10,7 +10,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// RegisterTaskTools registers all 10 task tools on the server.
+// RegisterTaskTools registers all 14 task tools on the server.
 func RegisterTaskTools(s *Server, client *APIClient) {
 	registerBrainTasks(s, client)
 	registerBrainTaskNext(s, client)
@@ -25,6 +25,8 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 	registerBrainFeatureReviewDisable(s, client)
 	registerBrainBlockedInspectorEnable(s, client)
 	registerBrainBlockedInspectorDisable(s, client)
+	registerBrainDreamEnable(s, client)
+	registerBrainDreamDisable(s, client)
 }
 
 // =============================================================================
@@ -1158,6 +1160,103 @@ func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 		}
 
 		return fmt.Sprintf("Blocked Task Inspector disabled for feature %q (task %s deleted).", featureID, resp.TaskID), nil
+	})
+}
+
+// =============================================================================
+// brain_dream_enable
+// =============================================================================
+
+func registerBrainDreamEnable(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_dream_enable",
+		Description: "Enable Dream Mode for a project. Creates a recurring scheduled task that periodically consolidates all project knowledge into a single injectable dream entry. The dream builds long-term project memory across sessions.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"project":  {Type: "string", Description: "Project to enable dream mode for"},
+				"schedule": {Type: "string", Description: "Cron schedule override (default: daily at 3 AM)"},
+			},
+			Required: []string{"project"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		project := StringArg(args, "project", "")
+
+		scope := map[string]string{
+			"type":    "project",
+			"project": project,
+		}
+
+		body := map[string]any{
+			"templateId": "dream",
+			"scope":      scope,
+		}
+		if schedule := StringArg(args, "schedule", ""); schedule != "" {
+			body["schedule"] = schedule
+		}
+
+		var resp struct {
+			ID    string `json:"id"`
+			Path  string `json:"path"`
+			Title string `json:"title"`
+		}
+		err := client.Request(ctx, "POST", "/monitors", body, nil, &resp)
+
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") {
+				return fmt.Sprintf("Dream Mode is already enabled for project %q. Use brain_dream_disable first to reset it.", project), nil
+			}
+			return "", err
+		}
+
+		return fmt.Sprintf("Dream Mode enabled for project %q:\n- **Task ID:** %s\n- **Title:** %s\nThe dream will periodically consolidate project knowledge into a single injectable entry.",
+			project, resp.ID, resp.Title), nil
+	})
+}
+
+// =============================================================================
+// brain_dream_disable
+// =============================================================================
+
+func registerBrainDreamDisable(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_dream_disable",
+		Description: "Disable Dream Mode for a project. Removes the dream consolidation task. Existing dream entries are preserved. Can be re-enabled with brain_dream_enable.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"project": {Type: "string", Description: "Project to disable dream mode for"},
+			},
+			Required: []string{"project"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		project := StringArg(args, "project", "")
+
+		scope := map[string]string{
+			"type":    "project",
+			"project": project,
+		}
+
+		var resp struct {
+			Message string `json:"message"`
+			TaskID  string `json:"taskId"`
+			Path    string `json:"path"`
+		}
+		err := client.Request(ctx, "DELETE", "/monitors/by-scope", map[string]any{
+			"templateId": "dream",
+			"scope":      scope,
+		}, nil, &resp)
+
+		if err != nil {
+			msg := err.Error()
+			if strings.Contains(msg, "404") || strings.Contains(strings.ToLower(msg), "not found") {
+				return fmt.Sprintf("Dream Mode is not currently enabled for project %q. Nothing to disable.", project), nil
+			}
+			return "", err
+		}
+
+		return fmt.Sprintf("Dream Mode disabled for project %q (task %s deleted). Existing dream entries are preserved.", project, resp.TaskID), nil
 	})
 }
 

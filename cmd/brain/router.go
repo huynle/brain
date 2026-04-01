@@ -82,6 +82,12 @@ var builtinCommands = map[string]bool{
 	"plugin-status": true,
 	"token":         true,
 	"dream":         true,
+	"save":          true,
+	"get":           true,
+	"cat":           true, // alias for "get"
+	"update":        true,
+	"search":        true,
+	"list":          true,
 	"help":          true,
 }
 
@@ -206,6 +212,31 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "dream"}, nil
 		}
 		return parseDreamCommand(cmdArgs)
+	case "save":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "save"}, nil
+		}
+		return parseSaveCommand(cmdArgs)
+	case "get", "cat":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "get"}, nil
+		}
+		return parseGetCommand(cmdArgs)
+	case "update":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "update"}, nil
+		}
+		return parseUpdateCommand(cmdArgs)
+	case "search":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "search"}, nil
+		}
+		return parseSearchCommand(cmdArgs)
+	case "list":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "list"}, nil
+		}
+		return parseListCommand(cmdArgs)
 	case "install":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "install"}, nil
@@ -765,6 +796,57 @@ func parseUninstallCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// parseGetCommand creates a GetCommand from args.
+func parseGetCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryGetFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Detect TTY via os.Stdout.Stat()
+	isTTY := false
+	if fi, err := os.Stdout.Stat(); err == nil {
+		isTTY = (fi.Mode() & os.ModeCharDevice) != 0
+	}
+
+	return &commands.GetCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryGetFlags(flags),
+		IsTTY:    isTTY,
+	}, nil
+}
+
+// parseSaveCommand creates a SaveCommand from args.
+func parseSaveCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntrySaveFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.SaveCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntrySaveFlags(flags),
+	}, nil
+}
+
+// parseUpdateCommand creates an UpdateCommand from args.
+func parseUpdateCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryUpdateFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.UpdateCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryUpdateFlags(flags),
+	}, nil
+}
+
 // parsePluginStatusCommand creates a PluginCommand for status subcommand.
 func parsePluginStatusCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
@@ -778,5 +860,43 @@ func parsePluginStatusCommand(args []string) (Command, error) {
 		Target:     "",
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parseSearchCommand creates a SearchCommand from args.
+func parseSearchCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntrySearchFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract query from positional args (first non-flag arg)
+	query := ""
+	for _, arg := range args {
+		if !isFlag(arg) {
+			query = arg
+			break
+		}
+	}
+
+	return &commands.SearchCommand{
+		Query:  query,
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntrySearchFlags(flags),
+	}, nil
+}
+
+// parseListCommand creates a ListCommand from args.
+func parseListCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntryListFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.ListCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntryListFlags(flags),
 	}, nil
 }

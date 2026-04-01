@@ -72,5 +72,14 @@ func matchesQuery(task types.ResolvedTask, query string) bool {
 		return true
 	}
 
+	// Match against schedule (typing "cron" or "schedule" finds all scheduled tasks,
+	// or match partial cron expressions like "*/15")
+	if task.Schedule != "" {
+		if strings.Contains("cron", q) || strings.Contains("scheduled", q) ||
+			strings.Contains(strings.ToLower(task.Schedule), q) {
+			return true
+		}
+	}
+
 	return false
 }

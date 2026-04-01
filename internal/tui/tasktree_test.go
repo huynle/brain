@@ -2185,6 +2185,69 @@ func TestStatusIndicator_DefaultToCompleted(t *testing.T) {
 }
 
 // =============================================================================
+// Tests: cronBadge
+// =============================================================================
+
+func TestCronBadge_NoSchedule(t *testing.T) {
+	task := types.ResolvedTask{Title: "Regular task"}
+	plain, styled := cronBadge(task)
+	if plain != "" || styled != "" {
+		t.Errorf("expected empty badge for non-scheduled task, got plain=%q styled=%q", plain, styled)
+	}
+}
+
+func TestCronBadge_ScheduleEnabled(t *testing.T) {
+	enabled := true
+	task := types.ResolvedTask{
+		Title:           "Scheduled check",
+		Schedule:        "*/15 * * * *",
+		ScheduleEnabled: &enabled,
+	}
+	plain, styled := cronBadge(task)
+	if plain != "[cron] " {
+		t.Errorf("expected plain '[cron] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for enabled schedule")
+	}
+	// Styled should contain the badge text (may be wrapped in ANSI codes)
+	if !strings.Contains(styled, "cron") {
+		t.Errorf("expected styled badge to contain 'cron', got %q", styled)
+	}
+}
+
+func TestCronBadge_ScheduleDisabled(t *testing.T) {
+	disabled := false
+	task := types.ResolvedTask{
+		Title:           "Disabled check",
+		Schedule:        "*/15 * * * *",
+		ScheduleEnabled: &disabled,
+	}
+	plain, styled := cronBadge(task)
+	if plain != "[cron] " {
+		t.Errorf("expected plain '[cron] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for disabled schedule")
+	}
+}
+
+func TestCronBadge_ScheduleEnabledNil(t *testing.T) {
+	// nil ScheduleEnabled means enabled by default
+	task := types.ResolvedTask{
+		Title:    "Default enabled",
+		Schedule: "0 3 * * *",
+	}
+	plain, styled := cronBadge(task)
+	if plain != "[cron] " {
+		t.Errorf("expected plain '[cron] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge when ScheduleEnabled is nil")
+	}
+}
+
+// =============================================================================
 // Tests: buildSelectedTaskRelationGraph
 // =============================================================================
 

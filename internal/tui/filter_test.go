@@ -271,3 +271,151 @@ func TestMatchesQueryEmptyFeatureID(t *testing.T) {
 		t.Errorf("matchesQuery with empty FeatureID should not match 'feat-', got %v", result)
 	}
 }
+
+// =============================================================================
+// Schedule/cron matching tests
+// =============================================================================
+
+func TestMatchesQuerySchedule(t *testing.T) {
+	task := types.ResolvedTask{
+		ID:       "abc123",
+		Title:    "Check blocked tasks",
+		Schedule: "*/15 * * * *",
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected bool
+	}{
+		{
+			name:     "Match 'cron' keyword",
+			query:    "cron",
+			expected: true,
+		},
+		{
+			name:     "Match 'schedule' partial via 'scheduled' contains",
+			query:    "sched",
+			expected: true,
+		},
+		{
+			name:     "Match 'scheduled' keyword",
+			query:    "scheduled",
+			expected: true,
+		},
+		{
+			name:     "Match cron expression partial",
+			query:    "*/15",
+			expected: true,
+		},
+		{
+			name:     "Match cron expression star",
+			query:    "*",
+			expected: true,
+		},
+		{
+			name:     "No match unrelated query",
+			query:    "xyz",
+			expected: false,
+		},
+		{
+			name:     "Case insensitive CRON",
+			query:    "CRON",
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesQuery(task, tt.query)
+			if result != tt.expected {
+				t.Errorf("matchesQuery(%q) = %v, expected %v", tt.query, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMatchesQueryNoSchedule(t *testing.T) {
+	// Task without schedule should NOT match cron queries
+	task := types.ResolvedTask{
+		ID:    "abc123",
+		Title: "Regular task",
+		// Schedule is empty
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected bool
+	}{
+		{
+			name:     "cron does not match non-scheduled task",
+			query:    "cron",
+			expected: false,
+		},
+		{
+			name:     "schedule does not match non-scheduled task",
+			query:    "schedule",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := matchesQuery(task, tt.query)
+			if result != tt.expected {
+				t.Errorf("matchesQuery(%q) = %v, expected %v", tt.query, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestFilterTasksSchedule(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{
+			ID:       "abc123",
+			Title:    "Scheduled check",
+			Schedule: "*/15 * * * *",
+		},
+		{
+			ID:    "def456",
+			Title: "Regular task",
+		},
+		{
+			ID:       "ghi789",
+			Title:    "Nightly job",
+			Schedule: "0 3 * * *",
+		},
+	}
+
+	tests := []struct {
+		name     string
+		query    string
+		expected int
+	}{
+		{
+			name:     "Filter 'cron' returns only scheduled tasks",
+			query:    "cron",
+			expected: 2,
+		},
+		{
+			name:     "Filter by cron expression returns matching task",
+			query:    "*/15",
+			expected: 1,
+		},
+		{
+			name:     "Filter 'regular' returns only title match",
+			query:    "regular",
+			expected: 1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			filtered := FilterTasks(tasks, tt.query)
+			if len(filtered) != tt.expected {
+				t.Errorf("FilterTasks(%q) = %d tasks, expected %d", tt.query, len(filtered), tt.expected)
+			}
+		})
+	}
+}

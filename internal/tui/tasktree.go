@@ -1913,6 +1913,19 @@ func statusIndicator(status, classification string) string {
 	}
 }
 
+// cronBadge returns a plain and styled [cron] badge if the task is scheduled, or empty strings if not.
+// The plain version is used for width calculation; the styled version for rendering.
+func cronBadge(task types.ResolvedTask) (plain string, styled string) {
+	if task.Schedule == "" {
+		return "", ""
+	}
+	badge := BadgeCron + " "
+	if task.ScheduleEnabled != nil && !*task.ScheduleEnabled {
+		return badge, ScheduleBadgeDisabledStyle.Render(BadgeCron) + " "
+	}
+	return badge, ScheduleBadgeStyle.Render(BadgeCron) + " "
+}
+
 // View renders the task tree as a string within the given dimensions.
 // This is the legacy method without project label support. Use ViewWithProject instead.
 func (tt *TaskTree) View(width, height int) string {
@@ -3086,6 +3099,9 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	indicator := statusIndicator(task.Status, task.Classification)
 	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
+	// Schedule badge (shown for cron/scheduled tasks)
+	cronPlain, cronStyled := cronBadge(task)
+
 	// Checkbox indicator (ONLY when multi-select active)
 	checkboxPart := ""
 	if showCheckboxes {
@@ -3099,12 +3115,13 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Calculate overhead: selMarker(2) + prefix + treeConnector + checkbox + indicator(2) + space(1) + suffixes
+		// Calculate overhead: selMarker(2) + prefix + treeConnector + checkbox + indicator(2) + space(1) + cronBadge + suffixes
 		overhead := 2 + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
 		if showCheckboxes {
 			overhead += 4 // "[x] "
 		}
 		overhead += 2 + 1 // indicator + space
+		overhead += len(cronPlain)
 		if task.Priority == "high" {
 			overhead++ // "!"
 		}
@@ -3133,7 +3150,7 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 	// Build the complete line first to preserve exact spacing
 	if isSelected {
 		// Build line without styles first
-		rawLine := fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicator, title, prioritySuffix, cycleSuffix)
+		rawLine := fmt.Sprintf("%s%s%s%s%s %s%s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicator, cronPlain, title, prioritySuffix, cycleSuffix)
 
 		// Apply blue background to the entire line at once
 		return SelectedRowStyle.Render(rawLine)
@@ -3146,7 +3163,7 @@ func (tt *TaskTree) renderTaskLine(node TreeNode, prefix string, isLast bool, wi
 			cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(cycleSuffix)
 		}
 
-		return fmt.Sprintf("%s%s%s%s%s %s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, title, prioritySuffix, cycleSuffix)
+		return fmt.Sprintf("%s%s%s%s%s %s%s%s%s", selMarker, prefix, treeConnector, checkboxPart, indicatorStyled, cronStyled, title, prioritySuffix, cycleSuffix)
 	}
 }
 
@@ -3287,15 +3304,19 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 	// Status indicator with color
 	indicator := statusIndicator(task.Status, task.Classification)
 
+	// Schedule badge (shown for cron/scheduled tasks)
+	cronPlain, cronStyled := cronBadge(task)
+
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Calculate overhead: selMarker + prefix + treeConnector + checkbox + indicator + space + suffixes
+		// Calculate overhead: selMarker + prefix + treeConnector + checkbox + indicator + space + cronBadge + suffixes
 		overhead := lipgloss.Width(selMarker) + lipgloss.Width(prefix) + lipgloss.Width(treeConnector)
 		if showCheckboxes {
 			overhead += 4 // "[x] "
 		}
 		overhead += 2 + 1 // indicator + space
+		overhead += len(cronPlain)
 		if task.Priority == "high" {
 			overhead++ // "!"
 		}
@@ -3331,13 +3352,14 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		treeConnector = SelectedRowStyle.Render(treeConnector)
 		checkboxPart = SelectedRowStyle.Render(checkboxPart)
 		indicatorStyled := SelectedRowStyle.Render(indicator)
+		cronBadgePart := SelectedRowStyle.Render(cronPlain)
 		projectLabel = SelectedRowStyle.Render(projectLabel)
 		title = SelectedRowStyle.Render(title)
 		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
 		cycleSuffix = SelectedRowStyle.Render(cycleSuffix)
-		return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
+		return fmt.Sprintf("%s%s%s%s%s %s%s%s%s%s",
 			selMarker, prefix, treeConnector, checkboxPart,
-			indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
+			indicatorStyled, cronBadgePart, projectLabel, title, prioritySuffix, cycleSuffix)
 	}
 
 	// Not selected - apply default styling, with optional relation highlighting
@@ -3360,9 +3382,9 @@ func (tt *TaskTree) renderGroupedTaskLineWithTree(
 		cycleSuffix = lipgloss.NewStyle().Foreground(ColorMagenta).Render(cycleSuffix)
 	}
 
-	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s",
+	return fmt.Sprintf("%s%s%s%s%s %s%s%s%s%s",
 		selMarker, prefix, treeConnector, checkboxPart,
-		indicatorStyled, projectLabel, title, prioritySuffix, cycleSuffix)
+		indicatorStyled, cronStyled, projectLabel, title, prioritySuffix, cycleSuffix)
 }
 
 // relationHighlight returns relation color metadata for a task ID relative to the selected task.
@@ -3461,11 +3483,15 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 	indicator := statusIndicator(task.Status, task.Classification)
 	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
+	// Schedule badge (shown for cron/scheduled tasks)
+	cronPlain, cronStyled := cronBadge(task)
+
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Overhead: selMarker(1) + prefix + space(1) + indicator(2) + space(1) + suffixes
-		overhead := 1 + lipgloss.Width(prefixRendered) + 1 + 2 + 1
+		// Overhead: selMarker(2) + prefix + space(1) + indicator(2) + space(1) + cronBadge + suffixes
+		overhead := 2 + lipgloss.Width(prefixRendered) + 1 + 2 + 1
+		overhead += len(cronPlain)
 		if task.Priority == "high" {
 			overhead++
 		}
@@ -3498,7 +3524,7 @@ func (tt *TaskTree) renderLaneTaskLine(task types.ResolvedTask, assignment LaneA
 		selMarker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
 	}
 
-	return fmt.Sprintf("%s%s %s %s%s%s", selMarker, prefixRendered, indicatorStyled, title, prioritySuffix, cycleSuffix)
+	return fmt.Sprintf("%s%s %s %s%s%s%s", selMarker, prefixRendered, indicatorStyled, cronStyled, title, prioritySuffix, cycleSuffix)
 }
 
 // moveDownLane navigates down in lane view.

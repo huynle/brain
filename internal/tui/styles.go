@@ -49,6 +49,9 @@ const (
 	IndicatorCancelled = "⊘" // magenta slash
 	IndicatorConnected = "●" // green dot
 	IndicatorDisconn   = "○" // red dot
+
+	// Schedule badge for cron/scheduled tasks
+	BadgeCron = "[cron]"
 )
 
 // =============================================================================
@@ -80,6 +83,14 @@ var DimStyle = lipgloss.NewStyle().
 
 // BoldStyle is used for keyboard shortcut keys in help bar.
 var BoldStyle = lipgloss.NewStyle().Bold(true)
+
+// ScheduleBadgeStyle is used for the [cron] badge on enabled scheduled tasks.
+var ScheduleBadgeStyle = lipgloss.NewStyle().
+	Foreground(ColorMagenta)
+
+// ScheduleBadgeDisabledStyle is used for the [cron] badge on disabled scheduled tasks.
+var ScheduleBadgeDisabledStyle = lipgloss.NewStyle().
+	Foreground(ColorDim)
 
 // GroupHeaderStyle is used for collapsible group headers.
 var GroupHeaderStyle = lipgloss.NewStyle().

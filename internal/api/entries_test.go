@@ -555,6 +555,256 @@ func TestHandleGetEntry(t *testing.T) {
 }
 
 // =============================================================================
+// Get Entry Content Negotiation Tests
+// =============================================================================
+
+func TestHandleGetEntry_ContentNegotiation(t *testing.T) {
+	testEntry := &types.BrainEntry{
+		ID:      "abc12def",
+		Path:    "projects/default/plan/test.md",
+		Title:   "Test Entry",
+		Type:    "plan",
+		Status:  "active",
+		Content: "## Hello\n\nSome markdown content.",
+		Tags:    []string{"go", "api"},
+	}
+
+	testFullContent := `---
+title: Test Entry
+type: plan
+status: active
+tags:
+  - go
+  - api
+---
+## Hello
+
+Some markdown content.`
+
+	tests := []struct {
+		name           string
+		id             string
+		acceptHeader   string
+		mockRecall     func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+		mockRecallFull func(ctx context.Context, pathOrID string) (string, error)
+		wantStatus     int
+		checkResp      func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:         "Accept text/markdown returns raw markdown body",
+			id:           "abc12def",
+			acceptHeader: "text/markdown",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				// Check Content-Type
+				ct := resp.Header.Get("Content-Type")
+				if ct != "text/markdown; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want %q", ct, "text/markdown; charset=utf-8")
+				}
+				// Check X-Brain-* headers
+				if got := resp.Header.Get("X-Brain-Entry-Id"); got != "abc12def" {
+					t.Errorf("X-Brain-Entry-Id = %q, want %q", got, "abc12def")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Path"); got != "projects/default/plan/test.md" {
+					t.Errorf("X-Brain-Entry-Path = %q, want %q", got, "projects/default/plan/test.md")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Title"); got != "Test Entry" {
+					t.Errorf("X-Brain-Entry-Title = %q, want %q", got, "Test Entry")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Status"); got != "active" {
+					t.Errorf("X-Brain-Entry-Status = %q, want %q", got, "active")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Type"); got != "plan" {
+					t.Errorf("X-Brain-Entry-Type = %q, want %q", got, "plan")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Tags"); got != "go,api" {
+					t.Errorf("X-Brain-Entry-Tags = %q, want %q", got, "go,api")
+				}
+				// Check body is raw markdown
+				var buf bytes.Buffer
+				buf.ReadFrom(resp.Body)
+				if buf.String() != "## Hello\n\nSome markdown content." {
+					t.Errorf("body = %q, want raw markdown content", buf.String())
+				}
+			},
+		},
+		{
+			name:         "Accept text/plain also returns raw markdown body",
+			id:           "abc12def",
+			acceptHeader: "text/plain",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				ct := resp.Header.Get("Content-Type")
+				if ct != "text/markdown; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want %q", ct, "text/markdown; charset=utf-8")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Id"); got != "abc12def" {
+					t.Errorf("X-Brain-Entry-Id = %q, want %q", got, "abc12def")
+				}
+			},
+		},
+		{
+			name:         "Accept text/markdown with no tags omits X-Brain-Entry-Tags",
+			id:           "abc12def",
+			acceptHeader: "text/markdown",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return &types.BrainEntry{
+					ID:      "abc12def",
+					Path:    "projects/default/plan/test.md",
+					Title:   "No Tags",
+					Type:    "plan",
+					Status:  "active",
+					Content: "content",
+					Tags:    nil,
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				if got := resp.Header.Get("X-Brain-Entry-Tags"); got != "" {
+					t.Errorf("X-Brain-Entry-Tags = %q, want empty (no tags)", got)
+				}
+			},
+		},
+		{
+			name:         "Accept text/x-brain-full returns full frontmatter + body",
+			id:           "abc12def",
+			acceptHeader: "text/x-brain-full",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			mockRecallFull: func(ctx context.Context, pathOrID string) (string, error) {
+				return testFullContent, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				ct := resp.Header.Get("Content-Type")
+				if ct != "text/x-brain-full; charset=utf-8" {
+					t.Errorf("Content-Type = %q, want %q", ct, "text/x-brain-full; charset=utf-8")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Id"); got != "abc12def" {
+					t.Errorf("X-Brain-Entry-Id = %q, want %q", got, "abc12def")
+				}
+				if got := resp.Header.Get("X-Brain-Entry-Path"); got != "projects/default/plan/test.md" {
+					t.Errorf("X-Brain-Entry-Path = %q, want %q", got, "projects/default/plan/test.md")
+				}
+				var buf bytes.Buffer
+				buf.ReadFrom(resp.Body)
+				if buf.String() != testFullContent {
+					t.Errorf("body = %q, want full frontmatter+body content", buf.String())
+				}
+			},
+		},
+		{
+			name:         "Accept text/x-brain-full with RecallFull error returns 500",
+			id:           "abc12def",
+			acceptHeader: "text/x-brain-full",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			mockRecallFull: func(ctx context.Context, pathOrID string) (string, error) {
+				return "", fmt.Errorf("file not found on disk")
+			},
+			wantStatus: http.StatusInternalServerError,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Internal Server Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Internal Server Error")
+				}
+			},
+		},
+		{
+			name:         "Default (no Accept header) returns JSON as before",
+			id:           "abc12def",
+			acceptHeader: "",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				ct := resp.Header.Get("Content-Type")
+				if ct != "application/json" {
+					t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+				}
+				body := decodeJSON[types.BrainEntry](t, resp)
+				if body.ID != "abc12def" {
+					t.Errorf("id = %q, want %q", body.ID, "abc12def")
+				}
+			},
+		},
+		{
+			name:         "Accept application/json returns JSON",
+			id:           "abc12def",
+			acceptHeader: "application/json",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return testEntry, nil
+			},
+			wantStatus: http.StatusOK,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				ct := resp.Header.Get("Content-Type")
+				if ct != "application/json" {
+					t.Errorf("Content-Type = %q, want %q", ct, "application/json")
+				}
+				body := decodeJSON[types.BrainEntry](t, resp)
+				if body.ID != "abc12def" {
+					t.Errorf("id = %q, want %q", body.ID, "abc12def")
+				}
+			},
+		},
+		{
+			name:         "Not found still returns JSON error regardless of Accept header",
+			id:           "notexist",
+			acceptHeader: "text/markdown",
+			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+			checkResp: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Not Found" {
+					t.Errorf("error = %q, want %q", body.Error, "Not Found")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockBrainService{
+				recallFunc:     tt.mockRecall,
+				recallFullFunc: tt.mockRecallFull,
+			}
+			router := newTestRouter(mock)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			req, _ := http.NewRequest(http.MethodGet, srv.URL+"/entries/"+tt.id, nil)
+			if tt.acceptHeader != "" {
+				req.Header.Set("Accept", tt.acceptHeader)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("GET /entries/%s failed: %v", tt.id, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			if tt.checkResp != nil {
+				tt.checkResp(t, resp)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // List Entries Tests
 // =============================================================================
 

@@ -119,6 +119,39 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Content negotiation based on Accept header
+	accept := r.Header.Get("Accept")
+
+	if strings.Contains(accept, "text/markdown") || strings.Contains(accept, "text/plain") {
+		// Return raw markdown body only with metadata in X-Brain-* headers
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("X-Brain-Entry-Id", entry.ID)
+		w.Header().Set("X-Brain-Entry-Path", entry.Path)
+		w.Header().Set("X-Brain-Entry-Title", entry.Title)
+		w.Header().Set("X-Brain-Entry-Status", entry.Status)
+		w.Header().Set("X-Brain-Entry-Type", entry.Type)
+		if len(entry.Tags) > 0 {
+			w.Header().Set("X-Brain-Entry-Tags", strings.Join(entry.Tags, ","))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(entry.Content))
+		return
+	} else if strings.Contains(accept, "text/x-brain-full") {
+		// Return full file content (frontmatter + body)
+		fullContent, err := h.brain.RecallFull(r.Context(), id)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/x-brain-full; charset=utf-8")
+		w.Header().Set("X-Brain-Entry-Id", entry.ID)
+		w.Header().Set("X-Brain-Entry-Path", entry.Path)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fullContent))
+		return
+	}
+
+	// Default: JSON (existing behavior, unchanged)
 	WriteJSON(w, http.StatusOK, entry)
 }
 

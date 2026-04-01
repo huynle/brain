@@ -271,6 +271,8 @@ func TestRoute_DreamCommand(t *testing.T) {
 		{"dream project", []string{"dream", "brain-api"}, "dream", "brain-api"},
 		{"dream enable", []string{"dream", "brain-api", "--enable"}, "dream", "brain-api"},
 		{"dream disable", []string{"dream", "brain-api", "--disable"}, "dream", "brain-api"},
+		{"dream now", []string{"dream", "brain-api", "--now"}, "dream", "brain-api"},
+		{"dream enable now", []string{"dream", "brain-api", "--enable", "--now"}, "dream", "brain-api"},
 		{"dream help", []string{"dream", "--help"}, "help", ""},
 	}
 
@@ -288,6 +290,18 @@ func TestRoute_DreamCommand(t *testing.T) {
 			if dc, ok := cmd.(*commands.DreamCommand); ok {
 				if dc.Project != tt.wantProject {
 					t.Errorf("Project = %q, want %q", dc.Project, tt.wantProject)
+				}
+			}
+
+			// Verify --now flag on DreamCommand
+			if dc, ok := cmd.(*commands.DreamCommand); ok && tt.name == "dream now" {
+				if !dc.Flags.Now {
+					t.Errorf("Flags.Now = false, want true")
+				}
+			}
+			if dc, ok := cmd.(*commands.DreamCommand); ok && tt.name == "dream enable now" {
+				if !dc.Flags.Now || !dc.Flags.Enable {
+					t.Errorf("Flags = {Now:%v, Enable:%v}, want {Now:true, Enable:true}", dc.Flags.Now, dc.Flags.Enable)
 				}
 			}
 

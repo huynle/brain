@@ -443,14 +443,17 @@ USAGE:
   brain dream <project>
   brain dream <project> --enable [--schedule "<cron>"]
   brain dream <project> --disable
+  brain dream <project> --now
 
 DESCRIPTION:
   Manage dream mode (knowledge consolidation) for projects.
   Dream mode periodically consolidates and synthesizes project knowledge.
+  Use --now to trigger consolidation immediately on demand.
 
 FLAGS:
   --enable                       Enable dream mode for project
   --disable                      Disable dream mode for project
+  --now                          Trigger dream consolidation immediately
   --schedule "<cron>"            Custom cron schedule (with --enable)
   -h, --help                     Show this help
 
@@ -460,6 +463,8 @@ EXAMPLES:
   brain dream my-project --enable
   brain dream my-project --enable --schedule "0 6 * * *"
   brain dream my-project --disable
+  brain dream my-project --now
+  brain dream my-project --enable --now
 `
 
 const stopHelp = `brain stop - Alias for "brain server stop"

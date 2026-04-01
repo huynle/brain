@@ -221,6 +221,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "plugin-status"}, nil
 		}
 		return parsePluginStatusCommand(cmdArgs)
+	case "dream":
+		return parseDreamCommand(cmdArgs)
 	case "run", "runner":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
@@ -778,5 +780,32 @@ func parsePluginStatusCommand(args []string) (Command, error) {
 		Target:     "",
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parseDreamCommand creates a DreamCommand from args.
+// Usage: brain dream <project> [flags]
+func parseDreamCommand(args []string) (Command, error) {
+	// Extract project name (first non-flag argument)
+	project := ""
+	var flagArgs []string
+	for _, arg := range args {
+		if !isFlag(arg) && project == "" {
+			project = arg
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	cfg := defaultConfig()
+	flags, err := ParseDreamFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.DreamCommand{
+		Project: project,
+		Config:  convertToCommandsConfig(cfg),
+		Flags:   convertToCommandsDreamFlags(flags),
 	}, nil
 }

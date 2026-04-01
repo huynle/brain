@@ -114,6 +114,9 @@ type Model struct {
 	seenFeatureIDs      map[string]bool // tracks all feature_ids ever seen across task updates
 	initialSnapshotDone bool            // prevents creating monitors for pre-existing features on first load
 	monitorClient       *MonitorClient  // reusable client for monitor API calls
+
+	// Feature toggle execution state
+	enabledFeatures map[string]bool // features toggled on via x key
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -164,6 +167,7 @@ func NewModel(cfg Config) Model {
 		metricsCollector: NewMetricsCollector(),
 		seenFeatureIDs:   make(map[string]bool),
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:  make(map[string]bool),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -489,6 +493,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case featureExecutedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Feature execute error: %v", msg.err))
+		} else if msg.started > 0 {
+			m.setStatusMessage("success", fmt.Sprintf("Feature '%s' enabled — %d task(s) started", msg.featureID, msg.started))
+		} else {
+			m.setStatusMessage("info", fmt.Sprintf("Feature '%s' enabled — no ready tasks to start", msg.featureID))
+		}
+		return m, nil
+
 	case taskExecutedMsg:
 		if msg.err != nil {
 			if msg.claimedBy != "" {
@@ -720,7 +734,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// these need to flow through the main switch to close the modal
 		// and trigger the next action.
 		switch msg.(type) {
-		case sessionSelectedMsg, taskExecutedMsg, taskCompletedMsg, taskCancelledMsg,
+		case sessionSelectedMsg, taskExecutedMsg, featureExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
 			sessionOpenedMsg, statusPickerResultMsg:
 			// Let these fall through to the main switch above (they won't match
@@ -1036,6 +1050,40 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			selectedTask := m.taskTree.SelectedTask()
 			if selectedTask == nil {
+				// Check if cursor is on a feature header → toggle feature execution
+				featureID := m.taskTree.GetSelectedFeatureID()
+				featureTasks := m.taskTree.GetSelectedFeatureTasks()
+				if featureID != "" && len(featureTasks) > 0 && m.runnerController != nil {
+					projectID := m.config.Project
+					if m.activeProjectID != "" && m.activeProjectID != "all" {
+						projectID = m.activeProjectID
+					}
+
+					if m.enabledFeatures[featureID] {
+						// DISABLE: remove from enabled set
+						delete(m.enabledFeatures, featureID)
+						m.runnerController.DisableFeature(featureID)
+						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
+						m.setStatusMessage("info", fmt.Sprintf("Feature '%s' disabled", featureID))
+					} else {
+						// ENABLE: add to enabled set + batch-execute ready tasks
+						m.enabledFeatures[featureID] = true
+						m.runnerController.EnableFeature(featureID)
+						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
+
+						// Fire-and-forget batch execution
+						rc := m.runnerController
+						tasksCopy := make([]types.ResolvedTask, len(featureTasks))
+						copy(tasksCopy, featureTasks)
+						pid := projectID
+						fid := featureID
+						return m, func() tea.Msg {
+							ctx := context.Background()
+							started, err := rc.ExecuteFeature(ctx, tasksCopy, pid)
+							return featureExecutedMsg{featureID: fid, started: started, err: err}
+						}
+					}
+				}
 				return m, nil
 			}
 
@@ -2201,18 +2249,15 @@ func (m Model) renderBaseView() string {
 		m.statusBar.IsPaused = m.pausedProjects[projectID]
 	}
 
-	// Count enabled and active features from task data
-	enabledFeatures := make(map[string]bool)
+	// EnabledFeatureCount reflects user-toggled features (via x key)
+	m.statusBar.EnabledFeatureCount = len(m.enabledFeatures)
+	// ActiveFeatureCount reflects features with currently running tasks
 	activeFeatures := make(map[string]bool)
 	for _, task := range m.tasks {
-		if task.FeatureID != "" {
-			enabledFeatures[task.FeatureID] = true
-		}
 		if task.FeatureID != "" && task.Status == "in_progress" {
 			activeFeatures[task.FeatureID] = true
 		}
 	}
-	m.statusBar.EnabledFeatureCount = len(enabledFeatures)
 	m.statusBar.ActiveFeatureCount = len(activeFeatures)
 	// Render ProjectTabs if multi-project mode
 	var projectTabsView string
@@ -2743,6 +2788,12 @@ type taskExecutedMsg struct {
 	taskID    string
 	err       error
 	claimedBy string
+}
+
+type featureExecutedMsg struct {
+	featureID string
+	started   int
+	err       error
 }
 
 type taskDeletedMsg struct {

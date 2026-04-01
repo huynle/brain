@@ -434,6 +434,9 @@ type TaskTree struct {
 
 	// Viewport state for stable scrolling behavior (shared across task-list views).
 	viewportStart int
+
+	// Feature toggle execution: tracks which features are enabled via x key
+	enabledFeatures map[string]bool
 }
 
 // NewTaskTree creates a new empty TaskTree component.
@@ -1802,6 +1805,17 @@ func (tt *TaskTree) GetSelectedFeatureTasks() []types.ResolvedTask {
 	}
 
 	return nil
+}
+
+// SetEnabledFeatures updates the set of user-toggled enabled features.
+// This is used by the TUI to pass toggle state for visual rendering.
+func (tt *TaskTree) SetEnabledFeatures(enabled map[string]bool) {
+	tt.enabledFeatures = enabled
+}
+
+// GetEnabledFeatures returns the current set of enabled features.
+func (tt *TaskTree) GetEnabledFeatures() map[string]bool {
+	return tt.enabledFeatures
 }
 
 // GetSelectedGroupTasks returns all tasks in the currently selected group header.

@@ -779,6 +779,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// If on Dream tab with search typing mode, handle search input first
+	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
+		return m.handleDreamSearchInput(msg)
+	}
+
 	// If in filter typing mode, handle filter input first
 	if m.filterState == FilterTyping {
 		return m.handleFilterInput(msg)
@@ -811,7 +816,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Configurable keybindings (checked via key.Matches before hardcoded switch).
 	// These must be checked before the msg.Type switch because some bindings
 	// (e.g., ctrl+l) use special key types, not KeyRunes.
-	if key.Matches(msg, m.keymap.ToggleLogs) {
+	// Skip toggle-logs in multi-project mode where 'l' is used for project tab navigation
+	if key.Matches(msg, m.keymap.ToggleLogs) && !m.config.IsMultiProject() {
 		m.logsVisible = !m.logsVisible
 		if !m.logsVisible && m.activePanel == PanelLogs {
 			m.activePanel = PanelTasks
@@ -866,6 +872,29 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
 		}
 		return m, nil
+	}
+
+	// When on Dream tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
+	// to the viewport for vim-style scrolling. Only intercept quit keys.
+	if m.activeContentTab == ContentTabDream {
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case tea.KeyEsc:
+			// If search is locked, Esc cancels search
+			if m.dreamViewer.SearchMode() == DreamSearchLocked {
+				m.dreamViewer.CancelSearch()
+				return m, nil
+			}
+			// Otherwise, allow Escape to work normally (close modals, etc.)
+		case tea.KeyRunes:
+			// Fall through to rune handling below
+		default:
+			// Forward ctrl+d, ctrl+u, ctrl+f, ctrl+b, arrows, pgup, pgdn, etc.
+			cmd := m.dreamViewer.Update(msg)
+			return m, cmd
+		}
 	}
 
 	switch msg.Type {
@@ -973,12 +1002,28 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// When on Dream tab, route navigation keys to dream viewer
+		// When on Dream tab, handle dream-specific keys then forward the rest to the viewport
 		if m.activeContentTab == ContentTabDream {
 			switch string(msg.Runes) {
-			case "j", "k", "g", "G":
-				cmd := m.dreamViewer.Update(msg)
-				return m, cmd
+			case "/":
+				m.dreamViewer.StartSearch()
+				return m, nil
+			case "n":
+				if m.dreamViewer.SearchMode() == DreamSearchLocked {
+					m.dreamViewer.NextMatch()
+				}
+				return m, nil
+			case "N":
+				if m.dreamViewer.SearchMode() == DreamSearchLocked {
+					m.dreamViewer.PrevMatch()
+				}
+				return m, nil
+			case "g":
+				m.dreamViewer.GotoTop()
+				return m, nil
+			case "G":
+				m.dreamViewer.GotoBottom()
+				return m, nil
 			case "r":
 				// Re-fetch dream content
 				m.dreamViewer.SetLoading(true)
@@ -995,8 +1040,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd := m.modalManager.Open(modal)
 				return m, cmd
 			}
-			// Other keys ignored on Dream tab
-			return m, nil
+			// Forward all other keys to the viewport for vim-style navigation
+			// (j/k, g/G, ctrl+d/u, ctrl+f/b, d/u, f/b, pgup/pgdn, space, arrow keys)
+			cmd := m.dreamViewer.Update(msg)
+			return m, cmd
 		}
 
 		switch string(msg.Runes) {
@@ -2388,23 +2435,45 @@ func (m Model) renderBaseView() string {
 		statusMessageView = style.Render(m.statusMessage)
 	}
 
-	// Filter bar (based on 3-mode state machine)
+	// Filter/Search bar (based on context)
 	var filterBarView string
-	switch m.filterState {
-	case FilterTyping:
-		// Yellow bg with / prefix, cursor, match count
-		matchCount := len(m.filteredTasks())
-		matchWord := "matches"
-		if matchCount == 1 {
-			matchWord = "match"
+	if m.activeContentTab == ContentTabDream {
+		// Dream tab: show search bar
+		switch m.dreamViewer.SearchMode() {
+		case DreamSearchTyping:
+			matchCount := m.dreamViewer.MatchCount()
+			matchWord := "matches"
+			if matchCount == 1 {
+				matchWord = "match"
+			}
+			filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.dreamViewer.SearchQuery(), matchCount, matchWord))
+		case DreamSearchLocked:
+			matchCount := m.dreamViewer.MatchCount()
+			currentIdx := m.dreamViewer.CurrentMatchIndex()
+			if matchCount > 0 {
+				filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Search: %s (%d/%d) ", m.dreamViewer.SearchQuery(), currentIdx, matchCount)) +
+					DimStyle.Render("  n/N: next/prev  Esc: clear")
+			} else {
+				filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Search: %s (no matches) ", m.dreamViewer.SearchQuery())) +
+					DimStyle.Render("  Esc: clear")
+			}
 		}
-		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
-	case FilterLocked:
-		// Cyan bg badge with filter text, N/total count, Esc hint
-		totalCount := len(m.tasks)
-		matchCount := len(m.filteredTasks())
-		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
-			DimStyle.Render("  Esc: clear")
+	} else {
+		// Tasks tab: show task filter bar
+		switch m.filterState {
+		case FilterTyping:
+			matchCount := len(m.filteredTasks())
+			matchWord := "matches"
+			if matchCount == 1 {
+				matchWord = "match"
+			}
+			filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+		case FilterLocked:
+			totalCount := len(m.tasks)
+			matchCount := len(m.filteredTasks())
+			filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
+				DimStyle.Render("  Esc: clear")
+		}
 	}
 
 	// Calculate available height for main content by measuring actual rendered heights
@@ -2672,6 +2741,40 @@ func (m Model) renderLogPanel(width, height int) string {
 // =============================================================================
 // Filter Methods
 // =============================================================================
+
+// handleDreamSearchInput processes keyboard input when searching in the Dream tab.
+func (m Model) handleDreamSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		// Lock search for n/N navigation
+		m.dreamViewer.LockSearch()
+		return m, nil
+
+	case tea.KeyEsc:
+		// Cancel search
+		m.dreamViewer.CancelSearch()
+		return m, nil
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		q := m.dreamViewer.SearchQuery()
+		if len(q) > 0 {
+			m.dreamViewer.SetSearchQuery(q[:len(q)-1])
+		}
+		return m, nil
+
+	case tea.KeyCtrlU:
+		// Clear search input
+		m.dreamViewer.SetSearchQuery("")
+		return m, nil
+
+	case tea.KeyRunes:
+		q := m.dreamViewer.SearchQuery() + string(msg.Runes)
+		m.dreamViewer.SetSearchQuery(q)
+		return m, nil
+	}
+
+	return m, nil
+}
 
 // handleFilterInput processes keyboard input in FilterTyping mode.
 // All runes are captured as filter text — no key leaking to other handlers.

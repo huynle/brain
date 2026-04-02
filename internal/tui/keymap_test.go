@@ -32,8 +32,8 @@ func TestKeyMapFromConfig_NoOverrides(t *testing.T) {
 	if !key.Matches(makeKeyMsg("L"), result.NextContentTab) {
 		t.Error("NextContentTab should default to L")
 	}
-	if !key.Matches(makeKeyMsg("ctrl+l"), result.ToggleLogs) {
-		t.Error("ToggleLogs should default to ctrl+l")
+	if !key.Matches(makeKeyMsg("l"), result.ToggleLogs) {
+		t.Error("ToggleLogs should default to l")
 	}
 	if !key.Matches(makeKeyMsg("T"), result.ToggleDetail) {
 		t.Error("ToggleDetail should default to T")
@@ -116,8 +116,8 @@ func TestDefaultKeyMap_HasContentTabBindings(t *testing.T) {
 	if !key.Matches(makeKeyMsg("L"), km.NextContentTab) {
 		t.Error("DefaultKeyMap should have NextContentTab bound to L")
 	}
-	if !key.Matches(makeKeyMsg("ctrl+l"), km.ToggleLogs) {
-		t.Error("DefaultKeyMap should have ToggleLogs bound to ctrl+l")
+	if !key.Matches(makeKeyMsg("l"), km.ToggleLogs) {
+		t.Error("DefaultKeyMap should have ToggleLogs bound to l")
 	}
 	if !key.Matches(makeKeyMsg("T"), km.ToggleDetail) {
 		t.Error("DefaultKeyMap should have ToggleDetail bound to T")

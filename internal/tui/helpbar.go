@@ -35,11 +35,15 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Content tab indicator
 	shortcuts += fmt.Sprintf("%s Tab  ", bold("H/L"))
 
-	// Dream tab has simplified help
+	// Dream tab has vim-style navigation help
 	if h.ActiveContentTab == ContentTabDream {
 		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
+		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
-		shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
 
 		// Focus indicator on the right
 		focusLabel := dim("Tab: ") +
@@ -135,8 +139,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Tab Panel
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
 
-	// ctrl+l Logs
-	shortcuts += fmt.Sprintf("%s Logs  ", bold("ctrl+l"))
+	// l Logs
+	shortcuts += fmt.Sprintf("%s Logs  ", bold("l"))
 
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))

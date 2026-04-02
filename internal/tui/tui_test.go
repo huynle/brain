@@ -752,7 +752,7 @@ func TestConfig_IsMultiProject(t *testing.T) {
 // Panel Toggle Tests - 'L' toggles logs, 'T' toggles detail
 // =============================================================================
 
-func TestUpdate_CtrlLKey_TogglesLogVisibility(t *testing.T) {
+func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
@@ -763,21 +763,21 @@ func TestUpdate_CtrlLKey_TogglesLogVisibility(t *testing.T) {
 		t.Fatal("expected logsVisible to be false initially")
 	}
 
-	// Press 'ctrl+l' to toggle logs on (moved from 'L' which is now content tab)
-	msg := tea.KeyMsg{Type: tea.KeyCtrlL}
+	// Press 'l' to toggle logs on
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
 	if !model.logsVisible {
-		t.Error("expected logsVisible to be true after 'ctrl+l' press")
+		t.Error("expected logsVisible to be true after 'l' press")
 	}
 
-	// Press 'ctrl+l' again to toggle logs off
+	// Press 'l' again to toggle logs off
 	updated, _ = model.Update(msg)
 	model = updated.(Model)
 
 	if model.logsVisible {
-		t.Error("expected logsVisible to be false after second 'ctrl+l' press")
+		t.Error("expected logsVisible to be false after second 'l' press")
 	}
 }
 

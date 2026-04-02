@@ -1,13 +1,12 @@
 package commands
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
+	"os"
+	"os/exec"
 	"time"
 )
 
@@ -45,23 +44,23 @@ func (c *DreamCommand) Execute() error {
 		return fmt.Errorf("brain API not available at %s", c.apiURL())
 	}
 
-	// --enable (optionally with --now)
-	if c.Flags.Enable {
-		if err := c.enableDream(); err != nil {
-			return err
-		}
-		if c.Flags.Now {
-			return c.triggerDream()
-		}
-		return nil
-	}
-
-	// --now (without --enable, dream must already be enabled)
+	// --now: inline execution (standalone, does not require --enable)
 	if c.Flags.Now {
 		if c.Project == "" {
 			return fmt.Errorf("project is required with --now")
 		}
-		return c.triggerDream()
+		if c.Flags.Enable {
+			// --enable --now: enable the recurring schedule AND run now
+			if err := c.enableDream(); err != nil {
+				return err
+			}
+		}
+		return c.executeDreamNow()
+	}
+
+	// --enable (without --now)
+	if c.Flags.Enable {
+		return c.enableDream()
 	}
 
 	// --disable
@@ -103,189 +102,145 @@ func (c *DreamCommand) isAPIAvailable() bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// triggerDream finds the dream monitor for this project and triggers it.
-func (c *DreamCommand) triggerDream() error {
-	// 1. Find the dream monitor for this project
-	taskID, err := c.findDreamMonitor()
+// executeDreamNow runs dream consolidation inline by spawning opencode directly.
+// This is a self-contained execution — no TUI runner needed.
+func (c *DreamCommand) executeDreamNow() error {
+	fmt.Printf("Running dream consolidation for %q...\n\n", c.Project)
+
+	// 1. Fetch the dream prompt from the API
+	prompt, err := c.fetchDreamPrompt()
 	if err != nil {
-		return err
-	}
-	if taskID == "" {
-		return fmt.Errorf("dream mode not enabled for project %q; use --enable first or --enable --now", c.Project)
+		return fmt.Errorf("failed to get dream prompt: %w", err)
 	}
 
-	// 2. Trigger the task
-	triggerURL := fmt.Sprintf("%s/api/v1/tasks/%s/%s/trigger",
-		c.apiURL(),
-		url.PathEscape(c.Project),
-		url.PathEscape(taskID),
-	)
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Post(triggerURL, "application/json", nil)
+	// 2. Resolve the opencode binary
+	opencodeBin := "opencode"
+	if c.Config != nil && c.Config.Runner.Opencode.Bin != "" {
+		opencodeBin = c.Config.Runner.Opencode.Bin
+	}
+	binPath, err := exec.LookPath(opencodeBin)
 	if err != nil {
-		return fmt.Errorf("trigger dream task: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("trigger dream task failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf("%s not found in PATH: %w", opencodeBin, err)
 	}
 
-	var triggerResp struct {
-		Success   bool   `json:"success"`
-		TaskID    string `json:"taskId"`
-		Triggered bool   `json:"triggered"`
-		Reason    string `json:"reason,omitempty"`
+	// 3. Build opencode run args
+	args := []string{"run"}
+	if c.Config != nil && c.Config.Runner.Opencode.Agent != "" {
+		args = append(args, "--agent", c.Config.Runner.Opencode.Agent)
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&triggerResp); err != nil {
-		return fmt.Errorf("parse trigger response: %w", err)
+	if c.Config != nil && c.Config.Runner.Opencode.Model != "" {
+		args = append(args, "--model", c.Config.Runner.Opencode.Model)
 	}
+	args = append(args, prompt)
 
-	if !triggerResp.Triggered {
-		reason := triggerResp.Reason
-		if reason == "" {
-			reason = "unknown reason"
-		}
-		return fmt.Errorf("dream task not triggered: %s", reason)
-	}
-
-	// 3. Print trigger confirmation
-	fmt.Printf("Triggering dream consolidation for %q...\n", c.Project)
-
-	// 4. Wait for completion
-	return c.waitForDreamCompletion(taskID)
-}
-
-// waitForDreamCompletion polls the task status until the dream task completes or times out.
-func (c *DreamCommand) waitForDreamCompletion(taskID string) error {
-	fmt.Print("  Waiting for completion")
-
-	timeout := 5 * time.Minute
-	interval := 5 * time.Second
-	deadline := time.Now().Add(timeout)
+	// 4. Spawn inline with inherited stdio
 	start := time.Now()
+	cmd := exec.Command(binPath, args...)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	cmd.Stdin = os.Stdin
 
-	client := &http.Client{Timeout: 10 * time.Second}
-	statusURL := fmt.Sprintf("%s/api/v1/tasks/%s/status",
-		c.apiURL(),
-		url.PathEscape(c.Project),
-	)
-
-	retryCount := 0
-	maxRetries := 3
-
-	for time.Now().Before(deadline) {
-		time.Sleep(interval)
-		fmt.Print(".")
-
-		// POST /api/v1/tasks/{project}/status with {"taskIds": ["taskId"]}
-		reqBody, _ := json.Marshal(map[string]interface{}{
-			"taskIds": []string{taskID},
-		})
-
-		resp, err := client.Post(statusURL, "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			retryCount++
-			if retryCount > maxRetries {
-				fmt.Println()
-				return fmt.Errorf("API error during polling (after %d retries): %w", maxRetries, err)
-			}
-			continue
-		}
-
-		var statusResp struct {
-			Tasks []struct {
-				ID     string `json:"id"`
-				Status string `json:"status"`
-			} `json:"tasks"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
-			resp.Body.Close()
-			retryCount++
-			if retryCount > maxRetries {
-				fmt.Println()
-				return fmt.Errorf("failed to parse status response (after %d retries): %w", maxRetries, err)
-			}
-			continue
-		}
-		resp.Body.Close()
-
-		// Reset retry count on successful API call
-		retryCount = 0
-
-		// Find our task in the response
-		for _, task := range statusResp.Tasks {
-			if task.ID == taskID {
-				switch task.Status {
-				case "pending", "in_progress":
-					// Still running, continue polling
-					continue
-				case "active", "completed", "validated":
-					// Success: task returned to steady state or completed
-					elapsed := time.Since(start).Round(time.Second)
-					fmt.Printf(" done! (%s)\n", elapsed)
-					fmt.Println()
-					fmt.Println("Dream content updated. View with:")
-					fmt.Printf("  brain dream %s\n", c.Project)
-					return nil
-				case "blocked":
-					elapsed := time.Since(start).Round(time.Second)
-					fmt.Printf(" warning (%s)\n", elapsed)
-					fmt.Println()
-					fmt.Println("Dream consolidation hit an issue (status: blocked).")
-					fmt.Println("Check the task for details:")
-					fmt.Printf("  brain dream %s\n", c.Project)
-					return nil
-				default:
-					elapsed := time.Since(start).Round(time.Second)
-					fmt.Printf(" finished (%s)\n", elapsed)
-					fmt.Println()
-					fmt.Printf("Dream task ended with status: %s\n", task.Status)
-					return nil
-				}
-			}
-		}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("dream consolidation failed: %w", err)
 	}
 
-	fmt.Println()
-	return fmt.Errorf("timed out waiting for dream consolidation (5m)")
+	elapsed := time.Since(start).Round(time.Second)
+	fmt.Printf("\nDream consolidation complete (%s)\n", elapsed)
+	fmt.Println("View the dream with:")
+	fmt.Printf("  brain dream %s\n", c.Project)
+	return nil
 }
 
-// findDreamMonitor looks up the dream monitor task ID for this project.
-func (c *DreamCommand) findDreamMonitor() (string, error) {
-	monitorURL := fmt.Sprintf("%s/api/v1/monitors?template_id=dream&project=%s",
+// fetchDreamPrompt fetches the dream prompt for this project from the API.
+// Falls back to a built-in prompt if the API endpoint is not available.
+func (c *DreamCommand) fetchDreamPrompt() (string, error) {
+	// Try the API endpoint that returns the dream prompt
+	promptURL := fmt.Sprintf("%s/api/v1/monitors/templates/dream/prompt?project=%s",
 		c.apiURL(),
 		url.QueryEscape(c.Project),
 	)
 
 	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Get(monitorURL)
-	if err != nil {
-		return "", fmt.Errorf("find dream monitor: %w", err)
+	resp, err := client.Get(promptURL)
+	if err == nil && resp.StatusCode == http.StatusOK {
+		defer resp.Body.Close()
+		var data struct {
+			Prompt string `json:"prompt"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&data); err == nil && data.Prompt != "" {
+			return data.Prompt, nil
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return "", fmt.Errorf("find dream monitor (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
-	}
-
-	var data struct {
-		Monitors []struct {
-			ID string `json:"id"`
-		} `json:"monitors"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return "", fmt.Errorf("parse monitor response: %w", err)
+	if resp != nil {
+		resp.Body.Close()
 	}
 
-	if len(data.Monitors) == 0 {
-		return "", nil
+	// Fallback: build a simple dream prompt inline
+	return c.buildFallbackDreamPrompt(), nil
+}
+
+// buildFallbackDreamPrompt constructs a dream prompt when the API endpoint isn't available.
+func (c *DreamCommand) buildFallbackDreamPrompt() string {
+	projectFilter := ""
+	if c.Project != "" {
+		projectFilter = fmt.Sprintf(`, project: "%s"`, c.Project)
 	}
 
-	return data.Monitors[0].ID, nil
+	return fmt.Sprintf(`You are the **Dream Consolidator** — read all knowledge in project %q and synthesize it into a single comprehensive "Project Dream" document.
+
+## Phase 1: Gate Checks (SKIP for --now invocation)
+
+This is an ad-hoc invocation via 'brain dream --now'. Skip cooldown and threshold checks — run consolidation unconditionally.
+
+## Phase 2: Read All Project Knowledge
+
+Gather every piece of knowledge by type. For each call, then call brain_recall on every returned entry to get full content.
+
+- brain_list({ type: "decision"%[2]s }) — architectural decisions
+- brain_list({ type: "pattern"%[2]s }) — reusable patterns
+- brain_list({ type: "learning"%[2]s }) — learnings and best practices
+- brain_list({ type: "summary"%[2]s }) — session summaries
+- brain_list({ type: "plan", status: "active"%[2]s }) — active plans
+- brain_list({ type: "exploration"%[2]s }) — research and investigations
+- brain_list({ type: "idea"%[2]s }) — future ideas
+
+## Phase 3: Synthesize Dream Document
+
+Consolidate everything into a structured markdown document with these sections:
+
+### Project Identity
+Purpose, technologies, primary goals.
+
+### Architecture & Design
+Architectural decisions, component structure, design patterns, system boundaries.
+
+### Active Context
+Current work in progress, priorities, blockers, recent completions.
+
+### Conventions & Preferences
+Coding style, naming conventions, workflow patterns, testing approach, tooling.
+
+### Key Decisions
+Compressed ADRs — title, context (1-2 sentences), decision, consequences.
+
+### Learnings & Patterns
+Reusable knowledge, gotchas, performance insights, proven approaches.
+
+### Open Questions & Ideas
+Unresolved questions, proposed features, exploration candidates.
+
+**Guidelines:** Compress don't copy. Prioritize recency. Resolve contradictions. Target 2000-4000 words.
+
+## Phase 4: Save Dream Entry
+
+1. Search for existing dream: brain_search({ query: "Project Dream", type: "dream"%[2]s })
+2. If found, delete it: brain_delete({ path: "<path>", confirm: true })
+3. Save new dream: brain_save({ type: "dream", title: "Project Dream: %[1]s", content: "<document>", tags: ["dream", "consolidation"]%[2]s })
+
+## Safety Rules
+- NEVER modify existing entries — read and synthesize only
+- NEVER fabricate information — only use what you actually read`,
+		c.Project, projectFilter)
 }
 
 // enableDream enables dream mode for this project.

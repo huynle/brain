@@ -88,8 +88,8 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("H/L", "Content Tab"),
 		),
 		ToggleLogs: key.NewBinding(
-			key.WithKeys("ctrl+l"),
-			key.WithHelp("ctrl+l", "Logs"),
+			key.WithKeys("l"),
+			key.WithHelp("l", "Logs"),
 		),
 		ToggleDetail: key.NewBinding(
 			key.WithKeys("T"),

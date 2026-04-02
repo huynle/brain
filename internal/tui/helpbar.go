@@ -13,8 +13,9 @@ type HelpBar struct {
 	TextWrap         bool
 	IsPaused         bool
 	AllPaused        bool
-	HasTaskSessions  bool // whether selected task has sessions (shows o/O shortcuts)
-	HasSelectedTasks bool // whether tasks are currently selected (shows delete shortcut)
+	HasTaskSessions  bool       // whether selected task has sessions (shows o/O shortcuts)
+	HasSelectedTasks bool       // whether tasks are currently selected (shows delete shortcut)
+	ActiveContentTab ContentTab // which content tab is active (Tasks/Dream)
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -30,6 +31,33 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	dim := DimStyle.Render
 
 	var shortcuts string
+
+	// Content tab indicator
+	shortcuts += fmt.Sprintf("%s Tab  ", bold("H/L"))
+
+	// Dream tab has simplified help
+	if h.ActiveContentTab == ContentTabDream {
+		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("Ctrl-C"))
+
+		// Focus indicator on the right
+		focusLabel := dim("Tab: ") +
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Dream")
+
+		leftStyle := lipgloss.NewStyle().
+			PaddingLeft(1).
+			Width(width - 20)
+
+		rightStyle := lipgloss.NewStyle().
+			Align(lipgloss.Right).
+			Width(18)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			leftStyle.Render(dim(shortcuts)),
+			rightStyle.Render(focusLabel),
+		)
+	}
 
 	// Multi-project tab shortcuts (matches TypeScript: h/l/[/]/1-9)
 	if isMultiProject {
@@ -107,8 +135,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Tab Panel
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
 
-	// L Logs
-	shortcuts += fmt.Sprintf("%s Logs  ", bold("L"))
+	// ctrl+l Logs
+	shortcuts += fmt.Sprintf("%s Logs  ", bold("ctrl+l"))
 
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))

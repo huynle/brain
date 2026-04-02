@@ -232,6 +232,9 @@ type UnifiedConfig struct {
 	MCP    struct {
 		APIURL string
 	}
+	TUI struct {
+		KeyBindings map[string]string
+	}
 }
 
 // ApplyFlagsToConfig applies CLI flags to config with proper precedence

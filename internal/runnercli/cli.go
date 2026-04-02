@@ -24,6 +24,7 @@ type RunnerOptions struct {
 	Mode        string
 	StartPaused bool
 	Config      runner.RunnerConfig
+	KeyBindings map[string]string // TUI keybinding overrides from config
 }
 
 // RunTaskRunner starts the task runner in daemon mode and blocks until context is cancelled.
@@ -220,14 +221,15 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	brainDir = pathutil.ExpandTilde(brainDir)
 
 	tuiCfg := tui.Config{
-		APIURL:     cfg.BrainAPIURL,
-		APIToken:   cfg.APIToken,
-		APITimeout: cfg.APITimeout,
-		Project:    opts.Projects[0],
-		Projects:   opts.Projects,
-		BrainDir:   brainDir,
-		LogDir:     cfg.LogDir,
-		Runner:     tr, // Wire the embedded runner directly to the TUI
+		APIURL:      cfg.BrainAPIURL,
+		APIToken:    cfg.APIToken,
+		APITimeout:  cfg.APITimeout,
+		Project:     opts.Projects[0],
+		Projects:    opts.Projects,
+		BrainDir:    brainDir,
+		LogDir:      cfg.LogDir,
+		Runner:      tr, // Wire the embedded runner directly to the TUI
+		KeyBindings: opts.KeyBindings,
 	}
 	model := tui.NewModel(tuiCfg)
 	p := tea.NewProgram(model, tea.WithAltScreen())

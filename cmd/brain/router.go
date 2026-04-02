@@ -484,6 +484,11 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+
+		// TUI keybindings
+		if len(ucfg.TUI.KeyBindings) > 0 {
+			cfg.TUI.KeyBindings = ucfg.TUI.KeyBindings
+		}
 	}
 
 	// Load runner config from config file + env vars
@@ -529,6 +534,9 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 
 	// MCP
 	cmdCfg.MCP.APIURL = cfg.MCP.APIURL
+
+	// TUI
+	cmdCfg.TUI.KeyBindings = cfg.TUI.KeyBindings
 
 	return cmdCfg
 }

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
@@ -117,6 +118,10 @@ type Model struct {
 
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
+
+	// Content tab state (Tasks / Dream)
+	activeContentTab ContentTab
+	dreamViewer      DreamViewer
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -146,7 +151,7 @@ func NewModel(cfg Config) Model {
 
 	m := Model{
 		config:           cfg,
-		keymap:           DefaultKeyMap(),
+		keymap:           KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
 		statusBar:        NewStatusBar(cfg.Project),
 		helpBar:          NewHelpBar(),
 		taskTree:         NewTaskTree(),
@@ -168,6 +173,7 @@ func NewModel(cfg Config) Model {
 		seenFeatureIDs:   make(map[string]bool),
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:  make(map[string]bool),
+		dreamViewer:      NewDreamViewer(),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -284,6 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.dreamViewer.SetSize(msg.Width-4, msg.Height-10) // approximate inner size
 		m.syncPanelSizes()
 		return m, nil
 
@@ -490,6 +497,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addLog("info", fmt.Sprintf("Session discovered: %s", msg.SessionID))
 				break
 			}
+		}
+		return m, nil
+
+	case DreamContentMsg:
+		if msg.Error != nil {
+			m.dreamViewer.SetError(msg.Error.Error())
+		} else {
+			m.dreamViewer.SetContent(msg.Content)
 		}
 		return m, nil
 
@@ -793,6 +808,66 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Configurable keybindings (checked via key.Matches before hardcoded switch).
+	// These must be checked before the msg.Type switch because some bindings
+	// (e.g., ctrl+l) use special key types, not KeyRunes.
+	if key.Matches(msg, m.keymap.ToggleLogs) {
+		m.logsVisible = !m.logsVisible
+		if !m.logsVisible && m.activePanel == PanelLogs {
+			m.activePanel = PanelTasks
+		}
+		m.syncPanelSizes()
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.ToggleDetail) {
+		m.detailVisible = !m.detailVisible
+		if !m.detailVisible && m.activePanel == PanelDetails {
+			m.activePanel = PanelTasks
+		}
+		if m.detailVisible {
+			m.syncTaskDetail()
+		} else {
+			m.syncPanelSizes()
+		}
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.NextContentTab) {
+		if m.activeContentTab < ContentTabDream {
+			m.activeContentTab++
+		} else {
+			m.activeContentTab = ContentTabTasks
+		}
+		m.helpBar.ActiveContentTab = m.activeContentTab
+		// Fetch dream content lazily when switching to Dream tab
+		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+			m.dreamViewer.SetLoading(true)
+			project := m.config.Project
+			if m.activeProjectID != "" && m.activeProjectID != "all" {
+				project = m.activeProjectID
+			}
+			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		}
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.PrevContentTab) {
+		if m.activeContentTab > ContentTabTasks {
+			m.activeContentTab--
+		} else {
+			m.activeContentTab = ContentTabDream
+		}
+		m.helpBar.ActiveContentTab = m.activeContentTab
+		// Fetch dream content lazily when switching to Dream tab
+		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+			m.dreamViewer.SetLoading(true)
+			project := m.config.Project
+			if m.activeProjectID != "" && m.activeProjectID != "all" {
+				project = m.activeProjectID
+			}
+			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		}
+		return m, nil
+	}
+
 	switch msg.Type {
 	case tea.KeyBackspace:
 		// Delete task(s) - with confirmation modal (tasks view only)
@@ -896,6 +971,32 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+		}
+
+		// When on Dream tab, route navigation keys to dream viewer
+		if m.activeContentTab == ContentTabDream {
+			switch string(msg.Runes) {
+			case "j", "k", "g", "G":
+				cmd := m.dreamViewer.Update(msg)
+				return m, cmd
+			case "r":
+				// Re-fetch dream content
+				m.dreamViewer.SetLoading(true)
+				project := m.config.Project
+				if m.activeProjectID != "" && m.activeProjectID != "all" {
+					project = m.activeProjectID
+				}
+				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			case "q":
+				m.sseClient.Stop()
+				return m, tea.Quit
+			case "?":
+				modal := NewHelpModal(m.config.IsMultiProject())
+				cmd := m.modalManager.Open(modal)
+				return m, cmd
+			}
+			// Other keys ignored on Dream tab
+			return m, nil
 		}
 
 		switch string(msg.Runes) {
@@ -1260,28 +1361,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.activePanel == PanelLogs {
 				m.filterLogsByTask = !m.filterLogsByTask
 				return m, nil
-			}
-			return m, nil
-		case "L":
-			m.logsVisible = !m.logsVisible
-			// If hiding the active panel, switch back to tasks
-			if !m.logsVisible && m.activePanel == PanelLogs {
-				m.activePanel = PanelTasks
-			}
-			m.syncPanelSizes()
-			return m, nil
-		case "T":
-			m.detailVisible = !m.detailVisible
-			// If hiding the active panel, switch back to tasks
-			if !m.detailVisible && m.activePanel == PanelDetails {
-				m.activePanel = PanelTasks
-			}
-			// When showing the detail panel, sync it with current selection
-			// so it doesn't show stale "No task selected" state
-			if m.detailVisible {
-				m.syncTaskDetail() // this calls syncPanelSizes internally
-			} else {
-				m.syncPanelSizes()
 			}
 			return m, nil
 		case "j":
@@ -2265,6 +2344,21 @@ func (m Model) renderBaseView() string {
 		projectTabsView = m.projectTabs.View(m.width)
 	}
 
+	// Render content tab bar (Tasks / Dream)
+	var contentTabBarView string
+	{
+		tasksLabel := " Tasks "
+		dreamLabel := " Dream "
+		if m.activeContentTab == ContentTabTasks {
+			tasksLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(tasksLabel)
+			dreamLabel = DimStyle.Render(dreamLabel)
+		} else {
+			tasksLabel = DimStyle.Render(tasksLabel)
+			dreamLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(dreamLabel)
+		}
+		contentTabBarView = " " + tasksLabel + "  " + dreamLabel
+	}
+
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
 
@@ -2332,8 +2426,13 @@ func (m Model) renderBaseView() string {
 		filterBarHeight = lipgloss.Height(filterBarView)
 	}
 
+	contentTabBarHeight := 0
+	if contentTabBarView != "" {
+		contentTabBarHeight = lipgloss.Height(contentTabBarView)
+	}
+
 	// Total height consumed by fixed UI elements (header at top, footer at bottom)
-	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+	fixedUIHeight := statusBarHeight + projectTabsHeight + contentTabBarHeight + helpBarHeight + statusMessageHeight + filterBarHeight
 
 	// Available height for main content area (tasks + detail/logs panels)
 	mainHeight := m.height - fixedUIHeight
@@ -2413,9 +2512,17 @@ func (m Model) renderBaseView() string {
 		MaxHeight(topHeight).
 		Render(taskContent)
 
-	// Build main content
+	// Build main content based on active content tab
 	var mainContent string
-	if hasBottomPanel {
+	if m.activeContentTab == ContentTabDream {
+		// Dream tab: full-width dream viewer, no task/detail/log panels
+		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
+		dreamPanel := InactiveBorder.
+			Width(m.width - 2).
+			Height(mainHeight - 2).
+			Render(dreamView)
+		mainContent = dreamPanel
+	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
 	} else {
@@ -2428,6 +2535,7 @@ func (m Model) renderBaseView() string {
 	if projectTabsView != "" {
 		sections = append(sections, projectTabsView)
 	}
+	sections = append(sections, contentTabBarView)
 	sections = append(sections, mainContent)
 	if statusMessageView != "" {
 		sections = append(sections, statusMessageView)
@@ -2841,6 +2949,38 @@ type runnerStatusMsg struct {
 // =============================================================================
 // Command Functions
 // =============================================================================
+
+// fetchDreamContentCmd fetches dream content for a project from the API.
+func fetchDreamContentCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+
+		// Search for dream entries in this project
+		limit := 1
+		searchResp, err := apiClient.SearchEntries(ctx, types.SearchRequest{
+			Query:   "Project Dream",
+			Type:    "dream",
+			Project: project,
+			Limit:   &limit,
+		})
+		if err != nil {
+			return DreamContentMsg{Error: fmt.Errorf("search failed: %w", err)}
+		}
+
+		if len(searchResp.Results) == 0 {
+			return DreamContentMsg{Content: ""}
+		}
+
+		// Fetch the full entry content
+		entry, err := apiClient.GetEntry(ctx, searchResp.Results[0].Path)
+		if err != nil {
+			return DreamContentMsg{Error: fmt.Errorf("fetch failed: %w", err)}
+		}
+
+		return DreamContentMsg{Content: entry.Content}
+	}
+}
 
 // completeTaskCmd completes a single task.
 func completeTaskCmd(cfg runner.RunnerConfig, taskPath string) tea.Cmd {

@@ -1,4 +1,4 @@
-# Brain API - GoReleaser Configuration
+# Brain - GoReleaser Configuration
 # Usage: goreleaser release --clean
 # Check: goreleaser check
 
@@ -12,72 +12,9 @@ before:
     - go vet ./...
 
 builds:
-  - id: brain-api
-    main: ./cmd/brain-api
-    binary: brain-api
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
-    ldflags:
-      - -s -w
-      - -X github.com/huynle/brain-api/internal/config.Version={{.Version}}
-      - -X github.com/huynle/brain-api/internal/config.Commit={{.ShortCommit}}
-      - -X github.com/huynle/brain-api/internal/config.BuildTime={{.Date}}
-
-  - id: brain-runner
-    main: ./cmd/brain-runner
-    binary: brain-runner
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
-    ldflags:
-      - -s -w
-      - -X github.com/huynle/brain-api/internal/config.Version={{.Version}}
-      - -X github.com/huynle/brain-api/internal/config.Commit={{.ShortCommit}}
-      - -X github.com/huynle/brain-api/internal/config.BuildTime={{.Date}}
-
   - id: brain
     main: ./cmd/brain
     binary: brain
-    env:
-      - CGO_ENABLED=0
-    goos:
-      - linux
-      - darwin
-      - windows
-    goarch:
-      - amd64
-      - arm64
-    ignore:
-      - goos: windows
-        goarch: arm64
-    ldflags:
-      - -s -w
-      - -X github.com/huynle/brain-api/internal/config.Version={{.Version}}
-      - -X github.com/huynle/brain-api/internal/config.Commit={{.ShortCommit}}
-      - -X github.com/huynle/brain-api/internal/config.BuildTime={{.Date}}
-
-  - id: brain-mcp
-    main: ./cmd/brain-mcp
-    binary: brain-mcp
     env:
       - CGO_ENABLED=0
     goos:
@@ -155,10 +92,7 @@ dockers_v2:
       "org.opencontainers.image.revision": "{{ .FullCommit }}"
       "org.opencontainers.image.source": "https://github.com/huynle/brain-api"
     ids:
-      - brain-api
-      - brain-runner
       - brain
-      - brain-mcp
     extra_files:
       - README.md
 

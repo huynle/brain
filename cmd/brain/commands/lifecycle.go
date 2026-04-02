@@ -2,8 +2,8 @@ package commands
 
 import (
 	"encoding/json"
-	"io"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -77,7 +77,7 @@ func (c *StartCommand) Execute() error {
 	}
 
 	// Build daemon arguments
-	args := []string{"server", "--daemon", "--log-file", logFile}
+	args := []string{"api", "--daemon", "--log-file", logFile}
 	if c.Config.Server.Port != 0 {
 		args = append(args, "--port", fmt.Sprintf("%d", c.Config.Server.Port))
 	}
@@ -366,10 +366,10 @@ func (c *DevCommand) Execute() error {
 		c.Config.Server.LogLevel = "debug"
 	}
 
-	// Create a server command with foreground mode (no daemon)
-	serverCmd := &ServerCommand{
+	// Create an API command with foreground mode (no daemon)
+	apiCmd := &APICommand{
 		Config: c.Config,
-		Flags: &ServerFlags{
+		Flags: &APIFlags{
 			Port:   c.Config.Server.Port,
 			Host:   c.Config.Server.Host,
 			Daemon: false, // Always foreground
@@ -380,5 +380,5 @@ func (c *DevCommand) Execute() error {
 	fmt.Println("Press Ctrl+C to stop")
 	fmt.Println()
 
-	return serverCmd.Execute()
+	return apiCmd.Execute()
 }

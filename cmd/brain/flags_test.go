@@ -8,9 +8,9 @@ import (
 )
 
 func TestFlagParsing(t *testing.T) {
-	t.Run("server flags", func(t *testing.T) {
+	t.Run("api flags", func(t *testing.T) {
 		args := []string{"--port", "3000", "--daemon", "--host", "0.0.0.0"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.Equal(t, 3000, flags.Port)
@@ -32,8 +32,8 @@ func TestFlagParsing(t *testing.T) {
 		cfg := &UnifiedConfig{}
 		cfg.Server.Port = 3333
 
-		serverFlags := &ServerFlags{Port: 4000}
-		ApplyFlagsToConfig(cfg, nil, serverFlags)
+		apiFlags := &APIFlags{Port: 4000}
+		ApplyFlagsToConfig(cfg, nil, apiFlags)
 
 		assert.Equal(t, 4000, cfg.Server.Port)
 	})
@@ -41,19 +41,19 @@ func TestFlagParsing(t *testing.T) {
 
 func TestGlobalFlags(t *testing.T) {
 	t.Run("verbose flag", func(t *testing.T) {
-		args := []string{"--verbose", "server"}
+		args := []string{"--verbose", "api"}
 		flags, remaining := ParseGlobalFlags(args)
 
 		assert.True(t, flags.Verbose)
-		assert.Equal(t, []string{"server"}, remaining)
+		assert.Equal(t, []string{"api"}, remaining)
 	})
 
 	t.Run("verbose short flag", func(t *testing.T) {
-		args := []string{"-v", "server"}
+		args := []string{"-v", "api"}
 		flags, remaining := ParseGlobalFlags(args)
 
 		assert.True(t, flags.Verbose)
-		assert.Equal(t, []string{"server"}, remaining)
+		assert.Equal(t, []string{"api"}, remaining)
 	})
 
 	t.Run("help flag", func(t *testing.T) {
@@ -71,10 +71,10 @@ func TestGlobalFlags(t *testing.T) {
 	})
 }
 
-func TestServerFlags(t *testing.T) {
+func TestAPIFlags(t *testing.T) {
 	t.Run("port flag", func(t *testing.T) {
 		args := []string{"--port", "8080"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.Equal(t, 8080, flags.Port)
@@ -82,7 +82,7 @@ func TestServerFlags(t *testing.T) {
 
 	t.Run("port short flag", func(t *testing.T) {
 		args := []string{"-p", "8080"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.Equal(t, 8080, flags.Port)
@@ -90,7 +90,7 @@ func TestServerFlags(t *testing.T) {
 
 	t.Run("daemon flag", func(t *testing.T) {
 		args := []string{"--daemon"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.True(t, flags.Daemon)
@@ -98,7 +98,7 @@ func TestServerFlags(t *testing.T) {
 
 	t.Run("daemon short flag", func(t *testing.T) {
 		args := []string{"-d"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.True(t, flags.Daemon)
@@ -106,7 +106,7 @@ func TestServerFlags(t *testing.T) {
 
 	t.Run("TLS flags", func(t *testing.T) {
 		args := []string{"--tls", "--tls-cert", "/path/to/cert", "--tls-key", "/path/to/key"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.True(t, flags.TLS)
@@ -116,7 +116,7 @@ func TestServerFlags(t *testing.T) {
 
 	t.Run("combined flags", func(t *testing.T) {
 		args := []string{"--port", "3000", "--daemon", "--host", "0.0.0.0", "--log-file", "/var/log/brain.log"}
-		flags, err := ParseServerFlags(args)
+		flags, err := ParseAPIFlags(args)
 		require.NoError(t, err)
 
 		assert.Equal(t, 3000, flags.Port)
@@ -242,18 +242,18 @@ func TestRunnerFlags(t *testing.T) {
 }
 
 func TestApplyFlagsToConfig(t *testing.T) {
-	t.Run("apply server flags to config", func(t *testing.T) {
+	t.Run("apply api flags to config", func(t *testing.T) {
 		cfg := &UnifiedConfig{}
 		cfg.Server.Port = 3000
 		cfg.Server.Host = "localhost"
 
-		serverFlags := &ServerFlags{
+		apiFlags := &APIFlags{
 			Port: 8080,
 			Host: "0.0.0.0",
 			TLS:  true,
 		}
 
-		ApplyFlagsToConfig(cfg, nil, serverFlags)
+		ApplyFlagsToConfig(cfg, nil, apiFlags)
 
 		assert.Equal(t, 8080, cfg.Server.Port)
 		assert.Equal(t, "0.0.0.0", cfg.Server.Host)
@@ -287,12 +287,12 @@ func TestApplyFlagsToConfig(t *testing.T) {
 		cfg.Server.Port = 3000
 
 		// Flags with zero values should not override config
-		serverFlags := &ServerFlags{
+		apiFlags := &APIFlags{
 			Port: 0,  // Zero value, should not override
 			Host: "", // Empty string, should not override
 		}
 
-		ApplyFlagsToConfig(cfg, nil, serverFlags)
+		ApplyFlagsToConfig(cfg, nil, apiFlags)
 
 		// Port should remain unchanged
 		assert.Equal(t, 3000, cfg.Server.Port)
@@ -301,13 +301,13 @@ func TestApplyFlagsToConfig(t *testing.T) {
 	t.Run("TLS cert and key paths", func(t *testing.T) {
 		cfg := &UnifiedConfig{}
 
-		serverFlags := &ServerFlags{
+		apiFlags := &APIFlags{
 			TLS:     true,
 			TLSCert: "/etc/ssl/cert.pem",
 			TLSKey:  "/etc/ssl/key.pem",
 		}
 
-		ApplyFlagsToConfig(cfg, nil, serverFlags)
+		ApplyFlagsToConfig(cfg, nil, apiFlags)
 
 		assert.True(t, cfg.Server.TLS.Enabled)
 		assert.Equal(t, "/etc/ssl/cert.pem", cfg.Server.TLS.CertPath)

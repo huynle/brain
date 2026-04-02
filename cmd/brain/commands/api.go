@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/lifecycle"
@@ -22,6 +24,8 @@ type UnifiedConfig struct {
 		BrainDir   string
 		EnableAuth bool
 		LogLevel   string
+		CORSOrigin string
+		OAuthPIN   string
 		TLS        struct {
 			Enabled  bool
 			CertPath string
@@ -39,8 +43,8 @@ type UnifiedConfig struct {
 	}
 }
 
-// ServerFlags holds server command flags.
-type ServerFlags struct {
+// APIFlags holds API server command flags.
+type APIFlags struct {
 	Port    int
 	Host    string
 	Daemon  bool
@@ -50,19 +54,19 @@ type ServerFlags struct {
 	TLSKey  string
 }
 
-// ServerCommand implements the Command interface for the server command.
-type ServerCommand struct {
+// APICommand implements the Command interface for the api command.
+type APICommand struct {
 	Config *UnifiedConfig
-	Flags  *ServerFlags
+	Flags  *APIFlags
 }
 
 // Type returns the command type identifier.
-func (c *ServerCommand) Type() string {
-	return "server"
+func (c *APICommand) Type() string {
+	return "api"
 }
 
 // Execute starts the Brain API server.
-func (c *ServerCommand) Execute() error {
+func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
 		Port:       c.Config.Server.Port,
@@ -70,6 +74,8 @@ func (c *ServerCommand) Execute() error {
 		BrainDir:   c.Config.Server.BrainDir,
 		EnableAuth: c.Config.Server.EnableAuth,
 		LogLevel:   c.Config.Server.LogLevel,
+		CORSOrigin: c.Config.Server.CORSOrigin,
+		OAuthPIN:   c.Config.Server.OAuthPIN,
 	}
 
 	// Flags override config
@@ -80,8 +86,9 @@ func (c *ServerCommand) Execute() error {
 		opts.Host = c.Flags.Host
 	}
 
-	// Create context
-	ctx := context.Background()
+	// Create context with signal handling for graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	// If daemon mode, handle daemonization
 	if c.Flags.Daemon {
@@ -112,13 +119,16 @@ func (c *ServerCommand) Execute() error {
 // In daemon mode, we write the PID file when the server starts and setup signal handlers.
 // The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
 func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig) error {
-	// Check if already running
+	// Check if already running (skip if the PID file contains our own PID,
+	// which happens when the parent wrote it before we started)
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
-		if lifecycle.IsProcessRunning(pid) {
+		if pid != os.Getpid() && lifecycle.IsProcessRunning(pid) {
 			return fmt.Errorf("server already running (PID %d)", pid)
 		}
-		// Clean up stale PID
-		lifecycle.ClearPID(pidFile)
+		if pid != os.Getpid() {
+			// Clean up stale PID from a dead process
+			lifecycle.ClearPID(pidFile)
+		}
 	}
 
 	// Write PID file

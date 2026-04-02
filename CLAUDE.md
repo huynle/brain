@@ -10,14 +10,11 @@ Brain API is a REST service for AI agent memory and knowledge management, with a
 
 ```bash
 # Development
-make build           # Build all Go binaries
-go test ./...        # Run all tests
-make typecheck       # Run go vet (static analysis)
-
-# Alternative: using just
-just go-build        # Build all Go binaries
-just go-test         # Run all tests
-just go-check        # Run all checks (vet + test + lint)
+just build           # Build all Go binaries
+just test            # Run all tests
+just vet             # Run go vet (static analysis)
+just check           # Run all checks (vet + test + lint)
+just dev             # Run brain-api server
 
 # Task Runner
 brain start <project>                       # TUI dashboard
@@ -221,7 +218,7 @@ func TestTaskTree_Update(t *testing.T) {
 brain start project -v
 
 # Check logs
-brain server logs -f
+brain api logs -f
 
 # Run without TUI for direct output
 brain start project
@@ -305,26 +302,21 @@ brain start all -i 'brain-*' -e 'brain-legacy'
 
 ## Build System
 
-The project uses both `Makefile` and `justfile` for task automation:
+The project uses `just` (justfile) for all task automation:
 
-### Makefile (Go-focused)
-```bash
-make build        # Build all binaries
-make test         # Run tests
-make test-cover   # Run tests with coverage
-make lint         # Run golangci-lint
-make typecheck    # Run go vet
-make check        # Run all checks
-make clean        # Clean build artifacts
-```
-
-### Justfile (Developer convenience)
 ```bash
 just              # List all recipes
-just go-build     # Build binaries
-just go-test      # Run tests
-just go-check     # All checks
-just go-dev       # Run brain-api server
+just build        # Build all binaries
+just test         # Run tests
+just test-cover   # Run tests with coverage
+just lint         # Run golangci-lint
+just vet          # Run go vet
+just check        # Run all checks (vet + test + lint)
+just clean        # Clean build artifacts
+just dev          # Run brain-api server
+just install      # Install binaries to GOPATH/bin
+just release      # Cross-compile for release
+just docker       # Build Docker image
 ```
 
 ## Go Module

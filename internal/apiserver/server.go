@@ -28,6 +28,8 @@ type ServerOptions struct {
 	BrainDir   string
 	EnableAuth bool
 	LogLevel   string
+	CORSOrigin string
+	OAuthPIN   string
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -86,11 +88,17 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	}
 
 	// ─── Build Config ───────────────────────────────────────────────
+	corsOrigin := opts.CORSOrigin
+	if corsOrigin == "" {
+		corsOrigin = "*" // Match standalone brain-api default
+	}
 	cfg := config.Config{
 		BrainDir:   opts.BrainDir,
 		Host:       opts.Host,
 		Port:       opts.Port,
 		EnableAuth: opts.EnableAuth,
+		CORSOrigin: corsOrigin,
+		OAuthPIN:   opts.OAuthPIN,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -161,6 +169,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			"db_path", dbPath,
 			"auth_enabled", opts.EnableAuth,
 			"oauth_enabled", true,
+			"cors_origin", cfg.CORSOrigin,
 		)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err

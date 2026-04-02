@@ -3,7 +3,10 @@ package commands
 import (
 	"context"
 	"os"
+	"os/signal"
+	"syscall"
 
+	"github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/mcpserver"
 )
 
@@ -35,8 +38,14 @@ func (c *MCPCommand) Execute() error {
 		opts.APIURL = c.Flags.APIURL
 	}
 
-	// Create context
-	ctx := context.Background()
+	// Fall back to default URL (reads BRAIN_API_URL env, defaults to http://localhost:3333)
+	if opts.APIURL == "" {
+		opts.APIURL = mcp.DefaultBaseURL()
+	}
+
+	// Create context with signal handling for graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
 
 	// Run MCP server on stdin/stdout
 	return mcpserver.RunMCPServer(ctx, opts, os.Stdin, os.Stdout)

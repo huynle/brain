@@ -1,4 +1,4 @@
-# Brain API - GoReleaser Docker Build
+# Brain - GoReleaser Docker Build
 # Used by goreleaser to create Docker images from pre-built binaries.
 # For manual builds, use the standard Dockerfile instead.
 
@@ -11,11 +11,8 @@ RUN addgroup -S brain && adduser -S brain -G brain
 
 WORKDIR /app
 
-# Copy pre-built binaries from goreleaser
-COPY brain-api /usr/local/bin/brain-api
-COPY brain-runner /usr/local/bin/brain-runner
+# Copy pre-built binary from goreleaser
 COPY brain /usr/local/bin/brain
-COPY brain-mcp /usr/local/bin/brain-mcp
 
 # Default brain directory
 RUN mkdir -p /data/brain && chown -R brain:brain /data/brain
@@ -25,4 +22,4 @@ USER brain
 
 EXPOSE 3333
 
-ENTRYPOINT ["brain-api"]
+ENTRYPOINT ["brain", "api"]

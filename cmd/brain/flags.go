@@ -15,8 +15,8 @@ type GlobalFlags struct {
 	Version bool
 }
 
-// ServerFlags for server command
-type ServerFlags struct {
+// APIFlags for api command
+type APIFlags struct {
 	Port    int
 	Host    string
 	Daemon  bool
@@ -81,10 +81,10 @@ func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 	return flags, fs.Args()
 }
 
-// ParseServerFlags parses server-specific flags
-func ParseServerFlags(args []string) (*ServerFlags, error) {
-	flags := &ServerFlags{}
-	fs := flag.NewFlagSet("server", flag.ExitOnError)
+// ParseAPIFlags parses API server-specific flags
+func ParseAPIFlags(args []string) (*APIFlags, error) {
+	flags := &APIFlags{}
+	fs := flag.NewFlagSet("api", flag.ExitOnError)
 
 	fs.IntVar(&flags.Port, "port", 0, "Server port")
 	fs.IntVar(&flags.Port, "p", 0, "Server port (short)")
@@ -218,6 +218,8 @@ type UnifiedConfig struct {
 		BrainDir   string
 		EnableAuth bool
 		LogLevel   string
+		CORSOrigin string
+		OAuthPIN   string
 		TLS        struct {
 			Enabled  bool
 			CertPath string
@@ -236,7 +238,7 @@ type UnifiedConfig struct {
 func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags interface{}) {
 	// Apply command-specific flags based on type
 	switch flags := cmdFlags.(type) {
-	case *ServerFlags:
+	case *APIFlags:
 		if flags.Port != 0 {
 			cfg.Server.Port = flags.Port
 		}

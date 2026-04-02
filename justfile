@@ -5,64 +5,122 @@ default:
     @just --list
 
 # =============================================================================
+# Variables
+# =============================================================================
+
+binary_dir := "bin"
+module := "github.com/huynle/brain-api"
+version := `git describe --tags --always --dirty 2>/dev/null || echo "dev"`
+commit := `git rev-parse --short HEAD 2>/dev/null || echo "unknown"`
+build_time := `date -u '+%Y-%m-%dT%H:%M:%SZ'`
+ldflags := "-s -w -X " + module + "/internal/config.Version=" + version + " -X " + module + "/internal/config.Commit=" + commit + " -X " + module + "/internal/config.BuildTime=" + build_time
+cmds := "brain"
+
+# =============================================================================
 # Go Development
 # =============================================================================
 
 # Build all Go binaries
-go-build:
-    make build
+build:
+    @mkdir -p {{ binary_dir }}
+    @for cmd in {{ cmds }}; do \
+        echo "Building $cmd..."; \
+        go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/$cmd ./cmd/$cmd; \
+    done
+    @echo "Build complete: {{ binary_dir }}/"
+
+# Build a specific binary (e.g., just build-one brain-api)
+build-one cmd:
+    @mkdir -p {{ binary_dir }}
+    go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/{{ cmd }} ./cmd/{{ cmd }}
 
 # Run Go tests
-go-test:
-    make test
+test:
+    go test ./... -v -count=1
 
 # Run Go tests with coverage
-go-cover:
-    make test-cover
+test-cover:
+    go test ./... -v -count=1 -coverprofile=coverage.out -covermode=atomic
+    go tool cover -func=coverage.out
+    @echo ""
+    @echo "HTML report: go tool cover -html=coverage.out -o coverage.html"
 
-# Run Go linter (golangci-lint)
-go-lint:
-    make lint
+# Run Go tests in short mode (skip long-running tests)
+test-short:
+    go test ./... -v -short -count=1
+
+# Run golangci-lint
+lint:
+    @if command -v golangci-lint >/dev/null 2>&1; then \
+        golangci-lint run ./...; \
+    else \
+        echo "golangci-lint not found. Install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2"; \
+        exit 1; \
+    fi
 
 # Run go vet (static analysis)
-go-vet:
-    make typecheck
+vet:
+    go vet ./...
 
-# Run all Go checks (vet + test + lint)
-go-check:
-    make check
+# Run all checks (vet + test + lint)
+check: vet test lint
 
 # Format Go code
-go-fmt:
-    make fmt
+fmt:
+    go fmt ./...
+    @if command -v goimports >/dev/null 2>&1; then \
+        goimports -w .; \
+    fi
 
 # Tidy Go dependencies
-go-tidy:
-    make tidy
+tidy:
+    go mod tidy
 
-# Clean Go build artifacts
-go-clean:
-    make clean
+# Clean build artifacts
+clean:
+    rm -rf {{ binary_dir }} coverage.out coverage.html
+    go clean -cache -testcache
 
-# Run brain-api server (Go)
-go-dev:
-    go run ./cmd/brain-api
+# Run brain API server (development)
+dev:
+    go run ./cmd/brain dev
 
 # =============================================================================
-# Installation
+# Installation & Release
 # =============================================================================
 
-# Install Go binaries to GOPATH/bin
-install:
-    make install
+# Build and install binaries to GOPATH/bin
+install: build
+    @for cmd in {{ cmds }}; do \
+        go install -ldflags '{{ ldflags }}' ./cmd/$cmd; \
+    done
+    @echo "Installed to $(go env GOPATH)/bin"
+
+# Cross-compile for release (linux/darwin/windows, amd64/arm64)
+release:
+    @mkdir -p {{ binary_dir }}/release
+    @for cmd in {{ cmds }}; do \
+        echo "Cross-compiling $cmd..."; \
+        GOOS=linux   GOARCH=amd64 go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/release/$cmd-linux-amd64 ./cmd/$cmd; \
+        GOOS=linux   GOARCH=arm64 go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/release/$cmd-linux-arm64 ./cmd/$cmd; \
+        GOOS=darwin  GOARCH=amd64 go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/release/$cmd-darwin-amd64 ./cmd/$cmd; \
+        GOOS=darwin  GOARCH=arm64 go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/release/$cmd-darwin-arm64 ./cmd/$cmd; \
+        GOOS=windows GOARCH=amd64 go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/release/$cmd-windows-amd64.exe ./cmd/$cmd; \
+    done
+    @echo "Release binaries: {{ binary_dir }}/release/"
+
+# Build Docker image
+docker:
+    docker build -t brain-api:{{ version }} .
+    @echo "Built: brain-api:{{ version }}"
+
+# =============================================================================
+# Health & Tunnel
+# =============================================================================
 
 # Check API health
 health:
     curl -s http://localhost:3333/health | jq .
-
-# =============================================================================
-# Tunnel (FRP)
-# =============================================================================
 
 # Start FRP tunnel to expose brain MCP at https://BRAIN_TUNNEL_HOST
 tunnel:
@@ -115,7 +173,7 @@ deploy:
 
 # Create an API token in the running container
 deploy-token name:
-    docker compose exec brain-api bun run src/cli/brain.ts token create --name {{name}}
+    docker compose exec brain-api bun run src/cli/brain.ts token create --name {{ name }}
 
 # List API tokens
 deploy-tokens:
@@ -123,7 +181,7 @@ deploy-tokens:
 
 # Revoke an API token
 deploy-revoke name:
-    docker compose exec brain-api bun run src/cli/brain.ts token revoke {{name}}
+    docker compose exec brain-api bun run src/cli/brain.ts token revoke {{ name }}
 
 # Show deployment status and health
 deploy-status:

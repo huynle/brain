@@ -14,13 +14,13 @@ USAGE:
   brain help <command>
 
 CORE COMMANDS:
-  server                         Run API server in foreground
-  server start                   Start server as daemon
-  server stop                    Stop daemonized server
-  server restart                 Restart daemonized server
-  server status                  Show server process status
-  server logs                    Show server logs
-  server health                  Call /api/v1/health
+  api                            Run API server in foreground
+  api start                      Start server as daemon
+  api stop                       Stop daemonized server
+  api restart                    Restart daemonized server
+  api status                     Show server process status
+  api logs                       Show server logs
+  api health                     Call /api/v1/health
 
 RUNNER COMMANDS:
   start [project|all]            Open runner TUI (default project: all)
@@ -63,9 +63,9 @@ GLOBAL HELP:
 EXAMPLES:
   brain start
   brain start my-project --max-parallel 5
-  brain server --port 3000
-  brain server start --dry-run
-  brain server logs -f -n 200
+  brain api --port 3000
+  brain api start --dry-run
+  brain api logs -f -n 200
   brain token create --name dev
   brain save --type task --title "Fix auth bug"
   brain edit abc12def
@@ -73,11 +73,11 @@ EXAMPLES:
   brain help run
 `
 
-const serverHelp = `brain server - API server operations
+const apiHelp = `brain api - API server operations
 
 USAGE:
-  brain server [flags]
-  brain server <subcommand> [flags]
+  brain api [flags]
+  brain api <subcommand> [flags]
 
 SUBCOMMANDS:
   start                          Start daemon in background
@@ -87,7 +87,7 @@ SUBCOMMANDS:
   logs                           Show/follow daemon logs
   health                         Query API health endpoint
 
-FLAGS (brain server):
+FLAGS (brain api):
   -p, --port <port>              Listen port (foreground mode)
   --host <host>                  Listen host (foreground mode)
   -d, --daemon                   Run as daemon
@@ -98,25 +98,25 @@ FLAGS (brain server):
   -h, --help                     Show this help
 
 SUBCOMMAND HELP:
-  brain help server start
-  brain help server stop
-  brain help server restart
-  brain help server status
-  brain help server logs
-  brain help server health
+  brain help api start
+  brain help api stop
+  brain help api restart
+  brain help api status
+  brain help api logs
+  brain help api health
 
 EXAMPLES:
-  brain server
-  brain server --port 4000 --host 0.0.0.0
-  brain server --tls --tls-cert cert.pem --tls-key key.pem
-  brain server start
-  brain server status
+  brain api
+  brain api --port 4000 --host 0.0.0.0
+  brain api --tls --tls-cert cert.pem --tls-key key.pem
+  brain api start
+  brain api status
 `
 
-const serverStartHelp = `brain server start - Start daemonized API server
+const apiStartHelp = `brain api start - Start daemonized API server
 
 USAGE:
-  brain server start [flags]
+  brain api start [flags]
 
 FLAGS:
   --pid-file <path>              PID file path override
@@ -126,18 +126,18 @@ FLAGS:
 
 NOTES:
   - Port/host are loaded from config, not from start flags.
-  - Daemon mode launches: brain server --daemon ...
+  - Daemon mode launches: brain api --daemon ...
 
 EXAMPLES:
-  brain server start
-  brain server start --log-file ~/.local/state/brain-api/brain-api.log
-  brain server start --dry-run
+  brain api start
+  brain api start --log-file ~/.local/state/brain-api/brain-api.log
+  brain api start --dry-run
 `
 
-const serverStopHelp = `brain server stop - Stop daemonized API server
+const apiStopHelp = `brain api stop - Stop daemonized API server
 
 USAGE:
-  brain server stop [flags]
+  brain api stop [flags]
   brain stop [flags]
 
 FLAGS:
@@ -148,15 +148,15 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server stop
-  brain server stop --timeout 30
-  brain server stop --force
+  brain api stop
+  brain api stop --timeout 30
+  brain api stop --force
 `
 
-const serverRestartHelp = `brain server restart - Restart daemonized API server
+const apiRestartHelp = `brain api restart - Restart daemonized API server
 
 USAGE:
-  brain server restart [flags]
+  brain api restart [flags]
 
 FLAGS:
   --pid-file <path>              PID file path override
@@ -167,28 +167,28 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server restart
-  brain server restart --timeout 20 --force
+  brain api restart
+  brain api restart --timeout 20 --force
 `
 
-const serverStatusHelp = `brain server status - Show daemon status
+const apiStatusHelp = `brain api status - Show daemon status
 
 USAGE:
-  brain server status [flags]
+  brain api status [flags]
 
 FLAGS:
   --json                         JSON output
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server status
-  brain server status --json
+  brain api status
+  brain api status --json
 `
 
-const serverLogsHelp = `brain server logs - Show or follow daemon logs
+const apiLogsHelp = `brain api logs - Show or follow daemon logs
 
 USAGE:
-  brain server logs [flags]
+  brain api logs [flags]
 
 FLAGS:
   -f, --follow                   Stream new log lines
@@ -198,16 +198,16 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server logs
-  brain server logs -n 300
-  brain server logs --since 2h --level error
-  brain server logs -f --level warn
+  brain api logs
+  brain api logs -n 300
+  brain api logs --since 2h --level error
+  brain api logs -f --level warn
 `
 
-const serverHealthHelp = `brain server health - Query API health endpoint
+const apiHealthHelp = `brain api health - Query API health endpoint
 
 USAGE:
-  brain server health [flags]
+  brain api health [flags]
 
 FLAGS:
   --wait                         Wait until healthy
@@ -215,8 +215,8 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server health
-  brain server health --wait --timeout 60
+  brain api health
+  brain api health --wait --timeout 60
 `
 
 const startHelp = `brain start - Open runner TUI
@@ -726,12 +726,12 @@ EXAMPLES:
   brain list -i --type task
 `
 
-const stopHelp = `brain stop - Alias for "brain server stop"
+const stopHelp = `brain stop - Alias for "brain api stop"
 
 USAGE:
   brain stop [flags]
 
-See: brain help server stop
+See: brain help api stop
 `
 
 func normalizeHelpTopic(command string) string {
@@ -753,20 +753,20 @@ func ShowHelp(command string) {
 	switch normalizeHelpTopic(command) {
 	case "":
 		fmt.Print(mainHelp)
-	case "server":
-		fmt.Print(serverHelp)
-	case "server start":
-		fmt.Print(serverStartHelp)
-	case "server stop":
-		fmt.Print(serverStopHelp)
-	case "server restart":
-		fmt.Print(serverRestartHelp)
-	case "server status":
-		fmt.Print(serverStatusHelp)
-	case "server logs":
-		fmt.Print(serverLogsHelp)
-	case "server health":
-		fmt.Print(serverHealthHelp)
+	case "api":
+		fmt.Print(apiHelp)
+	case "api start":
+		fmt.Print(apiStartHelp)
+	case "api stop":
+		fmt.Print(apiStopHelp)
+	case "api restart":
+		fmt.Print(apiRestartHelp)
+	case "api status":
+		fmt.Print(apiStatusHelp)
+	case "api logs":
+		fmt.Print(apiLogsHelp)
+	case "api health":
+		fmt.Print(apiHealthHelp)
 	case "start":
 		fmt.Print(startHelp)
 	case "run":

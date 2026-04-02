@@ -16,13 +16,13 @@ func TestRedirectLegacyInvocation(t *testing.T) {
 			name:     "brain-api redirect",
 			argv0:    "brain-api",
 			args:     []string{"--port", "3000"},
-			expected: []string{"server", "--port", "3000"},
+			expected: []string{"api", "--port", "3000"},
 		},
 		{
 			name:     "brain-api no args",
 			argv0:    "brain-api",
 			args:     []string{},
-			expected: []string{"server"},
+			expected: []string{"api"},
 		},
 		{
 			name:     "brain-mcp redirect",
@@ -39,8 +39,8 @@ func TestRedirectLegacyInvocation(t *testing.T) {
 		{
 			name:     "brain normal invocation",
 			argv0:    "brain",
-			args:     []string{"server"},
-			expected: []string{"server"},
+			args:     []string{"api"},
+			expected: []string{"api"},
 		},
 		{
 			name:     "brain with project",

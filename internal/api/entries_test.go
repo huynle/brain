@@ -37,6 +37,7 @@ type mockBrainService struct {
 	getStaleFunc     func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
 	verifyFunc       func(ctx context.Context, path string) (*types.VerifyResponse, error)
 	generateLinkFunc func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
+	bulkUpdateFunc   func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
@@ -170,6 +171,13 @@ func (m *mockBrainService) GenerateLink(ctx context.Context, req types.LinkReque
 		return m.generateLinkFunc(ctx, req)
 	}
 	return nil, fmt.Errorf("generateLinkFunc not set")
+}
+
+func (m *mockBrainService) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	if m.bulkUpdateFunc != nil {
+		return m.bulkUpdateFunc(ctx, req)
+	}
+	return nil, fmt.Errorf("bulkUpdateFunc not set")
 }
 
 func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {

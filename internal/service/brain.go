@@ -721,6 +721,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	return s.Recall(ctx, row.Path)
 }
 
+// BulkUpdate applies updates to multiple entries in a single request.
+// TODO: Full implementation will be added in a subsequent task.
+func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	return nil, fmt.Errorf("BulkUpdate not yet implemented")
+}
+
 // =============================================================================
 // Metadata Updates
 // =============================================================================

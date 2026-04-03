@@ -41,6 +41,10 @@ func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*Not
 			where = append(where, "feature_id = ?")
 			params = append(params, opts.FeatureID)
 		}
+		if opts.Priority != "" {
+			where = append(where, "priority = ?")
+			params = append(params, opts.Priority)
+		}
 		if opts.PathPrefix != "" {
 			where = append(where, "path LIKE ?")
 			params = append(params, opts.PathPrefix+"%")

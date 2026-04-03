@@ -67,8 +67,17 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		if err != nil {
 			return RunnerConfig{}, fmt.Errorf("read config file: %w", err)
 		}
-		if err := yaml.Unmarshal(data, &fileCfg); err != nil {
-			return RunnerConfig{}, fmt.Errorf("parse config file: %w", err)
+		// Try unified config format first (runner fields nested under "runner:" key)
+		var wrapper struct {
+			Runner RunnerConfig `yaml:"runner"`
+		}
+		if err := yaml.Unmarshal(data, &wrapper); err == nil && wrapper.Runner.BrainAPIURL != "" || wrapper.Runner.MaxParallel != 0 {
+			fileCfg = wrapper.Runner
+		} else {
+			// Fall back to flat/legacy format (runner fields at top level)
+			if err := yaml.Unmarshal(data, &fileCfg); err != nil {
+				return RunnerConfig{}, fmt.Errorf("parse config file: %w", err)
+			}
 		}
 	}
 

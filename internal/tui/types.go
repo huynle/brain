@@ -66,6 +66,17 @@ type RunnerController interface {
 	// SetMaxParallel updates the maximum number of parallel tasks at runtime.
 	// Values <= 0 are clamped to 1.
 	SetMaxParallel(n int)
+
+	// EnableFeature adds a feature to the enabled whitelist.
+	// When a project is paused, only enabled features are polled for new tasks.
+	EnableFeature(featureID string)
+	// DisableFeature removes a feature from the enabled whitelist.
+	DisableFeature(featureID string)
+	// GetEnabledFeatures returns a copy of the enabled features map.
+	GetEnabledFeatures() map[string]bool
+	// ExecuteFeature batch-executes all ready tasks in a feature (up to capacity).
+	// Returns the number of tasks successfully started.
+	ExecuteFeature(ctx context.Context, tasks []types.ResolvedTask, projectID string) (int, error)
 }
 
 // Config holds the configuration passed to the TUI from the runner.
@@ -82,6 +93,9 @@ type Config struct {
 	// Runner is the embedded task runner controller (optional).
 	// If set, pause/resume calls go directly to the runner instead of via HTTP.
 	Runner RunnerController
+	// KeyBindings holds user-configured keybinding overrides.
+	// Keys: prev_tab, next_tab, toggle_logs, toggle_detail.
+	KeyBindings map[string]string
 }
 
 // DefaultAPITimeout is the default HTTP client timeout for TUI API calls (15 seconds).
@@ -92,6 +106,26 @@ const DefaultAPITimeout = 15000
 // IsMultiProject returns true if monitoring multiple projects.
 func (c Config) IsMultiProject() bool {
 	return len(c.Projects) > 1
+}
+
+// ContentTab identifies which content tab is active.
+type ContentTab int
+
+const (
+	ContentTabTasks ContentTab = iota
+	ContentTabDream
+)
+
+// String returns the display name for a content tab.
+func (ct ContentTab) String() string {
+	switch ct {
+	case ContentTabTasks:
+		return "Tasks"
+	case ContentTabDream:
+		return "Dream"
+	default:
+		return "unknown"
+	}
 }
 
 // ViewMode identifies which view mode the TUI is in.

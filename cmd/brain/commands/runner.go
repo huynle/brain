@@ -85,6 +85,7 @@ func (c *RunnerTUICommand) Execute() error {
 		Config:      cfg,
 		Mode:        "tui",
 		StartPaused: true,
+		KeyBindings: c.Config.TUI.KeyBindings,
 	}
 
 	ctx := context.Background()
@@ -175,6 +176,7 @@ func (c *RunCommand) runStart() error {
 		Config:      cfg,
 		Mode:        mode,
 		StartPaused: false,
+		KeyBindings: c.Config.TUI.KeyBindings,
 	}
 
 	ctx := context.Background()

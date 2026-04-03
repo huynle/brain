@@ -151,6 +151,29 @@ func appendFilters(sql string, params []interface{}, tableAlias string, opts *Se
 		sql += " AND " + col("status") + " = ?"
 		params = append(params, opts.Status)
 	}
+	if opts.ProjectID != "" {
+		sql += " AND " + col("project_id") + " = ?"
+		params = append(params, opts.ProjectID)
+	}
+	if opts.FeatureID != "" {
+		sql += " AND " + col("feature_id") + " = ?"
+		params = append(params, opts.FeatureID)
+	}
+	if opts.Priority != "" {
+		sql += " AND " + col("priority") + " = ?"
+		params = append(params, opts.Priority)
+	}
+	if len(opts.Tags) > 0 {
+		placeholders := make([]string, len(opts.Tags))
+		for i := range opts.Tags {
+			placeholders[i] = "?"
+			params = append(params, opts.Tags[i])
+		}
+		idCol := col("id")
+		sql += fmt.Sprintf(" AND %s IN (SELECT note_id FROM tags WHERE tag IN (%s) GROUP BY note_id HAVING COUNT(DISTINCT tag) = ?)",
+			idCol, strings.Join(placeholders, ","))
+		params = append(params, len(opts.Tags))
+	}
 
 	return sql, params
 }

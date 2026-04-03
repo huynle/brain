@@ -67,7 +67,7 @@ func (c *HelpCommand) Type() string {
 // builtinCommands is the set of recognized built-in commands.
 // These commands take precedence over project names.
 var builtinCommands = map[string]bool{
-	"server":        true,
+	"api":           true,
 	"mcp":           true,
 	"run":           true,
 	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
@@ -82,6 +82,13 @@ var builtinCommands = map[string]bool{
 	"plugin-status": true,
 	"token":         true,
 	"dream":         true,
+	"save":          true,
+	"get":           true,
+	"cat":           true, // alias for "get"
+	"update":        true,
+	"edit":          true,
+	"search":        true,
+	"list":          true,
 	"help":          true,
 }
 
@@ -93,7 +100,7 @@ var builtinCommands = map[string]bool{
 //
 // Routing priority:
 //  1. Zero args → help
-//  2. Built-in commands (server, start, mcp, etc.)
+//  2. Built-in commands (api, start, mcp, etc.)
 //  3. Unknown/invalid input → help
 //
 // Use "brain start <project>" or "brain start all" to launch the runner TUI.
@@ -160,8 +167,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	cmdArgs := args[1:]
 
 	switch cmdName {
-	case "server":
-		return parseServerCommand(cmdArgs)
+	case "api":
+		return parseAPICommand(cmdArgs)
 	case "start":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "start"}, nil
@@ -206,6 +213,36 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "dream"}, nil
 		}
 		return parseDreamCommand(cmdArgs)
+	case "save":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "save"}, nil
+		}
+		return parseSaveCommand(cmdArgs)
+	case "get", "cat":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "get"}, nil
+		}
+		return parseGetCommand(cmdArgs)
+	case "update":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "update"}, nil
+		}
+		return parseUpdateCommand(cmdArgs)
+	case "edit":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "edit"}, nil
+		}
+		return parseEditCommand(cmdArgs)
+	case "search":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "search"}, nil
+		}
+		return parseSearchCommand(cmdArgs)
+	case "list":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "list"}, nil
+		}
+		return parseListCommand(cmdArgs)
 	case "install":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "install"}, nil
@@ -241,8 +278,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	}
 }
 
-// serverSubcommands maps server subcommand names to their parse functions.
-var serverSubcommands = map[string]func([]string) (Command, error){
+// apiSubcommands maps api subcommand names to their parse functions.
+var apiSubcommands = map[string]func([]string) (Command, error){
 	"start":   parseStartCommand,
 	"stop":    parseStopCommand,
 	"restart": parseRestartCommand,
@@ -251,37 +288,37 @@ var serverSubcommands = map[string]func([]string) (Command, error){
 	"health":  parseHealthCommand,
 }
 
-// parseServerCommand creates a ServerCommand from args, or delegates to a
-// server subcommand (start/stop/restart/status/logs/health).
-func parseServerCommand(args []string) (Command, error) {
+// parseAPICommand creates an APICommand from args, or delegates to an
+// api subcommand (start/stop/restart/status/logs/health).
+func parseAPICommand(args []string) (Command, error) {
 	if len(args) > 0 && isHelpArg(args[0]) {
-		return &HelpCommand{command: "server"}, nil
+		return &HelpCommand{command: "api"}, nil
 	}
 
 	// Check if the first arg is a known subcommand
 	if len(args) > 0 {
-		if parseFn, ok := serverSubcommands[args[0]]; ok {
+		if parseFn, ok := apiSubcommands[args[0]]; ok {
 			if wantsHelp(args[1:]) {
-				return &HelpCommand{command: "server " + args[0]}, nil
+				return &HelpCommand{command: "api " + args[0]}, nil
 			}
 			return parseFn(args[1:])
 		}
 	}
 
 	if wantsHelp(args) {
-		return &HelpCommand{command: "server"}, nil
+		return &HelpCommand{command: "api"}, nil
 	}
 
-	// Default: start server in foreground
+	// Default: start API server in foreground
 	cfg := defaultConfig()
-	flags, err := ParseServerFlags(args)
+	flags, err := ParseAPIFlags(args)
 	if err != nil {
 		return nil, err
 	}
 
-	return &commands.ServerCommand{
+	return &commands.APICommand{
 		Config: convertToCommandsConfig(cfg),
-		Flags:  convertToCommandsServerFlags(flags),
+		Flags:  convertToCommandsAPIFlags(flags),
 	}, nil
 }
 
@@ -373,30 +410,6 @@ func parseRunCommand(args []string) (Command, error) {
 	}, nil
 }
 
-// parseDreamCommand creates a DreamCommand from args.
-func parseDreamCommand(args []string) (Command, error) {
-	cfg := defaultConfig()
-	flags, err := ParseDreamFlags(args)
-	if err != nil {
-		return nil, err
-	}
-
-	// Determine project from positional args (first non-flag arg)
-	project := ""
-	for _, arg := range args {
-		if !isFlag(arg) {
-			project = arg
-			break
-		}
-	}
-
-	return &commands.DreamCommand{
-		Project: project,
-		Config:  convertToCommandsConfig(cfg),
-		Flags:   convertToCommandsDreamFlags(flags),
-	}, nil
-}
-
 // isFlag checks if a string looks like a flag.
 func isFlag(s string) bool {
 	return len(s) > 0 && s[0] == '-'
@@ -464,6 +477,18 @@ func defaultConfig() *UnifiedConfig {
 		}
 		// Bool fields: always apply from config (can't distinguish zero from "not set")
 		cfg.Server.EnableAuth = ucfg.Server.EnableAuth
+		// CORS and OAuth
+		if ucfg.Server.CORSOrigin != "" {
+			cfg.Server.CORSOrigin = ucfg.Server.CORSOrigin
+		}
+		if ucfg.Server.OAuthPIN != "" {
+			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
+		}
+
+		// TUI keybindings
+		if len(ucfg.TUI.KeyBindings) > 0 {
+			cfg.TUI.KeyBindings = ucfg.TUI.KeyBindings
+		}
 	}
 
 	// Load runner config from config file + env vars
@@ -497,6 +522,8 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.BrainDir = cfg.Server.BrainDir
 	cmdCfg.Server.EnableAuth = cfg.Server.EnableAuth
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
+	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
+	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
@@ -508,12 +535,15 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	// MCP
 	cmdCfg.MCP.APIURL = cfg.MCP.APIURL
 
+	// TUI
+	cmdCfg.TUI.KeyBindings = cfg.TUI.KeyBindings
+
 	return cmdCfg
 }
 
-// convertToCommandsServerFlags converts main.ServerFlags to commands.ServerFlags.
-func convertToCommandsServerFlags(flags *ServerFlags) *commands.ServerFlags {
-	return &commands.ServerFlags{
+// convertToCommandsAPIFlags converts main.APIFlags to commands.APIFlags.
+func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
+	return &commands.APIFlags{
 		Port:    flags.Port,
 		Host:    flags.Host,
 		Daemon:  flags.Daemon,
@@ -765,6 +795,57 @@ func parseUninstallCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// parseGetCommand creates a GetCommand from args.
+func parseGetCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryGetFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Detect TTY via os.Stdout.Stat()
+	isTTY := false
+	if fi, err := os.Stdout.Stat(); err == nil {
+		isTTY = (fi.Mode() & os.ModeCharDevice) != 0
+	}
+
+	return &commands.GetCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryGetFlags(flags),
+		IsTTY:    isTTY,
+	}, nil
+}
+
+// parseSaveCommand creates a SaveCommand from args.
+func parseSaveCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntrySaveFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.SaveCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntrySaveFlags(flags),
+	}, nil
+}
+
+// parseUpdateCommand creates an UpdateCommand from args.
+func parseUpdateCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryUpdateFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.UpdateCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryUpdateFlags(flags),
+	}, nil
+}
+
 // parsePluginStatusCommand creates a PluginCommand for status subcommand.
 func parsePluginStatusCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
@@ -778,5 +859,85 @@ func parsePluginStatusCommand(args []string) (Command, error) {
 		Target:     "",
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsPluginFlags(flags),
+	}, nil
+}
+
+// parseDreamCommand creates a DreamCommand from args.
+// Usage: brain dream <project> [flags]
+func parseDreamCommand(args []string) (Command, error) {
+	// Extract project name (first non-flag argument)
+	project := ""
+	var flagArgs []string
+	for _, arg := range args {
+		if !isFlag(arg) && project == "" {
+			project = arg
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	cfg := defaultConfig()
+	flags, err := ParseDreamFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.DreamCommand{
+		Project: project,
+		Config:  convertToCommandsConfig(cfg),
+		Flags:   convertToCommandsDreamFlags(flags),
+	}, nil
+}
+
+// parseEditCommand creates an EditCommand from args.
+func parseEditCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, idOrPath, err := ParseEntryEditFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.EditCommand{
+		IDOrPath: idOrPath,
+		Config:   convertToCommandsConfig(cfg),
+		Flags:    convertToCommandsEntryEditFlags(flags),
+	}, nil
+}
+
+// parseSearchCommand creates a SearchCommand from args.
+func parseSearchCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntrySearchFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract query from positional args (first non-flag arg)
+	query := ""
+	for _, arg := range args {
+		if !isFlag(arg) {
+			query = arg
+			break
+		}
+	}
+
+	return &commands.SearchCommand{
+		Query:  query,
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntrySearchFlags(flags),
+	}, nil
+}
+
+// parseListCommand creates a ListCommand from args.
+func parseListCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	flags, err := ParseEntryListFlags(args)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.ListCommand{
+		Config: convertToCommandsConfig(cfg),
+		Flags:  convertToCommandsEntryListFlags(flags),
 	}, nil
 }

@@ -743,3 +743,46 @@ func TestListNotes_EmptyResult(t *testing.T) {
 		t.Errorf("expected 0 notes, got %d", len(notes))
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ListNotes: filter by priority
+// ---------------------------------------------------------------------------
+
+func TestListNotes_FilterByPriority(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedListNotes(t, s)
+
+	tests := []struct {
+		priority  string
+		wantCount int
+	}{
+		{"high", 2},   // plan-active (alpha) + report-completed (beta)
+		{"medium", 2}, // task-active (alpha) + idea-draft (beta)
+		{"low", 1},    // summary-completed (alpha)
+		{"", 5},       // no filter = all
+	}
+
+	for _, tt := range tests {
+		name := tt.priority
+		if name == "" {
+			name = "empty"
+		}
+		t.Run(name, func(t *testing.T) {
+			notes, err := s.ListNotes(ctx, &ListOptions{Priority: tt.priority})
+			if err != nil {
+				t.Fatalf("ListNotes error: %v", err)
+			}
+			if len(notes) != tt.wantCount {
+				t.Errorf("priority=%q: got %d notes, want %d", tt.priority, len(notes), tt.wantCount)
+			}
+			if tt.priority != "" {
+				for _, n := range notes {
+					if n.Priority == nil || *n.Priority != tt.priority {
+						t.Errorf("note priority = %v, want %q", n.Priority, tt.priority)
+					}
+				}
+			}
+		})
+	}
+}

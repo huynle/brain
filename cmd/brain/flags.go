@@ -15,8 +15,8 @@ type GlobalFlags struct {
 	Version bool
 }
 
-// ServerFlags for server command
-type ServerFlags struct {
+// APIFlags for api command
+type APIFlags struct {
 	Port    int
 	Host    string
 	Daemon  bool
@@ -53,13 +53,6 @@ type TokenFlags struct {
 	Name string
 }
 
-// DreamFlags for dream command
-type DreamFlags struct {
-	Enable   bool
-	Disable  bool
-	Schedule string
-}
-
 // PluginFlags for plugin commands (install, uninstall, plugin-status)
 type PluginFlags struct {
 	Force  bool
@@ -88,10 +81,10 @@ func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 	return flags, fs.Args()
 }
 
-// ParseServerFlags parses server-specific flags
-func ParseServerFlags(args []string) (*ServerFlags, error) {
-	flags := &ServerFlags{}
-	fs := flag.NewFlagSet("server", flag.ExitOnError)
+// ParseAPIFlags parses API server-specific flags
+func ParseAPIFlags(args []string) (*APIFlags, error) {
+	flags := &APIFlags{}
+	fs := flag.NewFlagSet("api", flag.ExitOnError)
 
 	fs.IntVar(&flags.Port, "port", 0, "Server port")
 	fs.IntVar(&flags.Port, "p", 0, "Server port (short)")
@@ -193,36 +186,6 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 }
 
 // ParseDreamFlags parses dream-specific flags
-func ParseDreamFlags(args []string) (*DreamFlags, error) {
-	flags := &DreamFlags{}
-
-	for i := 0; i < len(args); i++ {
-		arg := args[i]
-		switch arg {
-		case "--enable":
-			flags.Enable = true
-		case "--disable":
-			flags.Disable = true
-		case "--schedule":
-			if i+1 < len(args) {
-				flags.Schedule = args[i+1]
-				i++
-			}
-		}
-	}
-
-	return flags, nil
-}
-
-// convertToCommandsDreamFlags converts main.DreamFlags to commands.DreamFlags.
-func convertToCommandsDreamFlags(flags *DreamFlags) *commands.DreamFlags {
-	return &commands.DreamFlags{
-		Enable:   flags.Enable,
-		Disable:  flags.Disable,
-		Schedule: flags.Schedule,
-	}
-}
-
 // ParsePluginFlags parses plugin-specific flags
 func ParsePluginFlags(args []string) (*PluginFlags, error) {
 	flags := &PluginFlags{}
@@ -255,6 +218,8 @@ type UnifiedConfig struct {
 		BrainDir   string
 		EnableAuth bool
 		LogLevel   string
+		CORSOrigin string
+		OAuthPIN   string
 		TLS        struct {
 			Enabled  bool
 			CertPath string
@@ -267,13 +232,16 @@ type UnifiedConfig struct {
 	MCP    struct {
 		APIURL string
 	}
+	TUI struct {
+		KeyBindings map[string]string
+	}
 }
 
 // ApplyFlagsToConfig applies CLI flags to config with proper precedence
 func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags interface{}) {
 	// Apply command-specific flags based on type
 	switch flags := cmdFlags.(type) {
-	case *ServerFlags:
+	case *APIFlags:
 		if flags.Port != 0 {
 			cfg.Server.Port = flags.Port
 		}
@@ -372,6 +340,48 @@ func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleF
 	}
 }
 
+// DreamFlags for dream command
+type DreamFlags struct {
+	Enable   bool
+	Disable  bool
+	Now      bool
+	Schedule string
+}
+
+// ParseDreamFlags parses dream command flags from args.
+func ParseDreamFlags(args []string) (*DreamFlags, error) {
+	flags := &DreamFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--enable":
+			flags.Enable = true
+		case "--disable":
+			flags.Disable = true
+		case "--now":
+			flags.Now = true
+		case "--schedule":
+			if i+1 < len(args) {
+				flags.Schedule = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsDreamFlags converts main.DreamFlags to commands.DreamFlags.
+func convertToCommandsDreamFlags(flags *DreamFlags) *commands.DreamFlags {
+	return &commands.DreamFlags{
+		Enable:   flags.Enable,
+		Disable:  flags.Disable,
+		Now:      flags.Now,
+		Schedule: flags.Schedule,
+	}
+}
+
 // ParseInitFlags parses init command flags from args.
 func ParseInitFlags(args []string) (*InitFlags, error) {
 	flags := &InitFlags{}
@@ -438,6 +448,100 @@ func convertToCommandsDoctorFlags(flags *DoctorFlags) *commands.DoctorFlags {
 	}
 }
 
+// EntrySaveFlags for brain save command
+type EntrySaveFlags struct {
+	Type      string
+	Title     string
+	Content   string
+	NoEdit    bool
+	Tags      string
+	Status    string
+	Priority  string
+	DependsOn string
+	FeatureID string
+	Global    bool
+	Project   string
+}
+
+// ParseEntrySaveFlags parses entry save command flags from args.
+func ParseEntrySaveFlags(args []string) (*EntrySaveFlags, error) {
+	flags := &EntrySaveFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--type":
+			if i+1 < len(args) {
+				flags.Type = args[i+1]
+				i++
+			}
+		case "--title":
+			if i+1 < len(args) {
+				flags.Title = args[i+1]
+				i++
+			}
+		case "--content":
+			if i+1 < len(args) {
+				flags.Content = args[i+1]
+				i++
+			}
+		case "--no-edit":
+			flags.NoEdit = true
+		case "--tags":
+			if i+1 < len(args) {
+				flags.Tags = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(args) {
+				flags.Priority = args[i+1]
+				i++
+			}
+		case "--depends-on":
+			if i+1 < len(args) {
+				flags.DependsOn = args[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(args) {
+				flags.FeatureID = args[i+1]
+				i++
+			}
+		case "--global":
+			flags.Global = true
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsEntrySaveFlags converts main.EntrySaveFlags to commands.EntrySaveFlags.
+func convertToCommandsEntrySaveFlags(flags *EntrySaveFlags) *commands.EntrySaveFlags {
+	return &commands.EntrySaveFlags{
+		Type:      flags.Type,
+		Title:     flags.Title,
+		Content:   flags.Content,
+		NoEdit:    flags.NoEdit,
+		Tags:      flags.Tags,
+		Status:    flags.Status,
+		Priority:  flags.Priority,
+		DependsOn: flags.DependsOn,
+		FeatureID: flags.FeatureID,
+		Global:    flags.Global,
+		Project:   flags.Project,
+	}
+}
+
 // convertToCommandsPluginFlags converts main.PluginFlags to commands.PluginFlags.
 func convertToCommandsPluginFlags(flags *PluginFlags) *commands.PluginFlags {
 	return &commands.PluginFlags{
@@ -445,4 +549,458 @@ func convertToCommandsPluginFlags(flags *PluginFlags) *commands.PluginFlags {
 		DryRun: flags.DryRun,
 		APIURL: flags.APIURL,
 	}
+}
+
+// EntryGetFlags holds flags for the brain get command.
+type EntryGetFlags struct {
+	Format  string // --format (path, id, short, full, json, jsonl, or Go template)
+	Quiet   bool   // -q, --quiet
+	NoColor bool   // --no-color
+}
+
+// ParseEntryGetFlags parses entry get command flags and the positional id-or-path argument.
+// Returns the flags, the positional argument (id-or-path), and any error.
+func ParseEntryGetFlags(args []string) (*EntryGetFlags, string, error) {
+	flags := &EntryGetFlags{}
+	var idOrPath string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		case "--no-color":
+			flags.NoColor = true
+		default:
+			// First non-flag argument is the id-or-path
+			if !isFlag(arg) && idOrPath == "" {
+				idOrPath = arg
+			}
+		}
+	}
+
+	return flags, idOrPath, nil
+}
+
+// convertToCommandsEntryGetFlags converts main.EntryGetFlags to commands.EntryGetFlags.
+func convertToCommandsEntryGetFlags(flags *EntryGetFlags) *commands.EntryGetFlags {
+	return &commands.EntryGetFlags{
+		Format:  flags.Format,
+		Quiet:   flags.Quiet,
+		NoColor: flags.NoColor,
+	}
+}
+
+// EntryUpdateFlags for the "brain update" command.
+type EntryUpdateFlags struct {
+	Status    string
+	Title     string
+	Content   string
+	Append    string
+	Note      string
+	Tags      string
+	Priority  string
+	DependsOn string
+	FeatureID string
+}
+
+// ParseEntryUpdateFlags parses entry update flags from args.
+// Returns the flags and the positional ID/path argument.
+func ParseEntryUpdateFlags(args []string) (*EntryUpdateFlags, string, error) {
+	flags := &EntryUpdateFlags{}
+
+	// Extract positional arg (ID or path) — first non-flag argument
+	idOrPath := ""
+	flagArgs := []string{}
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		if !isFlag(arg) && idOrPath == "" {
+			idOrPath = arg
+			continue
+		}
+		flagArgs = append(flagArgs, arg)
+	}
+
+	// Parse flags from remaining args
+	for i := 0; i < len(flagArgs); i++ {
+		arg := flagArgs[i]
+		switch arg {
+		case "--status":
+			if i+1 < len(flagArgs) {
+				flags.Status = flagArgs[i+1]
+				i++
+			}
+		case "--title":
+			if i+1 < len(flagArgs) {
+				flags.Title = flagArgs[i+1]
+				i++
+			}
+		case "--content":
+			if i+1 < len(flagArgs) {
+				flags.Content = flagArgs[i+1]
+				i++
+			}
+		case "--append":
+			if i+1 < len(flagArgs) {
+				flags.Append = flagArgs[i+1]
+				i++
+			}
+		case "--note":
+			if i+1 < len(flagArgs) {
+				flags.Note = flagArgs[i+1]
+				i++
+			}
+		case "--tags":
+			if i+1 < len(flagArgs) {
+				flags.Tags = flagArgs[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(flagArgs) {
+				flags.Priority = flagArgs[i+1]
+				i++
+			}
+		case "--depends-on":
+			if i+1 < len(flagArgs) {
+				flags.DependsOn = flagArgs[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(flagArgs) {
+				flags.FeatureID = flagArgs[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, idOrPath, nil
+}
+
+// convertToCommandsEntryUpdateFlags converts main.EntryUpdateFlags to commands.EntryUpdateFlags.
+func convertToCommandsEntryUpdateFlags(flags *EntryUpdateFlags) *commands.EntryUpdateFlags {
+	return &commands.EntryUpdateFlags{
+		Status:    flags.Status,
+		Title:     flags.Title,
+		Content:   flags.Content,
+		Append:    flags.Append,
+		Note:      flags.Note,
+		Tags:      flags.Tags,
+		Priority:  flags.Priority,
+		DependsOn: flags.DependsOn,
+		FeatureID: flags.FeatureID,
+	}
+}
+
+// EntrySearchFlags holds flags for the brain search command (main package mirror).
+type EntrySearchFlags struct {
+	Type        string
+	Status      string
+	Tags        string
+	Priority    string
+	FeatureID   string
+	Limit       int
+	Sort        string
+	Format      string
+	Quiet       bool
+	NoColor     bool
+	NulDelim    bool
+	Interactive bool
+}
+
+// ParseEntrySearchFlags parses brain search flags.
+func ParseEntrySearchFlags(args []string) (*EntrySearchFlags, error) {
+	flags := &EntrySearchFlags{Limit: 20}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--type":
+			if i+1 < len(args) {
+				flags.Type = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--tags":
+			if i+1 < len(args) {
+				flags.Tags = args[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(args) {
+				flags.Priority = args[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(args) {
+				flags.FeatureID = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "--sort":
+			if i+1 < len(args) {
+				flags.Sort = args[i+1]
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		case "--no-color":
+			flags.NoColor = true
+		case "-0":
+			flags.NulDelim = true
+		case "-i", "--interactive":
+			flags.Interactive = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsEntrySearchFlags converts main.EntrySearchFlags to commands.EntrySearchFlags.
+func convertToCommandsEntrySearchFlags(flags *EntrySearchFlags) *commands.EntrySearchFlags {
+	f := &commands.EntrySearchFlags{
+		Interactive: flags.Interactive,
+	}
+	f.Filter.Type = flags.Type
+	f.Filter.Status = flags.Status
+	f.Filter.Tags = flags.Tags
+	f.Filter.Priority = flags.Priority
+	f.Filter.FeatureID = flags.FeatureID
+	f.Filter.Limit = flags.Limit
+	f.Filter.Sort = flags.Sort
+	f.Output.Format = flags.Format
+	f.Output.Quiet = flags.Quiet
+	f.Output.NoColor = flags.NoColor
+	if flags.NulDelim {
+		f.Output.Delimiter = "\x00"
+	} else {
+		f.Output.Delimiter = "\n"
+	}
+	return f
+}
+
+// EntryListFlags holds flags for the brain list command (main package mirror).
+type EntryListFlags struct {
+	Type        string
+	Status      string
+	Tags        string
+	Priority    string
+	FeatureID   string
+	Limit       int
+	Sort        string
+	Match       string
+	Format      string
+	Quiet       bool
+	NoColor     bool
+	NulDelim    bool
+	Interactive bool
+}
+
+// ParseEntryListFlags parses brain list flags.
+func ParseEntryListFlags(args []string) (*EntryListFlags, error) {
+	flags := &EntryListFlags{Limit: 20}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--type":
+			if i+1 < len(args) {
+				flags.Type = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--tags":
+			if i+1 < len(args) {
+				flags.Tags = args[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(args) {
+				flags.Priority = args[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(args) {
+				flags.FeatureID = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "--sort":
+			if i+1 < len(args) {
+				flags.Sort = args[i+1]
+				i++
+			}
+		case "-m", "--match":
+			if i+1 < len(args) {
+				flags.Match = args[i+1]
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		case "--no-color":
+			flags.NoColor = true
+		case "-0":
+			flags.NulDelim = true
+		case "-i", "--interactive":
+			flags.Interactive = true
+		}
+	}
+
+	return flags, nil
+}
+
+// EntryEditFlags holds flags for the brain edit command (main package mirror).
+type EntryEditFlags struct {
+	Type        string
+	Status      string
+	Tags        string
+	Priority    string
+	FeatureID   string
+	Limit       int
+	Interactive bool
+	Force       bool
+	NoColor     bool
+	Quiet       bool
+	Format      string
+}
+
+// ParseEntryEditFlags parses brain edit flags and the positional id-or-path argument.
+// Returns the flags, the positional argument (id-or-path), and any error.
+func ParseEntryEditFlags(args []string) (*EntryEditFlags, string, error) {
+	flags := &EntryEditFlags{Limit: 20}
+	var idOrPath string
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--type":
+			if i+1 < len(args) {
+				flags.Type = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--tags":
+			if i+1 < len(args) {
+				flags.Tags = args[i+1]
+				i++
+			}
+		case "--priority":
+			if i+1 < len(args) {
+				flags.Priority = args[i+1]
+				i++
+			}
+		case "--feature-id":
+			if i+1 < len(args) {
+				flags.FeatureID = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "-i", "--interactive":
+			flags.Interactive = true
+		case "--force":
+			flags.Force = true
+		case "--no-color":
+			flags.NoColor = true
+		case "-q", "--quiet":
+			flags.Quiet = true
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		default:
+			// First non-flag argument is the id-or-path
+			if !isFlag(arg) && idOrPath == "" {
+				idOrPath = arg
+			}
+		}
+	}
+
+	return flags, idOrPath, nil
+}
+
+// convertToCommandsEntryEditFlags converts main.EntryEditFlags to commands.EntryEditFlags.
+func convertToCommandsEntryEditFlags(flags *EntryEditFlags) *commands.EntryEditFlags {
+	f := &commands.EntryEditFlags{
+		Interactive: flags.Interactive,
+		Force:       flags.Force,
+		NoColor:     flags.NoColor,
+		Quiet:       flags.Quiet,
+		Format:      flags.Format,
+	}
+	f.Filter.Type = flags.Type
+	f.Filter.Status = flags.Status
+	f.Filter.Tags = flags.Tags
+	f.Filter.Priority = flags.Priority
+	f.Filter.FeatureID = flags.FeatureID
+	f.Filter.Limit = flags.Limit
+	return f
+}
+
+// convertToCommandsEntryListFlags converts main.EntryListFlags to commands.EntryListFlags.
+func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListFlags {
+	f := &commands.EntryListFlags{
+		Interactive: flags.Interactive,
+	}
+	f.Filter.Type = flags.Type
+	f.Filter.Status = flags.Status
+	f.Filter.Tags = flags.Tags
+	f.Filter.Priority = flags.Priority
+	f.Filter.FeatureID = flags.FeatureID
+	f.Filter.Limit = flags.Limit
+	f.Filter.Sort = flags.Sort
+	f.Filter.Match = flags.Match
+	f.Output.Format = flags.Format
+	f.Output.Quiet = flags.Quiet
+	f.Output.NoColor = flags.NoColor
+	if flags.NulDelim {
+		f.Output.Delimiter = "\x00"
+	} else {
+		f.Output.Delimiter = "\n"
+	}
+	return f
 }

@@ -250,6 +250,171 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 }
 
 // =============================================================================
+// RecallFull
+// =============================================================================
+
+// RecallFull returns the full raw file content (YAML frontmatter + markdown body) for an entry.
+// This is used by the API layer when serving text/x-brain-full responses.
+func (s *BrainServiceImpl) RecallFull(ctx context.Context, pathOrID string) (string, error) {
+	if pathOrID == "" {
+		return "", fmt.Errorf("path or ID is required")
+	}
+
+	row, err := s.resolveEntry(ctx, pathOrID)
+	if err != nil {
+		return "", err
+	}
+	if row == nil {
+		return "", api.ErrNotFound
+	}
+
+	// NoteRow.RawContent stores the full file content (frontmatter + body).
+	// It's populated by the indexer from the on-disk file.
+	if row.RawContent != nil && *row.RawContent != "" {
+		return *row.RawContent, nil
+	}
+
+	// Fallback: reconstruct from metadata + body
+	return s.reconstructFullContent(row)
+}
+
+// reconstructFullContent rebuilds the full file content from a NoteRow's
+// metadata JSON and body fields. This handles edge cases where RawContent
+// was not populated (e.g., older index entries).
+func (s *BrainServiceImpl) reconstructFullContent(row *storage.NoteRow) (string, error) {
+	// Parse metadata JSON into a Frontmatter struct
+	var fm frontmatter.Frontmatter
+	if row.Metadata != "" && row.Metadata != "{}" {
+		var meta map[string]interface{}
+		if err := json.Unmarshal([]byte(row.Metadata), &meta); err != nil {
+			return "", fmt.Errorf("parse metadata: %w", err)
+		}
+		// Reconstruct frontmatter from metadata + row fields
+		fm = reconstructFrontmatter(row, meta)
+	} else {
+		fm = reconstructFrontmatter(row, nil)
+	}
+
+	// Serialize frontmatter back to YAML
+	fmYAML := frontmatter.Serialize(&fm)
+
+	// Combine: ---\n{yaml}---\n[\n{body}\n]
+	var buf strings.Builder
+	buf.WriteString("---\n")
+	buf.WriteString(fmYAML)
+	buf.WriteString("---\n")
+	if row.Body != nil && *row.Body != "" {
+		buf.WriteString("\n")
+		buf.WriteString(*row.Body)
+		buf.WriteString("\n")
+	}
+	return buf.String(), nil
+}
+
+// reconstructFrontmatter builds a Frontmatter struct from a NoteRow and its metadata map.
+func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) frontmatter.Frontmatter {
+	fm := frontmatter.Frontmatter{
+		Title: row.Title,
+	}
+	if row.Type != nil {
+		fm.Type = *row.Type
+	}
+	if row.Status != nil {
+		fm.Status = *row.Status
+	}
+	if row.Priority != nil {
+		fm.Priority = *row.Priority
+	}
+	if row.ProjectID != nil {
+		fm.ProjectID = *row.ProjectID
+	}
+	if row.FeatureID != nil {
+		fm.FeatureID = *row.FeatureID
+	}
+	if row.Created != nil {
+		fm.Created = *row.Created
+	}
+
+	// Pull additional fields from metadata JSON
+	if meta != nil {
+		if v, ok := meta["tags"]; ok {
+			fm.Tags = metaToStringSlice(v)
+		}
+		if v, ok := meta["depends_on"]; ok {
+			fm.DependsOn = metaToStringSlice(v)
+		}
+		if v, ok := meta["parent_id"].(string); ok {
+			fm.ParentID = v
+		}
+		if v, ok := meta["workdir"].(string); ok {
+			fm.Workdir = v
+		}
+		if v, ok := meta["git_remote"].(string); ok {
+			fm.GitRemote = v
+		}
+		if v, ok := meta["git_branch"].(string); ok {
+			fm.GitBranch = v
+		}
+		if v, ok := meta["user_original_request"].(string); ok {
+			fm.UserOriginalRequest = v
+		}
+		if v, ok := meta["direct_prompt"].(string); ok {
+			fm.DirectPrompt = v
+		}
+		if v, ok := meta["agent"].(string); ok {
+			fm.Agent = v
+		}
+		if v, ok := meta["model"].(string); ok {
+			fm.Model = v
+		}
+		if v, ok := meta["target_workdir"].(string); ok {
+			fm.TargetWorkdir = v
+		}
+		if v, ok := meta["merge_target_branch"].(string); ok {
+			fm.MergeTargetBranch = v
+		}
+		if v, ok := meta["merge_policy"].(string); ok {
+			fm.MergePolicy = v
+		}
+		if v, ok := meta["merge_strategy"].(string); ok {
+			fm.MergeStrategy = v
+		}
+		if v, ok := meta["remote_branch_policy"].(string); ok {
+			fm.RemoteBranchPolicy = v
+		}
+		if v, ok := meta["execution_mode"].(string); ok {
+			fm.ExecutionMode = v
+		}
+		if v, ok := meta["feature_priority"].(string); ok {
+			fm.FeaturePriority = v
+		}
+		if v, ok := meta["feature_depends_on"]; ok {
+			fm.FeatureDependsOn = metaToStringSlice(v)
+		}
+	}
+
+	return fm
+}
+
+// metaToStringSlice converts a JSON value ([]interface{} or []string) to []string.
+func metaToStringSlice(v interface{}) []string {
+	switch items := v.(type) {
+	case []interface{}:
+		result := make([]string, 0, len(items))
+		for _, item := range items {
+			if s, ok := item.(string); ok {
+				result = append(result, s)
+			}
+		}
+		return result
+	case []string:
+		return items
+	default:
+		return nil
+	}
+}
+
+// =============================================================================
 // Update
 // =============================================================================
 
@@ -770,9 +935,12 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		Type:      req.Type,
 		Status:    req.Status,
 		FeatureID: req.FeatureID,
+		ProjectID: req.Project,
 		Limit:     req.Limit,
 		Offset:    req.Offset,
 		SortBy:    req.SortBy,
+		SortOrder: req.SortOrder,
+		Priority:  req.Priority,
 	}
 
 	// Handle global vs project filtering
@@ -842,8 +1010,13 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 	}
 
 	opts := &storage.SearchOptions{
-		Type:   req.Type,
-		Status: req.Status,
+		Type:      req.Type,
+		Status:    req.Status,
+		ProjectID: req.Project,
+		FeatureID: req.FeatureID,
+		Tags:      req.Tags,
+		Strategy:  req.Strategy,
+		Priority:  req.Priority,
 	}
 	if req.Limit != nil {
 		opts.Limit = *req.Limit

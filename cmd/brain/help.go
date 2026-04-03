@@ -14,13 +14,13 @@ USAGE:
   brain help <command>
 
 CORE COMMANDS:
-  server                         Run API server in foreground
-  server start                   Start server as daemon
-  server stop                    Stop daemonized server
-  server restart                 Restart daemonized server
-  server status                  Show server process status
-  server logs                    Show server logs
-  server health                  Call /api/v1/health
+  api                            Run API server in foreground
+  api start                      Start server as daemon
+  api stop                       Stop daemonized server
+  api restart                    Restart daemonized server
+  api status                     Show server process status
+  api logs                       Show server logs
+  api health                     Call /api/v1/health
 
 RUNNER COMMANDS:
   start [project|all]            Open runner TUI (default project: all)
@@ -43,6 +43,14 @@ TOKENS:
   token list                     List API tokens
   token revoke <name>            Revoke API token
 
+ENTRIES:
+  save                           Create a new brain entry
+  get <id-or-path>               Read a brain entry (cat is an alias)
+  update <id> --status <s>       Update an existing entry
+  edit <id-or-path>              Open entry in $EDITOR for editing
+  search <query>                 Search brain entries
+  list                           List brain entries with filters
+
 DREAM MODE:
   dream                          List dream-enabled projects
   dream <project>                Print dream content for project
@@ -55,18 +63,21 @@ GLOBAL HELP:
 EXAMPLES:
   brain start
   brain start my-project --max-parallel 5
-  brain server --port 3000
-  brain server start --dry-run
-  brain server logs -f -n 200
+  brain api --port 3000
+  brain api start --dry-run
+  brain api logs -f -n 200
   brain token create --name dev
+  brain save --type task --title "Fix auth bug"
+  brain edit abc12def
+  brain edit -i --type task
   brain help run
 `
 
-const serverHelp = `brain server - API server operations
+const apiHelp = `brain api - API server operations
 
 USAGE:
-  brain server [flags]
-  brain server <subcommand> [flags]
+  brain api [flags]
+  brain api <subcommand> [flags]
 
 SUBCOMMANDS:
   start                          Start daemon in background
@@ -76,7 +87,7 @@ SUBCOMMANDS:
   logs                           Show/follow daemon logs
   health                         Query API health endpoint
 
-FLAGS (brain server):
+FLAGS (brain api):
   -p, --port <port>              Listen port (foreground mode)
   --host <host>                  Listen host (foreground mode)
   -d, --daemon                   Run as daemon
@@ -87,25 +98,25 @@ FLAGS (brain server):
   -h, --help                     Show this help
 
 SUBCOMMAND HELP:
-  brain help server start
-  brain help server stop
-  brain help server restart
-  brain help server status
-  brain help server logs
-  brain help server health
+  brain help api start
+  brain help api stop
+  brain help api restart
+  brain help api status
+  brain help api logs
+  brain help api health
 
 EXAMPLES:
-  brain server
-  brain server --port 4000 --host 0.0.0.0
-  brain server --tls --tls-cert cert.pem --tls-key key.pem
-  brain server start
-  brain server status
+  brain api
+  brain api --port 4000 --host 0.0.0.0
+  brain api --tls --tls-cert cert.pem --tls-key key.pem
+  brain api start
+  brain api status
 `
 
-const serverStartHelp = `brain server start - Start daemonized API server
+const apiStartHelp = `brain api start - Start daemonized API server
 
 USAGE:
-  brain server start [flags]
+  brain api start [flags]
 
 FLAGS:
   --pid-file <path>              PID file path override
@@ -115,18 +126,18 @@ FLAGS:
 
 NOTES:
   - Port/host are loaded from config, not from start flags.
-  - Daemon mode launches: brain server --daemon ...
+  - Daemon mode launches: brain api --daemon ...
 
 EXAMPLES:
-  brain server start
-  brain server start --log-file ~/.local/state/brain-api/brain-api.log
-  brain server start --dry-run
+  brain api start
+  brain api start --log-file ~/.local/state/brain-api/brain-api.log
+  brain api start --dry-run
 `
 
-const serverStopHelp = `brain server stop - Stop daemonized API server
+const apiStopHelp = `brain api stop - Stop daemonized API server
 
 USAGE:
-  brain server stop [flags]
+  brain api stop [flags]
   brain stop [flags]
 
 FLAGS:
@@ -137,15 +148,15 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server stop
-  brain server stop --timeout 30
-  brain server stop --force
+  brain api stop
+  brain api stop --timeout 30
+  brain api stop --force
 `
 
-const serverRestartHelp = `brain server restart - Restart daemonized API server
+const apiRestartHelp = `brain api restart - Restart daemonized API server
 
 USAGE:
-  brain server restart [flags]
+  brain api restart [flags]
 
 FLAGS:
   --pid-file <path>              PID file path override
@@ -156,28 +167,28 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server restart
-  brain server restart --timeout 20 --force
+  brain api restart
+  brain api restart --timeout 20 --force
 `
 
-const serverStatusHelp = `brain server status - Show daemon status
+const apiStatusHelp = `brain api status - Show daemon status
 
 USAGE:
-  brain server status [flags]
+  brain api status [flags]
 
 FLAGS:
   --json                         JSON output
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server status
-  brain server status --json
+  brain api status
+  brain api status --json
 `
 
-const serverLogsHelp = `brain server logs - Show or follow daemon logs
+const apiLogsHelp = `brain api logs - Show or follow daemon logs
 
 USAGE:
-  brain server logs [flags]
+  brain api logs [flags]
 
 FLAGS:
   -f, --follow                   Stream new log lines
@@ -187,16 +198,16 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server logs
-  brain server logs -n 300
-  brain server logs --since 2h --level error
-  brain server logs -f --level warn
+  brain api logs
+  brain api logs -n 300
+  brain api logs --since 2h --level error
+  brain api logs -f --level warn
 `
 
-const serverHealthHelp = `brain server health - Query API health endpoint
+const apiHealthHelp = `brain api health - Query API health endpoint
 
 USAGE:
-  brain server health [flags]
+  brain api health [flags]
 
 FLAGS:
   --wait                         Wait until healthy
@@ -204,8 +215,8 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain server health
-  brain server health --wait --timeout 60
+  brain api health
+  brain api health --wait --timeout 60
 `
 
 const startHelp = `brain start - Open runner TUI
@@ -443,14 +454,17 @@ USAGE:
   brain dream <project>
   brain dream <project> --enable [--schedule "<cron>"]
   brain dream <project> --disable
+  brain dream <project> --now
 
 DESCRIPTION:
   Manage dream mode (knowledge consolidation) for projects.
   Dream mode periodically consolidates and synthesizes project knowledge.
+  Use --now to trigger consolidation immediately on demand.
 
 FLAGS:
   --enable                       Enable dream mode for project
   --disable                      Disable dream mode for project
+  --now                          Trigger dream consolidation immediately
   --schedule "<cron>"            Custom cron schedule (with --enable)
   -h, --help                     Show this help
 
@@ -460,14 +474,264 @@ EXAMPLES:
   brain dream my-project --enable
   brain dream my-project --enable --schedule "0 6 * * *"
   brain dream my-project --disable
+  brain dream my-project --now
+  brain dream my-project --enable --now
 `
 
-const stopHelp = `brain stop - Alias for "brain server stop"
+const saveHelp = `brain save - Create a new brain entry
+
+USAGE:
+  brain save --type <type> --title <title> [flags]
+
+DESCRIPTION:
+  Creates a new brain entry. Opens $EDITOR by default for content entry
+  (zk-inspired pattern). Supports inline content, stdin, and file input
+  for automation.
+
+REQUIRED FLAGS:
+  --type <type>                  Entry type (task, plan, decision, etc.)
+  --title <title>                Entry title
+
+CONTENT FLAGS:
+  --content <text>               Inline content
+  --content -                    Read content from stdin
+  --content @<path>              Read content from file
+  --no-edit                      Skip opening $EDITOR
+
+OPTIONAL FLAGS:
+  --tags <t1,t2,...>             Comma-separated tags
+  --status <status>              Initial status (default: active, tasks: draft)
+  --priority <level>             Priority: high, medium, low
+  --depends-on <id1,id2,...>     Comma-separated task dependency IDs
+  --feature-id <id>              Feature group identifier
+  --global                       Save to global brain (not project-scoped)
+  --project <name>               Override auto-detected project
+  -h, --help                     Show this help
+
+EDITOR:
+  Uses $VISUAL, then $EDITOR, then vi as fallback.
+  Save and quit to create the entry. Empty content cancels.
+
+EXAMPLES:
+  brain save --type task --title "Fix auth bug"
+  brain save --type task --title "Fix auth bug" --content "Description" --no-edit
+  echo "content" | brain save --type task --title "My Task" --content - --no-edit
+  brain save --type plan --title "Q2 Roadmap" --content @roadmap.md --no-edit
+  brain save --type task --title "Fix" --priority high --tags "bug,auth"
+  brain save --type learning --title "Go patterns" --global
+`
+
+const updateHelp = `brain update - Update an existing brain entry
+
+USAGE:
+  brain update <id-or-path> [flags]
+
+DESCRIPTION:
+  Updates an existing brain entry. Supports metadata changes (status, tags,
+  priority), content replacement (inline, stdin, file), and content append.
+  Enables powerful pipe-based editing: brain get id | sed | brain update id --content -
+
+REQUIRED:
+  <id-or-path>                   Entry ID (8-char) or full brain path
+
+UPDATE FLAGS:
+  --status <status>              New status (draft, pending, active, in_progress,
+                                 blocked, completed, validated, superseded, archived)
+  --title <title>                New title
+  --content <text>               Replace content (inline text)
+  --content -                    Replace content from stdin
+  --content @<path>              Replace content from file
+  --append <text>                Append to existing content
+  --note <text>                  Timestamped status-change note
+  --tags <t1,t2,...>             Comma-separated tags (replaces existing)
+  --priority <level>             Priority: high, medium, low
+  --depends-on <id1,id2,...>     Comma-separated task dependency IDs
+  --feature-id <id>              Feature group identifier
+  -h, --help                     Show this help
+
+RULES:
+  - At least one flag must be provided
+  - --content and --append are mutually exclusive
+  - Multiple flags can be combined in one call
+
+EXAMPLES:
+  brain update abc12def --status completed
+  brain update abc12def --status blocked --note "Waiting on API design"
+  brain update abc12def --append "## Progress\n- Done with auth module"
+  brain update abc12def --title "New Title" --priority high
+  brain update abc12def --tags "api,auth,v2"
+  brain update abc12def --depends-on "task1,task2"
+  brain update abc12def --content -           # Read from stdin
+  brain update abc12def --content @file.md    # Read from file
+  brain get abc12def | sed 's/old/new/g' | brain update abc12def --content -
+`
+
+const getHelp = `brain get - Read a brain entry
+
+USAGE:
+  brain get <id-or-path> [--format <format>]
+  brain cat <id-or-path> [--format <format>]
+
+DESCRIPTION:
+  Read a brain entry by short ID or full path. "cat" is an alias for "get".
+  TTY-aware: shows formatted metadata + content in terminal, raw markdown
+  when piped.
+
+POSITIONAL:
+  <id-or-path>                   Entry short ID (8-char) or full brain path
+
+FLAGS:
+  --format <format>              Output format (see below)
+  -q, --quiet                    Suppress metadata/counts
+  --no-color                     Disable color output
+  -h, --help                     Show this help
+
+NAMED FORMATS:
+  path                           Just the entry path
+  id                             Just the short ID
+  short                          Compact one-line summary
+  full                           YAML frontmatter + body (on-disk format)
+  json                           Full JSON representation
+  jsonl                          Single JSON line
+
+CUSTOM TEMPLATES:
+  --format "{{.Title}}"                    Just the title
+  --format "{{.Title}} [{{.Status}}]"      Title with status
+  --format "{{.Path}}"                     Just the path
+
+TTY BEHAVIOR:
+  Interactive terminal:           Metadata header + content
+  Piped (non-TTY):               Raw markdown body only
+
+EXAMPLES:
+  brain get abc12def
+  brain cat abc12def
+  brain get abc12def --format json
+  brain get abc12def --format full
+  brain get abc12def --format path
+  brain get abc12def --format id
+  brain get abc12def --format "{{.Title}} [{{.Status}}]"
+  brain get abc12def | wc -l
+  brain get abc12def | grep "pattern"
+  brain get abc12def | sed 's/old/new/g' | brain update abc12def --content -
+`
+
+const editHelp = `brain edit - Open brain entry in $EDITOR
+
+USAGE:
+  brain edit <id-or-path>
+  brain edit -i [filters]
+
+DESCRIPTION:
+  Opens a brain entry in your $EDITOR with full YAML frontmatter and
+  markdown body. All frontmatter fields are editable. On save, changes
+  are diffed against the original and sent back via the API.
+
+POSITIONAL:
+  <id-or-path>                   Entry short ID (8-char) or full brain path
+
+FLAGS:
+  -i, --interactive              Use fzf to select entry interactively
+  --force                        Skip safety confirmations
+  --type <type>                  Filter by entry type (with -i)
+  --status <status>              Filter by status (with -i)
+  --tags <tags>                  Filter by tags (with -i)
+  --priority <priority>          Filter by priority (with -i)
+  --feature-id <id>              Filter by feature ID (with -i)
+  --limit <n>                    Max filter results (default: 20)
+  --no-color                     Disable color output
+  -h, --help                     Show this help
+
+EDITOR:
+  Uses $VISUAL, then $EDITOR, then vi as fallback.
+  Save and quit to apply changes. No changes = no API call.
+
+DANGEROUS CHANGES:
+  Modifying type or project triggers a confirmation prompt.
+  Use --force to skip all confirmations.
+
+EXAMPLES:
+  brain edit abc12def
+  brain edit projects/brain-api/task/abc12def.md
+  brain edit -i --type task
+  brain edit -i --type task --status active
+  brain edit -i --type task --status active --force
+`
+
+const searchHelp = `brain search - Search brain entries
+
+USAGE:
+  brain search <query> [flags]
+
+FLAGS:
+  --type <type>                  Filter by entry type (task, plan, note, etc.)
+  --status <status>              Filter by status (active, pending, completed, etc.)
+  --tags <tags>                  Comma-separated tags to filter by
+  --priority <priority>          Filter by priority (high, medium, low)
+  --feature-id <id>              Filter by feature ID
+  --limit <n>                    Max results (default: 20)
+  --sort <field>                 Sort by: created, modified, priority
+  --format <fmt>                 Output: path, id, short, full, json, jsonl, or Go template
+  -q, --quiet                    Suppress "Found N entries" count
+  --no-color                     Disable color output
+  -0                             NUL-delimited output (for xargs -0)
+  -i, --interactive              Post-filter with fzf
+  -h, --help                     Show this help
+
+FORMATS:
+  path    One path per line (default when piped)
+  id      One ID per line
+  short   Table: title, path, status, priority (default in terminal)
+  full    Frontmatter-style metadata + body
+  json    JSON array
+  jsonl   One JSON object per line
+
+EXAMPLES:
+  brain search "auth module"
+  brain search "auth" --type task --status active --limit 5
+  brain search "auth" --format json
+  brain search "auth" --format path -0 | xargs -0 brain get
+  brain search "auth" -i
+`
+
+const listHelp = `brain list - List brain entries
+
+USAGE:
+  brain list [flags]
+
+FLAGS:
+  --type <type>                  Filter by entry type (task, plan, note, etc.)
+  --status <status>              Filter by status (active, pending, completed, etc.)
+  --tags <tags>                  Comma-separated tags to filter by
+  --priority <priority>          Filter by priority (high, medium, low)
+  --feature-id <id>              Filter by feature ID
+  --limit <n>                    Max results (default: 20)
+  --sort <field>                 Sort by: created, modified, priority
+  -m, --match <query>            Search query filter
+  --format <fmt>                 Output: path, id, short, full, json, jsonl, or Go template
+  -q, --quiet                    Suppress "Found N entries" count
+  --no-color                     Disable color output
+  -0                             NUL-delimited output (for xargs -0)
+  -i, --interactive              Post-filter with fzf
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain list
+  brain list --type task --status pending
+  brain list --type task --feature-id auth-system
+  brain list --tags "api,v2"
+  brain list --sort modified
+  brain list --format json
+  brain list --format path -0 | xargs -0 brain get
+  brain list -i --type task
+`
+
+const stopHelp = `brain stop - Alias for "brain api stop"
 
 USAGE:
   brain stop [flags]
 
-See: brain help server stop
+See: brain help api stop
 `
 
 func normalizeHelpTopic(command string) string {
@@ -479,6 +743,9 @@ func normalizeHelpTopic(command string) string {
 	if topic == "tokens" {
 		return "token"
 	}
+	if topic == "cat" {
+		return "get"
+	}
 	return topic
 }
 
@@ -486,20 +753,20 @@ func ShowHelp(command string) {
 	switch normalizeHelpTopic(command) {
 	case "":
 		fmt.Print(mainHelp)
-	case "server":
-		fmt.Print(serverHelp)
-	case "server start":
-		fmt.Print(serverStartHelp)
-	case "server stop":
-		fmt.Print(serverStopHelp)
-	case "server restart":
-		fmt.Print(serverRestartHelp)
-	case "server status":
-		fmt.Print(serverStatusHelp)
-	case "server logs":
-		fmt.Print(serverLogsHelp)
-	case "server health":
-		fmt.Print(serverHealthHelp)
+	case "api":
+		fmt.Print(apiHelp)
+	case "api start":
+		fmt.Print(apiStartHelp)
+	case "api stop":
+		fmt.Print(apiStopHelp)
+	case "api restart":
+		fmt.Print(apiRestartHelp)
+	case "api status":
+		fmt.Print(apiStatusHelp)
+	case "api logs":
+		fmt.Print(apiLogsHelp)
+	case "api health":
+		fmt.Print(apiHealthHelp)
 	case "start":
 		fmt.Print(startHelp)
 	case "run":
@@ -530,6 +797,18 @@ func ShowHelp(command string) {
 		fmt.Print(tokenRevokeHelp)
 	case "dream":
 		fmt.Print(dreamHelp)
+	case "save":
+		fmt.Print(saveHelp)
+	case "get":
+		fmt.Print(getHelp)
+	case "update":
+		fmt.Print(updateHelp)
+	case "edit":
+		fmt.Print(editHelp)
+	case "search":
+		fmt.Print(searchHelp)
+	case "list":
+		fmt.Print(listHelp)
 	case "stop":
 		fmt.Print(stopHelp)
 	default:

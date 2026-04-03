@@ -108,6 +108,10 @@ type MetadataModal struct {
 	width           int
 	height          int
 
+	// Tab state
+	currentTab MetadataTab   // active tab
+	tabs       []MetadataTab // ordered tabs for current mode
+
 	// Mixed field tracking for batch mode
 	mixedFields map[MetadataField]bool
 
@@ -147,6 +151,7 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 	}
 
 	// Templates are fetched from API in Init() — start empty
+	tabs := tabsForMode(ModeFeature)
 	m := &MetadataModal{
 		featureID:           featureID,
 		projectID:           projectID,
@@ -164,14 +169,17 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 		monitorLoading:      true,
 		focusedMonitorIndex: -1,
 		monitorClient:       mc,
+		tabs:                tabs,
+		currentTab:          tabs[0],
 	}
-	// Set field list based on mode
+	// Set field list based on mode and current tab
 	m.fieldList = m.buildFieldList()
 	return m
 }
 
 // newMetadataModal is the internal constructor.
 func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.APIClient) *MetadataModal {
+	tabs := tabsForMode(mode)
 	m := &MetadataModal{
 		taskPaths:           taskPaths,
 		mode:                mode,
@@ -184,8 +192,10 @@ func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.A
 		width:               60,
 		height:              25,
 		focusedMonitorIndex: -1,
+		tabs:                tabs,
+		currentTab:          tabs[0],
 	}
-	// Set field list based on mode and initialize focused field
+	// Set field list based on mode/tab and initialize focused field
 	m.fieldList = m.buildFieldList()
 	if len(m.fieldList) > 0 {
 		m.focusedField = m.fieldList[0]
@@ -197,49 +207,9 @@ func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.A
 // Field Management Methods
 // ============================================================================
 
-// buildFieldList returns the list of fields to display based on mode.
+// buildFieldList returns the list of fields to display based on mode and current tab.
 func (m *MetadataModal) buildFieldList() []MetadataField {
-	if m.mode == ModeFeature {
-		// Feature mode: show feature-level and shared fields only
-		return []MetadataField{
-			FieldFeaturePriority,  // New: applies to all tasks in feature
-			FieldFeatureDependsOn, // New: feature-level dependencies
-			FieldStatus,           // Shared: can update all tasks
-			FieldPriority,         // Shared: can update all tasks
-			FieldGitBranch,        // Shared: git settings
-			FieldMergeTargetBranch,
-			FieldMergePolicy,
-			FieldMergeStrategy,
-			FieldExecutionMode,
-			FieldAgent,
-			FieldModel,
-			FieldTargetWorkdir,
-			FieldCompleteOnIdle,
-			FieldOpenPRBeforeMerge,
-			FieldSchedule,
-			// Excluded: direct_prompt (task-specific)
-			// Excluded: feature_id (already grouped by feature)
-		}
-	}
-
-	// Single and batch modes: all fields
-	return []MetadataField{
-		FieldStatus,
-		FieldPriority,
-		FieldFeatureID,
-		FieldGitBranch,
-		FieldMergeTargetBranch,
-		FieldMergePolicy,
-		FieldMergeStrategy,
-		FieldExecutionMode,
-		FieldDirectPrompt,
-		FieldAgent,
-		FieldModel,
-		FieldTargetWorkdir,
-		FieldCompleteOnIdle,
-		FieldOpenPRBeforeMerge,
-		FieldSchedule,
-	}
+	return fieldsForTab(m.currentTab, m.mode)
 }
 
 // ============================================================================
@@ -248,7 +218,7 @@ func (m *MetadataModal) buildFieldList() []MetadataField {
 
 // hasMonitorRows returns true if this modal has monitor template rows to display.
 func (m *MetadataModal) hasMonitorRows() bool {
-	return m.mode == ModeFeature && len(m.monitorTemplates) > 0 && !m.monitorLoading
+	return m.mode == ModeFeature && m.currentTab == MetaTabMonitors && len(m.monitorTemplates) > 0 && !m.monitorLoading
 }
 
 // inMonitorZone returns true if focus is currently in the monitor rows zone.
@@ -259,28 +229,28 @@ func (m *MetadataModal) inMonitorZone() bool {
 // moveDown moves focus to the next field or monitor row (wraps to top).
 func (m *MetadataModal) moveDown() {
 	if m.inMonitorZone() {
-		// In monitor zone: move to next monitor row or wrap to first field
+		// In monitor zone: move to next monitor row or wrap to first monitor
 		m.focusedMonitorIndex++
 		if m.focusedMonitorIndex >= len(m.monitorTemplates) {
-			// Wrap to first field
-			m.focusedMonitorIndex = -1
-			m.focusedIndex = 0
-			m.focusedField = m.fieldList[0]
+			// Wrap to first monitor row (Monitors tab has no fields)
+			m.focusedMonitorIndex = 0
 		}
 		return
 	}
 
 	// In field zone
+	if len(m.fieldList) == 0 {
+		// No fields (e.g., Monitors tab) — stay in monitor zone if available
+		if m.hasMonitorRows() {
+			m.focusedMonitorIndex = 0
+		}
+		return
+	}
+
 	m.focusedIndex++
 	if m.focusedIndex >= len(m.fieldList) {
-		if m.hasMonitorRows() {
-			// Move into monitor zone
-			m.focusedMonitorIndex = 0
-			// Keep focusedIndex at len(fieldList) to indicate monitor zone
-		} else {
-			// Wrap to first field
-			m.focusedIndex = 0
-		}
+		// Wrap to first field
+		m.focusedIndex = 0
 	}
 	if m.focusedIndex < len(m.fieldList) {
 		m.focusedField = m.fieldList[m.focusedIndex]
@@ -290,47 +260,51 @@ func (m *MetadataModal) moveDown() {
 // moveUp moves focus to the previous field or monitor row (wraps to bottom).
 func (m *MetadataModal) moveUp() {
 	if m.inMonitorZone() {
-		// In monitor zone: move to previous monitor row or back to last field
+		// In monitor zone: move to previous monitor row or wrap to last monitor
 		m.focusedMonitorIndex--
 		if m.focusedMonitorIndex < 0 {
-			// Move back to last field
-			m.focusedMonitorIndex = -1
-			m.focusedIndex = len(m.fieldList) - 1
-			m.focusedField = m.fieldList[m.focusedIndex]
+			// Wrap to last monitor row (Monitors tab has no fields)
+			m.focusedMonitorIndex = len(m.monitorTemplates) - 1
 		}
 		return
 	}
 
 	// In field zone
+	if len(m.fieldList) == 0 {
+		// No fields (e.g., Monitors tab) — stay in monitor zone if available
+		if m.hasMonitorRows() {
+			m.focusedMonitorIndex = len(m.monitorTemplates) - 1
+		}
+		return
+	}
+
 	m.focusedIndex--
 	if m.focusedIndex < 0 {
-		if m.hasMonitorRows() {
-			// Wrap to last monitor row
-			m.focusedMonitorIndex = len(m.monitorTemplates) - 1
-			m.focusedIndex = len(m.fieldList)
-		} else {
-			// Wrap to last field
-			m.focusedIndex = len(m.fieldList) - 1
-		}
+		// Wrap to last field
+		m.focusedIndex = len(m.fieldList) - 1
 	}
 	if m.focusedIndex < len(m.fieldList) {
 		m.focusedField = m.fieldList[m.focusedIndex]
 	}
 }
 
-// moveToTop moves focus to the first field.
+// moveToTop moves focus to the first field or first monitor row.
 func (m *MetadataModal) moveToTop() {
 	m.focusedMonitorIndex = -1
-	m.focusedIndex = 0
-	m.focusedField = m.fieldList[m.focusedIndex]
+	if len(m.fieldList) > 0 {
+		m.focusedIndex = 0
+		m.focusedField = m.fieldList[0]
+	} else if m.hasMonitorRows() {
+		m.focusedMonitorIndex = 0
+	}
 }
 
-// moveToBottom moves focus to the last field.
+// moveToBottom moves focus to the last field or last monitor row.
 func (m *MetadataModal) moveToBottom() {
 	if m.hasMonitorRows() {
 		m.focusedMonitorIndex = len(m.monitorTemplates) - 1
 		m.focusedIndex = len(m.fieldList)
-	} else {
+	} else if len(m.fieldList) > 0 {
 		m.focusedIndex = len(m.fieldList) - 1
 		m.focusedField = m.fieldList[m.focusedIndex]
 	}
@@ -768,6 +742,43 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 	return m, nil
 }
 
+// renderTabHeader renders the tab selection header matching the main TUI's
+// Tasks/Dream tab bar style: space-padded labels, bold+cyan active, dim inactive.
+// If all tabs don't fit in the modal width, a sliding window is shown with
+// ◀/▶ overflow indicators, always keeping the active tab visible.
+func (m *MetadataModal) renderTabHeader() string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorCyan)
+	inactiveStyle := lipgloss.NewStyle().Foreground(ColorDim)
+	overflowStyle := lipgloss.NewStyle().Foreground(ColorDim)
+
+	lo, hi := m.visibleTabRange()
+	allVisible := lo == 0 && hi == len(m.tabs)-1
+
+	// Build rendered tab strings for the visible range
+	var parts []string
+	if !allVisible && lo > 0 {
+		parts = append(parts, overflowStyle.Render("◀"))
+	}
+	for i := lo; i <= hi; i++ {
+		name := " " + tabLabel(m.tabs[i]) + " "
+		if m.tabs[i] == m.currentTab {
+			parts = append(parts, activeStyle.Render(name))
+		} else {
+			parts = append(parts, inactiveStyle.Render(name))
+		}
+	}
+	if !allVisible && hi < len(m.tabs)-1 {
+		parts = append(parts, overflowStyle.Render("▶"))
+	}
+
+	// Use 2-space gap when all fit, 1-space when truncated (tighter layout)
+	sep := "  "
+	if !allVisible {
+		sep = " "
+	}
+	return " " + strings.Join(parts, sep)
+}
+
 // View renders the modal content.
 func (m *MetadataModal) View() string {
 	var b strings.Builder
@@ -811,6 +822,10 @@ func (m *MetadataModal) View() string {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("✗ Error: %v", m.saveError)))
 		b.WriteString("\n\n")
 	}
+
+	// Render tab header
+	b.WriteString(m.renderTabHeader())
+	b.WriteString("\n\n")
 
 	// Render field list
 	for i, field := range m.fieldList {
@@ -862,8 +877,8 @@ func (m *MetadataModal) View() string {
 		b.WriteString("\n")
 	}
 
-	// Render monitor template section (feature mode only)
-	if m.mode == ModeFeature && len(m.monitorTemplates) > 0 {
+	// Render monitor template section (Monitors tab only)
+	if m.mode == ModeFeature && m.currentTab == MetaTabMonitors && len(m.monitorTemplates) > 0 {
 		b.WriteString("\n")
 		// Separator
 		separatorStyle := lipgloss.NewStyle().Foreground(ColorDim).Bold(true)
@@ -931,7 +946,7 @@ func (m *MetadataModal) View() string {
 	case ModeEditDropdown:
 		helpText = "j/k: select  Enter: save  Esc: cancel"
 	default:
-		helpText = "j/k: navigate  Enter: edit  Esc: close"
+		helpText = "j/k: navigate  Enter: edit  H/L: sections  Esc: close"
 	}
 	b.WriteString(helpStyle.Render(helpText))
 
@@ -1003,6 +1018,214 @@ func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
 	}
 }
 
+// HandleMouse handles mouse events within the modal content area.
+// x, y are relative to the content origin (0,0 = top-left of scrollable content).
+// Implements the MouseModal interface.
+func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) {
+	// Don't handle mouse during edit modes
+	if m.interactionMode != ModeNavigate {
+		return false, nil
+	}
+
+	// Line 0: tab header
+	if y == 0 {
+		return m.handleTabClick(x), nil
+	}
+
+	// Line 1: blank line after tab header
+	// Lines 2+: field rows (or status messages may shift things, but save/error messages
+	// are transient and we'll use a simple offset)
+
+	// Success/error messages appear before the tab header in the View output,
+	// but since those are transient and cleared after display, the normal layout is:
+	//   Line 0: tab header
+	//   Line 1: blank
+	//   Line 2..N: field rows (one per field)
+	//   After fields: monitor rows (on Monitors tab)
+
+	fieldStartY := 2 // tab header (1) + blank line (1)
+	fieldRow := y - fieldStartY
+
+	// Click on a field row
+	if fieldRow >= 0 && fieldRow < len(m.fieldList) {
+		m.focusedMonitorIndex = -1
+		m.focusedIndex = fieldRow
+		m.focusedField = m.fieldList[fieldRow]
+		return true, nil
+	}
+
+	// Click on a monitor row (Monitors tab)
+	if m.currentTab == MetaTabMonitors && m.hasMonitorRows() {
+		// Monitor rows start after fields + blank line + separator line
+		monitorStartY := fieldStartY + len(m.fieldList)
+		if len(m.fieldList) == 0 {
+			// Monitors tab has no fields, rows start after: blank + separator
+			monitorStartY = fieldStartY + 2 // blank line + separator "── Automated Tasks ──"
+		} else {
+			monitorStartY = fieldStartY + len(m.fieldList) + 2 // fields + blank + separator
+		}
+
+		monitorRow := y - monitorStartY
+		if monitorRow >= 0 && monitorRow < len(m.monitorTemplates) {
+			m.focusedMonitorIndex = monitorRow
+			m.focusedIndex = len(m.fieldList) // move past fields
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// handleTabClick processes a mouse click on the tab header line.
+// x is the column position relative to the content area.
+// Returns true if a tab was clicked.
+func (m *MetadataModal) handleTabClick(x int) bool {
+	lo, hi := m.visibleTabRange()
+
+	// Reconstruct the layout from renderTabHeader:
+	//   " " + [optional "◀ "] + " Label " + " " + " Label " + [optional " ▶"]
+	pos := 1 // leading " "
+
+	if lo > 0 {
+		// "◀" (1 char) + " " (1 char gap) in the joined output
+		pos += 2 // skip past "◀ "
+	}
+
+	for i := lo; i <= hi; i++ {
+		label := " " + tabLabel(m.tabs[i]) + " "
+		tabEnd := pos + len(label)
+		if x >= pos && x < tabEnd {
+			if m.tabs[i] != m.currentTab {
+				m.switchToTab(m.tabs[i])
+			}
+			return true
+		}
+		pos = tabEnd + 1 // " " gap (truncated mode uses single space joins)
+	}
+
+	// Click on overflow arrows: navigate in that direction
+	if lo > 0 && x >= 1 && x < 3 {
+		m.prevTab()
+		return true
+	}
+	// Right arrow position is after the last visible tab
+	if hi < len(m.tabs)-1 && x >= pos {
+		m.nextTab()
+		return true
+	}
+
+	return false
+}
+
+// visibleTabRange returns the lo..hi indices (inclusive) of tabs visible in the
+// tab header, matching the sliding window logic in renderTabHeader.
+func (m *MetadataModal) visibleTabRange() (lo, hi int) {
+	gap := 2   // "  " between tabs in non-truncated mode
+	lead := 1  // leading " "
+	arrow := 2 // "◀ " or " ▶"
+
+	// Check if everything fits
+	totalW := lead
+	for i, tab := range m.tabs {
+		if i > 0 {
+			totalW += gap
+		}
+		totalW += len(" " + tabLabel(tab) + " ")
+	}
+	if totalW <= m.width {
+		return 0, len(m.tabs) - 1
+	}
+
+	// Find active tab index
+	activeIdx := 0
+	for i, tab := range m.tabs {
+		if tab == m.currentTab {
+			activeIdx = i
+			break
+		}
+	}
+
+	lo, hi = activeIdx, activeIdx
+	usedW := lead + len(" "+tabLabel(m.tabs[activeIdx])+" ")
+
+	for {
+		expanded := false
+		if hi+1 < len(m.tabs) {
+			nextW := gap + len(" "+tabLabel(m.tabs[hi+1])+" ")
+			leftReserve := 0
+			if lo > 0 {
+				leftReserve = arrow
+			}
+			rightReserve := 0
+			if hi+2 < len(m.tabs) {
+				rightReserve = arrow
+			}
+			if usedW+nextW+leftReserve+rightReserve <= m.width {
+				hi++
+				usedW += nextW
+				expanded = true
+			}
+		}
+		if lo-1 >= 0 {
+			nextW := gap + len(" "+tabLabel(m.tabs[lo-1])+" ")
+			leftReserve := 0
+			if lo-2 >= 0 {
+				leftReserve = arrow
+			}
+			rightReserve := 0
+			if hi < len(m.tabs)-1 {
+				rightReserve = arrow
+			}
+			if usedW+nextW+leftReserve+rightReserve <= m.width {
+				lo--
+				usedW += nextW
+				expanded = true
+			}
+		}
+		if !expanded {
+			break
+		}
+	}
+
+	return lo, hi
+}
+
+// switchToTab switches to the given tab, resetting focus state.
+func (m *MetadataModal) switchToTab(tab MetadataTab) {
+	m.currentTab = tab
+	m.focusedIndex = 0
+	m.focusedMonitorIndex = -1
+	m.fieldList = m.buildFieldList()
+	if len(m.fieldList) > 0 {
+		m.focusedField = m.fieldList[0]
+	} else if m.hasMonitorRows() {
+		// Monitors tab: jump directly to monitor rows
+		m.focusedMonitorIndex = 0
+	}
+}
+
+// nextTab cycles to the next tab (wraps around).
+func (m *MetadataModal) nextTab() {
+	for i, tab := range m.tabs {
+		if tab == m.currentTab {
+			nextIdx := (i + 1) % len(m.tabs)
+			m.switchToTab(m.tabs[nextIdx])
+			return
+		}
+	}
+}
+
+// prevTab cycles to the previous tab (wraps around).
+func (m *MetadataModal) prevTab() {
+	for i, tab := range m.tabs {
+		if tab == m.currentTab {
+			prevIdx := (i - 1 + len(m.tabs)) % len(m.tabs)
+			m.switchToTab(m.tabs[prevIdx])
+			return
+		}
+	}
+}
+
 // handleNavigateMode handles key presses in navigation mode.
 func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 	switch key {
@@ -1011,6 +1234,18 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 		return true, nil
 	case "k", "up":
 		m.moveUp()
+		return true, nil
+	case "H":
+		m.prevTab()
+		return true, nil
+	case "L":
+		m.nextTab()
+		return true, nil
+	case "tab":
+		m.nextTab()
+		return true, nil
+	case "shift+tab":
+		m.prevTab()
 		return true, nil
 	case "g":
 		m.moveToTop()
@@ -1022,8 +1257,15 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 		if m.inMonitorZone() {
 			return m.toggleMonitorTemplate()
 		}
-		if key == "enter" {
+		if key == "enter" && len(m.fieldList) > 0 {
 			m.enterEditMode()
+			return true, nil
+		}
+		return false, nil
+	case "1", "2", "3", "4", "5":
+		idx := int(key[0]-'0') - 1
+		if idx >= 0 && idx < len(m.tabs) {
+			m.switchToTab(m.tabs[idx])
 			return true, nil
 		}
 		return false, nil

@@ -52,7 +52,8 @@ type BrainEntryType =
   | "decision"
   | "exploration"
   | "execution"
-  | "task";
+  | "task"
+  | "dream";
 
 type BrainEntryStatus =
   | "draft"
@@ -60,6 +61,7 @@ type BrainEntryStatus =
   | "active"
   | "in_progress"
   | "blocked"
+  | "cancelled"
   | "completed"
   | "validated"
   | "superseded"
@@ -338,6 +340,7 @@ const ENTRY_TYPES: BrainEntryType[] = [
   "exploration",
   "execution",
   "task",
+  "dream",
 ];
 
 const ENTRY_STATUSES: BrainEntryStatus[] = [
@@ -346,6 +349,7 @@ const ENTRY_STATUSES: BrainEntryStatus[] = [
   "active",
   "in_progress",
   "blocked",
+  "cancelled",
   "completed",
   "validated",
   "superseded",
@@ -827,7 +831,7 @@ ${response.content}`;
           tags: tool.schema
             .array(tool.schema.string())
             .optional()
-            .describe("Filter by tags (OR logic - matches entries with any of the specified tags)"),
+            .describe("Filter by tags (AND logic - matches entries with all specified tags)"),
           limit: tool.schema
             .number()
             .optional()
@@ -836,6 +840,20 @@ ${response.content}`;
             .boolean()
             .optional()
             .describe("Search only global entries"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter by project ID/name (e.g., 'brain-api', 'my-project'). If not provided, searches all projects."
+            ),
+          priority: tool.schema
+            .enum(["high", "medium", "low"])
+            .optional()
+            .describe("Filter by priority level"),
+          strategy: tool.schema
+            .enum(["fts", "exact", "like"])
+            .optional()
+            .describe("Search strategy: 'fts' (full-text, default), 'exact' (exact phrase), 'like' (substring/wildcard)"),
         },
         async execute(args) {
           try {
@@ -854,8 +872,12 @@ ${response.content}`;
               type: args.type,
               status: args.status,
               feature_id: args.feature_id,
+              tags: args.tags,
               limit: args.limit ?? 10,
               global: args.global,
+              project: args.project,
+              priority: args.priority,
+              strategy: args.strategy,
             });
 
             if (response.results.length === 0) {
@@ -931,6 +953,24 @@ Filename filtering supports:
             .describe(
               "Sort order: 'created' (default), 'modified', or 'priority' (high first)"
             ),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Filter by project ID/name (e.g., 'brain-api', 'my-project'). If not provided, returns entries from all projects."
+            ),
+          priority: tool.schema
+            .enum(["high", "medium", "low"])
+            .optional()
+            .describe("Filter by priority level"),
+          sortOrder: tool.schema
+            .enum(["asc", "desc"])
+            .optional()
+            .describe("Sort direction: 'asc' (oldest/lowest first) or 'desc' (newest/highest first, default)"),
+          offset: tool.schema
+            .number()
+            .optional()
+            .describe("Pagination offset (skip N entries). Use with limit for pagination."),
         },
         async execute(args) {
           try {
@@ -958,6 +998,10 @@ Filename filtering supports:
                 limit: args.limit ?? 20,
                 global: args.global,
                 sortBy: args.sortBy,
+                project: args.project,
+                priority: args.priority,
+                sortOrder: args.sortOrder,
+                offset: args.offset,
               }
             );
 

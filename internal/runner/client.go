@@ -419,6 +419,166 @@ func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID 
 }
 
 // =============================================================================
+// Entry CRUD (CLI Methods)
+// =============================================================================
+
+// CreateEntry creates a new brain entry via POST /api/v1/entries.
+func (c *APIClient) CreateEntry(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/entries", req)
+	if err != nil {
+		return nil, fmt.Errorf("create entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, c.readError(resp)
+	}
+
+	var result types.CreateEntryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode create entry response: %w", err)
+	}
+	return &result, nil
+}
+
+// SearchEntries searches for entries via POST /api/v1/search.
+func (c *APIClient) SearchEntries(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/search", req)
+	if err != nil {
+		return nil, fmt.Errorf("search entries: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode search response: %w", err)
+	}
+	return &result, nil
+}
+
+// ListEntries lists entries with optional filters via GET /api/v1/entries.
+func (c *APIClient) ListEntries(ctx context.Context, params map[string]string) (*types.ListEntriesResponse, error) {
+	path := "/api/v1/entries"
+	if len(params) > 0 {
+		q := url.Values{}
+		for k, v := range params {
+			q.Set(k, v)
+		}
+		path += "?" + q.Encode()
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list entries: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.ListEntriesResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode list entries response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetEntryRaw returns the raw markdown body of an entry (no JSON wrapping).
+// Uses Accept: text/markdown header; metadata is available in X-Brain-* response headers.
+func (c *APIClient) GetEntryRaw(ctx context.Context, entryPath string) (string, http.Header, error) {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodGet, apiPath, nil, map[string]string{
+		"Accept": "text/markdown",
+	})
+	if err != nil {
+		return "", nil, fmt.Errorf("get entry raw: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", nil, c.readError(resp)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", nil, fmt.Errorf("read entry raw body: %w", err)
+	}
+	return string(body), resp.Header, nil
+}
+
+// GetEntryFull returns the full file content (YAML frontmatter + body).
+// Uses Accept: text/x-brain-full header.
+func (c *APIClient) GetEntryFull(ctx context.Context, entryPath string) (string, error) {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodGet, apiPath, nil, map[string]string{
+		"Accept": "text/x-brain-full",
+	})
+	if err != nil {
+		return "", fmt.Errorf("get entry full: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", c.readError(resp)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read entry full body: %w", err)
+	}
+	return string(body), nil
+}
+
+// UpdateEntryRaw replaces entry content with raw markdown body.
+// Uses Content-Type: text/markdown header.
+func (c *APIClient) UpdateEntryRaw(ctx context.Context, entryPath string, content string) error {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(content), map[string]string{
+		"Content-Type": "text/markdown",
+	})
+	if err != nil {
+		return fmt.Errorf("update entry raw: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// UpdateEntryFull replaces entry content and metadata from full frontmatter+body file.
+// Uses Content-Type: text/x-brain-full header.
+func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullContent string) error {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
+
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(fullContent), map[string]string{
+		"Content-Type": "text/x-brain-full",
+	})
+	if err != nil {
+		return fmt.Errorf("update entry full: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
 // Runner Pause/Resume
 // =============================================================================
 
@@ -516,6 +676,31 @@ func (c *APIClient) doRequest(ctx context.Context, method, path string, body io.
 	req.Header.Set("Accept", "application/json")
 	if c.cfg.APIToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
+	}
+
+	return c.client.Do(req)
+}
+
+// doRequestWithHeaders performs an HTTP request with custom headers, overriding defaults.
+// Headers provided in the overrides map replace the default Content-Type and Accept headers.
+func (c *APIClient) doRequestWithHeaders(ctx context.Context, method, path string, body io.Reader, headers map[string]string) (*http.Response, error) {
+	reqURL := c.cfg.BrainAPIURL + path
+
+	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+
+	// Set defaults first
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	if c.cfg.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
+	}
+
+	// Override with custom headers
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 
 	return c.client.Do(req)

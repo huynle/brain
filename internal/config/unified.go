@@ -69,6 +69,7 @@ type UnifiedConfig struct {
 	Runner  RunnerConfig  `yaml:"runner"`
 	MCP     MCPConfig     `yaml:"mcp"`
 	Plugins PluginsConfig `yaml:"plugins"`
+	TUI     TUIConfig     `yaml:"tui"`
 }
 
 // ServerConfig holds API server configuration.
@@ -109,6 +110,11 @@ type OpencodeSettings struct {
 	Bin   string `yaml:"bin"`
 	Agent string `yaml:"agent"`
 	Model string `yaml:"model"`
+}
+
+// TUIConfig holds TUI display and keybinding configuration.
+type TUIConfig struct {
+	KeyBindings map[string]string `yaml:"keybindings"`
 }
 
 // MCPConfig holds MCP integration configuration.

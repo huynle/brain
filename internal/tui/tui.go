@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
@@ -114,6 +115,13 @@ type Model struct {
 	seenFeatureIDs      map[string]bool // tracks all feature_ids ever seen across task updates
 	initialSnapshotDone bool            // prevents creating monitors for pre-existing features on first load
 	monitorClient       *MonitorClient  // reusable client for monitor API calls
+
+	// Feature toggle execution state
+	enabledFeatures map[string]bool // features toggled on via x key
+
+	// Content tab state (Tasks / Dream)
+	activeContentTab ContentTab
+	dreamViewer      DreamViewer
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -143,7 +151,7 @@ func NewModel(cfg Config) Model {
 
 	m := Model{
 		config:           cfg,
-		keymap:           DefaultKeyMap(),
+		keymap:           KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
 		statusBar:        NewStatusBar(cfg.Project),
 		helpBar:          NewHelpBar(),
 		taskTree:         NewTaskTree(),
@@ -164,6 +172,8 @@ func NewModel(cfg Config) Model {
 		metricsCollector: NewMetricsCollector(),
 		seenFeatureIDs:   make(map[string]bool),
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:  make(map[string]bool),
+		dreamViewer:      NewDreamViewer(),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -280,6 +290,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.dreamViewer.SetSize(msg.Width-4, msg.Height-10) // approximate inner size
 		m.syncPanelSizes()
 		return m, nil
 
@@ -486,6 +497,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.addLog("info", fmt.Sprintf("Session discovered: %s", msg.SessionID))
 				break
 			}
+		}
+		return m, nil
+
+	case DreamContentMsg:
+		if msg.Error != nil {
+			m.dreamViewer.SetError(msg.Error.Error())
+		} else {
+			m.dreamViewer.SetContent(msg.Content)
+		}
+		return m, nil
+
+	case featureExecutedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Feature execute error: %v", msg.err))
+		} else if msg.started > 0 {
+			m.setStatusMessage("success", fmt.Sprintf("Feature '%s' enabled — %d task(s) started", msg.featureID, msg.started))
+		} else {
+			m.setStatusMessage("info", fmt.Sprintf("Feature '%s' enabled — no ready tasks to start", msg.featureID))
 		}
 		return m, nil
 
@@ -720,7 +749,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// these need to flow through the main switch to close the modal
 		// and trigger the next action.
 		switch msg.(type) {
-		case sessionSelectedMsg, taskExecutedMsg, taskCompletedMsg, taskCancelledMsg,
+		case sessionSelectedMsg, taskExecutedMsg, featureExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
 			sessionOpenedMsg, statusPickerResultMsg:
 			// Let these fall through to the main switch above (they won't match
@@ -750,6 +779,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	// If on Dream tab with search typing mode, handle search input first
+	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
+		return m.handleDreamSearchInput(msg)
+	}
+
 	// If in filter typing mode, handle filter input first
 	if m.filterState == FilterTyping {
 		return m.handleFilterInput(msg)
@@ -777,6 +811,90 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if msg.Type == tea.KeyEsc && len(m.selectedTasks) > 0 {
 		m.selectedTasks = make(map[string]bool)
 		return m, nil
+	}
+
+	// Configurable keybindings (checked via key.Matches before hardcoded switch).
+	// These must be checked before the msg.Type switch because some bindings
+	// (e.g., ctrl+l) use special key types, not KeyRunes.
+	// Skip toggle-logs in multi-project mode where 'l' is used for project tab navigation
+	if key.Matches(msg, m.keymap.ToggleLogs) && !m.config.IsMultiProject() {
+		m.logsVisible = !m.logsVisible
+		if !m.logsVisible && m.activePanel == PanelLogs {
+			m.activePanel = PanelTasks
+		}
+		m.syncPanelSizes()
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.ToggleDetail) {
+		m.detailVisible = !m.detailVisible
+		if !m.detailVisible && m.activePanel == PanelDetails {
+			m.activePanel = PanelTasks
+		}
+		if m.detailVisible {
+			m.syncTaskDetail()
+		} else {
+			m.syncPanelSizes()
+		}
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.NextContentTab) {
+		if m.activeContentTab < ContentTabDream {
+			m.activeContentTab++
+		} else {
+			m.activeContentTab = ContentTabTasks
+		}
+		m.helpBar.ActiveContentTab = m.activeContentTab
+		// Fetch dream content lazily when switching to Dream tab
+		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+			m.dreamViewer.SetLoading(true)
+			project := m.config.Project
+			if m.activeProjectID != "" && m.activeProjectID != "all" {
+				project = m.activeProjectID
+			}
+			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		}
+		return m, nil
+	}
+	if key.Matches(msg, m.keymap.PrevContentTab) {
+		if m.activeContentTab > ContentTabTasks {
+			m.activeContentTab--
+		} else {
+			m.activeContentTab = ContentTabDream
+		}
+		m.helpBar.ActiveContentTab = m.activeContentTab
+		// Fetch dream content lazily when switching to Dream tab
+		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+			m.dreamViewer.SetLoading(true)
+			project := m.config.Project
+			if m.activeProjectID != "" && m.activeProjectID != "all" {
+				project = m.activeProjectID
+			}
+			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		}
+		return m, nil
+	}
+
+	// When on Dream tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
+	// to the viewport for vim-style scrolling. Only intercept quit keys.
+	if m.activeContentTab == ContentTabDream {
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case tea.KeyEsc:
+			// If search is locked, Esc cancels search
+			if m.dreamViewer.SearchMode() == DreamSearchLocked {
+				m.dreamViewer.CancelSearch()
+				return m, nil
+			}
+			// Otherwise, allow Escape to work normally (close modals, etc.)
+		case tea.KeyRunes:
+			// Fall through to rune handling below
+		default:
+			// Forward ctrl+d, ctrl+u, ctrl+f, ctrl+b, arrows, pgup, pgdn, etc.
+			cmd := m.dreamViewer.Update(msg)
+			return m, cmd
+		}
 	}
 
 	switch msg.Type {
@@ -882,6 +1000,50 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 			}
+		}
+
+		// When on Dream tab, handle dream-specific keys then forward the rest to the viewport
+		if m.activeContentTab == ContentTabDream {
+			switch string(msg.Runes) {
+			case "/":
+				m.dreamViewer.StartSearch()
+				return m, nil
+			case "n":
+				if m.dreamViewer.SearchMode() == DreamSearchLocked {
+					m.dreamViewer.NextMatch()
+				}
+				return m, nil
+			case "N":
+				if m.dreamViewer.SearchMode() == DreamSearchLocked {
+					m.dreamViewer.PrevMatch()
+				}
+				return m, nil
+			case "g":
+				m.dreamViewer.GotoTop()
+				return m, nil
+			case "G":
+				m.dreamViewer.GotoBottom()
+				return m, nil
+			case "r":
+				// Re-fetch dream content
+				m.dreamViewer.SetLoading(true)
+				project := m.config.Project
+				if m.activeProjectID != "" && m.activeProjectID != "all" {
+					project = m.activeProjectID
+				}
+				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			case "q":
+				m.sseClient.Stop()
+				return m, tea.Quit
+			case "?":
+				modal := NewHelpModal(m.config.IsMultiProject())
+				cmd := m.modalManager.Open(modal)
+				return m, cmd
+			}
+			// Forward all other keys to the viewport for vim-style navigation
+			// (j/k, g/G, ctrl+d/u, ctrl+f/b, d/u, f/b, pgup/pgdn, space, arrow keys)
+			cmd := m.dreamViewer.Update(msg)
+			return m, cmd
 		}
 
 		switch string(msg.Runes) {
@@ -1036,6 +1198,40 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 			selectedTask := m.taskTree.SelectedTask()
 			if selectedTask == nil {
+				// Check if cursor is on a feature header → toggle feature execution
+				featureID := m.taskTree.GetSelectedFeatureID()
+				featureTasks := m.taskTree.GetSelectedFeatureTasks()
+				if featureID != "" && len(featureTasks) > 0 && m.runnerController != nil {
+					projectID := m.config.Project
+					if m.activeProjectID != "" && m.activeProjectID != "all" {
+						projectID = m.activeProjectID
+					}
+
+					if m.enabledFeatures[featureID] {
+						// DISABLE: remove from enabled set
+						delete(m.enabledFeatures, featureID)
+						m.runnerController.DisableFeature(featureID)
+						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
+						m.setStatusMessage("info", fmt.Sprintf("Feature '%s' disabled", featureID))
+					} else {
+						// ENABLE: add to enabled set + batch-execute ready tasks
+						m.enabledFeatures[featureID] = true
+						m.runnerController.EnableFeature(featureID)
+						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
+
+						// Fire-and-forget batch execution
+						rc := m.runnerController
+						tasksCopy := make([]types.ResolvedTask, len(featureTasks))
+						copy(tasksCopy, featureTasks)
+						pid := projectID
+						fid := featureID
+						return m, func() tea.Msg {
+							ctx := context.Background()
+							started, err := rc.ExecuteFeature(ctx, tasksCopy, pid)
+							return featureExecutedMsg{featureID: fid, started: started, err: err}
+						}
+					}
+				}
 				return m, nil
 			}
 
@@ -1214,28 +1410,6 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, nil
-		case "L":
-			m.logsVisible = !m.logsVisible
-			// If hiding the active panel, switch back to tasks
-			if !m.logsVisible && m.activePanel == PanelLogs {
-				m.activePanel = PanelTasks
-			}
-			m.syncPanelSizes()
-			return m, nil
-		case "T":
-			m.detailVisible = !m.detailVisible
-			// If hiding the active panel, switch back to tasks
-			if !m.detailVisible && m.activePanel == PanelDetails {
-				m.activePanel = PanelTasks
-			}
-			// When showing the detail panel, sync it with current selection
-			// so it doesn't show stale "No task selected" state
-			if m.detailVisible {
-				m.syncTaskDetail() // this calls syncPanelSizes internally
-			} else {
-				m.syncPanelSizes()
-			}
-			return m, nil
 		case "j":
 			if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
@@ -1411,8 +1585,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseMsg processes mouse input.
 func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	// If modal is open, don't handle mouse events in the main UI
+	// If modal is open, forward mouse events to the modal
 	if m.modalManager.IsOpen() {
+		handled, cmd := m.modalManager.HandleMouse(msg, m.width, m.height)
+		if handled {
+			return m, cmd
+		}
 		return m, nil
 	}
 
@@ -1434,6 +1612,43 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+
+	// Click on content tab bar (the row just above mainContentStartY)
+	contentTabBarY := mainContentStartY - 1
+	if y == contentTabBarY {
+		// Layout: " " + " Tasks " + "  " + " Dream "
+		// Calculate hit zones from actual text widths
+		const tabPadding = 1 // leading " "
+		const tabGap = 2     // "  " between tabs
+		tasksText := " Tasks "
+		dreamText := " Dream "
+
+		tasksStart := tabPadding
+		tasksEnd := tasksStart + len(tasksText)
+		dreamStart := tasksEnd + tabGap
+		dreamEnd := dreamStart + len(dreamText)
+
+		var newTab ContentTab = m.activeContentTab
+		if x >= tasksStart && x < tasksEnd {
+			newTab = ContentTabTasks
+		} else if x >= dreamStart && x < dreamEnd {
+			newTab = ContentTabDream
+		}
+
+		if newTab != m.activeContentTab {
+			m.activeContentTab = newTab
+			m.helpBar.ActiveContentTab = m.activeContentTab
+			if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+				m.dreamViewer.SetLoading(true)
+				project := m.config.Project
+				if m.activeProjectID != "" && m.activeProjectID != "all" {
+					project = m.activeProjectID
+				}
+				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			}
+		}
+		return m, nil
+	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
 		// Click in top task panel (full-width in current layout)
@@ -1531,7 +1746,8 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		filterBarHeight = lipgloss.Height(filterBarView)
 	}
 
-	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+	contentTabBarHeight := 1 // content tab bar always present
+	fixedUIHeight := statusBarHeight + projectTabsHeight + contentTabBarHeight + helpBarHeight + statusMessageHeight + filterBarHeight
 	mainHeight := m.height - fixedUIHeight
 	if mainHeight < 3 {
 		mainHeight = 3
@@ -1565,7 +1781,7 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		}
 	}
 
-	mainContentStartY = statusBarHeight + projectTabsHeight
+	mainContentStartY = statusBarHeight + projectTabsHeight + contentTabBarHeight
 	taskPanelOuterHeight = topHeight
 	taskInnerHeight = topHeight - 2
 	if taskInnerHeight < 1 {
@@ -1976,6 +2192,10 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
 func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activeContentTab == ContentTabDream {
+		m.dreamViewer.ScrollUp(3)
+		return m, nil
+	}
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveUp()
 		m.syncTaskDetail()
@@ -1987,6 +2207,10 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
 func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activeContentTab == ContentTabDream {
+		m.dreamViewer.ScrollDown(3)
+		return m, nil
+	}
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveDown()
 		m.syncTaskDetail()
@@ -2201,23 +2425,35 @@ func (m Model) renderBaseView() string {
 		m.statusBar.IsPaused = m.pausedProjects[projectID]
 	}
 
-	// Count enabled and active features from task data
-	enabledFeatures := make(map[string]bool)
+	// EnabledFeatureCount reflects user-toggled features (via x key)
+	m.statusBar.EnabledFeatureCount = len(m.enabledFeatures)
+	// ActiveFeatureCount reflects features with currently running tasks
 	activeFeatures := make(map[string]bool)
 	for _, task := range m.tasks {
-		if task.FeatureID != "" {
-			enabledFeatures[task.FeatureID] = true
-		}
 		if task.FeatureID != "" && task.Status == "in_progress" {
 			activeFeatures[task.FeatureID] = true
 		}
 	}
-	m.statusBar.EnabledFeatureCount = len(enabledFeatures)
 	m.statusBar.ActiveFeatureCount = len(activeFeatures)
 	// Render ProjectTabs if multi-project mode
 	var projectTabsView string
 	if m.config.IsMultiProject() {
 		projectTabsView = m.projectTabs.View(m.width)
+	}
+
+	// Render content tab bar (Tasks / Dream)
+	var contentTabBarView string
+	{
+		tasksLabel := " Tasks "
+		dreamLabel := " Dream "
+		if m.activeContentTab == ContentTabTasks {
+			tasksLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(tasksLabel)
+			dreamLabel = DimStyle.Render(dreamLabel)
+		} else {
+			tasksLabel = DimStyle.Render(tasksLabel)
+			dreamLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(dreamLabel)
+		}
+		contentTabBarView = " " + tasksLabel + "  " + dreamLabel
 	}
 
 	// Render status bar at top
@@ -2249,23 +2485,45 @@ func (m Model) renderBaseView() string {
 		statusMessageView = style.Render(m.statusMessage)
 	}
 
-	// Filter bar (based on 3-mode state machine)
+	// Filter/Search bar (based on context)
 	var filterBarView string
-	switch m.filterState {
-	case FilterTyping:
-		// Yellow bg with / prefix, cursor, match count
-		matchCount := len(m.filteredTasks())
-		matchWord := "matches"
-		if matchCount == 1 {
-			matchWord = "match"
+	if m.activeContentTab == ContentTabDream {
+		// Dream tab: show search bar
+		switch m.dreamViewer.SearchMode() {
+		case DreamSearchTyping:
+			matchCount := m.dreamViewer.MatchCount()
+			matchWord := "matches"
+			if matchCount == 1 {
+				matchWord = "match"
+			}
+			filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.dreamViewer.SearchQuery(), matchCount, matchWord))
+		case DreamSearchLocked:
+			matchCount := m.dreamViewer.MatchCount()
+			currentIdx := m.dreamViewer.CurrentMatchIndex()
+			if matchCount > 0 {
+				filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Search: %s (%d/%d) ", m.dreamViewer.SearchQuery(), currentIdx, matchCount)) +
+					DimStyle.Render("  n/N: next/prev  Esc: clear")
+			} else {
+				filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Search: %s (no matches) ", m.dreamViewer.SearchQuery())) +
+					DimStyle.Render("  Esc: clear")
+			}
 		}
-		filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
-	case FilterLocked:
-		// Cyan bg badge with filter text, N/total count, Esc hint
-		totalCount := len(m.tasks)
-		matchCount := len(m.filteredTasks())
-		filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
-			DimStyle.Render("  Esc: clear")
+	} else {
+		// Tasks tab: show task filter bar
+		switch m.filterState {
+		case FilterTyping:
+			matchCount := len(m.filteredTasks())
+			matchWord := "matches"
+			if matchCount == 1 {
+				matchWord = "match"
+			}
+			filterBarView = FilterTypingStyle.Render(fmt.Sprintf(" / %s_ (%d %s) ", m.filterQuery, matchCount, matchWord))
+		case FilterLocked:
+			totalCount := len(m.tasks)
+			matchCount := len(m.filteredTasks())
+			filterBarView = FilterLockedStyle.Render(fmt.Sprintf(" Filter: %s (%d/%d) ", m.filterQuery, matchCount, totalCount)) +
+				DimStyle.Render("  Esc: clear")
+		}
 	}
 
 	// Calculate available height for main content by measuring actual rendered heights
@@ -2287,8 +2545,13 @@ func (m Model) renderBaseView() string {
 		filterBarHeight = lipgloss.Height(filterBarView)
 	}
 
+	contentTabBarHeight := 0
+	if contentTabBarView != "" {
+		contentTabBarHeight = lipgloss.Height(contentTabBarView)
+	}
+
 	// Total height consumed by fixed UI elements (header at top, footer at bottom)
-	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+	fixedUIHeight := statusBarHeight + projectTabsHeight + contentTabBarHeight + helpBarHeight + statusMessageHeight + filterBarHeight
 
 	// Available height for main content area (tasks + detail/logs panels)
 	mainHeight := m.height - fixedUIHeight
@@ -2368,9 +2631,17 @@ func (m Model) renderBaseView() string {
 		MaxHeight(topHeight).
 		Render(taskContent)
 
-	// Build main content
+	// Build main content based on active content tab
 	var mainContent string
-	if hasBottomPanel {
+	if m.activeContentTab == ContentTabDream {
+		// Dream tab: full-width dream viewer, no task/detail/log panels
+		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
+		dreamPanel := InactiveBorder.
+			Width(m.width - 2).
+			Height(mainHeight - 2).
+			Render(dreamView)
+		mainContent = dreamPanel
+	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
 	} else {
@@ -2383,6 +2654,7 @@ func (m Model) renderBaseView() string {
 	if projectTabsView != "" {
 		sections = append(sections, projectTabsView)
 	}
+	sections = append(sections, contentTabBarView)
 	sections = append(sections, mainContent)
 	if statusMessageView != "" {
 		sections = append(sections, statusMessageView)
@@ -2519,6 +2791,40 @@ func (m Model) renderLogPanel(width, height int) string {
 // =============================================================================
 // Filter Methods
 // =============================================================================
+
+// handleDreamSearchInput processes keyboard input when searching in the Dream tab.
+func (m Model) handleDreamSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		// Lock search for n/N navigation
+		m.dreamViewer.LockSearch()
+		return m, nil
+
+	case tea.KeyEsc:
+		// Cancel search
+		m.dreamViewer.CancelSearch()
+		return m, nil
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		q := m.dreamViewer.SearchQuery()
+		if len(q) > 0 {
+			m.dreamViewer.SetSearchQuery(q[:len(q)-1])
+		}
+		return m, nil
+
+	case tea.KeyCtrlU:
+		// Clear search input
+		m.dreamViewer.SetSearchQuery("")
+		return m, nil
+
+	case tea.KeyRunes:
+		q := m.dreamViewer.SearchQuery() + string(msg.Runes)
+		m.dreamViewer.SetSearchQuery(q)
+		return m, nil
+	}
+
+	return m, nil
+}
 
 // handleFilterInput processes keyboard input in FilterTyping mode.
 // All runes are captured as filter text — no key leaking to other handlers.
@@ -2745,6 +3051,12 @@ type taskExecutedMsg struct {
 	claimedBy string
 }
 
+type featureExecutedMsg struct {
+	featureID string
+	started   int
+	err       error
+}
+
 type taskDeletedMsg struct {
 	taskID string
 	err    error
@@ -2790,6 +3102,38 @@ type runnerStatusMsg struct {
 // =============================================================================
 // Command Functions
 // =============================================================================
+
+// fetchDreamContentCmd fetches dream content for a project from the API.
+func fetchDreamContentCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+
+		// Search for dream entries in this project
+		limit := 1
+		searchResp, err := apiClient.SearchEntries(ctx, types.SearchRequest{
+			Query:   "Project Dream",
+			Type:    "dream",
+			Project: project,
+			Limit:   &limit,
+		})
+		if err != nil {
+			return DreamContentMsg{Error: fmt.Errorf("search failed: %w", err)}
+		}
+
+		if len(searchResp.Results) == 0 {
+			return DreamContentMsg{Content: ""}
+		}
+
+		// Fetch the full entry content
+		entry, err := apiClient.GetEntry(ctx, searchResp.Results[0].Path)
+		if err != nil {
+			return DreamContentMsg{Error: fmt.Errorf("fetch failed: %w", err)}
+		}
+
+		return DreamContentMsg{Content: entry.Content}
+	}
+}
 
 // completeTaskCmd completes a single task.
 func completeTaskCmd(cfg runner.RunnerConfig, taskPath string) tea.Cmd {

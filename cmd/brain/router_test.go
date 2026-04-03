@@ -47,7 +47,7 @@ func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"server", "mcp", "run", "runner", "start", "stop",
+		"api", "mcp", "run", "runner", "start", "stop",
 		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
@@ -121,17 +121,17 @@ func TestRoute_UnknownCommand_RoutesToHelp(t *testing.T) {
 // Test: "brain server <subcommand>" routes to the correct lifecycle command
 // ---------------------------------------------------------------------------
 
-func TestRoute_ServerSubcommands(t *testing.T) {
+func TestRoute_APISubcommands(t *testing.T) {
 	tests := []struct {
 		args     []string
 		wantType string
 	}{
-		{[]string{"server", "start"}, "start"},
-		{[]string{"server", "stop"}, "stop"},
-		{[]string{"server", "restart"}, "restart"},
-		{[]string{"server", "status"}, "status"},
-		{[]string{"server", "logs"}, "logs"},
-		{[]string{"server", "health"}, "health"},
+		{[]string{"api", "start"}, "start"},
+		{[]string{"api", "stop"}, "stop"},
+		{[]string{"api", "restart"}, "restart"},
+		{[]string{"api", "status"}, "status"},
+		{[]string{"api", "logs"}, "logs"},
+		{[]string{"api", "health"}, "health"},
 	}
 
 	for _, tt := range tests {
@@ -181,14 +181,14 @@ func TestRoute_StartProject(t *testing.T) {
 	}
 }
 
-// Test: "brain server" with no subcommand still starts the server
-func TestRoute_ServerNoSubcommand_StartsServer(t *testing.T) {
-	cmd, err := route([]string{"server"})
+// Test: "brain api" with no subcommand still starts the API server
+func TestRoute_APINoSubcommand_StartsAPI(t *testing.T) {
+	cmd, err := route([]string{"api"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cmd.Type() != "server" {
-		t.Errorf("Type() = %q, want %q", cmd.Type(), "server")
+	if cmd.Type() != "api" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "api")
 	}
 }
 
@@ -198,9 +198,9 @@ func TestRoute_HelpFlagsRouteToHelpCommand(t *testing.T) {
 		args      []string
 		helpTopic string
 	}{
-		{name: "server help", args: []string{"server", "--help"}, helpTopic: "server"},
-		{name: "server logs help", args: []string{"server", "logs", "--help"}, helpTopic: "server logs"},
-		{name: "server health short help", args: []string{"server", "health", "-h"}, helpTopic: "server health"},
+		{name: "api help", args: []string{"api", "--help"}, helpTopic: "api"},
+		{name: "api logs help", args: []string{"api", "logs", "--help"}, helpTopic: "api logs"},
+		{name: "api health short help", args: []string{"api", "health", "-h"}, helpTopic: "api health"},
 		{name: "start help", args: []string{"start", "--help"}, helpTopic: "start"},
 		{name: "run start help", args: []string{"run", "start", "--help"}, helpTopic: "run start"},
 		{name: "token create help", args: []string{"token", "create", "--help"}, helpTopic: "token create"},
@@ -233,7 +233,7 @@ func TestIsBuiltinCommand(t *testing.T) {
 		cmd  string
 		want bool
 	}{
-		{"server", true},
+		{"api", true},
 		{"mcp", true},
 		{"help", true},
 		{"run", true},
@@ -271,6 +271,8 @@ func TestRoute_DreamCommand(t *testing.T) {
 		{"dream project", []string{"dream", "brain-api"}, "dream", "brain-api"},
 		{"dream enable", []string{"dream", "brain-api", "--enable"}, "dream", "brain-api"},
 		{"dream disable", []string{"dream", "brain-api", "--disable"}, "dream", "brain-api"},
+		{"dream now", []string{"dream", "brain-api", "--now"}, "dream", "brain-api"},
+		{"dream enable now", []string{"dream", "brain-api", "--enable", "--now"}, "dream", "brain-api"},
 		{"dream help", []string{"dream", "--help"}, "help", ""},
 	}
 
@@ -288,6 +290,18 @@ func TestRoute_DreamCommand(t *testing.T) {
 			if dc, ok := cmd.(*commands.DreamCommand); ok {
 				if dc.Project != tt.wantProject {
 					t.Errorf("Project = %q, want %q", dc.Project, tt.wantProject)
+				}
+			}
+
+			// Verify --now flag on DreamCommand
+			if dc, ok := cmd.(*commands.DreamCommand); ok && tt.name == "dream now" {
+				if !dc.Flags.Now {
+					t.Errorf("Flags.Now = false, want true")
+				}
+			}
+			if dc, ok := cmd.(*commands.DreamCommand); ok && tt.name == "dream enable now" {
+				if !dc.Flags.Now || !dc.Flags.Enable {
+					t.Errorf("Flags = {Now:%v, Enable:%v}, want {Now:true, Enable:true}", dc.Flags.Now, dc.Flags.Enable)
 				}
 			}
 

@@ -65,3 +65,9 @@ type SessionDiscoveredMsg struct {
 	TaskPath  string
 	SessionID string
 }
+
+// DreamContentMsg is sent when dream content has been fetched from the API.
+type DreamContentMsg struct {
+	Content string
+	Error   error
+}

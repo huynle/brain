@@ -17,6 +17,14 @@ type KeyMap struct {
 	PrevTab key.Binding
 	NextTab key.Binding
 
+	// Content tabs (Tasks / Dream)
+	PrevContentTab key.Binding
+	NextContentTab key.Binding
+
+	// Panel toggles (configurable)
+	ToggleLogs   key.Binding
+	ToggleDetail key.Binding
+
 	// Actions
 	Refresh  key.Binding
 	Quit     key.Binding
@@ -71,5 +79,53 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("P"),
 			key.WithHelp("P", "Pause All"),
 		),
+		PrevContentTab: key.NewBinding(
+			key.WithKeys("H"),
+			key.WithHelp("H/L", "Content Tab"),
+		),
+		NextContentTab: key.NewBinding(
+			key.WithKeys("L"),
+			key.WithHelp("H/L", "Content Tab"),
+		),
+		ToggleLogs: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "Logs"),
+		),
+		ToggleDetail: key.NewBinding(
+			key.WithKeys("T"),
+			key.WithHelp("T", "Detail"),
+		),
 	}
+}
+
+// KeyMapFromConfig returns a KeyMap with defaults overridden by user config.
+// Recognized config keys: prev_tab, next_tab, toggle_logs, toggle_detail.
+// Unknown keys are silently ignored.
+func KeyMapFromConfig(defaults KeyMap, overrides map[string]string) KeyMap {
+	km := defaults
+	for name, keyStr := range overrides {
+		switch name {
+		case "prev_tab":
+			km.PrevContentTab = key.NewBinding(
+				key.WithKeys(keyStr),
+				key.WithHelp(keyStr, "Content Tab"),
+			)
+		case "next_tab":
+			km.NextContentTab = key.NewBinding(
+				key.WithKeys(keyStr),
+				key.WithHelp(keyStr, "Content Tab"),
+			)
+		case "toggle_logs":
+			km.ToggleLogs = key.NewBinding(
+				key.WithKeys(keyStr),
+				key.WithHelp(keyStr, "Logs"),
+			)
+		case "toggle_detail":
+			km.ToggleDetail = key.NewBinding(
+				key.WithKeys(keyStr),
+				key.WithHelp(keyStr, "Detail"),
+			)
+		}
+	}
+	return km
 }

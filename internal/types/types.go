@@ -349,6 +349,9 @@ type ListEntriesRequest struct {
 	Offset    int    `json:"offset,omitempty"`
 	Global    *bool  `json:"global,omitempty"`
 	SortBy    string `json:"sortBy,omitempty"`
+	Project   string `json:"project,omitempty"`
+	SortOrder string `json:"sortOrder,omitempty"`
+	Priority  string `json:"priority,omitempty"`
 }
 
 // ListEntriesResponse is the response for GET /entries.
@@ -380,6 +383,9 @@ type SearchRequest struct {
 	Tags      []string `json:"tags,omitempty"`
 	Limit     *int     `json:"limit,omitempty"`
 	Global    *bool    `json:"global,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	Strategy  string   `json:"strategy,omitempty"`
+	Priority  string   `json:"priority,omitempty"`
 }
 
 // SearchResult is a single search result.

@@ -32,14 +32,14 @@ func main() {
 // redirectLegacyInvocation redirects legacy binary names to unified commands.
 //
 // Supports backward compatibility via symlinks:
-//   - brain-api [flags] → brain server [flags]
+//   - brain-api [flags] → brain api [flags]
 //   - brain-mcp [flags] → brain mcp [flags]
 //   - brain [...] → brain [...] (no change)
 func redirectLegacyInvocation(invoked string, args []string) []string {
 	switch invoked {
 	case "brain-api":
-		// brain-api [flags] → brain server [flags]
-		return append([]string{"server"}, args...)
+		// brain-api [flags] → brain api [flags]
+		return append([]string{"api"}, args...)
 
 	case "brain-mcp":
 		// brain-mcp [flags] → brain mcp [flags]

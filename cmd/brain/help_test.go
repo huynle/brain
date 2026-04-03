@@ -30,7 +30,7 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 		wants []string
 	}{
 		{name: "main", topic: "", wants: []string{"brain - Unified Brain CLI", "CORE COMMANDS:", "RUNNER COMMANDS:"}},
-		{name: "server", topic: "server", wants: []string{"brain server", "SUBCOMMANDS:", "brain help server logs"}},
+		{name: "api", topic: "api", wants: []string{"brain api", "SUBCOMMANDS:", "brain help api logs"}},
 		{name: "start", topic: "start", wants: []string{"brain start", "--max-parallel", "--feature-id"}},
 		{name: "run", topic: "run", wants: []string{"brain run", "SUBCOMMANDS:", "run start"}},
 		{name: "mcp", topic: "mcp", wants: []string{"brain mcp", "--api-url"}},
@@ -61,8 +61,8 @@ func TestShowHelp_SubTopicsAndAliases(t *testing.T) {
 		topic string
 		want  string
 	}{
-		{name: "server logs", topic: "server logs", want: "--since <duration>"},
-		{name: "server health", topic: "server health", want: "--wait"},
+		{name: "api logs", topic: "api logs", want: "--since <duration>"},
+		{name: "api health", topic: "api health", want: "--wait"},
 		{name: "token create", topic: "token create", want: "--name <name>"},
 		{name: "run start", topic: "run start", want: "brain run start"},
 		{name: "runner alias", topic: "runner", want: "brain run"},

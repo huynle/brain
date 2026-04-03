@@ -4,12 +4,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
 // HandleCreateEntry handles POST /entries.
@@ -117,6 +119,39 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Content negotiation based on Accept header
+	accept := r.Header.Get("Accept")
+
+	if strings.Contains(accept, "text/markdown") || strings.Contains(accept, "text/plain") {
+		// Return raw markdown body only with metadata in X-Brain-* headers
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("X-Brain-Entry-Id", entry.ID)
+		w.Header().Set("X-Brain-Entry-Path", entry.Path)
+		w.Header().Set("X-Brain-Entry-Title", entry.Title)
+		w.Header().Set("X-Brain-Entry-Status", entry.Status)
+		w.Header().Set("X-Brain-Entry-Type", entry.Type)
+		if len(entry.Tags) > 0 {
+			w.Header().Set("X-Brain-Entry-Tags", strings.Join(entry.Tags, ","))
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(entry.Content))
+		return
+	} else if strings.Contains(accept, "text/x-brain-full") {
+		// Return full file content (frontmatter + body)
+		fullContent, err := h.brain.RecallFull(r.Context(), id)
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+		w.Header().Set("Content-Type", "text/x-brain-full; charset=utf-8")
+		w.Header().Set("X-Brain-Entry-Id", entry.ID)
+		w.Header().Set("X-Brain-Entry-Path", entry.Path)
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(fullContent))
+		return
+	}
+
+	// Default: JSON (existing behavior, unchanged)
 	WriteJSON(w, http.StatusOK, entry)
 }
 
@@ -144,6 +179,18 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority", sortBy),
 		})
 	}
+	if sortOrder := q.Get("sortOrder"); sortOrder != "" && sortOrder != "asc" && sortOrder != "desc" {
+		details = append(details, types.ValidationDetail{
+			Field:   "sortOrder",
+			Message: fmt.Sprintf("invalid sortOrder %q, must be one of: asc, desc", sortOrder),
+		})
+	}
+	if priority := q.Get("priority"); priority != "" && !isValidPriority(priority) {
+		details = append(details, types.ValidationDetail{
+			Field:   "priority",
+			Message: fmt.Sprintf("invalid priority %q, must be one of: high, medium, low", priority),
+		})
+	}
 
 	if len(details) > 0 {
 		WriteValidationError(w, details)
@@ -157,6 +204,9 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		Filename:  q.Get("filename"),
 		Tags:      q.Get("tags"),
 		SortBy:    q.Get("sortBy"),
+		Project:   q.Get("project"),
+		SortOrder: q.Get("sortOrder"),
+		Priority:  q.Get("priority"),
 	}
 
 	if v := q.Get("limit"); v != "" {
@@ -193,9 +243,36 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req types.UpdateEntryRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
-		return
+	contentType := r.Header.Get("Content-Type")
+
+	if strings.Contains(contentType, "text/markdown") || strings.Contains(contentType, "text/plain") {
+		// Raw markdown/text body = full content replacement
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+			return
+		}
+		content := string(bodyBytes)
+		req = types.UpdateEntryRequest{Content: &content}
+	} else if strings.Contains(contentType, "text/x-brain-full") {
+		// Full file with YAML frontmatter + body
+		bodyBytes, err := io.ReadAll(r.Body)
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+			return
+		}
+		doc, err := frontmatter.Parse(string(bodyBytes))
+		if err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to parse frontmatter: "+err.Error())
+			return
+		}
+		req = mapFrontmatterToUpdateRequest(doc.Frontmatter, doc.Body)
+	} else {
+		// Default: JSON (existing behavior, unchanged)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+			return
+		}
 	}
 
 	// Validate optional enum fields
@@ -448,4 +525,81 @@ func isValidSortBy(s string) bool {
 		return true
 	}
 	return false
+}
+
+// isValidPriority checks if a priority value is valid.
+func isValidPriority(p string) bool {
+	return p == "high" || p == "medium" || p == "low"
+}
+
+// strPtr returns a pointer to the given string, or nil if empty.
+func strPtr(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
+}
+
+// mapFrontmatterToUpdateRequest converts parsed frontmatter fields and body
+// into an UpdateEntryRequest. Only non-empty/non-nil fields are set so that
+// the update is a partial merge (matching JSON PATCH semantics).
+func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) types.UpdateEntryRequest {
+	req := types.UpdateEntryRequest{
+		Title:              strPtr(fm.Title),
+		Status:             strPtr(fm.Status),
+		Priority:           strPtr(fm.Priority),
+		FeatureID:          strPtr(fm.FeatureID),
+		FeaturePriority:    strPtr(fm.FeaturePriority),
+		GitBranch:          strPtr(fm.GitBranch),
+		TargetWorkdir:      strPtr(fm.TargetWorkdir),
+		MergeTargetBranch:  strPtr(fm.MergeTargetBranch),
+		MergePolicy:        strPtr(fm.MergePolicy),
+		MergeStrategy:      strPtr(fm.MergeStrategy),
+		RemoteBranchPolicy: strPtr(fm.RemoteBranchPolicy),
+		ExecutionMode:      strPtr(fm.ExecutionMode),
+		DirectPrompt:       strPtr(fm.DirectPrompt),
+		Agent:              strPtr(fm.Agent),
+		Model:              strPtr(fm.Model),
+		Schedule:           strPtr(fm.Schedule),
+	}
+
+	// Body → Content
+	if body != "" {
+		req.Content = &body
+	}
+
+	// Tags (slice — set if non-empty)
+	if len(fm.Tags) > 0 {
+		req.Tags = fm.Tags
+	}
+
+	// DependsOn (pointer to slice)
+	if len(fm.DependsOn) > 0 {
+		deps := fm.DependsOn
+		req.DependsOn = &deps
+	}
+
+	// FeatureDependsOn (pointer to slice)
+	if len(fm.FeatureDependsOn) > 0 {
+		fdeps := fm.FeatureDependsOn
+		req.FeatureDependsOn = &fdeps
+	}
+
+	// Boolean pointer fields — only set when present in frontmatter
+	if fm.ScheduleEnabled != nil {
+		req.ScheduleEnabled = fm.ScheduleEnabled
+	}
+	if fm.CompleteOnIdle != nil {
+		req.CompleteOnIdle = fm.CompleteOnIdle
+	}
+	if fm.OpenPRBeforeMerge != nil {
+		req.OpenPRBeforeMerge = fm.OpenPRBeforeMerge
+	}
+
+	// Integer pointer fields
+	if fm.MaxRuns != nil {
+		req.MaxRuns = fm.MaxRuns
+	}
+
+	return req
 }

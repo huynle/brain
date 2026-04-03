@@ -763,21 +763,21 @@ func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
 		t.Fatal("expected logsVisible to be false initially")
 	}
 
-	// Press 'L' to toggle logs on
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
+	// Press 'l' to toggle logs on
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
 	if !model.logsVisible {
-		t.Error("expected logsVisible to be true after 'L' press")
+		t.Error("expected logsVisible to be true after 'l' press")
 	}
 
-	// Press 'L' again to toggle logs off
+	// Press 'l' again to toggle logs off
 	updated, _ = model.Update(msg)
 	model = updated.(Model)
 
 	if model.logsVisible {
-		t.Error("expected logsVisible to be false after second 'L' press")
+		t.Error("expected logsVisible to be false after second 'l' press")
 	}
 }
 

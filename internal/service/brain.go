@@ -722,9 +722,154 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 }
 
 // BulkUpdate applies updates to multiple entries in a single request.
-// TODO: Full implementation will be added in a subsequent task.
+// Supports two modes:
+//   - Filter mode: Filter + Updates selects entries by criteria, applies shared updates.
+//   - Explicit mode: Entries provides per-entry paths with individual updates.
+//
+// Safety cap (default 100, max 100) limits how many entries are affected.
+// DryRun returns matched entries without applying changes.
+// Partial failures are collected; successful updates are NOT rolled back.
 func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
-	return nil, fmt.Errorf("BulkUpdate not yet implemented")
+	// 1. Validate request: must be (filter+updates) XOR entries, not both.
+	hasFilter := req.Filter != nil
+	hasEntries := len(req.Entries) > 0
+	if hasFilter && hasEntries {
+		return nil, fmt.Errorf("cannot specify both filter and entries")
+	}
+	if !hasFilter && !hasEntries {
+		return nil, fmt.Errorf("must specify either filter or entries")
+	}
+	if hasFilter && req.Updates == nil {
+		return nil, fmt.Errorf("updates required when using filter mode")
+	}
+
+	// 2. Apply safety cap: default 100, max 100.
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// 3. Resolve target entries.
+	type target struct {
+		path    string
+		updates types.UpdateEntryRequest
+	}
+	var targets []target
+
+	if hasFilter {
+		// Filter mode: query storage using existing List functionality.
+		listReq := types.ListEntriesRequest{
+			Limit: limit,
+		}
+		if req.Filter.FeatureID != nil {
+			listReq.FeatureID = *req.Filter.FeatureID
+		}
+		if req.Filter.Project != nil {
+			listReq.Project = *req.Filter.Project
+		}
+		if req.Filter.Type != nil {
+			listReq.Type = *req.Filter.Type
+		}
+		if req.Filter.Status != nil {
+			listReq.Status = *req.Filter.Status
+		}
+		if req.Filter.Priority != nil {
+			listReq.Priority = *req.Filter.Priority
+		}
+		if len(req.Filter.Tags) > 0 {
+			listReq.Tags = strings.Join(req.Filter.Tags, ",")
+		}
+
+		listResp, err := s.List(ctx, listReq)
+		if err != nil {
+			return nil, fmt.Errorf("filter query: %w", err)
+		}
+
+		for _, entry := range listResp.Entries {
+			targets = append(targets, target{
+				path:    entry.Path,
+				updates: *req.Updates,
+			})
+		}
+	} else {
+		// Explicit mode: use provided entries directly.
+		for _, entry := range req.Entries {
+			targets = append(targets, target{
+				path:    entry.Path,
+				updates: entry.Updates,
+			})
+		}
+	}
+
+	// 4. Cap results at limit.
+	if len(targets) > limit {
+		targets = targets[:limit]
+	}
+
+	// 5. Dry run: return matched entries without changes.
+	if req.DryRun {
+		results := make([]types.BulkUpdateResult, 0, len(targets))
+		for _, t := range targets {
+			// Resolve each entry to get ID and title.
+			row, err := s.resolveEntry(ctx, t.path)
+			if err != nil || row == nil {
+				results = append(results, types.BulkUpdateResult{
+					Path:   t.path,
+					Status: "error",
+					Error:  "entry not found",
+				})
+				continue
+			}
+			results = append(results, types.BulkUpdateResult{
+				Path:   row.Path,
+				ID:     row.ShortID,
+				Title:  row.Title,
+				Status: "ok",
+			})
+		}
+		return &types.BulkUpdateResponse{
+			Total:   len(results),
+			DryRun:  true,
+			Results: results,
+		}, nil
+	}
+
+	// 6. Apply updates: loop entries, call existing Update() per entry.
+	results := make([]types.BulkUpdateResult, 0, len(targets))
+	updated := 0
+	failed := 0
+
+	for _, t := range targets {
+		entry, err := s.Update(ctx, t.path, t.updates)
+		if err != nil {
+			failed++
+			results = append(results, types.BulkUpdateResult{
+				Path:   t.path,
+				Status: "error",
+				Error:  err.Error(),
+			})
+			continue
+		}
+		updated++
+		results = append(results, types.BulkUpdateResult{
+			Path:   entry.Path,
+			ID:     entry.ID,
+			Title:  entry.Title,
+			Status: "ok",
+		})
+	}
+
+	// 7. Return aggregate response.
+	return &types.BulkUpdateResponse{
+		Updated: updated,
+		Failed:  failed,
+		Total:   len(results),
+		DryRun:  false,
+		Results: results,
+	}, nil
 }
 
 // =============================================================================

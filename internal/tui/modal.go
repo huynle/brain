@@ -37,6 +37,15 @@ type DestructiveModal interface {
 	IsDestructive() bool
 }
 
+// MouseModal is an optional interface that modals can implement
+// to receive mouse events (clicks on tabs, field rows, etc.).
+type MouseModal interface {
+	// HandleMouse handles a mouse event within the modal content area.
+	// x, y are relative to the modal content origin (0,0 = top-left of content).
+	// Returns true if the event was handled, and an optional command.
+	HandleMouse(msg tea.MouseMsg, x, y int) (handled bool, cmd tea.Cmd)
+}
+
 // ModalManager manages modal lifecycle and rendering.
 type ModalManager struct {
 	activeModal  Modal
@@ -147,6 +156,81 @@ func (m ModalManager) Update(msg tea.Msg) (ModalManager, tea.Cmd) {
 	m.activeModal = newModal
 
 	return m, cmd
+}
+
+// HandleMouse routes mouse events to the active modal if it implements MouseModal.
+// screenW, screenH are the terminal dimensions needed to compute content-relative coordinates.
+// Returns true if the event was handled.
+func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool, tea.Cmd) {
+	if m.activeModal == nil {
+		return false, nil
+	}
+
+	// Check if the modal supports mouse events
+	mm, ok := m.activeModal.(MouseModal)
+	if !ok {
+		return false, nil
+	}
+
+	// Only handle left clicks
+	if msg.Type != tea.MouseLeft {
+		return false, nil
+	}
+
+	// Compute modal content area origin on screen.
+	// The modal is centered in the terminal with:
+	//   border: 1 cell each side
+	//   padding: 2 cells each side (horizontal), 1 cell each side (vertical)
+	//   title: rendered above content (title line + blank line = 2 lines)
+	modalW := m.activeModal.Width()
+	maxW := screenW - 6 - 2
+	if modalW > maxW {
+		modalW = maxW
+	}
+	if modalW < 20 {
+		modalW = 20
+	}
+
+	// Total box width = content width + border (2) + horizontal padding (4)
+	boxW := modalW + 6
+
+	// Compute visible content height (same as in View)
+	title := m.activeModal.Title()
+	titleLines := 0
+	if title != "" {
+		titleLines = 2 // title + blank line
+	}
+	overhead := 4 + titleLines // border (2) + vertical padding (2) + title
+	maxContentH := screenH - overhead
+	if maxContentH < 3 {
+		maxContentH = 3
+	}
+	visibleContentH := m.contentLines
+	if visibleContentH > maxContentH {
+		visibleContentH = maxContentH
+	}
+
+	// Total box height = visible content + title + border (2) + vertical padding (2)
+	boxH := visibleContentH + titleLines + 4
+
+	// Modal box is centered on screen
+	boxX := (screenW - boxW) / 2
+	boxY := (screenH - boxH) / 2
+
+	// Content origin inside the box: border (1) + padding (2) horizontally, border (1) + padding (1) + title vertically
+	contentX := boxX + 3              // border(1) + padding(2)
+	contentY := boxY + 2 + titleLines // border(1) + padding(1) + title lines
+
+	// Convert screen coords to content-relative coords
+	relX := msg.X - contentX
+	relY := msg.Y - contentY + m.scrollOffset // account for scroll
+
+	// Check if click is within the modal box at all
+	if msg.X < boxX || msg.X >= boxX+boxW || msg.Y < boxY || msg.Y >= boxY+boxH {
+		return false, nil
+	}
+
+	return mm.HandleMouse(msg, relX, relY)
 }
 
 // HandleKey routes key presses to the active modal.

@@ -643,3 +643,190 @@ func TestSearchNotes_UnknownStrategyDefaultsToFTS(t *testing.T) {
 		t.Fatal("expected results with unknown strategy (should default to FTS)")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// SearchNotes: filter by project_id
+// ---------------------------------------------------------------------------
+
+func TestSearchNotes_FilterByProjectID(t *testing.T) {
+	s := newTestStorage(t)
+	seedSearchNotes(t, s)
+
+	// All seeded notes have "Go" or "TypeScript" in body.
+	// "myproj" notes: go-plan, ts-summary, go-task, perf-report
+	// "other" notes: rust-idea
+	results, err := s.SearchNotes(context.Background(), "Go", &SearchOptions{
+		ProjectID: "myproj",
+	})
+	if err != nil {
+		t.Fatalf("SearchNotes with ProjectID error: %v", err)
+	}
+	for _, r := range results {
+		if r.ProjectID == nil || *r.ProjectID != "myproj" {
+			t.Errorf("expected project_id=myproj, got %v for path %s", r.ProjectID, r.Path)
+		}
+	}
+	// rust-idea mentions "Go" but is in project "other" — should be excluded
+	for _, r := range results {
+		if r.ShortID == "rust9012" {
+			t.Error("rust-idea should be excluded by ProjectID=myproj filter")
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SearchNotes: filter by feature_id
+// ---------------------------------------------------------------------------
+
+func TestSearchNotes_FilterByFeatureID(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// Seed notes with feature_id set
+	strPtr := func(s string) *string { return &s }
+	notes := []*NoteRow{
+		{
+			Path: "projects/proj/task/a.md", ShortID: "feat0001",
+			Title: "Feature A Task", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+			ProjectID: strPtr("proj"), FeatureID: strPtr("auth"),
+		},
+		{
+			Path: "projects/proj/task/b.md", ShortID: "feat0002",
+			Title: "Feature B Task", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+			ProjectID: strPtr("proj"), FeatureID: strPtr("billing"),
+		},
+	}
+	for _, n := range notes {
+		body := "This is a task for the feature"
+		n.Body = &body
+		if _, err := s.InsertNote(ctx, n); err != nil {
+			t.Fatalf("insert note: %v", err)
+		}
+	}
+
+	results, err := s.SearchNotes(ctx, "task", &SearchOptions{
+		FeatureID: "auth",
+	})
+	if err != nil {
+		t.Fatalf("SearchNotes with FeatureID error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ShortID != "feat0001" {
+		t.Errorf("expected feat0001, got %s", results[0].ShortID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SearchNotes: filter by priority
+// ---------------------------------------------------------------------------
+
+func TestSearchNotes_FilterByPriority(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	strPtr := func(s string) *string { return &s }
+	notes := []*NoteRow{
+		{
+			Path: "projects/proj/task/hi.md", ShortID: "prio0001",
+			Title: "High Priority Task", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+			Priority: strPtr("high"),
+		},
+		{
+			Path: "projects/proj/task/lo.md", ShortID: "prio0002",
+			Title: "Low Priority Task", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+			Priority: strPtr("low"),
+		},
+	}
+	for _, n := range notes {
+		body := "This is a priority task"
+		n.Body = &body
+		if _, err := s.InsertNote(ctx, n); err != nil {
+			t.Fatalf("insert note: %v", err)
+		}
+	}
+
+	results, err := s.SearchNotes(ctx, "priority task", &SearchOptions{
+		Priority: "high",
+	})
+	if err != nil {
+		t.Fatalf("SearchNotes with Priority error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].ShortID != "prio0001" {
+		t.Errorf("expected prio0001, got %s", results[0].ShortID)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SearchNotes: filter by tags
+// ---------------------------------------------------------------------------
+
+func TestSearchNotes_FilterByTags(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	strPtr := func(s string) *string { return &s }
+	notes := []*NoteRow{
+		{
+			Path: "projects/proj/task/tagged1.md", ShortID: "tags0001",
+			Title: "Tagged Task One", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+		},
+		{
+			Path: "projects/proj/task/tagged2.md", ShortID: "tags0002",
+			Title: "Tagged Task Two", Metadata: "{}",
+			Type: strPtr("task"), Status: strPtr("active"),
+		},
+	}
+	for _, n := range notes {
+		body := "This is a tagged task"
+		n.Body = &body
+		if _, err := s.InsertNote(ctx, n); err != nil {
+			t.Fatalf("insert note: %v", err)
+		}
+	}
+
+	// Set tags
+	if err := s.SetTags(ctx, "projects/proj/task/tagged1.md", []string{"go", "api"}); err != nil {
+		t.Fatalf("set tags: %v", err)
+	}
+	if err := s.SetTags(ctx, "projects/proj/task/tagged2.md", []string{"go", "cli"}); err != nil {
+		t.Fatalf("set tags: %v", err)
+	}
+
+	// Filter by single tag "api" — should match only tagged1
+	results, err := s.SearchNotes(ctx, "tagged task", &SearchOptions{
+		Tags: []string{"api"},
+	})
+	if err != nil {
+		t.Fatalf("SearchNotes with Tags error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for tag 'api', got %d", len(results))
+	}
+	if results[0].ShortID != "tags0001" {
+		t.Errorf("expected tags0001, got %s", results[0].ShortID)
+	}
+
+	// Filter by tags ["go", "cli"] — should match only tagged2 (AND logic)
+	results, err = s.SearchNotes(ctx, "tagged task", &SearchOptions{
+		Tags: []string{"go", "cli"},
+	})
+	if err != nil {
+		t.Fatalf("SearchNotes with multiple Tags error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for tags [go, cli], got %d", len(results))
+	}
+	if results[0].ShortID != "tags0002" {
+		t.Errorf("expected tags0002, got %s", results[0].ShortID)
+	}
+}

@@ -1585,8 +1585,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseMsg processes mouse input.
 func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	// If modal is open, don't handle mouse events in the main UI
+	// If modal is open, forward mouse events to the modal
 	if m.modalManager.IsOpen() {
+		handled, cmd := m.modalManager.HandleMouse(msg, m.width, m.height)
+		if handled {
+			return m, cmd
+		}
 		return m, nil
 	}
 
@@ -1608,6 +1612,43 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+
+	// Click on content tab bar (the row just above mainContentStartY)
+	contentTabBarY := mainContentStartY - 1
+	if y == contentTabBarY {
+		// Layout: " " + " Tasks " + "  " + " Dream "
+		// Calculate hit zones from actual text widths
+		const tabPadding = 1 // leading " "
+		const tabGap = 2     // "  " between tabs
+		tasksText := " Tasks "
+		dreamText := " Dream "
+
+		tasksStart := tabPadding
+		tasksEnd := tasksStart + len(tasksText)
+		dreamStart := tasksEnd + tabGap
+		dreamEnd := dreamStart + len(dreamText)
+
+		var newTab ContentTab = m.activeContentTab
+		if x >= tasksStart && x < tasksEnd {
+			newTab = ContentTabTasks
+		} else if x >= dreamStart && x < dreamEnd {
+			newTab = ContentTabDream
+		}
+
+		if newTab != m.activeContentTab {
+			m.activeContentTab = newTab
+			m.helpBar.ActiveContentTab = m.activeContentTab
+			if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
+				m.dreamViewer.SetLoading(true)
+				project := m.config.Project
+				if m.activeProjectID != "" && m.activeProjectID != "all" {
+					project = m.activeProjectID
+				}
+				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			}
+		}
+		return m, nil
+	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
 		// Click in top task panel (full-width in current layout)
@@ -1705,7 +1746,8 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		filterBarHeight = lipgloss.Height(filterBarView)
 	}
 
-	fixedUIHeight := statusBarHeight + projectTabsHeight + helpBarHeight + statusMessageHeight + filterBarHeight
+	contentTabBarHeight := 1 // content tab bar always present
+	fixedUIHeight := statusBarHeight + projectTabsHeight + contentTabBarHeight + helpBarHeight + statusMessageHeight + filterBarHeight
 	mainHeight := m.height - fixedUIHeight
 	if mainHeight < 3 {
 		mainHeight = 3
@@ -1739,7 +1781,7 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		}
 	}
 
-	mainContentStartY = statusBarHeight + projectTabsHeight
+	mainContentStartY = statusBarHeight + projectTabsHeight + contentTabBarHeight
 	taskPanelOuterHeight = topHeight
 	taskInnerHeight = topHeight - 2
 	if taskInnerHeight < 1 {
@@ -2150,6 +2192,10 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
 func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activeContentTab == ContentTabDream {
+		m.dreamViewer.ScrollUp(3)
+		return m, nil
+	}
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveUp()
 		m.syncTaskDetail()
@@ -2161,6 +2207,10 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
 func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.activeContentTab == ContentTabDream {
+		m.dreamViewer.ScrollDown(3)
+		return m, nil
+	}
 	if m.activePanel == PanelTasks {
 		m.taskTree.MoveDown()
 		m.syncTaskDetail()

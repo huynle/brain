@@ -179,6 +179,18 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority", sortBy),
 		})
 	}
+	if sortOrder := q.Get("sortOrder"); sortOrder != "" && sortOrder != "asc" && sortOrder != "desc" {
+		details = append(details, types.ValidationDetail{
+			Field:   "sortOrder",
+			Message: fmt.Sprintf("invalid sortOrder %q, must be one of: asc, desc", sortOrder),
+		})
+	}
+	if priority := q.Get("priority"); priority != "" && !isValidPriority(priority) {
+		details = append(details, types.ValidationDetail{
+			Field:   "priority",
+			Message: fmt.Sprintf("invalid priority %q, must be one of: high, medium, low", priority),
+		})
+	}
 
 	if len(details) > 0 {
 		WriteValidationError(w, details)
@@ -192,6 +204,9 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		Filename:  q.Get("filename"),
 		Tags:      q.Get("tags"),
 		SortBy:    q.Get("sortBy"),
+		Project:   q.Get("project"),
+		SortOrder: q.Get("sortOrder"),
+		Priority:  q.Get("priority"),
 	}
 
 	if v := q.Get("limit"); v != "" {
@@ -510,6 +525,11 @@ func isValidSortBy(s string) bool {
 		return true
 	}
 	return false
+}
+
+// isValidPriority checks if a priority value is valid.
+func isValidPriority(p string) bool {
+	return p == "high" || p == "medium" || p == "low"
 }
 
 // strPtr returns a pointer to the given string, or nil if empty.

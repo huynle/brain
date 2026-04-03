@@ -67,6 +67,10 @@ type SearchOptions struct {
 	PathPrefix string
 	Type       string
 	Status     string
+	ProjectID  string
+	FeatureID  string
+	Tags       []string
+	Priority   string
 }
 
 // ListOptions configures list/filter behavior.
@@ -78,6 +82,7 @@ type ListOptions struct {
 	PathPrefix string
 	Tag        string
 	Tags       []string
+	Priority   string
 	SortBy     string // "modified", "created", "priority", "title"
 	SortOrder  string // "asc", "desc"
 	Limit      int

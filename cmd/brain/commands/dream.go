@@ -1,12 +1,15 @@
 package commands
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -68,9 +71,9 @@ func (c *DreamCommand) Execute() error {
 		return c.disableDream()
 	}
 
-	// No flags: show dream content (or list)
+	// No flags: show dream content (or list all dream-enabled projects)
 	if c.Project == "" {
-		return fmt.Errorf("project is required for dream command")
+		return c.listDreamProjects()
 	}
 	return c.showDream()
 }
@@ -243,28 +246,184 @@ Unresolved questions, proposed features, exploration candidates.
 		c.Project, projectFilter)
 }
 
-// enableDream enables dream mode for this project.
+// apiRequest makes an authenticated HTTP request to the Brain API.
+func (c *DreamCommand) apiRequest(method, path string, body io.Reader) ([]byte, int, error) {
+	reqURL := c.apiURL() + path
+	req, err := http.NewRequest(method, reqURL, body)
+	if err != nil {
+		return nil, 0, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, resp.StatusCode, fmt.Errorf("read response: %w", err)
+	}
+	return data, resp.StatusCode, nil
+}
+
+// enableDream enables dream mode for this project via POST /api/v1/monitors.
 func (c *DreamCommand) enableDream() error {
 	if c.Project == "" {
 		return fmt.Errorf("project is required with --enable")
 	}
-	// TODO: Implement enable logic (task 1 of 3 in the feature plan)
-	fmt.Printf("Dream mode enabled for %q\n", c.Project)
+
+	reqBody := map[string]interface{}{
+		"template_id": "dream",
+		"scope_type":  "project",
+		"project":     c.Project,
+	}
+	if c.Flags.Schedule != "" {
+		reqBody["schedule"] = c.Flags.Schedule
+	}
+
+	bodyBytes, _ := json.Marshal(reqBody)
+	data, status, err := c.apiRequest("POST", "/api/v1/monitors", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("enable dream: %w", err)
+	}
+
+	if status == http.StatusConflict {
+		return fmt.Errorf("dream mode is already enabled for project %q", c.Project)
+	}
+	if status != http.StatusCreated && status != http.StatusOK {
+		return fmt.Errorf("enable dream: API returned status %d: %s", status, string(data))
+	}
+
+	fmt.Printf("Dream mode enabled for project %q\n", c.Project)
 	return nil
 }
 
-// disableDream disables dream mode for this project.
+// disableDream disables dream mode for this project via DELETE /api/v1/monitors/by-scope.
 func (c *DreamCommand) disableDream() error {
 	if c.Project == "" {
 		return fmt.Errorf("project is required with --disable")
 	}
-	// TODO: Implement disable logic (task 3 of 3 in the feature plan)
-	fmt.Printf("Dream mode disabled for %q\n", c.Project)
+
+	reqBody := map[string]interface{}{
+		"templateId": "dream",
+		"scope": map[string]string{
+			"type":    "project",
+			"project": c.Project,
+		},
+	}
+	bodyBytes, _ := json.Marshal(reqBody)
+	_, status, err := c.apiRequest("DELETE", "/api/v1/monitors/by-scope", bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("disable dream: %w", err)
+	}
+
+	if status == http.StatusNotFound {
+		return fmt.Errorf("dream mode is not enabled for project %q", c.Project)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("disable dream: API returned status %d", status)
+	}
+
+	fmt.Printf("Dream mode disabled for project %q\n", c.Project)
+	return nil
+}
+
+// listDreamProjects lists all dream-enabled projects via GET /api/v1/monitors?template_id=dream.
+func (c *DreamCommand) listDreamProjects() error {
+	data, status, err := c.apiRequest("GET", "/api/v1/monitors?template_id=dream", nil)
+	if err != nil {
+		return fmt.Errorf("list dream projects: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("list dream projects: API returned status %d", status)
+	}
+
+	var resp struct {
+		Monitors []struct {
+			ID    string `json:"id"`
+			Scope struct {
+				Type    string `json:"type"`
+				Project string `json:"project"`
+			} `json:"scope"`
+			Enabled  bool   `json:"enabled"`
+			Schedule string `json:"schedule"`
+		} `json:"monitors"`
+	}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	if len(resp.Monitors) == 0 {
+		fmt.Println("No dream-enabled projects found")
+		fmt.Println()
+		fmt.Println("Enable dream mode:")
+		fmt.Println("  brain dream <project> --enable")
+		return nil
+	}
+
+	fmt.Println("Dream-Enabled Projects")
+	fmt.Println(strings.Repeat("─", 70))
+	fmt.Printf("%-25s %-25s %s\n", "Project", "Schedule", "Status")
+	fmt.Println(strings.Repeat("─", 70))
+
+	for _, m := range resp.Monitors {
+		project := m.Scope.Project
+		if project == "" {
+			project = "(all)"
+		}
+		schedule := m.Schedule
+		if schedule == "" {
+			schedule = "(default)"
+		}
+		status := "enabled"
+		if !m.Enabled {
+			status = "disabled"
+		}
+		fmt.Printf("%-25s %-25s %s\n", project, schedule, status)
+	}
+
+	fmt.Println(strings.Repeat("─", 70))
+	fmt.Printf("Total: %d project(s)\n", len(resp.Monitors))
 	return nil
 }
 
 // showDream displays dream content for the project.
 func (c *DreamCommand) showDream() error {
-	// TODO: Implement show/list dream content
-	return fmt.Errorf("dream content display not yet implemented")
+	listPath := fmt.Sprintf("/api/v1/entries?type=dream&project=%s", url.QueryEscape(c.Project))
+	data, status, err := c.apiRequest("GET", listPath, nil)
+	if err != nil {
+		return fmt.Errorf("list dream entries: %w", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("list dream entries: API returned status %d", status)
+	}
+
+	var listResp struct {
+		Entries []struct {
+			Path      string `json:"path"`
+			Title     string `json:"title"`
+			Content   string `json:"content"`
+			ProjectID string `json:"project_id"`
+		} `json:"entries"`
+	}
+	if err := json.Unmarshal(data, &listResp); err != nil {
+		return fmt.Errorf("parse list response: %w", err)
+	}
+
+	// Find matching entry for this project (content is included in list response)
+	for _, e := range listResp.Entries {
+		if e.ProjectID == c.Project || strings.Contains(e.Path, "projects/"+c.Project+"/") {
+			fmt.Println(e.Content)
+			return nil
+		}
+	}
+
+	fmt.Printf("No dream content found for project %q\n", c.Project)
+	fmt.Println()
+	fmt.Println("Dream content is generated when dream mode runs.")
+	fmt.Printf("  brain dream %s --enable --now\n", c.Project)
+	return nil
 }

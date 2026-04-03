@@ -935,9 +935,12 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		Type:      req.Type,
 		Status:    req.Status,
 		FeatureID: req.FeatureID,
+		ProjectID: req.Project,
 		Limit:     req.Limit,
 		Offset:    req.Offset,
 		SortBy:    req.SortBy,
+		SortOrder: req.SortOrder,
+		Priority:  req.Priority,
 	}
 
 	// Handle global vs project filtering
@@ -1007,8 +1010,13 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 	}
 
 	opts := &storage.SearchOptions{
-		Type:   req.Type,
-		Status: req.Status,
+		Type:      req.Type,
+		Status:    req.Status,
+		ProjectID: req.Project,
+		FeatureID: req.FeatureID,
+		Tags:      req.Tags,
+		Strategy:  req.Strategy,
+		Priority:  req.Priority,
 	}
 	if req.Limit != nil {
 		opts.Limit = *req.Limit

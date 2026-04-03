@@ -88,6 +88,20 @@ func (d *DreamViewer) GotoBottom() {
 	}
 }
 
+// ScrollUp scrolls the viewport up by n lines.
+func (d *DreamViewer) ScrollUp(n int) {
+	if d.ready {
+		d.viewport.LineUp(n)
+	}
+}
+
+// ScrollDown scrolls the viewport down by n lines.
+func (d *DreamViewer) ScrollDown(n int) {
+	if d.ready {
+		d.viewport.LineDown(n)
+	}
+}
+
 // SearchMode returns the current search mode.
 func (d *DreamViewer) SearchMode() DreamSearchMode {
 	return d.searchMode

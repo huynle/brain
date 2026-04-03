@@ -803,6 +803,188 @@ func TestMetadataModal_Update_HandlesFetchSuccess(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// metadataFetchedMsg Feature Field Population Tests
+// ============================================================================
+
+func TestMetadataModal_Update_PopulatesFeaturePriority(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:              "task123",
+				Status:          "pending",
+				FeaturePriority: "high",
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	if m.values[FieldFeaturePriority] != "high" {
+		t.Errorf("FieldFeaturePriority = %q, want 'high'", m.values[FieldFeaturePriority])
+	}
+}
+
+func TestMetadataModal_Update_PopulatesFeaturePriority_Empty(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:              "task123",
+				Status:          "pending",
+				FeaturePriority: "",
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	if m.values[FieldFeaturePriority] != "" {
+		t.Errorf("FieldFeaturePriority = %q, want empty string", m.values[FieldFeaturePriority])
+	}
+}
+
+func TestMetadataModal_Update_PopulatesFeatureDependsOn_CommaJoined(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:               "task123",
+				Status:           "pending",
+				FeatureDependsOn: []string{"feat-auth", "feat-db", "feat-ui"},
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	expected := "feat-auth, feat-db, feat-ui"
+	if m.values[FieldFeatureDependsOn] != expected {
+		t.Errorf("FieldFeatureDependsOn = %q, want %q", m.values[FieldFeatureDependsOn], expected)
+	}
+}
+
+func TestMetadataModal_Update_PopulatesFeatureDependsOn_SingleDep(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:               "task123",
+				Status:           "pending",
+				FeatureDependsOn: []string{"feat-auth"},
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	if m.values[FieldFeatureDependsOn] != "feat-auth" {
+		t.Errorf("FieldFeatureDependsOn = %q, want 'feat-auth'", m.values[FieldFeatureDependsOn])
+	}
+}
+
+func TestMetadataModal_Update_PopulatesFeatureDependsOn_Empty(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:               "task123",
+				Status:           "pending",
+				FeatureDependsOn: nil,
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	if m.values[FieldFeatureDependsOn] != "" {
+		t.Errorf("FieldFeatureDependsOn = %q, want empty string for nil deps", m.values[FieldFeatureDependsOn])
+	}
+}
+
+func TestMetadataModal_Update_PopulatesFeatureDependsOn_EmptySlice(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:               "task123",
+				Status:           "pending",
+				FeatureDependsOn: []string{},
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	if m.values[FieldFeatureDependsOn] != "" {
+		t.Errorf("FieldFeatureDependsOn = %q, want empty string for empty slice", m.values[FieldFeatureDependsOn])
+	}
+}
+
+func TestMetadataModal_Update_PopulatesBothFeatureFields(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	fetchedMsg := metadataFetchedMsg{
+		entries: []*types.BrainEntry{
+			{
+				ID:               "task123",
+				Status:           "active",
+				Priority:         "medium",
+				FeaturePriority:  "high",
+				FeatureDependsOn: []string{"feat-auth", "feat-db"},
+				Agent:            "tdd-dev",
+			},
+		},
+	}
+
+	updatedModal, _ := modal.Update(fetchedMsg)
+	m := updatedModal.(*MetadataModal)
+
+	// Verify all fields populated together
+	if m.values[FieldStatus] != "active" {
+		t.Errorf("FieldStatus = %q, want 'active'", m.values[FieldStatus])
+	}
+	if m.values[FieldPriority] != "medium" {
+		t.Errorf("FieldPriority = %q, want 'medium'", m.values[FieldPriority])
+	}
+	if m.values[FieldFeaturePriority] != "high" {
+		t.Errorf("FieldFeaturePriority = %q, want 'high'", m.values[FieldFeaturePriority])
+	}
+	if m.values[FieldFeatureDependsOn] != "feat-auth, feat-db" {
+		t.Errorf("FieldFeatureDependsOn = %q, want 'feat-auth, feat-db'", m.values[FieldFeatureDependsOn])
+	}
+	if m.values[FieldAgent] != "tdd-dev" {
+		t.Errorf("FieldAgent = %q, want 'tdd-dev'", m.values[FieldAgent])
+	}
+}
+
 func TestMetadataModal_Update_HandlesFetchError(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
@@ -902,6 +1084,50 @@ func TestDetectMixedFields(t *testing.T) {
 		}
 		if mixed[FieldOpenPRBeforeMerge] {
 			t.Error("expected open_pr_before_merge to not be mixed")
+		}
+	})
+
+	t.Run("mixed feature_priority field", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", FeaturePriority: "high"},
+			{Status: "pending", FeaturePriority: "low"},
+		}
+		mixed := detectMixedFields(entries)
+		if !mixed[FieldFeaturePriority] {
+			t.Error("expected feature_priority to be mixed when values differ")
+		}
+	})
+
+	t.Run("same feature_priority field not mixed", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", FeaturePriority: "high"},
+			{Status: "pending", FeaturePriority: "high"},
+		}
+		mixed := detectMixedFields(entries)
+		if mixed[FieldFeaturePriority] {
+			t.Error("expected feature_priority to NOT be mixed when values are same")
+		}
+	})
+
+	t.Run("mixed feature_depends_on field", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", FeatureDependsOn: []string{"feat-auth"}},
+			{Status: "pending", FeatureDependsOn: []string{"feat-db"}},
+		}
+		mixed := detectMixedFields(entries)
+		if !mixed[FieldFeatureDependsOn] {
+			t.Error("expected feature_depends_on to be mixed when values differ")
+		}
+	})
+
+	t.Run("same feature_depends_on field not mixed", func(t *testing.T) {
+		entries := []*types.BrainEntry{
+			{Status: "pending", FeatureDependsOn: []string{"feat-auth", "feat-db"}},
+			{Status: "pending", FeatureDependsOn: []string{"feat-auth", "feat-db"}},
+		}
+		mixed := detectMixedFields(entries)
+		if mixed[FieldFeatureDependsOn] {
+			t.Error("expected feature_depends_on to NOT be mixed when values are same")
 		}
 	})
 }

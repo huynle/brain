@@ -149,6 +149,118 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 }
 
 // ============================================================================
+// Tab Types
+// ============================================================================
+
+// MetadataTab represents a tab section in the metadata modal.
+type MetadataTab int
+
+const (
+	MetaTabFeature MetadataTab = iota
+	MetaTabTask
+	MetaTabExecution
+	MetaTabGitMerge
+	MetaTabMonitors
+)
+
+// tabLabel returns the display label for a tab.
+func tabLabel(tab MetadataTab) string {
+	switch tab {
+	case MetaTabFeature:
+		return "Feature"
+	case MetaTabTask:
+		return "Task"
+	case MetaTabExecution:
+		return "Execution"
+	case MetaTabGitMerge:
+		return "Git & Merge"
+	case MetaTabMonitors:
+		return "Monitors"
+	default:
+		return "Unknown"
+	}
+}
+
+// tabsForMode returns the ordered list of tabs for a given mode.
+func tabsForMode(mode MetadataMode) []MetadataTab {
+	if mode == ModeFeature {
+		return []MetadataTab{
+			MetaTabFeature,
+			MetaTabTask,
+			MetaTabExecution,
+			MetaTabGitMerge,
+			MetaTabMonitors,
+		}
+	}
+	// Single and Batch modes
+	return []MetadataTab{
+		MetaTabTask,
+		MetaTabExecution,
+		MetaTabGitMerge,
+	}
+}
+
+// fieldsForTab returns the fields belonging to a tab for a given mode.
+func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
+	switch tab {
+	case MetaTabFeature:
+		// Only in feature mode
+		return []MetadataField{
+			FieldFeaturePriority,
+			FieldFeatureDependsOn,
+		}
+	case MetaTabTask:
+		if mode == ModeFeature {
+			return []MetadataField{
+				FieldStatus,
+				FieldPriority,
+			}
+		}
+		// Single/Batch modes include FeatureID
+		return []MetadataField{
+			FieldStatus,
+			FieldPriority,
+			FieldFeatureID,
+		}
+	case MetaTabExecution:
+		if mode == ModeFeature {
+			// Feature mode excludes DirectPrompt
+			return []MetadataField{
+				FieldAgent,
+				FieldModel,
+				FieldExecutionMode,
+				FieldTargetWorkdir,
+				FieldCompleteOnIdle,
+				FieldSchedule,
+			}
+		}
+		// Single/Batch modes include DirectPrompt
+		return []MetadataField{
+			FieldAgent,
+			FieldModel,
+			FieldExecutionMode,
+			FieldTargetWorkdir,
+			FieldDirectPrompt,
+			FieldCompleteOnIdle,
+			FieldSchedule,
+		}
+	case MetaTabGitMerge:
+		return []MetadataField{
+			FieldGitBranch,
+			FieldMergeTargetBranch,
+			FieldMergePolicy,
+			FieldMergeStrategy,
+			FieldOpenPRBeforeMerge,
+		}
+	case MetaTabMonitors:
+		// Monitors tab has no regular fields — only monitor template rows
+		return []MetadataField{}
+	default:
+		return []MetadataField{}
+	}
+}
+
+// ============================================================================
 // Helper Functions
 // ============================================================================
 

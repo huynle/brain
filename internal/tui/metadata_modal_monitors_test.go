@@ -16,13 +16,15 @@ import (
 
 // setupTestMonitorTemplates populates the modal with default monitor templates
 // for testing. Since templates are now fetched from the API in production,
-// tests need to pre-populate them.
+// tests need to pre-populate them. Also switches to the Monitors tab.
 func setupTestMonitorTemplates(modal *MetadataModal) {
 	modal.monitorTemplates = []MonitorTemplateState{
 		{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "loading", Schedule: "*/30 * * * *"},
 		{TemplateID: "feature-review", Label: "Feature Review", Status: "loading", Schedule: "one-shot"},
 	}
 	modal.monitorLoading = false
+	// Switch to Monitors tab so hasMonitorRows() returns true
+	modal.switchToTab(MetaTabMonitors)
 }
 
 // =============================================================================
@@ -126,7 +128,7 @@ func TestMetadataModalFeature_HandleMonitorFetchedMsg(t *testing.T) {
 // Navigation Tests
 // =============================================================================
 
-func TestMetadataModalFeature_NavigateFromFieldsToMonitors(t *testing.T) {
+func TestMetadataModalFeature_NavigateMonitorRows_Down(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
@@ -138,26 +140,31 @@ func TestMetadataModalFeature_NavigateFromFieldsToMonitors(t *testing.T) {
 	modal.monitorTemplates[1].Status = "create"
 	modal.monitorLoading = false
 
-	// Navigate to last field
-	lastFieldIndex := len(modal.fieldList) - 1
-	modal.focusedIndex = lastFieldIndex
-	modal.focusedField = modal.fieldList[lastFieldIndex]
+	// On Monitors tab, focus starts on first monitor row
+	if modal.focusedMonitorIndex != 0 {
+		t.Fatalf("focusedMonitorIndex = %d, want 0 (first monitor)", modal.focusedMonitorIndex)
+	}
 
-	// Press down - should move to first monitor row
+	// Press down - should move to second monitor row
 	handled, _ := modal.HandleKey("j")
 	if !handled {
 		t.Error("j key should be handled")
 	}
-	if modal.focusedMonitorIndex != 0 {
-		t.Errorf("focusedMonitorIndex = %d, want 0", modal.focusedMonitorIndex)
+	if modal.focusedMonitorIndex != 1 {
+		t.Errorf("focusedMonitorIndex = %d, want 1", modal.focusedMonitorIndex)
 	}
-	// focusedIndex should be beyond field list to indicate monitor zone
-	if modal.focusedIndex != len(modal.fieldList) {
-		t.Errorf("focusedIndex = %d, want %d (beyond field list)", modal.focusedIndex, len(modal.fieldList))
+
+	// Press down again - should wrap to first monitor row (no fields on Monitors tab)
+	handled, _ = modal.HandleKey("j")
+	if !handled {
+		t.Error("j key should be handled")
+	}
+	if modal.focusedMonitorIndex != 0 {
+		t.Errorf("focusedMonitorIndex = %d, want 0 (wrapped to first monitor)", modal.focusedMonitorIndex)
 	}
 }
 
-func TestMetadataModalFeature_NavigateFromMonitorsToFields(t *testing.T) {
+func TestMetadataModalFeature_NavigateMonitorRows_Up(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)
 	monitorClient := NewMonitorClient("http://localhost:3333", "")
@@ -169,24 +176,18 @@ func TestMetadataModalFeature_NavigateFromMonitorsToFields(t *testing.T) {
 	modal.monitorTemplates[1].Status = "create"
 	modal.monitorLoading = false
 
-	// Start at first monitor row
-	modal.focusedIndex = len(modal.fieldList)
-	modal.focusedMonitorIndex = 0
+	// On Monitors tab, focus starts on first monitor row
+	if modal.focusedMonitorIndex != 0 {
+		t.Fatalf("focusedMonitorIndex = %d, want 0", modal.focusedMonitorIndex)
+	}
 
-	// Press up - should move back to last field
+	// Press up - should wrap to last monitor row
 	handled, _ := modal.HandleKey("k")
 	if !handled {
 		t.Error("k key should be handled")
 	}
-	if modal.focusedMonitorIndex != -1 {
-		t.Errorf("focusedMonitorIndex = %d, want -1", modal.focusedMonitorIndex)
-	}
-	lastFieldIndex := len(modal.fieldList) - 1
-	if modal.focusedIndex != lastFieldIndex {
-		t.Errorf("focusedIndex = %d, want %d (last field)", modal.focusedIndex, lastFieldIndex)
-	}
-	if modal.focusedField != modal.fieldList[lastFieldIndex] {
-		t.Errorf("focusedField = %q, want %q", modal.focusedField, modal.fieldList[lastFieldIndex])
+	if modal.focusedMonitorIndex != len(modal.monitorTemplates)-1 {
+		t.Errorf("focusedMonitorIndex = %d, want %d (last monitor)", modal.focusedMonitorIndex, len(modal.monitorTemplates)-1)
 	}
 }
 
@@ -203,7 +204,6 @@ func TestMetadataModalFeature_NavigateBetweenMonitorRows(t *testing.T) {
 	modal.monitorLoading = false
 
 	// Start at first monitor row
-	modal.focusedIndex = len(modal.fieldList)
 	modal.focusedMonitorIndex = 0
 
 	// Press down - should move to second monitor row
@@ -213,45 +213,6 @@ func TestMetadataModalFeature_NavigateBetweenMonitorRows(t *testing.T) {
 	}
 	if modal.focusedMonitorIndex != 1 {
 		t.Errorf("focusedMonitorIndex = %d, want 1", modal.focusedMonitorIndex)
-	}
-
-	// Press down again - should wrap to first field (top of list)
-	handled, _ = modal.HandleKey("j")
-	if !handled {
-		t.Error("j key should be handled")
-	}
-	if modal.focusedMonitorIndex != -1 {
-		t.Errorf("focusedMonitorIndex = %d, want -1 (back to fields)", modal.focusedMonitorIndex)
-	}
-	if modal.focusedIndex != 0 {
-		t.Errorf("focusedIndex = %d, want 0 (first field)", modal.focusedIndex)
-	}
-}
-
-func TestMetadataModalFeature_NavigateUp_WrapsFromFirstFieldToLastMonitor(t *testing.T) {
-	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
-	apiClient := runner.NewAPIClient(cfg)
-	monitorClient := NewMonitorClient("http://localhost:3333", "")
-	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
-	setupTestMonitorTemplates(modal)
-
-	// Set monitor templates to non-loading state
-	modal.monitorTemplates[0].Status = "enabled"
-	modal.monitorTemplates[1].Status = "create"
-	modal.monitorLoading = false
-
-	// Start at first field
-	modal.focusedIndex = 0
-	modal.focusedField = modal.fieldList[0]
-	modal.focusedMonitorIndex = -1
-
-	// Press up - should wrap to last monitor row
-	handled, _ := modal.HandleKey("k")
-	if !handled {
-		t.Error("k key should be handled")
-	}
-	if modal.focusedMonitorIndex != len(modal.monitorTemplates)-1 {
-		t.Errorf("focusedMonitorIndex = %d, want %d (last monitor)", modal.focusedMonitorIndex, len(modal.monitorTemplates)-1)
 	}
 }
 

@@ -133,38 +133,46 @@ func TestMetadataModal_FieldList(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModal("task123", apiClient)
 
-	// Check that all 15 fields are in the list
-	expectedFields := []MetadataField{
+	// Default tab is Task — should have 3 fields (Status, Priority, FeatureID)
+	expectedTaskFields := []MetadataField{
 		FieldStatus,
 		FieldPriority,
 		FieldFeatureID,
-		FieldGitBranch,
-		FieldMergeTargetBranch,
-		FieldMergePolicy,
-		FieldMergeStrategy,
-		FieldExecutionMode,
-		FieldDirectPrompt,
-		FieldAgent,
-		FieldModel,
-		FieldTargetWorkdir,
-		FieldCompleteOnIdle,
-		FieldOpenPRBeforeMerge,
-		FieldSchedule,
 	}
 
-	if len(modal.fieldList) != len(expectedFields) {
-		t.Errorf("fieldList length = %d, want %d", len(modal.fieldList), len(expectedFields))
+	if len(modal.fieldList) != len(expectedTaskFields) {
+		t.Errorf("Task tab fieldList length = %d, want %d", len(modal.fieldList), len(expectedTaskFields))
 	}
 
-	// Verify all expected fields are present (order may vary)
 	fieldSet := make(map[MetadataField]bool)
 	for _, field := range modal.fieldList {
 		fieldSet[field] = true
 	}
-
-	for _, expected := range expectedFields {
+	for _, expected := range expectedTaskFields {
 		if !fieldSet[expected] {
-			t.Errorf("fieldList missing field: %s", expected)
+			t.Errorf("Task tab fieldList missing field: %s", expected)
+		}
+	}
+
+	// Verify all 15 fields are accessible across all tabs
+	allFields := make(map[MetadataField]bool)
+	for _, tab := range modal.tabs {
+		for _, field := range fieldsForTab(tab, modal.mode) {
+			allFields[field] = true
+		}
+	}
+
+	expectedAllFields := []MetadataField{
+		FieldStatus, FieldPriority, FieldFeatureID,
+		FieldGitBranch, FieldMergeTargetBranch, FieldMergePolicy,
+		FieldMergeStrategy, FieldExecutionMode, FieldDirectPrompt,
+		FieldAgent, FieldModel, FieldTargetWorkdir,
+		FieldCompleteOnIdle, FieldOpenPRBeforeMerge, FieldSchedule,
+	}
+
+	for _, expected := range expectedAllFields {
+		if !allFields[expected] {
+			t.Errorf("field %s not found in any tab", expected)
 		}
 	}
 }
@@ -952,6 +960,147 @@ func TestAllEqual(t *testing.T) {
 			t.Error("expected different bools to not be equal")
 		}
 	})
+}
+
+// ===========================================================================
+// Tab Switching Tests
+// ===========================================================================
+
+func TestMetadataModal_TabSwitching_NextTab(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Single mode has 3 tabs: Task, Execution, Git & Merge
+	if modal.currentTab != MetaTabTask {
+		t.Fatalf("initial tab = %v, want MetaTabTask", modal.currentTab)
+	}
+
+	// Tab key cycles to next tab
+	modal.HandleKey("tab")
+	if modal.currentTab != MetaTabExecution {
+		t.Errorf("after tab: currentTab = %v, want MetaTabExecution", modal.currentTab)
+	}
+
+	modal.HandleKey("tab")
+	if modal.currentTab != MetaTabGitMerge {
+		t.Errorf("after 2nd tab: currentTab = %v, want MetaTabGitMerge", modal.currentTab)
+	}
+
+	// Wraps around
+	modal.HandleKey("tab")
+	if modal.currentTab != MetaTabTask {
+		t.Errorf("after 3rd tab: currentTab = %v, want MetaTabTask (wrapped)", modal.currentTab)
+	}
+}
+
+func TestMetadataModal_TabSwitching_PrevTab(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// shift+tab cycles to previous tab (wraps)
+	modal.HandleKey("shift+tab")
+	if modal.currentTab != MetaTabGitMerge {
+		t.Errorf("after shift+tab: currentTab = %v, want MetaTabGitMerge (wrapped)", modal.currentTab)
+	}
+}
+
+func TestMetadataModal_TabSwitching_HL(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// l key goes to next tab
+	modal.HandleKey("l")
+	if modal.currentTab != MetaTabExecution {
+		t.Errorf("after l: currentTab = %v, want MetaTabExecution", modal.currentTab)
+	}
+
+	// h key goes to previous tab
+	modal.HandleKey("h")
+	if modal.currentTab != MetaTabTask {
+		t.Errorf("after h: currentTab = %v, want MetaTabTask", modal.currentTab)
+	}
+}
+
+func TestMetadataModal_TabSwitching_NumberKeys(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Number keys jump to specific tabs (1-indexed)
+	modal.HandleKey("3")
+	if modal.currentTab != MetaTabGitMerge {
+		t.Errorf("after '3': currentTab = %v, want MetaTabGitMerge", modal.currentTab)
+	}
+
+	modal.HandleKey("1")
+	if modal.currentTab != MetaTabTask {
+		t.Errorf("after '1': currentTab = %v, want MetaTabTask", modal.currentTab)
+	}
+
+	modal.HandleKey("2")
+	if modal.currentTab != MetaTabExecution {
+		t.Errorf("after '2': currentTab = %v, want MetaTabExecution", modal.currentTab)
+	}
+}
+
+func TestMetadataModal_TabSwitching_ResetsIndex(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Navigate down a few fields
+	modal.HandleKey("j")
+	modal.HandleKey("j")
+	if modal.focusedIndex == 0 {
+		t.Fatal("focusedIndex should not be 0 after navigating down")
+	}
+
+	// Switch tab — focusedIndex should reset to 0
+	modal.HandleKey("tab")
+	if modal.focusedIndex != 0 {
+		t.Errorf("focusedIndex = %d, want 0 after tab switch", modal.focusedIndex)
+	}
+}
+
+func TestMetadataModal_TabSwitching_RebuildFieldList(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Task tab fields
+	taskFields := len(modal.fieldList)
+
+	// Switch to Execution tab
+	modal.HandleKey("tab")
+	execFields := len(modal.fieldList)
+
+	// Field counts should differ
+	if taskFields == execFields {
+		t.Errorf("Task tab (%d fields) and Execution tab (%d fields) should have different field counts", taskFields, execFields)
+	}
+}
+
+func TestMetadataModal_HL_OnlyInNavigateMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+
+	// Enter text edit mode
+	modal.interactionMode = ModeEditText
+	modal.editBuffer = ""
+
+	// h/l should NOT switch tabs in edit mode — they should be treated as text input
+	initialTab := modal.currentTab
+	modal.HandleKey("h")
+	if modal.editBuffer != "h" {
+		t.Errorf("editBuffer = %q, want 'h' (should be text input in edit mode)", modal.editBuffer)
+	}
+	if modal.currentTab != initialTab {
+		t.Error("h should not switch tabs in edit mode")
+	}
 }
 
 // ===========================================================================

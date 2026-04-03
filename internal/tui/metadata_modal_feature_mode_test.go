@@ -168,6 +168,93 @@ func TestMetadataModalFeature_Init_FetchesFeatureTasks(t *testing.T) {
 	}
 }
 
+// TestMetadataModalFeature_Has5Tabs tests that feature mode has 5 tabs.
+func TestMetadataModalFeature_Has5Tabs(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModalFeature("feat-auth-123", "brain-api", apiClient)
+
+	if len(modal.tabs) != 5 {
+		t.Errorf("Feature mode tab count = %d, want 5", len(modal.tabs))
+	}
+
+	// Verify tab order
+	expectedTabs := []MetadataTab{MetaTabFeature, MetaTabTask, MetaTabExecution, MetaTabGitMerge, MetaTabMonitors}
+	for i, tab := range expectedTabs {
+		if modal.tabs[i] != tab {
+			t.Errorf("tabs[%d] = %v, want %v", i, modal.tabs[i], tab)
+		}
+	}
+}
+
+// TestMetadataModalFeature_StartsOnFeatureTab tests that feature mode starts on the Feature tab.
+func TestMetadataModalFeature_StartsOnFeatureTab(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+
+	modal := NewMetadataModalFeature("feat-auth-123", "brain-api", apiClient)
+
+	if modal.currentTab != MetaTabFeature {
+		t.Errorf("initial tab = %v, want MetaTabFeature", modal.currentTab)
+	}
+}
+
+// TestMetadataModalFeature_MonitorsOnlyInMonitorsTab tests that monitors only render on the Monitors tab.
+func TestMetadataModalFeature_MonitorsOnlyInMonitorsTab(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	monitorClient := NewMonitorClient("http://localhost:3333", "")
+	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient, monitorClient)
+
+	// Set up monitor templates
+	modal.monitorTemplates = []MonitorTemplateState{
+		{TemplateID: "blocked-inspector", Label: "Blocked Inspector", Status: "enabled", Schedule: "*/30 * * * *"},
+	}
+	modal.monitorLoading = false
+	modal.loading = false
+
+	// On Feature tab (default), monitors should NOT appear
+	view := modal.View()
+	if strings.Contains(view, "Automated Tasks") {
+		t.Error("Feature tab should NOT show 'Automated Tasks' section")
+	}
+
+	// Switch to Monitors tab — monitors should appear
+	modal.switchToTab(MetaTabMonitors)
+	view = modal.View()
+	if !strings.Contains(view, "Automated Tasks") {
+		t.Error("Monitors tab should show 'Automated Tasks' section")
+	}
+}
+
+// TestMetadataModalFeature_TabHeaderRendered tests that the tab header is rendered.
+func TestMetadataModalFeature_TabHeaderRendered(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient)
+	modal.loading = false
+
+	view := modal.View()
+
+	// Should contain tab labels
+	if !strings.Contains(view, "Feature") {
+		t.Error("View should contain 'Feature' tab label")
+	}
+	if !strings.Contains(view, "Task") {
+		t.Error("View should contain 'Task' tab label")
+	}
+	if !strings.Contains(view, "Execution") {
+		t.Error("View should contain 'Execution' tab label")
+	}
+	if !strings.Contains(view, "Git & Merge") {
+		t.Error("View should contain 'Git & Merge' tab label")
+	}
+	if !strings.Contains(view, "Monitors") {
+		t.Error("View should contain 'Monitors' tab label")
+	}
+}
+
 // TestMetadataModalFeature_Init_ErrorHandling tests error scenarios in Init.
 func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 	t.Run("feature not found", func(t *testing.T) {

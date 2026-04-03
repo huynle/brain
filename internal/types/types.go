@@ -361,6 +361,54 @@ type UpdateEntryRequest struct {
 	GeneratedBy   *string `json:"generated_by,omitempty"`
 }
 
+// =============================================================================
+// Bulk Update Types
+// =============================================================================
+
+// BulkUpdateFilter selects entries to update by matching criteria.
+type BulkUpdateFilter struct {
+	FeatureID *string  `json:"feature_id,omitempty"`
+	Project   *string  `json:"project,omitempty"`
+	Type      *string  `json:"type,omitempty"`
+	Status    *string  `json:"status,omitempty"`
+	Tags      []string `json:"tags,omitempty"`
+	Priority  *string  `json:"priority,omitempty"`
+}
+
+// BulkUpdateEntry targets a specific entry with updates.
+type BulkUpdateEntry struct {
+	Path    string             `json:"path"`
+	Updates UpdateEntryRequest `json:"updates"`
+}
+
+// BulkUpdateRequest supports two modes: filter-based or explicit entries.
+// Must have either (Filter + Updates) or Entries, not both.
+type BulkUpdateRequest struct {
+	Filter  *BulkUpdateFilter   `json:"filter,omitempty"`
+	Updates *UpdateEntryRequest `json:"updates,omitempty"`
+	Entries []BulkUpdateEntry   `json:"entries,omitempty"`
+	DryRun  bool                `json:"dry_run,omitempty"`
+	Limit   int                 `json:"limit,omitempty"` // default 100, max 100
+}
+
+// BulkUpdateResult represents the outcome of a single entry update.
+type BulkUpdateResult struct {
+	Path   string `json:"path"`
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"` // "ok" or "error"
+	Error  string `json:"error,omitempty"`
+}
+
+// BulkUpdateResponse is the response for POST /entries/bulk-update.
+type BulkUpdateResponse struct {
+	Updated int                `json:"updated"`
+	Failed  int                `json:"failed"`
+	Total   int                `json:"total"`
+	DryRun  bool               `json:"dry_run"`
+	Results []BulkUpdateResult `json:"results"`
+}
+
 // ListEntriesRequest holds query parameters for GET /entries.
 type ListEntriesRequest struct {
 	Type      string `json:"type,omitempty"`

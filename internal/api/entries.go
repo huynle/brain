@@ -459,6 +459,140 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// HandleBulkUpdate handles POST /entries/bulk-update.
+func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	var req types.BulkUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+		return
+	}
+
+	// Structural validation: must have (filter+updates) XOR entries, not both, not neither
+	var details []types.ValidationDetail
+	hasFilter := req.Filter != nil
+	hasEntries := len(req.Entries) > 0
+
+	if !hasFilter && !hasEntries {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter/entries",
+			Message: "must provide either 'filter'+'updates' or 'entries', not neither",
+		})
+	}
+	if hasFilter && hasEntries {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter/entries",
+			Message: "must provide either 'filter'+'updates' or 'entries', not both",
+		})
+	}
+	if hasFilter && req.Updates == nil {
+		details = append(details, types.ValidationDetail{
+			Field:   "updates",
+			Message: "required when using 'filter' mode",
+		})
+	}
+
+	if len(details) > 0 {
+		WriteJSON(w, http.StatusUnprocessableEntity, types.ErrorResponse{
+			Error:   "Validation Error",
+			Message: "Invalid request",
+			Details: details,
+		})
+		return
+	}
+
+	// Validate enum fields in updates
+	if hasFilter && req.Updates != nil {
+		details = append(details, validateUpdateEnums("updates", req.Updates)...)
+	}
+	if hasEntries {
+		for i, entry := range req.Entries {
+			prefix := fmt.Sprintf("entries[%d].updates", i)
+			details = append(details, validateUpdateEnums(prefix, &entry.Updates)...)
+		}
+	}
+
+	if len(details) > 0 {
+		WriteJSON(w, http.StatusUnprocessableEntity, types.ErrorResponse{
+			Error:   "Validation Error",
+			Message: "Invalid request",
+			Details: details,
+		})
+		return
+	}
+
+	resp, err := h.brain.BulkUpdate(r.Context(), req)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Send deduplicated SSE notifications (skip for dry runs)
+	if !req.DryRun {
+		seen := make(map[string]bool)
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			projectID := extractProjectID(result.Path)
+			if projectID != "" && !seen[projectID] {
+				seen[projectID] = true
+				h.notifyProjectChanged(r, result.Path, "task")
+			}
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// validateUpdateEnums validates enum fields in an UpdateEntryRequest and returns
+// validation details with the given field prefix.
+func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.ValidationDetail {
+	var details []types.ValidationDetail
+	if req.Status != nil && !types.IsValidEntryStatus(*req.Status) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".status",
+			Message: fmt.Sprintf("invalid status %q", *req.Status),
+		})
+	}
+	if req.Priority != nil && !types.IsValidPriority(*req.Priority) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".priority",
+			Message: fmt.Sprintf("invalid priority %q", *req.Priority),
+		})
+	}
+	if req.MergePolicy != nil && !isValidEnum(*req.MergePolicy, types.MergePolicies) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".merge_policy",
+			Message: fmt.Sprintf("invalid merge_policy %q", *req.MergePolicy),
+		})
+	}
+	if req.MergeStrategy != nil && !isValidEnum(*req.MergeStrategy, types.MergeStrategies) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".merge_strategy",
+			Message: fmt.Sprintf("invalid merge_strategy %q", *req.MergeStrategy),
+		})
+	}
+	if req.RemoteBranchPolicy != nil && !isValidEnum(*req.RemoteBranchPolicy, types.RemoteBranchPolicies) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".remote_branch_policy",
+			Message: fmt.Sprintf("invalid remote_branch_policy %q", *req.RemoteBranchPolicy),
+		})
+	}
+	if req.ExecutionMode != nil && !isValidEnum(*req.ExecutionMode, types.ExecutionModes) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".execution_mode",
+			Message: fmt.Sprintf("invalid execution_mode %q", *req.ExecutionMode),
+		})
+	}
+	if req.FeaturePriority != nil && !types.IsValidPriority(*req.FeaturePriority) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".feature_priority",
+			Message: fmt.Sprintf("invalid feature_priority %q", *req.FeaturePriority),
+		})
+	}
+	return details
+}
+
 // HandleMoveEntry handles POST /entries/{id}/move.
 func (h *Handler) HandleMoveEntry(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

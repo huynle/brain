@@ -510,9 +510,9 @@ func (m *MetadataModal) saveField() tea.Cmd {
 
 	if fieldType == FieldTypeMultiFilterDropdown {
 		// Multi-select: value is already set as comma-separated string
-		// Send as []string to the API
+		// Send as []string to the API (must be non-nil so json.Marshal produces [] not null)
 		value := m.values[m.focusedField]
-		var items []string
+		items := []string{}
 		if value != "" {
 			for _, item := range strings.Split(value, ",") {
 				item = strings.TrimSpace(item)

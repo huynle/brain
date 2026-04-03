@@ -13,10 +13,10 @@ func TestBuildFieldList_SingleMode(t *testing.T) {
 
 	modal := NewMetadataModal("task1", apiClient)
 
-	// Default tab is Task — should have 3 fields
+	// Default tab is Task — should have 4 fields (Status, Priority, FeatureID, MoveToProject)
 	fields := modal.buildFieldList()
-	if len(fields) != 3 {
-		t.Errorf("Single mode Task tab field count = %d, want 3", len(fields))
+	if len(fields) != 4 {
+		t.Errorf("Single mode Task tab field count = %d, want 4", len(fields))
 	}
 
 	// Should include standard feature field on Task tab
@@ -31,15 +31,15 @@ func TestBuildFieldList_SingleMode(t *testing.T) {
 		t.Error("Single mode Execution tab should include FieldDirectPrompt")
 	}
 
-	// Verify all 15 fields are accessible across all tabs
+	// Verify all 16 fields are accessible across all tabs
 	allFields := make(map[MetadataField]bool)
 	for _, tab := range modal.tabs {
 		for _, field := range fieldsForTab(tab, modal.mode) {
 			allFields[field] = true
 		}
 	}
-	if len(allFields) != 15 {
-		t.Errorf("Total fields across all tabs = %d, want 15", len(allFields))
+	if len(allFields) != 16 {
+		t.Errorf("Total fields across all tabs = %d, want 16", len(allFields))
 	}
 }
 
@@ -50,10 +50,10 @@ func TestBuildFieldList_BatchMode(t *testing.T) {
 
 	modal := NewMetadataModalBatch([]string{"task1", "task2"}, apiClient)
 
-	// Default tab is Task — should have 3 fields
+	// Default tab is Task — should have 4 fields (Status, Priority, FeatureID, MoveToProject)
 	fields := modal.buildFieldList()
-	if len(fields) != 3 {
-		t.Errorf("Batch mode Task tab field count = %d, want 3", len(fields))
+	if len(fields) != 4 {
+		t.Errorf("Batch mode Task tab field count = %d, want 4", len(fields))
 	}
 
 	// Switch to Execution tab — should include DirectPrompt
@@ -212,8 +212,8 @@ func TestFieldsForTab_FeatureTab(t *testing.T) {
 // TestFieldsForTab_TaskTab_FeatureMode tests fields in the Task tab for feature mode.
 func TestFieldsForTab_TaskTab_FeatureMode(t *testing.T) {
 	fields := fieldsForTab(MetaTabTask, ModeFeature)
-	if len(fields) != 2 {
-		t.Errorf("Task tab (feature mode) field count = %d, want 2", len(fields))
+	if len(fields) != 3 {
+		t.Errorf("Task tab (feature mode) field count = %d, want 3", len(fields))
 	}
 	if !containsField(fields, FieldStatus) {
 		t.Error("Task tab should include FieldStatus")
@@ -226,8 +226,8 @@ func TestFieldsForTab_TaskTab_FeatureMode(t *testing.T) {
 // TestFieldsForTab_TaskTab_SingleMode tests fields in the Task tab for single mode.
 func TestFieldsForTab_TaskTab_SingleMode(t *testing.T) {
 	fields := fieldsForTab(MetaTabTask, ModeSingle)
-	if len(fields) != 3 {
-		t.Errorf("Task tab (single mode) field count = %d, want 3", len(fields))
+	if len(fields) != 4 {
+		t.Errorf("Task tab (single mode) field count = %d, want 4", len(fields))
 	}
 	if !containsField(fields, FieldFeatureID) {
 		t.Error("Task tab (single mode) should include FieldFeatureID")

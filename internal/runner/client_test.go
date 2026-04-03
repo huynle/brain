@@ -1414,6 +1414,75 @@ func TestAPIClient_UpdateEntryFull_ServerError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// MoveEntry
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_MoveEntry(t *testing.T) {
+	var gotMethod, gotRequestURI string
+	var gotBody types.MoveEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotRequestURI = r.RequestURI
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.MoveResult{
+			Success: true,
+			From:    "projects/brain-api/task/abc123.md",
+			To:      "projects/other-project/task/abc123.md",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	result, err := client.MoveEntry(context.Background(), "projects/brain-api/task/abc123.md", "other-project")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	wantURI := "/api/v1/entries/projects/brain-api/task/abc123.md/move"
+	if gotRequestURI != wantURI {
+		t.Errorf("RequestURI = %q, want %q", gotRequestURI, wantURI)
+	}
+	if gotBody.Project != "other-project" {
+		t.Errorf("body project = %q, want %q", gotBody.Project, "other-project")
+	}
+	if !result.Success {
+		t.Error("expected Success to be true")
+	}
+	if result.From != "projects/brain-api/task/abc123.md" {
+		t.Errorf("From = %q, want source path", result.From)
+	}
+	if result.To != "projects/other-project/task/abc123.md" {
+		t.Errorf("To = %q, want target path", result.To)
+	}
+}
+
+func TestAPIClient_MoveEntry_Error(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"entry not found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.MoveEntry(context.Background(), "nonexistent.md", "other-project")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != 404 {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // doRequestWithHeaders
 // ---------------------------------------------------------------------------
 

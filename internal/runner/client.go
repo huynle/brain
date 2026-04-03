@@ -366,6 +366,30 @@ func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID string) e
 	return nil
 }
 
+// MoveEntry moves a brain entry to a different project.
+func (c *APIClient) MoveEntry(ctx context.Context, entryPath, targetProject string) (*types.MoveResult, error) {
+	encodedPath := encodePathComponent(entryPath)
+	apiPath := fmt.Sprintf("/api/v1/entries/%s/move", encodedPath)
+
+	body := types.MoveEntryRequest{Project: targetProject}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, apiPath, body)
+	if err != nil {
+		return nil, fmt.Errorf("move entry: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.MoveResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode move result: %w", err)
+	}
+
+	return &result, nil
+}
+
 // DeleteEntry deletes a brain entry by path.
 func (c *APIClient) DeleteEntry(ctx context.Context, entryPath string) error {
 	encodedPath := encodePathComponent(entryPath)

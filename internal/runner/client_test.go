@@ -776,6 +776,205 @@ func TestAPIClient_GetFeature_ServerError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// GetFeatures
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_GetFeatures_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureListResponse{
+			Features: []types.Feature{
+				{
+					FeatureID: "dark-mode",
+					Tasks:     []types.ResolvedTask{{ID: "t1", Title: "Task 1"}},
+					Ready:     true,
+				},
+				{
+					FeatureID: "auth-flow",
+					Tasks:     []types.ResolvedTask{{ID: "t2", Title: "Task 2"}},
+					Ready:     false,
+				},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	features, err := client.GetFeatures(context.Background(), "brain-api")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodGet {
+		t.Errorf("method = %q, want GET", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/features" {
+		t.Errorf("path = %q, want /api/v1/tasks/brain-api/features", gotPath)
+	}
+	if len(features) != 2 {
+		t.Fatalf("expected 2 features, got %d", len(features))
+	}
+	if features[0].FeatureID != "dark-mode" {
+		t.Errorf("features[0].FeatureID = %q, want %q", features[0].FeatureID, "dark-mode")
+	}
+	if !features[0].Ready {
+		t.Error("expected features[0].Ready to be true")
+	}
+	if features[1].FeatureID != "auth-flow" {
+		t.Errorf("features[1].FeatureID = %q, want %q", features[1].FeatureID, "auth-flow")
+	}
+}
+
+func TestAPIClient_GetFeatures_Empty(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureListResponse{Features: []types.Feature{}})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	features, err := client.GetFeatures(context.Background(), "brain-api")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(features) != 0 {
+		t.Errorf("expected 0 features, got %d", len(features))
+	}
+}
+
+func TestAPIClient_GetFeatures_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetFeatures(context.Background(), "brain-api")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BulkUpdate
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_BulkUpdate_Success(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.BulkUpdateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.BulkUpdateResponse{
+			Updated: 2,
+			Failed:  0,
+			Total:   2,
+			DryRun:  false,
+			Results: []types.BulkUpdateResult{
+				{Path: "projects/p/task/t1.md", ID: "t1", Title: "Task 1", Status: "ok"},
+				{Path: "projects/p/task/t2.md", ID: "t2", Title: "Task 2", Status: "ok"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	completed := "completed"
+	req := types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: "projects/p/task/t1.md", Updates: types.UpdateEntryRequest{Status: &completed}},
+			{Path: "projects/p/task/t2.md", Updates: types.UpdateEntryRequest{Status: &completed}},
+		},
+	}
+	result, err := client.BulkUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/entries/bulk-update" {
+		t.Errorf("path = %q, want /api/v1/entries/bulk-update", gotPath)
+	}
+	if len(gotBody.Entries) != 2 {
+		t.Errorf("body entries = %d, want 2", len(gotBody.Entries))
+	}
+	if result.Updated != 2 {
+		t.Errorf("Updated = %d, want 2", result.Updated)
+	}
+	if result.Failed != 0 {
+		t.Errorf("Failed = %d, want 0", result.Failed)
+	}
+	if len(result.Results) != 2 {
+		t.Fatalf("expected 2 results, got %d", len(result.Results))
+	}
+	if result.Results[0].Status != "ok" {
+		t.Errorf("Results[0].Status = %q, want %q", result.Results[0].Status, "ok")
+	}
+}
+
+func TestAPIClient_BulkUpdate_DryRun(t *testing.T) {
+	var gotBody types.BulkUpdateRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.BulkUpdateResponse{
+			Updated: 0,
+			Failed:  0,
+			Total:   1,
+			DryRun:  true,
+			Results: []types.BulkUpdateResult{
+				{Path: "projects/p/task/t1.md", ID: "t1", Title: "Task 1", Status: "ok"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	completed := "completed"
+	req := types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: "projects/p/task/t1.md", Updates: types.UpdateEntryRequest{Status: &completed}},
+		},
+		DryRun: true,
+	}
+	result, err := client.BulkUpdate(context.Background(), req)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !gotBody.DryRun {
+		t.Error("expected DryRun to be true in request body")
+	}
+	if !result.DryRun {
+		t.Error("expected DryRun to be true in response")
+	}
+}
+
+func TestAPIClient_BulkUpdate_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"validation failed"}`, http.StatusBadRequest)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.BulkUpdate(context.Background(), types.BulkUpdateRequest{})
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusBadRequest {
+		t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // PauseProject
 // ---------------------------------------------------------------------------
 

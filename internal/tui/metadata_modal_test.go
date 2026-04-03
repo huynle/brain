@@ -134,11 +134,12 @@ func TestMetadataModal_FieldList(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModal("task123", apiClient)
 
-	// Default tab is Task — should have 3 fields (Status, Priority, FeatureID)
+	// Default tab is Task — should have 4 fields (Status, Priority, FeatureID, MoveToProject)
 	expectedTaskFields := []MetadataField{
 		FieldStatus,
 		FieldPriority,
 		FieldFeatureID,
+		FieldMoveToProject,
 	}
 
 	if len(modal.fieldList) != len(expectedTaskFields) {
@@ -164,7 +165,7 @@ func TestMetadataModal_FieldList(t *testing.T) {
 	}
 
 	expectedAllFields := []MetadataField{
-		FieldStatus, FieldPriority, FieldFeatureID,
+		FieldStatus, FieldPriority, FieldFeatureID, FieldMoveToProject,
 		FieldGitBranch, FieldMergeTargetBranch, FieldMergePolicy,
 		FieldMergeStrategy, FieldExecutionMode, FieldDirectPrompt,
 		FieldAgent, FieldModel, FieldTargetWorkdir,

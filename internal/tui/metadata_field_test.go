@@ -116,6 +116,84 @@ func TestGetEnumOptions(t *testing.T) {
 	}
 }
 
+// ============================================================================
+// FieldMoveToProject Tests
+// ============================================================================
+
+func TestFieldMoveToProject_Constant(t *testing.T) {
+	if string(FieldMoveToProject) != "move_to_project" {
+		t.Errorf("FieldMoveToProject = %q, want %q", FieldMoveToProject, "move_to_project")
+	}
+}
+
+func TestFieldMoveToProject_Type(t *testing.T) {
+	got := getFieldType(FieldMoveToProject)
+	if got != FieldTypeFilterDropdown {
+		t.Errorf("getFieldType(FieldMoveToProject) = %v, want FieldTypeFilterDropdown", got)
+	}
+}
+
+func TestFieldMoveToProject_Label(t *testing.T) {
+	got := getFieldLabel(FieldMoveToProject)
+	if got != "Move to Project" {
+		t.Errorf("getFieldLabel(FieldMoveToProject) = %q, want %q", got, "Move to Project")
+	}
+}
+
+func TestFieldMoveToProject_InTaskTab_FeatureMode(t *testing.T) {
+	fields := fieldsForTab(MetaTabTask, ModeFeature)
+	found := false
+	for _, f := range fields {
+		if f == FieldMoveToProject {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("FieldMoveToProject not found in Task tab for Feature mode, got fields: %v", fields)
+	}
+	// Should be last field
+	if fields[len(fields)-1] != FieldMoveToProject {
+		t.Errorf("FieldMoveToProject should be last field in Task tab, got %v", fields)
+	}
+}
+
+func TestFieldMoveToProject_InTaskTab_SingleMode(t *testing.T) {
+	fields := fieldsForTab(MetaTabTask, ModeSingle)
+	found := false
+	for _, f := range fields {
+		if f == FieldMoveToProject {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("FieldMoveToProject not found in Task tab for Single mode, got fields: %v", fields)
+	}
+	// Should be last field
+	if fields[len(fields)-1] != FieldMoveToProject {
+		t.Errorf("FieldMoveToProject should be last field in Task tab, got %v", fields)
+	}
+}
+
+func TestFieldMoveToProject_InTaskTab_BatchMode(t *testing.T) {
+	fields := fieldsForTab(MetaTabTask, ModeBatch)
+	found := false
+	for _, f := range fields {
+		if f == FieldMoveToProject {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("FieldMoveToProject not found in Task tab for Batch mode, got fields: %v", fields)
+	}
+	// Should be last field
+	if fields[len(fields)-1] != FieldMoveToProject {
+		t.Errorf("FieldMoveToProject should be last field in Task tab, got %v", fields)
+	}
+}
+
 // stringSlicesEqual compares two string slices for equality.
 func stringSlicesEqual(a, b []string) bool {
 	if len(a) != len(b) {

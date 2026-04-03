@@ -26,6 +26,7 @@ const (
 	FieldCompleteOnIdle    MetadataField = "complete_on_idle"
 	FieldOpenPRBeforeMerge MetadataField = "open_pr_before_merge"
 	FieldSchedule          MetadataField = "schedule"
+	FieldMoveToProject     MetadataField = "move_to_project"
 )
 
 // ============================================================================
@@ -39,6 +40,7 @@ const (
 	FieldTypeText FieldType = iota
 	FieldTypeDropdown
 	FieldTypeBoolean
+	FieldTypeFilterDropdown
 )
 
 // ============================================================================
@@ -146,6 +148,11 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 		Hint:  "Cron expression for scheduled execution",
 		Type:  FieldTypeText,
 	},
+	FieldMoveToProject: {
+		Label: "Move to Project",
+		Hint:  "Move tasks to another project (type to filter)",
+		Type:  FieldTypeFilterDropdown,
+	},
 }
 
 // ============================================================================
@@ -214,6 +221,7 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 			return []MetadataField{
 				FieldStatus,
 				FieldPriority,
+				FieldMoveToProject,
 			}
 		}
 		// Single/Batch modes include FeatureID
@@ -221,6 +229,7 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 			FieldStatus,
 			FieldPriority,
 			FieldFeatureID,
+			FieldMoveToProject,
 		}
 	case MetaTabExecution:
 		if mode == ModeFeature {

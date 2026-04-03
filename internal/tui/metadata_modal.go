@@ -29,6 +29,20 @@ type metadataUpdatedMsg struct {
 	err   error
 }
 
+// projectsListedMsg is sent when the project list has been fetched.
+type projectsListedMsg struct {
+	projects []string
+	err      error
+}
+
+// metadataMovedMsg is sent when tasks have been moved to a new project.
+type metadataMovedMsg struct {
+	targetProject string
+	pathMapping   map[string]string // old path -> new path
+	errors        []error
+	err           error
+}
+
 // monitorTemplatesFetchedMsg is sent when monitor template statuses have been fetched.
 type monitorTemplatesFetchedMsg struct {
 	templates []MonitorTemplateState
@@ -82,6 +96,7 @@ const (
 	ModeNavigate MetadataInteractionMode = iota
 	ModeEditText
 	ModeEditDropdown
+	ModeEditFilterDropdown
 )
 
 // ============================================================================
@@ -121,6 +136,11 @@ type MetadataModal struct {
 	saveError      error
 	saveSuccess    bool
 	lastSavedField MetadataField
+
+	// Project move state
+	projectsList    []string // all available projects
+	projectsLoaded  bool     // whether projects have been fetched
+	filteredOptions []string // filtered project list based on editBuffer
 
 	// Monitor template state (feature mode only)
 	monitorTemplates    []MonitorTemplateState
@@ -339,6 +359,14 @@ func (m *MetadataModal) enterEditMode() {
 		} else {
 			m.editBuffer = ""
 		}
+	case FieldTypeFilterDropdown:
+		if m.projectsLoaded {
+			m.interactionMode = ModeEditFilterDropdown
+			m.editBuffer = ""
+			m.dropdownIndex = 0
+			m.filterProjects()
+		}
+		// If not loaded, enterEditModeCmd() handles fetching
 	case FieldTypeDropdown, FieldTypeBoolean:
 		m.interactionMode = ModeEditDropdown
 		m.dropdownOptions = getEnumOptions(m.focusedField)
@@ -459,6 +487,11 @@ func (m *MetadataModal) handleEditDropdownMode(key string) (bool, tea.Cmd) {
 
 // saveField saves the current edit to the values map and sends API update.
 func (m *MetadataModal) saveField() tea.Cmd {
+	// Move to Project uses its own save path
+	if m.focusedField == FieldMoveToProject {
+		return m.saveMoveField()
+	}
+
 	fieldType := getFieldType(m.focusedField)
 
 	// Build updates map
@@ -711,6 +744,50 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		return m, nil
 
+	case projectsListedMsg:
+		if msg.err != nil {
+			m.saveError = msg.err
+			m.interactionMode = ModeNavigate
+			return m, nil
+		}
+		m.projectsLoaded = true
+		// Filter out the current project
+		currentProject := m.extractCurrentProject()
+		var filtered []string
+		for _, p := range msg.projects {
+			if p != currentProject {
+				filtered = append(filtered, p)
+			}
+		}
+		m.projectsList = filtered
+		m.interactionMode = ModeEditFilterDropdown
+		m.editBuffer = ""
+		m.dropdownIndex = 0
+		m.filterProjects()
+		return m, nil
+
+	case metadataMovedMsg:
+		if msg.err != nil {
+			m.saveError = msg.err
+			m.saveSuccess = false
+		} else {
+			// Update task paths to reflect new locations
+			newPaths := make([]string, 0, len(m.taskPaths))
+			for _, oldPath := range m.taskPaths {
+				if newPath, ok := msg.pathMapping[oldPath]; ok {
+					newPaths = append(newPaths, newPath)
+				} else {
+					newPaths = append(newPaths, oldPath)
+				}
+			}
+			m.taskPaths = newPaths
+			m.projectID = msg.targetProject
+			m.saveSuccess = true
+			m.lastSavedField = FieldMoveToProject
+			m.saveError = nil
+		}
+		return m, nil
+
 	case monitorTemplatesListedMsg:
 		if msg.err != nil {
 			// Template fetch failed — proceed without monitor rows
@@ -849,6 +926,16 @@ func (m *MetadataModal) View() string {
 			line = fmt.Sprintf("%s %s: %s_", indicator, label, m.editBuffer)
 			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
 			line = style.Render(line)
+		} else if isFocused && m.interactionMode == ModeEditFilterDropdown {
+			// Show filter input with cursor
+			line = fmt.Sprintf("%s %s: > %s_", indicator, label, m.editBuffer)
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			b.WriteString(style.Render(line))
+			b.WriteString("\n\n")
+			// Render filtered dropdown
+			b.WriteString(m.renderFilterDropdown())
+			b.WriteString("\n")
+			continue
 		} else if isFocused && m.interactionMode == ModeEditDropdown {
 			// Show dropdown popup
 			line = fmt.Sprintf("%s %s: %s", indicator, label, value)
@@ -945,6 +1032,8 @@ func (m *MetadataModal) View() string {
 		helpText = "Enter: save  Ctrl-U: clear  Esc: cancel"
 	case ModeEditDropdown:
 		helpText = "j/k: select  Enter: save  Esc: cancel"
+	case ModeEditFilterDropdown:
+		helpText = "type to filter  j/k: select  Enter: move  Esc: cancel"
 	default:
 		helpText = "j/k: navigate  Enter: edit  H/L: sections  Esc: close"
 	}
@@ -981,6 +1070,15 @@ func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
 		return lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9900")).Italic(true).Render("(mixed)")
 	}
 
+	// Special handling for MoveToProject — show current project
+	if field == FieldMoveToProject {
+		currentProject := m.extractCurrentProject()
+		if currentProject != "" {
+			return currentProject + lipgloss.NewStyle().Foreground(ColorDim).Render(" (current)")
+		}
+		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+	}
+
 	fieldType := getFieldType(field)
 
 	switch fieldType {
@@ -1013,6 +1111,8 @@ func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
 		return m.handleEditTextMode(key)
 	case ModeEditDropdown:
 		return m.handleEditDropdownMode(key)
+	case ModeEditFilterDropdown:
+		return m.handleEditFilterDropdownMode(key)
 	default:
 		return false, nil
 	}
@@ -1258,6 +1358,10 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 			return m.toggleMonitorTemplate()
 		}
 		if key == "enter" && len(m.fieldList) > 0 {
+			// Check if we need to fetch async data first
+			if cmd := m.enterEditModeCmd(); cmd != nil {
+				return true, cmd
+			}
 			m.enterEditMode()
 			return true, nil
 		}
@@ -1444,6 +1548,215 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 	}
 
 	return mixed
+}
+
+// ============================================================================
+// Filter Dropdown Methods (Move to Project)
+// ============================================================================
+
+// enterEditModeCmd returns a tea.Cmd if the current field needs async data before editing.
+// For FieldTypeFilterDropdown, it fetches the project list if not already loaded.
+func (m *MetadataModal) enterEditModeCmd() tea.Cmd {
+	if m.focusedField == FieldMoveToProject && !m.projectsLoaded {
+		apiClient := m.apiClient
+		return func() tea.Msg {
+			ctx := context.Background()
+			projects, err := apiClient.ListProjects(ctx)
+			return projectsListedMsg{projects: projects, err: err}
+		}
+	}
+	return nil
+}
+
+// filterProjects filters the projectsList based on editBuffer (case-insensitive substring match).
+func (m *MetadataModal) filterProjects() {
+	if m.editBuffer == "" {
+		m.filteredOptions = make([]string, len(m.projectsList))
+		copy(m.filteredOptions, m.projectsList)
+		return
+	}
+	query := strings.ToLower(m.editBuffer)
+	var filtered []string
+	for _, p := range m.projectsList {
+		if strings.Contains(strings.ToLower(p), query) {
+			filtered = append(filtered, p)
+		}
+	}
+	m.filteredOptions = filtered
+}
+
+// extractCurrentProject extracts the project name from the first task path.
+// e.g., "projects/brain-api/task/abc.md" -> "brain-api"
+func (m *MetadataModal) extractCurrentProject() string {
+	if len(m.taskPaths) == 0 {
+		return ""
+	}
+	parts := strings.Split(m.taskPaths[0], "/")
+	if len(parts) >= 2 && parts[0] == "projects" {
+		return parts[1]
+	}
+	return ""
+}
+
+// handleEditFilterDropdownMode handles key presses in filter dropdown mode.
+func (m *MetadataModal) handleEditFilterDropdownMode(key string) (bool, tea.Cmd) {
+	switch key {
+	case "backspace":
+		m.deleteChar()
+		m.filterProjects()
+		m.dropdownIndex = 0
+		return true, nil
+	case "ctrl+u":
+		m.clearBuffer()
+		m.filterProjects()
+		m.dropdownIndex = 0
+		return true, nil
+	case "j", "down":
+		if len(m.filteredOptions) > 0 {
+			m.dropdownIndex++
+			if m.dropdownIndex >= len(m.filteredOptions) {
+				m.dropdownIndex = 0
+			}
+		}
+		return true, nil
+	case "k", "up":
+		if len(m.filteredOptions) > 0 {
+			m.dropdownIndex--
+			if m.dropdownIndex < 0 {
+				m.dropdownIndex = len(m.filteredOptions) - 1
+			}
+		}
+		return true, nil
+	case "enter":
+		cmd := m.saveMoveField()
+		return true, cmd
+	case "esc":
+		m.editBuffer = ""
+		m.interactionMode = ModeNavigate
+		return true, nil
+	default:
+		// Single printable character: append to buffer and re-filter
+		if len(key) == 1 {
+			m.appendChar(rune(key[0]))
+			m.filterProjects()
+			m.dropdownIndex = 0
+			return true, nil
+		}
+		return true, nil
+	}
+}
+
+// saveMoveField saves the move-to-project selection and triggers the move API calls.
+func (m *MetadataModal) saveMoveField() tea.Cmd {
+	var targetProject string
+	if len(m.filteredOptions) > 0 && m.dropdownIndex < len(m.filteredOptions) {
+		targetProject = m.filteredOptions[m.dropdownIndex]
+	} else {
+		targetProject = m.editBuffer
+	}
+
+	if targetProject == "" {
+		return nil
+	}
+
+	m.values[FieldMoveToProject] = targetProject
+	m.editBuffer = ""
+	m.interactionMode = ModeNavigate
+
+	taskPaths := make([]string, len(m.taskPaths))
+	copy(taskPaths, m.taskPaths)
+	apiClient := m.apiClient
+
+	return func() tea.Msg {
+		ctx := context.Background()
+		pathMapping := make(map[string]string)
+		var moveErrors []error
+
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for _, taskPath := range taskPaths {
+			wg.Add(1)
+			go func(path string) {
+				defer wg.Done()
+				result, err := apiClient.MoveEntry(ctx, path, targetProject)
+				mu.Lock()
+				defer mu.Unlock()
+				if err != nil {
+					moveErrors = append(moveErrors, fmt.Errorf("move %s: %w", path, err))
+				} else if result != nil {
+					pathMapping[result.From] = result.To
+				}
+			}(taskPath)
+		}
+		wg.Wait()
+
+		var firstErr error
+		if len(moveErrors) > 0 {
+			firstErr = moveErrors[0]
+		}
+
+		return metadataMovedMsg{
+			targetProject: targetProject,
+			pathMapping:   pathMapping,
+			errors:        moveErrors,
+			err:           firstErr,
+		}
+	}
+}
+
+// renderFilterDropdown renders the filter dropdown with filtered project list.
+func (m *MetadataModal) renderFilterDropdown() string {
+	var lines []string
+
+	// Show match count
+	countInfo := fmt.Sprintf("(%d of %d projects)", len(m.filteredOptions), len(m.projectsList))
+	countStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	lines = append(lines, countStyle.Render("  "+countInfo))
+
+	// Show up to 8 filtered options
+	maxVisible := 8
+	if len(m.filteredOptions) < maxVisible {
+		maxVisible = len(m.filteredOptions)
+	}
+
+	// Calculate visible window around dropdownIndex
+	startIdx := 0
+	if m.dropdownIndex >= maxVisible {
+		startIdx = m.dropdownIndex - maxVisible + 1
+	}
+	endIdx := startIdx + maxVisible
+	if endIdx > len(m.filteredOptions) {
+		endIdx = len(m.filteredOptions)
+		startIdx = endIdx - maxVisible
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		option := m.filteredOptions[i]
+		indicator := " "
+		if i == m.dropdownIndex {
+			indicator = "→"
+		}
+		line := fmt.Sprintf("  %s %s", indicator, option)
+		if i == m.dropdownIndex {
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			lines = append(lines, style.Render(line))
+		} else {
+			style := lipgloss.NewStyle().Foreground(ColorDim)
+			lines = append(lines, style.Render(line))
+		}
+	}
+
+	// If no matches and editBuffer is non-empty, show new project indicator
+	if len(m.filteredOptions) == 0 && m.editBuffer != "" {
+		newStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9900")).Italic(true)
+		lines = append(lines, newStyle.Render(fmt.Sprintf("  → %s (new)", m.editBuffer)))
+	}
+
+	return strings.Join(lines, "\n")
 }
 
 // allEqual checks if all values in a slice are equal.

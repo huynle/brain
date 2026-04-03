@@ -43,6 +43,12 @@ type metadataMovedMsg struct {
 	err           error
 }
 
+// featureListFetchedMsg is sent when the feature list has been fetched for multi-select.
+type featureListFetchedMsg struct {
+	featureIDs []string
+	err        error
+}
+
 // monitorTemplatesFetchedMsg is sent when monitor template statuses have been fetched.
 type monitorTemplatesFetchedMsg struct {
 	templates []MonitorTemplateState
@@ -97,6 +103,7 @@ const (
 	ModeEditText
 	ModeEditDropdown
 	ModeEditFilterDropdown
+	ModeEditMultiFilterDropdown
 )
 
 // ============================================================================
@@ -136,6 +143,10 @@ type MetadataModal struct {
 	saveError      error
 	saveSuccess    bool
 	lastSavedField MetadataField
+
+	// Multi-select dropdown state (for FieldFeatureDependsOn)
+	selectedItems      map[string]bool // tracks toggled items in multi-select
+	featureListLoading bool            // whether feature list is being fetched
 
 	// Project move state
 	projectsList    []string // all available projects
@@ -497,7 +508,21 @@ func (m *MetadataModal) saveField() tea.Cmd {
 	// Build updates map
 	updates := make(map[string]interface{})
 
-	if fieldType == FieldTypeText || fieldType == FieldTypeDropdown {
+	if fieldType == FieldTypeMultiFilterDropdown {
+		// Multi-select: value is already set as comma-separated string
+		// Send as []string to the API
+		value := m.values[m.focusedField]
+		var items []string
+		if value != "" {
+			for _, item := range strings.Split(value, ",") {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					items = append(items, item)
+				}
+			}
+		}
+		updates[string(m.focusedField)] = items
+	} else if fieldType == FieldTypeText || fieldType == FieldTypeDropdown {
 		var value string
 		if m.interactionMode == ModeEditText {
 			value = m.editBuffer
@@ -724,6 +749,8 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.values[FieldFeatureExpiresAt] = entry.FeatureExpiresAt
 		m.values[FieldFeatureRunOnceAt] = entry.FeatureRunOnceAt
 		m.values[FieldFeatureTimezone] = entry.FeatureTimezone
+		m.values[FieldFeatureDependsOn] = strings.Join(entry.FeatureDependsOn, ", ")
+		m.values[FieldFeaturePriority] = entry.FeaturePriority
 
 		// Boolean values
 		if entry.CompleteOnIdle != nil {
@@ -754,6 +781,38 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			// Clear mixed indicator for this field after successful save
 			m.mixedFields[msg.field] = false
 		}
+		return m, nil
+
+	case featureListFetchedMsg:
+		m.featureListLoading = false
+		if msg.err != nil {
+			m.saveError = msg.err
+			return m, nil
+		}
+		// Populate dropdown options with fetched feature IDs
+		m.dropdownOptions = msg.featureIDs
+		// Initialize selectedItems map
+		if m.selectedItems == nil {
+			m.selectedItems = make(map[string]bool)
+		}
+		// Pre-select current feature_depends_on values
+		for k := range m.selectedItems {
+			delete(m.selectedItems, k)
+		}
+		if currentDeps, ok := m.values[FieldFeatureDependsOn]; ok && currentDeps != "" {
+			for _, dep := range strings.Split(currentDeps, ",") {
+				dep = strings.TrimSpace(dep)
+				if dep != "" {
+					m.selectedItems[dep] = true
+				}
+			}
+		}
+		// Enter multi-select filter dropdown mode
+		m.interactionMode = ModeEditMultiFilterDropdown
+		m.editBuffer = ""
+		m.dropdownIndex = 0
+		m.filteredOptions = make([]string, len(m.dropdownOptions))
+		copy(m.filteredOptions, m.dropdownOptions)
 		return m, nil
 
 	case projectsListedMsg:
@@ -948,6 +1007,16 @@ func (m *MetadataModal) View() string {
 			b.WriteString(m.renderFilterDropdown())
 			b.WriteString("\n")
 			continue
+		} else if isFocused && m.interactionMode == ModeEditMultiFilterDropdown {
+			// Show multi-select filter input with cursor
+			line = fmt.Sprintf("%s %s: > %s_", indicator, label, m.editBuffer)
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			b.WriteString(style.Render(line))
+			b.WriteString("\n\n")
+			// Render multi-select dropdown
+			b.WriteString(m.renderMultiFilterDropdown())
+			b.WriteString("\n")
+			continue
 		} else if isFocused && m.interactionMode == ModeEditDropdown {
 			// Show dropdown popup
 			line = fmt.Sprintf("%s %s: %s", indicator, label, value)
@@ -1046,6 +1115,8 @@ func (m *MetadataModal) View() string {
 		helpText = "j/k: select  Enter: save  Esc: cancel"
 	case ModeEditFilterDropdown:
 		helpText = "type to filter  j/k: select  Enter: move  Esc: cancel"
+	case ModeEditMultiFilterDropdown:
+		helpText = "type to filter  j/k: navigate  space: toggle  Enter: save  Esc: cancel"
 	default:
 		helpText = "j/k: navigate  Enter: edit  H/L: sections  Esc: close"
 	}
@@ -1103,7 +1174,7 @@ func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
 		}
 		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
 
-	case FieldTypeText, FieldTypeDropdown:
+	case FieldTypeText, FieldTypeDropdown, FieldTypeMultiFilterDropdown:
 		if val, ok := m.values[field]; ok && val != "" {
 			return val
 		}
@@ -1125,6 +1196,8 @@ func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
 		return m.handleEditDropdownMode(key)
 	case ModeEditFilterDropdown:
 		return m.handleEditFilterDropdownMode(key)
+	case ModeEditMultiFilterDropdown:
+		return m.handleEditMultiFilterDropdownMode(key)
 	default:
 		return false, nil
 	}
@@ -1489,6 +1562,7 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 		FieldRunOnceAt, FieldStartsAt, FieldExpiresAt, FieldTimezone,
 		FieldFeatureSchedule, FieldFeatureStartsAt, FieldFeatureExpiresAt,
 		FieldFeatureRunOnceAt, FieldFeatureTimezone,
+		FieldFeaturePriority, FieldFeatureDependsOn,
 	}
 
 	for _, field := range stringFields {
@@ -1497,6 +1571,8 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 			switch field {
 			case FieldFeatureID:
 				values[i] = entry.FeatureID
+			case FieldFeaturePriority:
+				values[i] = entry.FeaturePriority
 			case FieldGitBranch:
 				values[i] = entry.GitBranch
 			case FieldMergeTargetBranch:
@@ -1535,6 +1611,8 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 				values[i] = entry.FeatureRunOnceAt
 			case FieldFeatureTimezone:
 				values[i] = entry.FeatureTimezone
+			case FieldFeatureDependsOn:
+				values[i] = strings.Join(entry.FeatureDependsOn, ",")
 			}
 		}
 		if !allEqual(values) {
@@ -1599,6 +1677,7 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 
 // enterEditModeCmd returns a tea.Cmd if the current field needs async data before editing.
 // For FieldTypeFilterDropdown, it fetches the project list if not already loaded.
+// For FieldTypeMultiFilterDropdown (FieldFeatureDependsOn), it fetches the feature list.
 func (m *MetadataModal) enterEditModeCmd() tea.Cmd {
 	if m.focusedField == FieldMoveToProject && !m.projectsLoaded {
 		apiClient := m.apiClient
@@ -1606,6 +1685,31 @@ func (m *MetadataModal) enterEditModeCmd() tea.Cmd {
 			ctx := context.Background()
 			projects, err := apiClient.ListProjects(ctx)
 			return projectsListedMsg{projects: projects, err: err}
+		}
+	}
+	if m.focusedField == FieldFeatureDependsOn {
+		m.featureListLoading = true
+		apiClient := m.apiClient
+		projectID := m.projectID
+		// For single/batch mode, extract project from task path
+		if projectID == "" {
+			projectID = m.extractCurrentProject()
+		}
+		currentFeatureID := m.featureID
+		return func() tea.Msg {
+			ctx := context.Background()
+			features, err := apiClient.GetFeatures(ctx, projectID)
+			if err != nil {
+				return featureListFetchedMsg{err: err}
+			}
+			// Extract feature IDs, filtering out the current feature
+			var featureIDs []string
+			for _, f := range features {
+				if f.FeatureID != currentFeatureID {
+					featureIDs = append(featureIDs, f.FeatureID)
+				}
+			}
+			return featureListFetchedMsg{featureIDs: featureIDs}
 		}
 	}
 	return nil
@@ -1797,6 +1901,164 @@ func (m *MetadataModal) renderFilterDropdown() string {
 	if len(m.filteredOptions) == 0 && m.editBuffer != "" {
 		newStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#ff9900")).Italic(true)
 		lines = append(lines, newStyle.Render(fmt.Sprintf("  → %s (new)", m.editBuffer)))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+// ============================================================================
+// Multi-Select Filter Dropdown Methods (Feature Dependencies)
+// ============================================================================
+
+// handleEditMultiFilterDropdownMode handles key presses in multi-select filter dropdown mode.
+func (m *MetadataModal) handleEditMultiFilterDropdownMode(key string) (bool, tea.Cmd) {
+	switch key {
+	case "j", "down":
+		if len(m.filteredOptions) > 0 {
+			m.dropdownIndex++
+			if m.dropdownIndex >= len(m.filteredOptions) {
+				m.dropdownIndex = 0
+			}
+		}
+		return true, nil
+	case "k", "up":
+		if len(m.filteredOptions) > 0 {
+			m.dropdownIndex--
+			if m.dropdownIndex < 0 {
+				m.dropdownIndex = len(m.filteredOptions) - 1
+			}
+		}
+		return true, nil
+	case " ":
+		// Toggle selection on highlighted item
+		if len(m.filteredOptions) > 0 && m.dropdownIndex < len(m.filteredOptions) {
+			item := m.filteredOptions[m.dropdownIndex]
+			if m.selectedItems == nil {
+				m.selectedItems = make(map[string]bool)
+			}
+			m.selectedItems[item] = !m.selectedItems[item]
+			if !m.selectedItems[item] {
+				delete(m.selectedItems, item)
+			}
+		}
+		return true, nil
+	case "enter":
+		// Confirm selections — join selected items into comma-separated string
+		var selected []string
+		for _, opt := range m.dropdownOptions {
+			if m.selectedItems[opt] {
+				selected = append(selected, opt)
+			}
+		}
+		m.values[m.focusedField] = strings.Join(selected, ", ")
+		cmd := m.saveField()
+		m.interactionMode = ModeNavigate
+		m.editBuffer = ""
+		return true, cmd
+	case "esc":
+		// Cancel without saving
+		m.editBuffer = ""
+		m.interactionMode = ModeNavigate
+		return true, nil
+	case "backspace":
+		m.deleteChar()
+		m.filterFeatures()
+		m.dropdownIndex = 0
+		return true, nil
+	case "ctrl+u":
+		m.clearBuffer()
+		m.filterFeatures()
+		m.dropdownIndex = 0
+		return true, nil
+	default:
+		// Single printable character: append to buffer and re-filter
+		if len(key) == 1 {
+			m.appendChar(rune(key[0]))
+			m.filterFeatures()
+			m.dropdownIndex = 0
+			return true, nil
+		}
+		return true, nil
+	}
+}
+
+// filterFeatures filters the dropdownOptions based on editBuffer (case-insensitive substring match).
+func (m *MetadataModal) filterFeatures() {
+	if m.editBuffer == "" {
+		m.filteredOptions = make([]string, len(m.dropdownOptions))
+		copy(m.filteredOptions, m.dropdownOptions)
+		return
+	}
+	query := strings.ToLower(m.editBuffer)
+	var filtered []string
+	for _, opt := range m.dropdownOptions {
+		if strings.Contains(strings.ToLower(opt), query) {
+			filtered = append(filtered, opt)
+		}
+	}
+	m.filteredOptions = filtered
+}
+
+// renderMultiFilterDropdown renders the multi-select filter dropdown with checkmarks.
+func (m *MetadataModal) renderMultiFilterDropdown() string {
+	var lines []string
+
+	// Show match count
+	selectedCount := 0
+	for _, v := range m.selectedItems {
+		if v {
+			selectedCount++
+		}
+	}
+	countInfo := fmt.Sprintf("(%d selected, %d of %d features)", selectedCount, len(m.filteredOptions), len(m.dropdownOptions))
+	countStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	lines = append(lines, countStyle.Render("  "+countInfo))
+
+	// Show up to 8 filtered options
+	maxVisible := 8
+	if len(m.filteredOptions) < maxVisible {
+		maxVisible = len(m.filteredOptions)
+	}
+
+	// Calculate visible window around dropdownIndex
+	startIdx := 0
+	if m.dropdownIndex >= maxVisible {
+		startIdx = m.dropdownIndex - maxVisible + 1
+	}
+	endIdx := startIdx + maxVisible
+	if endIdx > len(m.filteredOptions) {
+		endIdx = len(m.filteredOptions)
+		startIdx = endIdx - maxVisible
+		if startIdx < 0 {
+			startIdx = 0
+		}
+	}
+
+	for i := startIdx; i < endIdx; i++ {
+		option := m.filteredOptions[i]
+		// Checkbox indicator
+		check := " "
+		if m.selectedItems[option] {
+			check = "x"
+		}
+		// Focus indicator
+		cursor := " "
+		if i == m.dropdownIndex {
+			cursor = ">"
+		}
+		line := fmt.Sprintf("  %s [%s] %s", cursor, check, option)
+		if i == m.dropdownIndex {
+			style := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Background(lipgloss.Color("235"))
+			lines = append(lines, style.Render(line))
+		} else {
+			style := lipgloss.NewStyle().Foreground(ColorDim)
+			lines = append(lines, style.Render(line))
+		}
+	}
+
+	if len(m.filteredOptions) == 0 {
+		emptyStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+		lines = append(lines, emptyStyle.Render("  (no matching features)"))
 	}
 
 	return strings.Join(lines, "\n")

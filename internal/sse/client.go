@@ -19,6 +19,7 @@ type Client struct {
 	mu        sync.Mutex
 	cancel    context.CancelFunc
 	eventCh   chan Event
+	closed    bool // tracks whether eventCh has been closed
 	connected bool
 }
 
@@ -60,6 +61,10 @@ func (c *Client) Close() {
 		c.cancel = nil
 	}
 	c.connected = false
+	if !c.closed {
+		c.closed = true
+		close(c.eventCh)
+	}
 }
 
 // Connected returns whether the SSE stream is currently connected.
@@ -75,8 +80,11 @@ func (c *Client) listen(ctx context.Context) {
 	defer func() {
 		c.mu.Lock()
 		c.connected = false
+		if !c.closed {
+			c.closed = true
+			close(c.eventCh)
+		}
 		c.mu.Unlock()
-		close(c.eventCh)
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
@@ -145,6 +153,13 @@ func (c *Client) listen(ctx context.Context) {
 
 // sendEvent sends an event to the channel, respecting context cancellation.
 func (c *Client) sendEvent(ctx context.Context, event Event) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
 	select {
 	case c.eventCh <- event:
 	case <-ctx.Done():

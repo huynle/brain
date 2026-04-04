@@ -34,7 +34,8 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 	s := newTestStorage(t)
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
-		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens"}
+		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
+		"task_claims"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -555,5 +556,135 @@ func TestNew_MaxOpenConns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("insert %d failed: %v", i, err)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// task_claims table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestTaskClaimsTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Table should exist
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_claims'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("task_claims table not found: %v", err)
+	}
+
+	// Verify columns by inserting and querying a row
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert into task_claims failed: %v", err)
+	}
+
+	var projectID, taskID, runnerID string
+	var claimedAt, expiresAt int64
+	err = s.DB().QueryRow("SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims").
+		Scan(&projectID, &taskID, &runnerID, &claimedAt, &expiresAt)
+	if err != nil {
+		t.Fatalf("select from task_claims failed: %v", err)
+	}
+	if projectID != "proj1" || taskID != "task1" || runnerID != "runner1" {
+		t.Errorf("got (%q, %q, %q), want (proj1, task1, runner1)", projectID, taskID, runnerID)
+	}
+	if claimedAt != 1000 || expiresAt != 2000 {
+		t.Errorf("got (claimed_at=%d, expires_at=%d), want (1000, 2000)", claimedAt, expiresAt)
+	}
+}
+
+func TestTaskClaimsTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Insert first claim
+	_, err := s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	// Duplicate (project_id, task_id) should fail — composite PK
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner2', 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate (project_id, task_id), got nil")
+	}
+
+	// Same task_id but different project_id should succeed
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj2', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert with different project_id failed: %v", err)
+	}
+}
+
+func TestTaskClaimsTable_Indexes(t *testing.T) {
+	s := newTestStorage(t)
+
+	indexes := []string{
+		"idx_claims_runner",
+		"idx_claims_expires",
+	}
+	for _, idx := range indexes {
+		t.Run(idx, func(t *testing.T) {
+			var name string
+			err := s.DB().QueryRow(
+				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
+			).Scan(&name)
+			if err != nil {
+				t.Fatalf("index %q not found: %v", idx, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// task_claims table: migration from v4 to v5
+// ---------------------------------------------------------------------------
+
+func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	// Simulate a v4 database: create schema_version and set version to 4
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (4)")
+	if err != nil {
+		t.Fatalf("insert v4: %v", err)
+	}
+
+	// Run migration
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	// task_claims table should now exist
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_claims'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("task_claims table not found after migration: %v", err)
+	}
+
+	// Should be able to insert data
+	_, err = db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
+	}
+}
+
+func TestSchemaVersion_IsFive(t *testing.T) {
+	if CurrentSchemaVersion != 5 {
+		t.Errorf("CurrentSchemaVersion = %d, want 5", CurrentSchemaVersion)
 	}
 }

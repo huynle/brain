@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -135,6 +135,16 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   created_at INTEGER NOT NULL
 );`
 
+const createTaskClaimsTable = `
+CREATE TABLE IF NOT EXISTS task_claims (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, task_id)
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -150,6 +160,9 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
+	// Task claims indexes
+	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -273,6 +286,25 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 5 {
+		// v5: add task_claims table for persistent lease-based task claims (multi-runner support).
+		if _, err := db.Exec(createTaskClaimsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v5 (task_claims table): %w", err)
+			}
+		}
+		// Indexes for task_claims
+		claimIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at)",
+		}
+		for _, stmt := range claimIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v5 (task_claims indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -320,6 +352,7 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
+		createTaskClaimsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

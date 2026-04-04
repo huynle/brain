@@ -231,14 +231,14 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	// Wire HookDispatcher to execute lifecycle hook scripts.
-	// The dispatcher scans the hooks directory for executable pre-*/post-* scripts.
-	// If the directory doesn't exist, the dispatcher is a no-op.
-	if opts.Config.HooksDir != "" {
+	// The dispatcher loads hooks from both the hooks directory (executable scripts)
+	// and inline hook definitions from config. Inline hooks take precedence.
+	{
 		hookTimeout := time.Duration(opts.Config.HookTimeout) * time.Second
 		if hookTimeout <= 0 {
 			hookTimeout = 30 * time.Second
 		}
-		hd, err := NewHookDispatcher(opts.Config.HooksDir, hookTimeout)
+		hd, err := NewHookDispatcherWithConfig(opts.Config.Hooks, hookTimeout)
 		if err != nil {
 			logger.Printf("WARNING: failed to initialize hook dispatcher: %v", err)
 		} else {

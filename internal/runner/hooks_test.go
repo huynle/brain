@@ -428,3 +428,273 @@ func TestDispatchPre_MultipleHooks_AllMustPass(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+// =============================================================================
+// NewHookDispatcherWithConfig
+// =============================================================================
+
+func TestNewHookDispatcherWithConfig_InlineHooks(t *testing.T) {
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(), // empty dir
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "echo hello",
+			},
+			"post-task-complete": {
+				Command: "echo done",
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := hd.ListHooks()
+	if len(hooks) != 2 {
+		t.Errorf("expected 2 hooks, got %d: %v", len(hooks), hooks)
+	}
+}
+
+func TestNewHookDispatcherWithConfig_DisabledHooksSkipped(t *testing.T) {
+	disabled := false
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(),
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "echo hello",
+				Enabled: &disabled,
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hooks := hd.ListHooks()
+	if len(hooks) != 0 {
+		t.Errorf("expected 0 hooks (disabled), got %d: %v", len(hooks), hooks)
+	}
+}
+
+func TestNewHookDispatcherWithConfig_InlineOverridesDirectory(t *testing.T) {
+	dir := t.TempDir()
+	// Create a directory hook that exits 1 (would abort).
+	makeExecutable(t, dir, "pre-task-start", "#!/bin/sh\nexit 1\n")
+
+	// Inline hook with same name exits 0 (should succeed).
+	cfg := HooksConfig{
+		HooksDir: dir,
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "exit 0",
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Should use inline hook (exit 0), not directory hook (exit 1).
+	evt := testEvent(types.EventTaskStarted)
+	if err := hd.DispatchPre(evt); err != nil {
+		t.Fatalf("expected inline hook to succeed, got error: %v", err)
+	}
+}
+
+// =============================================================================
+// Inline Hook Pre-Dispatch
+// =============================================================================
+
+func TestDispatchPre_InlineCommand_ExitZero(t *testing.T) {
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(),
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "exit 0",
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := testEvent(types.EventTaskStarted)
+	if err := hd.DispatchPre(evt); err != nil {
+		t.Fatalf("expected inline command to succeed, got: %v", err)
+	}
+}
+
+func TestDispatchPre_InlineCommand_ExitOne_Aborts(t *testing.T) {
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(),
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "exit 1",
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := testEvent(types.EventTaskStarted)
+	err = hd.DispatchPre(evt)
+	if err == nil {
+		t.Fatal("expected error for inline exit 1")
+	}
+	if !IsHookAbort(err) {
+		t.Errorf("expected HookAbortError, got: %T %v", err, err)
+	}
+}
+
+func TestDispatchPre_InlineScript_Executes(t *testing.T) {
+	dir := t.TempDir()
+	scriptPath := makeExecutable(t, dir, "my-check.sh", "#!/bin/sh\nexit 0\n")
+
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(), // separate from script
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Script: scriptPath,
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := testEvent(types.EventTaskStarted)
+	if err := hd.DispatchPre(evt); err != nil {
+		t.Fatalf("expected inline script to succeed, got: %v", err)
+	}
+}
+
+func TestDispatchPre_InlineCommand_Timeout(t *testing.T) {
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(),
+		Hooks: map[string]InlineHookConfig{
+			"pre-task-start": {
+				Command: "sleep 60",
+				Timeout: Duration{500 * time.Millisecond},
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := testEvent(types.EventTaskStarted)
+	err = hd.DispatchPre(evt)
+	if err == nil {
+		t.Fatal("expected timeout error")
+	}
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("expected timeout message, got: %v", err)
+	}
+}
+
+// =============================================================================
+// Inline Hook Post-Dispatch
+// =============================================================================
+
+func TestDispatchPost_InlineCommand_Executes(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "inline_post_ran.txt")
+	cfg := HooksConfig{
+		HooksDir: t.TempDir(),
+		Hooks: map[string]InlineHookConfig{
+			"post-task-complete": {
+				Command: "echo done > " + marker,
+			},
+		},
+	}
+
+	hd, err := NewHookDispatcherWithConfig(cfg, 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	evt := testEvent(types.EventTaskCompleted)
+	hd.DispatchPost(evt)
+
+	// Wait for async execution.
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, err := os.Stat(marker); err == nil {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatal("inline post-hook did not execute within 5 seconds")
+}
+
+// =============================================================================
+// InlineHookConfig Helpers
+// =============================================================================
+
+func TestInlineHookConfig_IsEnabled(t *testing.T) {
+	// Default (nil) → true.
+	h := InlineHookConfig{Command: "echo"}
+	if !h.IsEnabled() {
+		t.Error("expected nil Enabled to default to true")
+	}
+
+	// Explicit true.
+	enabled := true
+	h.Enabled = &enabled
+	if !h.IsEnabled() {
+		t.Error("expected explicit true")
+	}
+
+	// Explicit false.
+	disabled := false
+	h.Enabled = &disabled
+	if h.IsEnabled() {
+		t.Error("expected explicit false")
+	}
+}
+
+func TestInlineHookConfig_IsBlocking(t *testing.T) {
+	// Default (nil) → true.
+	h := InlineHookConfig{Command: "echo"}
+	if !h.IsBlocking() {
+		t.Error("expected nil Blocking to default to true")
+	}
+
+	// Explicit false.
+	blocking := false
+	h.Blocking = &blocking
+	if h.IsBlocking() {
+		t.Error("expected explicit false")
+	}
+}
+
+func TestInlineHookConfig_GetTimeout(t *testing.T) {
+	// No timeout set → use default.
+	h := InlineHookConfig{Command: "echo"}
+	got := h.GetTimeout(30 * time.Second)
+	if got != 30*time.Second {
+		t.Errorf("expected 30s default, got %v", got)
+	}
+
+	// Timeout set → use configured.
+	h.Timeout = Duration{10 * time.Second}
+	got = h.GetTimeout(30 * time.Second)
+	if got != 10*time.Second {
+		t.Errorf("expected 10s configured, got %v", got)
+	}
+}

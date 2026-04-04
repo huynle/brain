@@ -63,13 +63,18 @@ func AsHookBlockError(err error) (*HookBlockError, bool) {
 // HookDispatcher discovers hook scripts from a directory and executes them
 // when events occur. Pre-hooks (blocking) run synchronously with timeout;
 // post-hooks fire-and-forget in goroutines.
+//
+// Inline hooks (from config) take precedence over directory scripts.
 type HookDispatcher struct {
 	// hooksDir is the directory containing hook scripts.
 	hooksDir string
-	// timeout is the maximum duration for pre-hook execution.
+	// timeout is the default maximum duration for pre-hook execution.
 	timeout time.Duration
-	// hooks maps filenames to their full paths (only executable files).
+	// hooks maps filenames to their full paths (only executable files from directory).
 	hooks map[string]string
+	// inlineHooks maps hook names to inline config definitions.
+	// Inline hooks take precedence over directory scripts.
+	inlineHooks map[string]InlineHookConfig
 }
 
 // NewHookDispatcher creates a HookDispatcher that discovers executable scripts
@@ -77,14 +82,46 @@ type HookDispatcher struct {
 // no hooks (not an error). The timeout applies to pre-hook execution.
 func NewHookDispatcher(hooksDir string, timeout time.Duration) (*HookDispatcher, error) {
 	hd := &HookDispatcher{
-		hooksDir: hooksDir,
-		timeout:  timeout,
-		hooks:    make(map[string]string),
+		hooksDir:    hooksDir,
+		timeout:     timeout,
+		hooks:       make(map[string]string),
+		inlineHooks: make(map[string]InlineHookConfig),
 	}
 
 	if err := hd.scan(); err != nil {
 		return nil, err
 	}
+	return hd, nil
+}
+
+// NewHookDispatcherWithConfig creates a HookDispatcher from a HooksConfig,
+// loading both directory-based scripts and inline hook definitions.
+// Inline hooks take precedence over directory scripts with the same name.
+func NewHookDispatcherWithConfig(cfg HooksConfig, defaultTimeout time.Duration) (*HookDispatcher, error) {
+	hd, err := NewHookDispatcher(cfg.HooksDir, defaultTimeout)
+	if err != nil {
+		return nil, err
+	}
+
+	// Register inline hooks (these override directory scripts).
+	for name, hookCfg := range cfg.Hooks {
+		if !hookCfg.IsEnabled() {
+			slog.Debug("inline hook disabled, skipping", "hook", name)
+			continue
+		}
+		hd.inlineHooks[name] = hookCfg
+		slog.Debug("registered inline hook", "name", name,
+			"has_command", hookCfg.Command != "",
+			"has_script", hookCfg.Script != "")
+	}
+
+	totalHooks := len(hd.hooks) + len(hd.inlineHooks)
+	slog.Info("hook dispatcher initialized with config",
+		"hooks_dir", cfg.HooksDir,
+		"dir_hooks", len(hd.hooks),
+		"inline_hooks", len(hd.inlineHooks),
+		"total_hooks", totalHooks)
+
 	return hd, nil
 }
 
@@ -125,11 +162,21 @@ func (hd *HookDispatcher) scan() error {
 	return nil
 }
 
-// ListHooks returns the names of all discovered hooks.
+// ListHooks returns the names of all active hooks (directory + inline, deduplicated).
 func (hd *HookDispatcher) ListHooks() []string {
-	names := make([]string, 0, len(hd.hooks))
+	seen := make(map[string]bool)
+	names := make([]string, 0, len(hd.hooks)+len(hd.inlineHooks))
+	for name := range hd.inlineHooks {
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
+	}
 	for name := range hd.hooks {
-		names = append(names, name)
+		if !seen[name] {
+			seen[name] = true
+			names = append(names, name)
+		}
 	}
 	return names
 }
@@ -233,8 +280,19 @@ func buildHookEnv(evt types.Event) []string {
 // Returns HookAbortError if a hook exits with code 1.
 // Returns HookBlockError if a hook exits with code 2 (stderr captured as reason).
 // Returns an error if a hook times out or encounters an unexpected error.
+//
+// Inline hooks take precedence over directory scripts for the same hook name.
 func (hd *HookDispatcher) DispatchPre(evt types.Event) error {
 	preName, _ := eventToHookFilenames(evt.Type)
+
+	// Check inline hooks first (they take precedence).
+	if inlineCfg, ok := hd.inlineHooks[preName]; ok {
+		slog.Info("executing inline pre-hook", "hook", preName, "event", evt.Type)
+		timeout := inlineCfg.GetTimeout(hd.timeout)
+		return hd.executeInlinePreHook(inlineCfg, preName, evt, timeout)
+	}
+
+	// Fall back to directory scripts.
 	hookPath, ok := hd.hooks[preName]
 	if !ok {
 		return nil
@@ -246,8 +304,24 @@ func (hd *HookDispatcher) DispatchPre(evt types.Event) error {
 
 // DispatchPost executes all matching post-hooks asynchronously (fire-and-forget).
 // Errors are logged but not returned.
+//
+// Inline hooks take precedence over directory scripts for the same hook name.
 func (hd *HookDispatcher) DispatchPost(evt types.Event) {
 	_, postName := eventToHookFilenames(evt.Type)
+
+	// Check inline hooks first (they take precedence).
+	if inlineCfg, ok := hd.inlineHooks[postName]; ok {
+		slog.Info("dispatching inline post-hook", "hook", postName, "event", evt.Type)
+		timeout := inlineCfg.GetTimeout(10 * time.Second) // default 10s for post-hooks
+		go func() {
+			if err := hd.executeInlinePostHook(inlineCfg, postName, evt, timeout); err != nil {
+				slog.Error("inline post-hook failed", "hook", postName, "event", evt.Type, "error", err)
+			}
+		}()
+		return
+	}
+
+	// Fall back to directory scripts.
 	hookPath, ok := hd.hooks[postName]
 	if !ok {
 		return
@@ -347,5 +421,101 @@ func (hd *HookDispatcher) executePostHook(hookPath, hookName string, evt types.E
 	}
 
 	slog.Info("post-hook succeeded", "hook", hookName)
+	return nil
+}
+
+// =============================================================================
+// Inline Hook Execution
+// =============================================================================
+
+// buildInlineCmd creates an exec.Cmd for an inline hook config.
+// If Command is set, it runs via "sh -c <command>".
+// If Script is set, it runs the script directly.
+func buildInlineCmd(ctx context.Context, cfg InlineHookConfig) *exec.Cmd {
+	if cfg.Command != "" {
+		return exec.CommandContext(ctx, "sh", "-c", cfg.Command)
+	}
+	return exec.CommandContext(ctx, cfg.Script)
+}
+
+// executeInlinePreHook runs an inline pre-hook with timeout and interprets exit codes.
+func (hd *HookDispatcher) executeInlinePreHook(cfg InlineHookConfig, hookName string, evt types.Event, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := buildInlineCmd(ctx, cfg)
+	cmd.Env = buildHookEnv(evt)
+	cmd.Cancel = func() error {
+		return cmd.Process.Kill()
+	}
+	cmd.WaitDelay = 500 * time.Millisecond
+
+	// Pipe event JSON to stdin.
+	eventJSON, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal event for inline hook stdin: %w", err)
+	}
+	cmd.Stdin = bytes.NewReader(eventJSON)
+
+	// Capture stderr for block reason.
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err = cmd.Run()
+	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("inline pre-hook %q timed out after %v", hookName, timeout)
+		}
+
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			code := exitErr.ExitCode()
+			switch code {
+			case 1:
+				return &HookAbortError{Hook: hookName}
+			case 2:
+				reason := strings.TrimSpace(stderr.String())
+				if reason == "" {
+					reason = "hook exited with code 2 (no stderr)"
+				}
+				return &HookBlockError{Hook: hookName, Reason: reason}
+			default:
+				return fmt.Errorf("inline pre-hook %q exited with code %d", hookName, code)
+			}
+		}
+		return fmt.Errorf("inline pre-hook %q execution error: %w", hookName, err)
+	}
+
+	slog.Info("inline pre-hook succeeded", "hook", hookName)
+	return nil
+}
+
+// executeInlinePostHook runs an inline post-hook (no exit code interpretation).
+func (hd *HookDispatcher) executeInlinePostHook(cfg InlineHookConfig, hookName string, evt types.Event, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := buildInlineCmd(ctx, cfg)
+	cmd.Env = buildHookEnv(evt)
+	cmd.Cancel = func() error {
+		return cmd.Process.Kill()
+	}
+	cmd.WaitDelay = 500 * time.Millisecond
+
+	// Pipe event JSON to stdin.
+	eventJSON, err := json.Marshal(evt)
+	if err != nil {
+		return fmt.Errorf("marshal event for inline hook stdin: %w", err)
+	}
+	cmd.Stdin = bytes.NewReader(eventJSON)
+
+	if err := cmd.Run(); err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return fmt.Errorf("inline post-hook %q timed out after %v", hookName, timeout)
+		}
+		return fmt.Errorf("inline post-hook %q failed: %w", hookName, err)
+	}
+
+	slog.Info("inline post-hook succeeded", "hook", hookName)
 	return nil
 }

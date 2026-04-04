@@ -1865,6 +1865,50 @@ func TestApplyTaskDefaults_PartialDefaults(t *testing.T) {
 	}
 }
 
+func TestApplyTaskDefaults_AppliedToAllTasks(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		Agent: "tdd-dev",
+		Model: "claude-sonnet-4-20250514",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	// Insert multiple tasks — defaults should apply to ALL of them, not just the first
+	insertTaskNote(t, store, "multi_a1", "Task A", "pending", "high", "proj", map[string]interface{}{})
+	insertTaskNote(t, store, "multi_b1", "Task B", "pending", "medium", "proj", map[string]interface{}{
+		"agent": "explore", // This task has its own agent — should keep it
+	})
+	insertTaskNote(t, store, "multi_c1", "Task C", "pending", "low", "proj", map[string]interface{}{})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 3 {
+		t.Fatalf("expected 3 tasks, got %d", len(result.Tasks))
+	}
+
+	// Build a map by ID for easier assertions
+	byID := make(map[string]types.ResolvedTask)
+	for _, task := range result.Tasks {
+		byID[task.ID] = task
+	}
+
+	// Task A: both defaults applied
+	if a := byID["multi_a1"]; a.Agent != "tdd-dev" || a.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Task A: Agent=%q Model=%q, want tdd-dev/claude-sonnet-4-20250514", a.Agent, a.Model)
+	}
+	// Task B: agent from task wins, model from defaults
+	if b := byID["multi_b1"]; b.Agent != "explore" || b.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Task B: Agent=%q Model=%q, want explore/claude-sonnet-4-20250514", b.Agent, b.Model)
+	}
+	// Task C: both defaults applied
+	if c := byID["multi_c1"]; c.Agent != "tdd-dev" || c.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Task C: Agent=%q Model=%q, want tdd-dev/claude-sonnet-4-20250514", c.Agent, c.Model)
+	}
+}
+
 func TestApplyTaskDefaults_AppliedViaGetReady(t *testing.T) {
 	defaults := config.TaskDefaultsConfig{
 		Agent: "tdd-dev",

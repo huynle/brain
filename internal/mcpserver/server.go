@@ -29,6 +29,7 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	mcp.RegisterBrainTools(server, client)
 	mcp.RegisterTaskTools(server, client)
 	mcp.RegisterPlanningTools(server, client)
+	mcp.RegisterWebhookTools(server, client)
 
 	// Run the server (reads from stdin, writes to stdout)
 	if err := server.Serve(ctx, stdin, stdout); err != nil {

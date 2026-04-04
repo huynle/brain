@@ -665,6 +665,360 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 var _ Client = (*schedMockClient)(nil)
 
 // =============================================================================
+// Feature Schedule Gate Direct-Complete Tests
+// =============================================================================
+
+func TestProcessScheduledTask_FeatureScheduleGate_DirectComplete(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should set status to "completed", NOT "pending"
+	statusCalls := client.getUpdateStatusCalls()
+	foundCompleted := false
+	foundPending := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if c.Status == "completed" {
+				foundCompleted = true
+			}
+			if c.Status == "pending" {
+				foundPending = true
+			}
+		}
+	}
+	if !foundCompleted {
+		t.Error("feature_schedule gate should be directly set to 'completed'")
+	}
+	if foundPending {
+		t.Error("feature_schedule gate should NOT be set to 'pending'")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_RunRecordedAsCompleted(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that the run was recorded with status "completed" directly
+	metaCalls := client.getUpdateMetadataCalls()
+	var runsMeta []interface{}
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if runs, ok := c.Fields["runs"]; ok {
+				runsMeta = runs.([]interface{})
+			}
+		}
+	}
+	if runsMeta == nil {
+		t.Fatal("expected runs array in metadata update")
+	}
+
+	// The last run should have status "completed"
+	lastRun := runsMeta[len(runsMeta)-1].(map[string]interface{})
+	if lastRun["status"] != "completed" {
+		t.Errorf("run status = %v, want 'completed'", lastRun["status"])
+	}
+	if lastRun["completed"] == nil || lastRun["completed"] == "" {
+		t.Error("run should have a 'completed' timestamp")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_DisablesSchedule(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that schedule_enabled was set to false
+	metaCalls := client.getUpdateMetadataCalls()
+	foundScheduleDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled == false {
+					foundScheduleDisabled = true
+				}
+			}
+		}
+	}
+	if !foundScheduleDisabled {
+		t.Error("feature_schedule gate should disable schedule_enabled after completion")
+	}
+}
+
+func TestProcessScheduledTask_RegularTask_StillSetsPending(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "regular-1",
+			Path:     "projects/proj-a/task/regular-1.md",
+			Title:    "Regular Scheduled Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			// No GeneratedKind — regular task
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Regular tasks should be set to "pending", NOT "completed"
+	statusCalls := client.getUpdateStatusCalls()
+	foundPending := false
+	foundCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/regular-1.md" {
+			if c.Status == "pending" {
+				foundPending = true
+			}
+			if c.Status == "completed" {
+				foundCompleted = true
+			}
+		}
+	}
+	if !foundPending {
+		t.Error("regular task should be set to 'pending'")
+	}
+	if foundCompleted {
+		t.Error("regular task should NOT be set to 'completed'")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_EmitsCompletedEvent(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Register event handler to capture events
+	var events []RunnerEvent
+	tr.OnEvent(func(evt RunnerEvent) {
+		events = append(events, evt)
+	})
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that a completed event was emitted
+	foundCompletedEvent := false
+	for _, evt := range events {
+		if evt.Type == EventTaskCompleted && evt.TaskID == "gate-1" {
+			foundCompletedEvent = true
+		}
+	}
+	if !foundCompletedEvent {
+		t.Error("feature_schedule gate should emit a completed event")
+	}
+}
+
+// =============================================================================
+// Downstream Unblocking Tests — Feature Schedule Gate Lifecycle
+// =============================================================================
+
+func TestProcessFeatureScheduleGate_DownstreamTasksBecomeReady(t *testing.T) {
+	// This test simulates the full lifecycle:
+	// 1. Feature has 3 tasks + 1 gate, all tasks depend_on the gate
+	// 2. Gate triggers at scheduled time → gate set to completed
+	// 3. After gate completes, downstream tasks should now be classifiable as "ready"
+	//    (because their sole dependency — the gate — is now completed)
+
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	// Gate task (feature_schedule generated)
+	gateTask := types.ResolvedTask{
+		ID:            "gate-deploy",
+		Path:          "projects/proj-a/task/gate-deploy.md",
+		Title:         "Feature Schedule: deploy-v3",
+		Status:        "active",
+		Schedule:      "*/15 * * * *",
+		GeneratedKind: "feature_schedule",
+		FeatureID:     "deploy-v3",
+	}
+
+	// Three downstream tasks that depend on the gate
+	taskAlpha := types.ResolvedTask{
+		ID:             "task-alpha",
+		Path:           "projects/proj-a/task/task-alpha.md",
+		Title:          "Deploy Service",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+	taskBeta := types.ResolvedTask{
+		ID:             "task-beta",
+		Path:           "projects/proj-a/task/task-beta.md",
+		Title:          "Run Migrations",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+	taskGamma := types.ResolvedTask{
+		ID:             "task-gamma",
+		Path:           "projects/proj-a/task/task-gamma.md",
+		Title:          "Verify Health",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+
+	client.allTasks["proj-a"] = []types.ResolvedTask{gateTask, taskAlpha, taskBeta, taskGamma}
+
+	ctx := context.Background()
+
+	// Trigger the scheduled tasks check — should directly complete the gate
+	tr.checkScheduledTasks(ctx, now)
+
+	// Verify gate was set to completed
+	statusCalls := client.getUpdateStatusCalls()
+	gateCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-deploy.md" && c.Status == "completed" {
+			gateCompleted = true
+		}
+	}
+	if !gateCompleted {
+		t.Fatal("gate task should have been set to 'completed'")
+	}
+
+	// Verify NO status changes were made to the downstream tasks (they remain pending,
+	// waiting for the next poll cycle to re-evaluate via dependency resolution)
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/task-alpha.md" ||
+			c.Path == "projects/proj-a/task/task-beta.md" ||
+			c.Path == "projects/proj-a/task/task-gamma.md" {
+			t.Errorf("downstream task %s should NOT have its status changed by gate completion directly", c.Path)
+		}
+	}
+
+	// Verify schedule was disabled on the gate
+	metaCalls := client.getUpdateMetadataCalls()
+	gateScheduleDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-deploy.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok && enabled == false {
+				gateScheduleDisabled = true
+			}
+		}
+	}
+	if !gateScheduleDisabled {
+		t.Error("gate schedule_enabled should be set to false after completion")
+	}
+}
+
+func TestProcessFeatureScheduleGate_RunOnceAtGate_ScheduleDisabledAfterCompletion(t *testing.T) {
+	// Specifically tests that a gate created from feature_run_once_at
+	// (which has a cron schedule set) gets schedule_enabled=false after firing once.
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	schedEnabled := true
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "gate-once",
+			Path:            "projects/proj-a/task/gate-once.md",
+			Title:           "Feature Schedule: one-time-deploy",
+			Status:          "active",
+			Schedule:        "0 0 1 6 *", // June 1st at midnight
+			ScheduleEnabled: &schedEnabled,
+			GeneratedKind:   "feature_schedule",
+			GeneratedKey:    "feature-schedule:one-time-deploy",
+			FeatureID:       "one-time-deploy",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Verify gate was completed
+	statusCalls := client.getUpdateStatusCalls()
+	gateCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-once.md" && c.Status == "completed" {
+			gateCompleted = true
+		}
+	}
+	if !gateCompleted {
+		t.Fatal("run_once_at gate should be completed")
+	}
+
+	// Verify schedule_enabled was set to false (preventing re-trigger)
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-once.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok && enabled == false {
+				foundDisabled = true
+			}
+		}
+	}
+	if !foundDisabled {
+		t.Error("run_once_at gate should disable schedule after completion")
+	}
+}
+
+// =============================================================================
 // latestInProgressRunID Tests
 // =============================================================================
 
@@ -1716,545 +2070,3 @@ func TestCheckScheduledTasks_MaxRunsNotReached(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// Feature-Level Schedule Evaluation Tests
-// =============================================================================
-
-func TestCheckFeatureSchedules_CronEnablesFeature(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// Task with feature_schedule cron that matches now (10:30, */15)
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "my-feature",
-			FeatureSchedule: "*/15 * * * *",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	// Feature should have been enabled
-	enabled := tr.GetEnabledFeatures()
-	if !enabled["my-feature"] {
-		t.Error("should enable feature when cron matches")
-	}
-}
-
-func TestCheckFeatureSchedules_CronDoesNotEnableWhenNoMatch(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// Cron does NOT match 10:31
-	now := time.Date(2026, 3, 22, 10, 31, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "my-feature",
-			FeatureSchedule: "*/15 * * * *",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if enabled["my-feature"] {
-		t.Error("should NOT enable feature when cron does not match")
-	}
-}
-
-func TestCheckFeatureSchedules_RunOnceAtEnablesFeature(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// run_once_at is in the past -> should fire
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "feat-task-1",
-			Path:             "projects/proj-a/task/feat-task-1.md",
-			Title:            "Feature Task 1",
-			Status:           "active",
-			FeatureID:        "my-feature",
-			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if !enabled["my-feature"] {
-		t.Error("should enable feature when feature_run_once_at is in the past")
-	}
-}
-
-func TestCheckFeatureSchedules_RunOnceAtAutoDisables(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "feat-task-1",
-			Path:             "projects/proj-a/task/feat-task-1.md",
-			Title:            "Feature Task 1",
-			Status:           "active",
-			FeatureID:        "my-feature",
-			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	// Feature should be enabled
-	if !tr.GetEnabledFeatures()["my-feature"] {
-		t.Fatal("feature should be enabled first")
-	}
-
-	// State should be marked as fired to prevent re-triggering
-	tr.mu.RLock()
-	state := tr.featureScheduleState["my-feature"]
-	tr.mu.RUnlock()
-	if !state.runOnceFired {
-		t.Error("run_once_at should mark state as fired")
-	}
-
-	// Second call should NOT trigger again (already fired)
-	tr.DisableFeature("my-feature")
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if enabled["my-feature"] {
-		t.Error("should NOT re-trigger run_once_at feature after it has already fired")
-	}
-}
-
-func TestCheckFeatureSchedules_StartsAtBeforeWindow(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// starts_at is in the future, cron matches
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "my-feature",
-			FeatureSchedule: "*/15 * * * *",
-			FeatureStartsAt: "2026-07-01T00:00:00Z", // future
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if enabled["my-feature"] {
-		t.Error("should NOT enable feature before feature_starts_at")
-	}
-}
-
-func TestCheckFeatureSchedules_ExpiresAtDisablesFeature(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// Pre-enable the feature
-	tr.EnableFeature("my-feature")
-
-	// expires_at is in the past -> should disable
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "feat-task-1",
-			Path:             "projects/proj-a/task/feat-task-1.md",
-			Title:            "Feature Task 1",
-			Status:           "active",
-			FeatureID:        "my-feature",
-			FeatureSchedule:  "*/15 * * * *",
-			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if enabled["my-feature"] {
-		t.Error("should disable feature when feature_expires_at has passed")
-	}
-}
-
-func TestCheckFeatureSchedules_TimezoneRespected(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// 10:30 UTC = 19:30 Tokyo. Cron "30 19 * * *" should match Tokyo time.
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "tz-feature",
-			FeatureSchedule: "30 19 * * *",
-			FeatureTimezone: "Asia/Tokyo",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if !enabled["tz-feature"] {
-		t.Error("should enable feature with timezone-aware cron matching")
-	}
-}
-
-func TestCheckFeatureSchedules_GroupsByFeatureID(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// Multiple tasks with same feature_id — feature_schedule from highest-priority task should be used
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "grouped-feature",
-			FeaturePriority: "high",
-			FeatureSchedule: "*/15 * * * *",
-		},
-		{
-			ID:              "feat-task-2",
-			Path:            "projects/proj-a/task/feat-task-2.md",
-			Title:           "Feature Task 2",
-			Status:          "active",
-			FeatureID:       "grouped-feature",
-			FeaturePriority: "low",
-			// No feature_schedule on this one - should use the one from feat-task-1
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if !enabled["grouped-feature"] {
-		t.Error("should enable feature from grouped tasks using highest-priority task's schedule")
-	}
-}
-
-func TestCheckFeatureSchedules_NoFeatureScheduleSkipped(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	// Tasks with feature_id but no feature_schedule fields
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:        "feat-task-1",
-			Path:      "projects/proj-a/task/feat-task-1.md",
-			Title:     "Feature Task 1",
-			Status:    "active",
-			FeatureID: "plain-feature",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	enabled := tr.GetEnabledFeatures()
-	if enabled["plain-feature"] {
-		t.Error("should NOT enable feature with no feature_schedule or feature_run_once_at")
-	}
-}
-
-func TestCheckFeatureSchedules_EmitsEvents(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	var events []RunnerEvent
-	tr.OnEvent(func(e RunnerEvent) {
-		events = append(events, e)
-	})
-
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:              "feat-task-1",
-			Path:            "projects/proj-a/task/feat-task-1.md",
-			Title:           "Feature Task 1",
-			Status:          "active",
-			FeatureID:       "event-feature",
-			FeatureSchedule: "*/15 * * * *",
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	found := false
-	for _, e := range events {
-		if e.Type == EventFeatureEnabled && e.FeatureID == "event-feature" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("should emit EventFeatureEnabled when feature schedule triggers")
-	}
-}
-
-func TestCheckFeatureSchedules_ExpiresAtEmitsDisableEvent(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	tr.EnableFeature("expire-feature")
-
-	var events []RunnerEvent
-	tr.OnEvent(func(e RunnerEvent) {
-		events = append(events, e)
-	})
-
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "feat-task-1",
-			Path:             "projects/proj-a/task/feat-task-1.md",
-			Title:            "Feature Task 1",
-			Status:           "active",
-			FeatureID:        "expire-feature",
-			FeatureSchedule:  "*/15 * * * *",
-			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	found := false
-	for _, e := range events {
-		if e.Type == EventFeatureDisabled && e.FeatureID == "expire-feature" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("should emit EventFeatureDisabled when feature expires")
-	}
-}
-
-func TestCheckFeatureSchedules_RunningTasksFinishWhenWindowCloses(t *testing.T) {
-	tr, client, processMgr := schedTestRunner()
-
-	// Simulate a running task for this feature by adding it to the process manager
-	proc := newMockProcess(12345)
-	_ = processMgr.Add("feat-task-1", RunningTask{
-		ID:        "feat-task-1",
-		Path:      "projects/proj-a/task/feat-task-1.md",
-		Title:     "Feature Task 1",
-		ProjectID: "proj-a",
-		StartedAt: time.Now(),
-	}, proc)
-
-	// Pre-enable the feature
-	tr.EnableFeature("running-feature")
-
-	// Feature has expired — schedule check should disable the feature
-	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "feat-task-1",
-			Path:             "projects/proj-a/task/feat-task-1.md",
-			Title:            "Feature Task 1",
-			Status:           "in_progress",
-			FeatureID:        "running-feature",
-			FeatureSchedule:  "*/15 * * * *",
-			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
-		},
-	}
-
-	ctx := context.Background()
-	tr.checkFeatureSchedules(ctx, now)
-
-	// Feature should be disabled (no new tasks will be picked)
-	enabled := tr.GetEnabledFeatures()
-	if enabled["running-feature"] {
-		t.Error("should disable feature when window expires, even with running tasks")
-	}
-
-	// But the running task should NOT have been killed — process should still be tracked
-	info := processMgr.Get("feat-task-1")
-	if info == nil {
-		t.Error("running task should still be tracked in process manager (not killed)")
-	}
-
-	// Verify the process was not killed
-	if proc.Exited() {
-		t.Error("running task process should NOT be terminated; it should be allowed to finish")
-	}
-}
-
-// =============================================================================
-// Integration Test: End-to-End Feature Scheduling Lifecycle
-// =============================================================================
-
-func TestCheckFeatureSchedules_Integration_FullLifecycle(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	var events []RunnerEvent
-	tr.OnEvent(func(e RunnerEvent) {
-		events = append(events, e)
-	})
-
-	ctx := context.Background()
-	featureID := "lifecycle-feature"
-
-	// --- Phase 1: Before starts_at window — feature should NOT enable ---
-	phase1Now := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC) // before starts_at
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "lc-task-1",
-			Path:             "projects/proj-a/task/lc-task-1.md",
-			Title:            "Lifecycle Task 1",
-			Status:           "active",
-			FeatureID:        featureID,
-			FeaturePriority:  "high",
-			FeatureSchedule:  "*/15 * * * *",
-			FeatureStartsAt:  "2026-03-20T00:00:00Z",
-			FeatureExpiresAt: "2026-04-01T00:00:00Z",
-			FeatureTimezone:  "America/New_York",
-		},
-		{
-			ID:              "lc-task-2",
-			Path:            "projects/proj-a/task/lc-task-2.md",
-			Title:           "Lifecycle Task 2",
-			Status:          "active",
-			FeatureID:       featureID,
-			FeaturePriority: "low",
-			// No schedule fields — should inherit from lc-task-1 (higher priority)
-		},
-	}
-
-	tr.checkFeatureSchedules(ctx, phase1Now)
-	if tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 1: feature should NOT be enabled before starts_at window")
-	}
-
-	// --- Phase 2: Inside window, cron matches — feature should enable ---
-	// 2026-03-22 10:30 UTC = 2026-03-22 06:30 EDT (within window, but cron "*/15" in NY tz)
-	// Use a time where cron matches in the feature's timezone
-	// 2026-03-22T20:30:00Z = 2026-03-22 16:30 EDT. "*/15 * * * *" matches minute 30.
-	phase2Now := time.Date(2026, 3, 22, 20, 30, 0, 0, time.UTC)
-	tr.checkFeatureSchedules(ctx, phase2Now)
-
-	if !tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 2: feature should be enabled when inside window and cron matches")
-	}
-
-	// Verify EnableFeature event was emitted
-	enableEventFound := false
-	for _, e := range events {
-		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
-			enableEventFound = true
-		}
-	}
-	if !enableEventFound {
-		t.Error("Phase 2: should emit EventFeatureEnabled")
-	}
-
-	// --- Phase 3: Cron does not match — feature stays as-is (already enabled) ---
-	events = nil
-	phase3Now := time.Date(2026, 3, 22, 20, 31, 0, 0, time.UTC) // minute 31, no cron match
-	tr.checkFeatureSchedules(ctx, phase3Now)
-	// Feature was already enabled, no new enable event expected
-	// (No disable should happen either — no cron match just means no new enable)
-
-	// --- Phase 4: After expires_at — feature should be disabled ---
-	events = nil
-	phase4Now := time.Date(2026, 4, 5, 10, 30, 0, 0, time.UTC) // after expires_at
-	tr.checkFeatureSchedules(ctx, phase4Now)
-
-	if tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 4: feature should be disabled after expires_at")
-	}
-
-	disableEventFound := false
-	for _, e := range events {
-		if e.Type == EventFeatureDisabled && e.FeatureID == featureID {
-			disableEventFound = true
-		}
-	}
-	if !disableEventFound {
-		t.Error("Phase 4: should emit EventFeatureDisabled when window expires")
-	}
-}
-
-func TestCheckFeatureSchedules_Integration_RunOnceAtLifecycle(t *testing.T) {
-	tr, client, _ := schedTestRunner()
-
-	var events []RunnerEvent
-	tr.OnEvent(func(e RunnerEvent) {
-		events = append(events, e)
-	})
-
-	ctx := context.Background()
-	featureID := "once-lifecycle"
-
-	client.allTasks["proj-a"] = []types.ResolvedTask{
-		{
-			ID:               "once-task-1",
-			Path:             "projects/proj-a/task/once-task-1.md",
-			Title:            "One-Shot Task",
-			Status:           "active",
-			FeatureID:        featureID,
-			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
-		},
-	}
-
-	// --- Phase 1: Before run_once_at time — should NOT trigger ---
-	phase1Now := time.Date(2026, 3, 22, 9, 30, 0, 0, time.UTC)
-	tr.checkFeatureSchedules(ctx, phase1Now)
-
-	if tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 1: feature should NOT be enabled before run_once_at time")
-	}
-
-	// --- Phase 2: After run_once_at time — should trigger and enable ---
-	phase2Now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	tr.checkFeatureSchedules(ctx, phase2Now)
-
-	if !tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 2: feature should be enabled after run_once_at time")
-	}
-
-	// Verify state marked as fired
-	tr.mu.RLock()
-	state := tr.featureScheduleState[featureID]
-	tr.mu.RUnlock()
-	if !state.runOnceFired {
-		t.Error("Phase 2: run_once_at state should be marked as fired")
-	}
-
-	// --- Phase 3: Second poll after run_once_at — should NOT re-trigger ---
-	tr.DisableFeature(featureID) // simulate feature completing its work
-	events = nil
-
-	phase3Now := time.Date(2026, 3, 22, 11, 0, 0, 0, time.UTC)
-	tr.checkFeatureSchedules(ctx, phase3Now)
-
-	if tr.GetEnabledFeatures()[featureID] {
-		t.Fatal("Phase 3: feature should NOT re-trigger after run_once_at already fired")
-	}
-
-	// No enable event should have been emitted in phase 3
-	for _, e := range events {
-		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
-			t.Error("Phase 3: should NOT emit EventFeatureEnabled on re-poll")
-		}
-	}
-}

@@ -12,11 +12,6 @@ import (
 	"github.com/huynle/brain-api/pkg/cron"
 )
 
-// featureSchedState tracks per-feature scheduling state to prevent re-triggering.
-type featureSchedState struct {
-	runOnceFired bool // true after a feature_run_once_at has been triggered
-}
-
 // timeWindowResult represents the result of checking a task's time window.
 type timeWindowResult int
 
@@ -199,144 +194,6 @@ func isScheduledTask(task *types.ResolvedTask) bool {
 	return task.Schedule != "" || task.RunOnceAt != ""
 }
 
-// featureScheduleInfo holds the extracted schedule fields for a feature group.
-type featureScheduleInfo struct {
-	featureID    string
-	schedule     string
-	startsAt     string
-	expiresAt    string
-	runOnceAt    string
-	timezone     string
-	priorityRank int // lower = higher priority (0=high,1=medium,2=low)
-}
-
-// priorityRank maps priority strings to numeric ranks (lower = higher priority).
-func priorityRank(p string) int {
-	switch p {
-	case "high":
-		return 0
-	case "medium":
-		return 1
-	case "low":
-		return 2
-	default:
-		return 3 // no priority
-	}
-}
-
-// checkFeatureSchedules evaluates feature-level schedules and enables/disables
-// features based on cron expressions, one-shot times, and time windows.
-// Called each poll iteration after checkScheduledTasks.
-func (tr *TaskRunner) checkFeatureSchedules(ctx context.Context, now time.Time) {
-	for _, projectID := range tr.projects {
-		if ctx.Err() != nil {
-			return
-		}
-
-		tasks, err := tr.client.GetAllTasks(ctx, projectID)
-		if err != nil {
-			tr.logger.Printf("feature-sched: failed to get tasks for %s: %v", projectID, err)
-			continue
-		}
-
-		// Group tasks by feature_id and extract schedule info from highest-priority task
-		featureInfos := tr.groupFeatureSchedules(tasks)
-
-		for featureID, info := range featureInfos {
-			if ctx.Err() != nil {
-				return
-			}
-			tr.evaluateFeatureSchedule(ctx, featureID, info, now)
-		}
-	}
-}
-
-// groupFeatureSchedules groups tasks by feature_id and extracts the feature schedule
-// fields from the highest-priority task that has them set.
-func (tr *TaskRunner) groupFeatureSchedules(tasks []types.ResolvedTask) map[string]featureScheduleInfo {
-	infos := make(map[string]featureScheduleInfo)
-
-	for i := range tasks {
-		task := &tasks[i]
-		if task.FeatureID == "" {
-			continue
-		}
-		// Skip tasks with no feature-level schedule fields
-		if task.FeatureSchedule == "" && task.FeatureRunOnceAt == "" {
-			// Check if another task in this feature already has schedule info
-			if _, exists := infos[task.FeatureID]; !exists {
-				continue
-			}
-			// Already have info from another task, skip
-			continue
-		}
-
-		rank := priorityRank(task.FeaturePriority)
-		existing, exists := infos[task.FeatureID]
-
-		if !exists || rank < existing.priorityRank {
-			infos[task.FeatureID] = featureScheduleInfo{
-				featureID:    task.FeatureID,
-				schedule:     task.FeatureSchedule,
-				startsAt:     task.FeatureStartsAt,
-				expiresAt:    task.FeatureExpiresAt,
-				runOnceAt:    task.FeatureRunOnceAt,
-				timezone:     task.FeatureTimezone,
-				priorityRank: rank,
-			}
-		}
-	}
-
-	return infos
-}
-
-// evaluateFeatureSchedule evaluates a single feature's schedule and enables/disables it.
-func (tr *TaskRunner) evaluateFeatureSchedule(ctx context.Context, featureID string, info featureScheduleInfo, now time.Time) {
-	// Check time window first
-	switch checkTimeWindow(info.startsAt, info.expiresAt, now, info.timezone) {
-	case windowNotYet:
-		// Window hasn't opened yet — skip silently
-		tr.logger.Printf("feature-sched: %s window not yet open (starts_at: %s)", featureID, info.startsAt)
-		return
-	case windowExpired:
-		// Window has passed — disable the feature
-		tr.logger.Printf("feature-sched: %s window expired (expires_at: %s), disabling", featureID, info.expiresAt)
-		tr.DisableFeature(featureID)
-		return
-	}
-
-	// Handle run_once_at (one-shot)
-	if info.runOnceAt != "" && info.schedule == "" {
-		tr.mu.RLock()
-		state := tr.featureScheduleState[featureID]
-		tr.mu.RUnlock()
-
-		if state.runOnceFired {
-			// Already fired — do not re-trigger
-			return
-		}
-
-		if shouldTriggerRunOnce(info.runOnceAt, now, info.timezone) {
-			tr.logger.Printf("feature-sched: triggering run_once_at for feature %s", featureID)
-			tr.EnableFeature(featureID)
-
-			// Mark as fired to prevent re-triggering
-			tr.mu.Lock()
-			tr.featureScheduleState[featureID] = featureSchedState{runOnceFired: true}
-			tr.mu.Unlock()
-		}
-		return
-	}
-
-	// Handle cron schedule
-	if info.schedule != "" {
-		if shouldTrigger(info.schedule, "", now, info.timezone) {
-			tr.logger.Printf("feature-sched: cron match for feature %s (schedule: %s)", featureID, info.schedule)
-			tr.EnableFeature(featureID)
-		}
-	}
-}
-
 // checkProjectScheduledTasks checks scheduled tasks for a single project.
 // Handles both recurring cron-based tasks and one-shot run_once_at tasks.
 func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID string, now time.Time) {
@@ -462,7 +319,15 @@ func (tr *TaskRunner) disableSchedule(ctx context.Context, task *types.ResolvedT
 
 // processScheduledTask resets a scheduled task to pending and advances next_run.
 // It records the run in the task's runs[] array for tracking and max_runs counting.
+// processScheduledTask dispatches scheduled task processing.
+// For feature_schedule gate tasks, it directly completes the task (no agent spawn).
+// For regular tasks, it resets status to pending for agent pickup.
 func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	if task.GeneratedKind == "feature_schedule" {
+		tr.processFeatureScheduleGate(ctx, task, now)
+		return
+	}
+
 	runID := generateRunID(now)
 
 	// Record the run as in_progress
@@ -472,17 +337,7 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 		"started": now.UTC().Format(time.RFC3339),
 		"tasks":   1,
 	}
-	runs := make([]interface{}, 0, len(task.Runs)+1)
-	for _, r := range task.Runs {
-		runs = append(runs, map[string]interface{}{
-			"run_id":      r.RunID,
-			"status":      r.Status,
-			"started":     r.Started,
-			"completed":   r.Completed,
-			"skip_reason": r.SkipReason,
-		})
-	}
-	runs = append(runs, newRun)
+	runs := buildRunsArray(task.Runs, newRun)
 
 	// Update metadata: runs array + next_run
 	nextRun, err := getNextRun(task.Schedule, now, task.Timezone)
@@ -508,6 +363,53 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 		task.ID, runID, task.Schedule, nextRun.Format(time.RFC3339), len(runs))
 }
 
+// processFeatureScheduleGate directly completes a feature_schedule gate task.
+// This immediately unblocks all downstream feature tasks with zero overhead.
+func (tr *TaskRunner) processFeatureScheduleGate(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	runID := generateRunID(now)
+	nowStr := now.UTC().Format(time.RFC3339)
+
+	// Record the run as completed directly (no in_progress intermediate)
+	newRun := map[string]interface{}{
+		"run_id":    runID,
+		"status":    "completed",
+		"started":   nowStr,
+		"completed": nowStr,
+		"tasks":     1,
+	}
+	runs := buildRunsArray(task.Runs, newRun)
+
+	// Update metadata: runs, and disable schedule
+	metaUpdate := map[string]interface{}{
+		"runs":             runs,
+		"schedule_enabled": false,
+	}
+	// Compute next_run if there's a cron schedule (for display purposes)
+	if task.Schedule != "" {
+		if nextRun, err := getNextRun(task.Schedule, now, task.Timezone); err == nil {
+			metaUpdate["next_run"] = nextRun.Format(time.RFC3339)
+		}
+	}
+	if err := tr.client.UpdateMetadata(ctx, task.Path, metaUpdate); err != nil {
+		tr.logger.Printf("cron: failed to update metadata for gate %s: %v", task.ID, err)
+	}
+
+	// Set status to completed directly
+	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "completed"); err != nil {
+		tr.logger.Printf("cron: failed to complete gate %s: %v", task.ID, err)
+		return
+	}
+
+	tr.logger.Printf("cron: feature gate completed %s run=%s (feature_id: %s)",
+		task.ID, runID, task.FeatureID)
+
+	// Emit completed event for TUI
+	tr.emitEvent(RunnerEvent{
+		Type:   EventTaskCompleted,
+		TaskID: task.ID,
+	})
+}
+
 // processRunOnceTask fires a one-shot run_once_at task: records a run, resets status
 // to pending, and auto-disables the schedule so it never fires again.
 func (tr *TaskRunner) processRunOnceTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
@@ -520,17 +422,7 @@ func (tr *TaskRunner) processRunOnceTask(ctx context.Context, task *types.Resolv
 		"started": now.UTC().Format(time.RFC3339),
 		"tasks":   1,
 	}
-	runs := make([]interface{}, 0, len(task.Runs)+1)
-	for _, r := range task.Runs {
-		runs = append(runs, map[string]interface{}{
-			"run_id":      r.RunID,
-			"status":      r.Status,
-			"started":     r.Started,
-			"completed":   r.Completed,
-			"skip_reason": r.SkipReason,
-		})
-	}
-	runs = append(runs, newRun)
+	runs := buildRunsArray(task.Runs, newRun)
 
 	// Update metadata: runs array + auto-disable schedule
 	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
@@ -548,4 +440,20 @@ func (tr *TaskRunner) processRunOnceTask(ctx context.Context, task *types.Resolv
 
 	tr.logger.Printf("cron: triggered one-shot %s run=%s (run_once_at: %s), auto-disabled, runs=%d",
 		task.ID, runID, task.RunOnceAt, len(runs))
+}
+
+// buildRunsArray constructs the runs metadata array from existing runs plus a new run.
+func buildRunsArray(existingRuns []types.CronRun, newRun map[string]interface{}) []interface{} {
+	runs := make([]interface{}, 0, len(existingRuns)+1)
+	for _, r := range existingRuns {
+		runs = append(runs, map[string]interface{}{
+			"run_id":      r.RunID,
+			"status":      r.Status,
+			"started":     r.Started,
+			"completed":   r.Completed,
+			"skip_reason": r.SkipReason,
+		})
+	}
+	runs = append(runs, newRun)
+	return runs
 }

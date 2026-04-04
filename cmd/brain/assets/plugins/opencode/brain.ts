@@ -636,6 +636,60 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false and a note is appended. Omit or set to 0 for unlimited runs."
             ),
+          run_once_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for one-time execution (e.g., '2025-12-01T00:00:00Z'). Task runs once at this time then schedule_enabled is set to false."
+            ),
+          timezone: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "IANA timezone for schedule interpretation (e.g., 'America/Denver', 'Europe/London'). Applies to cron schedule and time window fields."
+            ),
+          starts_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for schedule window start. Task will not run before this time."
+            ),
+          expires_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for schedule window end. Task will not run after this time and schedule_enabled is set to false."
+            ),
+          feature_schedule: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "Cron schedule for feature-level execution. Creates a feature_schedule gate task that triggers all tasks in the feature on this schedule."
+            ),
+          feature_starts_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for feature schedule window start. Feature gate task will not run before this time."
+            ),
+          feature_expires_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for feature schedule window end. Feature gate task will not run after this time."
+            ),
+          feature_run_once_at: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "RFC3339 timestamp for one-time feature execution. Creates a feature_schedule gate task that runs once at this time."
+            ),
+          feature_timezone: tool.schema
+            .string()
+            .optional()
+            .describe(
+              "IANA timezone for feature schedule interpretation (e.g., 'America/Denver'). Applies to feature_schedule and feature time window fields."
+            ),
         },
         async execute(args) {
           try {
@@ -694,6 +748,17 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               schedule: args.type === "task" ? args.schedule : undefined,
               schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
               max_runs: args.type === "task" ? args.max_runs : undefined,
+              // Time-based scheduling fields
+              run_once_at: args.type === "task" ? args.run_once_at : undefined,
+              timezone: args.type === "task" ? args.timezone : undefined,
+              starts_at: args.type === "task" ? args.starts_at : undefined,
+              expires_at: args.type === "task" ? args.expires_at : undefined,
+              // Feature schedule fields
+              feature_schedule: args.type === "task" ? args.feature_schedule : undefined,
+              feature_starts_at: args.type === "task" ? args.feature_starts_at : undefined,
+              feature_expires_at: args.type === "task" ? args.feature_expires_at : undefined,
+              feature_run_once_at: args.type === "task" ? args.feature_run_once_at : undefined,
+              feature_timezone: args.type === "task" ? args.feature_timezone : undefined,
             });
 
             const location = args.global ? "global brain" : "project brain";
@@ -1501,6 +1566,42 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .number()
             .optional()
             .describe("Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."),
+          run_once_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for one-time execution (e.g., '2025-12-01T00:00:00Z'). Task runs once at this time then schedule_enabled is set to false."),
+          timezone: tool.schema
+            .string()
+            .optional()
+            .describe("IANA timezone for schedule interpretation (e.g., 'America/Denver', 'Europe/London'). Applies to cron schedule and time window fields."),
+          starts_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for schedule window start. Task will not run before this time."),
+          expires_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for schedule window end. Task will not run after this time and schedule_enabled is set to false."),
+          feature_schedule: tool.schema
+            .string()
+            .optional()
+            .describe("Cron schedule for feature-level execution. Creates a feature_schedule gate task that triggers all tasks in the feature on this schedule."),
+          feature_starts_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for feature schedule window start. Feature gate task will not run before this time."),
+          feature_expires_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for feature schedule window end. Feature gate task will not run after this time."),
+          feature_run_once_at: tool.schema
+            .string()
+            .optional()
+            .describe("RFC3339 timestamp for one-time feature execution. Creates a feature_schedule gate task that runs once at this time."),
+          feature_timezone: tool.schema
+            .string()
+            .optional()
+            .describe("IANA timezone for feature schedule interpretation (e.g., 'America/Denver'). Applies to feature_schedule and feature time window fields."),
           direct_prompt: tool.schema
             .string()
             .optional()
@@ -1515,8 +1616,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Override model (format: 'provider/model-id')"),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.run_once_at === undefined && args.timezone === undefined && args.starts_at === undefined && args.expires_at === undefined && args.feature_schedule === undefined && args.feature_starts_at === undefined && args.feature_expires_at === undefined && args.feature_run_once_at === undefined && args.feature_timezone === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model`;
           }
 
           try {
@@ -1549,6 +1650,17 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               schedule: args.schedule,
               schedule_enabled: args.schedule_enabled,
               max_runs: args.max_runs,
+              // Time-based scheduling fields
+              run_once_at: args.run_once_at,
+              timezone: args.timezone,
+              starts_at: args.starts_at,
+              expires_at: args.expires_at,
+              // Feature schedule fields
+              feature_schedule: args.feature_schedule,
+              feature_starts_at: args.feature_starts_at,
+              feature_expires_at: args.feature_expires_at,
+              feature_run_once_at: args.feature_run_once_at,
+              feature_timezone: args.feature_timezone,
               direct_prompt: args.direct_prompt,
               agent: args.agent,
               model: args.model,
@@ -1597,6 +1709,24 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
             if (args.max_runs !== undefined)
               changes.push(`Max Runs: ${args.max_runs === 0 ? "unlimited" : args.max_runs}`);
+            if (args.run_once_at)
+              changes.push(`Run Once At: ${args.run_once_at}`);
+            if (args.timezone)
+              changes.push(`Timezone: ${args.timezone}`);
+            if (args.starts_at)
+              changes.push(`Starts At: ${args.starts_at}`);
+            if (args.expires_at)
+              changes.push(`Expires At: ${args.expires_at}`);
+            if (args.feature_schedule)
+              changes.push(`Feature Schedule: ${args.feature_schedule}`);
+            if (args.feature_starts_at)
+              changes.push(`Feature Starts At: ${args.feature_starts_at}`);
+            if (args.feature_expires_at)
+              changes.push(`Feature Expires At: ${args.feature_expires_at}`);
+            if (args.feature_run_once_at)
+              changes.push(`Feature Run Once At: ${args.feature_run_once_at}`);
+            if (args.feature_timezone)
+              changes.push(`Feature Timezone: ${args.feature_timezone}`);
             if (args.direct_prompt)
               changes.push(`Direct Prompt: set`);
             if (args.agent)

@@ -7,7 +7,7 @@ package tui
 // MetadataField represents a specific metadata field that can be edited.
 type MetadataField string
 
-// Field constants - all 17 editable metadata fields
+// Field constants - all editable metadata fields
 const (
 	FieldStatus            MetadataField = "status"
 	FieldPriority          MetadataField = "priority"
@@ -27,6 +27,20 @@ const (
 	FieldOpenPRBeforeMerge MetadataField = "open_pr_before_merge"
 	FieldSchedule          MetadataField = "schedule"
 	FieldMoveToProject     MetadataField = "move_to_project"
+
+	// Task-level scheduling fields
+	FieldScheduleEnabled MetadataField = "schedule_enabled"
+	FieldRunOnceAt       MetadataField = "run_once_at"
+	FieldStartsAt        MetadataField = "starts_at"
+	FieldExpiresAt       MetadataField = "expires_at"
+	FieldTimezone        MetadataField = "timezone"
+
+	// Feature-level scheduling fields
+	FieldFeatureSchedule  MetadataField = "feature_schedule"
+	FieldFeatureStartsAt  MetadataField = "feature_starts_at"
+	FieldFeatureExpiresAt MetadataField = "feature_expires_at"
+	FieldFeatureRunOnceAt MetadataField = "feature_run_once_at"
+	FieldFeatureTimezone  MetadataField = "feature_timezone"
 )
 
 // ============================================================================
@@ -148,6 +162,56 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 		Hint:  "Cron expression for scheduled execution",
 		Type:  FieldTypeText,
 	},
+	FieldScheduleEnabled: {
+		Label: "Schedule Enabled",
+		Hint:  "Toggle schedule on/off",
+		Type:  FieldTypeBoolean,
+	},
+	FieldRunOnceAt: {
+		Label: "Run Once At",
+		Hint:  "RFC3339 timestamp for one-shot execution (e.g. 2026-04-05T14:00:00-06:00)",
+		Type:  FieldTypeText,
+	},
+	FieldStartsAt: {
+		Label: "Starts At",
+		Hint:  "Schedule window start time (RFC3339)",
+		Type:  FieldTypeText,
+	},
+	FieldExpiresAt: {
+		Label: "Expires At",
+		Hint:  "Schedule window end time (RFC3339)",
+		Type:  FieldTypeText,
+	},
+	FieldTimezone: {
+		Label: "Timezone",
+		Hint:  "IANA timezone for schedule evaluation (e.g. America/Denver, Asia/Tokyo)",
+		Type:  FieldTypeText,
+	},
+	FieldFeatureSchedule: {
+		Label: "Feature Schedule",
+		Hint:  "Cron expression for feature-level scheduling",
+		Type:  FieldTypeText,
+	},
+	FieldFeatureStartsAt: {
+		Label: "Feature Starts At",
+		Hint:  "Feature schedule window start (RFC3339)",
+		Type:  FieldTypeText,
+	},
+	FieldFeatureExpiresAt: {
+		Label: "Feature Expires At",
+		Hint:  "Feature schedule window end (RFC3339)",
+		Type:  FieldTypeText,
+	},
+	FieldFeatureRunOnceAt: {
+		Label: "Feature Run Once At",
+		Hint:  "One-shot feature enable time (RFC3339)",
+		Type:  FieldTypeText,
+	},
+	FieldFeatureTimezone: {
+		Label: "Feature Timezone",
+		Hint:  "IANA timezone for feature schedule (e.g. America/Denver)",
+		Type:  FieldTypeText,
+	},
 	FieldMoveToProject: {
 		Label: "Move to Project",
 		Hint:  "Move tasks to another project (type to filter)",
@@ -215,6 +279,11 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 		return []MetadataField{
 			FieldFeaturePriority,
 			FieldFeatureDependsOn,
+			FieldFeatureSchedule,
+			FieldFeatureStartsAt,
+			FieldFeatureExpiresAt,
+			FieldFeatureRunOnceAt,
+			FieldFeatureTimezone,
 		}
 	case MetaTabTask:
 		if mode == ModeFeature {
@@ -241,6 +310,11 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 				FieldTargetWorkdir,
 				FieldCompleteOnIdle,
 				FieldSchedule,
+				FieldScheduleEnabled,
+				FieldRunOnceAt,
+				FieldStartsAt,
+				FieldExpiresAt,
+				FieldTimezone,
 			}
 		}
 		// Single/Batch modes include DirectPrompt
@@ -252,6 +326,11 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 			FieldDirectPrompt,
 			FieldCompleteOnIdle,
 			FieldSchedule,
+			FieldScheduleEnabled,
+			FieldRunOnceAt,
+			FieldStartsAt,
+			FieldExpiresAt,
+			FieldTimezone,
 		}
 	case MetaTabGitMerge:
 		return []MetadataField{

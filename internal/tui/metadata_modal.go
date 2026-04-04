@@ -715,6 +715,15 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		m.values[FieldModel] = entry.Model
 		m.values[FieldTargetWorkdir] = entry.TargetWorkdir
 		m.values[FieldSchedule] = entry.Schedule
+		m.values[FieldRunOnceAt] = entry.RunOnceAt
+		m.values[FieldStartsAt] = entry.StartsAt
+		m.values[FieldExpiresAt] = entry.ExpiresAt
+		m.values[FieldTimezone] = entry.Timezone
+		m.values[FieldFeatureSchedule] = entry.FeatureSchedule
+		m.values[FieldFeatureStartsAt] = entry.FeatureStartsAt
+		m.values[FieldFeatureExpiresAt] = entry.FeatureExpiresAt
+		m.values[FieldFeatureRunOnceAt] = entry.FeatureRunOnceAt
+		m.values[FieldFeatureTimezone] = entry.FeatureTimezone
 
 		// Boolean values
 		if entry.CompleteOnIdle != nil {
@@ -722,6 +731,9 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		}
 		if entry.OpenPRBeforeMerge != nil {
 			m.boolValues[FieldOpenPRBeforeMerge] = *entry.OpenPRBeforeMerge
+		}
+		if entry.ScheduleEnabled != nil {
+			m.boolValues[FieldScheduleEnabled] = *entry.ScheduleEnabled
 		}
 
 		// In feature mode, kick off template list fetch from API
@@ -1474,6 +1486,9 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 		FieldFeatureID, FieldGitBranch, FieldMergeTargetBranch,
 		FieldMergePolicy, FieldMergeStrategy, FieldExecutionMode,
 		FieldDirectPrompt, FieldAgent, FieldModel, FieldTargetWorkdir, FieldSchedule,
+		FieldRunOnceAt, FieldStartsAt, FieldExpiresAt, FieldTimezone,
+		FieldFeatureSchedule, FieldFeatureStartsAt, FieldFeatureExpiresAt,
+		FieldFeatureRunOnceAt, FieldFeatureTimezone,
 	}
 
 	for _, field := range stringFields {
@@ -1502,6 +1517,24 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 				values[i] = entry.TargetWorkdir
 			case FieldSchedule:
 				values[i] = entry.Schedule
+			case FieldRunOnceAt:
+				values[i] = entry.RunOnceAt
+			case FieldStartsAt:
+				values[i] = entry.StartsAt
+			case FieldExpiresAt:
+				values[i] = entry.ExpiresAt
+			case FieldTimezone:
+				values[i] = entry.Timezone
+			case FieldFeatureSchedule:
+				values[i] = entry.FeatureSchedule
+			case FieldFeatureStartsAt:
+				values[i] = entry.FeatureStartsAt
+			case FieldFeatureExpiresAt:
+				values[i] = entry.FeatureExpiresAt
+			case FieldFeatureRunOnceAt:
+				values[i] = entry.FeatureRunOnceAt
+			case FieldFeatureTimezone:
+				values[i] = entry.FeatureTimezone
 			}
 		}
 		if !allEqual(values) {
@@ -1545,6 +1578,16 @@ func detectMixedFields(entries []*types.BrainEntry) map[MetadataField]bool {
 	}
 	if !allEqual(openPRValues) {
 		mixed[FieldOpenPRBeforeMerge] = true
+	}
+
+	scheduleEnabledValues := make([]bool, len(entries))
+	for i, entry := range entries {
+		if entry.ScheduleEnabled != nil {
+			scheduleEnabledValues[i] = *entry.ScheduleEnabled
+		}
+	}
+	if !allEqual(scheduleEnabledValues) {
+		mixed[FieldScheduleEnabled] = true
 	}
 
 	return mixed

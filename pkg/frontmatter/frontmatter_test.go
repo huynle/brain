@@ -1647,6 +1647,227 @@ func TestGenerate_ExecutorAndExtensions(t *testing.T) {
 }
 
 // =============================================================================
+// Trigger field tests
+// =============================================================================
+
+func TestParse_TriggerConfig(t *testing.T) {
+	content := `---
+title: Hook Task
+type: task
+status: pending
+trigger:
+  event: "task.blocked"
+  filter:
+    project_id: "brain-api"
+  cooldown: 5m
+  max_concurrent: 1
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil")
+	}
+	if trigger.Event != "task.blocked" {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, "task.blocked")
+	}
+	if trigger.Cooldown != "5m" {
+		t.Errorf("trigger.cooldown = %q, want %q", trigger.Cooldown, "5m")
+	}
+	if trigger.MaxConcurrent != 1 {
+		t.Errorf("trigger.max_concurrent = %d, want 1", trigger.MaxConcurrent)
+	}
+	if trigger.Filter == nil || trigger.Filter["project_id"] != "brain-api" {
+		t.Errorf("trigger.filter = %v, want map[project_id:brain-api]", trigger.Filter)
+	}
+}
+
+func TestParse_TriggerConfig_Minimal(t *testing.T) {
+	content := `---
+title: Minimal Hook
+type: task
+status: pending
+trigger:
+  event: "task.completed"
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil")
+	}
+	if trigger.Event != "task.completed" {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, "task.completed")
+	}
+	if trigger.Cooldown != "" {
+		t.Errorf("trigger.cooldown should be empty, got %q", trigger.Cooldown)
+	}
+	if trigger.MaxConcurrent != 0 {
+		t.Errorf("trigger.max_concurrent should be 0, got %d", trigger.MaxConcurrent)
+	}
+	if len(trigger.Filter) != 0 {
+		t.Errorf("trigger.filter should be empty, got %v", trigger.Filter)
+	}
+}
+
+func TestParse_NoTrigger(t *testing.T) {
+	content := "---\ntitle: No Hook\ntype: task\nstatus: active\n---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.Trigger != nil {
+		t.Errorf("trigger should be nil, got %v", doc.Frontmatter.Trigger)
+	}
+}
+
+func TestParse_TriggerNotInExtra(t *testing.T) {
+	content := `---
+title: Hook Task
+type: task
+status: pending
+trigger:
+  event: "task.completed"
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := doc.Frontmatter.Extra["trigger"]; ok {
+		t.Error("trigger should not appear in Extra")
+	}
+}
+
+func TestSerialize_TriggerConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Hook Task",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:         "task.blocked",
+			Filter:        map[string]string{"project_id": "brain-api"},
+			Cooldown:      "5m",
+			MaxConcurrent: 1,
+		},
+	}
+	result := Serialize(fm)
+	if !strings.Contains(result, "trigger:") {
+		t.Errorf("missing trigger in:\n%s", result)
+	}
+	if !strings.Contains(result, "  event: task.blocked") {
+		t.Errorf("missing trigger event in:\n%s", result)
+	}
+	if !strings.Contains(result, "  filter:") {
+		t.Errorf("missing trigger filter in:\n%s", result)
+	}
+	if !strings.Contains(result, "    project_id: brain-api") {
+		t.Errorf("missing trigger filter project_id in:\n%s", result)
+	}
+	if !strings.Contains(result, "  cooldown: 5m") {
+		t.Errorf("missing trigger cooldown in:\n%s", result)
+	}
+	if !strings.Contains(result, "  max_concurrent: 1") {
+		t.Errorf("missing trigger max_concurrent in:\n%s", result)
+	}
+}
+
+func TestSerialize_TriggerOmittedWhenNil(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "No Hook",
+		Type:   "task",
+		Status: "active",
+	}
+	result := Serialize(fm)
+	if strings.Contains(result, "trigger") {
+		t.Errorf("should not contain trigger when nil, got:\n%s", result)
+	}
+}
+
+func TestRoundTrip_TriggerConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Round Trip Hook",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:         "task.blocked",
+			Filter:        map[string]string{"project_id": "brain-api", "feature_id": "my-feat"},
+			Cooldown:      "10m",
+			MaxConcurrent: 3,
+		},
+	}
+
+	serialized := Serialize(fm)
+	content := "---\n" + serialized + "---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil after round-trip")
+	}
+	if trigger.Event != fm.Trigger.Event {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, fm.Trigger.Event)
+	}
+	if trigger.Cooldown != fm.Trigger.Cooldown {
+		t.Errorf("trigger.cooldown = %q, want %q", trigger.Cooldown, fm.Trigger.Cooldown)
+	}
+	if trigger.MaxConcurrent != fm.Trigger.MaxConcurrent {
+		t.Errorf("trigger.max_concurrent = %d, want %d", trigger.MaxConcurrent, fm.Trigger.MaxConcurrent)
+	}
+	if len(trigger.Filter) != len(fm.Trigger.Filter) {
+		t.Fatalf("trigger.filter length = %d, want %d", len(trigger.Filter), len(fm.Trigger.Filter))
+	}
+	for k, v := range fm.Trigger.Filter {
+		if trigger.Filter[k] != v {
+			t.Errorf("trigger.filter[%s] = %q, want %q", k, trigger.Filter[k], v)
+		}
+	}
+}
+
+func TestGenerate_WithTrigger(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:  "Generated Hook",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:    "task.completed",
+			Cooldown: "1h",
+		},
+	}
+	result := Generate(opts)
+	if !strings.Contains(result, "trigger:") {
+		t.Errorf("generated YAML should contain trigger, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  event: task.completed") {
+		t.Errorf("generated YAML should contain trigger event, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  cooldown: 1h") {
+		t.Errorf("generated YAML should contain trigger cooldown, got:\n%s", result)
+	}
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

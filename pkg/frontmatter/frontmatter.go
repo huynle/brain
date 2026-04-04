@@ -68,6 +68,8 @@ type Frontmatter struct {
 	MaxRuns         *int      `yaml:"max_runs,omitempty" json:"max_runs,omitempty"`
 	StartsAt        string    `yaml:"starts_at,omitempty" json:"starts_at,omitempty"`
 	ExpiresAt       string    `yaml:"expires_at,omitempty" json:"expires_at,omitempty"`
+	RunOnceAt       string    `yaml:"run_once_at,omitempty" json:"run_once_at,omitempty"`
+	Timezone        string    `yaml:"timezone,omitempty" json:"timezone,omitempty"`
 	Runs            []CronRun `yaml:"runs,omitempty" json:"runs,omitempty"`
 
 	// Hierarchy / dependencies
@@ -77,6 +79,11 @@ type Frontmatter struct {
 	FeatureID        string   `yaml:"feature_id,omitempty" json:"feature_id,omitempty"`
 	FeaturePriority  string   `yaml:"feature_priority,omitempty" json:"feature_priority,omitempty"`
 	FeatureDependsOn []string `yaml:"feature_depends_on,omitempty" json:"feature_depends_on,omitempty"`
+	FeatureSchedule  string   `yaml:"feature_schedule,omitempty" json:"feature_schedule,omitempty"`
+	FeatureStartsAt  string   `yaml:"feature_starts_at,omitempty" json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt string   `yaml:"feature_expires_at,omitempty" json:"feature_expires_at,omitempty"`
+	FeatureRunOnceAt string   `yaml:"feature_run_once_at,omitempty" json:"feature_run_once_at,omitempty"`
+	FeatureTimezone  string   `yaml:"feature_timezone,omitempty" json:"feature_timezone,omitempty"`
 
 	// Execution context
 	Workdir            string `yaml:"workdir,omitempty" json:"workdir,omitempty"`
@@ -131,6 +138,8 @@ type GenerateOptions struct {
 	MaxRuns         *int
 	StartsAt        string
 	ExpiresAt       string
+	RunOnceAt       string
+	Timezone        string
 	Runs            []CronRun
 
 	Priority  string
@@ -141,6 +150,11 @@ type GenerateOptions struct {
 	FeatureID        string
 	FeaturePriority  string
 	FeatureDependsOn []string
+	FeatureSchedule  string
+	FeatureStartsAt  string
+	FeatureExpiresAt string
+	FeatureRunOnceAt string
+	FeatureTimezone  string
 
 	Workdir            string
 	GitRemote          string
@@ -201,6 +215,8 @@ type rawFrontmatter struct {
 	MaxRuns             *int                       `yaml:"max_runs"`
 	StartsAt            string                     `yaml:"starts_at"`
 	ExpiresAt           string                     `yaml:"expires_at"`
+	RunOnceAt           string                     `yaml:"run_once_at"`
+	Timezone            string                     `yaml:"timezone"`
 	Runs                []CronRun                  `yaml:"runs"`
 	ParentID            string                     `yaml:"parent_id"`
 	ProjectID           string                     `yaml:"projectId"`
@@ -208,6 +224,11 @@ type rawFrontmatter struct {
 	FeatureID           string                     `yaml:"feature_id"`
 	FeaturePriority     string                     `yaml:"feature_priority"`
 	FeatureDependsOn    []string                   `yaml:"feature_depends_on"`
+	FeatureSchedule     string                     `yaml:"feature_schedule"`
+	FeatureStartsAt     string                     `yaml:"feature_starts_at"`
+	FeatureExpiresAt    string                     `yaml:"feature_expires_at"`
+	FeatureRunOnceAt    string                     `yaml:"feature_run_once_at"`
+	FeatureTimezone     string                     `yaml:"feature_timezone"`
 	Workdir             string                     `yaml:"workdir"`
 	GitRemote           string                     `yaml:"git_remote"`
 	GitBranch           string                     `yaml:"git_branch"`
@@ -241,11 +262,14 @@ var knownFields = map[string]bool{
 	"title": true, "type": true, "name": true, "status": true,
 	"tags": true, "priority": true, "created": true,
 	"schedule": true, "schedule_enabled": true, "next_run": true,
-	"max_runs": true, "starts_at": true, "expires_at": true, "runs": true,
+	"max_runs": true, "starts_at": true, "expires_at": true,
+	"run_once_at": true, "timezone": true, "runs": true,
 	"parent_id": true, "projectId": true,
 	"depends_on": true, "feature_id": true, "feature_priority": true,
 	"feature_depends_on": true,
-	"workdir":            true, "git_remote": true, "git_branch": true,
+	"feature_schedule":   true, "feature_starts_at": true, "feature_expires_at": true,
+	"feature_run_once_at": true, "feature_timezone": true,
+	"workdir": true, "git_remote": true, "git_branch": true,
 	"merge_target_branch": true, "merge_policy": true, "merge_strategy": true,
 	"remote_branch_policy": true, "open_pr_before_merge": true,
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
@@ -356,6 +380,8 @@ func Parse(content string) (*Document, error) {
 		MaxRuns:             raw.MaxRuns,
 		StartsAt:            raw.StartsAt,
 		ExpiresAt:           raw.ExpiresAt,
+		RunOnceAt:           raw.RunOnceAt,
+		Timezone:            raw.Timezone,
 		Runs:                raw.Runs,
 		ParentID:            raw.ParentID,
 		ProjectID:           raw.ProjectID,
@@ -363,6 +389,11 @@ func Parse(content string) (*Document, error) {
 		FeatureID:           raw.FeatureID,
 		FeaturePriority:     raw.FeaturePriority,
 		FeatureDependsOn:    raw.FeatureDependsOn,
+		FeatureSchedule:     raw.FeatureSchedule,
+		FeatureStartsAt:     raw.FeatureStartsAt,
+		FeatureExpiresAt:    raw.FeatureExpiresAt,
+		FeatureRunOnceAt:    raw.FeatureRunOnceAt,
+		FeatureTimezone:     raw.FeatureTimezone,
 		Workdir:             raw.Workdir,
 		GitRemote:           raw.GitRemote,
 		GitBranch:           raw.GitBranch,
@@ -528,6 +559,8 @@ func Serialize(fm *Frontmatter) string {
 
 	emit("starts_at", fm.StartsAt)
 	emit("expires_at", fm.ExpiresAt)
+	emit("run_once_at", fm.RunOnceAt)
+	emit("timezone", fm.Timezone)
 
 	// Runs
 	if len(fm.Runs) > 0 {
@@ -567,6 +600,12 @@ func Serialize(fm *Frontmatter) string {
 			lines = append(lines, "  - "+escapeDependsOnEntry(dep))
 		}
 	}
+
+	emit("feature_schedule", fm.FeatureSchedule)
+	emit("feature_starts_at", fm.FeatureStartsAt)
+	emit("feature_expires_at", fm.FeatureExpiresAt)
+	emit("feature_run_once_at", fm.FeatureRunOnceAt)
+	emit("feature_timezone", fm.FeatureTimezone)
 
 	emit("workdir", fm.Workdir)
 	emit("git_remote", fm.GitRemote)
@@ -702,12 +741,19 @@ func Generate(opts *GenerateOptions) string {
 		MaxRuns:             opts.MaxRuns,
 		StartsAt:            opts.StartsAt,
 		ExpiresAt:           opts.ExpiresAt,
+		RunOnceAt:           opts.RunOnceAt,
+		Timezone:            opts.Timezone,
 		Runs:                opts.Runs,
 		ProjectID:           opts.ProjectID,
 		DependsOn:           opts.DependsOn,
 		FeatureID:           opts.FeatureID,
 		FeaturePriority:     opts.FeaturePriority,
 		FeatureDependsOn:    opts.FeatureDependsOn,
+		FeatureSchedule:     opts.FeatureSchedule,
+		FeatureStartsAt:     opts.FeatureStartsAt,
+		FeatureExpiresAt:    opts.FeatureExpiresAt,
+		FeatureRunOnceAt:    opts.FeatureRunOnceAt,
+		FeatureTimezone:     opts.FeatureTimezone,
 		Workdir:             opts.Workdir,
 		GitRemote:           opts.GitRemote,
 		GitBranch:           opts.GitBranch,

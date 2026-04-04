@@ -102,6 +102,7 @@ type RunnerConfig struct {
 	MemoryThresholdPercent int              `yaml:"memory_threshold_percent"`
 	Opencode               OpencodeSettings `yaml:"opencode"`
 	ExcludeProjects        []string         `yaml:"exclude_projects"`
+	IncludeProjects        []string         `yaml:"include_projects"`
 	AutoMonitors           bool             `yaml:"auto_monitors"`
 }
 
@@ -162,6 +163,7 @@ func defaultConfig() UnifiedConfig {
 				Model: "",
 			},
 			ExcludeProjects: []string{},
+			IncludeProjects: []string{},
 			AutoMonitors:    true,
 		},
 		MCP: MCPConfig{

@@ -107,6 +107,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
 		ExcludeProjects: fileCfg.ExcludeProjects,
+		IncludeProjects: fileCfg.IncludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),

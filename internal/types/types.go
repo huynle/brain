@@ -148,6 +148,8 @@ type BrainEntry struct {
 	MaxRuns         *int   `json:"max_runs,omitempty"`
 	StartsAt        string `json:"starts_at,omitempty"`
 	ExpiresAt       string `json:"expires_at,omitempty"`
+	RunOnceAt       string `json:"run_once_at,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
 
 	// Git/execution fields
 	Workdir            string `json:"workdir,omitempty"`
@@ -248,6 +250,7 @@ type CreateEntryRequest struct {
 	StartsAt        string `json:"starts_at,omitempty"`
 	ExpiresAt       string `json:"expires_at,omitempty"`
 	RunOnceAt       string `json:"run_once_at,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
 
 	// Git/execution fields
 	Workdir            string `json:"workdir,omitempty"`
@@ -309,6 +312,7 @@ type UpdateEntryRequest struct {
 	StartsAt        *string `json:"starts_at,omitempty"`
 	ExpiresAt       *string `json:"expires_at,omitempty"`
 	RunOnceAt       *string `json:"run_once_at,omitempty"`
+	Timezone        *string `json:"timezone,omitempty"`
 
 	TargetWorkdir      *string `json:"target_workdir,omitempty"`
 	GitBranch          *string `json:"git_branch,omitempty"`
@@ -500,6 +504,10 @@ type ResolvedTask struct {
 	ScheduleEnabled *bool     `json:"schedule_enabled,omitempty"`
 	NextRun         string    `json:"next_run,omitempty"`
 	MaxRuns         *int      `json:"max_runs,omitempty"`
+	StartsAt        string    `json:"starts_at,omitempty"`
+	ExpiresAt       string    `json:"expires_at,omitempty"`
+	RunOnceAt       string    `json:"run_once_at,omitempty"`
+	Timezone        string    `json:"timezone,omitempty"`
 	Runs            []CronRun `json:"runs,omitempty"`
 
 	UserOriginalRequest string            `json:"user_original_request,omitempty"`

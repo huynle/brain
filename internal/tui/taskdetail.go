@@ -553,8 +553,9 @@ func featureTaskStatusIcon(status string) string {
 	}
 }
 
-// featureDepStatusIcon returns the icon for a feature dependency status.
-func featureDepStatusIcon(status string) string {
+// featureDepStatusIconSimple returns a simple icon for a pre-resolved feature dependency status.
+// Used in taskdetail rendering where we don't have the full feature list.
+func featureDepStatusIconSimple(status string) string {
 	switch status {
 	case "completed":
 		return "✓"
@@ -647,19 +648,19 @@ func (td *TaskDetail) renderFeature() string {
 		lines = append(lines, "")
 		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dependencies:"))
 		for _, depID := range f.DependsOnFeatures {
-			icon := featureDepStatusIcon("pending") // default
+			icon := featureDepStatusIconSimple("pending") // default
 			style := DimStyle
 			// We don't have the dep feature objects directly, but we know if it's in
 			// BlockedByFeatures or WaitingOnFeatures
 			if sliceContains(f.BlockedByFeatures, depID) {
-				icon = featureDepStatusIcon("blocked")
+				icon = featureDepStatusIconSimple("blocked")
 				style = lipgloss.NewStyle().Foreground(ColorBlocked)
 			} else if sliceContains(f.WaitingOnFeatures, depID) {
-				icon = featureDepStatusIcon("in_progress")
+				icon = featureDepStatusIconSimple("in_progress")
 				style = lipgloss.NewStyle().Foreground(ColorWaiting)
 			} else {
 				// If not blocked/waiting, it must be completed
-				icon = featureDepStatusIcon("completed")
+				icon = featureDepStatusIconSimple("completed")
 				style = lipgloss.NewStyle().Foreground(ColorReady)
 			}
 			lines = append(lines, fmt.Sprintf("  %s %s", style.Render(icon), depID))

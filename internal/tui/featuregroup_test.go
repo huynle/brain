@@ -276,6 +276,308 @@ func TestGroupTasksByFeature_DependsOn(t *testing.T) {
 	}
 }
 
+// TestComputeTopologicalDepth tests the topological depth computation.
+func TestComputeTopologicalDepth(t *testing.T) {
+	tests := []struct {
+		name     string
+		depsMap  map[string][]string
+		query    string
+		expected int
+	}{
+		{
+			name:     "root feature (no deps) has depth 0",
+			depsMap:  map[string][]string{"A": {}},
+			query:    "A",
+			expected: 0,
+		},
+		{
+			name:     "single dependency has depth 1",
+			depsMap:  map[string][]string{"A": {}, "B": {"A"}},
+			query:    "B",
+			expected: 1,
+		},
+		{
+			name:     "chain A->B->C has depth 2 for C",
+			depsMap:  map[string][]string{"A": {}, "B": {"A"}, "C": {"B"}},
+			query:    "C",
+			expected: 2,
+		},
+		{
+			name:     "diamond: D depends on B and C which both depend on A",
+			depsMap:  map[string][]string{"A": {}, "B": {"A"}, "C": {"A"}, "D": {"B", "C"}},
+			query:    "D",
+			expected: 2,
+		},
+		{
+			name:     "cycle returns negative sentinel",
+			depsMap:  map[string][]string{"A": {"B"}, "B": {"A"}},
+			query:    "A",
+			expected: -1, // raw function returns -1; caller clamps to 0
+		},
+		{
+			name:     "unknown feature has depth 0",
+			depsMap:  map[string][]string{"A": {}},
+			query:    "nonexistent",
+			expected: 0,
+		},
+		{
+			name:     "deep chain depth 4",
+			depsMap:  map[string][]string{"A": {}, "B": {"A"}, "C": {"B"}, "D": {"C"}, "E": {"D"}},
+			query:    "E",
+			expected: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			visited := make(map[string]bool)
+			depth := computeTopologicalDepth(tt.query, tt.depsMap, visited)
+			if depth != tt.expected {
+				t.Errorf("computeTopologicalDepth(%q) = %d, want %d", tt.query, depth, tt.expected)
+			}
+		})
+	}
+}
+
+// TestGroupTasksByFeature_TopologicalSort tests that features are sorted by
+// priority first, then topological depth, then alphabetically.
+func TestGroupTasksByFeature_TopologicalSort(t *testing.T) {
+	// Setup: A has no deps, B->A, C->A, D->B+C (diamond pattern)
+	// All same priority. Expected order: A (depth 0), B (depth 1), C (depth 1), D (depth 2)
+	tasks := []types.ResolvedTask{
+		{ID: "t-d", FeatureID: "D", FeaturePriority: "medium", FeatureDependsOn: []string{"B", "C"}},
+		{ID: "t-b", FeatureID: "B", FeaturePriority: "medium", FeatureDependsOn: []string{"A"}},
+		{ID: "t-c", FeatureID: "C", FeaturePriority: "medium", FeatureDependsOn: []string{"A"}},
+		{ID: "t-a", FeatureID: "A", FeaturePriority: "medium"},
+	}
+
+	result := GroupTasksByFeature(tasks)
+
+	if len(result.Features) != 4 {
+		t.Fatalf("Expected 4 features, got %d", len(result.Features))
+	}
+
+	// Expected: A (depth 0), B (depth 1), C (depth 1), D (depth 2)
+	expected := []string{"A", "B", "C", "D"}
+	for i, featureID := range expected {
+		if result.Features[i].ID != featureID {
+			t.Errorf("Features[%d] = %s, want %s (full order: %v)",
+				i, result.Features[i].ID, featureID, featureIDs(result.Features))
+		}
+	}
+}
+
+// TestGroupTasksByFeature_PriorityOverTopology tests that priority still
+// takes precedence over topological depth.
+func TestGroupTasksByFeature_PriorityOverTopology(t *testing.T) {
+	// High-priority feature depends on low-priority feature,
+	// but should still sort first because priority wins.
+	tasks := []types.ResolvedTask{
+		{ID: "t-low", FeatureID: "low-root", FeaturePriority: "low"},
+		{ID: "t-high", FeatureID: "high-child", FeaturePriority: "high", FeatureDependsOn: []string{"low-root"}},
+	}
+
+	result := GroupTasksByFeature(tasks)
+
+	if len(result.Features) != 2 {
+		t.Fatalf("Expected 2 features, got %d", len(result.Features))
+	}
+
+	// high-child should come first despite being depth 1
+	expected := []string{"high-child", "low-root"}
+	for i, featureID := range expected {
+		if result.Features[i].ID != featureID {
+			t.Errorf("Features[%d] = %s, want %s", i, result.Features[i].ID, featureID)
+		}
+	}
+}
+
+// TestGroupTasksByFeature_DeepChain tests correct ordering of a deep dependency chain.
+func TestGroupTasksByFeature_DeepChain(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t-d", FeatureID: "D", FeaturePriority: "medium", FeatureDependsOn: []string{"C"}},
+		{ID: "t-a", FeatureID: "A", FeaturePriority: "medium"},
+		{ID: "t-c", FeatureID: "C", FeaturePriority: "medium", FeatureDependsOn: []string{"B"}},
+		{ID: "t-b", FeatureID: "B", FeaturePriority: "medium", FeatureDependsOn: []string{"A"}},
+	}
+
+	result := GroupTasksByFeature(tasks)
+
+	expected := []string{"A", "B", "C", "D"}
+	for i, featureID := range expected {
+		if result.Features[i].ID != featureID {
+			t.Errorf("Features[%d] = %s, want %s (full order: %v)",
+				i, result.Features[i].ID, featureID, featureIDs(result.Features))
+		}
+	}
+}
+
+// TestGroupTasksByFeature_CycleDoesNotCrash tests that cycles don't cause infinite recursion.
+func TestGroupTasksByFeature_CycleDoesNotCrash(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t-a", FeatureID: "A", FeaturePriority: "medium", FeatureDependsOn: []string{"B"}},
+		{ID: "t-b", FeatureID: "B", FeaturePriority: "medium", FeatureDependsOn: []string{"A"}},
+	}
+
+	// Should not panic or infinite loop
+	result := GroupTasksByFeature(tasks)
+
+	if len(result.Features) != 2 {
+		t.Fatalf("Expected 2 features, got %d", len(result.Features))
+	}
+	// Both get depth 0 due to cycle, so sorted alphabetically
+	if result.Features[0].ID != "A" || result.Features[1].ID != "B" {
+		t.Errorf("Expected cycle members sorted alphabetically: A, B; got %s, %s",
+			result.Features[0].ID, result.Features[1].ID)
+	}
+}
+
+// TestFeatureDepStatusIcon tests the featureDepStatusIcon helper function.
+func TestFeatureDepStatusIcon(t *testing.T) {
+	tests := []struct {
+		name         string
+		depFeatureID string
+		allFeatures  []FeatureGroup
+		expected     string
+	}{
+		{
+			name:         "returns ? for unknown feature",
+			depFeatureID: "nonexistent",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{{ID: "t1", Status: "pending"}}},
+			},
+			expected: "?",
+		},
+		{
+			name:         "returns ? for empty allFeatures",
+			depFeatureID: "feat-a",
+			allFeatures:  []FeatureGroup{},
+			expected:     "?",
+		},
+		{
+			name:         "returns ✓ when all tasks completed",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "completed"},
+					{ID: "t2", Status: "validated"},
+				}},
+			},
+			expected: IndicatorCompleted,
+		},
+		{
+			name:         "returns ✓ with cancelled/archived/superseded tasks",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "completed"},
+					{ID: "t2", Status: "cancelled"},
+					{ID: "t3", Status: "archived"},
+					{ID: "t4", Status: "superseded"},
+				}},
+			},
+			expected: IndicatorCompleted,
+		},
+		{
+			name:         "returns ▶ when has in_progress tasks",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "in_progress", Classification: "ready"},
+					{ID: "t2", Status: "pending", Classification: "blocked"},
+				}},
+			},
+			expected: IndicatorActive,
+		},
+		{
+			name:         "returns ▶ when has active tasks",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "active", Classification: "ready"},
+					{ID: "t2", Status: "pending", Classification: "waiting"},
+				}},
+			},
+			expected: IndicatorActive,
+		},
+		{
+			name:         "returns ✗ when has blocked tasks and none in_progress",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "pending", Classification: "blocked"},
+					{ID: "t2", Status: "pending", Classification: "waiting"},
+				}},
+			},
+			expected: IndicatorBlocked,
+		},
+		{
+			name:         "returns ○ when pending/waiting only",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "pending", Classification: "waiting"},
+					{ID: "t2", Status: "pending", Classification: "waiting"},
+				}},
+			},
+			expected: IndicatorWaiting,
+		},
+		{
+			name:         "returns ○ for feature with empty task list",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{}},
+			},
+			expected: IndicatorWaiting,
+		},
+		{
+			name:         "finds correct feature among multiple",
+			depFeatureID: "feat-b",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "completed"},
+				}},
+				{ID: "feat-b", Tasks: []types.ResolvedTask{
+					{ID: "t2", Status: "pending", Classification: "blocked"},
+				}},
+				{ID: "feat-c", Tasks: []types.ResolvedTask{
+					{ID: "t3", Status: "in_progress"},
+				}},
+			},
+			expected: IndicatorBlocked,
+		},
+		{
+			name:         "returns ○ for ready-only tasks with no in_progress or blocked",
+			depFeatureID: "feat-a",
+			allFeatures: []FeatureGroup{
+				{ID: "feat-a", Tasks: []types.ResolvedTask{
+					{ID: "t1", Status: "pending", Classification: "ready"},
+					{ID: "t2", Status: "completed"},
+				}},
+			},
+			expected: IndicatorWaiting,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := featureDepStatusIcon(tt.depFeatureID, tt.allFeatures)
+			if got != tt.expected {
+				t.Errorf("featureDepStatusIcon(%q) = %q, want %q", tt.depFeatureID, got, tt.expected)
+			}
+		})
+	}
+}
+
+// featureIDs extracts IDs from feature groups for debug output.
+func featureIDs(features []FeatureGroup) []string {
+	ids := make([]string, len(features))
+	for i, f := range features {
+		ids[i] = f.ID
+	}
+	return ids
+}
+
 // Helper function to find a feature by ID.
 func findFeature(features []FeatureGroup, id string) *FeatureGroup {
 	for i := range features {

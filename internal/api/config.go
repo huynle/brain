@@ -41,3 +41,22 @@ func TaskDefaultsHandler(td config.TaskDefaultsConfig) http.HandlerFunc {
 		WriteJSON(w, http.StatusOK, resp)
 	}
 }
+
+// HandleGetTaskDefaults returns the current task_defaults configuration.
+// GET /api/v1/config/task-defaults → 200 with task defaults JSON
+func (h *Handler) HandleGetTaskDefaults(w http.ResponseWriter, r *http.Request) {
+	d := h.taskDefaults
+	resp := taskDefaultsResponse{
+		Agent:              d.Agent,
+		Model:              d.Model,
+		ExecutionMode:      d.ExecutionMode,
+		CompleteOnIdle:     d.CompleteOnIdle,
+		MergePolicy:        d.MergePolicy,
+		MergeStrategy:      d.MergeStrategy,
+		MergeTargetBranch:  d.MergeTargetBranch,
+		RemoteBranchPolicy: d.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  d.OpenPRBeforeMerge,
+		TargetWorkdir:      d.TargetWorkdir,
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}

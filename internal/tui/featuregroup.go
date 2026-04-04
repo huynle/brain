@@ -14,6 +14,7 @@ type FeatureGroup struct {
 	Collapsed bool                 // Is the feature collapsed?
 	Stats     FeatureStats         // Aggregated stats for the feature
 	Priority  string               // Feature priority (from FeaturePriority field)
+	DependsOn []string             // Feature IDs this feature depends on
 }
 
 // FeatureStats holds statistics for a feature.
@@ -61,12 +62,19 @@ func GroupTasksByFeature(tasks []types.ResolvedTask) FeatureGroupResult {
 			featurePriority = featureTasks[0].FeaturePriority
 		}
 
+		// Get feature dependencies from first task (all tasks in a feature share this value)
+		var featureDeps []string
+		if len(featureTasks) > 0 && len(featureTasks[0].FeatureDependsOn) > 0 {
+			featureDeps = featureTasks[0].FeatureDependsOn
+		}
+
 		features = append(features, FeatureGroup{
-			ID:       featureID,
-			Name:     featureID,
-			Tasks:    featureTasks,
-			Stats:    computeFeatureStats(featureTasks),
-			Priority: featurePriority,
+			ID:        featureID,
+			Name:      featureID,
+			Tasks:     featureTasks,
+			Stats:     computeFeatureStats(featureTasks),
+			Priority:  featurePriority,
+			DependsOn: featureDeps,
 		})
 	}
 

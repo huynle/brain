@@ -232,6 +232,50 @@ func TestAggregateFeatureStatusIcon(t *testing.T) {
 	}
 }
 
+// TestGroupTasksByFeature_DependsOn tests that DependsOn is populated from task FeatureDependsOn.
+func TestGroupTasksByFeature_DependsOn(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "task1", FeatureID: "feat-auth", FeatureDependsOn: []string{"feat-db", "feat-config"}},
+		{ID: "task2", FeatureID: "feat-auth", FeatureDependsOn: []string{"feat-db", "feat-config"}},
+		{ID: "task3", FeatureID: "feat-dashboard"},
+		{ID: "task4", FeatureID: ""},
+	}
+
+	result := GroupTasksByFeature(tasks)
+
+	// Feature with deps should have DependsOn populated
+	authFeature := findFeature(result.Features, "feat-auth")
+	if authFeature == nil {
+		t.Fatalf("Expected feat-auth feature to exist")
+	}
+	if len(authFeature.DependsOn) != 2 {
+		t.Fatalf("Expected DependsOn length 2, got %d", len(authFeature.DependsOn))
+	}
+	if authFeature.DependsOn[0] != "feat-db" {
+		t.Errorf("Expected DependsOn[0]='feat-db', got %q", authFeature.DependsOn[0])
+	}
+	if authFeature.DependsOn[1] != "feat-config" {
+		t.Errorf("Expected DependsOn[1]='feat-config', got %q", authFeature.DependsOn[1])
+	}
+
+	// Feature without deps should have nil DependsOn
+	dashFeature := findFeature(result.Features, "feat-dashboard")
+	if dashFeature == nil {
+		t.Fatalf("Expected feat-dashboard feature to exist")
+	}
+	if len(dashFeature.DependsOn) != 0 {
+		t.Errorf("Expected empty DependsOn for feat-dashboard, got %v", dashFeature.DependsOn)
+	}
+
+	// Ungrouped should have nil DependsOn
+	if result.Ungrouped == nil {
+		t.Fatalf("Expected ungrouped group to exist")
+	}
+	if len(result.Ungrouped.DependsOn) != 0 {
+		t.Errorf("Expected empty DependsOn for ungrouped, got %v", result.Ungrouped.DependsOn)
+	}
+}
+
 // Helper function to find a feature by ID.
 func findFeature(features []FeatureGroup, id string) *FeatureGroup {
 	for i := range features {

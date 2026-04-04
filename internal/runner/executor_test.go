@@ -276,6 +276,192 @@ func TestExecutor_GetEffectiveModel_Precedence(t *testing.T) {
 }
 
 // =============================================================================
+// Server-Applied Defaults Tests
+// =============================================================================
+// These tests verify behavior when the server pre-fills task.Agent and task.Model
+// via centralized task_defaults, simulating the full precedence chain:
+//   1. Task-level (explicit at creation)
+//   2. Server task_defaults (applied when field is empty)
+//   3. Runtime default model (TUI picker, model only)
+//   4. Runner config (runner-local override)
+
+func TestExecutor_GetEffectiveAgent_ServerDefault_UsedWhenSet(t *testing.T) {
+	// Scenario: Server applied task_defaults agent to a task that had no explicit agent.
+	// The runner should use the server-filled value.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Agent = "server-default-agent" // Pre-filled by server task_defaults
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "server-default-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (server default should be used)", agent, "server-default-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveAgent_RunnerConfigUsedWhenServerEmpty(t *testing.T) {
+	// Scenario: Server has no task_defaults for agent, task has no explicit agent.
+	// The runner's config.Opencode.Agent should be the fallback.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	// task.Agent is empty (no server default configured either)
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "runner-local-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (runner config fallback)", agent, "runner-local-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveAgent_TaskExplicitOverridesServerDefault(t *testing.T) {
+	// Scenario: Task was created with an explicit agent that differs from
+	// the server task_defaults. Since the server only fills empty fields,
+	// the task's explicit agent is preserved. The runner sees it the same way.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Agent = "task-explicit-agent" // Set at creation (server did not override)
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "task-explicit-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (task explicit wins)", agent, "task-explicit-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_ServerDefault_UsedWhenSet(t *testing.T) {
+	// Scenario: Server applied task_defaults model to a task that had no explicit model.
+	// With no runtime default, the server-filled value should be used.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Model = "server-default-model" // Pre-filled by server task_defaults
+
+	model := e.GetEffectiveModel(task, "")
+	if model != "server-default-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (server default should be used)", model, "server-default-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_ServerDefault_BeatsRuntimeDefault(t *testing.T) {
+	// Scenario: Server filled task.Model, and a runtime default is also set.
+	// task.Model (includes server defaults) takes precedence over runtime default.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Model = "server-default-model" // Pre-filled by server task_defaults
+
+	model := e.GetEffectiveModel(task, "tui-runtime-model")
+	if model != "server-default-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (server default > runtime default)", model, "server-default-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_RuntimeDefault_BeatsRunnerConfig(t *testing.T) {
+	// Scenario: No task-level or server-level model, but TUI set a runtime default.
+	// Runtime default should beat the runner config.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	// task.Model empty (server had no default either)
+
+	model := e.GetEffectiveModel(task, "tui-runtime-model")
+	if model != "tui-runtime-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (runtime default > runner config)", model, "tui-runtime-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_RunnerConfigFallback(t *testing.T) {
+	// Scenario: No task-level, no server default, no runtime default.
+	// Runner config should be the final fallback.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+
+	model := e.GetEffectiveModel(task, "")
+	if model != "runner-local-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (runner config fallback)", model, "runner-local-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_FullPrecedenceChain(t *testing.T) {
+	// Table-driven test verifying the full precedence chain:
+	// task.Model (server-applied) > runtimeDefault > config.Model
+	tests := []struct {
+		name           string
+		taskModel      string
+		runtimeDefault string
+		configModel    string
+		expectedModel  string
+	}{
+		{
+			name:           "all set: task wins",
+			taskModel:      "task-model",
+			runtimeDefault: "runtime-model",
+			configModel:    "config-model",
+			expectedModel:  "task-model",
+		},
+		{
+			name:           "no task: runtime wins",
+			taskModel:      "",
+			runtimeDefault: "runtime-model",
+			configModel:    "config-model",
+			expectedModel:  "runtime-model",
+		},
+		{
+			name:           "no task no runtime: config wins",
+			taskModel:      "",
+			runtimeDefault: "",
+			configModel:    "config-model",
+			expectedModel:  "config-model",
+		},
+		{
+			name:           "all empty: returns empty",
+			taskModel:      "",
+			runtimeDefault: "",
+			configModel:    "",
+			expectedModel:  "",
+		},
+		{
+			name:           "server default set no runtime: server wins",
+			taskModel:      "server-applied-model",
+			runtimeDefault: "",
+			configModel:    "config-model",
+			expectedModel:  "server-applied-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testExecutorConfig()
+			cfg.Opencode.Model = tt.configModel
+			e := NewExecutor(cfg)
+
+			task := testResolvedTask("abc123")
+			task.Model = tt.taskModel
+
+			model := e.GetEffectiveModel(task, tt.runtimeDefault)
+			if model != tt.expectedModel {
+				t.Errorf("GetEffectiveModel = %q, want %q", model, tt.expectedModel)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // Background Spawn Tests (with mock command factory)
 // =============================================================================
 

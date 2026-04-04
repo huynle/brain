@@ -74,6 +74,15 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false. Omit or set to 0 for unlimited runs."},
+				"run_once_at":           {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":              {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":             {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
+				"feature_schedule":      {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":     {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":   {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":      {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"git_branch":            {Type: "string", Description: "Git branch for the task"},
 				"merge_target_branch":   {Type: "string", Description: "Branch to merge completed work into"},
 				"merge_policy":          {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
@@ -119,6 +128,15 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["schedule"] = args["schedule"]
 			body["schedule_enabled"] = args["schedule_enabled"]
 			body["max_runs"] = args["max_runs"]
+			body["run_once_at"] = args["run_once_at"]
+			body["timezone"] = args["timezone"]
+			body["starts_at"] = args["starts_at"]
+			body["expires_at"] = args["expires_at"]
+			body["feature_schedule"] = args["feature_schedule"]
+			body["feature_starts_at"] = args["feature_starts_at"]
+			body["feature_expires_at"] = args["feature_expires_at"]
+			body["feature_run_once_at"] = args["feature_run_once_at"]
+			body["feature_timezone"] = args["feature_timezone"]
 			body["merge_target_branch"] = args["merge_target_branch"]
 			body["merge_policy"] = args["merge_policy"]
 			body["merge_strategy"] = args["merge_strategy"]
@@ -433,9 +451,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
 				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
+				"run_once_at":          {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":             {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on"},
+				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
@@ -465,9 +492,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"schedule":             args["schedule"],
 			"schedule_enabled":     args["schedule_enabled"],
 			"max_runs":             args["max_runs"],
+			"run_once_at":          args["run_once_at"],
+			"timezone":             args["timezone"],
+			"starts_at":            args["starts_at"],
+			"expires_at":           args["expires_at"],
 			"feature_id":           args["feature_id"],
 			"feature_priority":     args["feature_priority"],
 			"feature_depends_on":   args["feature_depends_on"],
+			"feature_schedule":     args["feature_schedule"],
+			"feature_starts_at":    args["feature_starts_at"],
+			"feature_expires_at":   args["feature_expires_at"],
+			"feature_run_once_at":  args["feature_run_once_at"],
+			"feature_timezone":     args["feature_timezone"],
 			"direct_prompt":        args["direct_prompt"],
 			"agent":                args["agent"],
 			"model":                args["model"],
@@ -544,6 +580,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		if _, ok := args["max_runs"]; ok {
 			changes = append(changes, fmt.Sprintf("Max Runs: %v", args["max_runs"]))
 		}
+		if v := StringArg(args, "run_once_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Run Once At: %s", v))
+		}
+		if v := StringArg(args, "timezone", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Timezone: %s", v))
+		}
+		if v := StringArg(args, "starts_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Starts At: %s", v))
+		}
+		if v := StringArg(args, "expires_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Expires At: %s", v))
+		}
 		if v := StringArg(args, "feature_id", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature ID: %s", v))
 		}
@@ -552,6 +600,21 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 		if deps := StringSliceArg(args, "feature_depends_on"); deps != nil {
 			changes = append(changes, fmt.Sprintf("Feature Dependencies: %d feature(s)", len(deps)))
+		}
+		if v := StringArg(args, "feature_schedule", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Schedule: %s", v))
+		}
+		if v := StringArg(args, "feature_starts_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Starts At: %s", v))
+		}
+		if v := StringArg(args, "feature_expires_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Expires At: %s", v))
+		}
+		if v := StringArg(args, "feature_run_once_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Run Once At: %s", v))
+		}
+		if v := StringArg(args, "feature_timezone", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Timezone: %s", v))
 		}
 		if v := StringArg(args, "direct_prompt", ""); v != "" {
 			changes = append(changes, "Direct Prompt: set")

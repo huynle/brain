@@ -876,3 +876,221 @@ func TestFinalizeRun_BlockedStatusMapsFailed(t *testing.T) {
 		t.Errorf("blocked completion should map to 'failed', got %v", updatedRun["status"])
 	}
 }
+
+// =============================================================================
+// checkTimeWindow Tests
+// =============================================================================
+
+func TestCheckTimeWindow_NoFields(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("", "", now, "")
+	if result != windowOpen {
+		t.Errorf("no starts_at/expires_at should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtFuture(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-07-01T00:00:00Z" // future
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowNotYet {
+		t.Errorf("starts_at in future should return windowNotYet, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtPast(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z" // past
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowOpen {
+		t.Errorf("starts_at in past should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtExact(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T12:00:00Z" // exact match
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowOpen {
+		t.Errorf("starts_at equal to now should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtPast(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expiresAt := "2026-06-01T00:00:00Z" // past
+	result := checkTimeWindow("", expiresAt, now, "")
+	if result != windowExpired {
+		t.Errorf("expires_at in past should return windowExpired, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtFuture(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expiresAt := "2026-07-01T00:00:00Z" // future
+	result := checkTimeWindow("", expiresAt, now, "")
+	if result != windowOpen {
+		t.Errorf("expires_at in future should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsInWindow(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowOpen {
+		t.Errorf("now within window should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsBeforeWindow(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowNotYet {
+		t.Errorf("now before window should return windowNotYet, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsAfterWindow(t *testing.T) {
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowExpired {
+		t.Errorf("now after window should return windowExpired, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_RespectsTimezone(t *testing.T) {
+	// 10:00 UTC = 19:00 Asia/Tokyo
+	// starts_at is 2026-06-15T18:00:00Z (= next day 03:00 Tokyo)
+	// In UTC: now (10:00) < starts_at (18:00) → not yet
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T18:00:00Z"
+	result := checkTimeWindow(startsAt, "", now, "Asia/Tokyo")
+	if result != windowNotYet {
+		t.Errorf("should respect timezone, now is before starts_at, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_InvalidStartsAtIgnored(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("not-a-date", "", now, "")
+	if result != windowOpen {
+		t.Errorf("invalid starts_at should be ignored (windowOpen), got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_InvalidExpiresAtIgnored(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("", "not-a-date", now, "")
+	if result != windowOpen {
+		t.Errorf("invalid expires_at should be ignored (windowOpen), got %v", result)
+	}
+}
+
+// =============================================================================
+// Integration: checkProjectScheduledTasks with time windows
+// =============================================================================
+
+func TestCheckScheduledTasks_SkipsBeforeStartsAt(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-win-1",
+			Path:     "projects/proj-a/task/sched-win-1.md",
+			Title:    "Future Window Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			StartsAt: "2026-07-01T00:00:00Z", // future
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-win-1.md" && c.Status == "pending" {
+			t.Error("should NOT trigger task before starts_at")
+		}
+	}
+}
+
+func TestCheckScheduledTasks_TriggersAfterStartsAt(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-win-2",
+			Path:     "projects/proj-a/task/sched-win-2.md",
+			Title:    "Past Window Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			StartsAt: "2026-06-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	found := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-win-2.md" && c.Status == "pending" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("should trigger task after starts_at has passed")
+	}
+}
+
+func TestCheckScheduledTasks_DisablesExpiredTask(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "sched-exp-1",
+			Path:      "projects/proj-a/task/sched-exp-1.md",
+			Title:     "Expired Task",
+			Status:    "active",
+			Schedule:  "*/15 * * * *",
+			ExpiresAt: "2026-06-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should NOT trigger (no status reset to pending)
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-exp-1.md" && c.Status == "pending" {
+			t.Error("should NOT trigger expired task")
+		}
+	}
+
+	// Should have disabled the schedule via UpdateMetadata
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisable := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/sched-exp-1.md" {
+			if v, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled, ok := v.(bool); ok && !enabled {
+					foundDisable = true
+				}
+			}
+		}
+	}
+	if !foundDisable {
+		t.Error("should auto-disable expired task schedule")
+	}
+}

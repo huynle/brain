@@ -12,6 +12,64 @@ import (
 	"github.com/huynle/brain-api/pkg/cron"
 )
 
+// timeWindowResult represents the result of checking a task's time window.
+type timeWindowResult int
+
+const (
+	windowOpen    timeWindowResult = iota // Window is open (or no window set)
+	windowNotYet                          // Before starts_at
+	windowExpired                         // After expires_at
+)
+
+// checkTimeWindow evaluates starts_at/expires_at time windows for a scheduled task.
+// Returns windowOpen if the task is within its time window (or no window is set),
+// windowNotYet if now is before starts_at, or windowExpired if now is after expires_at.
+// starts_at/expires_at are RFC3339 strings (with embedded timezone info).
+// Invalid timestamps are ignored (treated as unset).
+// Checks starts_at first: if now < starts_at, returns windowNotYet immediately.
+// Then checks expires_at: if now > expires_at, returns windowExpired.
+func checkTimeWindow(startsAt, expiresAt string, now time.Time, timezone string) timeWindowResult {
+	nowUTC := now.UTC()
+
+	// Check starts_at: if set and now is before it, window hasn't opened yet
+	if startsAt != "" {
+		t, err := time.Parse(time.RFC3339, startsAt)
+		if err == nil {
+			if nowUTC.Before(t.UTC()) {
+				return windowNotYet
+			}
+		}
+		// Invalid starts_at: ignore (treat as unset)
+	}
+
+	// Check expires_at: if set and now is after it, window has expired
+	if expiresAt != "" {
+		t, err := time.Parse(time.RFC3339, expiresAt)
+		if err == nil {
+			if nowUTC.After(t.UTC()) {
+				return windowExpired
+			}
+		}
+		// Invalid expires_at: ignore (treat as unset)
+	}
+
+	return windowOpen
+}
+
+// shouldTriggerRunOnce checks if a run_once_at task should fire now.
+// Returns true if runOnceAt is a valid RFC3339 timestamp and now >= runOnceAt.
+// The timezone parameter is accepted for consistency but runOnceAt is stored as RFC3339.
+func shouldTriggerRunOnce(runOnceAt string, now time.Time, timezone string) bool {
+	if runOnceAt == "" {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, runOnceAt)
+	if err != nil {
+		return false
+	}
+	return !now.UTC().Before(t.UTC())
+}
+
 // Eligible statuses for cron triggering.
 // Tasks in these statuses can be reset to "pending" by the scheduler.
 var cronEligibleStatuses = map[string]bool{
@@ -131,7 +189,13 @@ func (tr *TaskRunner) checkScheduledTasks(ctx context.Context, now time.Time) {
 	}
 }
 
+// isScheduledTask returns true if the task has a cron schedule or run_once_at set.
+func isScheduledTask(task *types.ResolvedTask) bool {
+	return task.Schedule != "" || task.RunOnceAt != ""
+}
+
 // checkProjectScheduledTasks checks scheduled tasks for a single project.
+// Handles both recurring cron-based tasks and one-shot run_once_at tasks.
 func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID string, now time.Time) {
 	tasks, err := tr.client.GetAllTasks(ctx, projectID)
 	if err != nil {
@@ -142,8 +206,8 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 	for i := range tasks {
 		task := &tasks[i]
 
-		// Skip tasks without a schedule
-		if task.Schedule == "" {
+		// Skip tasks without a schedule or run_once_at
+		if !isScheduledTask(task) {
 			continue
 		}
 
@@ -162,6 +226,17 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 			continue
 		}
 
+		// Check time window: starts_at / expires_at
+		switch checkTimeWindow(task.StartsAt, task.ExpiresAt, now, task.Timezone) {
+		case windowNotYet:
+			// Window hasn't opened yet — skip silently
+			continue
+		case windowExpired:
+			// Window has passed — auto-disable the schedule
+			tr.disableSchedule(ctx, task, fmt.Sprintf("expires_at passed (%s)", task.ExpiresAt))
+			continue
+		}
+
 		// Check max_runs: count completed/failed runs and stop if exhausted
 		if task.MaxRuns != nil && *task.MaxRuns > 0 {
 			runCount := countRuns(task.Runs)
@@ -171,13 +246,20 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 			}
 		}
 
-		// Check if the schedule triggers now
-		if !shouldTrigger(task.Schedule, task.NextRun, now, task.Timezone) {
-			continue
+		// Branch: run_once_at (one-shot) vs cron (recurring)
+		if task.RunOnceAt != "" && task.Schedule == "" {
+			// One-shot task: check if time has arrived
+			if !shouldTriggerRunOnce(task.RunOnceAt, now, task.Timezone) {
+				continue
+			}
+			tr.processRunOnceTask(ctx, task, now)
+		} else {
+			// Recurring cron task
+			if !shouldTrigger(task.Schedule, task.NextRun, now, task.Timezone) {
+				continue
+			}
+			tr.processScheduledTask(ctx, task, now)
 		}
-
-		// Trigger the task
-		tr.processScheduledTask(ctx, task, now)
 	}
 }
 
@@ -281,4 +363,46 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 
 	tr.logger.Printf("cron: triggered %s run=%s (schedule: %s), next_run: %s, runs=%d",
 		task.ID, runID, task.Schedule, nextRun.Format(time.RFC3339), len(runs))
+}
+
+// processRunOnceTask fires a one-shot run_once_at task: records a run, resets status
+// to pending, and auto-disables the schedule so it never fires again.
+func (tr *TaskRunner) processRunOnceTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	runID := generateRunID(now)
+
+	// Record the run as in_progress
+	newRun := map[string]interface{}{
+		"run_id":  runID,
+		"status":  "in_progress",
+		"started": now.UTC().Format(time.RFC3339),
+		"tasks":   1,
+	}
+	runs := make([]interface{}, 0, len(task.Runs)+1)
+	for _, r := range task.Runs {
+		runs = append(runs, map[string]interface{}{
+			"run_id":      r.RunID,
+			"status":      r.Status,
+			"started":     r.Started,
+			"completed":   r.Completed,
+			"skip_reason": r.SkipReason,
+		})
+	}
+	runs = append(runs, newRun)
+
+	// Update metadata: runs array + auto-disable schedule
+	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		"runs":             runs,
+		"schedule_enabled": false,
+	}); err != nil {
+		tr.logger.Printf("cron: failed to update runs/disable for %s: %v", task.ID, err)
+	}
+
+	// Reset status to pending
+	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); err != nil {
+		tr.logger.Printf("cron: failed to reset status for %s: %v", task.ID, err)
+		return
+	}
+
+	tr.logger.Printf("cron: triggered one-shot %s run=%s (run_once_at: %s), auto-disabled, runs=%d",
+		task.ID, runID, task.RunOnceAt, len(runs))
 }

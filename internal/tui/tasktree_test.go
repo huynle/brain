@@ -2248,6 +2248,164 @@ func TestCronBadge_ScheduleEnabledNil(t *testing.T) {
 }
 
 // =============================================================================
+// Tests: onceBadge
+// =============================================================================
+
+func TestOnceBadge_NoRunOnceAt(t *testing.T) {
+	task := types.ResolvedTask{Title: "Regular task"}
+	plain, styled := onceBadge(task)
+	if plain != "" || styled != "" {
+		t.Errorf("expected empty badge for task without run_once_at, got plain=%q styled=%q", plain, styled)
+	}
+}
+
+func TestOnceBadge_WithRunOnceAt(t *testing.T) {
+	task := types.ResolvedTask{
+		Title:     "One-shot task",
+		RunOnceAt: "2025-06-15T10:00:00Z",
+	}
+	plain, styled := onceBadge(task)
+	if plain != "[once] " {
+		t.Errorf("expected plain '[once] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for run_once_at task")
+	}
+	if !strings.Contains(styled, "once") {
+		t.Errorf("expected styled badge to contain 'once', got %q", styled)
+	}
+}
+
+// =============================================================================
+// Tests: windowBadge
+// =============================================================================
+
+func TestWindowBadge_NoTimeWindow(t *testing.T) {
+	task := types.ResolvedTask{Title: "Regular task"}
+	plain, styled := windowBadge(task)
+	if plain != "" || styled != "" {
+		t.Errorf("expected empty badge for task without time window, got plain=%q styled=%q", plain, styled)
+	}
+}
+
+func TestWindowBadge_WithStartsAt(t *testing.T) {
+	task := types.ResolvedTask{
+		Title:    "Windowed task",
+		StartsAt: "2025-06-15T10:00:00Z",
+	}
+	plain, styled := windowBadge(task)
+	if plain != "[window] " {
+		t.Errorf("expected plain '[window] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for starts_at task")
+	}
+	if !strings.Contains(styled, "window") {
+		t.Errorf("expected styled badge to contain 'window', got %q", styled)
+	}
+}
+
+func TestWindowBadge_WithExpiresAt(t *testing.T) {
+	task := types.ResolvedTask{
+		Title:     "Expiring task",
+		ExpiresAt: "2025-06-16T10:00:00Z",
+	}
+	plain, styled := windowBadge(task)
+	if plain != "[window] " {
+		t.Errorf("expected plain '[window] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for expires_at task")
+	}
+}
+
+func TestWindowBadge_WithBothStartsAndExpires(t *testing.T) {
+	task := types.ResolvedTask{
+		Title:     "Full window task",
+		StartsAt:  "2025-06-15T10:00:00Z",
+		ExpiresAt: "2025-06-16T10:00:00Z",
+	}
+	plain, styled := windowBadge(task)
+	if plain != "[window] " {
+		t.Errorf("expected plain '[window] ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled badge for full time-window task")
+	}
+}
+
+// =============================================================================
+// Tests: timezoneSuffix
+// =============================================================================
+
+func TestTimezoneSuffix_NoTimezone(t *testing.T) {
+	task := types.ResolvedTask{Title: "Regular task"}
+	plain, styled := timezoneSuffix(task)
+	if plain != "" || styled != "" {
+		t.Errorf("expected empty suffix for task without timezone, got plain=%q styled=%q", plain, styled)
+	}
+}
+
+func TestTimezoneSuffix_UTC(t *testing.T) {
+	task := types.ResolvedTask{Title: "UTC task", Timezone: "UTC"}
+	plain, styled := timezoneSuffix(task)
+	if plain != "" || styled != "" {
+		t.Errorf("expected empty suffix for UTC timezone, got plain=%q styled=%q", plain, styled)
+	}
+}
+
+func TestTimezoneSuffix_NonUTC(t *testing.T) {
+	task := types.ResolvedTask{
+		Title:    "PST task",
+		Timezone: "America/Los_Angeles",
+	}
+	plain, styled := timezoneSuffix(task)
+	if plain != "(America/Los_Angeles) " {
+		t.Errorf("expected plain '(America/Los_Angeles) ', got %q", plain)
+	}
+	if styled == "" {
+		t.Error("expected non-empty styled suffix for non-UTC timezone")
+	}
+	if !strings.Contains(styled, "America/Los_Angeles") {
+		t.Errorf("expected styled suffix to contain timezone, got %q", styled)
+	}
+}
+
+// =============================================================================
+// Tests: badge co-existence
+// =============================================================================
+
+func TestBadges_CoExistWithCron(t *testing.T) {
+	enabled := true
+	task := types.ResolvedTask{
+		Title:           "Scheduled one-shot windowed task",
+		Schedule:        "*/15 * * * *",
+		ScheduleEnabled: &enabled,
+		RunOnceAt:       "2025-06-15T10:00:00Z",
+		StartsAt:        "2025-06-15T00:00:00Z",
+		ExpiresAt:       "2025-06-16T00:00:00Z",
+		Timezone:        "America/New_York",
+	}
+	cronP, cronS := cronBadge(task)
+	onceP, onceS := onceBadge(task)
+	windowP, windowS := windowBadge(task)
+	tzP, tzS := timezoneSuffix(task)
+
+	if cronP == "" || cronS == "" {
+		t.Error("expected cron badge")
+	}
+	if onceP == "" || onceS == "" {
+		t.Error("expected once badge")
+	}
+	if windowP == "" || windowS == "" {
+		t.Error("expected window badge")
+	}
+	if tzP == "" || tzS == "" {
+		t.Error("expected timezone suffix")
+	}
+}
+
+// =============================================================================
 // Tests: buildSelectedTaskRelationGraph
 // =============================================================================
 

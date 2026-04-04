@@ -37,8 +37,11 @@ func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, is
 	indicator := statusIndicator(task.Status, task.Classification)
 	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
 
-	// Schedule badge (shown for cron/scheduled tasks)
+	// Schedule badges
 	cronPlain, cronStyled := cronBadge(task)
+	oncePlain, onceStyled := onceBadge(task)
+	windowPlain, windowStyled := windowBadge(task)
+	tzPlain, tzStyled := timezoneSuffix(task)
 
 	// Project label (ONLY in aggregate view and if ProjectID is not empty)
 	projectLabel := ""
@@ -51,8 +54,8 @@ func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, is
 	// Title — truncate BEFORE styling to avoid cutting ANSI sequences
 	title := task.Title
 	if !tt.TextWrap && width > 0 {
-		// Overhead: selMarker(2) + checkbox + indicator(2) + space(1) + cronBadge + projectLabel + suffix
-		overhead := 2 + len(checkboxPart) + 2 + 1 + len(cronPlain) + len(projectLabelPlain)
+		// Overhead: selMarker(2) + checkbox + indicator(2) + space(1) + badges + projectLabel + suffix
+		overhead := 2 + len(checkboxPart) + 2 + 1 + len(cronPlain) + len(oncePlain) + len(windowPlain) + len(tzPlain) + len(projectLabelPlain)
 		if task.Priority == "high" {
 			overhead++
 		}
@@ -73,5 +76,5 @@ func (tt *TaskTree) renderGroupedTaskLineWithProject(task types.ResolvedTask, is
 		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render("!")
 	}
 
-	return fmt.Sprintf("%s%s%s %s%s%s%s", selMarker, checkboxPart, indicatorStyled, cronStyled, projectLabel, title, prioritySuffix)
+	return fmt.Sprintf("%s%s%s %s%s%s%s%s%s%s", selMarker, checkboxPart, indicatorStyled, cronStyled, onceStyled, windowStyled, tzStyled, projectLabel, title, prioritySuffix)
 }

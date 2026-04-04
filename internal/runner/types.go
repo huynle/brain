@@ -78,6 +78,7 @@ type RunningTask struct {
 	CompleteOnIdle  bool      `json:"completeOnIdle,omitempty"`
 	ScheduledTaskID string    `json:"scheduledTaskId,omitempty"`
 	RunID           string    `json:"runId,omitempty"`
+	FeatureID       string    `json:"featureId,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.

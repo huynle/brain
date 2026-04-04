@@ -439,6 +439,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			TaskID:    task.ID,
 			ProjectID: projectID,
 			ClaimedBy: result.ClaimedBy,
+			FeatureID: task.FeatureID,
 		})
 		return fmt.Errorf("task already claimed by %s", result.ClaimedBy)
 	}
@@ -448,6 +449,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		TaskID:    task.ID,
 		ProjectID: projectID,
 		TaskPath:  task.Path,
+		FeatureID: task.FeatureID,
 	})
 
 	// Update task status to in_progress
@@ -462,6 +464,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		TaskID:     task.ID,
 		ProjectID:  projectID,
 		TaskPath:   task.Path,
+		FeatureID:  task.FeatureID,
 		FromStatus: "pending",
 		ToStatus:   "in_progress",
 	})
@@ -475,6 +478,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			TaskID:     task.ID,
 			ProjectID:  projectID,
 			TaskPath:   task.Path,
+			FeatureID:  task.FeatureID,
 			FromStatus: "in_progress",
 			ToStatus:   "blocked",
 		})
@@ -482,6 +486,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			Type:      EventTaskReleased,
 			TaskID:    task.ID,
 			ProjectID: projectID,
+			FeatureID: task.FeatureID,
 			Reason:    "workdir resolution failed",
 		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID)
@@ -501,6 +506,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			Type:      EventTaskReleased,
 			TaskID:    task.ID,
 			ProjectID: projectID,
+			FeatureID: task.FeatureID,
 			Reason:    "spawn failed",
 		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID)
@@ -521,6 +527,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir:        spawnResult.Workdir,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
+		FeatureID:      task.FeatureID,
 	}
 
 	// Track in process manager
@@ -753,6 +760,7 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		TaskID:     taskID,
 		ProjectID:  task.ProjectID,
 		TaskPath:   task.Path,
+		FeatureID:  task.FeatureID,
 		FromStatus: "in_progress",
 		ToStatus:   apiStatus,
 	})
@@ -791,9 +799,12 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 
 	// Emit event
 	tr.emitEvent(RunnerEvent{
-		Type:   eventType,
-		Result: result,
-		TaskID: taskID,
+		Type:      eventType,
+		Result:    result,
+		TaskID:    taskID,
+		ProjectID: task.ProjectID,
+		TaskPath:  task.Path,
+		FeatureID: task.FeatureID,
 	})
 }
 

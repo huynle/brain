@@ -28,8 +28,13 @@ const (
 
 const (
 	// Runner lifecycle events.
-	EventRunnerStarted = "runner.started"
-	EventRunnerStopped = "runner.stopped"
+	EventRunnerStarted           = "runner.started"
+	EventRunnerStopped           = "runner.stopped"
+	EventRunnerPollComplete      = "runner.poll_complete"
+	EventRunnerStateSaved        = "runner.state_saved"
+	EventRunnerAllPaused         = "runner.all_paused"
+	EventRunnerAllResumed        = "runner.all_resumed"
+	EventRunnerSessionDiscovered = "runner.session_discovered"
 
 	// Project lifecycle events.
 	EventProjectStarted = "project.started"
@@ -53,6 +58,8 @@ const (
 	EventFeatureCompleted = "feature.completed"
 	EventFeatureBlocked   = "feature.blocked"
 	EventFeatureProgress  = "feature.progress"
+	EventFeatureEnabled   = "feature.enabled"
+	EventFeatureDisabled  = "feature.disabled"
 
 	// Entry CRUD events.
 	EventEntryCreated = "entry.created"
@@ -63,11 +70,14 @@ const (
 // AllEventTypes enumerates all valid event type strings.
 var AllEventTypes = []string{
 	EventRunnerStarted, EventRunnerStopped,
+	EventRunnerPollComplete, EventRunnerStateSaved,
+	EventRunnerAllPaused, EventRunnerAllResumed, EventRunnerSessionDiscovered,
 	EventProjectStarted, EventProjectPaused, EventProjectResumed,
 	EventTaskClaimed, EventTaskClaimRejected, EventTaskStarted, EventTaskCompleted,
 	EventTaskFailed, EventTaskBlocked, EventTaskCancelled, EventTaskReleased,
 	EventTaskStatusChanged, EventTaskIdleDetected,
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
+	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,
 }
 

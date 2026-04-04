@@ -112,11 +112,14 @@ func TestEventTypeConstants(t *testing.T) {
 	// Verify all expected event types exist as constants
 	expectedTypes := []string{
 		"runner.started", "runner.stopped",
+		"runner.poll_complete", "runner.state_saved",
+		"runner.all_paused", "runner.all_resumed", "runner.session_discovered",
 		"project.started", "project.paused", "project.resumed",
 		"task.claimed", "task.claim_rejected", "task.started", "task.completed",
 		"task.failed", "task.blocked", "task.cancelled", "task.released",
 		"task.status_changed", "task.idle_detected",
 		"feature.started", "feature.completed", "feature.blocked", "feature.progress",
+		"feature.enabled", "feature.disabled",
 		"entry.created", "entry.updated", "entry.deleted",
 	}
 

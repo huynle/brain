@@ -1394,6 +1394,11 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 // =============================================================================
 
 // Move moves an entry to a different project.
+//
+// Safety: This method is defensive against data loss. It verifies the source
+// file exists on disk before proceeding, verifies the destination was written
+// correctly before deleting the source, and treats index update failures as
+// non-fatal (they self-heal on re-index).
 func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error) {
 	if targetProject == "" {
 		return nil, fmt.Errorf("target project is required")
@@ -1418,8 +1423,15 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, err
 	}
 
-	// Read old file content
 	oldAbsPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(oldPath))
+
+	// SAFETY: Verify source file exists on disk (not just in DB).
+	// This catches stale DB entries where the file was already removed.
+	if _, err := os.Stat(oldAbsPath); err != nil {
+		return nil, fmt.Errorf("source file does not exist on disk: %w", err)
+	}
+
+	// Read old file content
 	content, err := os.ReadFile(oldAbsPath)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", oldAbsPath, err)
@@ -1454,17 +1466,30 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, fmt.Errorf("write file %q: %w", newAbsPath, err)
 	}
 
-	// Delete old file
-	if err := os.Remove(oldAbsPath); err != nil && !os.IsNotExist(err) {
-		return nil, fmt.Errorf("remove old file %q: %w", oldAbsPath, err)
+	// SAFETY: Verify destination was written correctly before deleting source.
+	dstInfo, err := os.Stat(newAbsPath)
+	if err != nil {
+		return nil, fmt.Errorf("destination file verification failed after write: %w", err)
+	}
+	expectedSize := int64(len(fileBuilder.String()))
+	if dstInfo.Size() != expectedSize {
+		return nil, fmt.Errorf("destination file size mismatch: wrote %d bytes but file is %d bytes", expectedSize, dstInfo.Size())
 	}
 
-	// Update index
+	// SAFETY: Delete old file ONLY after verifying destination exists.
+	if err := os.Remove(oldAbsPath); err != nil && !os.IsNotExist(err) {
+		// Destination exists but couldn't remove source — not data loss, just cleanup issue
+		slog.Error("move: failed to remove source file (destination is safe)", "src", oldAbsPath, "dst", newAbsPath, "error", err)
+		// Continue — the move is effectively complete, just has a leftover source file
+	}
+
+	// Update index — log errors but don't fail since files are already moved on disk.
+	// Index inconsistencies self-heal on re-index.
 	if err := s.indexer.RemoveFile(oldPath); err != nil {
-		return nil, fmt.Errorf("remove old index %q: %w", oldPath, err)
+		slog.Error("move: failed to remove old index entry (will self-heal on re-index)", "path", oldPath, "error", err)
 	}
 	if err := s.indexer.IndexFile(newPath); err != nil {
-		return nil, fmt.Errorf("index new file %q: %w", newPath, err)
+		slog.Error("move: failed to index new file (will self-heal on re-index)", "path", newPath, "error", err)
 	}
 
 	return &types.MoveResult{

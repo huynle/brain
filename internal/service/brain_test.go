@@ -1115,6 +1115,114 @@ func TestComputeMovedPath_InvalidPath(t *testing.T) {
 }
 
 // =============================================================================
+// Move: defensive safety tests
+// =============================================================================
+
+func TestMove_SourceFileMissingOnDisk(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Save an entry so it exists in the DB and on disk
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Ghost Task",
+		Project: "project-a",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Delete the file from disk but leave the DB entry intact
+	absPath := filepath.Join(brainDir, filepath.FromSlash(saved.Path))
+	if err := os.Remove(absPath); err != nil {
+		t.Fatalf("failed to remove file: %v", err)
+	}
+
+	// Move should fail with a clear "source file does not exist on disk" error
+	_, err = svc.Move(ctx, saved.ID, "project-b")
+	if err == nil {
+		t.Fatal("expected error when source file is missing on disk")
+	}
+	if !strings.Contains(err.Error(), "source file does not exist on disk") {
+		t.Errorf("error should mention 'source file does not exist on disk', got: %v", err)
+	}
+}
+
+func TestMove_DestinationVerifiedAfterWrite(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Verified Move",
+		Content: "Some content to verify size.",
+		Project: "project-a",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	result, err := svc.Move(ctx, saved.ID, "project-b")
+	if err != nil {
+		t.Fatalf("Move failed: %v", err)
+	}
+
+	// Verify destination file exists on disk with non-zero size
+	newAbsPath := filepath.Join(brainDir, filepath.FromSlash(result.To))
+	info, err := os.Stat(newAbsPath)
+	if err != nil {
+		t.Fatalf("destination file does not exist: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("destination file should have non-zero size")
+	}
+
+	// Verify source file is gone
+	oldAbsPath := filepath.Join(brainDir, filepath.FromSlash(result.From))
+	if _, err := os.Stat(oldAbsPath); !os.IsNotExist(err) {
+		t.Error("source file should have been removed")
+	}
+}
+
+func TestMove_PreservesSourceOnDestWriteFailure(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Protected Task",
+		Content: "Important content that must not be lost.",
+		Project: "project-a",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Make the destination directory unwritable by creating a FILE where the
+	// directory would need to be (so MkdirAll fails).
+	destDir := filepath.Join(brainDir, "projects", "project-b", "task")
+	// Create parent so we can place a file at the task dir path
+	if err := os.MkdirAll(filepath.Dir(destDir), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	// Create a regular file where the directory should be — MkdirAll will fail
+	if err := os.WriteFile(destDir, []byte("blocker"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	_, err = svc.Move(ctx, saved.ID, "project-b")
+	if err == nil {
+		t.Fatal("expected error when destination is unwritable")
+	}
+
+	// Source file must still exist
+	srcPath := filepath.Join(brainDir, filepath.FromSlash(saved.Path))
+	if _, err := os.Stat(srcPath); err != nil {
+		t.Errorf("source file should be preserved after failed move, got: %v", err)
+	}
+}
+
+// =============================================================================
 // Integration: Save + Recall + Update + Delete lifecycle
 // =============================================================================
 

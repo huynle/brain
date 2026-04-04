@@ -518,6 +518,207 @@ func copyMap(m map[string]interface{}) map[string]interface{} {
 var _ Client = (*schedMockClient)(nil)
 
 // =============================================================================
+// Feature Schedule Gate Direct-Complete Tests
+// =============================================================================
+
+func TestProcessScheduledTask_FeatureScheduleGate_DirectComplete(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should set status to "completed", NOT "pending"
+	statusCalls := client.getUpdateStatusCalls()
+	foundCompleted := false
+	foundPending := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if c.Status == "completed" {
+				foundCompleted = true
+			}
+			if c.Status == "pending" {
+				foundPending = true
+			}
+		}
+	}
+	if !foundCompleted {
+		t.Error("feature_schedule gate should be directly set to 'completed'")
+	}
+	if foundPending {
+		t.Error("feature_schedule gate should NOT be set to 'pending'")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_RunRecordedAsCompleted(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that the run was recorded with status "completed" directly
+	metaCalls := client.getUpdateMetadataCalls()
+	var runsMeta []interface{}
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if runs, ok := c.Fields["runs"]; ok {
+				runsMeta = runs.([]interface{})
+			}
+		}
+	}
+	if runsMeta == nil {
+		t.Fatal("expected runs array in metadata update")
+	}
+
+	// The last run should have status "completed"
+	lastRun := runsMeta[len(runsMeta)-1].(map[string]interface{})
+	if lastRun["status"] != "completed" {
+		t.Errorf("run status = %v, want 'completed'", lastRun["status"])
+	}
+	if lastRun["completed"] == nil || lastRun["completed"] == "" {
+		t.Error("run should have a 'completed' timestamp")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_DisablesSchedule(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that schedule_enabled was set to false
+	metaCalls := client.getUpdateMetadataCalls()
+	foundScheduleDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-1.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled == false {
+					foundScheduleDisabled = true
+				}
+			}
+		}
+	}
+	if !foundScheduleDisabled {
+		t.Error("feature_schedule gate should disable schedule_enabled after completion")
+	}
+}
+
+func TestProcessScheduledTask_RegularTask_StillSetsPending(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "regular-1",
+			Path:     "projects/proj-a/task/regular-1.md",
+			Title:    "Regular Scheduled Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			// No GeneratedKind — regular task
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Regular tasks should be set to "pending", NOT "completed"
+	statusCalls := client.getUpdateStatusCalls()
+	foundPending := false
+	foundCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/regular-1.md" {
+			if c.Status == "pending" {
+				foundPending = true
+			}
+			if c.Status == "completed" {
+				foundCompleted = true
+			}
+		}
+	}
+	if !foundPending {
+		t.Error("regular task should be set to 'pending'")
+	}
+	if foundCompleted {
+		t.Error("regular task should NOT be set to 'completed'")
+	}
+}
+
+func TestProcessScheduledTask_FeatureScheduleGate_EmitsCompletedEvent(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Register event handler to capture events
+	var events []RunnerEvent
+	tr.OnEvent(func(evt RunnerEvent) {
+		events = append(events, evt)
+	})
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:            "gate-1",
+			Path:          "projects/proj-a/task/gate-1.md",
+			Title:         "Feature Schedule: my-feature",
+			Status:        "active",
+			Schedule:      "*/15 * * * *",
+			GeneratedKind: "feature_schedule",
+			FeatureID:     "my-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Check that a completed event was emitted
+	foundCompletedEvent := false
+	for _, evt := range events {
+		if evt.Type == EventTaskCompleted && evt.TaskID == "gate-1" {
+			foundCompletedEvent = true
+		}
+	}
+	if !foundCompletedEvent {
+		t.Error("feature_schedule gate should emit a completed event")
+	}
+}
+
+// =============================================================================
 // latestInProgressRunID Tests
 // =============================================================================
 

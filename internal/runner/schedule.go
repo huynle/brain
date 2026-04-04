@@ -190,9 +190,70 @@ func (tr *TaskRunner) disableSchedule(ctx context.Context, task *types.ResolvedT
 	})
 }
 
-// processScheduledTask resets a scheduled task to pending and advances next_run.
+// processScheduledTask handles a triggered scheduled task.
+// For feature_schedule gate tasks, it directly completes the task (no agent spawn).
+// For regular tasks, it resets status to pending for agent pickup.
 // It records the run in the task's runs[] array for tracking and max_runs counting.
 func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	isFeatureGate := task.GeneratedKind == "feature_schedule"
+
+	if isFeatureGate {
+		tr.processFeatureScheduleGate(ctx, task, now)
+	} else {
+		tr.processRegularScheduledTask(ctx, task, now)
+	}
+}
+
+// processFeatureScheduleGate directly completes a feature_schedule gate task.
+// This immediately unblocks all downstream feature tasks with zero overhead.
+func (tr *TaskRunner) processFeatureScheduleGate(ctx context.Context, task *types.ResolvedTask, now time.Time) {
+	runID := generateRunID(now)
+	nowStr := now.UTC().Format(time.RFC3339)
+
+	// Record the run as completed directly (no in_progress intermediate)
+	newRun := map[string]interface{}{
+		"run_id":    runID,
+		"status":    "completed",
+		"started":   nowStr,
+		"completed": nowStr,
+		"tasks":     1,
+	}
+	runs := buildRunsArray(task.Runs, newRun)
+
+	// Compute next_run for metadata
+	nextRun, err := getNextRun(task.Schedule, now)
+	if err != nil {
+		tr.logger.Printf("cron: failed to compute next_run for %s: %v", task.ID, err)
+		return
+	}
+
+	// Update metadata: runs, next_run, and disable schedule
+	if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		"runs":             runs,
+		"next_run":         nextRun.Format(time.RFC3339),
+		"schedule_enabled": false,
+	}); err != nil {
+		tr.logger.Printf("cron: failed to update metadata for gate %s: %v", task.ID, err)
+	}
+
+	// Set status to completed directly
+	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "completed"); err != nil {
+		tr.logger.Printf("cron: failed to complete gate %s: %v", task.ID, err)
+		return
+	}
+
+	tr.logger.Printf("cron: feature gate completed %s run=%s (feature_id: %s), next_run: %s",
+		task.ID, runID, task.FeatureID, nextRun.Format(time.RFC3339))
+
+	// Emit completed event for TUI
+	tr.emitEvent(RunnerEvent{
+		Type:   EventTaskCompleted,
+		TaskID: task.ID,
+	})
+}
+
+// processRegularScheduledTask resets a scheduled task to pending and advances next_run.
+func (tr *TaskRunner) processRegularScheduledTask(ctx context.Context, task *types.ResolvedTask, now time.Time) {
 	runID := generateRunID(now)
 
 	// Record the run as in_progress
@@ -202,17 +263,7 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 		"started": now.UTC().Format(time.RFC3339),
 		"tasks":   1,
 	}
-	runs := make([]interface{}, 0, len(task.Runs)+1)
-	for _, r := range task.Runs {
-		runs = append(runs, map[string]interface{}{
-			"run_id":      r.RunID,
-			"status":      r.Status,
-			"started":     r.Started,
-			"completed":   r.Completed,
-			"skip_reason": r.SkipReason,
-		})
-	}
-	runs = append(runs, newRun)
+	runs := buildRunsArray(task.Runs, newRun)
 
 	// Update metadata: runs array + next_run
 	nextRun, err := getNextRun(task.Schedule, now)
@@ -236,4 +287,20 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 
 	tr.logger.Printf("cron: triggered %s run=%s (schedule: %s), next_run: %s, runs=%d",
 		task.ID, runID, task.Schedule, nextRun.Format(time.RFC3339), len(runs))
+}
+
+// buildRunsArray constructs the runs metadata array from existing runs plus a new run.
+func buildRunsArray(existingRuns []types.CronRun, newRun map[string]interface{}) []interface{} {
+	runs := make([]interface{}, 0, len(existingRuns)+1)
+	for _, r := range existingRuns {
+		runs = append(runs, map[string]interface{}{
+			"run_id":      r.RunID,
+			"status":      r.Status,
+			"started":     r.Started,
+			"completed":   r.Completed,
+			"skip_reason": r.SkipReason,
+		})
+	}
+	runs = append(runs, newRun)
+	return runs
 }

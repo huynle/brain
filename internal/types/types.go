@@ -99,7 +99,7 @@ func IsValidTaskClassification(s string) bool {
 // Generated Kinds
 // =============================================================================
 
-var GeneratedKinds = []string{"feature_checkout", "feature_review", "gap_task", "other"}
+var GeneratedKinds = []string{"feature_checkout", "feature_review", "feature_schedule", "gap_task", "other"}
 
 var generatedKindSet = makeSet(GeneratedKinds)
 
@@ -148,6 +148,8 @@ type BrainEntry struct {
 	MaxRuns         *int   `json:"max_runs,omitempty"`
 	StartsAt        string `json:"starts_at,omitempty"`
 	ExpiresAt       string `json:"expires_at,omitempty"`
+	RunOnceAt       string `json:"run_once_at,omitempty"`
+	Timezone        string `json:"timezone,omitempty"`
 
 	// Git/execution fields
 	Workdir            string `json:"workdir,omitempty"`
@@ -267,6 +269,13 @@ type CreateEntryRequest struct {
 	FeaturePriority     string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn    []string `json:"feature_depends_on,omitempty"`
 
+	// Feature schedule fields (trigger auto-creation of a feature_schedule gate task)
+	FeatureSchedule  string `json:"feature_schedule,omitempty"`
+	FeatureRunOnceAt string `json:"feature_run_once_at,omitempty"`
+	FeatureStartsAt  string `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt string `json:"feature_expires_at,omitempty"`
+	FeatureTimezone  string `json:"feature_timezone,omitempty"`
+
 	DirectPrompt string `json:"direct_prompt,omitempty"`
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`
@@ -323,6 +332,13 @@ type UpdateEntryRequest struct {
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn *[]string `json:"feature_depends_on,omitempty"`
+
+	// Feature schedule fields (trigger auto-creation of a feature_schedule gate task)
+	FeatureSchedule  *string `json:"feature_schedule,omitempty"`
+	FeatureRunOnceAt *string `json:"feature_run_once_at,omitempty"`
+	FeatureStartsAt  *string `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt *string `json:"feature_expires_at,omitempty"`
+	FeatureTimezone  *string `json:"feature_timezone,omitempty"`
 
 	DirectPrompt *string `json:"direct_prompt,omitempty"`
 	Agent        *string `json:"agent,omitempty"`

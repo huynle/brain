@@ -68,6 +68,8 @@ type Frontmatter struct {
 	MaxRuns         *int      `yaml:"max_runs,omitempty" json:"max_runs,omitempty"`
 	StartsAt        string    `yaml:"starts_at,omitempty" json:"starts_at,omitempty"`
 	ExpiresAt       string    `yaml:"expires_at,omitempty" json:"expires_at,omitempty"`
+	RunOnceAt       string    `yaml:"run_once_at,omitempty" json:"run_once_at,omitempty"`
+	Timezone        string    `yaml:"timezone,omitempty" json:"timezone,omitempty"`
 	Runs            []CronRun `yaml:"runs,omitempty" json:"runs,omitempty"`
 
 	// Hierarchy / dependencies
@@ -131,6 +133,8 @@ type GenerateOptions struct {
 	MaxRuns         *int
 	StartsAt        string
 	ExpiresAt       string
+	RunOnceAt       string
+	Timezone        string
 	Runs            []CronRun
 
 	Priority  string
@@ -201,6 +205,8 @@ type rawFrontmatter struct {
 	MaxRuns             *int                       `yaml:"max_runs"`
 	StartsAt            string                     `yaml:"starts_at"`
 	ExpiresAt           string                     `yaml:"expires_at"`
+	RunOnceAt           string                     `yaml:"run_once_at"`
+	Timezone            string                     `yaml:"timezone"`
 	Runs                []CronRun                  `yaml:"runs"`
 	ParentID            string                     `yaml:"parent_id"`
 	ProjectID           string                     `yaml:"projectId"`
@@ -241,7 +247,8 @@ var knownFields = map[string]bool{
 	"title": true, "type": true, "name": true, "status": true,
 	"tags": true, "priority": true, "created": true,
 	"schedule": true, "schedule_enabled": true, "next_run": true,
-	"max_runs": true, "starts_at": true, "expires_at": true, "runs": true,
+	"max_runs": true, "starts_at": true, "expires_at": true,
+	"run_once_at": true, "timezone": true, "runs": true,
 	"parent_id": true, "projectId": true,
 	"depends_on": true, "feature_id": true, "feature_priority": true,
 	"feature_depends_on": true,
@@ -356,6 +363,8 @@ func Parse(content string) (*Document, error) {
 		MaxRuns:             raw.MaxRuns,
 		StartsAt:            raw.StartsAt,
 		ExpiresAt:           raw.ExpiresAt,
+		RunOnceAt:           raw.RunOnceAt,
+		Timezone:            raw.Timezone,
 		Runs:                raw.Runs,
 		ParentID:            raw.ParentID,
 		ProjectID:           raw.ProjectID,
@@ -528,6 +537,8 @@ func Serialize(fm *Frontmatter) string {
 
 	emit("starts_at", fm.StartsAt)
 	emit("expires_at", fm.ExpiresAt)
+	emit("run_once_at", fm.RunOnceAt)
+	emit("timezone", fm.Timezone)
 
 	// Runs
 	if len(fm.Runs) > 0 {
@@ -702,6 +713,8 @@ func Generate(opts *GenerateOptions) string {
 		MaxRuns:             opts.MaxRuns,
 		StartsAt:            opts.StartsAt,
 		ExpiresAt:           opts.ExpiresAt,
+		RunOnceAt:           opts.RunOnceAt,
+		Timezone:            opts.Timezone,
 		Runs:                opts.Runs,
 		ProjectID:           opts.ProjectID,
 		DependsOn:           opts.DependsOn,

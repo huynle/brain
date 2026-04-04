@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +135,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		MaxRuns:             req.MaxRuns,
 		StartsAt:            req.StartsAt,
 		ExpiresAt:           req.ExpiresAt,
+		RunOnceAt:           req.RunOnceAt,
 	}
 
 	if !isGlobal {
@@ -171,6 +173,20 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 
 	// Generate markdown link
 	link := markdown.GenerateMarkdownLink(shortID, title)
+
+	// Post-save: auto-create feature_schedule gate task if feature schedule fields are set
+	if req.Type == "task" && req.FeatureID != "" {
+		schedFields := extractFeatureScheduleFromCreate(req)
+		if schedFields.HasAny() {
+			if err := s.ensureFeatureScheduleGate(ctx, project, req.FeatureID, schedFields); err != nil {
+				slog.Warn("failed to ensure feature schedule gate",
+					"feature_id", req.FeatureID,
+					"project", project,
+					"error", err,
+				)
+			}
+		}
+	}
 
 	return &types.CreateEntryResponse{
 		ID:     shortID,
@@ -493,6 +509,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.ExpiresAt != nil {
 		fm.ExpiresAt = *req.ExpiresAt
 	}
+	if req.RunOnceAt != nil {
+		fm.RunOnceAt = *req.RunOnceAt
+	}
 
 	// Git/execution fields
 	if req.TargetWorkdir != nil {
@@ -685,8 +704,35 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		_, _ = s.storage.MergeMetadata(ctx, row.Path, preservedFields)
 	}
 
+	// Post-update: auto-create/update feature_schedule gate task if feature schedule fields are set
+	if fm.Type == "task" && fm.FeatureID != "" {
+		schedFields, hasFeatureSched := extractFeatureScheduleFromUpdate(req)
+		if hasFeatureSched && schedFields.HasAny() {
+			project := extractProjectFromPath(row.Path)
+			if project != "" {
+				if err := s.ensureFeatureScheduleGate(ctx, project, fm.FeatureID, schedFields); err != nil {
+					slog.Warn("failed to ensure feature schedule gate on update",
+						"feature_id", fm.FeatureID,
+						"project", project,
+						"error", err,
+					)
+				}
+			}
+		}
+	}
+
 	// Re-read and return
 	return s.Recall(ctx, row.Path)
+}
+
+// extractProjectFromPath extracts the project name from a brain entry path.
+// Expected format: "projects/<project>/task/<id>.md"
+func extractProjectFromPath(path string) string {
+	parts := strings.Split(filepath.ToSlash(path), "/")
+	if len(parts) >= 2 && parts[0] == "projects" {
+		return parts[1]
+	}
+	return ""
 }
 
 // =============================================================================

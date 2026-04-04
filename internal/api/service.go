@@ -155,6 +155,23 @@ type RunnerService interface {
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
+// EventService defines the interface for event ingestion and querying.
+// Implementations accept events from runners and API mutations,
+// publish them to the EventHub, and support querying recent events.
+type EventService interface {
+	// Ingest accepts a batch of events, validates them, assigns IDs if missing,
+	// deduplicates by ID, and publishes to the EventHub.
+	Ingest(ctx context.Context, events []types.Event) error
+
+	// Recent returns recent events from the ring buffer with optional filters.
+	// Filters are key-value pairs matching event fields (e.g., "project_id", "type").
+	Recent(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
+
+	// Subscribe returns a channel of events matching the given filters and
+	// an unsubscribe function. Used by the SSE handler for real-time streaming.
+	Subscribe(ctx context.Context, filters map[string]string) (<-chan types.Event, func())
+}
+
 // MonitorService defines the interface for monitor operations.
 type MonitorService interface {
 	// ListTemplates returns all available monitor templates.

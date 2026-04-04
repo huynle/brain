@@ -56,21 +56,22 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 
 	// Wire up dependencies
 	client := runner.NewAPIClient(cfg)
-	executor := runner.NewExecutor(cfg)
+	executorRegistry := runner.NewExecutorRegistry(cfg)
 	processMgr := runner.NewProcessManager(cfg)
 	stateMgr := runner.NewStateManager(cfg.StateDir, opts.Projects[0])
 
 	// Build runner options
 	runnerOpts := runner.TaskRunnerOptions{
-		ProjectID:   opts.Projects[0],
-		Projects:    opts.Projects,
-		Config:      cfg,
-		Mode:        runner.ExecutionMode(opts.Mode),
-		StartPaused: opts.StartPaused,
-		Client:      client,
-		Executor:    executor,
-		ProcessMgr:  processMgr,
-		StateMgr:    stateMgr,
+		ProjectID:        opts.Projects[0],
+		Projects:         opts.Projects,
+		Config:           cfg,
+		Mode:             runner.ExecutionMode(opts.Mode),
+		StartPaused:      opts.StartPaused,
+		Client:           client,
+		Executor:         executorRegistry.MustGet("opencode"),
+		ExecutorRegistry: executorRegistry,
+		ProcessMgr:       processMgr,
+		StateMgr:         stateMgr,
 	}
 
 	tr := runner.NewTaskRunner(runnerOpts)
@@ -149,7 +150,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 
 	// Wire up dependencies
 	client := runner.NewAPIClient(cfg)
-	executor := runner.NewExecutor(cfg)
+	executorRegistry := runner.NewExecutorRegistry(cfg)
 	processMgr := runner.NewProcessManager(cfg)
 	stateMgr := runner.NewStateManager(cfg.StateDir, opts.Projects[0])
 
@@ -180,16 +181,17 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 
 	// Build runner options
 	runnerOpts := runner.TaskRunnerOptions{
-		ProjectID:   opts.Projects[0],
-		Projects:    opts.Projects,
-		Config:      cfg,
-		Mode:        runner.ExecutionModeTUI,
-		StartPaused: true,
-		Logger:      runnerLogger,
-		Client:      client,
-		Executor:    executor,
-		ProcessMgr:  processMgr,
-		StateMgr:    stateMgr,
+		ProjectID:        opts.Projects[0],
+		Projects:         opts.Projects,
+		Config:           cfg,
+		Mode:             runner.ExecutionModeTUI,
+		StartPaused:      true,
+		Logger:           runnerLogger,
+		Client:           client,
+		Executor:         executorRegistry.MustGet("opencode"),
+		ExecutorRegistry: executorRegistry,
+		ProcessMgr:       processMgr,
+		StateMgr:         stateMgr,
 	}
 
 	tr := runner.NewTaskRunner(runnerOpts)

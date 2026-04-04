@@ -177,7 +177,11 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.mu.Unlock()
 
 		tr.cleanupTaskTmux(task)
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		if tr.executor != nil {
+			tr.executor.Cleanup(task.ID, task.ProjectID)
+		} else {
+			CommonCleanup(tr.config.StateDir, task.ID, task.ProjectID)
+		}
 
 		tr.emitEvent(RunnerEvent{
 			Type:   eventType,
@@ -232,7 +236,11 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		if tr.executor != nil {
+			tr.executor.Cleanup(task.ID, task.ProjectID)
+		} else {
+			CommonCleanup(tr.config.StateDir, task.ID, task.ProjectID)
+		}
 
 		// Emit completion event
 		tr.emitEvent(RunnerEvent{
@@ -269,7 +277,11 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		if tr.executor != nil {
+			tr.executor.Cleanup(task.ID, task.ProjectID)
+		} else {
+			CommonCleanup(tr.config.StateDir, task.ID, task.ProjectID)
+		}
 
 		// Emit event
 		tr.emitEvent(RunnerEvent{

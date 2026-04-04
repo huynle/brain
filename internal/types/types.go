@@ -506,6 +506,7 @@ type ResolvedTask struct {
 	DirectPrompt        string            `json:"direct_prompt"`
 	Agent               string            `json:"agent"`
 	Model               string            `json:"model"`
+	Executor            string            `json:"executor,omitempty"`
 	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`

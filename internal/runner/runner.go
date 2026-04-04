@@ -104,6 +104,11 @@ type TaskRunnerOptions struct {
 	Executor   TaskExecutor
 	ProcessMgr TaskProcessManager
 	StateMgr   TaskStateManager
+
+	// ExecutorRegistry holds named executors for per-task dispatch.
+	// When set, the runner resolves executor per-task using the precedence chain.
+	// When nil, falls back to the single Executor field.
+	ExecutorRegistry *ExecutorRegistry
 }
 
 // RunnerStatusInfo is a snapshot of the runner's current state.
@@ -130,10 +135,11 @@ type TaskRunner struct {
 	mode     ExecutionMode
 	logger   *log.Logger
 
-	client     Client
-	executor   TaskExecutor
-	processMgr TaskProcessManager
-	stateMgr   TaskStateManager
+	client           Client
+	executor         TaskExecutor
+	executorRegistry *ExecutorRegistry
+	processMgr       TaskProcessManager
+	stateMgr         TaskStateManager
 
 	// Mutable state (protected by mu)
 	mu              sync.RWMutex
@@ -188,20 +194,21 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	tr := &TaskRunner{
-		runnerID:        runnerID,
-		projects:        projects,
-		config:          opts.Config,
-		mode:            mode,
-		logger:          logger,
-		client:          opts.Client,
-		executor:        opts.Executor,
-		processMgr:      opts.ProcessMgr,
-		stateMgr:        opts.StateMgr,
-		status:          RunnerStatusIdle,
-		pauseCache:      make(map[string]bool),
-		enabledFeatures: make(map[string]bool),
-		wakeCh:          make(chan struct{}, 1),
-		done:            make(chan struct{}),
+		runnerID:         runnerID,
+		projects:         projects,
+		config:           opts.Config,
+		mode:             mode,
+		logger:           logger,
+		client:           opts.Client,
+		executor:         opts.Executor,
+		executorRegistry: opts.ExecutorRegistry,
+		processMgr:       opts.ProcessMgr,
+		stateMgr:         opts.StateMgr,
+		status:           RunnerStatusIdle,
+		pauseCache:       make(map[string]bool),
+		enabledFeatures:  make(map[string]bool),
+		wakeCh:           make(chan struct{}, 1),
+		done:             make(chan struct{}),
 	}
 
 	if opts.StartPaused {
@@ -423,6 +430,25 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 }
 
 // =============================================================================
+// Executor Resolution
+// =============================================================================
+
+// resolveExecutor returns the executor for a given task.
+// If an ExecutorRegistry is set, it resolves per-task using the precedence chain.
+// Otherwise, it falls back to the single injected executor.
+func (tr *TaskRunner) resolveExecutor(task *types.ResolvedTask) (TaskExecutor, error) {
+	if tr.executorRegistry != nil {
+		exec, name, err := tr.executorRegistry.ResolveForTask(task)
+		if err != nil {
+			return nil, fmt.Errorf("resolve executor: %w", err)
+		}
+		tr.logger.Printf("resolved executor %q for task %s", name, task.ID)
+		return exec, nil
+	}
+	return tr.executor, nil
+}
+
+// =============================================================================
 // Claim and Spawn
 // =============================================================================
 
@@ -466,8 +492,15 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		ToStatus:   "in_progress",
 	})
 
+	// Resolve executor for this task
+	taskExecutor, err := tr.resolveExecutor(task)
+	if err != nil {
+		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		return fmt.Errorf("resolve executor: %w", err)
+	}
+
 	// Resolve workdir (may create git worktree)
-	workdir, err := tr.executor.ResolveWorkdir(task)
+	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{
@@ -494,7 +527,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir: workdir,
 	}
 
-	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
+	spawnResult, err := taskExecutor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		// Release the claim on failure
 		tr.emitEvent(RunnerEvent{
@@ -786,8 +819,13 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Clean up tmux window (graceful: Ctrl+C then kill)
 	tr.cleanupTaskTmux(task)
 
-	// Cleanup temp files
-	tr.executor.Cleanup(taskID, task.ProjectID)
+	// Cleanup temp files — use common cleanup since temp file layout is the same
+	// for all executors. Falls back to the single executor if no registry.
+	if tr.executor != nil {
+		tr.executor.Cleanup(taskID, task.ProjectID)
+	} else {
+		CommonCleanup(tr.config.StateDir, taskID, task.ProjectID)
+	}
 
 	// Emit event
 	tr.emitEvent(RunnerEvent{

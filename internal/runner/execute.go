@@ -35,8 +35,14 @@ func (tr *TaskRunner) ExecuteTask(ctx context.Context, task *types.ResolvedTask,
 // resumeTask spawns an executor for an already in_progress task without
 // re-claiming or updating status. Used when resuming orphaned tasks.
 func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, projectID string) error {
+	// Resolve executor for this task
+	taskExecutor, err := tr.resolveExecutor(task)
+	if err != nil {
+		return fmt.Errorf("resolve executor: %w", err)
+	}
+
 	// Resolve workdir (may create git worktree)
-	workdir, err := tr.executor.ResolveWorkdir(task)
+	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -47,7 +53,7 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		IsResume: true,
 	}
 
-	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
+	spawnResult, err := taskExecutor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		return fmt.Errorf("spawn task: %w", err)
 	}

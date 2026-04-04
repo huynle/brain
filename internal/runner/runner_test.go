@@ -16,7 +16,7 @@ import (
 // =============================================================================
 
 var _ Client = (*APIClient)(nil)
-var _ TaskExecutor = (*Executor)(nil)
+var _ TaskExecutor = (*OpenCodeExecutor)(nil)
 var _ TaskProcessManager = (*ProcessManager)(nil)
 var _ TaskStateManager = (*StateManager)(nil)
 

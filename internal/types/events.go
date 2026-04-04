@@ -237,6 +237,58 @@ func MatchEventPattern(pattern, eventType string) bool {
 	return pattern == eventType
 }
 
+// =============================================================================
+// Webhook Request/Response Types
+// =============================================================================
+
+// CreateWebhookRequest is the payload for creating a webhook.
+type CreateWebhookRequest struct {
+	Name    string            `json:"name"`
+	URL     string            `json:"url"`
+	Events  []string          `json:"events"`
+	Filter  map[string]string `json:"filter,omitempty"`
+	Secret  string            `json:"secret,omitempty"`
+	Enabled *bool             `json:"enabled,omitempty"` // defaults to true
+}
+
+// UpdateWebhookRequest is the payload for updating a webhook.
+type UpdateWebhookRequest struct {
+	Name    *string           `json:"name,omitempty"`
+	URL     *string           `json:"url,omitempty"`
+	Events  []string          `json:"events,omitempty"`
+	Filter  map[string]string `json:"filter,omitempty"`
+	Secret  *string           `json:"secret,omitempty"`
+	Enabled *bool             `json:"enabled,omitempty"`
+}
+
+// WebhookResponse is the API response for a webhook.
+type WebhookResponse struct {
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	URL       string            `json:"url"`
+	Events    []string          `json:"events"`
+	Filter    map[string]string `json:"filter,omitempty"`
+	Enabled   bool              `json:"enabled"`
+	CreatedAt string            `json:"created_at"`
+	UpdatedAt string            `json:"updated_at"`
+}
+
+// WebhookDeliveryResponse is the API response for a delivery attempt.
+type WebhookDeliveryResponse struct {
+	ID         string `json:"id"`
+	WebhookID  string `json:"webhook_id"`
+	EventType  string `json:"event_type"`
+	StatusCode *int   `json:"status_code,omitempty"`
+	Success    bool   `json:"success"`
+	LatencyMs  *int   `json:"latency_ms,omitempty"`
+	Error      string `json:"error,omitempty"`
+	CreatedAt  string `json:"created_at"`
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
 // generateEventID creates a unique event ID with the "evt_" prefix.
 func generateEventID() string {
 	b := make([]byte, 8)

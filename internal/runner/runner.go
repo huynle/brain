@@ -105,6 +105,10 @@ type TaskRunnerOptions struct {
 	Executor   TaskExecutor
 	ProcessMgr TaskProcessManager
 	StateMgr   TaskStateManager
+
+	// EventPoster enables event forwarding to the Brain API server.
+	// If nil (and Client is an *APIClient), the forwarder auto-wires.
+	EventPoster EventPoster
 }
 
 // RunnerStatusInfo is a snapshot of the runner's current state.
@@ -156,6 +160,12 @@ type TaskRunner struct {
 
 	// Feature lifecycle tracking
 	featureTracker *FeatureTracker
+
+	// Event hook dispatcher (pre/post lifecycle hooks)
+	hookDispatcher *HookDispatcher
+
+	// Event forwarding to Brain API server
+	eventForwarder *EventForwarder
 
 	// SSE reactive polling
 	wakeCh      chan struct{}
@@ -220,6 +230,35 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		tr.OnEvent(tr.featureTracker.HandleEvent)
 	}
 
+	// Wire HookDispatcher to execute lifecycle hook scripts.
+	// The dispatcher scans the hooks directory for executable pre-*/post-* scripts.
+	// If the directory doesn't exist, the dispatcher is a no-op.
+	if opts.Config.HooksDir != "" {
+		hookTimeout := time.Duration(opts.Config.HookTimeout) * time.Second
+		if hookTimeout <= 0 {
+			hookTimeout = 30 * time.Second
+		}
+		hd, err := NewHookDispatcher(opts.Config.HooksDir, hookTimeout)
+		if err != nil {
+			logger.Printf("WARNING: failed to initialize hook dispatcher: %v", err)
+		} else {
+			tr.hookDispatcher = hd
+		}
+	}
+
+	// Wire EventForwarder to batch-POST runner events to the API server.
+	// Use explicit EventPoster if provided, otherwise try the Client.
+	poster := opts.EventPoster
+	if poster == nil {
+		if apiClient, ok := tr.client.(*APIClient); ok {
+			poster = apiClient
+		}
+	}
+	if poster != nil {
+		tr.eventForwarder = NewEventForwarder(poster, EventForwarderConfig{})
+		tr.OnEvent(tr.eventForwarder.Handle)
+	}
+
 	return tr
 }
 
@@ -244,6 +283,11 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 
 	// Save initial state
 	tr.saveState()
+
+	// Start event forwarder (must start before emitting events)
+	if tr.eventForwarder != nil {
+		tr.eventForwarder.Start(ctx)
+	}
 
 	// Emit runner started event
 	tr.emitEvent(RunnerEvent{
@@ -326,6 +370,11 @@ func (tr *TaskRunner) Stop() error {
 		Type:   EventShutdown,
 		Reason: "graceful shutdown",
 	})
+
+	// Stop event forwarder (drains remaining events after shutdown event)
+	if tr.eventForwarder != nil {
+		tr.eventForwarder.Stop()
+	}
 
 	// Save final state
 	tr.saveState()
@@ -471,7 +520,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("update task status: %w", err)
 	}
 
-	tr.emitEvent(RunnerEvent{
+	statusEvt := RunnerEvent{
 		Type:       EventTaskStatusChanged,
 		TaskID:     task.ID,
 		ProjectID:  projectID,
@@ -479,7 +528,41 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		FeatureID:  task.FeatureID,
 		FromStatus: "pending",
 		ToStatus:   "in_progress",
-	})
+	}
+	statusEvt.RunnerID = tr.runnerID
+	tr.emitEvent(statusEvt)
+
+	// Pre-task-start hook: can abort/block task execution.
+	// If the hook returns an error, release the claim and reset status to pending.
+	if tr.hookDispatcher != nil {
+		evt := statusEvt.ToEvent()
+		// Use task.started as the event type for pre-task-start hook matching
+		evt.Type = types.EventTaskStarted
+		evt.TaskTitle = task.Title
+		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
+			tr.logger.Printf("pre-task-start hook failed for %s/%s: %v", projectID, task.ID, err)
+			// Release claim and reset status
+			tr.client.ReleaseTask(ctx, projectID, task.ID)
+			_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
+			tr.emitEvent(RunnerEvent{
+				Type:       EventTaskStatusChanged,
+				TaskID:     task.ID,
+				ProjectID:  projectID,
+				TaskPath:   task.Path,
+				FeatureID:  task.FeatureID,
+				FromStatus: "in_progress",
+				ToStatus:   "pending",
+			})
+			tr.emitEvent(RunnerEvent{
+				Type:      EventTaskReleased,
+				TaskID:    task.ID,
+				ProjectID: projectID,
+				FeatureID: task.FeatureID,
+				Reason:    fmt.Sprintf("pre-task-start hook: %v", err),
+			})
+			return fmt.Errorf("pre-task-start hook: %w", err)
+		}
+	}
 
 	// Resolve workdir (may create git worktree)
 	workdir, err := tr.executor.ResolveWorkdir(task)
@@ -555,10 +638,17 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	tr.mu.Unlock()
 
 	// Emit event
-	tr.emitEvent(RunnerEvent{
+	startedEvt := RunnerEvent{
 		Type: EventTaskStarted,
 		Task: &runningTask,
-	})
+	}
+	tr.emitEvent(startedEvt)
+
+	// Post-task-start hook: fire-and-forget after process is tracked.
+	if tr.hookDispatcher != nil {
+		startedEvt.RunnerID = tr.runnerID
+		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
+	}
 
 	// Discover opencode session ID and port in background
 	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
@@ -745,6 +835,35 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Create result before removing from process manager
 	result := tr.processMgr.CreateTaskResult(taskID, status)
 
+	// Pre-task-end hook: fires before cleanup, can inspect result but not modify status.
+	// Hook failures are logged but do not affect the task lifecycle.
+	if tr.hookDispatcher != nil {
+		// Determine the event type for the pre-hook based on completion status
+		var preEndEventType string
+		switch status {
+		case CompletionCompleted:
+			preEndEventType = types.EventTaskCompleted
+		case CompletionCancelled:
+			preEndEventType = types.EventTaskCancelled
+		default:
+			preEndEventType = types.EventTaskFailed
+		}
+		preEvt := RunnerEvent{
+			Type:      EventTaskStatusChanged,
+			TaskID:    taskID,
+			ProjectID: task.ProjectID,
+			TaskPath:  task.Path,
+			FeatureID: task.FeatureID,
+		}
+		preEvt.RunnerID = tr.runnerID
+		evt := preEvt.ToEvent()
+		evt.Type = preEndEventType
+		evt.TaskTitle = task.Title
+		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
+			tr.logger.Printf("pre-task-end hook failed for %s (non-blocking): %v", taskID, err)
+		}
+	}
+
 	// Remove from process manager
 	tr.processMgr.Remove(taskID)
 
@@ -810,14 +929,22 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	tr.executor.Cleanup(taskID, task.ProjectID)
 
 	// Emit event
-	tr.emitEvent(RunnerEvent{
+	completionEvt := RunnerEvent{
 		Type:      eventType,
 		Result:    result,
 		TaskID:    taskID,
 		ProjectID: task.ProjectID,
 		TaskPath:  task.Path,
 		FeatureID: task.FeatureID,
-	})
+	}
+	tr.emitEvent(completionEvt)
+
+	// Post-task-end hook: fire-and-forget after all cleanup is done.
+	// Hook failures don't affect the task lifecycle.
+	if tr.hookDispatcher != nil {
+		completionEvt.RunnerID = tr.runnerID
+		tr.hookDispatcher.DispatchPost(completionEvt.ToEvent())
+	}
 }
 
 // =============================================================================

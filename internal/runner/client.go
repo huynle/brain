@@ -644,6 +644,25 @@ func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullC
 }
 
 // =============================================================================
+// Event Forwarding
+// =============================================================================
+
+// PostEvents sends a batch of events to the Brain API.
+// Implements the EventPoster interface for EventForwarder.
+func (c *APIClient) PostEvents(ctx context.Context, events []types.Event) error {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/events", events)
+	if err != nil {
+		return fmt.Errorf("post events: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
 // Runner Pause/Resume
 // =============================================================================
 

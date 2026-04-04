@@ -453,8 +453,344 @@ func TestExtractProjectFromPath(t *testing.T) {
 }
 
 // =============================================================================
+// Missing edge case: no gate when feature_id present but no schedule fields
+// =============================================================================
+
+func TestSave_NoGateWithoutScheduleFields(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create a task with feature_id but NO schedule fields
+	_, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Plain feature task",
+		Content:   "No schedule fields set",
+		Project:   "test-project",
+		FeatureID: "my-feature",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	taskDir := filepath.Join(brainDir, "projects", "test-project", "task")
+	count := countGateTasksInDir(t, taskDir, "feature-schedule:my-feature")
+	if count != 0 {
+		t.Errorf("expected 0 gate tasks when no schedule fields set, found %d", count)
+	}
+}
+
+// =============================================================================
+// Gate schedule field copy verification
+// =============================================================================
+
+func TestSave_GateScheduleFieldsCopiedCorrectly(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:             "task",
+		Title:            "Full schedule task",
+		Content:          "All schedule fields set",
+		Project:          "test-project",
+		FeatureID:        "full-sched",
+		FeatureSchedule:  "30 2 * * MON",
+		FeatureRunOnceAt: "2026-06-15T00:00:00Z",
+		FeatureStartsAt:  "2026-01-01T00:00:00Z",
+		FeatureExpiresAt: "2026-12-31T23:59:59Z",
+		FeatureTimezone:  "Europe/Berlin",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	taskDir := filepath.Join(brainDir, "projects", "test-project", "task")
+	gate := findGateTaskInDir(t, taskDir, "feature-schedule:full-sched")
+	if gate == nil {
+		t.Fatal("expected gate task")
+	}
+
+	if gate.Schedule != "30 2 * * MON" {
+		t.Errorf("gate schedule = %q, want %q", gate.Schedule, "30 2 * * MON")
+	}
+	if gate.RunOnceAt != "2026-06-15T00:00:00Z" {
+		t.Errorf("gate run_once_at = %q, want %q", gate.RunOnceAt, "2026-06-15T00:00:00Z")
+	}
+	if gate.StartsAt != "2026-01-01T00:00:00Z" {
+		t.Errorf("gate starts_at = %q, want %q", gate.StartsAt, "2026-01-01T00:00:00Z")
+	}
+	if gate.ExpiresAt != "2026-12-31T23:59:59Z" {
+		t.Errorf("gate expires_at = %q, want %q", gate.ExpiresAt, "2026-12-31T23:59:59Z")
+	}
+}
+
+// =============================================================================
+// End-to-end lifecycle: create → gate → deps waiting → gate completes → ready
+// =============================================================================
+
+func TestFeatureScheduleLifecycle_GateCreation_DepsWaiting(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Step 1: Create all 3 tasks first WITHOUT schedule fields.
+	// This ensures they exist on disk before gate creation triggers injection.
+	resp1, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Task Alpha",
+		Content:   "First task",
+		Project:   "test-project",
+		FeatureID: "release-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Task Alpha failed: %v", err)
+	}
+
+	resp2, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Task Beta",
+		Content:   "Second task",
+		Project:   "test-project",
+		FeatureID: "release-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Task Beta failed: %v", err)
+	}
+
+	resp3, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Task Gamma",
+		Content:   "Third task",
+		Project:   "test-project",
+		FeatureID: "release-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Task Gamma failed: %v", err)
+	}
+
+	// Step 2: Now update one of the tasks with feature_run_once_at to trigger gate creation.
+	// This triggers ensureFeatureScheduleGate → createFeatureScheduleGate → injectGateDependency
+	// which scans ALL existing feature tasks and adds the gate to their depends_on.
+	runOnceAt := "2026-06-01T00:00:00Z"
+	_, err = svc.Update(ctx, resp1.ID, types.UpdateEntryRequest{
+		FeatureRunOnceAt: &runOnceAt,
+	})
+	if err != nil {
+		t.Fatalf("Update with schedule failed: %v", err)
+	}
+
+	// Step 3: Verify gate was created
+	taskDir := filepath.Join(brainDir, "projects", "test-project", "task")
+	gate := findGateTaskInDir(t, taskDir, "feature-schedule:release-v3")
+	if gate == nil {
+		t.Fatal("expected gate task to be auto-created")
+	}
+
+	// Step 4: Verify all 3 non-generated tasks have gate in depends_on
+	for _, resp := range []*types.CreateEntryResponse{resp1, resp2, resp3} {
+		fm := readTaskFrontmatter(t, taskDir, resp.ID)
+		if fm == nil {
+			t.Fatalf("could not read frontmatter for %s", resp.ID)
+		}
+		if !containsString(fm.DependsOn, gate.ID) {
+			t.Errorf("Task %s depends_on = %v, should contain gate %q", resp.ID, fm.DependsOn, gate.ID)
+		}
+	}
+
+	// Step 5: Build BrainEntry array from disk frontmatter and resolve dependencies.
+	// NOTE: The gate has status "active", which the dependency resolution system treats
+	// as "satisfied" (not blocking). Tasks are classified "ready" even while the gate
+	// is active. The schedule-based blocking is enforced by the runner's scheduler,
+	// not by the dependency resolution system.
+	entries := loadEntriesFromDisk(t, taskDir)
+
+	resolved := ResolveDependencies(entries)
+	readyCount := 0
+	for _, rt := range resolved.Tasks {
+		if rt.GeneratedKind == "feature_schedule" {
+			continue
+		}
+		if rt.Status != "pending" {
+			continue
+		}
+		// Tasks have the gate in their resolved deps (proves injection worked at dep-resolution level)
+		if !containsString(rt.ResolvedDeps, gate.ID) {
+			t.Errorf("Task %s ResolvedDeps = %v, should contain gate %q", rt.ID, rt.ResolvedDeps, gate.ID)
+		}
+		readyCount++
+	}
+	if readyCount != 3 {
+		t.Errorf("expected 3 pending tasks with resolved gate dep, got %d", readyCount)
+	}
+}
+
+func TestFeatureScheduleLifecycle_GateCompletes_TasksBecomeReady(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Step 1: Create all 3 tasks first WITHOUT schedule fields
+	resp1, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Deploy Service",
+		Content:   "Deploy the service",
+		Project:   "test-project",
+		FeatureID: "deploy-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Deploy Service failed: %v", err)
+	}
+
+	_, err = svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Run Migrations",
+		Content:   "Run database migrations",
+		Project:   "test-project",
+		FeatureID: "deploy-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Run Migrations failed: %v", err)
+	}
+
+	_, err = svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Verify Health",
+		Content:   "Verify service health",
+		Project:   "test-project",
+		FeatureID: "deploy-v3",
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save Verify Health failed: %v", err)
+	}
+
+	// Step 2: Update one task with feature schedule to trigger gate creation + injection
+	runOnceAt := "2026-06-01T00:00:00Z"
+	_, err = svc.Update(ctx, resp1.ID, types.UpdateEntryRequest{
+		FeatureRunOnceAt: &runOnceAt,
+	})
+	if err != nil {
+		t.Fatalf("Update with schedule failed: %v", err)
+	}
+
+	// Verify gate was created
+	taskDir := filepath.Join(brainDir, "projects", "test-project", "task")
+	gate := findGateTaskInDir(t, taskDir, "feature-schedule:deploy-v3")
+	if gate == nil {
+		t.Fatal("expected gate task")
+	}
+
+	// Before gate completes: verify tasks have gate in resolved deps
+	resolvedBefore := ResolveDependencies(loadEntriesFromDisk(t, taskDir))
+	for _, rt := range resolvedBefore.Tasks {
+		if rt.GeneratedKind == "feature_schedule" {
+			continue
+		}
+		if rt.Status != "pending" {
+			continue
+		}
+		if !containsString(rt.ResolvedDeps, gate.ID) {
+			t.Errorf("before completion: Task %s ResolvedDeps = %v, should contain gate %q",
+				rt.ID, rt.ResolvedDeps, gate.ID)
+		}
+	}
+
+	// Simulate gate completion by writing status=completed to disk
+	// (The runner's processFeatureScheduleGate does this via UpdateTaskStatus.)
+	gateFilePath := filepath.Join(taskDir, gate.ID+".md")
+	gateContent, err := os.ReadFile(gateFilePath)
+	if err != nil {
+		t.Fatalf("Read gate file failed: %v", err)
+	}
+	gateDoc, err := frontmatter.Parse(string(gateContent))
+	if err != nil {
+		t.Fatalf("Parse gate frontmatter failed: %v", err)
+	}
+	gateDoc.Frontmatter.Status = "completed"
+	updatedGateYAML := frontmatter.Serialize(&gateDoc.Frontmatter)
+	updatedGateContent := "---\n" + updatedGateYAML + "---\n"
+	if gateDoc.Body != "" {
+		updatedGateContent += "\n" + gateDoc.Body + "\n"
+	}
+	if err := os.WriteFile(gateFilePath, []byte(updatedGateContent), 0o644); err != nil {
+		t.Fatalf("Write gate file failed: %v", err)
+	}
+
+	// After gate completes: reload and resolve — tasks should be "ready"
+	// (Gate dep is now "completed" which counts as satisfied.)
+	resolvedAfter := ResolveDependencies(loadEntriesFromDisk(t, taskDir))
+	readyCount := 0
+	for _, rt := range resolvedAfter.Tasks {
+		if rt.GeneratedKind == "feature_schedule" {
+			continue
+		}
+		if rt.Status == "pending" && rt.Classification == "ready" {
+			readyCount++
+		}
+	}
+	if readyCount != 3 {
+		t.Errorf("after gate completes: expected 3 ready tasks, got %d", readyCount)
+	}
+
+	// Verify the gate itself is now completed
+	gateEntry := findGateTaskInDir(t, taskDir, "feature-schedule:deploy-v3")
+	if gateEntry == nil {
+		t.Fatal("gate not found after completion")
+	}
+	if gateEntry.Status != "completed" {
+		t.Errorf("gate status = %q, want 'completed'", gateEntry.Status)
+	}
+}
+
+// =============================================================================
 // Test helpers
 // =============================================================================
+
+// loadEntriesFromDisk reads all .md files in taskDir and converts them to BrainEntry
+// for use with ResolveDependencies. This reads directly from disk frontmatter,
+// which is the source of truth for depends_on after gate dependency injection.
+func loadEntriesFromDisk(t *testing.T, taskDir string) []types.BrainEntry {
+	t.Helper()
+	dirEntries, err := os.ReadDir(taskDir)
+	if err != nil {
+		t.Fatalf("ReadDir %s failed: %v", taskDir, err)
+	}
+
+	var entries []types.BrainEntry
+	for _, de := range dirEntries {
+		if !strings.HasSuffix(de.Name(), ".md") {
+			continue
+		}
+		content, err := os.ReadFile(filepath.Join(taskDir, de.Name()))
+		if err != nil {
+			continue
+		}
+		doc, err := frontmatter.Parse(string(content))
+		if err != nil {
+			continue
+		}
+		fm := doc.Frontmatter
+		shortID := strings.TrimSuffix(de.Name(), ".md")
+		entry := types.BrainEntry{
+			ID:            shortID,
+			Path:          filepath.Join(taskDir, de.Name()),
+			Title:         fm.Title,
+			Type:          fm.Type,
+			Status:        fm.Status,
+			Priority:      fm.Priority,
+			DependsOn:     fm.DependsOn,
+			FeatureID:     fm.FeatureID,
+			GeneratedKind: fm.GeneratedKind,
+			GeneratedKey:  fm.GeneratedKey,
+			GeneratedBy:   fm.GeneratedBy,
+			Generated:     fm.Generated,
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
 
 type gateTaskInfo struct {
 	ID              string

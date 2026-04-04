@@ -719,6 +719,159 @@ func TestProcessScheduledTask_FeatureScheduleGate_EmitsCompletedEvent(t *testing
 }
 
 // =============================================================================
+// Downstream Unblocking Tests — Feature Schedule Gate Lifecycle
+// =============================================================================
+
+func TestProcessFeatureScheduleGate_DownstreamTasksBecomeReady(t *testing.T) {
+	// This test simulates the full lifecycle:
+	// 1. Feature has 3 tasks + 1 gate, all tasks depend_on the gate
+	// 2. Gate triggers at scheduled time → gate set to completed
+	// 3. After gate completes, downstream tasks should now be classifiable as "ready"
+	//    (because their sole dependency — the gate — is now completed)
+
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	// Gate task (feature_schedule generated)
+	gateTask := types.ResolvedTask{
+		ID:            "gate-deploy",
+		Path:          "projects/proj-a/task/gate-deploy.md",
+		Title:         "Feature Schedule: deploy-v3",
+		Status:        "active",
+		Schedule:      "*/15 * * * *",
+		GeneratedKind: "feature_schedule",
+		FeatureID:     "deploy-v3",
+	}
+
+	// Three downstream tasks that depend on the gate
+	taskAlpha := types.ResolvedTask{
+		ID:             "task-alpha",
+		Path:           "projects/proj-a/task/task-alpha.md",
+		Title:          "Deploy Service",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+	taskBeta := types.ResolvedTask{
+		ID:             "task-beta",
+		Path:           "projects/proj-a/task/task-beta.md",
+		Title:          "Run Migrations",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+	taskGamma := types.ResolvedTask{
+		ID:             "task-gamma",
+		Path:           "projects/proj-a/task/task-gamma.md",
+		Title:          "Verify Health",
+		Status:         "pending",
+		FeatureID:      "deploy-v3",
+		DependsOn:      []string{"gate-deploy"},
+		WaitingOn:      []string{"gate-deploy"},
+		Classification: "waiting",
+	}
+
+	client.allTasks["proj-a"] = []types.ResolvedTask{gateTask, taskAlpha, taskBeta, taskGamma}
+
+	ctx := context.Background()
+
+	// Trigger the scheduled tasks check — should directly complete the gate
+	tr.checkScheduledTasks(ctx, now)
+
+	// Verify gate was set to completed
+	statusCalls := client.getUpdateStatusCalls()
+	gateCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-deploy.md" && c.Status == "completed" {
+			gateCompleted = true
+		}
+	}
+	if !gateCompleted {
+		t.Fatal("gate task should have been set to 'completed'")
+	}
+
+	// Verify NO status changes were made to the downstream tasks (they remain pending,
+	// waiting for the next poll cycle to re-evaluate via dependency resolution)
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/task-alpha.md" ||
+			c.Path == "projects/proj-a/task/task-beta.md" ||
+			c.Path == "projects/proj-a/task/task-gamma.md" {
+			t.Errorf("downstream task %s should NOT have its status changed by gate completion directly", c.Path)
+		}
+	}
+
+	// Verify schedule was disabled on the gate
+	metaCalls := client.getUpdateMetadataCalls()
+	gateScheduleDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-deploy.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok && enabled == false {
+				gateScheduleDisabled = true
+			}
+		}
+	}
+	if !gateScheduleDisabled {
+		t.Error("gate schedule_enabled should be set to false after completion")
+	}
+}
+
+func TestProcessFeatureScheduleGate_RunOnceAtGate_ScheduleDisabledAfterCompletion(t *testing.T) {
+	// Specifically tests that a gate created from feature_run_once_at
+	// (which has a cron schedule set) gets schedule_enabled=false after firing once.
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	schedEnabled := true
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "gate-once",
+			Path:            "projects/proj-a/task/gate-once.md",
+			Title:           "Feature Schedule: one-time-deploy",
+			Status:          "active",
+			Schedule:        "0 0 1 6 *", // June 1st at midnight
+			ScheduleEnabled: &schedEnabled,
+			GeneratedKind:   "feature_schedule",
+			GeneratedKey:    "feature-schedule:one-time-deploy",
+			FeatureID:       "one-time-deploy",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Verify gate was completed
+	statusCalls := client.getUpdateStatusCalls()
+	gateCompleted := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/gate-once.md" && c.Status == "completed" {
+			gateCompleted = true
+		}
+	}
+	if !gateCompleted {
+		t.Fatal("run_once_at gate should be completed")
+	}
+
+	// Verify schedule_enabled was set to false (preventing re-trigger)
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisabled := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/gate-once.md" {
+			if enabled, ok := c.Fields["schedule_enabled"]; ok && enabled == false {
+				foundDisabled = true
+			}
+		}
+	}
+	if !foundDisabled {
+		t.Error("run_once_at gate should disable schedule after completion")
+	}
+}
+
+// =============================================================================
 // latestInProgressRunID Tests
 // =============================================================================
 

@@ -170,6 +170,10 @@ func (m *mockClient) GetAllTasks(ctx context.Context, projectID string) ([]types
 	return nil, nil
 }
 
+func (m *mockClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	return nil, nil
+}
+
 func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
 	return nil
 }

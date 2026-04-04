@@ -29,6 +29,7 @@ type Client interface {
 	GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error)
 	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
+	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	ReleaseTask(ctx context.Context, projectID, taskID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
@@ -153,6 +154,9 @@ type TaskRunner struct {
 	eventMu  sync.RWMutex
 	handlers []EventHandler
 
+	// Feature lifecycle tracking
+	featureTracker *FeatureTracker
+
 	// SSE reactive polling
 	wakeCh      chan struct{}
 	sseListener *SSEListener
@@ -206,6 +210,14 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 
 	if opts.StartPaused {
 		tr.allPaused = true
+	}
+
+	// Wire FeatureTracker to emit feature lifecycle events.
+	// The tracker registers itself as an OnEvent handler so it
+	// receives task events and emits feature-level events back.
+	if tr.client != nil {
+		tr.featureTracker = NewFeatureTracker(tr.client, tr.emitEvent)
+		tr.OnEvent(tr.featureTracker.HandleEvent)
 	}
 
 	return tr

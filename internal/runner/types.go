@@ -163,6 +163,12 @@ const (
 	EventTaskStatusChanged RunnerEventType = "task_status_changed"
 	EventTaskReleased      RunnerEventType = "task_released"
 	EventRunnerStarted     RunnerEventType = "runner_started"
+
+	// Feature lifecycle events (emitted by FeatureTracker).
+	EventFeatureStarted   RunnerEventType = "feature_started"
+	EventFeatureCompleted RunnerEventType = "feature_completed"
+	EventFeatureBlocked   RunnerEventType = "feature_blocked"
+	EventFeatureProgress  RunnerEventType = "feature_progress"
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.

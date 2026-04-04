@@ -28,6 +28,12 @@ var runnerEventTypeMap = map[RunnerEventType]string{
 	EventAllPaused:         types.EventRunnerAllPaused,
 	EventAllResumed:        types.EventRunnerAllResumed,
 	EventSessionDiscovered: types.EventRunnerSessionDiscovered,
+
+	// Feature lifecycle events.
+	EventFeatureStarted:   types.EventFeatureStarted,
+	EventFeatureCompleted: types.EventFeatureCompleted,
+	EventFeatureBlocked:   types.EventFeatureBlocked,
+	EventFeatureProgress:  types.EventFeatureProgress,
 }
 
 // ToEvent converts a RunnerEvent to the unified types.Event type.

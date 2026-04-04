@@ -29,6 +29,12 @@ func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
 	if len(flags.FeatureIDs) > 0 {
 		cfg.FeatureIDs = flags.FeatureIDs
 	}
+	if len(flags.Include) > 0 {
+		cfg.IncludeProjects = append(cfg.IncludeProjects, flags.Include...)
+	}
+	if len(flags.Exclude) > 0 {
+		cfg.ExcludeProjects = append(cfg.ExcludeProjects, flags.Exclude...)
+	}
 }
 
 // RunnerFlags holds runner command flags.

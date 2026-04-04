@@ -103,6 +103,7 @@ type RunningTask struct {
 	StartedAt       time.Time `json:"startedAt"`
 	IsResume        bool      `json:"isResume"`
 	Workdir         string    `json:"workdir"`
+	ExecutorType    string    `json:"executorType,omitempty"` // "opencode" or "pi"
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp

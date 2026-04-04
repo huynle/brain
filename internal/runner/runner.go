@@ -499,6 +499,12 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("resolve executor: %w", err)
 	}
 
+	// Determine executor type name for the running task record
+	executorType := "opencode" // default
+	if tr.executorRegistry != nil {
+		executorType = ResolveExecutorForTask(task, tr.config)
+	}
+
 	// Resolve workdir (may create git worktree)
 	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
@@ -552,6 +558,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		WindowName:     spawnResult.WindowName,
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
+		ExecutorType:   executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 	}
@@ -574,8 +581,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Task: &runningTask,
 	})
 
-	// Discover opencode session ID and port in background
-	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	// Discover opencode session ID and port in background.
+	// Pi tasks don't expose an HTTP server, so skip discovery for them.
+	if executorType != "pi" {
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	}
 
 	return nil
 }

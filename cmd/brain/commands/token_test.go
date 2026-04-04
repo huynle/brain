@@ -559,6 +559,189 @@ func TestTokenCommand_FallbackToDirect(t *testing.T) {
 	})
 }
 
+// =============================================================================
+// Auth Failure Fallback Tests (chicken-and-egg fix)
+// =============================================================================
+
+// newAuthFailingAPIServer creates a mock server where:
+// - /api/v1/health returns 200 (no auth required)
+// - /api/v1/tokens returns 401 (auth required, token invalid)
+// - /api/v1/tokens/bootstrap works when bootstrapAllowed is true
+func newAuthFailingAPIServer(t *testing.T, bootstrapAllowed bool) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"status": "healthy"})
+	})
+
+	mux.HandleFunc("/api/v1/tokens/bootstrap", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+		if !bootstrapAllowed {
+			w.WriteHeader(http.StatusForbidden)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error":   "Forbidden",
+				"message": "Tokens already exist",
+			})
+			return
+		}
+		var req struct {
+			Name string `json:"name"`
+		}
+		json.NewDecoder(r.Body).Decode(&req)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{
+			"name":       req.Name,
+			"token":      "brn_bootstrapped_token_1234567890abcdef",
+			"created_at": "2026-01-01 00:00:00",
+		})
+	})
+
+	// Catch-all for /api/v1/tokens and /api/v1/tokens/{name} — return 401
+	mux.HandleFunc("/api/v1/tokens", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "Unauthorized",
+			"message": "Invalid authentication token",
+		})
+	})
+	mux.HandleFunc("/api/v1/tokens/", func(w http.ResponseWriter, r *http.Request) {
+		// Skip bootstrap path (handled above)
+		if strings.HasSuffix(r.URL.Path, "/bootstrap") {
+			http.NotFound(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error":   "Unauthorized",
+			"message": "Invalid authentication token",
+		})
+	})
+
+	return httptest.NewServer(mux)
+}
+
+func TestTokenCommand_CreateFallsBackToBootstrapOn401(t *testing.T) {
+	server := newAuthFailingAPIServer(t, true) // bootstrap allowed
+	defer server.Close()
+
+	cmd := &TokenCommand{
+		Subcommand: "create",
+		Name:       "bootstrap-test",
+		Config:     &UnifiedConfig{},
+		httpClient: server.Client(),
+	}
+	cmd.Config.Runner.BrainAPIURL = server.URL
+	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Server.BrainDir = setupTestDB(t)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() failed: %v (expected bootstrap fallback to succeed)", err)
+	}
+}
+
+func TestTokenCommand_CreateFallsBackToDirectDBWhenBootstrapForbidden(t *testing.T) {
+	server := newAuthFailingAPIServer(t, false) // bootstrap forbidden (tokens exist)
+	defer server.Close()
+
+	brainDir := setupTestDB(t)
+	cmd := &TokenCommand{
+		Subcommand: "create",
+		Name:       "direct-db-test",
+		Config:     &UnifiedConfig{},
+		httpClient: server.Client(),
+	}
+	cmd.Config.Runner.BrainAPIURL = server.URL
+	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Server.BrainDir = brainDir
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() failed: %v (expected direct DB fallback to succeed)", err)
+	}
+
+	// Verify token was created in local DB
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	defer store.Close()
+
+	ctx := context.Background()
+	tok, err := store.GetTokenByName(ctx, "direct-db-test")
+	if err != nil {
+		t.Fatalf("GetTokenByName failed: %v", err)
+	}
+	if tok.Name != "direct-db-test" {
+		t.Errorf("token name = %q, want %q", tok.Name, "direct-db-test")
+	}
+}
+
+func TestTokenCommand_ListFallsBackToDirectDBOn401(t *testing.T) {
+	server := newAuthFailingAPIServer(t, false)
+	defer server.Close()
+
+	brainDir := setupTestDB(t)
+	// Create a token in the DB first
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	tok, _ := store.GenerateToken()
+	store.CreateToken(context.Background(), "list-test", tok)
+	store.Close()
+
+	cmd := &TokenCommand{
+		Subcommand: "list",
+		Config:     &UnifiedConfig{},
+		httpClient: server.Client(),
+	}
+	cmd.Config.Runner.BrainAPIURL = server.URL
+	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Server.BrainDir = brainDir
+
+	err = cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() failed: %v (expected direct DB fallback)", err)
+	}
+}
+
+func TestTokenCommand_RevokeFallsBackToDirectDBOn401(t *testing.T) {
+	server := newAuthFailingAPIServer(t, false)
+	defer server.Close()
+
+	brainDir := setupTestDB(t)
+	// Create a token in the DB first
+	store, err := storage.New(filepath.Join(brainDir, ".brain-data", "brain.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	tok, _ := store.GenerateToken()
+	store.CreateToken(context.Background(), "revoke-test", tok)
+	store.Close()
+
+	cmd := &TokenCommand{
+		Subcommand: "revoke",
+		Name:       "revoke-test",
+		Config:     &UnifiedConfig{},
+		httpClient: server.Client(),
+	}
+	cmd.Config.Runner.BrainAPIURL = server.URL
+	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Server.BrainDir = brainDir
+
+	err = cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() failed: %v (expected direct DB fallback)", err)
+	}
+}
+
 func TestTokenCommand_APIURLDefault(t *testing.T) {
 	cmd := &TokenCommand{Config: &UnifiedConfig{}}
 	got := cmd.apiURL()

@@ -511,6 +511,62 @@ func TestUpdateTokenLastUsed_Success(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// CountActiveTokens
+// ---------------------------------------------------------------------------
+
+func TestCountActiveTokens_Empty(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	count, err := s.CountActiveTokens(ctx)
+	if err != nil {
+		t.Fatalf("CountActiveTokens failed: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count = %d, want 0", count)
+	}
+}
+
+func TestCountActiveTokens_WithTokens(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token1, _ := s.GenerateToken()
+	token2, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "token1", token1)
+	_ = s.CreateToken(ctx, "token2", token2)
+
+	count, err := s.CountActiveTokens(ctx)
+	if err != nil {
+		t.Fatalf("CountActiveTokens failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2", count)
+	}
+}
+
+func TestCountActiveTokens_ExcludesRevoked(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token1, _ := s.GenerateToken()
+	token2, _ := s.GenerateToken()
+	token3, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "active1", token1)
+	_ = s.CreateToken(ctx, "active2", token2)
+	_ = s.CreateToken(ctx, "revoked1", token3)
+	_ = s.RevokeToken(ctx, "revoked1")
+
+	count, err := s.CountActiveTokens(ctx)
+	if err != nil {
+		t.Fatalf("CountActiveTokens failed: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count = %d, want 2 (revoked should be excluded)", count)
+	}
+}
+
 func TestUpdateTokenLastUsed_NotFound(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()

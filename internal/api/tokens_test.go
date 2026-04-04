@@ -17,11 +17,12 @@ import (
 // =============================================================================
 
 type mockTokenService struct {
-	generateTokenFunc  func() (string, error)
-	createTokenFunc    func(ctx context.Context, name, token string) error
-	listTokensFunc     func(ctx context.Context, includeRevoked ...bool) ([]storage.Token, error)
-	getTokenByNameFunc func(ctx context.Context, name string) (*storage.Token, error)
-	revokeTokenFunc    func(ctx context.Context, name string) error
+	generateTokenFunc    func() (string, error)
+	createTokenFunc      func(ctx context.Context, name, token string) error
+	listTokensFunc       func(ctx context.Context, includeRevoked ...bool) ([]storage.Token, error)
+	getTokenByNameFunc   func(ctx context.Context, name string) (*storage.Token, error)
+	revokeTokenFunc      func(ctx context.Context, name string) error
+	countActiveTokenFunc func(ctx context.Context) (int, error)
 }
 
 func (m *mockTokenService) GenerateToken() (string, error) {
@@ -59,6 +60,13 @@ func (m *mockTokenService) RevokeToken(ctx context.Context, name string) error {
 	return nil
 }
 
+func (m *mockTokenService) CountActiveTokens(ctx context.Context) (int, error) {
+	if m.countActiveTokenFunc != nil {
+		return m.countActiveTokenFunc(ctx)
+	}
+	return 0, nil
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -66,6 +74,7 @@ func (m *mockTokenService) RevokeToken(ctx context.Context, name string) error {
 func newTokenTestRouter(mock *mockTokenService) *chi.Mux {
 	h := NewHandler(&mockBrainService{}, WithTokenService(mock))
 	r := chi.NewRouter()
+	r.Post("/tokens/bootstrap", h.HandleBootstrapToken)
 	r.Route("/tokens", func(r chi.Router) {
 		r.Post("/", h.HandleCreateToken)
 		r.Get("/", h.HandleListTokens)
@@ -368,6 +377,125 @@ func TestHandleRevokeToken(t *testing.T) {
 				t.Fatalf("failed to create request: %v", err)
 			}
 			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Bootstrap Token Tests
+// =============================================================================
+
+func TestHandleBootstrapToken(t *testing.T) {
+	tests := []struct {
+		name          string
+		body          any
+		mockCount     func(ctx context.Context) (int, error)
+		mockGenerate  func() (string, error)
+		mockCreate    func(ctx context.Context, name, token string) error
+		mockGetByName func(ctx context.Context, name string) (*storage.Token, error)
+		wantStatus    int
+		checkBody     func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name: "success - zero tokens exist",
+			body: map[string]any{"name": "bootstrap-token"},
+			mockCount: func(_ context.Context) (int, error) {
+				return 0, nil
+			},
+			mockGetByName: func(_ context.Context, name string) (*storage.Token, error) {
+				return &storage.Token{
+					Name:      name,
+					Token:     "test-token-value",
+					CreatedAt: "2026-01-01 00:00:00",
+				}, nil
+			},
+			wantStatus: http.StatusCreated,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[createTokenResponse](t, resp)
+				if body.Name != "bootstrap-token" {
+					t.Errorf("expected name bootstrap-token, got %s", body.Name)
+				}
+				if body.Token == "" {
+					t.Error("expected token value, got empty")
+				}
+			},
+		},
+		{
+			name: "forbidden - tokens already exist",
+			body: map[string]any{"name": "late-bootstrap"},
+			mockCount: func(_ context.Context) (int, error) {
+				return 2, nil
+			},
+			wantStatus: http.StatusForbidden,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[map[string]any](t, resp)
+				msg, ok := body["message"].(string)
+				if !ok || msg == "" {
+					t.Error("expected error message")
+				}
+				if !strings.Contains(msg, "already exist") {
+					t.Errorf("expected 'already exist' in message, got: %s", msg)
+				}
+			},
+		},
+		{
+			name: "missing name",
+			body: map[string]any{},
+			mockCount: func(_ context.Context) (int, error) {
+				return 0, nil
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "invalid json",
+			body: nil,
+			mockCount: func(_ context.Context) (int, error) {
+				return 0, nil
+			},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name: "count error",
+			body: map[string]any{"name": "test"},
+			mockCount: func(_ context.Context) (int, error) {
+				return 0, fmt.Errorf("database error")
+			},
+			wantStatus: http.StatusInternalServerError,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockTokenService{
+				countActiveTokenFunc: tt.mockCount,
+				generateTokenFunc:    tt.mockGenerate,
+				createTokenFunc:      tt.mockCreate,
+				getTokenByNameFunc:   tt.mockGetByName,
+			}
+			router := newTokenTestRouter(mock)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var resp *http.Response
+			var err error
+			if tt.body == nil {
+				resp, err = http.Post(srv.URL+"/tokens/bootstrap", "application/json",
+					strings.NewReader("not valid json{{{"))
+			} else {
+				resp, err = http.Post(srv.URL+"/tokens/bootstrap", "application/json",
+					jsonBody(t, tt.body))
+			}
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}

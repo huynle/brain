@@ -33,6 +33,12 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 		// Health check — unauthenticated (before auth middleware)
 		r.Get("/health", HealthHandler())
 
+		// Token bootstrap — unauthenticated (only works when zero tokens exist)
+		// Solves the chicken-and-egg problem: need a token to create a token.
+		if o.handler != nil && o.handler.tokens != nil {
+			r.Post("/tokens/bootstrap", o.handler.HandleBootstrapToken)
+		}
+
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator))

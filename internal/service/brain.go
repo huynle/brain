@@ -391,6 +391,18 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["feature_depends_on"]; ok {
 			fm.FeatureDependsOn = metaToStringSlice(v)
 		}
+		if v, ok := meta["starts_at"].(string); ok {
+			fm.StartsAt = v
+		}
+		if v, ok := meta["expires_at"].(string); ok {
+			fm.ExpiresAt = v
+		}
+		if v, ok := meta["run_once_at"].(string); ok {
+			fm.RunOnceAt = v
+		}
+		if v, ok := meta["timezone"].(string); ok {
+			fm.Timezone = v
+		}
 	}
 
 	return fm
@@ -492,6 +504,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.ExpiresAt != nil {
 		fm.ExpiresAt = *req.ExpiresAt
+	}
+	if req.RunOnceAt != nil {
+		fm.RunOnceAt = *req.RunOnceAt
+	}
+	if req.Timezone != nil {
+		fm.Timezone = *req.Timezone
 	}
 
 	// Git/execution fields
@@ -659,6 +677,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
@@ -707,6 +726,10 @@ var durableMetadataFields = map[string]bool{
 	"feature_depends_on": true,
 	"note":               true,
 	"append":             true,
+	"starts_at":          true,
+	"expires_at":         true,
+	"run_once_at":        true,
+	"timezone":           true,
 }
 
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
@@ -800,6 +823,26 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 			fm.FeaturePriority = s
 		}
 	}
+	if v, ok := fields["starts_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.StartsAt = s
+		}
+	}
+	if v, ok := fields["expires_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.ExpiresAt = s
+		}
+	}
+	if v, ok := fields["run_once_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.RunOnceAt = s
+		}
+	}
+	if v, ok := fields["timezone"]; ok {
+		if s, ok := v.(string); ok {
+			fm.Timezone = s
+		}
+	}
 
 	// Slice fields: coerce from JSON's []interface{} or []string, then sanitize
 	if v, ok := fields["tags"]; ok {
@@ -868,6 +911,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}

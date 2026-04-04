@@ -916,6 +916,12 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "expires_at"); ok {
 		entry.ExpiresAt = v
 	}
+	if v, ok := metaString(meta, "run_once_at"); ok {
+		entry.RunOnceAt = v
+	}
+	if v, ok := metaString(meta, "timezone"); ok {
+		entry.Timezone = v
+	}
 
 	// Git/execution fields
 	if v, ok := metaString(meta, "workdir"); ok {

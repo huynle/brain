@@ -64,9 +64,10 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 	}
 
 	spawnOpts := SpawnOptions{
-		Mode:     tr.mode,
-		Workdir:  workdir,
-		IsResume: true,
+		Mode:                tr.mode,
+		Workdir:             workdir,
+		IsResume:            true,
+		RuntimeDefaultModel: tr.getDefaultModel(),
 	}
 
 	// Start log streamer if enabled

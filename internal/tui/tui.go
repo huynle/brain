@@ -191,6 +191,11 @@ func NewModel(cfg Config) Model {
 		cfg.Runner.SetMaxParallel(settings.GlobalMaxParallel)
 	}
 
+	// Propagate default model setting to the runner on startup
+	if cfg.Runner != nil && settings.DefaultModel != "" {
+		cfg.Runner.SetDefaultModel(settings.DefaultModel)
+	}
+
 	// Create SSE clients for multi-project mode
 	// Initialize ProjectTabs for multi-project mode
 	if cfg.IsMultiProject() {
@@ -783,6 +788,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Propagate max parallel setting to the runner
 			if m.runnerController != nil && settings.GlobalMaxParallel > 0 {
 				m.runnerController.SetMaxParallel(settings.GlobalMaxParallel)
+			}
+
+			// Propagate default model setting to the runner
+			if m.runnerController != nil {
+				m.runnerController.SetDefaultModel(settings.DefaultModel)
 			}
 		}
 		return m, nil

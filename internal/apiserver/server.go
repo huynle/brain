@@ -106,9 +106,27 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	monitorSvc := service.NewMonitorService(brainSvc)
+	webhookSvc := service.NewWebhookService(store)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
+
+	// ─── Event Hub & Services ──────────────────────────────────────
+	eventHub := realtime.NewEventHub()
+	eventSvc := service.NewEventService(eventHub)
+
+	// ─── Webhook Dispatcher ────────────────────────────────────────
+	// Subscribe to all EventHub events and deliver to matching webhooks.
+	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)
+	go webhookDispatcher.Start(ctx)
+
+	// ─── Trigger Dispatcher ────────────────────────────────────────
+	// Subscribe to all EventHub events and evaluate task triggers.
+	// When events match a task's trigger config, the task is activated (set to pending).
+	triggerStore := service.NewTriggerTaskStoreAdapter(store)
+	triggerSvc := service.NewTriggerService(triggerStore)
+	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
+	go triggerDispatcher.Start(ctx)
 
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
@@ -118,6 +136,8 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
+		api.WithEventService(eventSvc),
+		api.WithWebhookService(webhookSvc),
 	)
 
 	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))

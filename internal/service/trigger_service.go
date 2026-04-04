@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"text/template"
 	"time"
 
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+// Compile-time check that TriggerService implements realtime.TriggerHandler.
+var _ realtime.TriggerHandler = (*TriggerService)(nil)
 
 // =============================================================================
 // Interfaces
@@ -270,6 +275,40 @@ func (s *TriggerService) checkCooldown(taskPath, cooldownStr string) (skip bool,
 	}
 
 	return false, ""
+}
+
+// =============================================================================
+// HandleEvent — TriggerHandler interface
+// =============================================================================
+
+// HandleEvent evaluates an event against all configured triggers and activates
+// any matching tasks. It combines Evaluate and Activate into a single call,
+// implementing the realtime.TriggerHandler interface for use with the
+// TriggerDispatcher.
+func (s *TriggerService) HandleEvent(ctx context.Context, evt types.Event) error {
+	results, err := s.Evaluate(ctx, evt)
+	if err != nil {
+		return fmt.Errorf("evaluate triggers: %w", err)
+	}
+
+	if len(results) == 0 {
+		return nil
+	}
+
+	activated, err := s.Activate(ctx, results)
+	if err != nil {
+		return fmt.Errorf("activate triggers: %w", err)
+	}
+
+	if activated > 0 {
+		slog.Info("trigger handler: tasks activated",
+			"event_id", evt.ID,
+			"event_type", evt.Type,
+			"activated", activated,
+		)
+	}
+
+	return nil
 }
 
 // =============================================================================

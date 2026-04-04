@@ -910,6 +910,101 @@ func TestTriggerService_StoreErrorReturnedFromEvaluate(t *testing.T) {
 }
 
 // =============================================================================
+// HandleEvent Tests
+// =============================================================================
+
+func TestTriggerService_HandleEventEvaluatesAndActivates(t *testing.T) {
+	store := newMockTriggerTaskStore()
+	store.entries = []types.BrainEntry{
+		{
+			Path:         "projects/myproj/task/abc.md",
+			ID:           "abc12345",
+			Status:       "active",
+			ProjectID:    "myproj",
+			DirectPrompt: "Run deployment for {{.ProjectID}}",
+			Trigger:      &types.TriggerConfig{Event: "task.completed"},
+		},
+	}
+	svc := NewTriggerService(store)
+
+	evt := types.Event{
+		ID:        "evt_handle1",
+		Type:      "task.completed",
+		Source:    "runner",
+		ProjectID: "target-proj",
+		Timestamp: time.Now().UTC(),
+	}
+
+	err := svc.HandleEvent(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+
+	// Verify the task was activated (set to pending).
+	if len(store.updatedPaths) != 1 {
+		t.Fatalf("expected 1 activated task, got %d", len(store.updatedPaths))
+	}
+	if store.updatedPaths[0] != "projects/myproj/task/abc.md" {
+		t.Errorf("wrong activated path: %q", store.updatedPaths[0])
+	}
+
+	fields := store.mergedFields["projects/myproj/task/abc.md"]
+	if fields["status"] != "pending" {
+		t.Errorf("expected status 'pending', got %v", fields["status"])
+	}
+	if fields["direct_prompt"] != "Run deployment for target-proj" {
+		t.Errorf("expected interpolated prompt, got %v", fields["direct_prompt"])
+	}
+}
+
+func TestTriggerService_HandleEventNoMatchDoesNothing(t *testing.T) {
+	store := newMockTriggerTaskStore()
+	store.entries = []types.BrainEntry{
+		{
+			Path:      "projects/myproj/task/abc.md",
+			ID:        "abc12345",
+			Status:    "active",
+			ProjectID: "myproj",
+			Trigger:   &types.TriggerConfig{Event: "feature.completed"},
+		},
+	}
+	svc := NewTriggerService(store)
+
+	evt := types.Event{
+		ID:     "evt_handle2",
+		Type:   "task.completed", // does not match feature.completed
+		Source: "runner",
+	}
+
+	err := svc.HandleEvent(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("HandleEvent() error: %v", err)
+	}
+
+	// Nothing should have been activated.
+	if len(store.updatedPaths) != 0 {
+		t.Fatalf("expected 0 activated tasks, got %d", len(store.updatedPaths))
+	}
+}
+
+func TestTriggerService_HandleEventReturnsStoreError(t *testing.T) {
+	store := newMockTriggerTaskStore()
+	store.listErr = context.DeadlineExceeded
+	svc := NewTriggerService(store)
+
+	evt := types.Event{
+		ID:     "evt_handle3",
+		Type:   "task.completed",
+		Source: "runner",
+	}
+
+	err := svc.HandleEvent(context.Background(), evt)
+	if err == nil {
+		t.Fatal("expected error from HandleEvent, got nil")
+	}
+}
+
+// =============================================================================
 // Multiple Matching Tasks
 // =============================================================================
 

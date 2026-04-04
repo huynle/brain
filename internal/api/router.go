@@ -95,20 +95,6 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 					r.Get("/{id}/related", notImplemented)
 				}
 
-				// Verify route
-				if o.handler != nil {
-					r.Post("/{id}/verify", o.handler.HandleVerifyEntry)
-				} else {
-					r.Post("/{id}/verify", notImplemented)
-				}
-
-				// Move route
-				if o.handler != nil {
-					r.Post("/{id}/move", o.handler.HandleMoveEntry)
-				} else {
-					r.Post("/{id}/move", notImplemented)
-				}
-
 				// Bulk update (must be before wildcard /*)
 				if o.handler != nil {
 					r.Post("/bulk-update", o.handler.HandleBulkUpdate)
@@ -118,12 +104,15 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 
 				// Entry CRUD by ID or path (wildcard — must be last)
 				// Uses /* to capture paths with slashes (e.g., projects/govpu/task/1bg4bj9y.md)
+				// POST /* dispatches to move/verify based on path suffix
 				if o.handler != nil {
 					r.Get("/*", o.handler.HandleGetEntry)
+					r.Post("/*", o.handler.HandlePostWildcard)
 					r.Patch("/*", o.handler.HandleUpdateOrMetadata)
 					r.Delete("/*", o.handler.HandleDeleteEntry)
 				} else {
 					r.Get("/*", notImplemented)
+					r.Post("/*", notImplemented)
 					r.Patch("/*", notImplemented)
 					r.Delete("/*", notImplemented)
 				}

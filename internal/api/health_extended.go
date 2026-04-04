@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
@@ -72,9 +73,15 @@ func (h *Handler) HandleGetStale(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, entries)
 }
 
-// HandleVerifyEntry handles POST /entries/{id}/verify.
+// HandleVerifyEntry handles POST /entries/{id}/verify or POST /entries/*/verify.
 func (h *Handler) HandleVerifyEntry(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
+	id := chi.URLParam(r, "*")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	// Strip "/verify" suffix from the path to get the entry identifier
+	id = strings.TrimSuffix(id, "/verify")
 
 	resp, err := h.brain.Verify(r.Context(), id)
 	if err != nil {

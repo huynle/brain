@@ -189,16 +189,17 @@ func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, 
 // =============================================================================
 
 // newTestRouter creates a chi router with entry handlers wired to the given mock.
+// Mirrors the real router's wildcard approach for POST (move/verify) routes.
 func newTestRouter(mock *mockBrainService) *chi.Mux {
 	h := NewHandler(mock)
 	r := chi.NewRouter()
 	r.Route("/entries", func(r chi.Router) {
 		r.Post("/", h.HandleCreateEntry)
 		r.Get("/", h.HandleListEntries)
-		r.Post("/{id}/move", h.HandleMoveEntry)
 		r.Post("/bulk-update", h.HandleBulkUpdate)
 		// Wildcard routes must be last to allow specific routes to match first
 		r.Get("/*", h.HandleGetEntry)
+		r.Post("/*", h.HandlePostWildcard)
 		r.Patch("/*", h.HandleUpdateEntry)
 		r.Delete("/*", h.HandleDeleteEntry)
 	})
@@ -1613,6 +1614,47 @@ func TestHandleMoveEntry(t *testing.T) {
 				return nil, fmt.Errorf("disk error")
 			},
 			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "success with full path containing slashes",
+			id:   "projects/brain-api/task/q94q9lie.md",
+			body: map[string]any{
+				"project": "other-project",
+			},
+			mockMove: func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error) {
+				if pathOrID != "projects/brain-api/task/q94q9lie.md" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				if targetProject != "other-project" {
+					return nil, fmt.Errorf("unexpected project: %s", targetProject)
+				}
+				return &types.MoveResult{
+					Success: true,
+					From:    "projects/brain-api/task/q94q9lie.md",
+					To:      "projects/other-project/task/q94q9lie.md",
+					OldPath: "projects/brain-api/task/q94q9lie.md",
+					NewPath: "projects/other-project/task/q94q9lie.md",
+					Project: "other-project",
+					ID:      "q94q9lie",
+					Title:   "Test Task",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.MoveResult](t, resp)
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.From != "projects/brain-api/task/q94q9lie.md" {
+					t.Errorf("from = %q, want %q", body.From, "projects/brain-api/task/q94q9lie.md")
+				}
+				if body.To != "projects/other-project/task/q94q9lie.md" {
+					t.Errorf("to = %q, want %q", body.To, "projects/other-project/task/q94q9lie.md")
+				}
+				if body.ID != "q94q9lie" {
+					t.Errorf("id = %q, want %q", body.ID, "q94q9lie")
+				}
+			},
 		},
 	}
 

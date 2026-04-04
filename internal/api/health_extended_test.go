@@ -13,13 +13,16 @@ import (
 )
 
 // newHealthExtRouter creates a chi router with health-extended handlers wired to the given mock.
+// Mirrors the real router's wildcard approach for POST (move/verify) routes.
 func newHealthExtRouter(mock *mockBrainService) *chi.Mux {
 	h := NewHandler(mock)
 	r := chi.NewRouter()
 	r.Get("/stats", h.HandleGetStats)
 	r.Get("/orphans", h.HandleGetOrphans)
 	r.Get("/stale", h.HandleGetStale)
-	r.Post("/entries/{id}/verify", h.HandleVerifyEntry)
+	r.Route("/entries", func(r chi.Router) {
+		r.Post("/*", h.HandlePostWildcard)
+	})
 	r.Post("/link", h.HandleGenerateLink)
 	return r
 }
@@ -334,6 +337,30 @@ func TestHandleVerifyEntry(t *testing.T) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
+		},
+		{
+			name: "success with full path containing slashes",
+			id:   "projects/brain-api/plan/abc12def.md",
+			mockVerify: func(ctx context.Context, path string) (*types.VerifyResponse, error) {
+				if path != "projects/brain-api/plan/abc12def.md" {
+					return nil, fmt.Errorf("path = %q, want %q", path, "projects/brain-api/plan/abc12def.md")
+				}
+				return &types.VerifyResponse{
+					Success:    true,
+					Path:       "projects/brain-api/plan/abc12def.md",
+					VerifiedAt: "2025-01-15T10:30:00Z",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.VerifyResponse](t, resp)
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.Path != "projects/brain-api/plan/abc12def.md" {
+					t.Errorf("path = %q, want %q", body.Path, "projects/brain-api/plan/abc12def.md")
+				}
+			},
 		},
 	}
 

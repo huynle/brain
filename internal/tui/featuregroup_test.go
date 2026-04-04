@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -567,6 +568,132 @@ func TestFeatureDepStatusIcon(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBuildFeatureDepAnnotation tests the buildFeatureDepAnnotation function.
+func TestBuildFeatureDepAnnotation(t *testing.T) {
+	t.Run("returns empty for no dependencies", func(t *testing.T) {
+		feature := FeatureGroup{ID: "feat-a", DependsOn: nil}
+		got := buildFeatureDepAnnotation(feature, nil)
+		if got != "" {
+			t.Errorf("expected empty string for feature with no deps, got %q", got)
+		}
+	})
+
+	t.Run("returns empty for empty DependsOn", func(t *testing.T) {
+		feature := FeatureGroup{ID: "feat-a", DependsOn: []string{}}
+		got := buildFeatureDepAnnotation(feature, nil)
+		if got != "" {
+			t.Errorf("expected empty string for feature with empty deps, got %q", got)
+		}
+	})
+
+	t.Run("shows completed dep with check icon", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b"}},
+			{ID: "feat-b", Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "completed"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if got == "" {
+			t.Fatal("expected non-empty annotation")
+		}
+		// Should contain ✓ and feat-b (stripped of ANSI)
+		if !strings.Contains(got, "✓") {
+			t.Errorf("expected ✓ in annotation for completed dep, got %q", got)
+		}
+		if !strings.Contains(got, "feat-b") {
+			t.Errorf("expected dep name 'feat-b' in annotation, got %q", got)
+		}
+		if !strings.Contains(got, "←") {
+			t.Errorf("expected ← prefix in annotation, got %q", got)
+		}
+	})
+
+	t.Run("shows in_progress dep with lightning icon", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b"}},
+			{ID: "feat-b", Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "in_progress"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "⚡") {
+			t.Errorf("expected ⚡ in annotation for in_progress dep, got %q", got)
+		}
+	})
+
+	t.Run("shows waiting dep with circle icon", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b"}},
+			{ID: "feat-b", Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "waiting"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "○") {
+			t.Errorf("expected ○ in annotation for waiting dep, got %q", got)
+		}
+	})
+
+	t.Run("shows blocked dep with x icon", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b"}},
+			{ID: "feat-b", Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending", Classification: "blocked"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "✗") {
+			t.Errorf("expected ✗ in annotation for blocked dep, got %q", got)
+		}
+	})
+
+	t.Run("shows unknown dep with question mark", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"nonexistent"}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "?") {
+			t.Errorf("expected ? in annotation for unknown dep, got %q", got)
+		}
+	})
+
+	t.Run("shows cycle icon for mutual dependency", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b"}},
+			{ID: "feat-b", DependsOn: []string{"feat-a"}, Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "pending"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "↺") {
+			t.Errorf("expected ↺ in annotation for cycle dep, got %q", got)
+		}
+	})
+
+	t.Run("shows multiple deps separated by commas", func(t *testing.T) {
+		allFeatures := []FeatureGroup{
+			{ID: "feat-a", DependsOn: []string{"feat-b", "feat-c"}},
+			{ID: "feat-b", Tasks: []types.ResolvedTask{
+				{ID: "t1", Status: "completed"},
+			}},
+			{ID: "feat-c", Tasks: []types.ResolvedTask{
+				{ID: "t2", Status: "in_progress"},
+			}},
+		}
+		got := buildFeatureDepAnnotation(allFeatures[0], allFeatures)
+		if !strings.Contains(got, "feat-b") || !strings.Contains(got, "feat-c") {
+			t.Errorf("expected both dep names in annotation, got %q", got)
+		}
+		if !strings.Contains(got, "✓") {
+			t.Errorf("expected ✓ for completed dep feat-b, got %q", got)
+		}
+		if !strings.Contains(got, "⚡") {
+			t.Errorf("expected ⚡ for in_progress dep feat-c, got %q", got)
+		}
+	})
 }
 
 // featureIDs extracts IDs from feature groups for debug output.

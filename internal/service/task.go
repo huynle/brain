@@ -1058,6 +1058,12 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "next_run"); ok {
 		entry.NextRun = v
 	}
+	if v, ok := metaString(meta, "run_once_at"); ok {
+		entry.RunOnceAt = v
+	}
+	if v, ok := metaString(meta, "timezone"); ok {
+		entry.Timezone = v
+	}
 
 	// Runs: []CronRun from metadata JSON
 	if runsRaw, ok := meta["runs"]; ok {

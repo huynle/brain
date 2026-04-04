@@ -6,10 +6,13 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 )
 
+// RouterOption is a functional option for configuring the router.
+type RouterOption = func(*routerOptions)
+
 // NewRouter creates the chi router with all routes and middleware.
 // An optional Handler can be provided to wire implemented endpoints;
 // nil means all entry/task routes return 501 Not Implemented.
-func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
+func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 	var o routerOptions
 	for _, fn := range opts {
 		fn(&o)
@@ -23,6 +26,11 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 	r.Use(CORS(cfg))
 	r.Use(RequestID)
 	r.Use(Logger)
+
+	// Rate limiting (applied after recovery/logging so 429s are logged)
+	if o.rateLimiter != nil {
+		r.Use(o.rateLimiter.Middleware())
+	}
 
 	// Custom 404 and 405 handlers
 	r.NotFound(NotFoundHandler())
@@ -227,8 +235,9 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 
 // routerOptions holds optional dependencies for the router.
 type routerOptions struct {
-	handler   *Handler
-	validator TokenValidator
+	handler     *Handler
+	validator   TokenValidator
+	rateLimiter *RateLimiter
 }
 
 // WithHandler returns a router option that wires the given Handler.
@@ -255,5 +264,12 @@ func WithDualAuth(apiValidator TokenValidator, oauthValidator OAuthAccessTokenVa
 			APIValidator:   apiValidator,
 			OAuthValidator: oauthValidator,
 		}
+	}
+}
+
+// WithRateLimiter returns a router option that applies per-IP rate limiting.
+func WithRateLimiter(rl *RateLimiter) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.rateLimiter = rl
 	}
 }

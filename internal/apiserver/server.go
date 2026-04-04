@@ -23,13 +23,14 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host       string
-	Port       int
-	BrainDir   string
-	EnableAuth bool
-	LogLevel   string
-	CORSOrigin string
-	OAuthPIN   string
+	Host         string
+	Port         int
+	BrainDir     string
+	EnableAuth   bool
+	LogLevel     string
+	CORSOrigin   string
+	OAuthPIN     string
+	TaskDefaults config.TaskDefaultsConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -93,12 +94,13 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:   opts.BrainDir,
-		Host:       opts.Host,
-		Port:       opts.Port,
-		EnableAuth: opts.EnableAuth,
-		CORSOrigin: corsOrigin,
-		OAuthPIN:   opts.OAuthPIN,
+		BrainDir:     opts.BrainDir,
+		Host:         opts.Host,
+		Port:         opts.Port,
+		EnableAuth:   opts.EnableAuth,
+		CORSOrigin:   corsOrigin,
+		OAuthPIN:     opts.OAuthPIN,
+		TaskDefaults: opts.TaskDefaults,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -120,7 +122,33 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithHub(hub),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
+	// ─── Rate Limiting ─────────────────────────────────────────────
+	var rateLimiter *api.RateLimiter
+	if cfg.RateLimitPerMinute > 0 {
+		burst := cfg.RateLimitBurst
+		if burst <= 0 {
+			burst = cfg.RateLimitPerMinute
+		}
+		rateLimiter = api.NewRateLimiter(api.RateLimitConfig{
+			RequestsPerMinute: cfg.RateLimitPerMinute,
+			BurstSize:         burst,
+			CleanupInterval:   5 * time.Minute,
+		})
+		defer rateLimiter.Stop()
+		slog.Info("rate limiting enabled",
+			"requests_per_minute", cfg.RateLimitPerMinute,
+			"burst", burst,
+		)
+	}
+
+	routerOpts := []api.RouterOption{
+		api.WithHandler(handler),
+		api.WithDualAuth(store, store),
+	}
+	if rateLimiter != nil {
+		routerOpts = append(routerOpts, api.WithRateLimiter(rateLimiter))
+	}
+	router := api.NewRouter(cfg, routerOpts...)
 
 	// ─── OAuth ─────────────────────────────────────────────────────
 	oauthStore := oauth.NewStore()

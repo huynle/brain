@@ -14,6 +14,41 @@ import (
 )
 
 // ============================================================================
+// Test Helpers
+// ============================================================================
+
+// executeBatchCmd executes a tea.Cmd (which may be a Batch) and returns all resulting messages.
+// This handles both single commands and tea.Batch commands transparently.
+func executeBatchCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var msgs []tea.Msg
+		for _, c := range batch {
+			if c != nil {
+				msgs = append(msgs, c())
+			}
+		}
+		return msgs
+	}
+	return []tea.Msg{msg}
+}
+
+// findMsg finds a message of the target type from a slice of messages.
+// Returns the message and true if found, or zero value and false otherwise.
+func findMsg[T any](msgs []tea.Msg) (T, bool) {
+	for _, msg := range msgs {
+		if typed, ok := msg.(T); ok {
+			return typed, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+// ============================================================================
 // MetadataModal Construction Tests
 // ============================================================================
 
@@ -737,17 +772,17 @@ func TestMetadataModal_Init_FetchesEntry(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModal("projects/test/task/abc123.md", apiClient)
 
-	// Init should return a command
+	// Init should return a command (now a batch)
 	cmd := modal.Init()
 	if cmd == nil {
 		t.Fatal("Init() should return non-nil command to fetch entry")
 	}
 
-	// Execute the command
-	msg := cmd()
-	fetchedMsg, ok := msg.(metadataFetchedMsg)
+	// Execute the batch and find the metadataFetchedMsg
+	msgs := executeBatchCmd(cmd)
+	fetchedMsg, ok := findMsg[metadataFetchedMsg](msgs)
 	if !ok {
-		t.Fatalf("Init() command should return metadataFetchedMsg, got %T", msg)
+		t.Fatalf("Init() batch should contain metadataFetchedMsg, got messages: %v", msgs)
 	}
 
 	// Check that entry was fetched

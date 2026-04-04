@@ -142,19 +142,17 @@ func TestMetadataModalFeature_Init_FetchesFeatureTasks(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("dark-mode", "brain-api", apiClient)
 
-	// Call Init and execute the returned command
+	// Call Init and execute the returned command (now a batch)
 	cmd := modal.Init()
 	if cmd == nil {
 		t.Fatal("Init() returned nil cmd")
 	}
 
-	// Execute the command to fetch data
-	msg := cmd()
-
-	// Check that we got a metadataFetchedMsg
-	fetchedMsg, ok := msg.(metadataFetchedMsg)
+	// Execute the batch and find the metadataFetchedMsg
+	msgs := executeBatchCmd(cmd)
+	fetchedMsg, ok := findMsg[metadataFetchedMsg](msgs)
 	if !ok {
-		t.Fatalf("expected metadataFetchedMsg, got %T", msg)
+		t.Fatalf("expected metadataFetchedMsg in batch, got messages: %v", msgs)
 	}
 
 	// Check no error
@@ -268,11 +266,11 @@ func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 		modal := NewMetadataModalFeature("nonexistent", "brain-api", apiClient)
 
 		cmd := modal.Init()
-		msg := cmd()
+		msgs := executeBatchCmd(cmd)
 
-		fetchedMsg, ok := msg.(metadataFetchedMsg)
+		fetchedMsg, ok := findMsg[metadataFetchedMsg](msgs)
 		if !ok {
-			t.Fatalf("expected metadataFetchedMsg, got %T", msg)
+			t.Fatalf("expected metadataFetchedMsg in batch, got messages: %v", msgs)
 		}
 
 		if fetchedMsg.err == nil {
@@ -307,11 +305,11 @@ func TestMetadataModalFeature_Init_ErrorHandling(t *testing.T) {
 		modal := NewMetadataModalFeature("dark-mode", "brain-api", apiClient)
 
 		cmd := modal.Init()
-		msg := cmd()
+		msgs := executeBatchCmd(cmd)
 
-		fetchedMsg, ok := msg.(metadataFetchedMsg)
+		fetchedMsg, ok := findMsg[metadataFetchedMsg](msgs)
 		if !ok {
-			t.Fatalf("expected metadataFetchedMsg, got %T", msg)
+			t.Fatalf("expected metadataFetchedMsg in batch, got messages: %v", msgs)
 		}
 
 		// Should have error from entry fetch failure

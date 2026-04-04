@@ -26,6 +26,18 @@ func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
 	if flags.Model != "" {
 		cfg.Opencode.Model = flags.Model
 	}
+	if flags.Executor != "" {
+		cfg.DefaultExecutor = flags.Executor
+	}
+	if flags.PiBin != "" {
+		cfg.Pi.Bin = flags.PiBin
+	}
+	if flags.PiModel != "" {
+		cfg.Pi.Model = flags.PiModel
+	}
+	if flags.PiThinking != "" {
+		cfg.Pi.Thinking = flags.PiThinking
+	}
 	if len(flags.FeatureIDs) > 0 {
 		cfg.FeatureIDs = flags.FeatureIDs
 	}
@@ -42,6 +54,10 @@ type RunnerFlags struct {
 	Workdir      string
 	Agent        string
 	Model        string
+	Executor     string
+	PiBin        string
+	PiModel      string
+	PiThinking   string
 	Include      []string
 	Exclude      []string
 	FeatureIDs   []string

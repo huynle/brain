@@ -85,6 +85,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	fileCfg.StateDir = expandTilde(fileCfg.StateDir, homeDir)
 	fileCfg.LogDir = expandTilde(fileCfg.LogDir, homeDir)
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
+	fileCfg.Pi.AgentsDir = expandTilde(fileCfg.Pi.AgentsDir, homeDir)
+	fileCfg.Pi.ExtensionsDir = expandTilde(fileCfg.Pi.ExtensionsDir, homeDir)
 
 	// Build final config: file defaults → built-in defaults → env overrides
 	cfg := RunnerConfig{
@@ -106,6 +108,17 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
+		Pi: PiConfig{
+			Bin:           getEnvOrDefault("PI_BIN", firstNonEmpty(fileCfg.Pi.Bin, "pi")),
+			Model:         getEnvOrDefault("PI_MODEL", fileCfg.Pi.Model),
+			Thinking:      getEnvOrDefault("PI_THINKING", fileCfg.Pi.Thinking),
+			AgentsDir:     firstNonEmpty(fileCfg.Pi.AgentsDir, expandTilde("~/.pi/brain-agents", homeDir)),
+			ExtensionsDir: firstNonEmpty(fileCfg.Pi.ExtensionsDir, expandTilde("~/.pi/extensions", homeDir)),
+			Extensions:    fileCfg.Pi.Extensions,
+			NoSession:     getEnvBoolOrDefault("PI_NO_SESSION", piNoSessionDefault(fileCfg)),
+		},
+		DefaultExecutor: getEnvOrDefault("DEFAULT_EXECUTOR", firstNonEmpty(fileCfg.DefaultExecutor, "opencode")),
+		TaskDefaults:    fileCfg.TaskDefaults,
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
@@ -149,6 +162,27 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.IdleDetectionThreshold < 0 {
 		errs = append(errs, fmt.Sprintf("idleDetectionThreshold must be >= 0, got %d", cfg.IdleDetectionThreshold))
+	}
+
+	// Validate default_executor
+	if cfg.DefaultExecutor != "" && cfg.DefaultExecutor != "opencode" && cfg.DefaultExecutor != "pi" {
+		errs = append(errs, fmt.Sprintf("default_executor must be \"\", \"opencode\", or \"pi\", got %q", cfg.DefaultExecutor))
+	}
+
+	// Validate task_defaults.executor
+	if cfg.TaskDefaults.Executor != "" && cfg.TaskDefaults.Executor != "opencode" && cfg.TaskDefaults.Executor != "pi" {
+		errs = append(errs, fmt.Sprintf("task_defaults.executor must be \"\", \"opencode\", or \"pi\", got %q", cfg.TaskDefaults.Executor))
+	}
+
+	// Validate pi.thinking
+	if cfg.Pi.Thinking != "" {
+		validThinking := map[string]bool{
+			"off": true, "minimal": true, "low": true,
+			"medium": true, "high": true, "xhigh": true,
+		}
+		if !validThinking[cfg.Pi.Thinking] {
+			errs = append(errs, fmt.Sprintf("pi.thinking must be one of: off, minimal, low, medium, high, xhigh; got %q", cfg.Pi.Thinking))
+		}
 	}
 
 	if len(errs) > 0 {
@@ -211,6 +245,20 @@ func firstNonZero(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// piNoSessionDefault returns the file value for Pi.NoSession if the Pi section
+// appears to have been configured (any field set), otherwise returns true (the default).
+// This allows `no_session: false` in YAML to take effect while defaulting to true
+// when the Pi section is absent.
+func piNoSessionDefault(fileCfg RunnerConfig) bool {
+	pi := fileCfg.Pi
+	if pi.Bin != "" || pi.Model != "" || pi.Thinking != "" || pi.AgentsDir != "" || pi.ExtensionsDir != "" || len(pi.Extensions) > 0 {
+		// Pi section was configured in the file; use its NoSession value
+		return pi.NoSession
+	}
+	// No Pi section in file; default to true
+	return true
 }
 
 // getEnvCSVOrDefault reads a comma-separated env var and returns the split values.

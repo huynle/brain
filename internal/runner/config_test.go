@@ -322,3 +322,375 @@ func TestValidateConfig_NegativeTimeout(t *testing.T) {
 		t.Error("expected error for negative apiTimeout")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Pi config defaults
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_PiDefaults(t *testing.T) {
+	// Clear Pi-related env vars
+	for _, key := range []string{
+		"PI_BIN", "PI_MODEL", "PI_THINKING", "PI_NO_SESSION",
+		"DEFAULT_EXECUTOR",
+		"BRAIN_API_URL", "BRAIN_API_TOKEN",
+		"RUNNER_POLL_INTERVAL", "RUNNER_TASK_POLL_INTERVAL",
+		"RUNNER_MAX_PARALLEL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"RUNNER_MEMORY_THRESHOLD", "RUNNER_IDLE_THRESHOLD",
+		"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR",
+		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
+		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
+		"BRAIN_AUTO_MONITORS",
+	} {
+		os.Unsetenv(key)
+	}
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Pi defaults
+	if cfg.Pi.Bin != "pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "pi")
+	}
+	if cfg.Pi.Model != "" {
+		t.Errorf("Pi.Model = %q, want empty", cfg.Pi.Model)
+	}
+	if cfg.Pi.Thinking != "" {
+		t.Errorf("Pi.Thinking = %q, want empty", cfg.Pi.Thinking)
+	}
+	homeDir, _ := os.UserHomeDir()
+	wantAgentsDir := filepath.Join(homeDir, ".pi", "brain-agents")
+	if cfg.Pi.AgentsDir != wantAgentsDir {
+		t.Errorf("Pi.AgentsDir = %q, want %q", cfg.Pi.AgentsDir, wantAgentsDir)
+	}
+	wantExtDir := filepath.Join(homeDir, ".pi", "extensions")
+	if cfg.Pi.ExtensionsDir != wantExtDir {
+		t.Errorf("Pi.ExtensionsDir = %q, want %q", cfg.Pi.ExtensionsDir, wantExtDir)
+	}
+	if !cfg.Pi.NoSession {
+		t.Error("Pi.NoSession should default to true")
+	}
+	if cfg.DefaultExecutor != "opencode" {
+		t.Errorf("DefaultExecutor = %q, want %q", cfg.DefaultExecutor, "opencode")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pi config from YAML
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_PiFromYAML(t *testing.T) {
+	for _, key := range []string{
+		"PI_BIN", "PI_MODEL", "PI_THINKING", "PI_NO_SESSION",
+		"DEFAULT_EXECUTOR",
+		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
+		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"OPENCODE_BIN",
+	} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `brain_api_url: "http://localhost:3333"
+max_parallel: 2
+pi:
+  bin: "/usr/local/bin/pi"
+  model: "anthropic/claude-sonnet-4-20250514"
+  thinking: "high"
+  agents_dir: "~/my-agents"
+  extensions_dir: "~/my-extensions"
+  extensions:
+    - "ext1"
+    - "ext2"
+  no_session: false
+default_executor: "pi"
+task_defaults:
+  agent: "tdd-dev"
+  model: "anthropic/claude-sonnet-4-20250514"
+  executor: "pi"
+  execution_mode: "worktree"
+  merge_policy: "auto_pr"
+  merge_strategy: "squash"
+  merge_target_branch: "main"
+  remote_branch_policy: "delete"
+  target_workdir: "/tmp/work"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Pi.Bin != "/usr/local/bin/pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/usr/local/bin/pi")
+	}
+	if cfg.Pi.Model != "anthropic/claude-sonnet-4-20250514" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "anthropic/claude-sonnet-4-20250514")
+	}
+	if cfg.Pi.Thinking != "high" {
+		t.Errorf("Pi.Thinking = %q, want %q", cfg.Pi.Thinking, "high")
+	}
+	homeDir, _ := os.UserHomeDir()
+	wantAgentsDir := filepath.Join(homeDir, "my-agents")
+	if cfg.Pi.AgentsDir != wantAgentsDir {
+		t.Errorf("Pi.AgentsDir = %q, want %q", cfg.Pi.AgentsDir, wantAgentsDir)
+	}
+	wantExtDir := filepath.Join(homeDir, "my-extensions")
+	if cfg.Pi.ExtensionsDir != wantExtDir {
+		t.Errorf("Pi.ExtensionsDir = %q, want %q", cfg.Pi.ExtensionsDir, wantExtDir)
+	}
+	if len(cfg.Pi.Extensions) != 2 {
+		t.Fatalf("Pi.Extensions len = %d, want 2", len(cfg.Pi.Extensions))
+	}
+	if cfg.Pi.Extensions[0] != "ext1" || cfg.Pi.Extensions[1] != "ext2" {
+		t.Errorf("Pi.Extensions = %v, want [ext1 ext2]", cfg.Pi.Extensions)
+	}
+	if cfg.Pi.NoSession {
+		t.Error("Pi.NoSession should be false from YAML")
+	}
+	if cfg.DefaultExecutor != "pi" {
+		t.Errorf("DefaultExecutor = %q, want %q", cfg.DefaultExecutor, "pi")
+	}
+
+	// TaskDefaults
+	if cfg.TaskDefaults.Agent != "tdd-dev" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", cfg.TaskDefaults.Agent, "tdd-dev")
+	}
+	if cfg.TaskDefaults.Executor != "pi" {
+		t.Errorf("TaskDefaults.Executor = %q, want %q", cfg.TaskDefaults.Executor, "pi")
+	}
+	if cfg.TaskDefaults.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want %q", cfg.TaskDefaults.ExecutionMode, "worktree")
+	}
+	if cfg.TaskDefaults.MergePolicy != "auto_pr" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want %q", cfg.TaskDefaults.MergePolicy, "auto_pr")
+	}
+	if cfg.TaskDefaults.MergeStrategy != "squash" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want %q", cfg.TaskDefaults.MergeStrategy, "squash")
+	}
+	if cfg.TaskDefaults.MergeTargetBranch != "main" {
+		t.Errorf("TaskDefaults.MergeTargetBranch = %q, want %q", cfg.TaskDefaults.MergeTargetBranch, "main")
+	}
+	if cfg.TaskDefaults.RemoteBranchPolicy != "delete" {
+		t.Errorf("TaskDefaults.RemoteBranchPolicy = %q, want %q", cfg.TaskDefaults.RemoteBranchPolicy, "delete")
+	}
+	if cfg.TaskDefaults.TargetWorkdir != "/tmp/work" {
+		t.Errorf("TaskDefaults.TargetWorkdir = %q, want %q", cfg.TaskDefaults.TargetWorkdir, "/tmp/work")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Pi env var overrides
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_PiEnvOverrides(t *testing.T) {
+	t.Setenv("PI_BIN", "/custom/pi")
+	t.Setenv("PI_MODEL", "gpt-4")
+	t.Setenv("PI_THINKING", "medium")
+	t.Setenv("DEFAULT_EXECUTOR", "pi")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Pi.Bin != "/custom/pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/custom/pi")
+	}
+	if cfg.Pi.Model != "gpt-4" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "gpt-4")
+	}
+	if cfg.Pi.Thinking != "medium" {
+		t.Errorf("Pi.Thinking = %q, want %q", cfg.Pi.Thinking, "medium")
+	}
+	if cfg.DefaultExecutor != "pi" {
+		t.Errorf("DefaultExecutor = %q, want %q", cfg.DefaultExecutor, "pi")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unified config format (nested under runner: key)
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_UnifiedFormat_WithPi(t *testing.T) {
+	for _, key := range []string{
+		"PI_BIN", "PI_MODEL", "PI_THINKING", "DEFAULT_EXECUTOR",
+		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
+		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"OPENCODE_BIN",
+	} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `runner:
+  brain_api_url: "http://unified:3333"
+  max_parallel: 3
+  pi:
+    bin: "/opt/pi"
+    model: "claude-4"
+    thinking: "low"
+  default_executor: "pi"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.BrainAPIURL != "http://unified:3333" {
+		t.Errorf("BrainAPIURL = %q, want %q", cfg.BrainAPIURL, "http://unified:3333")
+	}
+	if cfg.Pi.Bin != "/opt/pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/opt/pi")
+	}
+	if cfg.Pi.Model != "claude-4" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "claude-4")
+	}
+	if cfg.Pi.Thinking != "low" {
+		t.Errorf("Pi.Thinking = %q, want %q", cfg.Pi.Thinking, "low")
+	}
+	if cfg.DefaultExecutor != "pi" {
+		t.Errorf("DefaultExecutor = %q, want %q", cfg.DefaultExecutor, "pi")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Backward compatibility: existing config without pi/task_defaults
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_BackwardCompatible_NoPiSection(t *testing.T) {
+	for _, key := range []string{
+		"PI_BIN", "PI_MODEL", "PI_THINKING", "DEFAULT_EXECUTOR",
+		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
+		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
+	} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `brain_api_url: "http://old-config:3333"
+max_parallel: 2
+opencode:
+  bin: "opencode"
+  agent: "tdd-dev"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should load without error, with defaults for Pi
+	if cfg.Pi.Bin != "pi" {
+		t.Errorf("Pi.Bin = %q, want default %q", cfg.Pi.Bin, "pi")
+	}
+	if cfg.DefaultExecutor != "opencode" {
+		t.Errorf("DefaultExecutor = %q, want default %q", cfg.DefaultExecutor, "opencode")
+	}
+	if cfg.TaskDefaults.Agent != "" {
+		t.Errorf("TaskDefaults.Agent = %q, want empty", cfg.TaskDefaults.Agent)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Validation: executor values
+// ---------------------------------------------------------------------------
+
+func TestValidateConfig_InvalidExecutor(t *testing.T) {
+	tests := []struct {
+		name     string
+		executor string
+	}{
+		{"unknown executor", "claude"},
+		{"typo", "opecode"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.DefaultExecutor = tt.executor
+			if err := ValidateConfig(cfg); err == nil {
+				t.Errorf("expected error for invalid executor %q", tt.executor)
+			}
+		})
+	}
+}
+
+func TestValidateConfig_ValidExecutor(t *testing.T) {
+	for _, executor := range []string{"", "opencode", "pi"} {
+		t.Run(executor, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.DefaultExecutor = executor
+			if err := ValidateConfig(cfg); err != nil {
+				t.Errorf("unexpected error for executor %q: %v", executor, err)
+			}
+		})
+	}
+}
+
+func TestValidateConfig_InvalidThinking(t *testing.T) {
+	tests := []struct {
+		name     string
+		thinking string
+	}{
+		{"invalid value", "ultra"},
+		{"number", "5"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Pi.Thinking = tt.thinking
+			if err := ValidateConfig(cfg); err == nil {
+				t.Errorf("expected error for invalid thinking %q", tt.thinking)
+			}
+		})
+	}
+}
+
+func TestValidateConfig_ValidThinking(t *testing.T) {
+	for _, thinking := range []string{"", "off", "minimal", "low", "medium", "high", "xhigh"} {
+		t.Run(thinking, func(t *testing.T) {
+			cfg := validBaseConfig()
+			cfg.Pi.Thinking = thinking
+			if err := ValidateConfig(cfg); err != nil {
+				t.Errorf("unexpected error for thinking %q: %v", thinking, err)
+			}
+		})
+	}
+}
+
+func TestValidateConfig_InvalidTaskDefaultsExecutor(t *testing.T) {
+	cfg := validBaseConfig()
+	cfg.TaskDefaults.Executor = "invalid"
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error for invalid task_defaults.executor")
+	}
+}
+
+// validBaseConfig returns a RunnerConfig with all required fields set to valid values.
+func validBaseConfig() RunnerConfig {
+	return RunnerConfig{
+		PollInterval:           30,
+		TaskPollInterval:       5,
+		MaxParallel:            2,
+		MaxTotalProcesses:      10,
+		MemoryThresholdPercent: 10,
+		APITimeout:             5000,
+		IdleDetectionThreshold: 60000,
+		DefaultExecutor:        "opencode",
+	}
+}

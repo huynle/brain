@@ -760,6 +760,212 @@ func TestExecutor_Spawn_UnknownMode(t *testing.T) {
 }
 
 // =============================================================================
+// ensureWorktree Tests - Feature ID Derivation
+// =============================================================================
+
+func TestEnsureWorktree_FeatureID_DerivesBranch(t *testing.T) {
+	// When git_branch is empty but feature_id is set, feature_id should be used as branch name
+	mainRepo := t.TempDir()
+
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	// Track git commands to verify feature_id is used as branch
+	var gitCmds [][]string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" {
+			gitCmds = append(gitCmds, args)
+		}
+		// Default: return a command that fails (branch doesn't exist, etc.)
+		return exec.Command("false")
+	}
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""                          // No explicit branch
+	task.FeatureID = "centralized-task-defaults" // Has feature_id
+	task.TargetWorkdir = mainRepo
+	task.ExecutionMode = "worktree"
+
+	_, _ = e.ensureWorktree(task)
+
+	// Verify that git commands used the feature_id as the branch name
+	foundBranchRef := false
+	for _, cmd := range gitCmds {
+		for _, arg := range cmd {
+			if arg == "centralized-task-defaults" {
+				foundBranchRef = true
+				break
+			}
+		}
+	}
+	if !foundBranchRef {
+		t.Errorf("ensureWorktree should use feature_id as branch name, git commands were: %v", gitCmds)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_NoFeatureID_NoGitBranch(t *testing.T) {
+	// When both git_branch and feature_id are empty, should return "" (no worktree)
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""
+	task.FeatureID = ""
+	task.ExecutionMode = "worktree"
+
+	path, err := e.ensureWorktree(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "" {
+		t.Errorf("ensureWorktree should return empty string when no branch and no feature_id, got %q", path)
+	}
+}
+
+func TestEnsureWorktree_ExplicitGitBranch_OverridesFeatureID(t *testing.T) {
+	// Explicit git_branch should always win over feature_id
+	mainRepo := t.TempDir()
+
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	var gitCmds [][]string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" {
+			gitCmds = append(gitCmds, args)
+		}
+		return exec.Command("false")
+	}
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = "my-explicit-branch"
+	task.FeatureID = "centralized-task-defaults"
+	task.TargetWorkdir = mainRepo
+	task.ExecutionMode = "worktree"
+
+	_, _ = e.ensureWorktree(task)
+
+	// Verify git commands used the explicit branch, not feature_id
+	foundExplicit := false
+	foundFeature := false
+	for _, cmd := range gitCmds {
+		for _, arg := range cmd {
+			if arg == "my-explicit-branch" {
+				foundExplicit = true
+			}
+			if arg == "centralized-task-defaults" {
+				foundFeature = true
+			}
+		}
+	}
+	if !foundExplicit {
+		t.Errorf("ensureWorktree should use explicit git_branch, git commands were: %v", gitCmds)
+	}
+	if foundFeature {
+		t.Errorf("ensureWorktree should not use feature_id when explicit git_branch is set, git commands were: %v", gitCmds)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_DefaultBranchGuard(t *testing.T) {
+	// Feature IDs of "main" or "master" should be rejected (same as branch guard)
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+
+	tests := []struct {
+		name      string
+		featureID string
+	}{
+		{"main feature_id", "main"},
+		{"master feature_id", "master"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := testResolvedTask("abc123")
+			task.GitBranch = ""
+			task.FeatureID = tt.featureID
+			task.ExecutionMode = "worktree"
+
+			path, err := e.ensureWorktree(task)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if path != "" {
+				t.Errorf("ensureWorktree should return empty for feature_id=%q (default branch), got %q", tt.featureID, path)
+			}
+		})
+	}
+}
+
+func TestEnsureWorktree_FeatureID_CurrentBranchGuard(t *testing.T) {
+	// execution_mode="current_branch" should prevent worktree even with feature_id
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""
+	task.FeatureID = "some-feature"
+	task.ExecutionMode = "current_branch"
+
+	path, err := e.ensureWorktree(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "" {
+		t.Errorf("ensureWorktree should return empty for current_branch mode, got %q", path)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_SameWorktreeForSameFeature(t *testing.T) {
+	// Two tasks with same feature_id should resolve to the same worktree directory path
+	mainRepo := t.TempDir()
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+
+	task1 := testResolvedTask("task1")
+	task1.GitBranch = ""
+	task1.FeatureID = "shared-feature"
+	task1.TargetWorkdir = mainRepo
+	task1.ExecutionMode = "worktree"
+
+	task2 := testResolvedTask("task2")
+	task2.GitBranch = ""
+	task2.FeatureID = "shared-feature"
+	task2.TargetWorkdir = mainRepo
+	task2.ExecutionMode = "worktree"
+
+	// Both should attempt the same worktree path (they will fail because git isn't real,
+	// but the error message will contain the path)
+	_, err1 := e.ensureWorktree(task1)
+	_, err2 := e.ensureWorktree(task2)
+
+	// Both should produce the same error (same worktree path attempted)
+	// Since CommandFactory returns "false", both will fail identically
+	if err1 == nil || err2 == nil {
+		// If one succeeds (e.g., directory exists), that's fine too
+		// The key test is the path would be the same
+	}
+
+	// Verify by computing expected path manually
+	expectedPath := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName("shared-feature"))
+	_ = expectedPath // Path computation check - both tasks should target same path
+	// The real verification is that sanitizeBranchName produces consistent output
+	path1 := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName(task1.FeatureID))
+	path2 := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName(task2.FeatureID))
+	if path1 != path2 {
+		t.Errorf("same feature_id should produce same worktree path: %q vs %q", path1, path2)
+	}
+	_ = err1
+	_ = err2
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

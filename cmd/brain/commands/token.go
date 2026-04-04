@@ -122,18 +122,105 @@ func (c *TokenCommand) apiRequest(method, path string, body io.Reader) ([]byte, 
 	return data, resp.StatusCode, nil
 }
 
-// createToken creates a new API token, preferring API when available.
+// createToken creates a new API token with smart fallback:
+//  1. Try authenticated API (POST /tokens)
+//  2. On 401 → try unauthenticated bootstrap (POST /tokens/bootstrap)
+//  3. On bootstrap 403 (tokens exist) → fall back to direct DB access
+//  4. If API unreachable → fall back to direct DB access
 func (c *TokenCommand) createToken(brainDir string) error {
 	if c.Name == "" {
 		return fmt.Errorf("token name is required (use --name)")
 	}
 
 	if c.isAPIAvailable() {
-		return c.createTokenViaAPI()
+		err := c.createTokenViaAPI()
+		if err == nil {
+			return nil
+		}
+		// If auth failed, try bootstrap endpoint
+		if isAuthError(err) {
+			fmt.Println("Note: Authentication failed, trying bootstrap endpoint...")
+			bootstrapErr := c.createTokenViaBootstrap()
+			if bootstrapErr == nil {
+				return nil
+			}
+			// Bootstrap also failed (tokens exist on server) → fall back to direct DB
+			fmt.Println("Note: Bootstrap unavailable, falling back to direct database access")
+			return c.createTokenDirect(brainDir)
+		}
+		return err
 	}
 
 	fmt.Println("Note: API server not running, using direct database access")
 	return c.createTokenDirect(brainDir)
+}
+
+// isAuthError checks if an error is an authentication failure (401).
+func isAuthError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "Missing authentication token") ||
+		strings.Contains(msg, "Invalid authentication token") ||
+		strings.Contains(msg, "Unauthorized")
+}
+
+// createTokenViaBootstrap creates a token through the unauthenticated bootstrap endpoint.
+// This only works when zero tokens exist on the server.
+func (c *TokenCommand) createTokenViaBootstrap() error {
+	reqBody, _ := json.Marshal(map[string]string{"name": c.Name})
+	url := c.apiURL() + "/api/v1/tokens/bootstrap"
+	req, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	// No auth header — bootstrap is unauthenticated
+
+	resp, err := c.getHTTPClient().Do(req)
+	if err != nil {
+		return fmt.Errorf("bootstrap request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read response: %w", err)
+	}
+
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("bootstrap forbidden: tokens already exist on server")
+	}
+	if resp.StatusCode != http.StatusCreated {
+		var errResp struct {
+			Message string `json:"message"`
+		}
+		if json.Unmarshal(data, &errResp) == nil && errResp.Message != "" {
+			return fmt.Errorf("bootstrap token: %s", errResp.Message)
+		}
+		return fmt.Errorf("bootstrap token: API returned status %d", resp.StatusCode)
+	}
+
+	var respData struct {
+		Name      string `json:"name"`
+		Token     string `json:"token"`
+		CreatedAt string `json:"created_at"`
+	}
+	if err := json.Unmarshal(data, &respData); err != nil {
+		return fmt.Errorf("parse response: %w", err)
+	}
+
+	apiURL := c.apiURL()
+	fmt.Printf("✓ Token created via bootstrap\n")
+	fmt.Printf("  Name:  %s\n", respData.Name)
+	fmt.Printf("  Token: %s\n", respData.Token)
+	fmt.Println()
+	fmt.Println("Usage:")
+	fmt.Printf("  export BRAIN_API_TOKEN=%s\n", respData.Token)
+	fmt.Printf("  curl -H \"Authorization: Bearer %s\" %s/api/v1/health\n", respData.Token, apiURL)
+
+	return nil
 }
 
 // createTokenViaAPI creates a token through the API.
@@ -191,9 +278,18 @@ func (c *TokenCommand) createTokenDirect(brainDir string) error {
 }
 
 // listTokens lists all API tokens, preferring API when available.
+// Falls back to direct DB access on auth failure.
 func (c *TokenCommand) listTokens(brainDir string) error {
 	if c.isAPIAvailable() {
-		return c.listTokensViaAPI()
+		err := c.listTokensViaAPI()
+		if err == nil {
+			return nil
+		}
+		if isAuthError(err) {
+			fmt.Println("Note: Authentication failed, falling back to direct database access")
+			return c.listTokensDirect(brainDir)
+		}
+		return err
 	}
 
 	fmt.Println("Note: API server not running, using direct database access")
@@ -208,7 +304,7 @@ func (c *TokenCommand) listTokensViaAPI() error {
 	}
 
 	if status != http.StatusOK {
-		return fmt.Errorf("list tokens: API returned status %d", status)
+		return parseAPIError("list tokens", data, status)
 	}
 
 	var resp struct {
@@ -278,13 +374,22 @@ func (c *TokenCommand) listTokensDirect(brainDir string) error {
 }
 
 // revokeToken revokes an API token, preferring API when available.
+// Falls back to direct DB access on auth failure.
 func (c *TokenCommand) revokeToken(brainDir string) error {
 	if c.Name == "" {
 		return fmt.Errorf("token name is required")
 	}
 
 	if c.isAPIAvailable() {
-		return c.revokeTokenViaAPI()
+		err := c.revokeTokenViaAPI()
+		if err == nil {
+			return nil
+		}
+		if isAuthError(err) {
+			fmt.Println("Note: Authentication failed, falling back to direct database access")
+			return c.revokeTokenDirect(brainDir)
+		}
+		return err
 	}
 
 	fmt.Println("Note: API server not running, using direct database access")
@@ -302,13 +407,7 @@ func (c *TokenCommand) revokeTokenViaAPI() error {
 		return fmt.Errorf("revoke token: token '%s' not found", c.Name)
 	}
 	if status != http.StatusOK {
-		var errResp struct {
-			Message string `json:"message"`
-		}
-		if json.Unmarshal(data, &errResp) == nil && errResp.Message != "" {
-			return fmt.Errorf("revoke token: %s", errResp.Message)
-		}
-		return fmt.Errorf("revoke token: API returned status %d", status)
+		return parseAPIError("revoke token", data, status)
 	}
 
 	fmt.Printf("✓ Token '%s' revoked successfully\n", c.Name)
@@ -323,6 +422,20 @@ func (c *TokenCommand) revokeTokenDirect(brainDir string) error {
 
 	fmt.Printf("✓ Token '%s' revoked successfully\n", c.Name)
 	return nil
+}
+
+// parseAPIError extracts the error message from an API error response.
+// Returns an error that includes the message from the response body,
+// which allows isAuthError to detect 401 responses.
+func parseAPIError(context string, data []byte, status int) error {
+	var errResp struct {
+		Error   string `json:"error"`
+		Message string `json:"message"`
+	}
+	if json.Unmarshal(data, &errResp) == nil && errResp.Message != "" {
+		return fmt.Errorf("%s: %s", context, errResp.Message)
+	}
+	return fmt.Errorf("%s: API returned status %d", context, status)
 }
 
 // maskToken masks a token for display: shows first 8 chars + "..." + last 4 chars.

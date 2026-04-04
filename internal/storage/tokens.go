@@ -166,6 +166,20 @@ func (s *StorageLayer) DeleteTokenPermanent(ctx context.Context, name string) er
 	return nil
 }
 
+// CountActiveTokens returns the number of non-revoked tokens in the database.
+// Used by the bootstrap endpoint to determine if token creation should be allowed
+// without authentication (only when zero tokens exist).
+func (s *StorageLayer) CountActiveTokens(ctx context.Context) (int, error) {
+	var count int
+	err := s.db.QueryRowContext(ctx,
+		"SELECT COUNT(*) FROM api_tokens WHERE revoked_at IS NULL",
+	).Scan(&count)
+	if err != nil {
+		return 0, fmt.Errorf("count active tokens: %w", err)
+	}
+	return count, nil
+}
+
 // UpdateTokenLastUsed updates the last_used timestamp for a token.
 func (s *StorageLayer) UpdateTokenLastUsed(ctx context.Context, name string) error {
 	result, err := s.db.ExecContext(ctx,

@@ -376,3 +376,189 @@ func TestScheduleDetail_NoScrollWhenContentFits(t *testing.T) {
 		t.Error("should not show down-arrow when content fits viewport")
 	}
 }
+
+// =============================================================================
+// ScheduleDetail - New Scheduling Fields
+// =============================================================================
+
+func TestScheduleDetail_ShowsRunOnceAt(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "One-shot task", "", true)
+	task.Schedule = ""
+	task.RunOnceAt = "2099-06-15T14:30:00Z"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "Run Once At:") {
+		t.Errorf("expected 'Run Once At:' label in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2099-06-15T14:30:00Z") {
+		t.Errorf("expected run_once_at timestamp in view, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_RunOnceAtShowsCountdown(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "Future task", "", true)
+	task.Schedule = ""
+	task.RunOnceAt = "2099-01-15T10:00:00Z"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	// Should contain a countdown like "(in Xd Xh)"
+	if !strings.Contains(view, "(in ") {
+		t.Errorf("expected countdown in parentheses for future run_once_at, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_RunOnceAtShowsPassed(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "Past task", "", true)
+	task.Schedule = ""
+	task.RunOnceAt = "2020-01-01T00:00:00Z"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "(passed)") {
+		t.Errorf("expected '(passed)' for past run_once_at, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_ShowsTimezone(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "TZ task", "0 2 * * *", true)
+	task.Timezone = "America/New_York"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "Timezone:") {
+		t.Errorf("expected 'Timezone:' label in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "America/New_York") {
+		t.Errorf("expected timezone value in view, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_HidesTimezoneWhenEmpty(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "No TZ task", "0 2 * * *", true)
+	task.Timezone = ""
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if strings.Contains(view, "Timezone:") {
+		t.Errorf("should NOT show 'Timezone:' when empty, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_ShowsTimeWindow(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "Window task", "0 2 * * *", true)
+	task.StartsAt = "2099-01-01T00:00:00Z"
+	task.ExpiresAt = "2099-12-31T23:59:59Z"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "Window:") {
+		t.Errorf("expected 'Window:' label in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2099-01-01T00:00:00Z") {
+		t.Errorf("expected starts_at timestamp in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2099-12-31T23:59:59Z") {
+		t.Errorf("expected expires_at timestamp in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "→") {
+		t.Errorf("expected arrow '→' in time window, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_ShowsTimeWindowStartsOnly(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "Start only", "0 2 * * *", true)
+	task.StartsAt = "2099-06-01T00:00:00Z"
+	task.ExpiresAt = ""
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "Window:") {
+		t.Errorf("expected 'Window:' label in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2099-06-01T00:00:00Z") {
+		t.Errorf("expected starts_at timestamp in view, got:\n%s", view)
+	}
+	// expires_at side should show "open"
+	if !strings.Contains(view, "open") {
+		t.Errorf("expected 'open' for missing expires_at, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_HidesTimeWindowWhenBothEmpty(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "No window", "0 2 * * *", true)
+	task.StartsAt = ""
+	task.ExpiresAt = ""
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if strings.Contains(view, "Window:") {
+		t.Errorf("should NOT show 'Window:' when both starts_at and expires_at are empty, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_ShowsFeatureID(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "Feature task", "0 2 * * *", true)
+	task.FeatureID = "auth-v2"
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if !strings.Contains(view, "Feature:") {
+		t.Errorf("expected 'Feature:' label in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "auth-v2") {
+		t.Errorf("expected feature ID 'auth-v2' in view, got:\n%s", view)
+	}
+}
+
+func TestScheduleDetail_HidesFeatureIDWhenEmpty(t *testing.T) {
+	sd := NewScheduleDetail()
+	sd.SetSize(120, 30)
+
+	task := makeScheduledTaskForDetail("abc12def", "No feature", "0 2 * * *", true)
+	task.FeatureID = ""
+	sd.SetTask(task)
+
+	view := sd.View()
+
+	if strings.Contains(view, "Feature:") {
+		t.Errorf("should NOT show 'Feature:' when empty, got:\n%s", view)
+	}
+}

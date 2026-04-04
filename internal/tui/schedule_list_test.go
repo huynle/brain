@@ -65,6 +65,107 @@ func TestScheduleList_SetTasks_FiltersToScheduledOnly(t *testing.T) {
 	}
 }
 
+func TestScheduleList_SetTasks_IncludesRunOnceAtTasks(t *testing.T) {
+	sl := NewScheduleList()
+
+	tasks := []types.ResolvedTask{
+		makeScheduledTask("t1", "Cron task", "0 */6 * * *", true),
+		{
+			ID:              "t2",
+			Title:           "One-shot task",
+			Status:          "pending",
+			Priority:        "medium",
+			Classification:  "ready",
+			RunOnceAt:       "2099-01-15T10:00:00Z",
+			ScheduleEnabled: boolPtr(true),
+		},
+		{ID: "t3", Title: "Regular task", Priority: "medium"}, // No schedule, no run_once_at
+	}
+	sl.SetTasks(tasks)
+
+	view := sl.View(80, 20)
+
+	if !strings.Contains(view, "Cron task") {
+		t.Errorf("expected 'Cron task' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "One-shot task") {
+		t.Errorf("expected 'One-shot task' (has run_once_at) in view, got:\n%s", view)
+	}
+	if strings.Contains(view, "Regular task") {
+		t.Errorf("should NOT contain 'Regular task' (no schedule/run_once_at), got:\n%s", view)
+	}
+}
+
+func TestScheduleList_View_ShowsOneShotBadge(t *testing.T) {
+	sl := NewScheduleList()
+
+	tasks := []types.ResolvedTask{
+		{
+			ID:              "t1",
+			Title:           "One-shot task",
+			Status:          "pending",
+			Priority:        "medium",
+			Classification:  "ready",
+			RunOnceAt:       "2099-01-15T10:00:00Z",
+			ScheduleEnabled: boolPtr(true),
+		},
+	}
+	sl.SetTasks(tasks)
+
+	view := sl.View(80, 20)
+
+	if !strings.Contains(view, "[one-shot]") {
+		t.Errorf("expected '[one-shot]' badge for run_once_at task, got:\n%s", view)
+	}
+}
+
+func TestScheduleList_View_ShowsCountdownForOneShot(t *testing.T) {
+	sl := NewScheduleList()
+
+	tasks := []types.ResolvedTask{
+		{
+			ID:              "t1",
+			Title:           "Future task",
+			Status:          "pending",
+			Priority:        "medium",
+			Classification:  "ready",
+			RunOnceAt:       "2099-01-15T10:00:00Z",
+			ScheduleEnabled: boolPtr(true),
+		},
+	}
+	sl.SetTasks(tasks)
+
+	view := sl.View(80, 20)
+
+	// Should show a countdown like "in Xd Xh" for a far-future date
+	if !strings.Contains(view, "in ") {
+		t.Errorf("expected countdown 'in ...' for future run_once_at, got:\n%s", view)
+	}
+}
+
+func TestScheduleList_View_ShowsPassedForPastOneShot(t *testing.T) {
+	sl := NewScheduleList()
+
+	tasks := []types.ResolvedTask{
+		{
+			ID:              "t1",
+			Title:           "Past task",
+			Status:          "pending",
+			Priority:        "medium",
+			Classification:  "ready",
+			RunOnceAt:       "2020-01-01T00:00:00Z",
+			ScheduleEnabled: boolPtr(true),
+		},
+	}
+	sl.SetTasks(tasks)
+
+	view := sl.View(80, 20)
+
+	if !strings.Contains(view, "passed") {
+		t.Errorf("expected 'passed' for past run_once_at, got:\n%s", view)
+	}
+}
+
 // =============================================================================
 // ScheduleList - Navigation
 // =============================================================================

@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/types"
@@ -103,6 +104,24 @@ func (sd *ScheduleDetail) renderSchedule() string {
 		lines = append(lines, fmt.Sprintf("Schedule: %s", task.Schedule))
 	}
 
+	// Run-once-at with countdown
+	if task.RunOnceAt != "" {
+		countdown := formatRunOnceAt(task.RunOnceAt)
+		runOnceLabel := fmt.Sprintf("Run Once At: %s", task.RunOnceAt)
+		runOnceLabel += DimStyle.Render(fmt.Sprintf("  (%s)", countdown))
+		lines = append(lines, runOnceLabel)
+	}
+
+	// Timezone
+	if task.Timezone != "" {
+		lines = append(lines, fmt.Sprintf("Timezone: %s", task.Timezone))
+	}
+
+	// Time window: starts_at / expires_at
+	if task.StartsAt != "" || task.ExpiresAt != "" {
+		lines = append(lines, sd.renderTimeWindow(task.StartsAt, task.ExpiresAt))
+	}
+
 	// Enabled
 	if task.ScheduleEnabled != nil {
 		if *task.ScheduleEnabled {
@@ -130,6 +149,11 @@ func (sd *ScheduleDetail) renderSchedule() string {
 	if task.Priority != "" {
 		priorityLine := fmt.Sprintf("Priority: %s", PriorityStyle(task.Priority).Render(task.Priority))
 		lines = append(lines, priorityLine)
+	}
+
+	// Feature info
+	if task.FeatureID != "" {
+		lines = append(lines, fmt.Sprintf("Feature: %s", lipgloss.NewStyle().Foreground(ColorMagenta).Render(task.FeatureID)))
 	}
 
 	// Project
@@ -212,4 +236,33 @@ func (sd *ScheduleDetail) renderSchedule() string {
 	result = append(result, headerLine)
 	result = append(result, lines...)
 	return strings.Join(result, "\n")
+}
+
+// renderTimeWindow formats the starts_at/expires_at time window display.
+func (sd *ScheduleDetail) renderTimeWindow(startsAt, expiresAt string) string {
+	parts := []string{"Window:"}
+
+	if startsAt != "" {
+		startLabel := startsAt
+		if t, err := time.Parse(time.RFC3339, startsAt); err == nil {
+			startLabel += DimStyle.Render(fmt.Sprintf(" (%s)", formatCountdown(t)))
+		}
+		parts = append(parts, startLabel)
+	} else {
+		parts = append(parts, DimStyle.Render("open"))
+	}
+
+	parts = append(parts, "→")
+
+	if expiresAt != "" {
+		expiresLabel := expiresAt
+		if t, err := time.Parse(time.RFC3339, expiresAt); err == nil {
+			expiresLabel += DimStyle.Render(fmt.Sprintf(" (%s)", formatCountdown(t)))
+		}
+		parts = append(parts, expiresLabel)
+	} else {
+		parts = append(parts, DimStyle.Render("open"))
+	}
+
+	return strings.Join(parts, " ")
 }

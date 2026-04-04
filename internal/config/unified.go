@@ -74,17 +74,33 @@ type UnifiedConfig struct {
 
 // ServerConfig holds API server configuration.
 type ServerConfig struct {
-	Port       int    `yaml:"port"`
-	Host       string `yaml:"host"`
-	BrainDir   string `yaml:"brain_dir"`
-	EnableAuth bool   `yaml:"enable_auth"`
-	CORSOrigin string `yaml:"cors_origin"`
-	LogLevel   string `yaml:"log_level"`
-	OAuthPIN   string `yaml:"oauth_pin"`
-	TLSCert    string `yaml:"tls_cert"`
-	TLSKey     string `yaml:"tls_key"`
-	PIDFile    string `yaml:"pid_file"`
-	LogFile    string `yaml:"log_file"`
+	Port         int                `yaml:"port"`
+	Host         string             `yaml:"host"`
+	BrainDir     string             `yaml:"brain_dir"`
+	EnableAuth   bool               `yaml:"enable_auth"`
+	CORSOrigin   string             `yaml:"cors_origin"`
+	LogLevel     string             `yaml:"log_level"`
+	OAuthPIN     string             `yaml:"oauth_pin"`
+	TLSCert      string             `yaml:"tls_cert"`
+	TLSKey       string             `yaml:"tls_key"`
+	PIDFile      string             `yaml:"pid_file"`
+	LogFile      string             `yaml:"log_file"`
+	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
+}
+
+// TaskDefaultsConfig holds server-side default values for task execution.
+// These defaults are applied when a task does not specify its own values.
+type TaskDefaultsConfig struct {
+	Agent              string `yaml:"agent"`
+	Model              string `yaml:"model"`
+	ExecutionMode      string `yaml:"execution_mode"`
+	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty"`
+	MergePolicy        string `yaml:"merge_policy"`
+	MergeStrategy      string `yaml:"merge_strategy"`
+	MergeTargetBranch  string `yaml:"merge_target_branch"`
+	RemoteBranchPolicy string `yaml:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool  `yaml:"open_pr_before_merge,omitempty"`
+	TargetWorkdir      string `yaml:"target_workdir"`
 }
 
 // RunnerConfig holds task runner configuration.

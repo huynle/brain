@@ -485,6 +485,8 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+		// Thread task defaults from unified config
+		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -516,6 +518,13 @@ func defaultConfig() *UnifiedConfig {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
+	}
+	// Task defaults env var overrides
+	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
+		cfg.Server.TaskDefaults.Agent = v
+	}
+	if v := os.Getenv("BRAIN_DEFAULT_MODEL"); v != "" {
+		cfg.Server.TaskDefaults.Model = v
 	}
 
 	// Load runner config from config file + env vars
@@ -556,6 +565,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
+	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 

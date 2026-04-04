@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
 )
 
@@ -225,8 +226,9 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile string
-		LogFile string
+		PIDFile      string
+		LogFile      string
+		TaskDefaults uconfig.TaskDefaultsConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

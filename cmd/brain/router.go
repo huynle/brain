@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
@@ -489,6 +490,32 @@ func defaultConfig() *UnifiedConfig {
 		if len(ucfg.TUI.KeyBindings) > 0 {
 			cfg.TUI.KeyBindings = ucfg.TUI.KeyBindings
 		}
+	}
+
+	// Layer 3: Environment variable overrides (highest priority, for Docker deployments)
+	if v := os.Getenv("BRAIN_DIR"); v != "" {
+		cfg.Server.BrainDir = v
+	}
+	if v := os.Getenv("PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Port = n
+		}
+	}
+	if v := os.Getenv("HOST"); v != "" {
+		cfg.Server.Host = v
+	}
+	if v := os.Getenv("ENABLE_AUTH"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.EnableAuth = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("CORS_ORIGIN"); v != "" {
+		cfg.Server.CORSOrigin = v
+	}
+	if v := os.Getenv("LOG_LEVEL"); v != "" {
+		cfg.Server.LogLevel = v
+	}
+	if v := os.Getenv("OAUTH_PIN"); v != "" {
+		cfg.Server.OAuthPIN = v
 	}
 
 	// Load runner config from config file + env vars

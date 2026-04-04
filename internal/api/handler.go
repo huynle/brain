@@ -9,6 +9,7 @@ type Handler struct {
 	runner  RunnerService
 	monitor MonitorService
 	tokens  TokenService
+	events  EventService
 	hub     *realtime.Hub
 }
 
@@ -42,6 +43,13 @@ func WithRunnerService(rs RunnerService) HandlerOption {
 func WithMonitorService(ms MonitorService) HandlerOption {
 	return func(h *Handler) {
 		h.monitor = ms
+	}
+}
+
+// WithEventService sets the EventService on the Handler.
+func WithEventService(es EventService) HandlerOption {
+	return func(h *Handler) {
+		h.events = es
 	}
 }
 

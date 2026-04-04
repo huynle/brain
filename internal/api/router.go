@@ -198,6 +198,19 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				})
 			})
 
+			// ─── Events ──────────────────────────────────────────
+			r.Route("/events", func(r chi.Router) {
+				if o.handler != nil && o.handler.events != nil {
+					r.Post("/", o.handler.HandleIngestEvents)
+					r.Get("/stream", o.handler.HandleEventStream)
+					r.Get("/recent", o.handler.HandleRecentEvents)
+				} else {
+					r.Post("/", notImplemented)
+					r.Get("/stream", notImplemented)
+					r.Get("/recent", notImplemented)
+				}
+			})
+
 			// ─── Tokens ──────────────────────────────────────────
 			r.Route("/tokens", func(r chi.Router) {
 				if o.handler != nil && o.handler.tokens != nil {

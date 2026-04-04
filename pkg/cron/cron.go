@@ -159,10 +159,9 @@ func parseFieldPart(part string, lim fieldLimits, fs *fieldSet) error {
 }
 
 // Matches checks if a given time matches the cron schedule.
-// The time is evaluated in UTC.
+// The time is evaluated in its own location (use t.In(loc) to control timezone).
+// For backward compatibility, UTC times behave as before.
 func (s *Schedule) Matches(t time.Time) bool {
-	t = t.UTC()
-
 	minute := t.Minute()
 	hour := t.Hour()
 	day := t.Day()
@@ -178,9 +177,10 @@ func (s *Schedule) Matches(t time.Time) bool {
 
 // NextAfter returns the next time after t that matches the schedule.
 // Searches up to 1 year ahead. Returns zero time if no match found.
-// The returned time is in UTC with seconds/nanoseconds zeroed.
+// The returned time preserves the location of the input time.
+// Seconds and nanoseconds are zeroed.
 func (s *Schedule) NextAfter(t time.Time) time.Time {
-	t = t.UTC()
+	loc := t.Location()
 
 	// Start from the next minute
 	candidate := t.Truncate(time.Minute).Add(time.Minute)
@@ -193,7 +193,7 @@ func (s *Schedule) NextAfter(t time.Time) time.Time {
 		}
 
 		// Smart advancement: skip ahead when possible
-		candidate = s.advanceCandidate(candidate)
+		candidate = s.advanceCandidate(candidate, loc)
 	}
 
 	return time.Time{}
@@ -201,20 +201,20 @@ func (s *Schedule) NextAfter(t time.Time) time.Time {
 
 // advanceCandidate tries to skip ahead intelligently rather than
 // incrementing one minute at a time.
-func (s *Schedule) advanceCandidate(t time.Time) time.Time {
+func (s *Schedule) advanceCandidate(t time.Time, loc *time.Location) time.Time {
 	// Check month first (biggest skip)
 	month := int(t.Month())
 	if !s.fields[3].has(month) {
 		// Skip to next valid month
 		for m := month + 1; m <= 12; m++ {
 			if s.fields[3].has(m) {
-				return time.Date(t.Year(), time.Month(m), 1, 0, 0, 0, 0, time.UTC)
+				return time.Date(t.Year(), time.Month(m), 1, 0, 0, 0, 0, loc)
 			}
 		}
 		// Wrap to next year
 		for m := 1; m <= 12; m++ {
 			if s.fields[3].has(m) {
-				return time.Date(t.Year()+1, time.Month(m), 1, 0, 0, 0, 0, time.UTC)
+				return time.Date(t.Year()+1, time.Month(m), 1, 0, 0, 0, 0, loc)
 			}
 		}
 	}
@@ -225,7 +225,7 @@ func (s *Schedule) advanceCandidate(t time.Time) time.Time {
 	if !s.fields[2].has(day) || !s.fields[4].has(weekday) {
 		// Skip to next day
 		next := t.AddDate(0, 0, 1)
-		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, time.UTC)
+		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
 	}
 
 	// Check hour
@@ -234,12 +234,12 @@ func (s *Schedule) advanceCandidate(t time.Time) time.Time {
 		// Skip to next valid hour today
 		for h := hour + 1; h <= 23; h++ {
 			if s.fields[1].has(h) {
-				return time.Date(t.Year(), t.Month(), t.Day(), h, 0, 0, 0, time.UTC)
+				return time.Date(t.Year(), t.Month(), t.Day(), h, 0, 0, 0, loc)
 			}
 		}
 		// Wrap to next day
 		next := t.AddDate(0, 0, 1)
-		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, time.UTC)
+		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
 	}
 
 	// Minute doesn't match — just advance by 1 minute

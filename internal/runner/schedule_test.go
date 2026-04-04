@@ -17,7 +17,7 @@ func TestShouldTrigger_NextRunPast(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 	nextRun := "2026-03-22T10:15:00Z" // 15 minutes ago
 
-	if !shouldTrigger("*/15 * * * *", nextRun, now) {
+	if !shouldTrigger("*/15 * * * *", nextRun, now, "") {
 		t.Error("should trigger when next_run is in the past")
 	}
 }
@@ -26,7 +26,7 @@ func TestShouldTrigger_NextRunFuture(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 	nextRun := "2026-03-22T10:45:00Z" // 15 minutes from now
 
-	if shouldTrigger("*/15 * * * *", nextRun, now) {
+	if shouldTrigger("*/15 * * * *", nextRun, now, "") {
 		t.Error("should NOT trigger when next_run is in the future")
 	}
 }
@@ -35,7 +35,7 @@ func TestShouldTrigger_NoNextRun_CronMatches(t *testing.T) {
 	// At 10:30, */15 matches (30 is divisible by 15)
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if !shouldTrigger("*/15 * * * *", "", now) {
+	if !shouldTrigger("*/15 * * * *", "", now, "") {
 		t.Error("should trigger when no next_run and cron matches current time")
 	}
 }
@@ -44,7 +44,7 @@ func TestShouldTrigger_NoNextRun_CronDoesNotMatch(t *testing.T) {
 	// At 10:31, */15 does NOT match
 	now := time.Date(2026, 3, 22, 10, 31, 0, 0, time.UTC)
 
-	if shouldTrigger("*/15 * * * *", "", now) {
+	if shouldTrigger("*/15 * * * *", "", now, "") {
 		t.Error("should NOT trigger when no next_run and cron does not match")
 	}
 }
@@ -52,7 +52,7 @@ func TestShouldTrigger_NoNextRun_CronDoesNotMatch(t *testing.T) {
 func TestShouldTrigger_NoSchedule(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if shouldTrigger("", "", now) {
+	if shouldTrigger("", "", now, "") {
 		t.Error("should NOT trigger when schedule is empty")
 	}
 }
@@ -60,7 +60,7 @@ func TestShouldTrigger_NoSchedule(t *testing.T) {
 func TestShouldTrigger_InvalidSchedule(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if shouldTrigger("invalid cron", "", now) {
+	if shouldTrigger("invalid cron", "", now, "") {
 		t.Error("should NOT trigger when schedule is invalid")
 	}
 }
@@ -69,8 +69,155 @@ func TestShouldTrigger_InvalidNextRun(t *testing.T) {
 	// Invalid next_run should fall back to cron matching
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if !shouldTrigger("*/15 * * * *", "not-a-date", now) {
+	if !shouldTrigger("*/15 * * * *", "not-a-date", now, "") {
 		t.Error("should fall back to cron matching when next_run is invalid")
+	}
+}
+
+// =============================================================================
+// Timezone-aware shouldTrigger Tests
+// =============================================================================
+
+func TestShouldTrigger_Timezone_ConvertsNowBeforeMatching(t *testing.T) {
+	// It's 10:30 UTC, which is 19:30 in Asia/Tokyo (UTC+9).
+	// Cron schedule "30 19 * * *" means 19:30 in the task's timezone.
+	// Should trigger because now in Tokyo time is 19:30.
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 19 * * *", "", now, "Asia/Tokyo") {
+		t.Error("should trigger when now converted to task timezone matches cron")
+	}
+}
+
+func TestShouldTrigger_Timezone_DoesNotMatchUTC(t *testing.T) {
+	// It's 10:30 UTC, cron "30 10 * * *" would match UTC but NOT Asia/Tokyo (19:30).
+	// With timezone=Asia/Tokyo, we match against 19:30 not 10:30.
+	// "30 10 * * *" should NOT match because in Tokyo it's 19:30.
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if shouldTrigger("30 10 * * *", "", now, "Asia/Tokyo") {
+		t.Error("should NOT trigger: cron 30 10 matches UTC but not Tokyo time (19:30)")
+	}
+}
+
+func TestShouldTrigger_Timezone_EmptyFallsBackToUTC(t *testing.T) {
+	// Empty timezone should behave like UTC (backward compatible)
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 10 * * *", "", now, "") {
+		t.Error("empty timezone should fall back to UTC matching")
+	}
+}
+
+func TestShouldTrigger_Timezone_InvalidFallsBackToUTC(t *testing.T) {
+	// Invalid timezone should fall back to UTC
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 10 * * *", "", now, "Invalid/Timezone") {
+		t.Error("invalid timezone should fall back to UTC matching")
+	}
+}
+
+func TestShouldTrigger_Timezone_NextRunStillUsedWhenSet(t *testing.T) {
+	// When next_run is set and valid, timezone doesn't affect next_run comparison
+	// (next_run is already stored as UTC)
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	nextRun := "2026-03-22T10:15:00Z" // past
+
+	if !shouldTrigger("*/15 * * * *", nextRun, now, "America/New_York") {
+		t.Error("should still use next_run comparison regardless of timezone")
+	}
+}
+
+// =============================================================================
+// Timezone-aware getNextRun Tests
+// =============================================================================
+
+func TestGetNextRun_Timezone_ComputesInLocalThenReturnsUTC(t *testing.T) {
+	// after is 10:30 UTC = 19:30 Tokyo
+	// Schedule "0 20 * * *" means 20:00 in Tokyo = 11:00 UTC
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	next, err := getNextRun("0 20 * * *", after, "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	// Next 20:00 Tokyo after 19:30 Tokyo = today 20:00 Tokyo = 11:00 UTC
+	expected := time.Date(2026, 3, 22, 11, 0, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun = %v, want %v", next, expected)
+	}
+}
+
+func TestGetNextRun_Timezone_EmptyFallsBackToUTC(t *testing.T) {
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	next, err := getNextRun("*/15 * * * *", after, "")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	expected := time.Date(2026, 3, 22, 10, 45, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun = %v, want %v", next, expected)
+	}
+}
+
+func TestGetNextRun_Timezone_InvalidFallsBackToUTC(t *testing.T) {
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	next, err := getNextRun("*/15 * * * *", after, "Invalid/Zone")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	expected := time.Date(2026, 3, 22, 10, 45, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun with invalid timezone = %v, want %v (UTC fallback)", next, expected)
+	}
+}
+
+// =============================================================================
+// parseTimeInZone Tests
+// =============================================================================
+
+func TestParseTimeInZone_ValidIANA(t *testing.T) {
+	got, err := parseTimeInZone("2026-03-22T10:30:00Z", "America/New_York")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	// Should parse the time and return it in the New York location
+	ny, _ := time.LoadLocation("America/New_York")
+	expected := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC).In(ny)
+	if !got.Equal(expected) {
+		t.Errorf("parseTimeInZone = %v, want %v", got, expected)
+	}
+}
+
+func TestParseTimeInZone_EmptyTimezone(t *testing.T) {
+	got, err := parseTimeInZone("2026-03-22T10:30:00Z", "")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	expected := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	if !got.Equal(expected) {
+		t.Errorf("parseTimeInZone empty tz = %v, want %v", got, expected)
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("parseTimeInZone empty tz location = %v, want UTC", got.Location())
+	}
+}
+
+func TestParseTimeInZone_InvalidTimezone(t *testing.T) {
+	_, err := parseTimeInZone("2026-03-22T10:30:00Z", "Not/A/Zone")
+	if err == nil {
+		t.Error("parseTimeInZone should return error for invalid timezone")
+	}
+}
+
+func TestParseTimeInZone_InvalidTimeString(t *testing.T) {
+	_, err := parseTimeInZone("not-a-time", "America/New_York")
+	if err == nil {
+		t.Error("parseTimeInZone should return error for invalid time string")
 	}
 }
 
@@ -80,7 +227,7 @@ func TestShouldTrigger_InvalidNextRun(t *testing.T) {
 
 func TestGetNextRun(t *testing.T) {
 	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	next, err := getNextRun("*/15 * * * *", after)
+	next, err := getNextRun("*/15 * * * *", after, "")
 	if err != nil {
 		t.Fatalf("getNextRun error: %v", err)
 	}
@@ -92,7 +239,7 @@ func TestGetNextRun(t *testing.T) {
 }
 
 func TestGetNextRun_InvalidSchedule(t *testing.T) {
-	_, err := getNextRun("invalid", time.Now())
+	_, err := getNextRun("invalid", time.Now(), "")
 	if err == nil {
 		t.Error("getNextRun should return error for invalid schedule")
 	}

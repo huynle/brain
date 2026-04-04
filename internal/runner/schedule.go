@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"time"
+	_ "time/tzdata" // Embedded IANA timezone database as safety net
 
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/cron"
@@ -19,9 +20,24 @@ var cronEligibleStatuses = map[string]bool{
 	"blocked":   true,
 }
 
+// loadTimezone loads an IANA timezone location.
+// Returns UTC if timezone is empty or invalid.
+func loadTimezone(timezone string) *time.Location {
+	if timezone == "" {
+		return time.UTC
+	}
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.UTC
+	}
+	return loc
+}
+
 // shouldTrigger checks if a scheduled task should be triggered now.
 // Checks next_run first (is now >= next_run?), falls back to live cron matching.
-func shouldTrigger(schedule string, nextRun string, now time.Time) bool {
+// The timezone parameter specifies the IANA timezone for cron evaluation.
+// Empty or invalid timezone falls back to UTC.
+func shouldTrigger(schedule string, nextRun string, now time.Time, timezone string) bool {
 	if schedule == "" {
 		return false
 	}
@@ -32,7 +48,7 @@ func shouldTrigger(schedule string, nextRun string, now time.Time) bool {
 		return false
 	}
 
-	// If next_run is set and valid, use it
+	// If next_run is set and valid, use it (next_run is already stored as UTC)
 	if nextRun != "" {
 		nextRunTime, err := time.Parse(time.RFC3339, nextRun)
 		if err == nil {
@@ -42,17 +58,46 @@ func shouldTrigger(schedule string, nextRun string, now time.Time) bool {
 		// Invalid next_run: fall through to cron matching
 	}
 
-	// Fallback: live cron matching against current time
-	return sched.Matches(now.UTC())
+	// Convert now to the task's timezone for cron matching
+	loc := loadTimezone(timezone)
+	return sched.Matches(now.In(loc))
 }
 
 // getNextRun computes the next trigger time from a cron expression.
-func getNextRun(schedule string, after time.Time) (time.Time, error) {
+// The timezone parameter specifies the IANA timezone for cron evaluation.
+// Computation is done in the task's timezone, then the result is converted to UTC.
+// Empty or invalid timezone falls back to UTC.
+func getNextRun(schedule string, after time.Time, timezone string) (time.Time, error) {
 	sched, err := cron.Parse(schedule)
 	if err != nil {
 		return time.Time{}, err
 	}
-	return sched.NextAfter(after.UTC()), nil
+
+	loc := loadTimezone(timezone)
+	// Convert after to the task's timezone, find next match, convert back to UTC
+	nextLocal := sched.NextAfter(after.In(loc))
+	return nextLocal.UTC(), nil
+}
+
+// parseTimeInZone parses an RFC3339 time string and converts it to the specified timezone.
+// Returns the time in the given timezone's location.
+// Returns error if the time string is invalid or the timezone is unknown.
+func parseTimeInZone(timeStr, timezone string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, timeStr)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid time %q: %w", timeStr, err)
+	}
+
+	if timezone == "" {
+		return t.UTC(), nil
+	}
+
+	loc, err := time.LoadLocation(timezone)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid timezone %q: %w", timezone, err)
+	}
+
+	return t.In(loc), nil
 }
 
 // checkScheduledTasks evaluates cron expressions on scheduled tasks
@@ -127,7 +172,7 @@ func (tr *TaskRunner) checkProjectScheduledTasks(ctx context.Context, projectID 
 		}
 
 		// Check if the schedule triggers now
-		if !shouldTrigger(task.Schedule, task.NextRun, now) {
+		if !shouldTrigger(task.Schedule, task.NextRun, now, task.Timezone) {
 			continue
 		}
 
@@ -215,7 +260,7 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 	runs = append(runs, newRun)
 
 	// Update metadata: runs array + next_run
-	nextRun, err := getNextRun(task.Schedule, now)
+	nextRun, err := getNextRun(task.Schedule, now, task.Timezone)
 	if err != nil {
 		tr.logger.Printf("cron: failed to compute next_run for %s: %v", task.ID, err)
 		return

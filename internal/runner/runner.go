@@ -243,6 +243,9 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 			logger.Printf("WARNING: failed to initialize hook dispatcher: %v", err)
 		} else {
 			tr.hookDispatcher = hd
+			// Register an event handler that dispatches hooks for feature lifecycle events.
+			// Feature events are emitted by the FeatureTracker and forwarded to hooks here.
+			tr.OnEvent(tr.handleFeatureHookEvents)
 		}
 	}
 
@@ -1284,6 +1287,23 @@ func (tr *TaskRunner) emitPollComplete() {
 		Type:         EventPollComplete,
 		RunningCount: tr.processMgr.RunningCount(),
 	})
+}
+
+// handleFeatureHookEvents dispatches hooks for feature lifecycle events.
+// Registered as an OnEvent handler when a HookDispatcher is available.
+// Feature events are emitted by the FeatureTracker; this handler forwards
+// them to the hook dispatcher as post-hooks (fire-and-forget).
+func (tr *TaskRunner) handleFeatureHookEvents(event RunnerEvent) {
+	if tr.hookDispatcher == nil {
+		return
+	}
+
+	switch event.Type {
+	case EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress:
+		// All feature events are dispatched as post-hooks (fire-and-forget).
+		// Feature events are derived from task events and cannot be blocked.
+		tr.hookDispatcher.DispatchPost(event.ToEvent())
+	}
 }
 
 // =============================================================================

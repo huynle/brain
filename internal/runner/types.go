@@ -37,6 +37,15 @@ type RunnerConfig struct {
 	// When empty, all features are eligible. Supports multiple feature IDs.
 	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
 	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
+
+	// HooksDir is the directory containing hook scripts (pre-*/post-* executables).
+	// Default: ~/.config/brain/hooks
+	HooksDir string `yaml:"hooks_dir" json:"hooks_dir"`
+
+	// HookTimeout is the maximum duration in seconds for pre-hook execution.
+	// Post-hooks are fire-and-forget and not subject to this timeout.
+	// Default: 30
+	HookTimeout int `yaml:"hook_timeout" json:"hook_timeout"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.

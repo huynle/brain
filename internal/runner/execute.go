@@ -35,6 +35,22 @@ func (tr *TaskRunner) ExecuteTask(ctx context.Context, task *types.ResolvedTask,
 // resumeTask spawns an executor for an already in_progress task without
 // re-claiming or updating status. Used when resuming orphaned tasks.
 func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, projectID string) error {
+	// Pre-task-start hook for resumed tasks.
+	// If the hook aborts, we don't reset status (task is already in_progress from
+	// a previous session) — just skip spawning and return the error.
+	if tr.hookDispatcher != nil {
+		evt := types.NewEvent(types.EventTaskStarted, types.EventSourceRunner)
+		evt.RunnerID = tr.runnerID
+		evt.TaskID = task.ID
+		evt.TaskPath = task.Path
+		evt.TaskTitle = task.Title
+		evt.ProjectID = projectID
+		evt.FeatureID = task.FeatureID
+		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
+			return fmt.Errorf("pre-task-start hook (resume): %w", err)
+		}
+	}
+
 	// Resolve workdir (may create git worktree)
 	workdir, err := tr.executor.ResolveWorkdir(task)
 	if err != nil {
@@ -76,10 +92,17 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 	}
 
 	// Emit event
-	tr.emitEvent(RunnerEvent{
+	startedEvt := RunnerEvent{
 		Type: EventTaskStarted,
 		Task: &runningTask,
-	})
+	}
+	tr.emitEvent(startedEvt)
+
+	// Post-task-start hook: fire-and-forget after process is tracked.
+	if tr.hookDispatcher != nil {
+		startedEvt.RunnerID = tr.runnerID
+		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
+	}
 
 	// Discover opencode session ID in background and save to task entry
 	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)

@@ -110,6 +110,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
+		HooksDir:        getEnvOrDefault("RUNNER_HOOKS_DIR", firstNonEmpty(fileCfg.HooksDir, filepath.Join(homeDir, ".config", "brain", "hooks"))),
+		HookTimeout:     getEnvIntOrDefault("RUNNER_HOOK_TIMEOUT", firstNonZero(fileCfg.HookTimeout, 30)),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {

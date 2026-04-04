@@ -34,7 +34,8 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 	s := newTestStorage(t)
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
-		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens"}
+		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
+		"webhooks", "webhook_deliveries"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string

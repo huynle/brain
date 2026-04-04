@@ -36,7 +36,7 @@ type ExecutorRegistry struct {
 	config    RunnerConfig
 }
 
-// NewExecutorRegistry creates a registry pre-populated with an OpenCode executor.
+// NewExecutorRegistry creates a registry pre-populated with OpenCode and Pi executors.
 func NewExecutorRegistry(cfg RunnerConfig) *ExecutorRegistry {
 	reg := &ExecutorRegistry{
 		executors: make(map[string]TaskExecutor),
@@ -44,6 +44,8 @@ func NewExecutorRegistry(cfg RunnerConfig) *ExecutorRegistry {
 	}
 	// Always register the opencode executor
 	reg.executors["opencode"] = NewExecutor(cfg)
+	// Always register the pi executor
+	reg.executors["pi"] = NewPiExecutor(cfg)
 	return reg
 }
 

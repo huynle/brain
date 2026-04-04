@@ -179,7 +179,7 @@ func TestExecutorRegistry_ResolveForTask_UnregisteredExecutor(t *testing.T) {
 	cfg := testExecutorConfig()
 	reg := NewExecutorRegistry(cfg)
 
-	task := &types.ResolvedTask{Executor: "pi"} // pi not registered
+	task := &types.ResolvedTask{Executor: "unknown-executor"} // not registered
 	_, _, err := reg.ResolveForTask(task)
 	if err == nil {
 		t.Error("expected error for unregistered executor")

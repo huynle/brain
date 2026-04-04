@@ -507,6 +507,7 @@ type ResolvedTask struct {
 	Agent               string            `json:"agent"`
 	Model               string            `json:"model"`
 	Executor            string            `json:"executor,omitempty"`
+	Extensions          []string          `json:"extensions,omitempty"`
 	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`

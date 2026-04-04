@@ -1609,6 +1609,330 @@ func TestExtractGeneratedDependentTasks(t *testing.T) {
 	}
 }
 
+// newTestTaskServiceWithDefaults creates a TaskServiceImpl with pre-configured TaskDefaults.
+func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.StorageLayer, string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+
+	store, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatalf("NewWithDB failed: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	brainDir := t.TempDir()
+	cfg := &config.Config{
+		BrainDir:     brainDir,
+		TaskDefaults: defaults,
+	}
+
+	svc := NewTaskService(cfg, store)
+	return svc, store, brainDir
+}
+
+// ---------------------------------------------------------------------------
+// applyTaskDefaults
+// ---------------------------------------------------------------------------
+
+func TestApplyTaskDefaults_FillsEmptyStringFields(t *testing.T) {
+	trueVal := true
+	defaults := config.TaskDefaultsConfig{
+		Agent:              "tdd-dev",
+		Model:              "claude-sonnet-4-20250514",
+		ExecutionMode:      "worktree",
+		CompleteOnIdle:     &trueVal,
+		MergePolicy:        "auto_merge",
+		MergeStrategy:      "squash",
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  &trueVal,
+		TargetWorkdir:      "/default/workdir",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	// Insert a task with NO execution fields set
+	insertTaskNote(t, store, "empty111", "Empty Task", "pending", "high", "proj", map[string]interface{}{})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.Agent != "tdd-dev" {
+		t.Errorf("Agent = %q, want %q", task.Agent, "tdd-dev")
+	}
+	if task.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Model = %q, want %q", task.Model, "claude-sonnet-4-20250514")
+	}
+	if task.ExecutionMode != "worktree" {
+		t.Errorf("ExecutionMode = %q, want %q", task.ExecutionMode, "worktree")
+	}
+	if task.CompleteOnIdle == nil || !*task.CompleteOnIdle {
+		t.Error("CompleteOnIdle should be true from defaults")
+	}
+	if task.MergePolicy != "auto_merge" {
+		t.Errorf("MergePolicy = %q, want %q", task.MergePolicy, "auto_merge")
+	}
+	if task.MergeStrategy != "squash" {
+		t.Errorf("MergeStrategy = %q, want %q", task.MergeStrategy, "squash")
+	}
+	if task.MergeTargetBranch != "main" {
+		t.Errorf("MergeTargetBranch = %q, want %q", task.MergeTargetBranch, "main")
+	}
+	if task.RemoteBranchPolicy != "delete" {
+		t.Errorf("RemoteBranchPolicy = %q, want %q", task.RemoteBranchPolicy, "delete")
+	}
+	if task.OpenPRBeforeMerge == nil || !*task.OpenPRBeforeMerge {
+		t.Error("OpenPRBeforeMerge should be true from defaults")
+	}
+	if task.TargetWorkdir != "/default/workdir" {
+		t.Errorf("TargetWorkdir = %q, want %q", task.TargetWorkdir, "/default/workdir")
+	}
+}
+
+func TestApplyTaskDefaults_TaskValuesWin(t *testing.T) {
+	trueVal := true
+	defaults := config.TaskDefaultsConfig{
+		Agent:              "tdd-dev",
+		Model:              "claude-sonnet-4-20250514",
+		ExecutionMode:      "worktree",
+		CompleteOnIdle:     &trueVal,
+		MergePolicy:        "auto_merge",
+		MergeStrategy:      "squash",
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  &trueVal,
+		TargetWorkdir:      "/default/workdir",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	// Insert a task with ALL fields explicitly set — these should win
+	falseVal := false
+	insertTaskNote(t, store, "full1111", "Full Task", "pending", "high", "proj", map[string]interface{}{
+		"agent":                "explore",
+		"model":                "claude-opus-4-20250514",
+		"execution_mode":       "current_branch",
+		"complete_on_idle":     falseVal,
+		"merge_policy":         "prompt_only",
+		"merge_strategy":       "rebase",
+		"merge_target_branch":  "develop",
+		"remote_branch_policy": "keep",
+		"open_pr_before_merge": falseVal,
+		"target_workdir":       "/task/specific/dir",
+	})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.Agent != "explore" {
+		t.Errorf("Agent = %q, want %q (task value should win)", task.Agent, "explore")
+	}
+	if task.Model != "claude-opus-4-20250514" {
+		t.Errorf("Model = %q, want %q (task value should win)", task.Model, "claude-opus-4-20250514")
+	}
+	if task.ExecutionMode != "current_branch" {
+		t.Errorf("ExecutionMode = %q, want %q (task value should win)", task.ExecutionMode, "current_branch")
+	}
+	if task.CompleteOnIdle == nil || *task.CompleteOnIdle {
+		t.Error("CompleteOnIdle should be false (task value should win)")
+	}
+	if task.MergePolicy != "prompt_only" {
+		t.Errorf("MergePolicy = %q, want %q (task value should win)", task.MergePolicy, "prompt_only")
+	}
+	if task.MergeStrategy != "rebase" {
+		t.Errorf("MergeStrategy = %q, want %q (task value should win)", task.MergeStrategy, "rebase")
+	}
+	if task.MergeTargetBranch != "develop" {
+		t.Errorf("MergeTargetBranch = %q, want %q (task value should win)", task.MergeTargetBranch, "develop")
+	}
+	if task.RemoteBranchPolicy != "keep" {
+		t.Errorf("RemoteBranchPolicy = %q, want %q (task value should win)", task.RemoteBranchPolicy, "keep")
+	}
+	if task.OpenPRBeforeMerge == nil || *task.OpenPRBeforeMerge {
+		t.Error("OpenPRBeforeMerge should be false (task value should win)")
+	}
+	if task.TargetWorkdir != "/task/specific/dir" {
+		t.Errorf("TargetWorkdir = %q, want %q (task value should win)", task.TargetWorkdir, "/task/specific/dir")
+	}
+}
+
+func TestApplyTaskDefaults_NoOpWhenZeroValue(t *testing.T) {
+	// Zero-value defaults — nothing should change
+	svc, store, _ := newTestTaskServiceWithDefaults(t, config.TaskDefaultsConfig{})
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "zero1111", "Zero Task", "pending", "high", "proj", map[string]interface{}{})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	// All fields should remain empty/nil
+	if task.Agent != "" {
+		t.Errorf("Agent = %q, want empty", task.Agent)
+	}
+	if task.Model != "" {
+		t.Errorf("Model = %q, want empty", task.Model)
+	}
+	if task.ExecutionMode != "" {
+		t.Errorf("ExecutionMode = %q, want empty", task.ExecutionMode)
+	}
+	if task.CompleteOnIdle != nil {
+		t.Errorf("CompleteOnIdle = %v, want nil", task.CompleteOnIdle)
+	}
+	if task.MergePolicy != "" {
+		t.Errorf("MergePolicy = %q, want empty", task.MergePolicy)
+	}
+	if task.MergeStrategy != "" {
+		t.Errorf("MergeStrategy = %q, want empty", task.MergeStrategy)
+	}
+	if task.MergeTargetBranch != "" {
+		t.Errorf("MergeTargetBranch = %q, want empty", task.MergeTargetBranch)
+	}
+	if task.RemoteBranchPolicy != "" {
+		t.Errorf("RemoteBranchPolicy = %q, want empty", task.RemoteBranchPolicy)
+	}
+	if task.OpenPRBeforeMerge != nil {
+		t.Errorf("OpenPRBeforeMerge = %v, want nil", task.OpenPRBeforeMerge)
+	}
+	if task.TargetWorkdir != "" {
+		t.Errorf("TargetWorkdir = %q, want empty", task.TargetWorkdir)
+	}
+}
+
+func TestApplyTaskDefaults_PartialDefaults(t *testing.T) {
+	// Only some defaults set
+	defaults := config.TaskDefaultsConfig{
+		Agent: "tdd-dev",
+		Model: "claude-sonnet-4-20250514",
+		// Everything else is zero-value
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "part1111", "Partial Task", "pending", "high", "proj", map[string]interface{}{
+		"agent": "explore", // This should win over default
+	})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	// Agent should keep task value
+	if task.Agent != "explore" {
+		t.Errorf("Agent = %q, want %q (task value should win)", task.Agent, "explore")
+	}
+	// Model should get default since task has none
+	if task.Model != "claude-sonnet-4-20250514" {
+		t.Errorf("Model = %q, want %q (should get default)", task.Model, "claude-sonnet-4-20250514")
+	}
+	// ExecutionMode should remain empty (no default, no task value)
+	if task.ExecutionMode != "" {
+		t.Errorf("ExecutionMode = %q, want empty", task.ExecutionMode)
+	}
+}
+
+func TestApplyTaskDefaults_AppliedViaGetReady(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		Agent: "tdd-dev",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "ready111", "Ready Task", "pending", "high", "proj", map[string]interface{}{})
+
+	ready, err := svc.GetReady(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	if len(ready) != 1 {
+		t.Fatalf("expected 1 ready task, got %d", len(ready))
+	}
+	if ready[0].Agent != "tdd-dev" {
+		t.Errorf("Agent = %q, want %q (defaults should apply via GetReady)", ready[0].Agent, "tdd-dev")
+	}
+}
+
+func TestApplyTaskDefaults_AppliedViaGetNext(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		Agent: "tdd-dev",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "next1111", "Next Task", "pending", "high", "proj", map[string]interface{}{})
+
+	next, err := svc.GetNext(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil {
+		t.Fatal("expected non-nil task")
+	}
+	if next.Agent != "tdd-dev" {
+		t.Errorf("Agent = %q, want %q (defaults should apply via GetNext)", next.Agent, "tdd-dev")
+	}
+}
+
+func TestApplyTaskDefaults_AppliedViaGetMultiTaskStatus(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		Agent: "tdd-dev",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "multi111", "Multi Task", "pending", "high", "proj", map[string]interface{}{})
+
+	resp, err := svc.GetMultiTaskStatus(ctx, "proj", types.MultiTaskStatusRequest{
+		TaskIDs: []string{"multi111"},
+	})
+	if err != nil {
+		t.Fatalf("GetMultiTaskStatus failed: %v", err)
+	}
+	if len(resp.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(resp.Tasks))
+	}
+	if resp.Tasks[0].Agent != "tdd-dev" {
+		t.Errorf("Agent = %q, want %q (defaults should apply via GetMultiTaskStatus)", resp.Tasks[0].Agent, "tdd-dev")
+	}
+}
+
 // contains is a helper to check if a string contains a substring.
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) &&

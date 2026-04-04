@@ -438,6 +438,11 @@ type MoveResult struct {
 	Success bool   `json:"success"`
 	From    string `json:"from"`
 	To      string `json:"to"`
+	OldPath string `json:"oldPath"` // Same as From, for client compatibility
+	NewPath string `json:"newPath"` // Same as To, for client compatibility
+	Project string `json:"project"` // Target project ID
+	ID      string `json:"id"`      // Entry ID (filename without .md)
+	Title   string `json:"title"`   // Entry title
 }
 
 // MoveEntryRequest is the request body for POST /entries/:id/move.

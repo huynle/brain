@@ -1427,6 +1427,11 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		Success: true,
 		From:    oldPath,
 		To:      newPath,
+		OldPath: oldPath,
+		NewPath: newPath,
+		Project: targetProject,
+		ID:      entry.ID,
+		Title:   entry.Title,
 	}, nil
 }
 

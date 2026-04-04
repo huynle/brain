@@ -1537,6 +1537,11 @@ func TestHandleMoveEntry(t *testing.T) {
 					Success: true,
 					From:    "projects/old/plan/test.md",
 					To:      "projects/new-project/plan/test.md",
+					OldPath: "projects/old/plan/test.md",
+					NewPath: "projects/new-project/plan/test.md",
+					Project: "new-project",
+					ID:      "abc12def",
+					Title:   "Test Plan",
 				}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -1550,6 +1555,22 @@ func TestHandleMoveEntry(t *testing.T) {
 				}
 				if body.To != "projects/new-project/plan/test.md" {
 					t.Errorf("to = %q, want %q", body.To, "projects/new-project/plan/test.md")
+				}
+				// Verify client-compatible fields
+				if body.OldPath != "projects/old/plan/test.md" {
+					t.Errorf("oldPath = %q, want %q", body.OldPath, "projects/old/plan/test.md")
+				}
+				if body.NewPath != "projects/new-project/plan/test.md" {
+					t.Errorf("newPath = %q, want %q", body.NewPath, "projects/new-project/plan/test.md")
+				}
+				if body.Project != "new-project" {
+					t.Errorf("project = %q, want %q", body.Project, "new-project")
+				}
+				if body.ID != "abc12def" {
+					t.Errorf("id = %q, want %q", body.ID, "abc12def")
+				}
+				if body.Title != "Test Plan" {
+					t.Errorf("title = %q, want %q", body.Title, "Test Plan")
 				}
 			},
 		},

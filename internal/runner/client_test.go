@@ -1628,6 +1628,11 @@ func TestAPIClient_MoveEntry(t *testing.T) {
 			Success: true,
 			From:    "projects/brain-api/task/abc123.md",
 			To:      "projects/other-project/task/abc123.md",
+			OldPath: "projects/brain-api/task/abc123.md",
+			NewPath: "projects/other-project/task/abc123.md",
+			Project: "other-project",
+			ID:      "abc123",
+			Title:   "Test Task",
 		})
 	}))
 	defer srv.Close()

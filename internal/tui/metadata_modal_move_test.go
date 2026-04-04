@@ -265,6 +265,11 @@ func TestMetadataModal_FilterDropdown_Enter_ConfirmsSelection(t *testing.T) {
 				Success: true,
 				From:    "projects/brain-api/task/abc123.md",
 				To:      "projects/target-project/task/abc123.md",
+				OldPath: "projects/brain-api/task/abc123.md",
+				NewPath: "projects/target-project/task/abc123.md",
+				Project: "target-project",
+				ID:      "abc123",
+				Title:   "Test Task",
 			})
 		} else {
 			// Entry fetch

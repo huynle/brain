@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/muesli/termenv"
 )
@@ -2229,6 +2230,26 @@ func (m Model) handleRightClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // syncTaskDetail updates the task detail panel with the currently selected task.
 func (m *Model) syncTaskDetail() {
+	// When cursor is on a feature header, show feature detail instead of "No task selected"
+	if m.taskTree.IsOnGroupHeader() {
+		if featureID := m.taskTree.GetSelectedFeatureID(); featureID != "" {
+			// Compute features from the current task list and find the matching one
+			features := service.ComputeFeatures(m.taskTree.tasks)
+			var matched *service.ComputedFeature
+			for _, f := range features {
+				if f.ID == featureID {
+					matched = f
+					break
+				}
+			}
+			m.taskDetail.SetFeature(featureID, matched)
+			m.syncPanelSizes()
+			m.syncHelpBarSessionState()
+			return
+		}
+	}
+
+	// Default: show selected task (or nil/"No task selected" for ungrouped/section headers)
 	m.taskDetail.SetTask(m.taskTree.SelectedTask())
 	m.syncPanelSizes()
 	m.syncHelpBarSessionState()

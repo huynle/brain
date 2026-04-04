@@ -2236,6 +2236,65 @@ func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bo
 	return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
 }
 
+// buildFeatureDepAnnotation builds the dependency annotation string for a feature header.
+// Returns "" if the feature has no dependencies.
+// Example output: "← ✓ auth-core, ○ user-management"
+func buildFeatureDepAnnotation(feature FeatureGroup, allFeatures []FeatureGroup) string {
+	if len(feature.DependsOn) == 0 {
+		return ""
+	}
+
+	// Build a lookup of dep IDs to DependsOn for cycle detection
+	depsByID := make(map[string][]string, len(allFeatures))
+	for _, f := range allFeatures {
+		depsByID[f.ID] = f.DependsOn
+	}
+
+	var parts []string
+	for _, depID := range feature.DependsOn {
+		// Check for cycle: if dep also depends on this feature
+		isCycle := false
+		if depDeps, ok := depsByID[depID]; ok {
+			for _, dd := range depDeps {
+				if dd == feature.ID {
+					isCycle = true
+					break
+				}
+			}
+		}
+
+		var icon, styledEntry string
+		if isCycle {
+			icon = "↺"
+			styledEntry = lipgloss.NewStyle().Foreground(ColorBlocked).Render(icon + " " + depID)
+		} else {
+			statusIcon := featureDepStatusIcon(depID, allFeatures)
+			switch statusIcon {
+			case IndicatorCompleted: // ✓
+				icon = "✓"
+				styledEntry = lipgloss.NewStyle().Foreground(ColorReady).Render(icon + " " + depID)
+			case IndicatorActive: // ▶ → show as ⚡ for in_progress
+				icon = "⚡"
+				styledEntry = lipgloss.NewStyle().Foreground(ColorActive).Render(icon + " " + depID)
+			case IndicatorWaiting: // ○
+				icon = "○"
+				styledEntry = lipgloss.NewStyle().Foreground(ColorWaiting).Render(icon + " " + depID)
+			case IndicatorBlocked: // ✗
+				icon = "✗"
+				styledEntry = lipgloss.NewStyle().Foreground(ColorBlocked).Render(icon + " " + depID)
+			default: // "?" unknown
+				icon = "?"
+				styledEntry = DimStyle.Render(icon + " " + depID)
+			}
+		}
+		parts = append(parts, styledEntry)
+	}
+
+	separator := DimStyle.Render(", ")
+	prefix := DimStyle.Render("← ")
+	return prefix + strings.Join(parts, separator)
+}
+
 // viewFeatureGrouped renders tasks in feature-grouped view.
 // Now includes hybrid status groups: features show only active tasks,
 // with separate Draft and Completed sections after features.
@@ -2370,6 +2429,12 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 		} else {
 			featureHeader = fmt.Sprintf("%s%s Feature: %s%s %s",
 				collapseIndicator, enabledIndicator, feature.Name, execIndicator, statsStr)
+		}
+
+		// Append feature dependency annotation (before style application to avoid breaking selection highlighting)
+		depAnnotation := buildFeatureDepAnnotation(feature, tt.featureGroups.Features)
+		if depAnnotation != "" {
+			featureHeader += "  " + depAnnotation
 		}
 
 		// Selection marker keeps fixed width to avoid visual shift when highlighted
@@ -2566,6 +2631,18 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 					featureHeader = fmt.Sprintf("    %s%s %s %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
 				} else {
 					featureHeader = fmt.Sprintf("    %s%s %s Feature: %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
+				}
+
+				// Append feature dependency annotation for terminal section sub-features
+				// Look up the original feature to get its DependsOn list
+				for _, origF := range tt.featureGroups.Features {
+					if origF.ID == featureID {
+						termDepAnnotation := buildFeatureDepAnnotation(origF, tt.featureGroups.Features)
+						if termDepAnnotation != "" {
+							featureHeader += "  " + termDepAnnotation
+						}
+						break
+					}
 				}
 
 				// Highlight if this sub-feature header is selected (not when navigated into its tasks)

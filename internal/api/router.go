@@ -103,6 +103,13 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 					r.Post("/{id}/move", notImplemented)
 				}
 
+				// Bulk update (must be before wildcard /*)
+				if o.handler != nil {
+					r.Post("/bulk-update", o.handler.HandleBulkUpdate)
+				} else {
+					r.Post("/bulk-update", notImplemented)
+				}
+
 				// Entry CRUD by ID or path (wildcard — must be last)
 				// Uses /* to capture paths with slashes (e.g., projects/govpu/task/1bg4bj9y.md)
 				if o.handler != nil {

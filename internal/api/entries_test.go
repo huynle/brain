@@ -37,6 +37,7 @@ type mockBrainService struct {
 	getStaleFunc     func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
 	verifyFunc       func(ctx context.Context, path string) (*types.VerifyResponse, error)
 	generateLinkFunc func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
+	bulkUpdateFunc   func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
@@ -172,6 +173,13 @@ func (m *mockBrainService) GenerateLink(ctx context.Context, req types.LinkReque
 	return nil, fmt.Errorf("generateLinkFunc not set")
 }
 
+func (m *mockBrainService) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	if m.bulkUpdateFunc != nil {
+		return m.bulkUpdateFunc(ctx, req)
+	}
+	return nil, fmt.Errorf("bulkUpdateFunc not set")
+}
+
 func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
 	return nil, fmt.Errorf("updateMetadataFunc not set")
 }
@@ -188,6 +196,7 @@ func newTestRouter(mock *mockBrainService) *chi.Mux {
 		r.Post("/", h.HandleCreateEntry)
 		r.Get("/", h.HandleListEntries)
 		r.Post("/{id}/move", h.HandleMoveEntry)
+		r.Post("/bulk-update", h.HandleBulkUpdate)
 		// Wildcard routes must be last to allow specific routes to match first
 		r.Get("/*", h.HandleGetEntry)
 		r.Patch("/*", h.HandleUpdateEntry)
@@ -1938,6 +1947,292 @@ func TestHandleUpdateEntry_ScheduleValidation(t *testing.T) {
 				if !found {
 					t.Errorf("expected validation detail for field %q, got %v", tt.wantField, body.Details)
 				}
+			}
+		})
+	}
+}
+
+func TestHandleBulkUpdate(t *testing.T) {
+	completedStatus := "completed"
+
+	tests := []struct {
+		name           string
+		body           any
+		mockBulkUpdate func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+		wantStatus     int
+		checkBody      func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name: "success - explicit entries mode",
+			body: types.BulkUpdateRequest{
+				Entries: []types.BulkUpdateEntry{
+					{Path: "projects/myproj/task/abc.md", Updates: types.UpdateEntryRequest{Status: &completedStatus}},
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if len(req.Entries) != 1 {
+					t.Errorf("expected 1 entry, got %d", len(req.Entries))
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 1,
+					Total:   1,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/myproj/task/abc.md", ID: "abc12345", Title: "Test", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 1 {
+					t.Errorf("updated = %d, want %d", body.Updated, 1)
+				}
+				if body.Total != 1 {
+					t.Errorf("total = %d, want %d", body.Total, 1)
+				}
+				if len(body.Results) != 1 {
+					t.Fatalf("results count = %d, want %d", len(body.Results), 1)
+				}
+				if body.Results[0].Status != "ok" {
+					t.Errorf("result status = %q, want %q", body.Results[0].Status, "ok")
+				}
+			},
+		},
+		{
+			name: "success - filter mode",
+			body: types.BulkUpdateRequest{
+				Filter:  &types.BulkUpdateFilter{Project: &completedStatus},
+				Updates: &types.UpdateEntryRequest{Status: &completedStatus},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Filter == nil {
+					t.Error("expected filter to be set")
+				}
+				if req.Updates == nil {
+					t.Error("expected updates to be set")
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 3,
+					Total:   3,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/proj/task/a.md", ID: "a1234567", Status: "ok"},
+						{Path: "projects/proj/task/b.md", ID: "b1234567", Status: "ok"},
+						{Path: "projects/proj/task/c.md", ID: "c1234567", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 3 {
+					t.Errorf("updated = %d, want %d", body.Updated, 3)
+				}
+			},
+		},
+		{
+			name:       "validation error - neither filter nor entries",
+			body:       types.BulkUpdateRequest{},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Validation Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Validation Error")
+				}
+			},
+		},
+		{
+			name: "validation error - both filter and entries",
+			body: types.BulkUpdateRequest{
+				Filter:  &types.BulkUpdateFilter{},
+				Entries: []types.BulkUpdateEntry{{Path: "x"}},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Validation Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Validation Error")
+				}
+			},
+		},
+		{
+			name: "validation error - filter without updates",
+			body: types.BulkUpdateRequest{
+				Filter: &types.BulkUpdateFilter{},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Validation Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Validation Error")
+				}
+			},
+		},
+		{
+			name: "validation error - invalid status in updates",
+			body: map[string]any{
+				"entries": []map[string]any{
+					{
+						"path": "projects/x/task/y.md",
+						"updates": map[string]any{
+							"status": "bogus",
+						},
+					},
+				},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Validation Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Validation Error")
+				}
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "entries[0].updates.status" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected validation detail for field 'entries[0].updates.status', got %+v", body.Details)
+				}
+			},
+		},
+		{
+			name: "validation error - invalid priority in filter-mode updates",
+			body: map[string]any{
+				"filter": map[string]any{
+					"project": "myproj",
+				},
+				"updates": map[string]any{
+					"priority": "critical",
+				},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "updates.priority" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected validation detail for field 'updates.priority', got %+v", body.Details)
+				}
+			},
+		},
+		{
+			name: "validation error - invalid merge_policy in entry updates",
+			body: map[string]any{
+				"entries": []map[string]any{
+					{
+						"path": "projects/x/task/y.md",
+						"updates": map[string]any{
+							"merge_policy": "yolo",
+						},
+					},
+				},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "entries[0].updates.merge_policy" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected validation detail for field 'entries[0].updates.merge_policy', got %+v", body.Details)
+				}
+			},
+		},
+		{
+			name: "dry run - returns 200 without SSE (via mock verifying service called)",
+			body: types.BulkUpdateRequest{
+				Entries: []types.BulkUpdateEntry{
+					{Path: "projects/myproj/task/abc.md", Updates: types.UpdateEntryRequest{Status: &completedStatus}},
+				},
+				DryRun: true,
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if !req.DryRun {
+					t.Error("expected DryRun to be true")
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 1,
+					Total:   1,
+					DryRun:  true,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/myproj/task/abc.md", ID: "abc12345", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if !body.DryRun {
+					t.Error("expected dry_run = true in response")
+				}
+			},
+		},
+		{
+			name:       "invalid JSON body",
+			body:       "not json",
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Bad Request" {
+					t.Errorf("error = %q, want %q", body.Error, "Bad Request")
+				}
+			},
+		},
+		{
+			name: "service error",
+			body: types.BulkUpdateRequest{
+				Entries: []types.BulkUpdateEntry{
+					{Path: "projects/myproj/task/abc.md", Updates: types.UpdateEntryRequest{Status: &completedStatus}},
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				return nil, fmt.Errorf("database error")
+			},
+			wantStatus: http.StatusInternalServerError,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Internal Server Error" {
+					t.Errorf("error = %q, want %q", body.Error, "Internal Server Error")
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockBrainService{bulkUpdateFunc: tt.mockBulkUpdate}
+			router := newTestRouter(mock)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var body *bytes.Buffer
+			switch v := tt.body.(type) {
+			case string:
+				body = bytes.NewBufferString(v)
+			default:
+				body = jsonBody(t, v)
+			}
+
+			resp, err := http.Post(srv.URL+"/entries/bulk-update", "application/json", body)
+			if err != nil {
+				t.Fatalf("POST /entries/bulk-update failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
 			}
 		})
 	}

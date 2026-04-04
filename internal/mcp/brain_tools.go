@@ -10,7 +10,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// RegisterBrainTools registers all 19 brain core tools on the server.
+// RegisterBrainTools registers all 20 brain core tools on the server.
 func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainSave(s, client)
 	registerBrainRecall(s, client)
@@ -18,6 +18,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainList(s, client)
 	registerBrainInject(s, client)
 	registerBrainUpdate(s, client)
+	registerBrainBulkUpdate(s, client)
 	registerBrainDelete(s, client)
 	registerBrainMove(s, client)
 	registerBrainStats(s, client)
@@ -641,6 +642,111 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 
 		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
 			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
+	})
+}
+
+// =============================================================================
+// brain_bulk_update
+// =============================================================================
+
+func registerBrainBulkUpdate(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "brain_bulk_update",
+		Description: `Update multiple brain entries in a single request.
+
+Two modes (mutually exclusive):
+1. Filter mode: filter + updates — find entries matching criteria and apply the same updates
+2. Explicit mode: entries — specify each entry path with its own updates
+
+Use dry_run to preview what would be changed without applying.
+
+Examples:
+- Mark all tasks in a feature as cancelled:
+  brain_bulk_update({ filter: { feature_id: "old-feature" }, updates: { status: "cancelled" } })
+- Update specific entries:
+  brain_bulk_update({ entries: [{ path: "projects/x/task/abc.md", updates: { status: "completed" } }] })
+- Preview changes:
+  brain_bulk_update({ filter: { status: "draft" }, updates: { status: "pending" }, dry_run: true })`,
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
+				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), append (string), note (string). Use with 'filter'."},
+				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, append?, note? } }"},
+				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		// Validate: must have either (filter + updates) or entries, not both, not neither
+		_, hasFilter := args["filter"]
+		_, hasUpdates := args["updates"]
+		_, hasEntries := args["entries"]
+
+		if hasFilter && hasEntries {
+			return "Cannot use both 'filter' and 'entries' — pick one mode", nil
+		}
+		if !hasFilter && !hasEntries {
+			return "Please provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)", nil
+		}
+		if hasFilter && !hasUpdates {
+			return "Filter mode requires 'updates' to specify what to change", nil
+		}
+
+		// Build request body — pass through to the API which handles full validation
+		body := make(map[string]any)
+		if hasFilter {
+			body["filter"] = args["filter"]
+			body["updates"] = args["updates"]
+		}
+		if hasEntries {
+			body["entries"] = args["entries"]
+		}
+		body["dry_run"] = BoolArg(args, "dry_run", false)
+
+		var resp struct {
+			Updated int  `json:"updated"`
+			Failed  int  `json:"failed"`
+			Total   int  `json:"total"`
+			DryRun  bool `json:"dry_run"`
+			Results []struct {
+				Path   string `json:"path"`
+				ID     string `json:"id"`
+				Title  string `json:"title"`
+				Status string `json:"status"`
+				Error  string `json:"error,omitempty"`
+			} `json:"results"`
+		}
+		if err := client.Request(ctx, "POST", "/entries/bulk-update", body, nil, &resp); err != nil {
+			return "", err
+		}
+
+		// Format response
+		mode := "Applied"
+		if resp.DryRun {
+			mode = "Dry run"
+		}
+
+		lines := []string{
+			fmt.Sprintf("## %s: Bulk Update", mode),
+			"",
+			fmt.Sprintf("- Total matched: %d", resp.Total),
+			fmt.Sprintf("- Updated: %d", resp.Updated),
+			fmt.Sprintf("- Failed: %d", resp.Failed),
+			"",
+		}
+
+		if len(resp.Results) > 0 {
+			lines = append(lines, "### Results")
+			for _, r := range resp.Results {
+				if r.Status == "ok" {
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — updated", r.Title, r.Path))
+				} else {
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — error: %s", r.Title, r.Path, r.Error))
+				}
+			}
+		}
+
+		return strings.Join(lines, "\n"), nil
 	})
 }
 

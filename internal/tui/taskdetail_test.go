@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -509,5 +510,334 @@ func TestTaskDetail_ViewportScrolling_EmptyTaskNoScroll(t *testing.T) {
 	view := td.View()
 	if !strings.Contains(view, "No task selected") {
 		t.Error("expected placeholder text for empty task")
+	}
+}
+
+// =============================================================================
+// TaskDetail - Feature Mode
+// =============================================================================
+
+// testFeature creates a ComputedFeature for testing.
+func testFeature() *service.ComputedFeature {
+	return &service.ComputedFeature{
+		ID:                "auth-system",
+		Project:           "brain-api",
+		Priority:          "high",
+		Status:            "in_progress",
+		Classification:    "waiting",
+		DependsOnFeatures: []string{"data-layer", "user-profiles"},
+		BlockedByFeatures: []string{},
+		WaitingOnFeatures: []string{"user-profiles"},
+		InCycle:           false,
+		TaskStats: service.FeatureTaskStats{
+			Total:      5,
+			Pending:    2,
+			InProgress: 1,
+			Completed:  2,
+			Blocked:    0,
+		},
+		Tasks: []types.ResolvedTask{
+			{ID: "t1", Title: "Set up auth middleware", Status: "completed"},
+			{ID: "t2", Title: "Implement JWT signing", Status: "completed"},
+			{ID: "t3", Title: "Login endpoint", Status: "in_progress"},
+			{ID: "t4", Title: "Register endpoint", Status: "pending"},
+			{ID: "t5", Title: "Password reset flow", Status: "pending"},
+		},
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsFeatureHeader(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "Feature: auth-system") {
+		t.Errorf("expected 'Feature: auth-system' header, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsStatus(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "in_progress") {
+		t.Errorf("expected status 'in_progress' in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsPriority(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "high") {
+		t.Errorf("expected priority 'high' in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsTaskStats(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "2/5 complete") {
+		t.Errorf("expected task stats '2/5 complete' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "1 active") {
+		t.Errorf("expected '1 active' in task stats, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsDependencies(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "data-layer") {
+		t.Errorf("expected dependency 'data-layer' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "user-profiles") {
+		t.Errorf("expected dependency 'user-profiles' in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsDependencyIcons(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	// data-layer is not in WaitingOn or BlockedBy, so it should show completed icon
+	if !strings.Contains(view, "✓") {
+		t.Errorf("expected completed icon '✓' for data-layer, got:\n%s", view)
+	}
+	// user-profiles is in WaitingOnFeatures, should show waiting icon
+	if !strings.Contains(view, "◷") {
+		t.Errorf("expected waiting icon '◷' for user-profiles, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsTasks(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "Set up auth middleware") {
+		t.Errorf("expected task 'Set up auth middleware' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Login endpoint") {
+		t.Errorf("expected task 'Login endpoint' in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Password reset flow") {
+		t.Errorf("expected task 'Password reset flow' in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ShowsTaskStatusIcons(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	// Completed tasks get ✓
+	if !strings.Contains(view, "✓") {
+		t.Errorf("expected completed icon '✓' in view, got:\n%s", view)
+	}
+	// In-progress tasks get ⚡
+	if !strings.Contains(view, "⚡") {
+		t.Errorf("expected in_progress icon '⚡' in view, got:\n%s", view)
+	}
+	// Pending tasks get ◌
+	if !strings.Contains(view, "◌") {
+		t.Errorf("expected pending icon '◌' in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ClearsTaskMode(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	// First set a task
+	task := &types.ResolvedTask{
+		ID:    "abc12def",
+		Title: "Some task",
+	}
+	td.SetTask(task)
+	if td.task == nil {
+		t.Fatal("expected task to be set")
+	}
+
+	// Now set a feature - should clear task
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+
+	if td.task != nil {
+		t.Error("expected task to be nil after SetFeature")
+	}
+	if !td.featureMode {
+		t.Error("expected featureMode to be true after SetFeature")
+	}
+}
+
+func TestTaskDetail_SetTask_ClearsFeatureMode(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	// First set a feature
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	if !td.featureMode {
+		t.Fatal("expected featureMode to be true")
+	}
+
+	// Now set a task - should clear feature mode
+	task := &types.ResolvedTask{
+		ID:    "abc12def",
+		Title: "Some task",
+	}
+	td.SetTask(task)
+
+	if td.featureMode {
+		t.Error("expected featureMode to be false after SetTask")
+	}
+	if td.feature != nil {
+		t.Error("expected feature to be nil after SetTask")
+	}
+}
+
+func TestTaskDetail_SetFeature_ResetsScrollOnDifferentFeature(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6) // Small to force scrolling
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	td.View() // Render to set totalLines
+	td.ScrollDown()
+	td.ScrollDown()
+
+	if td.scrollOffset == 0 {
+		t.Fatal("expected non-zero scrollOffset after scrolling")
+	}
+
+	// Setting a different feature should reset scroll
+	f2 := testFeature()
+	f2.ID = "other-feature"
+	td.SetFeature("other-feature", f2)
+
+	if td.scrollOffset != 0 {
+		t.Errorf("expected scrollOffset 0 after SetFeature with different ID, got %d", td.scrollOffset)
+	}
+}
+
+func TestTaskDetail_SetFeature_KeepsScrollOnSameFeature(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6) // Small to force scrolling
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	td.View()
+	td.ScrollDown()
+	td.ScrollDown()
+
+	offset := td.scrollOffset
+	if offset == 0 {
+		t.Fatal("expected non-zero scrollOffset after scrolling")
+	}
+
+	// Setting same feature should preserve scroll
+	td.SetFeature("auth-system", f)
+
+	if td.scrollOffset != offset {
+		t.Errorf("expected scrollOffset %d after SetFeature with same ID, got %d", offset, td.scrollOffset)
+	}
+}
+
+func TestTaskDetail_SetFeature_CycleWarning(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	f.InCycle = true
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if !strings.Contains(view, "↺") {
+		t.Errorf("expected cycle indicator '↺' in feature view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_NoCycleWarningWhenFalse(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	f.InCycle = false
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	if strings.Contains(view, "↺") {
+		t.Errorf("expected no cycle indicator when InCycle=false, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_Dependents(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 40)
+
+	f := testFeature()
+	f.WaitingOnFeatures = []string{"dashboard"}
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	// Check for dependent feature name and its annotation
+	// (header "Dependents:" may have ANSI codes splitting letters with lipgloss underline)
+	if !strings.Contains(view, "dashboard") {
+		t.Errorf("expected 'dashboard' in dependents, got:\n%s", view)
+	}
+	if !strings.Contains(view, "waiting on this") {
+		t.Errorf("expected 'waiting on this' annotation, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_SetFeature_ScrollingWorks(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 6) // Very small to force scrolling
+
+	f := testFeature()
+	td.SetFeature("auth-system", f)
+	view := td.View()
+
+	// Should show scroll indicators when content exceeds viewport
+	if !strings.Contains(view, "▼") {
+		t.Errorf("expected down-arrow indicator for feature view, got:\n%s", view)
+	}
+
+	td.ScrollDown()
+	view = td.View()
+	if !strings.Contains(view, "▲") {
+		t.Errorf("expected up-arrow indicator after scrolling down in feature view, got:\n%s", view)
 	}
 }

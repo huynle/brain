@@ -429,6 +429,28 @@ func (c *APIClient) GetFeature(ctx context.Context, projectID, featureID string)
 	return &feature, nil
 }
 
+// GetFeatures returns all features and their tasks for a project.
+func (c *APIClient) GetFeatures(ctx context.Context, projectID string) ([]types.Feature, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features", projectID)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, apiPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get features: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data types.FeatureListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode features: %w", err)
+	}
+
+	return data.Features, nil
+}
+
 // GetTasksByFeature fetches all tasks belonging to a feature within a project.
 // Uses the dedicated feature endpoint which correctly filters by feature ID.
 func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
@@ -508,6 +530,25 @@ func (c *APIClient) ListEntries(ctx context.Context, params map[string]string) (
 	var result types.ListEntriesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode list entries response: %w", err)
+	}
+	return &result, nil
+}
+
+// BulkUpdate applies updates to multiple entries in a single request.
+func (c *APIClient) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/entries/bulk-update", req)
+	if err != nil {
+		return nil, fmt.Errorf("bulk update: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.BulkUpdateResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode bulk update response: %w", err)
 	}
 	return &result, nil
 }

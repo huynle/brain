@@ -55,6 +55,7 @@ const (
 	FieldTypeDropdown
 	FieldTypeBoolean
 	FieldTypeFilterDropdown
+	FieldTypeMultiFilterDropdown
 )
 
 // ============================================================================
@@ -96,8 +97,8 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 	},
 	FieldFeatureDependsOn: {
 		Label: "Feature Dependencies",
-		Hint:  "Comma-separated list of feature IDs this feature depends on",
-		Type:  FieldTypeText,
+		Hint:  "Select feature dependencies (multi-select)",
+		Type:  FieldTypeMultiFilterDropdown,
 	},
 	FieldGitBranch: {
 		Label: "Git Branch",

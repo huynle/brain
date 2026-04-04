@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"sync"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -16,11 +18,20 @@ var _ api.EventService = (*EventServiceImpl)(nil)
 // defaultRecentLimit is the default limit when Recent is called with limit <= 0.
 const defaultRecentLimit = 100
 
+// FeatureTaskLister is the subset of TaskService that EventServiceImpl
+// needs to query feature task statuses for completion detection.
+type FeatureTaskLister interface {
+	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
+}
+
 // EventServiceImpl implements api.EventService using the EventHub.
 // It handles event ingestion with validation and deduplication,
 // querying recent events, and subscribing to filtered event streams.
 type EventServiceImpl struct {
 	hub *realtime.EventHub
+
+	// featureLister queries tasks by feature for completion detection.
+	featureLister FeatureTaskLister
 
 	// seenIDs tracks event IDs for deduplication.
 	mu      sync.RWMutex
@@ -33,6 +44,13 @@ func NewEventService(hub *realtime.EventHub) *EventServiceImpl {
 		hub:     hub,
 		seenIDs: make(map[string]struct{}),
 	}
+}
+
+// SetFeatureTaskLister sets the FeatureTaskLister used for feature
+// completion detection. This is called after construction to break
+// circular dependencies between services.
+func (s *EventServiceImpl) SetFeatureTaskLister(lister FeatureTaskLister) {
+	s.featureLister = lister
 }
 
 // =============================================================================
@@ -181,4 +199,71 @@ func (s *EventServiceImpl) Subscribe(_ context.Context, filters map[string]strin
 	}
 
 	return s.hub.Subscribe(filter)
+}
+
+// =============================================================================
+// Feature Completion Detection
+// =============================================================================
+
+// CheckFeatureCompletion checks if all tasks in a feature are completed
+// and emits the appropriate event (feature.completed or feature.progress).
+// This is called server-side after a task status update via the API,
+// ensuring feature lifecycle events fire regardless of whether changes
+// come from the runner or direct API/MCP calls.
+//
+// Safe to call when featureID is empty or when no lister is configured.
+func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string) {
+	if featureID == "" {
+		return
+	}
+	if s.featureLister == nil {
+		return
+	}
+
+	tasks, err := s.featureLister.GetTasksByFeature(ctx, projectID, featureID)
+	if err != nil {
+		slog.Warn("feature completion check: failed to query tasks",
+			"project_id", projectID,
+			"feature_id", featureID,
+			"error", err,
+		)
+		return
+	}
+
+	if len(tasks) == 0 {
+		return
+	}
+
+	// Count completed/validated tasks
+	completed := 0
+	total := len(tasks)
+	for _, t := range tasks {
+		if t.Status == "completed" || t.Status == "validated" {
+			completed++
+		}
+	}
+
+	allDone := completed >= total
+
+	if allDone {
+		evt := types.NewEvent(types.EventFeatureCompleted, types.EventSourceAPI)
+		evt.ProjectID = projectID
+		evt.FeatureID = featureID
+		evt.TaskID = taskID
+		evt.Metadata = map[string]string{
+			"completed": strconv.Itoa(completed),
+			"total":     strconv.Itoa(total),
+		}
+		s.hub.Publish(evt)
+	} else {
+		evt := types.NewEvent(types.EventFeatureProgress, types.EventSourceAPI)
+		evt.ProjectID = projectID
+		evt.FeatureID = featureID
+		evt.TaskID = taskID
+		evt.Metadata = map[string]string{
+			"completed": strconv.Itoa(completed),
+			"total":     strconv.Itoa(total),
+		}
+		s.hub.Publish(evt)
+	}
 }

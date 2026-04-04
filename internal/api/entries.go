@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -380,6 +381,9 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 	// Notify SSE clients about the change
 	h.notifyProjectChanged(r, entry.Path, entry.Type)
 
+	// Check feature completion when a task status changes to completed/validated
+	h.checkFeatureCompletionForEntry(r.Context(), entry, req.Status)
+
 	WriteJSON(w, http.StatusOK, entry)
 }
 
@@ -539,6 +543,9 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 				h.notifyProjectChanged(r, result.Path, "task")
 			}
 		}
+
+		// Check feature completion for bulk-updated tasks
+		h.checkFeatureCompletionForBulkUpdate(r.Context(), req, resp)
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -664,6 +671,114 @@ func (h *Handler) notifyProjectChanged(r *http.Request, entryPath string, entryT
 				Cycles: resp.Cycles,
 			})
 		}
+	}
+}
+
+// =============================================================================
+// Feature Completion Detection
+// =============================================================================
+
+// checkFeatureCompletionForEntry checks if a task's feature is now complete
+// after a single entry update. Only triggers when:
+// 1. The entry is a task type
+// 2. The status was explicitly changed to "completed" or "validated"
+// 3. The entry has a feature_id
+// 4. An event service is configured
+func (h *Handler) checkFeatureCompletionForEntry(ctx context.Context, entry *types.BrainEntry, newStatus *string) {
+	if h.events == nil || entry == nil {
+		return
+	}
+	if entry.Type != "task" {
+		return
+	}
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+	if entry.FeatureID == "" {
+		return
+	}
+
+	projectID := extractProjectID(entry.Path)
+	if projectID == "" {
+		return
+	}
+
+	h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+}
+
+// checkFeatureCompletionForBulkUpdate checks feature completion for tasks
+// updated in a bulk update operation. It recalls each successfully updated
+// entry to check if it's a task with a feature_id.
+func (h *Handler) checkFeatureCompletionForBulkUpdate(ctx context.Context, req types.BulkUpdateRequest, resp *types.BulkUpdateResponse) {
+	if h.events == nil || resp == nil {
+		return
+	}
+
+	// Determine the status being set
+	var newStatus *string
+	if req.Updates != nil && req.Updates.Status != nil {
+		newStatus = req.Updates.Status
+	}
+
+	// For explicit mode, check each entry's status
+	if newStatus == nil && len(req.Entries) > 0 {
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			for _, reqEntry := range req.Entries {
+				if reqEntry.Path == result.Path && reqEntry.Updates.Status != nil {
+					s := *reqEntry.Updates.Status
+					if s == "completed" || s == "validated" {
+						entry, err := h.brain.Recall(ctx, result.Path)
+						if err == nil && entry.Type == "task" && entry.FeatureID != "" {
+							projectID := extractProjectID(entry.Path)
+							if projectID != "" {
+								h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+		return
+	}
+
+	// For filter mode with status change to completed/validated
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+
+	// Check each successfully updated entry
+	seenFeatures := make(map[string]bool)
+	for _, result := range resp.Results {
+		if result.Status != "ok" {
+			continue
+		}
+		entry, err := h.brain.Recall(ctx, result.Path)
+		if err != nil {
+			continue
+		}
+		if entry.Type != "task" || entry.FeatureID == "" {
+			continue
+		}
+		projectID := extractProjectID(entry.Path)
+		if projectID == "" {
+			continue
+		}
+		featureKey := projectID + ":" + entry.FeatureID
+		if seenFeatures[featureKey] {
+			continue // Already checked this feature
+		}
+		seenFeatures[featureKey] = true
+		h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
 	}
 }
 

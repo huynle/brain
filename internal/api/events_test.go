@@ -68,6 +68,10 @@ func (m *mockEventService) Subscribe(ctx context.Context, filters map[string]str
 	return ch, func() { close(ch) }
 }
 
+func (m *mockEventService) CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string) {
+	// no-op for tests
+}
+
 // =============================================================================
 // Helper: create event test router
 // =============================================================================

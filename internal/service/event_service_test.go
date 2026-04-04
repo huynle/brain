@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -366,6 +367,268 @@ func TestEventService_Subscribe_Unsubscribe(t *testing.T) {
 	_, ok := <-ch
 	if ok {
 		t.Fatal("expected channel to be closed after unsubscribe")
+	}
+}
+
+// =============================================================================
+// CheckFeatureCompletion Tests
+// =============================================================================
+
+// mockFeatureTaskLister implements FeatureTaskLister for testing.
+type mockFeatureTaskLister struct {
+	tasks []types.ResolvedTask
+	err   error
+}
+
+func (m *mockFeatureTaskLister) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	// Filter tasks by feature ID to simulate real behavior
+	var filtered []types.ResolvedTask
+	for _, t := range m.tasks {
+		if t.FeatureID == featureID {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered, nil
+}
+
+func TestCheckFeatureCompletion_EmitsCompletedWhenAllDone(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t3", FeatureID: "feat-1", Status: "validated"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureCompleted {
+		t.Errorf("expected event type %q, got %q", types.EventFeatureCompleted, events[0].Type)
+	}
+	if events[0].ProjectID != "proj-1" {
+		t.Errorf("expected project_id 'proj-1', got %q", events[0].ProjectID)
+	}
+	if events[0].FeatureID != "feat-1" {
+		t.Errorf("expected feature_id 'feat-1', got %q", events[0].FeatureID)
+	}
+	if events[0].Source != types.EventSourceAPI {
+		t.Errorf("expected source %q, got %q", types.EventSourceAPI, events[0].Source)
+	}
+}
+
+func TestCheckFeatureCompletion_EmitsProgressWhenPartiallyDone(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "pending"},
+			{ID: "t3", FeatureID: "feat-1", Status: "in_progress"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureProgress {
+		t.Errorf("expected event type %q, got %q", types.EventFeatureProgress, events[0].Type)
+	}
+	if events[0].ProjectID != "proj-1" {
+		t.Errorf("expected project_id 'proj-1', got %q", events[0].ProjectID)
+	}
+	if events[0].FeatureID != "feat-1" {
+		t.Errorf("expected feature_id 'feat-1', got %q", events[0].FeatureID)
+	}
+	// Check metadata contains progress info
+	if events[0].Metadata == nil {
+		t.Fatal("expected metadata with progress info")
+	}
+	if events[0].Metadata["completed"] != "1" {
+		t.Errorf("expected completed=1, got %q", events[0].Metadata["completed"])
+	}
+	if events[0].Metadata["total"] != "3" {
+		t.Errorf("expected total=3, got %q", events[0].Metadata["total"])
+	}
+}
+
+func TestCheckFeatureCompletion_NoEventWhenNoFeatureID(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{}
+	svc.SetFeatureTaskLister(lister)
+
+	// Empty feature ID should be a no-op
+	svc.CheckFeatureCompletion(ctx, "proj-1", "", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events for empty feature_id, got %d", len(events))
+	}
+}
+
+func TestCheckFeatureCompletion_NoEventWhenNoLister(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	// Don't set a lister - should be a safe no-op
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events when no lister set, got %d", len(events))
+	}
+}
+
+func TestCheckFeatureCompletion_NoEventWhenListerErrors(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		err: fmt.Errorf("connection refused"),
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events on lister error, got %d", len(events))
+	}
+}
+
+func TestCheckFeatureCompletion_NoEventWhenNoTasks(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{}, // no tasks for this feature
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 0 {
+		t.Fatalf("expected 0 events for empty feature, got %d", len(events))
+	}
+}
+
+func TestCheckFeatureCompletion_NoDuplicateEvents(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	// Call twice for the same feature
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t2")
+
+	events := hub.Replay("")
+	// Should have 2 events since dedup is by event ID not feature ID,
+	// but both should be feature.completed
+	completedCount := 0
+	for _, evt := range events {
+		if evt.Type == types.EventFeatureCompleted {
+			completedCount++
+		}
+	}
+	// At minimum, both calls should emit feature.completed since all tasks are done
+	if completedCount < 1 {
+		t.Errorf("expected at least 1 feature.completed event, got %d", completedCount)
+	}
+}
+
+func TestCheckFeatureCompletion_ValidatedCountsAsCompleted(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "validated"},
+			{ID: "t2", FeatureID: "feat-1", Status: "validated"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureCompleted {
+		t.Errorf("expected feature.completed, got %q", events[0].Type)
+	}
+}
+
+func TestCheckFeatureCompletion_MixedCompletedValidatedIsComplete(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "validated"},
+			{ID: "t3", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureCompleted {
+		t.Errorf("expected feature.completed for mixed completed/validated, got %q", events[0].Type)
+	}
+}
+
+func TestCheckFeatureCompletion_CancelledTasksCountAsNotDone(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "cancelled"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	// Cancelled tasks are NOT completed, so this should be progress
+	if events[0].Type != types.EventFeatureProgress {
+		t.Errorf("expected feature.progress when cancelled tasks exist, got %q", events[0].Type)
 	}
 }
 

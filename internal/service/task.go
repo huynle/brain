@@ -297,6 +297,17 @@ func (s *TaskServiceImpl) GetMultiTaskStatus(ctx context.Context, projectId stri
 	}, nil
 }
 
+// GetTasksByFeature returns all resolved tasks belonging to a specific feature.
+// This satisfies the FeatureTaskLister interface used by EventServiceImpl
+// for server-side feature completion detection.
+func (s *TaskServiceImpl) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	result, err := s.GetTasks(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return filterByFeatureIDs(result.Tasks, []string{featureID}), nil
+}
+
 // GetFeatures returns computed features for a project.
 func (s *TaskServiceImpl) GetFeatures(ctx context.Context, projectId string) (*types.FeatureListResponse, error) {
 	result, err := s.GetTasks(ctx, projectId)

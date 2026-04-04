@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/cron"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
@@ -82,6 +84,14 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid feature_priority %q", req.FeaturePriority),
 		})
 	}
+
+	// Validate schedule/time fields
+	details = append(details, validateTimezone(req.Timezone, "timezone")...)
+	details = append(details, validateRFC3339(req.RunOnceAt, "run_once_at")...)
+	details = append(details, validateRFC3339(req.StartsAt, "starts_at")...)
+	details = append(details, validateRFC3339(req.ExpiresAt, "expires_at")...)
+	details = append(details, validateExpiresAfterStarts(req.StartsAt, req.ExpiresAt)...)
+	details = append(details, validateCronSchedule(req.Schedule, "schedule")...)
 
 	if len(details) > 0 {
 		WriteValidationError(w, details)
@@ -320,6 +330,26 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// Validate schedule/time fields
+	if req.Timezone != nil {
+		details = append(details, validateTimezone(*req.Timezone, "timezone")...)
+	}
+	if req.RunOnceAt != nil {
+		details = append(details, validateRFC3339(*req.RunOnceAt, "run_once_at")...)
+	}
+	if req.StartsAt != nil {
+		details = append(details, validateRFC3339(*req.StartsAt, "starts_at")...)
+	}
+	if req.ExpiresAt != nil {
+		details = append(details, validateRFC3339(*req.ExpiresAt, "expires_at")...)
+	}
+	if req.StartsAt != nil && req.ExpiresAt != nil {
+		details = append(details, validateExpiresAfterStarts(*req.StartsAt, *req.ExpiresAt)...)
+	}
+	if req.Schedule != nil {
+		details = append(details, validateCronSchedule(*req.Schedule, "schedule")...)
+	}
+
 	if len(details) > 0 {
 		WriteValidationError(w, details)
 		return
@@ -538,6 +568,68 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// validateTimezone validates that a non-empty timezone string is a valid IANA timezone name.
+func validateTimezone(tz string, field string) []types.ValidationDetail {
+	if tz == "" {
+		return nil
+	}
+	if _, err := time.LoadLocation(tz); err != nil {
+		return []types.ValidationDetail{{
+			Field:   field,
+			Message: fmt.Sprintf("invalid IANA timezone %q", tz),
+		}}
+	}
+	return nil
+}
+
+// validateRFC3339 validates that a non-empty string is a valid RFC3339 timestamp.
+func validateRFC3339(ts string, field string) []types.ValidationDetail {
+	if ts == "" {
+		return nil
+	}
+	if _, err := time.Parse(time.RFC3339, ts); err != nil {
+		return []types.ValidationDetail{{
+			Field:   field,
+			Message: fmt.Sprintf("invalid RFC3339 timestamp %q", ts),
+		}}
+	}
+	return nil
+}
+
+// validateExpiresAfterStarts validates that expires_at > starts_at when both are set and valid.
+func validateExpiresAfterStarts(startsAt, expiresAt string) []types.ValidationDetail {
+	if startsAt == "" || expiresAt == "" {
+		return nil
+	}
+	st, errS := time.Parse(time.RFC3339, startsAt)
+	et, errE := time.Parse(time.RFC3339, expiresAt)
+	if errS != nil || errE != nil {
+		// Individual field errors already reported by validateRFC3339
+		return nil
+	}
+	if !et.After(st) {
+		return []types.ValidationDetail{{
+			Field:   "expires_at",
+			Message: "expires_at must be after starts_at",
+		}}
+	}
+	return nil
+}
+
+// validateCronSchedule validates that a non-empty string is a valid cron expression.
+func validateCronSchedule(expr string, field string) []types.ValidationDetail {
+	if expr == "" {
+		return nil
+	}
+	if _, err := cron.Parse(expr); err != nil {
+		return []types.ValidationDetail{{
+			Field:   field,
+			Message: fmt.Sprintf("invalid cron expression %q: %v", expr, err),
+		}}
+	}
+	return nil
 }
 
 // mapFrontmatterToUpdateRequest converts parsed frontmatter fields and body

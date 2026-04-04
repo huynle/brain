@@ -1620,6 +1620,168 @@ Use \`brain_recall\` to view the full entry.`;
       }),
 
       // ========================================
+      // brain_bulk_update
+      // ========================================
+      brain_bulk_update: tool({
+        description: `Bulk update multiple brain entries in a single operation.
+
+Supports two modes:
+1. **Filter mode:** Match entries by criteria and apply the same updates to all
+   - Use \`filter\` + \`updates\` parameters
+   - Great for feature reassignment: move all tasks from one feature to another
+2. **Explicit mode:** Update specific entries with per-entry updates
+   - Use \`entries\` parameter (array of {path, updates})
+   - Great for batch status changes on known entries
+
+Primary use case: reassigning tasks across features or projects in bulk.
+
+Examples:
+- Reassign all tasks in a feature: filter={feature_id:"old-feature"}, updates={feature_id:"new-feature"}
+- Bulk status change: filter={status:"pending",project:"my-proj"}, updates={status:"cancelled"}
+- Per-entry updates: entries=[{path:"projects/x/task/abc.md",updates:{status:"completed"}}]`,
+        args: {
+          filter: tool.schema
+            .object({
+              feature_id: tool.schema.string().optional().describe("Filter by feature group ID"),
+              project: tool.schema.string().optional().describe("Filter by project ID"),
+              type: tool.schema.enum(ENTRY_TYPES).optional().describe("Filter by entry type"),
+              status: tool.schema.enum(ENTRY_STATUSES).optional().describe("Filter by status"),
+              tags: tool.schema.array(tool.schema.string()).optional().describe("Filter by tags"),
+              priority: tool.schema.enum(PRIORITIES).optional().describe("Filter by priority"),
+            })
+            .optional()
+            .describe("Filter criteria to select entries (use with 'updates')"),
+          updates: tool.schema
+            .object({
+              status: tool.schema.enum(ENTRY_STATUSES).optional().describe("New status"),
+              title: tool.schema.string().optional().describe("New title"),
+              append: tool.schema.string().optional().describe("Content to append"),
+              note: tool.schema.string().optional().describe("Short note to add"),
+              tags: tool.schema.array(tool.schema.string()).optional().describe("Replace tags"),
+              priority: tool.schema.enum(PRIORITIES).optional().describe("New priority"),
+              feature_id: tool.schema.string().optional().describe("New feature group ID"),
+              feature_priority: tool.schema.enum(PRIORITIES).optional().describe("New feature priority"),
+              feature_depends_on: tool.schema.array(tool.schema.string()).optional().describe("New feature dependencies"),
+              target_workdir: tool.schema.string().optional().describe("New target workdir"),
+              git_branch: tool.schema.string().optional().describe("New git branch"),
+              merge_target_branch: tool.schema.string().optional().describe("New merge target branch"),
+              merge_policy: tool.schema.enum(["prompt_only", "auto_pr", "auto_merge"]).optional().describe("New merge policy"),
+              merge_strategy: tool.schema.enum(["squash", "merge", "rebase"]).optional().describe("New merge strategy"),
+              execution_mode: tool.schema.enum(["worktree", "current_branch"]).optional().describe("New execution mode"),
+              direct_prompt: tool.schema.string().optional().describe("New direct prompt"),
+              agent: tool.schema.string().optional().describe("New agent override"),
+              model: tool.schema.string().optional().describe("New model override"),
+            })
+            .optional()
+            .describe("Updates to apply to all matched entries (use with 'filter')"),
+          entries: tool.schema
+            .array(
+              tool.schema.object({
+                path: tool.schema.string().describe("Entry path"),
+                updates: tool.schema.object({
+                  status: tool.schema.enum(ENTRY_STATUSES).optional().describe("New status"),
+                  title: tool.schema.string().optional().describe("New title"),
+                  append: tool.schema.string().optional().describe("Content to append"),
+                  note: tool.schema.string().optional().describe("Short note to add"),
+                  tags: tool.schema.array(tool.schema.string()).optional().describe("Replace tags"),
+                  priority: tool.schema.enum(PRIORITIES).optional().describe("New priority"),
+                  feature_id: tool.schema.string().optional().describe("New feature group ID"),
+                  feature_priority: tool.schema.enum(PRIORITIES).optional().describe("New feature priority"),
+                  feature_depends_on: tool.schema.array(tool.schema.string()).optional().describe("New feature dependencies"),
+                }).describe("Updates for this specific entry"),
+              })
+            )
+            .optional()
+            .describe("Explicit list of entries with per-entry updates"),
+          dry_run: tool.schema
+            .boolean()
+            .optional()
+            .describe("Preview changes without applying them (default: false)"),
+        },
+        async execute(args) {
+          // Validate: must have (filter+updates) XOR entries
+          const hasFilter = !!args.filter;
+          const hasEntries = args.entries && args.entries.length > 0;
+
+          if (!hasFilter && !hasEntries) {
+            return "Must provide either 'filter'+'updates' or 'entries'. Use 'filter' to match entries by criteria, or 'entries' for specific paths.";
+          }
+          if (hasFilter && hasEntries) {
+            return "Cannot use both 'filter' and 'entries' modes. Choose one: filter-based (filter+updates) or explicit (entries).";
+          }
+          if (hasFilter && !args.updates) {
+            return "When using 'filter' mode, 'updates' is required to specify what changes to apply.";
+          }
+
+          try {
+            const body: Record<string, unknown> = {
+              dry_run: args.dry_run ?? false,
+            };
+
+            if (hasFilter) {
+              body.filter = args.filter;
+              body.updates = args.updates;
+            } else {
+              body.entries = args.entries;
+            }
+
+            const response = await apiRequest<{
+              updated: number;
+              failed: number;
+              total: number;
+              dry_run: boolean;
+              results: Array<{
+                path: string;
+                id: string;
+                title: string;
+                status: string;
+                error?: string;
+              }>;
+            }>("POST", "/entries/bulk-update", body);
+
+            const lines: string[] = [];
+
+            if (response.dry_run) {
+              lines.push("## Bulk Update Preview (dry run)");
+            } else {
+              lines.push("## Bulk Update Results");
+            }
+            lines.push("");
+            lines.push(`**Updated:** ${response.updated} | **Failed:** ${response.failed} | **Total matched:** ${response.total}`);
+            lines.push("");
+
+            // Show successful updates
+            const successes = response.results.filter(r => r.status === "ok");
+            if (successes.length > 0) {
+              lines.push(response.dry_run ? "### Would update:" : "### Updated:");
+              for (const result of successes) {
+                lines.push(`- **${result.title}** (\`${result.path}\`)`);
+              }
+              lines.push("");
+            }
+
+            // Show failures
+            const failures = response.results.filter(r => r.status !== "ok");
+            if (failures.length > 0) {
+              lines.push("### Failed:");
+              for (const result of failures) {
+                lines.push(`- **${result.title}** (\`${result.path}\`): ${result.error || "unknown error"}`);
+              }
+              lines.push("");
+            }
+
+            if (response.dry_run) {
+              lines.push("*This was a dry run. No changes were applied. Remove `dry_run: true` to apply.*");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Bulk update failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
       // brain_move
       // ========================================
       brain_move: tool({

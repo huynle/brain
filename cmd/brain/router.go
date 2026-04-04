@@ -594,6 +594,14 @@ func parseStartCommand(args []string) (Command, error) {
 		return nil, err
 	}
 
+	// Apply port/host overrides from flags
+	if flags.Port != 0 {
+		cfg.Server.Port = flags.Port
+	}
+	if flags.Host != "" {
+		cfg.Server.Host = flags.Host
+	}
+
 	return &commands.StartCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsLifecycleFlags(flags),

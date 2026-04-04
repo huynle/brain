@@ -272,6 +272,9 @@ func (m *mockBrainForMonitor) Verify(context.Context, string) (*types.VerifyResp
 func (m *mockBrainForMonitor) GenerateLink(context.Context, types.LinkRequest) (*types.LinkResponse, error) {
 	return nil, nil
 }
+func (m *mockBrainForMonitor) BulkUpdate(context.Context, types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	return nil, nil
+}
 func (m *mockBrainForMonitor) UpdateMetadata(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
 	return nil, nil
 }

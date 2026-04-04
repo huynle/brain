@@ -1548,6 +1548,104 @@ func TestRoundTrip_AllOpenCodeOptions(t *testing.T) {
 	}
 }
 
+func TestRoundTrip_ExecutorAndExtensions(t *testing.T) {
+	fm := &Frontmatter{
+		Title:      "Pi Executor Task",
+		Type:       "task",
+		Status:     "pending",
+		Executor:   "pi",
+		Extensions: []string{"browser", "filesystem"},
+		Agent:      "tdd-dev",
+	}
+
+	serialized := Serialize(fm)
+	content := "---\n" + serialized + "---\n\nTask body"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.Executor != "pi" {
+		t.Errorf("executor = %q, want %q", doc.Frontmatter.Executor, "pi")
+	}
+	if len(doc.Frontmatter.Extensions) != 2 {
+		t.Fatalf("extensions len = %d, want 2", len(doc.Frontmatter.Extensions))
+	}
+	if doc.Frontmatter.Extensions[0] != "browser" {
+		t.Errorf("extensions[0] = %q, want %q", doc.Frontmatter.Extensions[0], "browser")
+	}
+	if doc.Frontmatter.Extensions[1] != "filesystem" {
+		t.Errorf("extensions[1] = %q, want %q", doc.Frontmatter.Extensions[1], "filesystem")
+	}
+}
+
+func TestSerialize_ExecutorOmittedWhenEmpty(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "No Executor",
+		Type:   "task",
+		Status: "pending",
+	}
+
+	serialized := Serialize(fm)
+	if strings.Contains(serialized, "executor") {
+		t.Errorf("serialized should not contain executor when empty, got:\n%s", serialized)
+	}
+	if strings.Contains(serialized, "extensions") {
+		t.Errorf("serialized should not contain extensions when empty, got:\n%s", serialized)
+	}
+}
+
+func TestParse_ExecutorFromYAML(t *testing.T) {
+	content := `---
+title: Test
+type: task
+status: pending
+executor: opencode
+extensions:
+  - browser
+  - filesystem
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.Executor != "opencode" {
+		t.Errorf("executor = %q, want %q", doc.Frontmatter.Executor, "opencode")
+	}
+	if len(doc.Frontmatter.Extensions) != 2 {
+		t.Fatalf("extensions len = %d, want 2", len(doc.Frontmatter.Extensions))
+	}
+	if doc.Frontmatter.Extensions[0] != "browser" {
+		t.Errorf("extensions[0] = %q, want %q", doc.Frontmatter.Extensions[0], "browser")
+	}
+}
+
+func TestGenerate_ExecutorAndExtensions(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:      "Generated Task",
+		Type:       "task",
+		Status:     "pending",
+		Executor:   "pi",
+		Extensions: []string{"browser"},
+	}
+
+	yaml := Generate(opts)
+	if !strings.Contains(yaml, "executor: pi") {
+		t.Errorf("generated YAML should contain executor, got:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "extensions:") {
+		t.Errorf("generated YAML should contain extensions, got:\n%s", yaml)
+	}
+	if !strings.Contains(yaml, "  - browser") {
+		t.Errorf("generated YAML should contain browser extension, got:\n%s", yaml)
+	}
+}
+
 // =============================================================================
 // Helpers
 // =============================================================================

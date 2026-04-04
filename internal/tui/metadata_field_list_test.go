@@ -31,15 +31,16 @@ func TestBuildFieldList_SingleMode(t *testing.T) {
 		t.Error("Single mode Execution tab should include FieldDirectPrompt")
 	}
 
-	// Verify all 16 fields are accessible across all tabs
+	// Verify all 21 fields are accessible across all tabs
+	// (16 original + 5 task-level scheduling fields on Execution tab)
 	allFields := make(map[MetadataField]bool)
 	for _, tab := range modal.tabs {
 		for _, field := range fieldsForTab(tab, modal.mode) {
 			allFields[field] = true
 		}
 	}
-	if len(allFields) != 16 {
-		t.Errorf("Total fields across all tabs = %d, want 16", len(allFields))
+	if len(allFields) != 21 {
+		t.Errorf("Total fields across all tabs = %d, want 21", len(allFields))
 	}
 }
 
@@ -198,14 +199,20 @@ func TestTabsForMode_Batch(t *testing.T) {
 // TestFieldsForTab_FeatureTab tests fields in the Feature tab.
 func TestFieldsForTab_FeatureTab(t *testing.T) {
 	fields := fieldsForTab(MetaTabFeature, ModeFeature)
-	if len(fields) != 2 {
-		t.Errorf("Feature tab field count = %d, want 2", len(fields))
+	if len(fields) != 7 {
+		t.Errorf("Feature tab field count = %d, want 7", len(fields))
 	}
 	if !containsField(fields, FieldFeaturePriority) {
 		t.Error("Feature tab should include FieldFeaturePriority")
 	}
 	if !containsField(fields, FieldFeatureDependsOn) {
 		t.Error("Feature tab should include FieldFeatureDependsOn")
+	}
+	if !containsField(fields, FieldFeatureSchedule) {
+		t.Error("Feature tab should include FieldFeatureSchedule")
+	}
+	if !containsField(fields, FieldFeatureTimezone) {
+		t.Error("Feature tab should include FieldFeatureTimezone")
 	}
 }
 

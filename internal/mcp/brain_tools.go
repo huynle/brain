@@ -10,7 +10,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// RegisterBrainTools registers all 19 brain core tools on the server.
+// RegisterBrainTools registers all 20 brain core tools on the server.
 func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainSave(s, client)
 	registerBrainRecall(s, client)
@@ -18,6 +18,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainList(s, client)
 	registerBrainInject(s, client)
 	registerBrainUpdate(s, client)
+	registerBrainBulkUpdate(s, client)
 	registerBrainDelete(s, client)
 	registerBrainMove(s, client)
 	registerBrainStats(s, client)
@@ -74,6 +75,15 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false. Omit or set to 0 for unlimited runs."},
+				"run_once_at":           {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":              {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":             {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
+				"feature_schedule":      {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":     {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":   {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":      {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"git_branch":            {Type: "string", Description: "Git branch for the task"},
 				"merge_target_branch":   {Type: "string", Description: "Branch to merge completed work into"},
 				"merge_policy":          {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
@@ -82,6 +92,8 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
+				"executor":              {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi'). Defaults to empty (opencode)."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor (e.g., browser, filesystem)"},
 				"relatedEntries":        {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -119,6 +131,15 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["schedule"] = args["schedule"]
 			body["schedule_enabled"] = args["schedule_enabled"]
 			body["max_runs"] = args["max_runs"]
+			body["run_once_at"] = args["run_once_at"]
+			body["timezone"] = args["timezone"]
+			body["starts_at"] = args["starts_at"]
+			body["expires_at"] = args["expires_at"]
+			body["feature_schedule"] = args["feature_schedule"]
+			body["feature_starts_at"] = args["feature_starts_at"]
+			body["feature_expires_at"] = args["feature_expires_at"]
+			body["feature_run_once_at"] = args["feature_run_once_at"]
+			body["feature_timezone"] = args["feature_timezone"]
 			body["merge_target_branch"] = args["merge_target_branch"]
 			body["merge_policy"] = args["merge_policy"]
 			body["merge_strategy"] = args["merge_strategy"]
@@ -126,6 +147,8 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
+			body["executor"] = args["executor"]
+			body["extensions"] = args["extensions"]
 		}
 
 		var resp struct {
@@ -433,12 +456,23 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
 				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
+				"run_once_at":          {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":             {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on"},
+				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
+				"executor":             {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi')"},
+				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor"},
 			},
 			Required: []string{"path"},
 		},
@@ -465,12 +499,23 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"schedule":             args["schedule"],
 			"schedule_enabled":     args["schedule_enabled"],
 			"max_runs":             args["max_runs"],
+			"run_once_at":          args["run_once_at"],
+			"timezone":             args["timezone"],
+			"starts_at":            args["starts_at"],
+			"expires_at":           args["expires_at"],
 			"feature_id":           args["feature_id"],
 			"feature_priority":     args["feature_priority"],
 			"feature_depends_on":   args["feature_depends_on"],
+			"feature_schedule":     args["feature_schedule"],
+			"feature_starts_at":    args["feature_starts_at"],
+			"feature_expires_at":   args["feature_expires_at"],
+			"feature_run_once_at":  args["feature_run_once_at"],
+			"feature_timezone":     args["feature_timezone"],
 			"direct_prompt":        args["direct_prompt"],
 			"agent":                args["agent"],
 			"model":                args["model"],
+			"executor":             args["executor"],
+			"extensions":           args["extensions"],
 		}
 
 		var resp struct {
@@ -544,6 +589,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		if _, ok := args["max_runs"]; ok {
 			changes = append(changes, fmt.Sprintf("Max Runs: %v", args["max_runs"]))
 		}
+		if v := StringArg(args, "run_once_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Run Once At: %s", v))
+		}
+		if v := StringArg(args, "timezone", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Timezone: %s", v))
+		}
+		if v := StringArg(args, "starts_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Starts At: %s", v))
+		}
+		if v := StringArg(args, "expires_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Expires At: %s", v))
+		}
 		if v := StringArg(args, "feature_id", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature ID: %s", v))
 		}
@@ -552,6 +609,21 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 		if deps := StringSliceArg(args, "feature_depends_on"); deps != nil {
 			changes = append(changes, fmt.Sprintf("Feature Dependencies: %d feature(s)", len(deps)))
+		}
+		if v := StringArg(args, "feature_schedule", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Schedule: %s", v))
+		}
+		if v := StringArg(args, "feature_starts_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Starts At: %s", v))
+		}
+		if v := StringArg(args, "feature_expires_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Expires At: %s", v))
+		}
+		if v := StringArg(args, "feature_run_once_at", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Run Once At: %s", v))
+		}
+		if v := StringArg(args, "feature_timezone", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Feature Timezone: %s", v))
 		}
 		if v := StringArg(args, "direct_prompt", ""); v != "" {
 			changes = append(changes, "Direct Prompt: set")
@@ -570,6 +642,111 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 
 		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
 			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
+	})
+}
+
+// =============================================================================
+// brain_bulk_update
+// =============================================================================
+
+func registerBrainBulkUpdate(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "brain_bulk_update",
+		Description: `Update multiple brain entries in a single request.
+
+Two modes (mutually exclusive):
+1. Filter mode: filter + updates — find entries matching criteria and apply the same updates
+2. Explicit mode: entries — specify each entry path with its own updates
+
+Use dry_run to preview what would be changed without applying.
+
+Examples:
+- Mark all tasks in a feature as cancelled:
+  brain_bulk_update({ filter: { feature_id: "old-feature" }, updates: { status: "cancelled" } })
+- Update specific entries:
+  brain_bulk_update({ entries: [{ path: "projects/x/task/abc.md", updates: { status: "completed" } }] })
+- Preview changes:
+  brain_bulk_update({ filter: { status: "draft" }, updates: { status: "pending" }, dry_run: true })`,
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
+				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), append (string), note (string). Use with 'filter'."},
+				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, append?, note? } }"},
+				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		// Validate: must have either (filter + updates) or entries, not both, not neither
+		_, hasFilter := args["filter"]
+		_, hasUpdates := args["updates"]
+		_, hasEntries := args["entries"]
+
+		if hasFilter && hasEntries {
+			return "Cannot use both 'filter' and 'entries' — pick one mode", nil
+		}
+		if !hasFilter && !hasEntries {
+			return "Please provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)", nil
+		}
+		if hasFilter && !hasUpdates {
+			return "Filter mode requires 'updates' to specify what to change", nil
+		}
+
+		// Build request body — pass through to the API which handles full validation
+		body := make(map[string]any)
+		if hasFilter {
+			body["filter"] = args["filter"]
+			body["updates"] = args["updates"]
+		}
+		if hasEntries {
+			body["entries"] = args["entries"]
+		}
+		body["dry_run"] = BoolArg(args, "dry_run", false)
+
+		var resp struct {
+			Updated int  `json:"updated"`
+			Failed  int  `json:"failed"`
+			Total   int  `json:"total"`
+			DryRun  bool `json:"dry_run"`
+			Results []struct {
+				Path   string `json:"path"`
+				ID     string `json:"id"`
+				Title  string `json:"title"`
+				Status string `json:"status"`
+				Error  string `json:"error,omitempty"`
+			} `json:"results"`
+		}
+		if err := client.Request(ctx, "POST", "/entries/bulk-update", body, nil, &resp); err != nil {
+			return "", err
+		}
+
+		// Format response
+		mode := "Applied"
+		if resp.DryRun {
+			mode = "Dry run"
+		}
+
+		lines := []string{
+			fmt.Sprintf("## %s: Bulk Update", mode),
+			"",
+			fmt.Sprintf("- Total matched: %d", resp.Total),
+			fmt.Sprintf("- Updated: %d", resp.Updated),
+			fmt.Sprintf("- Failed: %d", resp.Failed),
+			"",
+		}
+
+		if len(resp.Results) > 0 {
+			lines = append(lines, "### Results")
+			for _, r := range resp.Results {
+				if r.Status == "ok" {
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — updated", r.Title, r.Path))
+				} else {
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — error: %s", r.Title, r.Path, r.Error))
+				}
+			}
+		}
+
+		return strings.Join(lines, "\n"), nil
 	})
 }
 

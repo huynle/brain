@@ -400,6 +400,151 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 	}
 }
 
+// TestMetadataModalFeature_SaveField_FeatureDependsOn_ArraySerialization tests that
+// FieldFeatureDependsOn is sent as a JSON array ([]string), not a plain string.
+func TestMetadataModalFeature_SaveField_FeatureDependsOn_ArraySerialization(t *testing.T) {
+	tests := []struct {
+		name          string
+		inputValue    string
+		expectedArray []string
+	}{
+		{
+			name:          "comma-separated values become array",
+			inputValue:    "feat-auth, feat-db, feat-ui",
+			expectedArray: []string{"feat-auth", "feat-db", "feat-ui"},
+		},
+		{
+			name:          "single value becomes single-element array",
+			inputValue:    "feat-auth",
+			expectedArray: []string{"feat-auth"},
+		},
+		{
+			name:          "empty value becomes empty array not null",
+			inputValue:    "",
+			expectedArray: []string{},
+		},
+		{
+			name:          "whitespace-only items are stripped",
+			inputValue:    "feat-auth, , , feat-db",
+			expectedArray: []string{"feat-auth", "feat-db"},
+		},
+		{
+			name:          "values are trimmed",
+			inputValue:    "  feat-auth  ,  feat-db  ",
+			expectedArray: []string{"feat-auth", "feat-db"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedPayload map[string]interface{}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+
+				if r.URL.Path == "/api/v1/tasks/brain-api/features/deps-test" {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"feature": map[string]interface{}{
+							"featureId": "deps-test",
+							"tasks": []map[string]interface{}{
+								{"id": "task1", "path": "projects/brain-api/task/task1.md", "title": "Task 1"},
+							},
+						},
+					})
+					return
+				}
+
+				if r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/api/v1/entries/") {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"status":            "active",
+						"priority":          "medium",
+						"completeOnIdle":    false,
+						"openPRBeforeMerge": false,
+					})
+					return
+				}
+
+				if r.Method == http.MethodPatch {
+					json.NewDecoder(r.Body).Decode(&receivedPayload)
+					json.NewEncoder(w).Encode(map[string]interface{}{"status": "ok"})
+					return
+				}
+
+				// Features list endpoint for multi-filter dropdown
+				if strings.Contains(r.URL.Path, "/features") {
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"features": []map[string]interface{}{},
+					})
+					return
+				}
+
+				http.Error(w, "not found", http.StatusNotFound)
+			}))
+			defer srv.Close()
+
+			cfg := runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}
+			apiClient := runner.NewAPIClient(cfg)
+			modal := NewMetadataModalFeature("deps-test", "brain-api", apiClient)
+
+			cmd := modal.Init()
+			msg := cmd()
+			modalInterface, _ := modal.Update(msg)
+			modal = modalInterface.(*MetadataModal)
+
+			// Set the field value and focus
+			modal.focusedField = FieldFeatureDependsOn
+			modal.values[FieldFeatureDependsOn] = tt.inputValue
+			modal.interactionMode = ModeEditMultiFilterDropdown
+
+			saveCmd := modal.saveField()
+			if saveCmd == nil {
+				t.Fatal("saveField returned nil cmd")
+			}
+			saveMsg := saveCmd()
+
+			updatedMsg, ok := saveMsg.(metadataUpdatedMsg)
+			if !ok {
+				t.Fatalf("expected metadataUpdatedMsg, got %T", saveMsg)
+			}
+			if updatedMsg.err != nil {
+				t.Fatalf("unexpected error: %v", updatedMsg.err)
+			}
+
+			// Verify the payload was sent
+			if receivedPayload == nil {
+				t.Fatal("no PATCH request received")
+			}
+
+			// Check that feature_depends_on is present and is an array
+			raw, ok := receivedPayload["feature_depends_on"]
+			if !ok {
+				t.Fatal("feature_depends_on not in update payload")
+			}
+
+			// json.Decoder unmarshals JSON arrays as []interface{}
+			arr, ok := raw.([]interface{})
+			if !ok {
+				t.Fatalf("feature_depends_on should be array, got %T: %v", raw, raw)
+			}
+
+			if len(arr) != len(tt.expectedArray) {
+				t.Fatalf("feature_depends_on length = %d, want %d; got %v", len(arr), len(tt.expectedArray), arr)
+			}
+
+			for i, expected := range tt.expectedArray {
+				actual, ok := arr[i].(string)
+				if !ok {
+					t.Errorf("element %d is %T, want string", i, arr[i])
+					continue
+				}
+				if actual != expected {
+					t.Errorf("element %d = %q, want %q", i, actual, expected)
+				}
+			}
+		})
+	}
+}
+
 // TestMetadataModalFeature_SuccessMessage tests that success message shows task count and feature ID.
 func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

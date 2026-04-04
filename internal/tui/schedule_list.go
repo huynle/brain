@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/types"
@@ -25,12 +26,13 @@ func NewScheduleList() ScheduleList {
 }
 
 // SetTasks updates the task list, filtering to only scheduled tasks.
+// Includes tasks with a cron Schedule or a RunOnceAt timestamp.
 // Preserves the current selection if the selected task still exists.
 func (sl *ScheduleList) SetTasks(tasks []types.ResolvedTask) {
-	// Filter to only tasks with a non-empty Schedule
+	// Filter to tasks with a non-empty Schedule OR RunOnceAt
 	var scheduled []types.ResolvedTask
 	for _, t := range tasks {
-		if t.Schedule != "" {
+		if t.Schedule != "" || t.RunOnceAt != "" {
 			scheduled = append(scheduled, t)
 		}
 	}
@@ -204,16 +206,24 @@ func (sl *ScheduleList) renderTaskLine(task types.ResolvedTask, isSelected bool)
 		title = lipgloss.NewStyle().Bold(true).Foreground(ColorWhite).Render(title)
 	}
 
-	// Badge: [disabled] (yellow) or [scheduled] (magenta)
+	// Badge: [disabled] (yellow), [one-shot] (cyan), or [scheduled] (magenta)
 	badge := ""
+	isOneShot := task.RunOnceAt != "" && task.Schedule == ""
 	if isDisabled {
 		badge = lipgloss.NewStyle().Foreground(ColorWaiting).Render("  [disabled]")
+	} else if isOneShot {
+		badge = lipgloss.NewStyle().Foreground(ColorCyan).Render("  [one-shot]")
 	} else {
 		badge = lipgloss.NewStyle().Foreground(ColorMagenta).Render("  [scheduled]")
 	}
 
-	// Schedule expression (dim)
-	scheduleExpr := DimStyle.Render("  " + task.Schedule)
+	// Schedule expression or run_once_at countdown (dim)
+	scheduleExpr := ""
+	if isOneShot {
+		scheduleExpr = DimStyle.Render("  " + formatRunOnceAt(task.RunOnceAt))
+	} else if task.Schedule != "" {
+		scheduleExpr = DimStyle.Render("  " + task.Schedule)
+	}
 
 	// Priority suffix (only if not medium)
 	prioritySuffix := ""
@@ -222,6 +232,42 @@ func (sl *ScheduleList) renderTaskLine(task types.ResolvedTask, isSelected bool)
 	}
 
 	return fmt.Sprintf("%s%s %s%s%s%s", selMarker, indicatorStyled, title, badge, scheduleExpr, prioritySuffix)
+}
+
+// formatRunOnceAt formats a run_once_at timestamp as a countdown or timestamp.
+// Returns "in Xh Ym" for future times, "passed" for past times, or the raw value on parse error.
+func formatRunOnceAt(runOnceAt string) string {
+	t, err := time.Parse(time.RFC3339, runOnceAt)
+	if err != nil {
+		return runOnceAt
+	}
+	return formatCountdown(t)
+}
+
+// formatCountdown returns a human-readable countdown string for a target time.
+// Future: "in 2h 30m", past: "passed", imminent (<1m): "in <1m".
+func formatCountdown(target time.Time) string {
+	now := time.Now()
+	diff := target.Sub(now)
+
+	if diff <= 0 {
+		return "passed"
+	}
+
+	days := int(diff.Hours()) / 24
+	hours := int(diff.Hours()) % 24
+	minutes := int(diff.Minutes()) % 60
+
+	if days > 0 {
+		return fmt.Sprintf("in %dd %dh", days, hours)
+	}
+	if hours > 0 {
+		return fmt.Sprintf("in %dh %dm", hours, minutes)
+	}
+	if minutes > 0 {
+		return fmt.Sprintf("in %dm", minutes)
+	}
+	return "in <1m"
 }
 
 // ContentHeight returns the number of content lines in the schedule list.

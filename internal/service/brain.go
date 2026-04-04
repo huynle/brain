@@ -109,6 +109,11 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		FeatureID:           req.FeatureID,
 		FeaturePriority:     req.FeaturePriority,
 		FeatureDependsOn:    req.FeatureDependsOn,
+		FeatureSchedule:     req.FeatureSchedule,
+		FeatureStartsAt:     req.FeatureStartsAt,
+		FeatureExpiresAt:    req.FeatureExpiresAt,
+		FeatureRunOnceAt:    req.FeatureRunOnceAt,
+		FeatureTimezone:     req.FeatureTimezone,
 		Workdir:             frontmatter.SanitizeSimpleValue(req.Workdir),
 		GitRemote:           frontmatter.SanitizeSimpleValue(req.GitRemote),
 		GitBranch:           frontmatter.SanitizeSimpleValue(req.GitBranch),
@@ -120,6 +125,8 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExecutionMode:       req.ExecutionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
+		Executor:            req.Executor,
+		Extensions:          req.Extensions,
 		UserOriginalRequest: req.UserOriginalRequest,
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
@@ -391,6 +398,18 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["feature_depends_on"]; ok {
 			fm.FeatureDependsOn = metaToStringSlice(v)
 		}
+		if v, ok := meta["starts_at"].(string); ok {
+			fm.StartsAt = v
+		}
+		if v, ok := meta["expires_at"].(string); ok {
+			fm.ExpiresAt = v
+		}
+		if v, ok := meta["run_once_at"].(string); ok {
+			fm.RunOnceAt = v
+		}
+		if v, ok := meta["timezone"].(string); ok {
+			fm.Timezone = v
+		}
 	}
 
 	return fm
@@ -493,6 +512,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.ExpiresAt != nil {
 		fm.ExpiresAt = *req.ExpiresAt
 	}
+	if req.RunOnceAt != nil {
+		fm.RunOnceAt = *req.RunOnceAt
+	}
+	if req.Timezone != nil {
+		fm.Timezone = *req.Timezone
+	}
 
 	// Git/execution fields
 	if req.TargetWorkdir != nil {
@@ -521,6 +546,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.CompleteOnIdle != nil {
 		fm.CompleteOnIdle = req.CompleteOnIdle
+	}
+	if req.Executor != nil {
+		fm.Executor = *req.Executor
+	}
+	if len(req.Extensions) > 0 {
+		fm.Extensions = req.Extensions
 	}
 
 	// Feature fields
@@ -659,6 +690,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
@@ -689,6 +721,157 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	return s.Recall(ctx, row.Path)
 }
 
+// BulkUpdate applies updates to multiple entries in a single request.
+// Supports two modes:
+//   - Filter mode: Filter + Updates selects entries by criteria, applies shared updates.
+//   - Explicit mode: Entries provides per-entry paths with individual updates.
+//
+// Safety cap (default 100, max 100) limits how many entries are affected.
+// DryRun returns matched entries without applying changes.
+// Partial failures are collected; successful updates are NOT rolled back.
+func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+	// 1. Validate request: must be (filter+updates) XOR entries, not both.
+	hasFilter := req.Filter != nil
+	hasEntries := len(req.Entries) > 0
+	if hasFilter && hasEntries {
+		return nil, fmt.Errorf("cannot specify both filter and entries")
+	}
+	if !hasFilter && !hasEntries {
+		return nil, fmt.Errorf("must specify either filter or entries")
+	}
+	if hasFilter && req.Updates == nil {
+		return nil, fmt.Errorf("updates required when using filter mode")
+	}
+
+	// 2. Apply safety cap: default 100, max 100.
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	// 3. Resolve target entries.
+	type target struct {
+		path    string
+		updates types.UpdateEntryRequest
+	}
+	var targets []target
+
+	if hasFilter {
+		// Filter mode: query storage using existing List functionality.
+		listReq := types.ListEntriesRequest{
+			Limit: limit,
+		}
+		if req.Filter.FeatureID != nil {
+			listReq.FeatureID = *req.Filter.FeatureID
+		}
+		if req.Filter.Project != nil {
+			listReq.Project = *req.Filter.Project
+		}
+		if req.Filter.Type != nil {
+			listReq.Type = *req.Filter.Type
+		}
+		if req.Filter.Status != nil {
+			listReq.Status = *req.Filter.Status
+		}
+		if req.Filter.Priority != nil {
+			listReq.Priority = *req.Filter.Priority
+		}
+		if len(req.Filter.Tags) > 0 {
+			listReq.Tags = strings.Join(req.Filter.Tags, ",")
+		}
+
+		listResp, err := s.List(ctx, listReq)
+		if err != nil {
+			return nil, fmt.Errorf("filter query: %w", err)
+		}
+
+		for _, entry := range listResp.Entries {
+			targets = append(targets, target{
+				path:    entry.Path,
+				updates: *req.Updates,
+			})
+		}
+	} else {
+		// Explicit mode: use provided entries directly.
+		for _, entry := range req.Entries {
+			targets = append(targets, target{
+				path:    entry.Path,
+				updates: entry.Updates,
+			})
+		}
+	}
+
+	// 4. Cap results at limit.
+	if len(targets) > limit {
+		targets = targets[:limit]
+	}
+
+	// 5. Dry run: return matched entries without changes.
+	if req.DryRun {
+		results := make([]types.BulkUpdateResult, 0, len(targets))
+		for _, t := range targets {
+			// Resolve each entry to get ID and title.
+			row, err := s.resolveEntry(ctx, t.path)
+			if err != nil || row == nil {
+				results = append(results, types.BulkUpdateResult{
+					Path:   t.path,
+					Status: "error",
+					Error:  "entry not found",
+				})
+				continue
+			}
+			results = append(results, types.BulkUpdateResult{
+				Path:   row.Path,
+				ID:     row.ShortID,
+				Title:  row.Title,
+				Status: "ok",
+			})
+		}
+		return &types.BulkUpdateResponse{
+			Total:   len(results),
+			DryRun:  true,
+			Results: results,
+		}, nil
+	}
+
+	// 6. Apply updates: loop entries, call existing Update() per entry.
+	results := make([]types.BulkUpdateResult, 0, len(targets))
+	updated := 0
+	failed := 0
+
+	for _, t := range targets {
+		entry, err := s.Update(ctx, t.path, t.updates)
+		if err != nil {
+			failed++
+			results = append(results, types.BulkUpdateResult{
+				Path:   t.path,
+				Status: "error",
+				Error:  err.Error(),
+			})
+			continue
+		}
+		updated++
+		results = append(results, types.BulkUpdateResult{
+			Path:   entry.Path,
+			ID:     entry.ID,
+			Title:  entry.Title,
+			Status: "ok",
+		})
+	}
+
+	// 7. Return aggregate response.
+	return &types.BulkUpdateResponse{
+		Updated: updated,
+		Failed:  failed,
+		Total:   len(results),
+		DryRun:  false,
+		Results: results,
+	}, nil
+}
+
 // =============================================================================
 // Metadata Updates
 // =============================================================================
@@ -707,6 +890,10 @@ var durableMetadataFields = map[string]bool{
 	"feature_depends_on": true,
 	"note":               true,
 	"append":             true,
+	"starts_at":          true,
+	"expires_at":         true,
+	"run_once_at":        true,
+	"timezone":           true,
 }
 
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
@@ -800,6 +987,51 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 			fm.FeaturePriority = s
 		}
 	}
+	if v, ok := fields["feature_schedule"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureSchedule = s
+		}
+	}
+	if v, ok := fields["feature_starts_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureStartsAt = s
+		}
+	}
+	if v, ok := fields["feature_expires_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureExpiresAt = s
+		}
+	}
+	if v, ok := fields["feature_run_once_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureRunOnceAt = s
+		}
+	}
+	if v, ok := fields["feature_timezone"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureTimezone = s
+		}
+	}
+	if v, ok := fields["starts_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.StartsAt = s
+		}
+	}
+	if v, ok := fields["expires_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.ExpiresAt = s
+		}
+	}
+	if v, ok := fields["run_once_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.RunOnceAt = s
+		}
+	}
+	if v, ok := fields["timezone"]; ok {
+		if s, ok := v.(string); ok {
+			fm.Timezone = s
+		}
+	}
 
 	// Slice fields: coerce from JSON's []interface{} or []string, then sanitize
 	if v, ok := fields["tags"]; ok {
@@ -868,6 +1100,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
@@ -1194,6 +1427,11 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		Success: true,
 		From:    oldPath,
 		To:      newPath,
+		OldPath: oldPath,
+		NewPath: newPath,
+		Project: targetProject,
+		ID:      entry.ID,
+		Title:   entry.Title,
 	}, nil
 }
 

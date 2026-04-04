@@ -20,8 +20,8 @@ func TestRegisterBrainTools_Count(t *testing.T) {
 
 	// Count registered tools
 	count := len(s.tools)
-	if count != 19 {
-		t.Errorf("expected 19 brain tools registered, got %d", count)
+	if count != 20 {
+		t.Errorf("expected 20 brain tools registered, got %d", count)
 	}
 }
 
@@ -37,6 +37,7 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 		"brain_list",
 		"brain_inject",
 		"brain_update",
+		"brain_bulk_update",
 		"brain_delete",
 		"brain_move",
 		"brain_stats",

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -13,6 +14,11 @@ import (
 type TaskDetail struct {
 	task          *types.ResolvedTask
 	width, height int
+
+	// Feature mode: when a feature header is selected instead of a task
+	featureMode bool
+	featureID   string
+	feature     *service.ComputedFeature
 
 	// Viewport scrolling state
 	scrollOffset int // First visible line index (0-based)
@@ -25,7 +31,13 @@ func NewTaskDetail() TaskDetail {
 }
 
 // SetTask updates the displayed task. Only resets scroll position if the task changes.
+// Clears feature mode (task and feature display are mutually exclusive).
 func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
+	// Clear feature mode
+	td.featureMode = false
+	td.featureID = ""
+	td.feature = nil
+
 	// Only reset scroll position when switching to a different task
 	oldID := ""
 	if td.task != nil {
@@ -38,6 +50,24 @@ func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 
 	td.task = task
 	if oldID != newID {
+		td.scrollOffset = 0
+		td.totalLines = 0
+	}
+}
+
+// SetFeature switches to feature detail mode, showing aggregate feature info.
+// Clears task mode (task and feature display are mutually exclusive).
+func (td *TaskDetail) SetFeature(featureID string, feature *service.ComputedFeature) {
+	// Clear task mode
+	td.task = nil
+
+	// Only reset scroll when switching to a different feature
+	oldID := td.featureID
+	td.featureMode = true
+	td.featureID = featureID
+	td.feature = feature
+
+	if oldID != featureID {
 		td.scrollOffset = 0
 		td.totalLines = 0
 	}
@@ -82,7 +112,9 @@ func (td *TaskDetail) SetSize(width, height int) {
 	td.width = width
 	td.height = height
 	// Recompute totalLines so ScrollDown/ScrollUp have accurate bounds
-	if td.task != nil {
+	if td.featureMode && td.feature != nil {
+		td.totalLines = td.countFeatureContentLines()
+	} else if td.task != nil {
 		td.totalLines = td.countContentLines()
 	}
 }
@@ -186,6 +218,9 @@ func (td *TaskDetail) countContentLines() int {
 
 // View renders the task detail panel.
 func (td *TaskDetail) View() string {
+	if td.featureMode && td.feature != nil {
+		return td.renderFeature()
+	}
 	if td.task == nil {
 		return td.renderEmpty()
 	}
@@ -500,4 +535,262 @@ func (td *TaskDetail) renderFrontmatter(task *types.ResolvedTask) []string {
 	}
 
 	return lines
+}
+
+// featureTaskStatusIcon returns the icon for a task status within a feature view.
+func featureTaskStatusIcon(status string) string {
+	switch status {
+	case "completed", "validated":
+		return "✓"
+	case "in_progress":
+		return "⚡"
+	case "blocked", "cancelled":
+		return "✗"
+	case "pending":
+		return "◌"
+	default:
+		return "◌"
+	}
+}
+
+// featureDepStatusIconSimple returns a simple icon for a pre-resolved feature dependency status.
+// Used in taskdetail rendering where we don't have the full feature list.
+func featureDepStatusIconSimple(status string) string {
+	switch status {
+	case "completed":
+		return "✓"
+	case "in_progress":
+		return "◷"
+	case "blocked":
+		return "✗"
+	case "pending":
+		return "◌"
+	default:
+		return "◌"
+	}
+}
+
+// countFeatureContentLines counts content lines for feature mode (excluding header).
+func (td *TaskDetail) countFeatureContentLines() int {
+	if td.feature == nil {
+		return 0
+	}
+	f := td.feature
+	count := 0
+
+	// Status
+	count++
+	// Priority
+	if f.Priority != "" {
+		count++
+	}
+	// Task stats
+	count++
+
+	// Dependencies section
+	if len(f.DependsOnFeatures) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(f.DependsOnFeatures)
+	}
+
+	// Dependents section (blocked-by + waiting-on combined)
+	hasDependents := len(f.BlockedByFeatures) > 0 || len(f.WaitingOnFeatures) > 0
+	if hasDependents {
+		count++ // blank line
+		count++ // header
+		count += len(f.BlockedByFeatures)
+		count += len(f.WaitingOnFeatures)
+	}
+
+	// Tasks section
+	if len(f.Tasks) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(f.Tasks)
+	}
+
+	// Cycle warning
+	if f.InCycle {
+		count++ // blank line
+		count++ // warning
+	}
+
+	return count
+}
+
+// renderFeature renders the feature detail view.
+func (td *TaskDetail) renderFeature() string {
+	f := td.feature
+	var lines []string
+
+	// Status
+	statusLine := fmt.Sprintf("Status:      %s", StatusStyle(f.Classification).Render(f.Status))
+	lines = append(lines, statusLine)
+
+	// Priority
+	if f.Priority != "" {
+		priorityLine := fmt.Sprintf("Priority:    %s", PriorityStyle(f.Priority).Render(f.Priority))
+		lines = append(lines, priorityLine)
+	}
+
+	// Task stats
+	stats := f.TaskStats
+	activeCount := stats.InProgress
+	statsLine := fmt.Sprintf("Tasks:       %d/%d complete", stats.Completed, stats.Total)
+	if activeCount > 0 {
+		statsLine += fmt.Sprintf(" (%d active)", activeCount)
+	}
+	lines = append(lines, statsLine)
+
+	// Dependencies (features this feature depends on)
+	if len(f.DependsOnFeatures) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dependencies:"))
+		for _, depID := range f.DependsOnFeatures {
+			icon := featureDepStatusIconSimple("pending") // default
+			style := DimStyle
+			// We don't have the dep feature objects directly, but we know if it's in
+			// BlockedByFeatures or WaitingOnFeatures
+			if sliceContains(f.BlockedByFeatures, depID) {
+				icon = featureDepStatusIconSimple("blocked")
+				style = lipgloss.NewStyle().Foreground(ColorBlocked)
+			} else if sliceContains(f.WaitingOnFeatures, depID) {
+				icon = featureDepStatusIconSimple("in_progress")
+				style = lipgloss.NewStyle().Foreground(ColorWaiting)
+			} else {
+				// If not blocked/waiting, it must be completed
+				icon = featureDepStatusIconSimple("completed")
+				style = lipgloss.NewStyle().Foreground(ColorReady)
+			}
+			lines = append(lines, fmt.Sprintf("  %s %s", style.Render(icon), depID))
+		}
+	}
+
+	// Dependents (features blocked by or waiting on this feature)
+	hasDependents := len(f.BlockedByFeatures) > 0 || len(f.WaitingOnFeatures) > 0
+	if hasDependents {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dependents:"))
+		for _, depID := range f.BlockedByFeatures {
+			icon := "✗"
+			style := lipgloss.NewStyle().Foreground(ColorBlocked)
+			lines = append(lines, fmt.Sprintf("  %s %s (blocked)", style.Render(icon), depID))
+		}
+		for _, depID := range f.WaitingOnFeatures {
+			icon := "◌"
+			style := lipgloss.NewStyle().Foreground(ColorWaiting)
+			lines = append(lines, fmt.Sprintf("  %s %s (waiting on this)", style.Render(icon), depID))
+		}
+	}
+
+	// Tasks within the feature
+	if len(f.Tasks) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Tasks:"))
+		for _, task := range f.Tasks {
+			icon := featureTaskStatusIcon(task.Status)
+			var style lipgloss.Style
+			switch task.Status {
+			case "completed", "validated":
+				style = lipgloss.NewStyle().Foreground(ColorCompleted)
+			case "in_progress":
+				style = lipgloss.NewStyle().Foreground(ColorActive)
+			case "blocked", "cancelled":
+				style = lipgloss.NewStyle().Foreground(ColorBlocked)
+			default:
+				style = DimStyle
+			}
+
+			taskLine := fmt.Sprintf("  %s %s", style.Render(icon), task.Title)
+			if task.Status == "in_progress" {
+				taskLine += DimStyle.Render(" (in_progress)")
+			}
+			lines = append(lines, taskLine)
+		}
+	}
+
+	// Cycle warning
+	if f.InCycle {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBlocked).Bold(true).
+			Render("↺ Feature is part of a dependency cycle"))
+	}
+
+	// Store total content lines
+	td.totalLines = len(lines)
+
+	// Build header: "── Feature: <name> ──────"
+	featureTitle := fmt.Sprintf("── Feature: %s ", f.ID)
+	remainingWidth := td.width - len(featureTitle) - 2
+	if remainingWidth < 0 {
+		remainingWidth = 0
+	}
+	headerText := featureTitle + strings.Repeat("─", remainingWidth)
+	var headerLine string
+
+	// Apply viewport scrolling (same logic as renderTask)
+	if td.height > 0 && td.totalLines > td.height-1 {
+		viewportHeight := td.height - 1
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		}
+
+		maxOffset := td.totalLines - viewportHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if td.scrollOffset > maxOffset {
+			td.scrollOffset = maxOffset
+		}
+
+		startLine := td.scrollOffset + 1
+		endLine := td.scrollOffset + viewportHeight
+		if endLine > td.totalLines {
+			endLine = td.totalLines
+		}
+
+		headerLine = FeatureHeaderStyle.Render(headerText) +
+			DimStyle.Render(fmt.Sprintf(" (%d-%d/%d)", startLine, endLine, td.totalLines))
+
+		end := td.scrollOffset + viewportHeight
+		if end > td.totalLines {
+			end = td.totalLines
+		}
+		visibleLines := make([]string, end-td.scrollOffset)
+		copy(visibleLines, lines[td.scrollOffset:end])
+
+		hasMore := td.scrollOffset > 0
+		hasBelow := end < td.totalLines
+
+		if hasMore && len(visibleLines) > 0 {
+			visibleLines[0] = DimStyle.Render("▲ more above")
+		}
+		if hasBelow && len(visibleLines) > 0 {
+			visibleLines[len(visibleLines)-1] = DimStyle.Render("▼ more below")
+		}
+
+		var result []string
+		result = append(result, headerLine)
+		result = append(result, visibleLines...)
+		return strings.Join(result, "\n")
+	}
+
+	// Content fits in viewport
+	td.scrollOffset = 0
+	headerLine = FeatureHeaderStyle.Render(headerText)
+	var result []string
+	result = append(result, headerLine)
+	result = append(result, lines...)
+	return strings.Join(result, "\n")
+}
+
+// sliceContains checks if a string slice contains a value.
+func sliceContains(slice []string, val string) bool {
+	for _, s := range slice {
+		if s == val {
+			return true
+		}
+	}
+	return false
 }

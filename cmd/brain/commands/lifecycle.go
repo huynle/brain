@@ -1,15 +1,18 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
+	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/lifecycle"
 )
 
@@ -17,9 +20,12 @@ import (
 type LifecycleFlags struct {
 	PIDFile string
 	LogFile string
-	Timeout int  // Timeout in seconds for stop operations
-	Force   bool // Force kill if graceful shutdown fails
-	DryRun  bool // Dry-run mode (don't actually execute)
+	Timeout int    // Timeout in seconds for stop operations
+	Force   bool   // Force kill if graceful shutdown fails
+	DryRun  bool   // Dry-run mode (don't actually execute)
+	Daemon  bool   // Run as background daemon
+	Port    int    // Server port override
+	Host    string // Server host override
 }
 
 // StartCommand starts the server in daemon mode.
@@ -66,10 +72,25 @@ func (c *StartCommand) Execute() error {
 	}
 
 	if c.Flags.DryRun {
-		fmt.Printf("[DRY-RUN] Would start server (pid_file=%s, log_file=%s)\n", pidFile, logFile)
+		mode := "foreground"
+		if c.Flags.Daemon {
+			mode = "daemon"
+		}
+		fmt.Printf("[DRY-RUN] Would start server in %s mode (pid_file=%s, log_file=%s)\n", mode, pidFile, logFile)
 		return nil
 	}
 
+	// Daemon mode: fork a detached child process
+	if c.Flags.Daemon {
+		return c.startDaemon(pidFile, logFile)
+	}
+
+	// Default: run in foreground
+	return c.startForeground(pidFile)
+}
+
+// startDaemon forks a detached child process running the API server.
+func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 	// Get path to brain binary
 	brainBinary, err := exec.LookPath("brain")
 	if err != nil {
@@ -99,6 +120,34 @@ func (c *StartCommand) Execute() error {
 	fmt.Printf("Server started (PID %d)\n", pid)
 	fmt.Printf("Logs: %s\n", logFile)
 	return nil
+}
+
+// startForeground runs the API server in the current process.
+func (c *StartCommand) startForeground(pidFile string) error {
+	opts := apiserver.ServerOptions{
+		Port:       c.Config.Server.Port,
+		Host:       c.Config.Server.Host,
+		BrainDir:   c.Config.Server.BrainDir,
+		EnableAuth: c.Config.Server.EnableAuth,
+		LogLevel:   c.Config.Server.LogLevel,
+		CORSOrigin: c.Config.Server.CORSOrigin,
+		OAuthPIN:   c.Config.Server.OAuthPIN,
+	}
+
+	// Create context with signal handling for graceful shutdown
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	// Write PID file so `brain api stop` works against foreground processes too
+	if err := lifecycle.WritePID(pidFile, os.Getpid()); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write PID file: %v\n", err)
+	} else {
+		defer lifecycle.ClearPID(pidFile)
+	}
+
+	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
+	fmt.Println("Press Ctrl+C to stop")
+	return apiserver.RunServer(ctx, opts)
 }
 
 // StopCommand stops a running server.

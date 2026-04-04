@@ -29,6 +29,9 @@ type BrainService interface {
 	// Update modifies an existing brain entry.
 	Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
 
+	// BulkUpdate applies updates to multiple entries in a single request.
+	BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+
 	// UpdateMetadata merges fields into the entry's metadata JSON in SQLite.
 	// Used for runtime state (sessions, claims) without filesystem access.
 	UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)

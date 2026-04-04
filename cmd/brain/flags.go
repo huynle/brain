@@ -290,6 +290,9 @@ type LifecycleFlags struct {
 	Timeout int
 	Force   bool
 	DryRun  bool
+	Daemon  bool
+	Port    int
+	Host    string
 }
 
 // ParseLifecycleFlags parses lifecycle command flags from args.
@@ -323,6 +326,21 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 			flags.Force = true
 		case "--dry-run":
 			flags.DryRun = true
+		case "--daemon", "-d":
+			flags.Daemon = true
+		case "--port", "-p":
+			if i+1 < len(args) {
+				port := 0
+				if _, err := fmt.Sscanf(args[i+1], "%d", &port); err == nil {
+					flags.Port = port
+				}
+				i++
+			}
+		case "--host":
+			if i+1 < len(args) {
+				flags.Host = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -337,6 +355,9 @@ func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleF
 		Timeout: flags.Timeout,
 		Force:   flags.Force,
 		DryRun:  flags.DryRun,
+		Daemon:  flags.Daemon,
+		Port:    flags.Port,
+		Host:    flags.Host,
 	}
 }
 

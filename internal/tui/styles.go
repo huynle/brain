@@ -51,7 +51,9 @@ const (
 	IndicatorDisconn   = "○" // red dot
 
 	// Schedule badge for cron/scheduled tasks
-	BadgeCron = "[cron]"
+	BadgeCron   = "[cron]"
+	BadgeOnce   = "[once]"
+	BadgeWindow = "[window]"
 )
 
 // =============================================================================
@@ -91,6 +93,14 @@ var ScheduleBadgeStyle = lipgloss.NewStyle().
 // ScheduleBadgeDisabledStyle is used for the [cron] badge on disabled scheduled tasks.
 var ScheduleBadgeDisabledStyle = lipgloss.NewStyle().
 	Foreground(ColorDim)
+
+// OnceBadgeStyle is used for the [once] badge on run_once_at tasks.
+var OnceBadgeStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("3")) // yellow
+
+// WindowBadgeStyle is used for the [window] badge on time-windowed tasks.
+var WindowBadgeStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("6")) // cyan
 
 // GroupHeaderStyle is used for collapsible group headers.
 var GroupHeaderStyle = lipgloss.NewStyle().

@@ -17,7 +17,7 @@ func TestShouldTrigger_NextRunPast(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 	nextRun := "2026-03-22T10:15:00Z" // 15 minutes ago
 
-	if !shouldTrigger("*/15 * * * *", nextRun, now) {
+	if !shouldTrigger("*/15 * * * *", nextRun, now, "") {
 		t.Error("should trigger when next_run is in the past")
 	}
 }
@@ -26,7 +26,7 @@ func TestShouldTrigger_NextRunFuture(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 	nextRun := "2026-03-22T10:45:00Z" // 15 minutes from now
 
-	if shouldTrigger("*/15 * * * *", nextRun, now) {
+	if shouldTrigger("*/15 * * * *", nextRun, now, "") {
 		t.Error("should NOT trigger when next_run is in the future")
 	}
 }
@@ -35,7 +35,7 @@ func TestShouldTrigger_NoNextRun_CronMatches(t *testing.T) {
 	// At 10:30, */15 matches (30 is divisible by 15)
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if !shouldTrigger("*/15 * * * *", "", now) {
+	if !shouldTrigger("*/15 * * * *", "", now, "") {
 		t.Error("should trigger when no next_run and cron matches current time")
 	}
 }
@@ -44,7 +44,7 @@ func TestShouldTrigger_NoNextRun_CronDoesNotMatch(t *testing.T) {
 	// At 10:31, */15 does NOT match
 	now := time.Date(2026, 3, 22, 10, 31, 0, 0, time.UTC)
 
-	if shouldTrigger("*/15 * * * *", "", now) {
+	if shouldTrigger("*/15 * * * *", "", now, "") {
 		t.Error("should NOT trigger when no next_run and cron does not match")
 	}
 }
@@ -52,7 +52,7 @@ func TestShouldTrigger_NoNextRun_CronDoesNotMatch(t *testing.T) {
 func TestShouldTrigger_NoSchedule(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if shouldTrigger("", "", now) {
+	if shouldTrigger("", "", now, "") {
 		t.Error("should NOT trigger when schedule is empty")
 	}
 }
@@ -60,7 +60,7 @@ func TestShouldTrigger_NoSchedule(t *testing.T) {
 func TestShouldTrigger_InvalidSchedule(t *testing.T) {
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if shouldTrigger("invalid cron", "", now) {
+	if shouldTrigger("invalid cron", "", now, "") {
 		t.Error("should NOT trigger when schedule is invalid")
 	}
 }
@@ -69,8 +69,155 @@ func TestShouldTrigger_InvalidNextRun(t *testing.T) {
 	// Invalid next_run should fall back to cron matching
 	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
 
-	if !shouldTrigger("*/15 * * * *", "not-a-date", now) {
+	if !shouldTrigger("*/15 * * * *", "not-a-date", now, "") {
 		t.Error("should fall back to cron matching when next_run is invalid")
+	}
+}
+
+// =============================================================================
+// Timezone-aware shouldTrigger Tests
+// =============================================================================
+
+func TestShouldTrigger_Timezone_ConvertsNowBeforeMatching(t *testing.T) {
+	// It's 10:30 UTC, which is 19:30 in Asia/Tokyo (UTC+9).
+	// Cron schedule "30 19 * * *" means 19:30 in the task's timezone.
+	// Should trigger because now in Tokyo time is 19:30.
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 19 * * *", "", now, "Asia/Tokyo") {
+		t.Error("should trigger when now converted to task timezone matches cron")
+	}
+}
+
+func TestShouldTrigger_Timezone_DoesNotMatchUTC(t *testing.T) {
+	// It's 10:30 UTC, cron "30 10 * * *" would match UTC but NOT Asia/Tokyo (19:30).
+	// With timezone=Asia/Tokyo, we match against 19:30 not 10:30.
+	// "30 10 * * *" should NOT match because in Tokyo it's 19:30.
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if shouldTrigger("30 10 * * *", "", now, "Asia/Tokyo") {
+		t.Error("should NOT trigger: cron 30 10 matches UTC but not Tokyo time (19:30)")
+	}
+}
+
+func TestShouldTrigger_Timezone_EmptyFallsBackToUTC(t *testing.T) {
+	// Empty timezone should behave like UTC (backward compatible)
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 10 * * *", "", now, "") {
+		t.Error("empty timezone should fall back to UTC matching")
+	}
+}
+
+func TestShouldTrigger_Timezone_InvalidFallsBackToUTC(t *testing.T) {
+	// Invalid timezone should fall back to UTC
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 10 * * *", "", now, "Invalid/Timezone") {
+		t.Error("invalid timezone should fall back to UTC matching")
+	}
+}
+
+func TestShouldTrigger_Timezone_NextRunStillUsedWhenSet(t *testing.T) {
+	// When next_run is set and valid, timezone doesn't affect next_run comparison
+	// (next_run is already stored as UTC)
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	nextRun := "2026-03-22T10:15:00Z" // past
+
+	if !shouldTrigger("*/15 * * * *", nextRun, now, "America/New_York") {
+		t.Error("should still use next_run comparison regardless of timezone")
+	}
+}
+
+// =============================================================================
+// Timezone-aware getNextRun Tests
+// =============================================================================
+
+func TestGetNextRun_Timezone_ComputesInLocalThenReturnsUTC(t *testing.T) {
+	// after is 10:30 UTC = 19:30 Tokyo
+	// Schedule "0 20 * * *" means 20:00 in Tokyo = 11:00 UTC
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+
+	next, err := getNextRun("0 20 * * *", after, "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	// Next 20:00 Tokyo after 19:30 Tokyo = today 20:00 Tokyo = 11:00 UTC
+	expected := time.Date(2026, 3, 22, 11, 0, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun = %v, want %v", next, expected)
+	}
+}
+
+func TestGetNextRun_Timezone_EmptyFallsBackToUTC(t *testing.T) {
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	next, err := getNextRun("*/15 * * * *", after, "")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	expected := time.Date(2026, 3, 22, 10, 45, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun = %v, want %v", next, expected)
+	}
+}
+
+func TestGetNextRun_Timezone_InvalidFallsBackToUTC(t *testing.T) {
+	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	next, err := getNextRun("*/15 * * * *", after, "Invalid/Zone")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	expected := time.Date(2026, 3, 22, 10, 45, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun with invalid timezone = %v, want %v (UTC fallback)", next, expected)
+	}
+}
+
+// =============================================================================
+// parseTimeInZone Tests
+// =============================================================================
+
+func TestParseTimeInZone_ValidIANA(t *testing.T) {
+	got, err := parseTimeInZone("2026-03-22T10:30:00Z", "America/New_York")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	// Should parse the time and return it in the New York location
+	ny, _ := time.LoadLocation("America/New_York")
+	expected := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC).In(ny)
+	if !got.Equal(expected) {
+		t.Errorf("parseTimeInZone = %v, want %v", got, expected)
+	}
+}
+
+func TestParseTimeInZone_EmptyTimezone(t *testing.T) {
+	got, err := parseTimeInZone("2026-03-22T10:30:00Z", "")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	expected := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	if !got.Equal(expected) {
+		t.Errorf("parseTimeInZone empty tz = %v, want %v", got, expected)
+	}
+	if got.Location() != time.UTC {
+		t.Errorf("parseTimeInZone empty tz location = %v, want UTC", got.Location())
+	}
+}
+
+func TestParseTimeInZone_InvalidTimezone(t *testing.T) {
+	_, err := parseTimeInZone("2026-03-22T10:30:00Z", "Not/A/Zone")
+	if err == nil {
+		t.Error("parseTimeInZone should return error for invalid timezone")
+	}
+}
+
+func TestParseTimeInZone_InvalidTimeString(t *testing.T) {
+	_, err := parseTimeInZone("not-a-time", "America/New_York")
+	if err == nil {
+		t.Error("parseTimeInZone should return error for invalid time string")
 	}
 }
 
@@ -80,7 +227,7 @@ func TestShouldTrigger_InvalidNextRun(t *testing.T) {
 
 func TestGetNextRun(t *testing.T) {
 	after := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
-	next, err := getNextRun("*/15 * * * *", after)
+	next, err := getNextRun("*/15 * * * *", after, "")
 	if err != nil {
 		t.Fatalf("getNextRun error: %v", err)
 	}
@@ -92,7 +239,7 @@ func TestGetNextRun(t *testing.T) {
 }
 
 func TestGetNextRun_InvalidSchedule(t *testing.T) {
-	_, err := getNextRun("invalid", time.Now())
+	_, err := getNextRun("invalid", time.Now(), "")
 	if err == nil {
 		t.Error("getNextRun should return error for invalid schedule")
 	}
@@ -727,5 +874,1387 @@ func TestFinalizeRun_BlockedStatusMapsFailed(t *testing.T) {
 
 	if updatedRun["status"] != "failed" {
 		t.Errorf("blocked completion should map to 'failed', got %v", updatedRun["status"])
+	}
+}
+
+// =============================================================================
+// checkTimeWindow Tests
+// =============================================================================
+
+func TestCheckTimeWindow_NoFields(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("", "", now, "")
+	if result != windowOpen {
+		t.Errorf("no starts_at/expires_at should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtFuture(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-07-01T00:00:00Z" // future
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowNotYet {
+		t.Errorf("starts_at in future should return windowNotYet, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtPast(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z" // past
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowOpen {
+		t.Errorf("starts_at in past should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_StartsAtExact(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T12:00:00Z" // exact match
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowOpen {
+		t.Errorf("starts_at equal to now should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtPast(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expiresAt := "2026-06-01T00:00:00Z" // past
+	result := checkTimeWindow("", expiresAt, now, "")
+	if result != windowExpired {
+		t.Errorf("expires_at in past should return windowExpired, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtFuture(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expiresAt := "2026-07-01T00:00:00Z" // future
+	result := checkTimeWindow("", expiresAt, now, "")
+	if result != windowOpen {
+		t.Errorf("expires_at in future should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsInWindow(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowOpen {
+		t.Errorf("now within window should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsBeforeWindow(t *testing.T) {
+	now := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowNotYet {
+		t.Errorf("now before window should return windowNotYet, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_BothFieldsAfterWindow(t *testing.T) {
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"
+	expiresAt := "2026-07-01T00:00:00Z"
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowExpired {
+		t.Errorf("now after window should return windowExpired, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_RespectsTimezone(t *testing.T) {
+	// 10:00 UTC = 19:00 Asia/Tokyo
+	// starts_at is 2026-06-15T18:00:00Z (= next day 03:00 Tokyo)
+	// In UTC: now (10:00) < starts_at (18:00) → not yet
+	now := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T18:00:00Z"
+	result := checkTimeWindow(startsAt, "", now, "Asia/Tokyo")
+	if result != windowNotYet {
+		t.Errorf("should respect timezone, now is before starts_at, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_InvalidStartsAtIgnored(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("not-a-date", "", now, "")
+	if result != windowOpen {
+		t.Errorf("invalid starts_at should be ignored (windowOpen), got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_InvalidExpiresAtIgnored(t *testing.T) {
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	result := checkTimeWindow("", "not-a-date", now, "")
+	if result != windowOpen {
+		t.Errorf("invalid expires_at should be ignored (windowOpen), got %v", result)
+	}
+}
+
+// =============================================================================
+// Integration: checkProjectScheduledTasks with time windows
+// =============================================================================
+
+func TestCheckScheduledTasks_SkipsBeforeStartsAt(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-win-1",
+			Path:     "projects/proj-a/task/sched-win-1.md",
+			Title:    "Future Window Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			StartsAt: "2026-07-01T00:00:00Z", // future
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-win-1.md" && c.Status == "pending" {
+			t.Error("should NOT trigger task before starts_at")
+		}
+	}
+}
+
+func TestCheckScheduledTasks_TriggersAfterStartsAt(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-win-2",
+			Path:     "projects/proj-a/task/sched-win-2.md",
+			Title:    "Past Window Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			StartsAt: "2026-06-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	found := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-win-2.md" && c.Status == "pending" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("should trigger task after starts_at has passed")
+	}
+}
+
+func TestCheckScheduledTasks_DisablesExpiredTask(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "sched-exp-1",
+			Path:      "projects/proj-a/task/sched-exp-1.md",
+			Title:     "Expired Task",
+			Status:    "active",
+			Schedule:  "*/15 * * * *",
+			ExpiresAt: "2026-06-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should NOT trigger (no status reset to pending)
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-exp-1.md" && c.Status == "pending" {
+			t.Error("should NOT trigger expired task")
+		}
+	}
+
+	// Should have disabled the schedule via UpdateMetadata
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisable := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/sched-exp-1.md" {
+			if v, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled, ok := v.(bool); ok && !enabled {
+					foundDisable = true
+				}
+			}
+		}
+	}
+	if !foundDisable {
+		t.Error("should auto-disable expired task schedule")
+	}
+}
+
+// =============================================================================
+// shouldTrigger — Additional Timezone Tests (America/New_York)
+// =============================================================================
+
+func TestShouldTrigger_Timezone_AmericaNewYork(t *testing.T) {
+	// It's 15:30 UTC, which is 11:30 EDT (UTC-4) in America/New_York.
+	// Cron "30 11 * * *" means 11:30 in NY time.
+	now := time.Date(2026, 6, 15, 15, 30, 0, 0, time.UTC)
+
+	if !shouldTrigger("30 11 * * *", "", now, "America/New_York") {
+		t.Error("should trigger when now in America/New_York matches cron")
+	}
+}
+
+func TestShouldTrigger_Timezone_AmericaNewYork_NoMatch(t *testing.T) {
+	// It's 15:30 UTC = 11:30 EDT in NY.
+	// Cron "30 15 * * *" means 15:30 NY time, which is 19:30 UTC.
+	// Should NOT match because in NY it's 11:30, not 15:30.
+	now := time.Date(2026, 6, 15, 15, 30, 0, 0, time.UTC)
+
+	if shouldTrigger("30 15 * * *", "", now, "America/New_York") {
+		t.Error("should NOT trigger: cron 30 15 matches UTC but not NY time (11:30)")
+	}
+}
+
+func TestShouldTrigger_Timezone_AmericaNewYork_Winter(t *testing.T) {
+	// In January, New York is EST (UTC-5).
+	// 16:00 UTC = 11:00 EST
+	now := time.Date(2026, 1, 15, 16, 0, 0, 0, time.UTC)
+
+	if !shouldTrigger("0 11 * * *", "", now, "America/New_York") {
+		t.Error("should trigger: 16:00 UTC = 11:00 EST in winter")
+	}
+}
+
+// =============================================================================
+// shouldTriggerRunOnce Unit Tests
+// =============================================================================
+
+func TestShouldTriggerRunOnce_TriggersAtCorrectTime(t *testing.T) {
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	runOnceAt := "2026-06-15T14:00:00Z" // exact match
+
+	if !shouldTriggerRunOnce(runOnceAt, now, "") {
+		t.Error("should trigger when now equals run_once_at")
+	}
+}
+
+func TestShouldTriggerRunOnce_TriggersAfterTime(t *testing.T) {
+	now := time.Date(2026, 6, 15, 14, 30, 0, 0, time.UTC)
+	runOnceAt := "2026-06-15T14:00:00Z" // 30 minutes ago
+
+	if !shouldTriggerRunOnce(runOnceAt, now, "") {
+		t.Error("should trigger when now is after run_once_at")
+	}
+}
+
+func TestShouldTriggerRunOnce_DoesNotTriggerBeforeTime(t *testing.T) {
+	now := time.Date(2026, 6, 15, 13, 30, 0, 0, time.UTC)
+	runOnceAt := "2026-06-15T14:00:00Z" // 30 minutes from now
+
+	if shouldTriggerRunOnce(runOnceAt, now, "") {
+		t.Error("should NOT trigger when now is before run_once_at")
+	}
+}
+
+func TestShouldTriggerRunOnce_EmptyString(t *testing.T) {
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+
+	if shouldTriggerRunOnce("", now, "") {
+		t.Error("should NOT trigger when run_once_at is empty")
+	}
+}
+
+func TestShouldTriggerRunOnce_InvalidFormat(t *testing.T) {
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+
+	if shouldTriggerRunOnce("not-a-date", now, "") {
+		t.Error("should NOT trigger when run_once_at is invalid")
+	}
+}
+
+func TestShouldTriggerRunOnce_PastRunOnceAt(t *testing.T) {
+	// A run_once_at that's far in the past should still trigger
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	runOnceAt := "2026-01-01T00:00:00Z" // months ago
+
+	if !shouldTriggerRunOnce(runOnceAt, now, "") {
+		t.Error("should trigger for past run_once_at (schedule_enabled controls re-trigger)")
+	}
+}
+
+func TestShouldTriggerRunOnce_WithTimezoneParam(t *testing.T) {
+	// run_once_at is RFC3339 (absolute time), timezone param is accepted but
+	// doesn't change the comparison since RFC3339 already embeds offset.
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	runOnceAt := "2026-06-15T14:00:00Z"
+
+	if !shouldTriggerRunOnce(runOnceAt, now, "America/New_York") {
+		t.Error("should trigger regardless of timezone param (RFC3339 is absolute)")
+	}
+}
+
+// =============================================================================
+// run_once_at Integration Tests
+// =============================================================================
+
+func TestCheckScheduledTasks_RunOnce_TriggersAndDisables(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "once-1",
+			Path:      "projects/proj-a/task/once-1.md",
+			Title:     "One-Shot Task",
+			Status:    "active",
+			RunOnceAt: "2026-06-15T13:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should reset status to pending
+	statusCalls := client.getUpdateStatusCalls()
+	foundPending := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/once-1.md" && c.Status == "pending" {
+			foundPending = true
+		}
+	}
+	if !foundPending {
+		t.Error("run_once_at task should be reset to pending")
+	}
+
+	// Should auto-disable via UpdateMetadata (schedule_enabled=false)
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisable := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/once-1.md" {
+			if v, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled, ok := v.(bool); ok && !enabled {
+					foundDisable = true
+				}
+			}
+		}
+	}
+	if !foundDisable {
+		t.Error("run_once_at task should auto-disable schedule_enabled after firing")
+	}
+}
+
+func TestCheckScheduledTasks_RunOnce_DoesNotTriggerBeforeTime(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "once-2",
+			Path:      "projects/proj-a/task/once-2.md",
+			Title:     "Future One-Shot Task",
+			Status:    "active",
+			RunOnceAt: "2026-06-15T14:00:00Z", // future
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/once-2.md" && c.Status == "pending" {
+			t.Error("run_once_at task should NOT trigger before its time")
+		}
+	}
+}
+
+func TestCheckScheduledTasks_RunOnce_WithoutCronTreatedAsScheduled(t *testing.T) {
+	// A task with run_once_at but NO schedule field should still be treated as scheduled
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "once-3",
+			Path:      "projects/proj-a/task/once-3.md",
+			Title:     "No-Cron One-Shot",
+			Status:    "active",
+			Schedule:  "",                     // no cron
+			RunOnceAt: "2026-06-15T13:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	foundPending := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/once-3.md" && c.Status == "pending" {
+			foundPending = true
+		}
+	}
+	if !foundPending {
+		t.Error("task with run_once_at but no cron should still trigger as scheduled")
+	}
+}
+
+func TestCheckScheduledTasks_RunOnce_RecordsRunEntry(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 14, 0, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "once-4",
+			Path:      "projects/proj-a/task/once-4.md",
+			Title:     "One-Shot With Runs",
+			Status:    "active",
+			RunOnceAt: "2026-06-15T13:00:00Z",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	metaCalls := client.getUpdateMetadataCalls()
+	foundRuns := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/once-4.md" {
+			if runs, ok := c.Fields["runs"]; ok {
+				runList, ok := runs.([]interface{})
+				if ok && len(runList) > 0 {
+					foundRuns = true
+				}
+			}
+		}
+	}
+	if !foundRuns {
+		t.Error("run_once_at task should record a run entry")
+	}
+}
+
+// =============================================================================
+// parseTimeInZone — Additional Tests
+// =============================================================================
+
+func TestParseTimeInZone_AsiaTokyo(t *testing.T) {
+	got, err := parseTimeInZone("2026-06-15T12:00:00Z", "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	tokyo, _ := time.LoadLocation("Asia/Tokyo")
+	expected := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC).In(tokyo)
+	if !got.Equal(expected) {
+		t.Errorf("parseTimeInZone = %v, want %v", got, expected)
+	}
+	if got.Location().String() != "Asia/Tokyo" {
+		t.Errorf("location = %v, want Asia/Tokyo", got.Location())
+	}
+}
+
+func TestParseTimeInZone_LocationIsCorrect(t *testing.T) {
+	got, err := parseTimeInZone("2026-06-15T12:00:00Z", "America/New_York")
+	if err != nil {
+		t.Fatalf("parseTimeInZone error: %v", err)
+	}
+	if got.Location().String() != "America/New_York" {
+		t.Errorf("location = %v, want America/New_York", got.Location())
+	}
+	// In June, NY is EDT (UTC-4), so 12:00 UTC = 08:00 EDT
+	if got.Hour() != 8 {
+		t.Errorf("hour = %d, want 8 (EDT = UTC-4)", got.Hour())
+	}
+}
+
+func TestParseTimeInZone_PreservesAbsoluteTime(t *testing.T) {
+	// Same absolute moment regardless of timezone
+	utc, err := parseTimeInZone("2026-06-15T12:00:00Z", "")
+	if err != nil {
+		t.Fatalf("parseTimeInZone UTC error: %v", err)
+	}
+	tokyo, err := parseTimeInZone("2026-06-15T12:00:00Z", "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("parseTimeInZone Tokyo error: %v", err)
+	}
+	if !utc.Equal(tokyo) {
+		t.Error("same RFC3339 input should represent same absolute moment in any timezone")
+	}
+}
+
+// =============================================================================
+// getNextRun — Additional Timezone Tests
+// =============================================================================
+
+func TestGetNextRun_Timezone_AmericaNewYork(t *testing.T) {
+	// after is 15:30 UTC = 11:30 EDT (June, UTC-4)
+	// Schedule "0 12 * * *" means 12:00 in New York = 16:00 UTC
+	after := time.Date(2026, 6, 15, 15, 30, 0, 0, time.UTC)
+
+	next, err := getNextRun("0 12 * * *", after, "America/New_York")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	// Next 12:00 NY after 11:30 NY = today 12:00 NY = 16:00 UTC
+	expected := time.Date(2026, 6, 15, 16, 0, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun(America/New_York) = %v, want %v", next, expected)
+	}
+}
+
+func TestGetNextRun_Timezone_ReturnsUTC(t *testing.T) {
+	after := time.Date(2026, 6, 15, 10, 0, 0, 0, time.UTC)
+	next, err := getNextRun("0 20 * * *", after, "Asia/Tokyo")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	if next.Location() != time.UTC {
+		t.Errorf("getNextRun should return UTC, got location %v", next.Location())
+	}
+}
+
+func TestGetNextRun_Timezone_DSTTransition(t *testing.T) {
+	// March 8, 2026: US spring forward (EST->EDT at 2:00 AM)
+	// After 06:30 UTC = 01:30 EST
+	// Schedule "0 3 * * *" = 3:00 AM local
+	// After spring forward, 3:00 AM EDT = 07:00 UTC
+	after := time.Date(2026, 3, 8, 6, 30, 0, 0, time.UTC)
+
+	next, err := getNextRun("0 3 * * *", after, "America/New_York")
+	if err != nil {
+		t.Fatalf("getNextRun error: %v", err)
+	}
+
+	// 3:00 AM EDT = 07:00 UTC (since clocks spring forward, 2:00 AM -> 3:00 AM)
+	expected := time.Date(2026, 3, 8, 7, 0, 0, 0, time.UTC)
+	if !next.Equal(expected) {
+		t.Errorf("getNextRun DST transition = %v, want %v", next, expected)
+	}
+}
+
+// =============================================================================
+// checkTimeWindow — Additional Tests
+// =============================================================================
+
+func TestCheckTimeWindow_ExpiresAtExact(t *testing.T) {
+	// When now is exactly at expires_at, should still be windowOpen (not expired)
+	// because now.After(expires_at) is false when equal
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	expiresAt := "2026-06-15T12:00:00Z"
+	result := checkTimeWindow("", expiresAt, now, "")
+	if result != windowOpen {
+		t.Errorf("expires_at equal to now should return windowOpen, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtBeforeStartsAt(t *testing.T) {
+	// Edge case: expires_at is before starts_at (misconfiguration)
+	// starts_at is checked first, so if now < starts_at => windowNotYet
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-07-01T00:00:00Z"  // future
+	expiresAt := "2026-06-01T00:00:00Z" // past (before starts_at)
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowNotYet {
+		t.Errorf("when expires_at < starts_at and now < starts_at, should return windowNotYet, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_ExpiresAtBeforeStartsAt_NowAfterBoth(t *testing.T) {
+	// Edge case: expires_at before starts_at, now is after both
+	// starts_at check passes (now > starts_at), expires_at check: now > expires_at => windowExpired
+	now := time.Date(2026, 8, 15, 12, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-01T00:00:00Z"  // past
+	expiresAt := "2026-05-01T00:00:00Z" // even more past (before starts_at)
+	result := checkTimeWindow(startsAt, expiresAt, now, "")
+	if result != windowExpired {
+		t.Errorf("when now > both and expires_at < starts_at, should return windowExpired, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_WithTimezoneOffset(t *testing.T) {
+	// starts_at has a non-UTC timezone offset: 2026-06-15T12:00:00+09:00
+	// This is 03:00 UTC. If now is 02:00 UTC, window not yet.
+	now := time.Date(2026, 6, 15, 2, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T12:00:00+09:00" // = 03:00 UTC
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowNotYet {
+		t.Errorf("RFC3339 with offset should be correctly parsed, got %v", result)
+	}
+}
+
+func TestCheckTimeWindow_WithTimezoneOffset_After(t *testing.T) {
+	// Same as above but now is after the start
+	now := time.Date(2026, 6, 15, 4, 0, 0, 0, time.UTC)
+	startsAt := "2026-06-15T12:00:00+09:00" // = 03:00 UTC
+	result := checkTimeWindow(startsAt, "", now, "")
+	if result != windowOpen {
+		t.Errorf("now after starts_at (with offset) should return windowOpen, got %v", result)
+	}
+}
+
+// =============================================================================
+// loadTimezone Tests
+// =============================================================================
+
+func TestLoadTimezone_ValidIANA(t *testing.T) {
+	loc := loadTimezone("America/New_York")
+	if loc.String() != "America/New_York" {
+		t.Errorf("loadTimezone = %v, want America/New_York", loc)
+	}
+}
+
+func TestLoadTimezone_Empty(t *testing.T) {
+	loc := loadTimezone("")
+	if loc != time.UTC {
+		t.Errorf("loadTimezone empty = %v, want UTC", loc)
+	}
+}
+
+func TestLoadTimezone_Invalid(t *testing.T) {
+	loc := loadTimezone("Not/Real/Zone")
+	if loc != time.UTC {
+		t.Errorf("loadTimezone invalid = %v, want UTC fallback", loc)
+	}
+}
+
+func TestLoadTimezone_UTC(t *testing.T) {
+	loc := loadTimezone("UTC")
+	if loc != time.UTC {
+		t.Errorf("loadTimezone UTC = %v, want UTC", loc)
+	}
+}
+
+// =============================================================================
+// isScheduledTask Tests
+// =============================================================================
+
+func TestIsScheduledTask_WithSchedule(t *testing.T) {
+	task := &types.ResolvedTask{Schedule: "*/15 * * * *"}
+	if !isScheduledTask(task) {
+		t.Error("task with schedule should be scheduled")
+	}
+}
+
+func TestIsScheduledTask_WithRunOnceAt(t *testing.T) {
+	task := &types.ResolvedTask{RunOnceAt: "2026-06-15T14:00:00Z"}
+	if !isScheduledTask(task) {
+		t.Error("task with run_once_at should be scheduled")
+	}
+}
+
+func TestIsScheduledTask_WithBoth(t *testing.T) {
+	task := &types.ResolvedTask{
+		Schedule:  "*/15 * * * *",
+		RunOnceAt: "2026-06-15T14:00:00Z",
+	}
+	if !isScheduledTask(task) {
+		t.Error("task with both schedule and run_once_at should be scheduled")
+	}
+}
+
+func TestIsScheduledTask_Neither(t *testing.T) {
+	task := &types.ResolvedTask{}
+	if isScheduledTask(task) {
+		t.Error("task without schedule or run_once_at should NOT be scheduled")
+	}
+}
+
+// =============================================================================
+// countRuns Tests
+// =============================================================================
+
+func TestCountRuns_MixedStatuses(t *testing.T) {
+	runs := []types.CronRun{
+		{RunID: "r1", Status: "completed"},
+		{RunID: "r2", Status: "failed"},
+		{RunID: "r3", Status: "skipped"},
+		{RunID: "r4", Status: "in_progress"},
+	}
+	got := countRuns(runs)
+	if got != 4 {
+		t.Errorf("countRuns = %d, want 4", got)
+	}
+}
+
+func TestCountRuns_Empty(t *testing.T) {
+	got := countRuns(nil)
+	if got != 0 {
+		t.Errorf("countRuns(nil) = %d, want 0", got)
+	}
+}
+
+func TestCountRuns_UnknownStatusNotCounted(t *testing.T) {
+	runs := []types.CronRun{
+		{RunID: "r1", Status: "completed"},
+		{RunID: "r2", Status: "unknown"},
+		{RunID: "r3", Status: "pending"},
+	}
+	got := countRuns(runs)
+	if got != 1 {
+		t.Errorf("countRuns = %d, want 1 (only 'completed' counts)", got)
+	}
+}
+
+// =============================================================================
+// generateRunID Tests
+// =============================================================================
+
+func TestGenerateRunID_Format(t *testing.T) {
+	ts := time.Date(2026, 6, 15, 14, 30, 0, 0, time.UTC)
+	id := generateRunID(ts)
+
+	// Format: YYYYMMDD-HHMM-<6 hex chars>
+	if len(id) != 20 { // "20260615-1430-" (14) + 6 hex chars
+		t.Errorf("generateRunID length = %d, want 20, got %q", len(id), id)
+	}
+	if id[:13] != "20260615-1430" {
+		t.Errorf("generateRunID prefix = %q, want %q", id[:13], "20260615-1430")
+	}
+	if id[13] != '-' {
+		t.Errorf("generateRunID separator at 13 = %c, want '-'", id[13])
+	}
+}
+
+func TestGenerateRunID_Unique(t *testing.T) {
+	ts := time.Date(2026, 6, 15, 14, 30, 0, 0, time.UTC)
+	id1 := generateRunID(ts)
+	id2 := generateRunID(ts)
+	if id1 == id2 {
+		t.Error("generateRunID should produce unique IDs (random suffix)")
+	}
+}
+
+// =============================================================================
+// Integration: max_runs enforcement
+// =============================================================================
+
+func TestCheckScheduledTasks_MaxRunsReached(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	maxRuns := 2
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-max",
+			Path:     "projects/proj-a/task/sched-max.md",
+			Title:    "Max Runs Task",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			MaxRuns:  &maxRuns,
+			Runs: []types.CronRun{
+				{RunID: "r1", Status: "completed"},
+				{RunID: "r2", Status: "completed"},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	// Should NOT trigger (max_runs reached)
+	statusCalls := client.getUpdateStatusCalls()
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-max.md" && c.Status == "pending" {
+			t.Error("should NOT trigger when max_runs is reached")
+		}
+	}
+
+	// Should auto-disable
+	metaCalls := client.getUpdateMetadataCalls()
+	foundDisable := false
+	for _, c := range metaCalls {
+		if c.Path == "projects/proj-a/task/sched-max.md" {
+			if v, ok := c.Fields["schedule_enabled"]; ok {
+				if enabled, ok := v.(bool); ok && !enabled {
+					foundDisable = true
+				}
+			}
+		}
+	}
+	if !foundDisable {
+		t.Error("should auto-disable when max_runs is reached")
+	}
+}
+
+func TestCheckScheduledTasks_MaxRunsNotReached(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 6, 15, 12, 0, 0, 0, time.UTC)
+	maxRuns := 5
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:       "sched-max2",
+			Path:     "projects/proj-a/task/sched-max2.md",
+			Title:    "Under Max Runs",
+			Status:   "active",
+			Schedule: "*/15 * * * *",
+			MaxRuns:  &maxRuns,
+			Runs: []types.CronRun{
+				{RunID: "r1", Status: "completed"},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkScheduledTasks(ctx, now)
+
+	statusCalls := client.getUpdateStatusCalls()
+	foundPending := false
+	for _, c := range statusCalls {
+		if c.Path == "projects/proj-a/task/sched-max2.md" && c.Status == "pending" {
+			foundPending = true
+		}
+	}
+	if !foundPending {
+		t.Error("should trigger when max_runs not yet reached")
+	}
+}
+
+// =============================================================================
+// Feature-Level Schedule Evaluation Tests
+// =============================================================================
+
+func TestCheckFeatureSchedules_CronEnablesFeature(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Task with feature_schedule cron that matches now (10:30, */15)
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "my-feature",
+			FeatureSchedule: "*/15 * * * *",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	// Feature should have been enabled
+	enabled := tr.GetEnabledFeatures()
+	if !enabled["my-feature"] {
+		t.Error("should enable feature when cron matches")
+	}
+}
+
+func TestCheckFeatureSchedules_CronDoesNotEnableWhenNoMatch(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Cron does NOT match 10:31
+	now := time.Date(2026, 3, 22, 10, 31, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "my-feature",
+			FeatureSchedule: "*/15 * * * *",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["my-feature"] {
+		t.Error("should NOT enable feature when cron does not match")
+	}
+}
+
+func TestCheckFeatureSchedules_RunOnceAtEnablesFeature(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// run_once_at is in the past -> should fire
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "active",
+			FeatureID:        "my-feature",
+			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if !enabled["my-feature"] {
+		t.Error("should enable feature when feature_run_once_at is in the past")
+	}
+}
+
+func TestCheckFeatureSchedules_RunOnceAtAutoDisables(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "active",
+			FeatureID:        "my-feature",
+			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	// Feature should be enabled
+	if !tr.GetEnabledFeatures()["my-feature"] {
+		t.Fatal("feature should be enabled first")
+	}
+
+	// State should be marked as fired to prevent re-triggering
+	tr.mu.RLock()
+	state := tr.featureScheduleState["my-feature"]
+	tr.mu.RUnlock()
+	if !state.runOnceFired {
+		t.Error("run_once_at should mark state as fired")
+	}
+
+	// Second call should NOT trigger again (already fired)
+	tr.DisableFeature("my-feature")
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["my-feature"] {
+		t.Error("should NOT re-trigger run_once_at feature after it has already fired")
+	}
+}
+
+func TestCheckFeatureSchedules_StartsAtBeforeWindow(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// starts_at is in the future, cron matches
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "my-feature",
+			FeatureSchedule: "*/15 * * * *",
+			FeatureStartsAt: "2026-07-01T00:00:00Z", // future
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["my-feature"] {
+		t.Error("should NOT enable feature before feature_starts_at")
+	}
+}
+
+func TestCheckFeatureSchedules_ExpiresAtDisablesFeature(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Pre-enable the feature
+	tr.EnableFeature("my-feature")
+
+	// expires_at is in the past -> should disable
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "active",
+			FeatureID:        "my-feature",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["my-feature"] {
+		t.Error("should disable feature when feature_expires_at has passed")
+	}
+}
+
+func TestCheckFeatureSchedules_TimezoneRespected(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// 10:30 UTC = 19:30 Tokyo. Cron "30 19 * * *" should match Tokyo time.
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "tz-feature",
+			FeatureSchedule: "30 19 * * *",
+			FeatureTimezone: "Asia/Tokyo",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if !enabled["tz-feature"] {
+		t.Error("should enable feature with timezone-aware cron matching")
+	}
+}
+
+func TestCheckFeatureSchedules_GroupsByFeatureID(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Multiple tasks with same feature_id — feature_schedule from highest-priority task should be used
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "grouped-feature",
+			FeaturePriority: "high",
+			FeatureSchedule: "*/15 * * * *",
+		},
+		{
+			ID:              "feat-task-2",
+			Path:            "projects/proj-a/task/feat-task-2.md",
+			Title:           "Feature Task 2",
+			Status:          "active",
+			FeatureID:       "grouped-feature",
+			FeaturePriority: "low",
+			// No feature_schedule on this one - should use the one from feat-task-1
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if !enabled["grouped-feature"] {
+		t.Error("should enable feature from grouped tasks using highest-priority task's schedule")
+	}
+}
+
+func TestCheckFeatureSchedules_NoFeatureScheduleSkipped(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	// Tasks with feature_id but no feature_schedule fields
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:        "feat-task-1",
+			Path:      "projects/proj-a/task/feat-task-1.md",
+			Title:     "Feature Task 1",
+			Status:    "active",
+			FeatureID: "plain-feature",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	enabled := tr.GetEnabledFeatures()
+	if enabled["plain-feature"] {
+		t.Error("should NOT enable feature with no feature_schedule or feature_run_once_at")
+	}
+}
+
+func TestCheckFeatureSchedules_EmitsEvents(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:              "feat-task-1",
+			Path:            "projects/proj-a/task/feat-task-1.md",
+			Title:           "Feature Task 1",
+			Status:          "active",
+			FeatureID:       "event-feature",
+			FeatureSchedule: "*/15 * * * *",
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	found := false
+	for _, e := range events {
+		if e.Type == EventFeatureEnabled && e.FeatureID == "event-feature" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("should emit EventFeatureEnabled when feature schedule triggers")
+	}
+}
+
+func TestCheckFeatureSchedules_ExpiresAtEmitsDisableEvent(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	tr.EnableFeature("expire-feature")
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "active",
+			FeatureID:        "expire-feature",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	found := false
+	for _, e := range events {
+		if e.Type == EventFeatureDisabled && e.FeatureID == "expire-feature" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("should emit EventFeatureDisabled when feature expires")
+	}
+}
+
+func TestCheckFeatureSchedules_RunningTasksFinishWhenWindowCloses(t *testing.T) {
+	tr, client, processMgr := schedTestRunner()
+
+	// Simulate a running task for this feature by adding it to the process manager
+	proc := newMockProcess(12345)
+	_ = processMgr.Add("feat-task-1", RunningTask{
+		ID:        "feat-task-1",
+		Path:      "projects/proj-a/task/feat-task-1.md",
+		Title:     "Feature Task 1",
+		ProjectID: "proj-a",
+		StartedAt: time.Now(),
+	}, proc)
+
+	// Pre-enable the feature
+	tr.EnableFeature("running-feature")
+
+	// Feature has expired — schedule check should disable the feature
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "in_progress",
+			FeatureID:        "running-feature",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	// Feature should be disabled (no new tasks will be picked)
+	enabled := tr.GetEnabledFeatures()
+	if enabled["running-feature"] {
+		t.Error("should disable feature when window expires, even with running tasks")
+	}
+
+	// But the running task should NOT have been killed — process should still be tracked
+	info := processMgr.Get("feat-task-1")
+	if info == nil {
+		t.Error("running task should still be tracked in process manager (not killed)")
+	}
+
+	// Verify the process was not killed
+	if proc.Exited() {
+		t.Error("running task process should NOT be terminated; it should be allowed to finish")
+	}
+}
+
+// =============================================================================
+// Integration Test: End-to-End Feature Scheduling Lifecycle
+// =============================================================================
+
+func TestCheckFeatureSchedules_Integration_FullLifecycle(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	featureID := "lifecycle-feature"
+
+	// --- Phase 1: Before starts_at window — feature should NOT enable ---
+	phase1Now := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC) // before starts_at
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "lc-task-1",
+			Path:             "projects/proj-a/task/lc-task-1.md",
+			Title:            "Lifecycle Task 1",
+			Status:           "active",
+			FeatureID:        featureID,
+			FeaturePriority:  "high",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureStartsAt:  "2026-03-20T00:00:00Z",
+			FeatureExpiresAt: "2026-04-01T00:00:00Z",
+			FeatureTimezone:  "America/New_York",
+		},
+		{
+			ID:              "lc-task-2",
+			Path:            "projects/proj-a/task/lc-task-2.md",
+			Title:           "Lifecycle Task 2",
+			Status:          "active",
+			FeatureID:       featureID,
+			FeaturePriority: "low",
+			// No schedule fields — should inherit from lc-task-1 (higher priority)
+		},
+	}
+
+	tr.checkFeatureSchedules(ctx, phase1Now)
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 1: feature should NOT be enabled before starts_at window")
+	}
+
+	// --- Phase 2: Inside window, cron matches — feature should enable ---
+	// 2026-03-22 10:30 UTC = 2026-03-22 06:30 EDT (within window, but cron "*/15" in NY tz)
+	// Use a time where cron matches in the feature's timezone
+	// 2026-03-22T20:30:00Z = 2026-03-22 16:30 EDT. "*/15 * * * *" matches minute 30.
+	phase2Now := time.Date(2026, 3, 22, 20, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase2Now)
+
+	if !tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 2: feature should be enabled when inside window and cron matches")
+	}
+
+	// Verify EnableFeature event was emitted
+	enableEventFound := false
+	for _, e := range events {
+		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
+			enableEventFound = true
+		}
+	}
+	if !enableEventFound {
+		t.Error("Phase 2: should emit EventFeatureEnabled")
+	}
+
+	// --- Phase 3: Cron does not match — feature stays as-is (already enabled) ---
+	events = nil
+	phase3Now := time.Date(2026, 3, 22, 20, 31, 0, 0, time.UTC) // minute 31, no cron match
+	tr.checkFeatureSchedules(ctx, phase3Now)
+	// Feature was already enabled, no new enable event expected
+	// (No disable should happen either — no cron match just means no new enable)
+
+	// --- Phase 4: After expires_at — feature should be disabled ---
+	events = nil
+	phase4Now := time.Date(2026, 4, 5, 10, 30, 0, 0, time.UTC) // after expires_at
+	tr.checkFeatureSchedules(ctx, phase4Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 4: feature should be disabled after expires_at")
+	}
+
+	disableEventFound := false
+	for _, e := range events {
+		if e.Type == EventFeatureDisabled && e.FeatureID == featureID {
+			disableEventFound = true
+		}
+	}
+	if !disableEventFound {
+		t.Error("Phase 4: should emit EventFeatureDisabled when window expires")
+	}
+}
+
+func TestCheckFeatureSchedules_Integration_RunOnceAtLifecycle(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	featureID := "once-lifecycle"
+
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "once-task-1",
+			Path:             "projects/proj-a/task/once-task-1.md",
+			Title:            "One-Shot Task",
+			Status:           "active",
+			FeatureID:        featureID,
+			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
+		},
+	}
+
+	// --- Phase 1: Before run_once_at time — should NOT trigger ---
+	phase1Now := time.Date(2026, 3, 22, 9, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase1Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 1: feature should NOT be enabled before run_once_at time")
+	}
+
+	// --- Phase 2: After run_once_at time — should trigger and enable ---
+	phase2Now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase2Now)
+
+	if !tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 2: feature should be enabled after run_once_at time")
+	}
+
+	// Verify state marked as fired
+	tr.mu.RLock()
+	state := tr.featureScheduleState[featureID]
+	tr.mu.RUnlock()
+	if !state.runOnceFired {
+		t.Error("Phase 2: run_once_at state should be marked as fired")
+	}
+
+	// --- Phase 3: Second poll after run_once_at — should NOT re-trigger ---
+	tr.DisableFeature(featureID) // simulate feature completing its work
+	events = nil
+
+	phase3Now := time.Date(2026, 3, 22, 11, 0, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase3Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 3: feature should NOT re-trigger after run_once_at already fired")
+	}
+
+	// No enable event should have been emitted in phase 3
+	for _, e := range events {
+		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
+			t.Error("Phase 3: should NOT emit EventFeatureEnabled on re-poll")
+		}
 	}
 }

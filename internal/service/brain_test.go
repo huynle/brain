@@ -1391,4 +1391,462 @@ func TestRecallFull_EmptyBody(t *testing.T) {
 	}
 }
 
+func TestSaveRecall_ExecutorAndExtensions(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create a task with executor and extensions
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:       "task",
+		Title:      "Executor Round Trip",
+		Content:    "Test body",
+		Executor:   "pi",
+		Extensions: []string{"browser", "filesystem"},
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Recall the entry
+	entry, err := svc.Recall(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+
+	if entry.Executor != "pi" {
+		t.Errorf("executor = %q, want %q", entry.Executor, "pi")
+	}
+	if len(entry.Extensions) != 2 {
+		t.Fatalf("extensions len = %d, want 2", len(entry.Extensions))
+	}
+	if entry.Extensions[0] != "browser" {
+		t.Errorf("extensions[0] = %q, want %q", entry.Extensions[0], "browser")
+	}
+	if entry.Extensions[1] != "filesystem" {
+		t.Errorf("extensions[1] = %q, want %q", entry.Extensions[1], "filesystem")
+	}
+}
+
 // Stub tests removed — methods now implemented in brain.go (Phase 4).
+
+// =============================================================================
+// BulkUpdate tests
+// =============================================================================
+
+func TestBulkUpdate_ValidationErrors(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	tests := []struct {
+		name string
+		req  types.BulkUpdateRequest
+		err  string
+	}{
+		{
+			name: "no filter or entries",
+			req:  types.BulkUpdateRequest{},
+			err:  "must specify either filter or entries",
+		},
+		{
+			name: "both filter and entries",
+			req: types.BulkUpdateRequest{
+				Filter:  &types.BulkUpdateFilter{},
+				Entries: []types.BulkUpdateEntry{{Path: "x"}},
+			},
+			err: "cannot specify both filter and entries",
+		},
+		{
+			name: "filter without updates",
+			req: types.BulkUpdateRequest{
+				Filter: &types.BulkUpdateFilter{},
+			},
+			err: "updates required when using filter mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := svc.BulkUpdate(ctx, tt.req)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.err) {
+				t.Errorf("expected error containing %q, got %q", tt.err, err.Error())
+			}
+		})
+	}
+}
+
+func TestBulkUpdate_ExplicitMode(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create two entries
+	resp1, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Task One",
+		Content: "content one",
+		Project: "test-proj",
+	})
+	if err != nil {
+		t.Fatalf("Save 1 failed: %v", err)
+	}
+
+	resp2, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Task Two",
+		Content: "content two",
+		Project: "test-proj",
+	})
+	if err != nil {
+		t.Fatalf("Save 2 failed: %v", err)
+	}
+
+	// Bulk update both to status=completed
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: resp1.Path, Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+			{Path: resp2.Path, Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	if result.Updated != 2 {
+		t.Errorf("expected 2 updated, got %d", result.Updated)
+	}
+	if result.Failed != 0 {
+		t.Errorf("expected 0 failed, got %d", result.Failed)
+	}
+	if result.Total != 2 {
+		t.Errorf("expected total 2, got %d", result.Total)
+	}
+	if result.DryRun {
+		t.Error("expected DryRun=false")
+	}
+
+	// Verify entries were actually updated
+	entry1, err := svc.Recall(ctx, resp1.ID)
+	if err != nil {
+		t.Fatalf("Recall 1 failed: %v", err)
+	}
+	if entry1.Status != "completed" {
+		t.Errorf("expected status completed, got %q", entry1.Status)
+	}
+
+	entry2, err := svc.Recall(ctx, resp2.ID)
+	if err != nil {
+		t.Fatalf("Recall 2 failed: %v", err)
+	}
+	if entry2.Status != "completed" {
+		t.Errorf("expected status completed, got %q", entry2.Status)
+	}
+}
+
+func TestBulkUpdate_FilterMode(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create entries with known feature_id
+	for i := 0; i < 3; i++ {
+		_, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:      "task",
+			Title:     "Filter Task",
+			Content:   "content",
+			Project:   "filter-proj",
+			FeatureID: "feat-abc",
+			Status:    "active",
+		})
+		if err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+
+	// Create an entry with different feature_id (should NOT be updated)
+	_, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Other Task",
+		Content:   "other",
+		Project:   "filter-proj",
+		FeatureID: "feat-other",
+		Status:    "active",
+	})
+	if err != nil {
+		t.Fatalf("Save other failed: %v", err)
+	}
+
+	// Bulk update by filter: feature_id=feat-abc
+	featureID := "feat-abc"
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Filter: &types.BulkUpdateFilter{
+			FeatureID: &featureID,
+		},
+		Updates: &types.UpdateEntryRequest{
+			Status: strPtr("completed"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	if result.Updated != 3 {
+		t.Errorf("expected 3 updated, got %d", result.Updated)
+	}
+	if result.Failed != 0 {
+		t.Errorf("expected 0 failed, got %d", result.Failed)
+	}
+}
+
+func TestBulkUpdate_DryRun(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create an entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "DryRun Task",
+		Content: "content",
+		Project: "dry-proj",
+		Status:  "active",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Dry run: should return matches without applying
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: resp.Path, Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+		},
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate dry run failed: %v", err)
+	}
+
+	if !result.DryRun {
+		t.Error("expected DryRun=true")
+	}
+	if result.Total != 1 {
+		t.Errorf("expected total 1, got %d", result.Total)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(result.Results))
+	}
+	if result.Results[0].Status != "ok" {
+		t.Errorf("expected dry run result status=ok, got %q", result.Results[0].Status)
+	}
+
+	// Verify entry was NOT actually updated
+	entry, err := svc.Recall(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if entry.Status != "active" {
+		t.Errorf("expected status to remain active after dry run, got %q", entry.Status)
+	}
+}
+
+func TestBulkUpdate_SafetyCap(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create 5 entries
+	for i := 0; i < 5; i++ {
+		_, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:    "task",
+			Title:   "Cap Task",
+			Content: "content",
+			Project: "cap-proj",
+		})
+		if err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+
+	// Request with limit=2
+	project := "cap-proj"
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Filter: &types.BulkUpdateFilter{
+			Project: &project,
+		},
+		Updates: &types.UpdateEntryRequest{
+			Status: strPtr("completed"),
+		},
+		Limit: 2,
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate with limit failed: %v", err)
+	}
+
+	if result.Total > 2 {
+		t.Errorf("expected total <= 2 (safety cap), got %d", result.Total)
+	}
+}
+
+func TestBulkUpdate_SafetyCapClampsAbove100(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create 1 entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Clamp Task",
+		Content: "content",
+		Project: "clamp-proj",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Request with limit=999 (should be clamped to 100)
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: resp.Path, Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+		},
+		Limit: 999,
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	// Should still work — the clamp doesn't block, it just limits
+	if result.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", result.Updated)
+	}
+}
+
+func TestBulkUpdate_PartialFailure(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create one valid entry
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Valid Task",
+		Content: "content",
+		Project: "partial-proj",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Bulk update with one valid and one invalid path
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: resp.Path, Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+			{Path: "nonexistent/path.md", Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	// Should have partial success
+	if result.Updated != 1 {
+		t.Errorf("expected 1 updated, got %d", result.Updated)
+	}
+	if result.Failed != 1 {
+		t.Errorf("expected 1 failed, got %d", result.Failed)
+	}
+	if result.Total != 2 {
+		t.Errorf("expected total 2, got %d", result.Total)
+	}
+
+	// Check result statuses
+	var okCount, errCount int
+	for _, r := range result.Results {
+		switch r.Status {
+		case "ok":
+			okCount++
+		case "error":
+			errCount++
+			if r.Error == "" {
+				t.Error("expected error message for failed result")
+			}
+		}
+	}
+	if okCount != 1 || errCount != 1 {
+		t.Errorf("expected 1 ok + 1 error, got %d ok + %d error", okCount, errCount)
+	}
+}
+
+func TestBulkUpdate_FilterWithMultipleFields(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create entries with specific type+status+project
+	for i := 0; i < 2; i++ {
+		_, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:    "task",
+			Title:   "Multi-Filter Task",
+			Content: "content",
+			Project: "mf-proj",
+			Status:  "pending",
+		})
+		if err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+
+	// Create one with different status (should NOT match)
+	_, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Active Task",
+		Content: "content",
+		Project: "mf-proj",
+		Status:  "active",
+	})
+	if err != nil {
+		t.Fatalf("Save active failed: %v", err)
+	}
+
+	// Filter by project + status=pending
+	project := "mf-proj"
+	status := "pending"
+	entryType := "task"
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Filter: &types.BulkUpdateFilter{
+			Project: &project,
+			Status:  &status,
+			Type:    &entryType,
+		},
+		Updates: &types.UpdateEntryRequest{
+			Status: strPtr("completed"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+
+	if result.Updated != 2 {
+		t.Errorf("expected 2 updated (only pending tasks), got %d", result.Updated)
+	}
+}
+
+func TestBulkUpdate_DryRunWithInvalidEntry(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Dry run with an invalid path should report error in results, not fail the request
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: "nonexistent/path.md", Updates: types.UpdateEntryRequest{Status: strPtr("completed")}},
+		},
+		DryRun: true,
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate dry run failed: %v", err)
+	}
+
+	if !result.DryRun {
+		t.Error("expected DryRun=true")
+	}
+	if result.Total != 1 {
+		t.Errorf("expected total 1, got %d", result.Total)
+	}
+	if result.Results[0].Status != "error" {
+		t.Errorf("expected dry run result status=error for invalid entry, got %q", result.Results[0].Status)
+	}
+}

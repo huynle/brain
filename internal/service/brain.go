@@ -109,6 +109,11 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		FeatureID:           req.FeatureID,
 		FeaturePriority:     req.FeaturePriority,
 		FeatureDependsOn:    req.FeatureDependsOn,
+		FeatureSchedule:     req.FeatureSchedule,
+		FeatureStartsAt:     req.FeatureStartsAt,
+		FeatureExpiresAt:    req.FeatureExpiresAt,
+		FeatureRunOnceAt:    req.FeatureRunOnceAt,
+		FeatureTimezone:     req.FeatureTimezone,
 		Workdir:             frontmatter.SanitizeSimpleValue(req.Workdir),
 		GitRemote:           frontmatter.SanitizeSimpleValue(req.GitRemote),
 		GitBranch:           frontmatter.SanitizeSimpleValue(req.GitBranch),
@@ -120,6 +125,8 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExecutionMode:       req.ExecutionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
+		Executor:            req.Executor,
+		Extensions:          req.Extensions,
 		UserOriginalRequest: req.UserOriginalRequest,
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
@@ -540,6 +547,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.CompleteOnIdle != nil {
 		fm.CompleteOnIdle = req.CompleteOnIdle
 	}
+	if req.Executor != nil {
+		fm.Executor = *req.Executor
+	}
+	if len(req.Extensions) > 0 {
+		fm.Extensions = req.Extensions
+	}
 
 	// Feature fields
 	if req.FeatureID != nil {
@@ -821,6 +834,31 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if v, ok := fields["feature_priority"]; ok {
 		if s, ok := v.(string); ok {
 			fm.FeaturePriority = s
+		}
+	}
+	if v, ok := fields["feature_schedule"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureSchedule = s
+		}
+	}
+	if v, ok := fields["feature_starts_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureStartsAt = s
+		}
+	}
+	if v, ok := fields["feature_expires_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureExpiresAt = s
+		}
+	}
+	if v, ok := fields["feature_run_once_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureRunOnceAt = s
+		}
+	}
+	if v, ok := fields["feature_timezone"]; ok {
+		if s, ok := v.(string); ok {
+			fm.FeatureTimezone = s
 		}
 	}
 	if v, ok := fields["starts_at"]; ok {

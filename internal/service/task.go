@@ -971,6 +971,12 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "target_workdir"); ok {
 		entry.TargetWorkdir = v
 	}
+	if v, ok := metaString(meta, "executor"); ok {
+		entry.Executor = v
+	}
+	if v, ok := metaStringSlice(meta, "extensions"); ok {
+		entry.Extensions = v
+	}
 
 	// Feature grouping (feature_id from metadata as fallback)
 	if v, ok := metaString(meta, "feature_id"); ok {
@@ -983,6 +989,23 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaStringSlice(meta, "feature_depends_on"); ok {
 		entry.FeatureDependsOn = v
+	}
+
+	// Feature-level schedule fields
+	if v, ok := metaString(meta, "feature_schedule"); ok {
+		entry.FeatureSchedule = v
+	}
+	if v, ok := metaString(meta, "feature_starts_at"); ok {
+		entry.FeatureStartsAt = v
+	}
+	if v, ok := metaString(meta, "feature_expires_at"); ok {
+		entry.FeatureExpiresAt = v
+	}
+	if v, ok := metaString(meta, "feature_run_once_at"); ok {
+		entry.FeatureRunOnceAt = v
+	}
+	if v, ok := metaString(meta, "feature_timezone"); ok {
+		entry.FeatureTimezone = v
 	}
 
 	// Generated entry metadata

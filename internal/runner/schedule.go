@@ -12,6 +12,11 @@ import (
 	"github.com/huynle/brain-api/pkg/cron"
 )
 
+// featureSchedState tracks per-feature scheduling state to prevent re-triggering.
+type featureSchedState struct {
+	runOnceFired bool // true after a feature_run_once_at has been triggered
+}
+
 // timeWindowResult represents the result of checking a task's time window.
 type timeWindowResult int
 
@@ -192,6 +197,144 @@ func (tr *TaskRunner) checkScheduledTasks(ctx context.Context, now time.Time) {
 // isScheduledTask returns true if the task has a cron schedule or run_once_at set.
 func isScheduledTask(task *types.ResolvedTask) bool {
 	return task.Schedule != "" || task.RunOnceAt != ""
+}
+
+// featureScheduleInfo holds the extracted schedule fields for a feature group.
+type featureScheduleInfo struct {
+	featureID    string
+	schedule     string
+	startsAt     string
+	expiresAt    string
+	runOnceAt    string
+	timezone     string
+	priorityRank int // lower = higher priority (0=high,1=medium,2=low)
+}
+
+// priorityRank maps priority strings to numeric ranks (lower = higher priority).
+func priorityRank(p string) int {
+	switch p {
+	case "high":
+		return 0
+	case "medium":
+		return 1
+	case "low":
+		return 2
+	default:
+		return 3 // no priority
+	}
+}
+
+// checkFeatureSchedules evaluates feature-level schedules and enables/disables
+// features based on cron expressions, one-shot times, and time windows.
+// Called each poll iteration after checkScheduledTasks.
+func (tr *TaskRunner) checkFeatureSchedules(ctx context.Context, now time.Time) {
+	for _, projectID := range tr.projects {
+		if ctx.Err() != nil {
+			return
+		}
+
+		tasks, err := tr.client.GetAllTasks(ctx, projectID)
+		if err != nil {
+			tr.logger.Printf("feature-sched: failed to get tasks for %s: %v", projectID, err)
+			continue
+		}
+
+		// Group tasks by feature_id and extract schedule info from highest-priority task
+		featureInfos := tr.groupFeatureSchedules(tasks)
+
+		for featureID, info := range featureInfos {
+			if ctx.Err() != nil {
+				return
+			}
+			tr.evaluateFeatureSchedule(ctx, featureID, info, now)
+		}
+	}
+}
+
+// groupFeatureSchedules groups tasks by feature_id and extracts the feature schedule
+// fields from the highest-priority task that has them set.
+func (tr *TaskRunner) groupFeatureSchedules(tasks []types.ResolvedTask) map[string]featureScheduleInfo {
+	infos := make(map[string]featureScheduleInfo)
+
+	for i := range tasks {
+		task := &tasks[i]
+		if task.FeatureID == "" {
+			continue
+		}
+		// Skip tasks with no feature-level schedule fields
+		if task.FeatureSchedule == "" && task.FeatureRunOnceAt == "" {
+			// Check if another task in this feature already has schedule info
+			if _, exists := infos[task.FeatureID]; !exists {
+				continue
+			}
+			// Already have info from another task, skip
+			continue
+		}
+
+		rank := priorityRank(task.FeaturePriority)
+		existing, exists := infos[task.FeatureID]
+
+		if !exists || rank < existing.priorityRank {
+			infos[task.FeatureID] = featureScheduleInfo{
+				featureID:    task.FeatureID,
+				schedule:     task.FeatureSchedule,
+				startsAt:     task.FeatureStartsAt,
+				expiresAt:    task.FeatureExpiresAt,
+				runOnceAt:    task.FeatureRunOnceAt,
+				timezone:     task.FeatureTimezone,
+				priorityRank: rank,
+			}
+		}
+	}
+
+	return infos
+}
+
+// evaluateFeatureSchedule evaluates a single feature's schedule and enables/disables it.
+func (tr *TaskRunner) evaluateFeatureSchedule(ctx context.Context, featureID string, info featureScheduleInfo, now time.Time) {
+	// Check time window first
+	switch checkTimeWindow(info.startsAt, info.expiresAt, now, info.timezone) {
+	case windowNotYet:
+		// Window hasn't opened yet — skip silently
+		tr.logger.Printf("feature-sched: %s window not yet open (starts_at: %s)", featureID, info.startsAt)
+		return
+	case windowExpired:
+		// Window has passed — disable the feature
+		tr.logger.Printf("feature-sched: %s window expired (expires_at: %s), disabling", featureID, info.expiresAt)
+		tr.DisableFeature(featureID)
+		return
+	}
+
+	// Handle run_once_at (one-shot)
+	if info.runOnceAt != "" && info.schedule == "" {
+		tr.mu.RLock()
+		state := tr.featureScheduleState[featureID]
+		tr.mu.RUnlock()
+
+		if state.runOnceFired {
+			// Already fired — do not re-trigger
+			return
+		}
+
+		if shouldTriggerRunOnce(info.runOnceAt, now, info.timezone) {
+			tr.logger.Printf("feature-sched: triggering run_once_at for feature %s", featureID)
+			tr.EnableFeature(featureID)
+
+			// Mark as fired to prevent re-triggering
+			tr.mu.Lock()
+			tr.featureScheduleState[featureID] = featureSchedState{runOnceFired: true}
+			tr.mu.Unlock()
+		}
+		return
+	}
+
+	// Handle cron schedule
+	if info.schedule != "" {
+		if shouldTrigger(info.schedule, "", now, info.timezone) {
+			tr.logger.Printf("feature-sched: cron match for feature %s (schedule: %s)", featureID, info.schedule)
+			tr.EnableFeature(featureID)
+		}
+	}
 }
 
 // checkProjectScheduledTasks checks scheduled tasks for a single project.

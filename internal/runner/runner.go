@@ -136,12 +136,13 @@ type TaskRunner struct {
 	stateMgr   TaskStateManager
 
 	// Mutable state (protected by mu)
-	mu              sync.RWMutex
-	status          RunnerStatus
-	stats           RunnerStats
-	startedAt       time.Time
-	lastCronCheckAt time.Time
-	maxParallel     int // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	mu                   sync.RWMutex
+	status               RunnerStatus
+	stats                RunnerStats
+	startedAt            time.Time
+	lastCronCheckAt      time.Time
+	maxParallel          int                          // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	featureScheduleState map[string]featureSchedState // tracks per-feature schedule state
 
 	// Pause state (protected by pauseMu)
 	pauseMu         sync.RWMutex
@@ -188,20 +189,21 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	tr := &TaskRunner{
-		runnerID:        runnerID,
-		projects:        projects,
-		config:          opts.Config,
-		mode:            mode,
-		logger:          logger,
-		client:          opts.Client,
-		executor:        opts.Executor,
-		processMgr:      opts.ProcessMgr,
-		stateMgr:        opts.StateMgr,
-		status:          RunnerStatusIdle,
-		pauseCache:      make(map[string]bool),
-		enabledFeatures: make(map[string]bool),
-		wakeCh:          make(chan struct{}, 1),
-		done:            make(chan struct{}),
+		runnerID:             runnerID,
+		projects:             projects,
+		config:               opts.Config,
+		mode:                 mode,
+		logger:               logger,
+		client:               opts.Client,
+		executor:             opts.Executor,
+		processMgr:           opts.ProcessMgr,
+		stateMgr:             opts.StateMgr,
+		status:               RunnerStatusIdle,
+		pauseCache:           make(map[string]bool),
+		enabledFeatures:      make(map[string]bool),
+		featureScheduleState: make(map[string]featureSchedState),
+		wakeCh:               make(chan struct{}, 1),
+		done:                 make(chan struct{}),
 	}
 
 	if opts.StartPaused {
@@ -346,6 +348,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 2.6. Check scheduled tasks (cron triggers)
 	tr.checkScheduledTasks(ctx, time.Now().UTC())
+
+	// 2.7. Check feature-level schedules (enable/disable features by time)
+	tr.checkFeatureSchedules(ctx, time.Now().UTC())
 
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()

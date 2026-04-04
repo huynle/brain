@@ -115,6 +115,7 @@ var MergePolicies = []string{"prompt_only", "auto_pr", "auto_merge"}
 var MergeStrategies = []string{"squash", "merge", "rebase"}
 var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
+var Executors = []string{"opencode", "pi"}
 
 // =============================================================================
 // Domain Structs
@@ -163,16 +164,25 @@ type BrainEntry struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 
 	// Task execution fields
-	UserOriginalRequest string `json:"user_original_request,omitempty"`
-	DirectPrompt        string `json:"direct_prompt,omitempty"`
-	Agent               string `json:"agent,omitempty"`
-	Model               string `json:"model,omitempty"`
-	CompleteOnIdle      *bool  `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string `json:"target_workdir,omitempty"`
+	UserOriginalRequest string   `json:"user_original_request,omitempty"`
+	DirectPrompt        string   `json:"direct_prompt,omitempty"`
+	Agent               string   `json:"agent,omitempty"`
+	Model               string   `json:"model,omitempty"`
+	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string   `json:"target_workdir,omitempty"`
+	Executor            string   `json:"executor,omitempty"`
+	Extensions          []string `json:"extensions,omitempty"`
 
 	// Feature grouping
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
+
+	// Feature-level schedule fields
+	FeatureSchedule  string `json:"feature_schedule,omitempty"`
+	FeatureStartsAt  string `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt string `json:"feature_expires_at,omitempty"`
+	FeatureRunOnceAt string `json:"feature_run_once_at,omitempty"`
+	FeatureTimezone  string `json:"feature_timezone,omitempty"`
 
 	// Generated entry metadata
 	Generated     *bool  `json:"generated,omitempty"`
@@ -266,9 +276,16 @@ type CreateEntryRequest struct {
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
+	Executor            string   `json:"executor,omitempty"`
+	Extensions          []string `json:"extensions,omitempty"`
 	FeatureID           string   `json:"feature_id,omitempty"`
 	FeaturePriority     string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn    []string `json:"feature_depends_on,omitempty"`
+	FeatureSchedule     string   `json:"feature_schedule,omitempty"`
+	FeatureStartsAt     string   `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt    string   `json:"feature_expires_at,omitempty"`
+	FeatureRunOnceAt    string   `json:"feature_run_once_at,omitempty"`
+	FeatureTimezone     string   `json:"feature_timezone,omitempty"`
 
 	DirectPrompt string `json:"direct_prompt,omitempty"`
 	Agent        string `json:"agent,omitempty"`
@@ -314,15 +331,17 @@ type UpdateEntryRequest struct {
 	RunOnceAt       *string `json:"run_once_at,omitempty"`
 	Timezone        *string `json:"timezone,omitempty"`
 
-	TargetWorkdir      *string `json:"target_workdir,omitempty"`
-	GitBranch          *string `json:"git_branch,omitempty"`
-	MergeTargetBranch  *string `json:"merge_target_branch,omitempty"`
-	MergePolicy        *string `json:"merge_policy,omitempty"`
-	MergeStrategy      *string `json:"merge_strategy,omitempty"`
-	RemoteBranchPolicy *string `json:"remote_branch_policy,omitempty"`
-	OpenPRBeforeMerge  *bool   `json:"open_pr_before_merge,omitempty"`
-	ExecutionMode      *string `json:"execution_mode,omitempty"`
-	CompleteOnIdle     *bool   `json:"complete_on_idle,omitempty"`
+	TargetWorkdir      *string  `json:"target_workdir,omitempty"`
+	GitBranch          *string  `json:"git_branch,omitempty"`
+	MergeTargetBranch  *string  `json:"merge_target_branch,omitempty"`
+	MergePolicy        *string  `json:"merge_policy,omitempty"`
+	MergeStrategy      *string  `json:"merge_strategy,omitempty"`
+	RemoteBranchPolicy *string  `json:"remote_branch_policy,omitempty"`
+	OpenPRBeforeMerge  *bool    `json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      *string  `json:"execution_mode,omitempty"`
+	CompleteOnIdle     *bool    `json:"complete_on_idle,omitempty"`
+	Executor           *string  `json:"executor,omitempty"`
+	Extensions         []string `json:"extensions,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -499,6 +518,13 @@ type ResolvedTask struct {
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
 
+	// Feature-level schedule fields
+	FeatureSchedule  string `json:"feature_schedule,omitempty"`
+	FeatureStartsAt  string `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt string `json:"feature_expires_at,omitempty"`
+	FeatureRunOnceAt string `json:"feature_run_once_at,omitempty"`
+	FeatureTimezone  string `json:"feature_timezone,omitempty"`
+
 	// Schedule fields
 	Schedule        string    `json:"schedule,omitempty"`
 	ScheduleEnabled *bool     `json:"schedule_enabled,omitempty"`
@@ -516,6 +542,8 @@ type ResolvedTask struct {
 	Model               string            `json:"model"`
 	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string            `json:"target_workdir,omitempty"`
+	Executor            string            `json:"executor,omitempty"`
+	Extensions          []string          `json:"extensions,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
 
 	// Session tracking

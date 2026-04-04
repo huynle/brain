@@ -815,7 +815,11 @@ func TestBrainTaskMetadata_Handler(t *testing.T) {
 					"tags": []string{"feature"}, "created": "2024-01-01T00:00:00Z",
 					"agent": "tdd-dev", "model": "anthropic/claude-sonnet-4-20250514",
 					"git_branch": "feature-branch", "git_remote": "origin",
-					"feature_id": "auth-system", "feature_priority": "high",
+					"execution_mode": "worktree", "complete_on_idle": true,
+					"merge_target_branch": "main", "merge_policy": "auto_merge",
+					"merge_strategy": "squash", "remote_branch_policy": "delete",
+					"open_pr_before_merge": true,
+					"feature_id":           "auth-system", "feature_priority": "high",
 				},
 			},
 			"count": 1,
@@ -853,6 +857,33 @@ func TestBrainTaskMetadata_Handler(t *testing.T) {
 	}
 	if exec["agent"] != "tdd-dev" {
 		t.Errorf("agent = %v, want tdd-dev", exec["agent"])
+	}
+	if exec["execution_mode"] != "worktree" {
+		t.Errorf("execution.execution_mode = %v, want worktree", exec["execution_mode"])
+	}
+	if exec["complete_on_idle"] != true {
+		t.Errorf("execution.complete_on_idle = %v, want true", exec["complete_on_idle"])
+	}
+
+	// Check merge intent
+	merge, ok := metadata["merge"].(map[string]any)
+	if !ok {
+		t.Fatal("missing merge config")
+	}
+	if merge["merge_target_branch"] != "main" {
+		t.Errorf("merge.merge_target_branch = %v, want main", merge["merge_target_branch"])
+	}
+	if merge["merge_policy"] != "auto_merge" {
+		t.Errorf("merge.merge_policy = %v, want auto_merge", merge["merge_policy"])
+	}
+	if merge["merge_strategy"] != "squash" {
+		t.Errorf("merge.merge_strategy = %v, want squash", merge["merge_strategy"])
+	}
+	if merge["remote_branch_policy"] != "delete" {
+		t.Errorf("merge.remote_branch_policy = %v, want delete", merge["remote_branch_policy"])
+	}
+	if merge["open_pr_before_merge"] != true {
+		t.Errorf("merge.open_pr_before_merge = %v, want true", merge["open_pr_before_merge"])
 	}
 
 	// Check feature grouping

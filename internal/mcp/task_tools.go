@@ -556,7 +556,8 @@ func registerBrainTaskMetadata(s *Server, client *APIClient) {
 		Description: `Get execution metadata for a task — fields NOT included in brain_task_get.
 
 Returns structured JSON with:
-- **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote
+- **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote, execution_mode, complete_on_idle
+- **Merge intent:** merge_target_branch, merge_policy (default auto_merge), merge_strategy (default squash), open_pr_before_merge, remote_branch_policy
 - **Feature grouping:** feature_id, feature_priority, feature_depends_on
 - **Raw dependencies:** depends_on (IDs), resolved_deps, unresolved_deps, blocked_by, blocked_by_reason, waiting_on, in_cycle
 - **Timestamps:** created, modified
@@ -641,6 +642,17 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
 				"resolved_workdir": task.ResolvedWorkdir,
 				"git_branch":       task.GitBranch,
 				"git_remote":       task.GitRemote,
+				"execution_mode":   nilIfEmpty(task.ExecutionMode),
+				"complete_on_idle": task.CompleteOnIdle,
+			},
+
+			// Merge intent
+			"merge": map[string]any{
+				"merge_target_branch":  nilIfEmpty(task.MergeTargetBranch),
+				"merge_policy":         nilIfEmpty(task.MergePolicy),
+				"merge_strategy":       nilIfEmpty(task.MergeStrategy),
+				"remote_branch_policy": nilIfEmpty(task.RemoteBranchPolicy),
+				"open_pr_before_merge": task.OpenPRBeforeMerge,
 			},
 
 			// Dependencies (raw IDs)
@@ -1304,6 +1316,13 @@ type fullTask struct {
 	Agent               string   `json:"agent"`
 	Model               string   `json:"model"`
 	DirectPrompt        string   `json:"direct_prompt"`
+	MergeTargetBranch   string   `json:"merge_target_branch"`
+	MergePolicy         string   `json:"merge_policy"`
+	MergeStrategy       string   `json:"merge_strategy"`
+	RemoteBranchPolicy  string   `json:"remote_branch_policy"`
+	OpenPRBeforeMerge   *bool    `json:"open_pr_before_merge"`
+	ExecutionMode       string   `json:"execution_mode"`
+	CompleteOnIdle      *bool    `json:"complete_on_idle"`
 	FeatureID           string   `json:"feature_id"`
 	FeaturePriority     string   `json:"feature_priority"`
 	FeatureDependsOn    []string `json:"feature_depends_on"`

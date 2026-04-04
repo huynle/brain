@@ -51,6 +51,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator))
 
+			// ─── Config ──────────────────────────────────────────
+			r.Get("/config/task-defaults", TaskDefaultsHandler(cfg.TaskDefaults))
+
 			// ─── Health & Stats ──────────────────────────────────
 			if o.handler != nil {
 				r.Get("/stats", o.handler.HandleGetStats)

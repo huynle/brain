@@ -322,7 +322,17 @@ func ensureWorktreesIgnored(repoPath string) {
 // =============================================================================
 
 // GetEffectiveAgent returns the effective agent for a task.
-// Precedence: task.Agent > config.Opencode.Agent
+//
+// Precedence: task.Agent (includes server task_defaults) > config.Opencode.Agent (runner-local override)
+//
+// The full precedence chain from creation to execution:
+//  1. Task-level agent (set explicitly on the task at creation)
+//  2. Server task_defaults agent (applied by the API server when the task field is empty)
+//  3. Runner config agent (config.Opencode.Agent — runner-local override for this runner instance)
+//
+// By the time the runner sees task.Agent, steps 1-2 have already been resolved
+// server-side. The runner's config.Opencode.Agent only applies when the task
+// field is still empty after server defaults (e.g., no server-level default configured).
 func (e *Executor) GetEffectiveAgent(task *types.ResolvedTask) string {
 	if task.Agent != "" {
 		return task.Agent
@@ -331,7 +341,18 @@ func (e *Executor) GetEffectiveAgent(task *types.ResolvedTask) string {
 }
 
 // GetEffectiveModel returns the effective model for a task.
-// Precedence: task.Model > runtimeDefaultModel > config.Opencode.Model
+//
+// Precedence: task.Model (includes server task_defaults) > runtimeDefaultModel (TUI override) > config.Opencode.Model (runner-local override)
+//
+// The full precedence chain from creation to execution:
+//  1. Task-level model (set explicitly on the task at creation)
+//  2. Server task_defaults model (applied by the API server when the task field is empty)
+//  3. Runtime default model (runtimeDefaultModel — set interactively via TUI model picker)
+//  4. Runner config model (config.Opencode.Model — runner-local override for this runner instance)
+//
+// By the time the runner sees task.Model, steps 1-2 have already been resolved
+// server-side. The runtimeDefaultModel and config.Opencode.Model only apply when
+// the task field is still empty after server defaults.
 func (e *Executor) GetEffectiveModel(task *types.ResolvedTask, runtimeDefaultModel string) string {
 	if task.Model != "" {
 		return task.Model

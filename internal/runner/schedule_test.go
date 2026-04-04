@@ -2047,3 +2047,214 @@ func TestCheckFeatureSchedules_ExpiresAtEmitsDisableEvent(t *testing.T) {
 		t.Error("should emit EventFeatureDisabled when feature expires")
 	}
 }
+
+func TestCheckFeatureSchedules_RunningTasksFinishWhenWindowCloses(t *testing.T) {
+	tr, client, processMgr := schedTestRunner()
+
+	// Simulate a running task for this feature by adding it to the process manager
+	proc := newMockProcess(12345)
+	_ = processMgr.Add("feat-task-1", RunningTask{
+		ID:        "feat-task-1",
+		Path:      "projects/proj-a/task/feat-task-1.md",
+		Title:     "Feature Task 1",
+		ProjectID: "proj-a",
+		StartedAt: time.Now(),
+	}, proc)
+
+	// Pre-enable the feature
+	tr.EnableFeature("running-feature")
+
+	// Feature has expired — schedule check should disable the feature
+	now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "feat-task-1",
+			Path:             "projects/proj-a/task/feat-task-1.md",
+			Title:            "Feature Task 1",
+			Status:           "in_progress",
+			FeatureID:        "running-feature",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureExpiresAt: "2026-03-01T00:00:00Z", // past
+		},
+	}
+
+	ctx := context.Background()
+	tr.checkFeatureSchedules(ctx, now)
+
+	// Feature should be disabled (no new tasks will be picked)
+	enabled := tr.GetEnabledFeatures()
+	if enabled["running-feature"] {
+		t.Error("should disable feature when window expires, even with running tasks")
+	}
+
+	// But the running task should NOT have been killed — process should still be tracked
+	info := processMgr.Get("feat-task-1")
+	if info == nil {
+		t.Error("running task should still be tracked in process manager (not killed)")
+	}
+
+	// Verify the process was not killed
+	if proc.Exited() {
+		t.Error("running task process should NOT be terminated; it should be allowed to finish")
+	}
+}
+
+// =============================================================================
+// Integration Test: End-to-End Feature Scheduling Lifecycle
+// =============================================================================
+
+func TestCheckFeatureSchedules_Integration_FullLifecycle(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	featureID := "lifecycle-feature"
+
+	// --- Phase 1: Before starts_at window — feature should NOT enable ---
+	phase1Now := time.Date(2026, 3, 15, 10, 30, 0, 0, time.UTC) // before starts_at
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "lc-task-1",
+			Path:             "projects/proj-a/task/lc-task-1.md",
+			Title:            "Lifecycle Task 1",
+			Status:           "active",
+			FeatureID:        featureID,
+			FeaturePriority:  "high",
+			FeatureSchedule:  "*/15 * * * *",
+			FeatureStartsAt:  "2026-03-20T00:00:00Z",
+			FeatureExpiresAt: "2026-04-01T00:00:00Z",
+			FeatureTimezone:  "America/New_York",
+		},
+		{
+			ID:              "lc-task-2",
+			Path:            "projects/proj-a/task/lc-task-2.md",
+			Title:           "Lifecycle Task 2",
+			Status:          "active",
+			FeatureID:       featureID,
+			FeaturePriority: "low",
+			// No schedule fields — should inherit from lc-task-1 (higher priority)
+		},
+	}
+
+	tr.checkFeatureSchedules(ctx, phase1Now)
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 1: feature should NOT be enabled before starts_at window")
+	}
+
+	// --- Phase 2: Inside window, cron matches — feature should enable ---
+	// 2026-03-22 10:30 UTC = 2026-03-22 06:30 EDT (within window, but cron "*/15" in NY tz)
+	// Use a time where cron matches in the feature's timezone
+	// 2026-03-22T20:30:00Z = 2026-03-22 16:30 EDT. "*/15 * * * *" matches minute 30.
+	phase2Now := time.Date(2026, 3, 22, 20, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase2Now)
+
+	if !tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 2: feature should be enabled when inside window and cron matches")
+	}
+
+	// Verify EnableFeature event was emitted
+	enableEventFound := false
+	for _, e := range events {
+		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
+			enableEventFound = true
+		}
+	}
+	if !enableEventFound {
+		t.Error("Phase 2: should emit EventFeatureEnabled")
+	}
+
+	// --- Phase 3: Cron does not match — feature stays as-is (already enabled) ---
+	events = nil
+	phase3Now := time.Date(2026, 3, 22, 20, 31, 0, 0, time.UTC) // minute 31, no cron match
+	tr.checkFeatureSchedules(ctx, phase3Now)
+	// Feature was already enabled, no new enable event expected
+	// (No disable should happen either — no cron match just means no new enable)
+
+	// --- Phase 4: After expires_at — feature should be disabled ---
+	events = nil
+	phase4Now := time.Date(2026, 4, 5, 10, 30, 0, 0, time.UTC) // after expires_at
+	tr.checkFeatureSchedules(ctx, phase4Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 4: feature should be disabled after expires_at")
+	}
+
+	disableEventFound := false
+	for _, e := range events {
+		if e.Type == EventFeatureDisabled && e.FeatureID == featureID {
+			disableEventFound = true
+		}
+	}
+	if !disableEventFound {
+		t.Error("Phase 4: should emit EventFeatureDisabled when window expires")
+	}
+}
+
+func TestCheckFeatureSchedules_Integration_RunOnceAtLifecycle(t *testing.T) {
+	tr, client, _ := schedTestRunner()
+
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		events = append(events, e)
+	})
+
+	ctx := context.Background()
+	featureID := "once-lifecycle"
+
+	client.allTasks["proj-a"] = []types.ResolvedTask{
+		{
+			ID:               "once-task-1",
+			Path:             "projects/proj-a/task/once-task-1.md",
+			Title:            "One-Shot Task",
+			Status:           "active",
+			FeatureID:        featureID,
+			FeatureRunOnceAt: "2026-03-22T10:00:00Z",
+		},
+	}
+
+	// --- Phase 1: Before run_once_at time — should NOT trigger ---
+	phase1Now := time.Date(2026, 3, 22, 9, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase1Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 1: feature should NOT be enabled before run_once_at time")
+	}
+
+	// --- Phase 2: After run_once_at time — should trigger and enable ---
+	phase2Now := time.Date(2026, 3, 22, 10, 30, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase2Now)
+
+	if !tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 2: feature should be enabled after run_once_at time")
+	}
+
+	// Verify state marked as fired
+	tr.mu.RLock()
+	state := tr.featureScheduleState[featureID]
+	tr.mu.RUnlock()
+	if !state.runOnceFired {
+		t.Error("Phase 2: run_once_at state should be marked as fired")
+	}
+
+	// --- Phase 3: Second poll after run_once_at — should NOT re-trigger ---
+	tr.DisableFeature(featureID) // simulate feature completing its work
+	events = nil
+
+	phase3Now := time.Date(2026, 3, 22, 11, 0, 0, 0, time.UTC)
+	tr.checkFeatureSchedules(ctx, phase3Now)
+
+	if tr.GetEnabledFeatures()[featureID] {
+		t.Fatal("Phase 3: feature should NOT re-trigger after run_once_at already fired")
+	}
+
+	// No enable event should have been emitted in phase 3
+	for _, e := range events {
+		if e.Type == EventFeatureEnabled && e.FeatureID == featureID {
+			t.Error("Phase 3: should NOT emit EventFeatureEnabled on re-poll")
+		}
+	}
+}

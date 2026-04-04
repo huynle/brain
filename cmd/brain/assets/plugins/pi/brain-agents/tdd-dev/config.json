@@ -1,0 +1,5 @@
+{
+  "thinking": "low",
+  "tools": ["read", "bash", "edit", "write"],
+  "no_session": true
+}

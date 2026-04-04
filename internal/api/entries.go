@@ -78,6 +78,12 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid execution_mode %q", req.ExecutionMode),
 		})
 	}
+	if req.Executor != "" && !isValidEnum(req.Executor, types.Executors) {
+		details = append(details, types.ValidationDetail{
+			Field:   "executor",
+			Message: fmt.Sprintf("invalid executor %q; valid values: opencode, pi", req.Executor),
+		})
+	}
 	if req.FeaturePriority != "" && !types.IsValidPriority(req.FeaturePriority) {
 		details = append(details, types.ValidationDetail{
 			Field:   "feature_priority",
@@ -321,6 +327,12 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		details = append(details, types.ValidationDetail{
 			Field:   "execution_mode",
 			Message: fmt.Sprintf("invalid execution_mode %q", *req.ExecutionMode),
+		})
+	}
+	if req.Executor != nil && *req.Executor != "" && !isValidEnum(*req.Executor, types.Executors) {
+		details = append(details, types.ValidationDetail{
+			Field:   "executor",
+			Message: fmt.Sprintf("invalid executor %q; valid values: opencode, pi", *req.Executor),
 		})
 	}
 	if req.FeaturePriority != nil && !types.IsValidPriority(*req.FeaturePriority) {

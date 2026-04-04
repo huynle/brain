@@ -91,6 +91,8 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
+				"executor":              {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi'). Defaults to empty (opencode)."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor (e.g., browser, filesystem)"},
 				"relatedEntries":        {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -144,6 +146,8 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
+			body["executor"] = args["executor"]
+			body["extensions"] = args["extensions"]
 		}
 
 		var resp struct {
@@ -466,6 +470,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
+				"executor":             {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi')"},
+				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor"},
 			},
 			Required: []string{"path"},
 		},
@@ -507,6 +513,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"direct_prompt":        args["direct_prompt"],
 			"agent":                args["agent"],
 			"model":                args["model"],
+			"executor":             args["executor"],
+			"extensions":           args["extensions"],
 		}
 
 		var resp struct {

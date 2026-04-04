@@ -86,17 +86,19 @@ type Frontmatter struct {
 	FeatureTimezone  string   `yaml:"feature_timezone,omitempty" json:"feature_timezone,omitempty"`
 
 	// Execution context
-	Workdir            string `yaml:"workdir,omitempty" json:"workdir,omitempty"`
-	GitRemote          string `yaml:"git_remote,omitempty" json:"git_remote,omitempty"`
-	GitBranch          string `yaml:"git_branch,omitempty" json:"git_branch,omitempty"`
-	MergeTargetBranch  string `yaml:"merge_target_branch,omitempty" json:"merge_target_branch,omitempty"`
-	MergePolicy        string `yaml:"merge_policy,omitempty" json:"merge_policy,omitempty"`
-	MergeStrategy      string `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
-	RemoteBranchPolicy string `yaml:"remote_branch_policy,omitempty" json:"remote_branch_policy,omitempty"`
-	OpenPRBeforeMerge  *bool  `yaml:"open_pr_before_merge,omitempty" json:"open_pr_before_merge,omitempty"`
-	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
-	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
-	TargetWorkdir      string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
+	Workdir            string   `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	GitRemote          string   `yaml:"git_remote,omitempty" json:"git_remote,omitempty"`
+	GitBranch          string   `yaml:"git_branch,omitempty" json:"git_branch,omitempty"`
+	MergeTargetBranch  string   `yaml:"merge_target_branch,omitempty" json:"merge_target_branch,omitempty"`
+	MergePolicy        string   `yaml:"merge_policy,omitempty" json:"merge_policy,omitempty"`
+	MergeStrategy      string   `yaml:"merge_strategy,omitempty" json:"merge_strategy,omitempty"`
+	RemoteBranchPolicy string   `yaml:"remote_branch_policy,omitempty" json:"remote_branch_policy,omitempty"`
+	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge,omitempty" json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      string   `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	CompleteOnIdle     *bool    `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
+	TargetWorkdir      string   `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
+	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
+	Extensions         []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 
 	// User intent / prompts
 	UserOriginalRequest string `yaml:"user_original_request,omitempty" json:"user_original_request,omitempty"`
@@ -167,6 +169,8 @@ type GenerateOptions struct {
 	ExecutionMode      string
 	CompleteOnIdle     *bool
 	TargetWorkdir      string
+	Executor           string
+	Extensions         []string
 
 	UserOriginalRequest string
 	DirectPrompt        string
@@ -240,6 +244,8 @@ type rawFrontmatter struct {
 	ExecutionMode       string                     `yaml:"execution_mode"`
 	CompleteOnIdle      *bool                      `yaml:"complete_on_idle"`
 	TargetWorkdir       string                     `yaml:"target_workdir"`
+	Executor            string                     `yaml:"executor"`
+	Extensions          []string                   `yaml:"extensions"`
 	UserOriginalRequest string                     `yaml:"user_original_request"`
 	DirectPrompt        string                     `yaml:"direct_prompt"`
 	Agent               string                     `yaml:"agent"`
@@ -273,6 +279,7 @@ var knownFields = map[string]bool{
 	"merge_target_branch": true, "merge_policy": true, "merge_strategy": true,
 	"remote_branch_policy": true, "open_pr_before_merge": true,
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
+	"executor": true, "extensions": true,
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
@@ -405,6 +412,8 @@ func Parse(content string) (*Document, error) {
 		ExecutionMode:       raw.ExecutionMode,
 		CompleteOnIdle:      raw.CompleteOnIdle,
 		TargetWorkdir:       raw.TargetWorkdir,
+		Executor:            raw.Executor,
+		Extensions:          raw.Extensions,
 		UserOriginalRequest: raw.UserOriginalRequest,
 		DirectPrompt:        raw.DirectPrompt,
 		Agent:               raw.Agent,
@@ -626,6 +635,15 @@ func Serialize(fm *Frontmatter) string {
 	}
 
 	emit("target_workdir", fm.TargetWorkdir)
+	emitPlain("executor", fm.Executor)
+
+	// Extensions
+	if len(fm.Extensions) > 0 {
+		lines = append(lines, "extensions:")
+		for _, ext := range fm.Extensions {
+			lines = append(lines, "  - "+EscapeYamlValue(ext))
+		}
+	}
 
 	// Multiline fields
 	if fm.UserOriginalRequest != "" {
@@ -765,6 +783,8 @@ func Generate(opts *GenerateOptions) string {
 		ExecutionMode:       opts.ExecutionMode,
 		CompleteOnIdle:      opts.CompleteOnIdle,
 		TargetWorkdir:       opts.TargetWorkdir,
+		Executor:            opts.Executor,
+		Extensions:          opts.Extensions,
 		UserOriginalRequest: opts.UserOriginalRequest,
 		DirectPrompt:        opts.DirectPrompt,
 		Agent:               opts.Agent,

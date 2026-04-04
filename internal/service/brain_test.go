@@ -1391,4 +1391,40 @@ func TestRecallFull_EmptyBody(t *testing.T) {
 	}
 }
 
+func TestSaveRecall_ExecutorAndExtensions(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Create a task with executor and extensions
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:       "task",
+		Title:      "Executor Round Trip",
+		Content:    "Test body",
+		Executor:   "pi",
+		Extensions: []string{"browser", "filesystem"},
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Recall the entry
+	entry, err := svc.Recall(ctx, resp.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+
+	if entry.Executor != "pi" {
+		t.Errorf("executor = %q, want %q", entry.Executor, "pi")
+	}
+	if len(entry.Extensions) != 2 {
+		t.Fatalf("extensions len = %d, want 2", len(entry.Extensions))
+	}
+	if entry.Extensions[0] != "browser" {
+		t.Errorf("extensions[0] = %q, want %q", entry.Extensions[0], "browser")
+	}
+	if entry.Extensions[1] != "filesystem" {
+		t.Errorf("extensions[1] = %q, want %q", entry.Extensions[1], "filesystem")
+	}
+}
+
 // Stub tests removed — methods now implemented in brain.go (Phase 4).

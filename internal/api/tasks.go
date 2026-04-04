@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -119,6 +120,17 @@ func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("claim request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID, "success", resp.Success)
+
+	// Emit task.claimed event
+	evt := types.NewEvent(types.EventTaskClaimed, types.EventSourceAPI)
+	evt.ProjectID = projectId
+	evt.TaskID = taskId
+	evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+	evt.Metadata = map[string]string{
+		"runner_id": req.RunnerID,
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -150,6 +162,17 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("release request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
+
+	// Emit task.released event
+	evt := types.NewEvent(types.EventTaskReleased, types.EventSourceAPI)
+	evt.ProjectID = projectId
+	evt.TaskID = taskId
+	evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+	evt.Metadata = map[string]string{
+		"runner_id": req.RunnerID,
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -273,6 +296,14 @@ func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+
+	// Emit task.triggered event
+	evt := types.NewEvent(types.EventTaskTriggered, types.EventSourceAPI)
+	evt.ProjectID = projectId
+	evt.TaskID = taskId
+	evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, resp)
 }
 

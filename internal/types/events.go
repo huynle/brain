@@ -51,6 +51,7 @@ const (
 	EventTaskCancelled     = "task.cancelled"
 	EventTaskReleased      = "task.released"
 	EventTaskStatusChanged = "task.status_changed"
+	EventTaskTriggered     = "task.triggered"
 	EventTaskIdleDetected  = "task.idle_detected"
 
 	// Feature lifecycle events.
@@ -75,7 +76,7 @@ var AllEventTypes = []string{
 	EventProjectStarted, EventProjectPaused, EventProjectResumed,
 	EventTaskClaimed, EventTaskClaimRejected, EventTaskStarted, EventTaskCompleted,
 	EventTaskFailed, EventTaskBlocked, EventTaskCancelled, EventTaskReleased,
-	EventTaskStatusChanged, EventTaskIdleDetected,
+	EventTaskStatusChanged, EventTaskTriggered, EventTaskIdleDetected,
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
 	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,

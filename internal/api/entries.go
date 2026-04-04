@@ -593,9 +593,30 @@ func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.V
 	return details
 }
 
-// HandleMoveEntry handles POST /entries/{id}/move.
+// HandlePostWildcard dispatches POST /entries/* to either HandleMoveEntry
+// or HandleVerifyEntry based on whether the path ends with "/move" or "/verify".
+func (h *Handler) HandlePostWildcard(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "*")
+	if strings.HasSuffix(id, "/move") {
+		h.HandleMoveEntry(w, r)
+		return
+	}
+	if strings.HasSuffix(id, "/verify") {
+		h.HandleVerifyEntry(w, r)
+		return
+	}
+	WriteError(w, http.StatusNotFound, "Not Found", "Unknown POST endpoint")
+}
+
+// HandleMoveEntry handles POST /entries/{id}/move or POST /entries/*/move.
 func (h *Handler) HandleMoveEntry(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	// Chi wildcard /* captures everything after /entries/ in the "*" parameter
+	id := chi.URLParam(r, "*")
+	if id == "" {
+		id = chi.URLParam(r, "id")
+	}
+	// Strip "/move" suffix from the path to get the entry identifier
+	id = strings.TrimSuffix(id, "/move")
 
 	var req types.MoveEntryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

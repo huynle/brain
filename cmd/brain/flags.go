@@ -274,6 +274,9 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 		if flags.Model != "" {
 			cfg.Runner.Opencode.Model = flags.Model
 		}
+		if len(flags.Include) > 0 {
+			cfg.Runner.IncludeProjects = append(cfg.Runner.IncludeProjects, flags.Include...)
+		}
 		if len(flags.Exclude) > 0 {
 			cfg.Runner.ExcludeProjects = append(cfg.Runner.ExcludeProjects, flags.Exclude...)
 		}

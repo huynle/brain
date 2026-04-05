@@ -25,6 +25,7 @@ type RunnerConfig struct {
 	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
+	IncludeProjects        []string       `yaml:"include_projects" json:"include_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
 
 	// EnvPassthrough is a list of environment variable names to forward

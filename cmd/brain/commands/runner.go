@@ -29,6 +29,12 @@ func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
 	if len(flags.FeatureIDs) > 0 {
 		cfg.FeatureIDs = flags.FeatureIDs
 	}
+	if len(flags.Include) > 0 {
+		cfg.IncludeProjects = append(cfg.IncludeProjects, flags.Include...)
+	}
+	if len(flags.Exclude) > 0 {
+		cfg.ExcludeProjects = append(cfg.ExcludeProjects, flags.Exclude...)
+	}
 }
 
 // RunnerFlags holds runner command flags.
@@ -74,7 +80,7 @@ func (c *RunnerTUICommand) Execute() error {
 	applyRunnerFlagOverrides(&cfg, c.Flags)
 
 	// Resolve projects
-	projects, err := c.resolveProjects()
+	projects, err := c.resolveProjects(cfg)
 	if err != nil {
 		return err
 	}
@@ -94,14 +100,34 @@ func (c *RunnerTUICommand) Execute() error {
 	return runnercli.RunTUI(ctx, opts)
 }
 
-func (c *RunnerTUICommand) resolveProjects() ([]string, error) {
-	if c.Project != "all" {
-		return []string{c.Project}, nil
+func (c *RunnerTUICommand) resolveProjects(cfg runner.RunnerConfig) ([]string, error) {
+	return resolveProjectList(c.Project, cfg)
+}
+
+// resolveProjectList fetches and filters the project list from the Brain API.
+// If project is not "all", it returns a single-element list without calling the API.
+// For "all", it fetches all projects from the API and applies include/exclude filtering.
+func resolveProjectList(project string, cfg runner.RunnerConfig) ([]string, error) {
+	if project != "all" {
+		return []string{project}, nil
 	}
 
-	// TODO: Fetch all projects from API in future phase
-	// For now, just return "all" as a single project identifier
-	return []string{"all"}, nil
+	client := runner.NewAPIClient(cfg)
+	projects, err := client.ListProjects(context.Background())
+	if err != nil {
+		return nil, fmt.Errorf("failed to list projects: %w", err)
+	}
+	if len(projects) == 0 {
+		return nil, fmt.Errorf("no projects found")
+	}
+
+	// Apply include/exclude filters (already merged with CLI flags by applyRunnerFlagOverrides)
+	filtered := runner.FilterProjects(projects, cfg.IncludeProjects, cfg.ExcludeProjects)
+	if len(filtered) == 0 {
+		return nil, fmt.Errorf("all projects filtered out by include/exclude patterns")
+	}
+
+	return filtered, nil
 }
 
 // RunCommand handles explicit `brain run` subcommands.
@@ -164,10 +190,9 @@ func (c *RunCommand) runStart() error {
 	applyRunnerFlagOverrides(&cfg, c.Flags)
 
 	// Resolve projects
-	projects := []string{c.Project}
-	if c.Project == "all" {
-		// TODO: Fetch all projects from API
-		projects = []string{"all"}
+	projects, err := resolveProjectList(c.Project, cfg)
+	if err != nil {
+		return err
 	}
 
 	// Build runner options

@@ -33,8 +33,24 @@ func NewClient(apiURL, apiToken, projectID string) *Client {
 	}
 }
 
+// NewClientWithURL creates a new SSE client that connects to an explicit URL
+// rather than deriving the stream URL from a project ID.
+// This is used for runner-scoped SSE streams (e.g., /api/v1/runners/{id}/stream).
+func NewClientWithURL(apiURL, apiToken, streamURL string) *Client {
+	return &Client{
+		apiURL:    streamURL, // store the full URL directly
+		apiToken:  apiToken,
+		projectID: "", // not used — streamURL overrides
+		eventCh:   make(chan Event, 32),
+	}
+}
+
 // streamURL returns the full SSE stream URL.
 func (c *Client) streamURL() string {
+	if c.projectID == "" {
+		// Direct URL mode (set via NewClientWithURL)
+		return c.apiURL
+	}
 	return fmt.Sprintf("%s/api/v1/tasks/%s/stream", c.apiURL, c.projectID)
 }
 

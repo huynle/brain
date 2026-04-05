@@ -237,3 +237,44 @@ type ClaimResult struct {
 	ClaimedBy string `json:"claimedBy,omitempty"`
 	Message   string `json:"message,omitempty"`
 }
+
+// =============================================================================
+// Runner Command Types (SSE command channel)
+// =============================================================================
+
+// RunnerCommandType enumerates the kinds of commands the server can push to a runner.
+type RunnerCommandType string
+
+const (
+	// CommandAffinityUpdated signals the runner to update its FeatureIDs.
+	CommandAffinityUpdated RunnerCommandType = "affinity_updated"
+
+	// CommandConfigUpdated signals the runner to update maxParallel, model, agent.
+	CommandConfigUpdated RunnerCommandType = "config_updated"
+
+	// CommandDispatch signals the runner to immediately wake for targeted task pickup.
+	CommandDispatch RunnerCommandType = "dispatch"
+
+	// CommandShutdown signals the runner to initiate graceful shutdown.
+	CommandShutdown RunnerCommandType = "shutdown"
+)
+
+// RunnerCommand represents a server-pushed command received via the runner SSE stream.
+type RunnerCommand struct {
+	Type RunnerCommandType `json:"type"`
+
+	// Populated for affinity_updated commands.
+	FeatureIDs []string `json:"featureIds,omitempty"`
+
+	// Populated for config_updated commands.
+	MaxParallel *int   `json:"maxParallel,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+
+	// Populated for dispatch commands.
+	TaskID    string `json:"taskId,omitempty"`
+	ProjectID string `json:"projectId,omitempty"`
+
+	// Populated for shutdown commands.
+	Reason string `json:"reason,omitempty"`
+}

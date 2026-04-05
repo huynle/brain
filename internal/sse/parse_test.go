@@ -217,6 +217,58 @@ func TestParseEvent_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestParseEvent_CommandEvent(t *testing.T) {
+	data := map[string]interface{}{
+		"type":      "dispatch",
+		"taskId":    "task-123",
+		"projectId": "proj-a",
+	}
+	jsonData, _ := json.Marshal(data)
+
+	lines := []string{
+		"event: command",
+		"data: " + string(jsonData),
+	}
+
+	event, err := ParseEvent(lines)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event == nil {
+		t.Fatal("expected non-nil event for command")
+	}
+	if event.Type != "command" {
+		t.Errorf("expected type 'command', got %q", event.Type)
+	}
+	if event.Data == nil {
+		t.Fatal("expected non-nil data")
+	}
+}
+
+func TestParseEvent_TasksChangedEvent(t *testing.T) {
+	data := map[string]interface{}{
+		"type":      "tasks_changed",
+		"projectId": "proj-a",
+	}
+	jsonData, _ := json.Marshal(data)
+
+	lines := []string{
+		"event: tasks_changed",
+		"data: " + string(jsonData),
+	}
+
+	event, err := ParseEvent(lines)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if event == nil {
+		t.Fatal("expected non-nil event for tasks_changed")
+	}
+	if event.Type != "tasks_changed" {
+		t.Errorf("expected type 'tasks_changed', got %q", event.Type)
+	}
+}
+
 func TestParseEvent_DataPreservedAsRawJSON(t *testing.T) {
 	// Verify that the raw JSON data is preserved exactly
 	data := `{"type":"tasks_snapshot","tasks":[{"id":"t1"}],"count":1}`

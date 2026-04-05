@@ -855,6 +855,8 @@ const (
 	SSEEventProjectDirty  SSEEventType = "project_dirty"
 	SSEEventHeartbeat     SSEEventType = "heartbeat"
 	SSEEventError         SSEEventType = "error"
+	SSEEventTasksChanged  SSEEventType = "tasks_changed"
+	SSEEventCommand       SSEEventType = "command"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -888,6 +890,31 @@ type SSEProjectDirtyData struct {
 type SSEErrorData struct {
 	SSEEventData
 	Message string `json:"message"`
+}
+
+// =============================================================================
+// Runner SSE Event Types
+// =============================================================================
+
+// RunnerSSEEventData is the base data structure for runner-scoped SSE events.
+type RunnerSSEEventData struct {
+	Type      SSEEventType `json:"type"`
+	Transport string       `json:"transport"`
+	Timestamp string       `json:"timestamp"`
+	RunnerID  string       `json:"runnerId"`
+}
+
+// RunnerSSEConnectedData is the data for a runner "connected" SSE event.
+type RunnerSSEConnectedData struct {
+	RunnerSSEEventData
+}
+
+// RunnerSSECommandData is the data for a runner "command" SSE event.
+// Commands include: affinity, config, dispatch, shutdown.
+type RunnerSSECommandData struct {
+	RunnerSSEEventData
+	Command string      `json:"command"`
+	Payload interface{} `json:"payload,omitempty"`
 }
 
 // =============================================================================

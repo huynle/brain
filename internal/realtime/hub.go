@@ -89,3 +89,28 @@ func (h *Hub) PublishError(projectId string, message string) {
 		Data:  message,
 	})
 }
+
+// RunnerTopic returns the topic key for a runner's SSE stream.
+// Uses "runner:" prefix to namespace runner subscriptions separately from project subscriptions.
+func RunnerTopic(runnerID string) string {
+	return "runner:" + runnerID
+}
+
+// PublishRunnerCommand sends a command event to a specific runner's SSE stream.
+func (h *Hub) PublishRunnerCommand(runnerID string, command string, payload interface{}) {
+	h.publish(RunnerTopic(runnerID), SSEMessage{
+		Event: "command",
+		Data: map[string]interface{}{
+			"command": command,
+			"payload": payload,
+		},
+	})
+}
+
+// PublishRunnerTasksChanged sends a tasks_changed event to a specific runner's SSE stream.
+func (h *Hub) PublishRunnerTasksChanged(runnerID string, data interface{}) {
+	h.publish(RunnerTopic(runnerID), SSEMessage{
+		Event: "tasks_changed",
+		Data:  data,
+	})
+}

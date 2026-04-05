@@ -5,8 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -107,4 +109,86 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleRunnerStream handles GET /runners/{runnerId}/stream — runner-scoped SSE event stream.
+// Carries task change events and server-pushed commands (affinity, config, dispatch, shutdown).
+func (h *Handler) HandleRunnerStream(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	// Verify runner exists
+	if h.runnerRegistry != nil {
+		_, err := h.runnerRegistry.GetRunner(r.Context(), runnerID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+	}
+
+	// Check that the ResponseWriter supports flushing
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "streaming not supported")
+		return
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	// Subscribe to hub using runner-scoped topic key
+	ch, unsub := h.hub.Subscribe(realtime.RunnerTopic(runnerID))
+	defer unsub()
+
+	now := types.TimeNowUTC().Format(time.RFC3339)
+
+	// Send connected event
+	writeSSEEvent(w, "connected", types.RunnerSSEConnectedData{
+		RunnerSSEEventData: types.RunnerSSEEventData{
+			Type:      types.SSEEventConnected,
+			Transport: "sse",
+			Timestamp: now,
+			RunnerID:  runnerID,
+		},
+	})
+	flusher.Flush()
+
+	// Start heartbeat ticker
+	heartbeat := time.NewTicker(DefaultHeartbeatInterval)
+	defer heartbeat.Stop()
+
+	// Event loop
+	for {
+		select {
+		case <-r.Context().Done():
+			// Client disconnected
+			slog.Debug("runner SSE stream disconnected", "runner_id", runnerID)
+			return
+
+		case msg, ok := <-ch:
+			if !ok {
+				// Channel closed
+				return
+			}
+			writeSSEEvent(w, msg.Event, msg.Data)
+			flusher.Flush()
+
+		case <-heartbeat.C:
+			writeSSEEvent(w, "heartbeat", types.RunnerSSEEventData{
+				Type:      types.SSEEventHeartbeat,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+				RunnerID:  runnerID,
+			})
+			flusher.Flush()
+		}
+	}
 }

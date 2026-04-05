@@ -219,11 +219,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Get("/", o.handler.HandleListRunners)
 					r.Post("/{runnerId}/heartbeat", o.handler.HandleHeartbeat)
 					r.Post("/{runnerId}/deregister", o.handler.HandleDeregisterRunner)
+					r.Get("/{runnerId}/stream", o.handler.HandleRunnerStream)
 				} else {
 					r.Post("/register", notImplemented)
 					r.Get("/", notImplemented)
 					r.Post("/{runnerId}/heartbeat", notImplemented)
 					r.Post("/{runnerId}/deregister", notImplemented)
+					r.Get("/{runnerId}/stream", notImplemented)
 				}
 			})
 

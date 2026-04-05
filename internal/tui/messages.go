@@ -71,3 +71,18 @@ type DreamContentMsg struct {
 	Content string
 	Error   error
 }
+
+// RunnerListMsg is sent when the runner list has been fetched from the API.
+type RunnerListMsg struct {
+	Runners []types.RunnerInfo
+	Err     error
+}
+
+// RunnerLogMsg is sent when a runner_log SSE event is received from a remote runner.
+// This enables monitor-only mode to display logs from runners executing elsewhere.
+type RunnerLogMsg struct {
+	ProjectID string
+	TaskID    string
+	RunnerID  string
+	Lines     []types.LogLine
+}

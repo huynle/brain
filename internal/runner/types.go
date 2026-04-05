@@ -24,6 +24,8 @@ type RunnerConfig struct {
 	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
 	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
+	Pi                     PiConfig       `yaml:"pi" json:"pi"`
+	Executors              []string       `yaml:"executors" json:"executors"`
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
 	IncludeProjects        []string       `yaml:"include_projects" json:"include_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
@@ -53,6 +55,15 @@ type RunnerConfig struct {
 	// Default: 30
 	// Deprecated: Use per-hook timeout in Hooks.Hooks[name].Timeout instead.
 	HookTimeout int `yaml:"hook_timeout" json:"hook_timeout"`
+
+	// HeartbeatInterval is how often (in seconds) the runner sends heartbeats
+	// to the Brain API. Default: 30s. Set via RUNNER_HEARTBEAT_INTERVAL env var.
+	HeartbeatInterval int `yaml:"heartbeat_interval" json:"heartbeat_interval"`
+
+	// LogStreaming enables runner-side log streaming. When true, the runner
+	// captures executor stdout/stderr and POSTs batches to the Brain API.
+	// Default: true. Set via RUNNER_LOG_STREAMING env var.
+	LogStreaming bool `yaml:"log_streaming" json:"log_streaming"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -143,6 +154,12 @@ func (h InlineHookConfig) GetTimeout(defaultTimeout time.Duration) time.Duration
 		return h.Timeout.Duration
 	}
 	return defaultTimeout
+}
+
+// PiConfig holds configuration for the Pi executor.
+type PiConfig struct {
+	Bin   string `yaml:"bin" json:"bin"`
+	Model string `yaml:"model" json:"model"`
 }
 
 // =============================================================================
@@ -338,4 +355,45 @@ type ClaimResult struct {
 	TaskID    string `json:"taskId"`
 	ClaimedBy string `json:"claimedBy,omitempty"`
 	Message   string `json:"message,omitempty"`
+}
+
+// =============================================================================
+// Runner Command Types (SSE command channel)
+// =============================================================================
+
+// RunnerCommandType enumerates the kinds of commands the server can push to a runner.
+type RunnerCommandType string
+
+const (
+	// CommandAffinityUpdated signals the runner to update its FeatureIDs.
+	CommandAffinityUpdated RunnerCommandType = "affinity_updated"
+
+	// CommandConfigUpdated signals the runner to update maxParallel, model, agent.
+	CommandConfigUpdated RunnerCommandType = "config_updated"
+
+	// CommandDispatch signals the runner to immediately wake for targeted task pickup.
+	CommandDispatch RunnerCommandType = "dispatch"
+
+	// CommandShutdown signals the runner to initiate graceful shutdown.
+	CommandShutdown RunnerCommandType = "shutdown"
+)
+
+// RunnerCommand represents a server-pushed command received via the runner SSE stream.
+type RunnerCommand struct {
+	Type RunnerCommandType `json:"type"`
+
+	// Populated for affinity_updated commands.
+	FeatureIDs []string `json:"featureIds,omitempty"`
+
+	// Populated for config_updated commands.
+	MaxParallel *int   `json:"maxParallel,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+
+	// Populated for dispatch commands.
+	TaskID    string `json:"taskId,omitempty"`
+	ProjectID string `json:"projectId,omitempty"`
+
+	// Populated for shutdown commands.
+	Reason string `json:"reason,omitempty"`
 }

@@ -43,6 +43,7 @@ type RunnerFlags struct {
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
+	Monitor      bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -95,6 +96,11 @@ func (c *RunnerTUICommand) Execute() error {
 	}
 
 	ctx := context.Background()
+
+	// Monitor mode: TUI without local runner (pure control panel)
+	if c.Flags.Monitor {
+		return runnercli.RunMonitorTUI(ctx, opts)
+	}
 
 	// Run with TUI
 	return runnercli.RunTUI(ctx, opts)
@@ -207,6 +213,9 @@ func (c *RunCommand) runStart() error {
 	ctx := context.Background()
 
 	// Run based on mode
+	if c.Flags.Monitor {
+		return runnercli.RunMonitorTUI(ctx, opts)
+	}
 	if mode == "tui" {
 		return runnercli.RunTUI(ctx, opts)
 	}

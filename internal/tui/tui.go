@@ -123,6 +123,10 @@ type Model struct {
 	// Content tab state (Tasks / Dream)
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
+
+	// Runner panel state
+	runnerPanel        RunnerPanel
+	runnerPanelVisible bool
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -175,6 +179,7 @@ func NewModel(cfg Config) Model {
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:  make(map[string]bool),
 		dreamViewer:      NewDreamViewer(),
+		runnerPanel:      NewRunnerPanel(),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -408,7 +413,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()))
+		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
+		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
+		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
+		return m, tea.Batch(cmds...)
+
+	case RunnerListMsg:
+		if msg.Err == nil {
+			m.runnerPanel.SetRunners(msg.Runners)
+			// Compute runner metrics for status bar
+			m.statusBar.RunnerMetrics = computeRunnerMetrics(msg.Runners)
+		}
+		return m, nil
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -481,8 +497,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case featureAffinityResultMsg:
+		m.modalManager.Close()
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to update affinity: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Affinity update failed for runner %s: %v", msg.runnerID, msg.err))
+		} else {
+			m.setStatusMessage("success", fmt.Sprintf("Updated affinity for runner %s", msg.runnerID))
+			m.addLog("info", fmt.Sprintf("Runner %s affinity → [%s]", msg.runnerID, strings.Join(msg.features, ", ")))
+			// Refresh runner list to show updated affinity
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		return m, nil
+
 	case LogEntryMsg:
 		m.logViewer.AddEntry(msg.Entry)
+		return m, nil
+
+	case RunnerLogMsg:
+		// Convert runner_log SSE event lines to LogEntry and add to viewer.
+		// This enables monitor-only mode to display logs from remote runners.
+		// In hybrid mode, these remote logs are merged chronologically with local logs.
+		for _, line := range msg.Lines {
+			ts, err := time.Parse(time.RFC3339, line.Timestamp)
+			if err != nil {
+				// Fallback to current time if parse fails
+				ts = time.Now()
+			}
+			entry := LogEntry{
+				Timestamp: ts,
+				Level:     line.Level,
+				Message:   line.Content,
+				TaskID:    msg.TaskID,
+				ProjectID: msg.ProjectID,
+				RunnerID:  msg.RunnerID,
+			}
+			m.logViewer.AddEntry(entry)
+		}
 		return m, nil
 
 	case SessionDiscoveredMsg:
@@ -955,7 +1006,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyTab:
-		m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		if m.runnerPanelVisible {
+			m.activePanel = NextPanelWithRunners(m.activePanel, m.detailVisible, m.logsVisible, true)
+		} else {
+			m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		}
 		m.helpBar.ActivePanel = m.activePanel
 		return m, nil
 
@@ -1053,6 +1108,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			modal := NewHelpModal(m.config.IsMultiProject())
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
+		case "R":
+			// Toggle runner panel visibility
+			m.runnerPanelVisible = !m.runnerPanelVisible
+			m.helpBar.RunnerPanelVisible = m.runnerPanelVisible
+			if m.runnerPanelVisible {
+				// Switch focus to runner panel and fetch runners immediately
+				m.activePanel = PanelRunners
+				m.helpBar.ActivePanel = m.activePanel
+				return m, fetchRunnerListCmd(m.apiRunnerConfig())
+			}
+			// Closing runner panel: return focus to tasks
+			if m.activePanel == PanelRunners {
+				m.activePanel = PanelTasks
+				m.helpBar.ActivePanel = m.activePanel
+			}
+			return m, nil
 		case "S":
 			// Open settings modal with task counts per status group and per-project running counts
 			taskCounts := m.computeTaskCountsByStatus()
@@ -1155,6 +1226,46 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if selectedTask != nil {
 					return m, completeTaskCmd(m.apiRunnerConfig(), selectedTask.Path)
 				}
+			}
+			return m, nil
+		case "a":
+			// Assign feature affinity to selected runner (runner panel only)
+			if m.activePanel == PanelRunners {
+				selectedRunner := m.runnerPanel.SelectedRunner()
+				if selectedRunner == nil {
+					return m, nil
+				}
+
+				// Collect all feature IDs from current tasks
+				featureIDSet := make(map[string]bool)
+				for _, task := range m.tasks {
+					if task.FeatureID != "" {
+						featureIDSet[task.FeatureID] = true
+					}
+				}
+
+				// Convert set to sorted list
+				allFeatures := make([]string, 0, len(featureIDSet))
+				for fid := range featureIDSet {
+					allFeatures = append(allFeatures, fid)
+				}
+
+				// Parse current runner affinity (comma-separated string)
+				currentFeatures := []string{}
+				if selectedRunner.FeatureIDs != "" {
+					for _, f := range strings.Split(selectedRunner.FeatureIDs, ",") {
+						f = strings.TrimSpace(f)
+						if f != "" {
+							currentFeatures = append(currentFeatures, f)
+						}
+					}
+				}
+
+				// Open feature picker modal
+				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+				modal := NewFeaturePickerModal(selectedRunner.RunnerID, currentFeatures, allFeatures, apiClient)
+				cmd := m.modalManager.Open(modal)
+				return m, cmd
 			}
 			return m, nil
 		case "C":
@@ -1412,7 +1523,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "j":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveDown()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveDown()
 					m.syncScheduleDetail()
@@ -1429,7 +1542,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "k":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveUp()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveUp()
 					m.syncScheduleDetail()
@@ -2581,7 +2696,7 @@ func (m Model) renderBaseView() string {
 	}
 
 	// Determine if right panels are visible
-	hasBottomPanel := m.detailVisible || m.logsVisible
+	hasBottomPanel := m.detailVisible || m.logsVisible || m.runnerPanelVisible
 
 	// Calculate heights - ensure total equals mainHeight exactly
 	var topHeight, bottomHeight int
@@ -2662,6 +2777,27 @@ func (m Model) renderBaseView() string {
 			Height(mainHeight - 2).
 			Render(dreamView)
 		mainContent = dreamPanel
+	} else if m.runnerPanelVisible {
+		// Runner panel visible: split into task panel (top) + runner panel (bottom)
+		// Use the same bottom panel area for the runner panel
+		runnerPanelStyle := InactiveBorder
+		if m.activePanel == PanelRunners {
+			runnerPanelStyle = ActiveBorder
+		}
+
+		runnerInnerHeight := bottomHeight - 2
+		if runnerInnerHeight < 1 {
+			runnerInnerHeight = 1
+		}
+		runnerView := m.runnerPanel.View(innerWidth, runnerInnerHeight)
+		runnerView = truncateToHeight(runnerView, runnerInnerHeight)
+		runnerPanelView := runnerPanelStyle.
+			Width(m.width - 2).
+			Height(runnerInnerHeight).
+			MaxHeight(bottomHeight).
+			Render(runnerView)
+
+		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, runnerPanelView)
 	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
@@ -3398,6 +3534,19 @@ func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerControl
 	}
 }
 
+// fetchRunnerListCmd fetches the list of registered runners from the API.
+func fetchRunnerListCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		resp, err := apiClient.ListRunners(ctx)
+		if err != nil {
+			return RunnerListMsg{Err: err}
+		}
+		return RunnerListMsg{Runners: resp.Runners}
+	}
+}
+
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
 func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -3543,6 +3692,28 @@ func (m Model) computeRunningPerProject() map[string]int {
 		}
 	}
 	return running
+}
+
+// computeRunnerMetrics calculates aggregate runner statistics from a list of runners.
+func computeRunnerMetrics(runners []types.RunnerInfo) *RunnerMetrics {
+	if len(runners) == 0 {
+		return nil
+	}
+
+	metrics := &RunnerMetrics{
+		TotalRunners: len(runners),
+	}
+
+	for _, r := range runners {
+		switch r.Status {
+		case types.RunnerStatusOnline:
+			metrics.OnlineRunners++
+		case types.RunnerStatusStale:
+			metrics.StaleRunners++
+		}
+	}
+
+	return metrics
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

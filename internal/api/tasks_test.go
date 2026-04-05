@@ -27,6 +27,7 @@ type mockTaskService struct {
 	getNextFunc          func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
 	claimTaskFunc        func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
 	releaseTaskFunc      func(ctx context.Context, projectId, taskId, runnerId string) error
+	renewClaimFunc       func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
@@ -92,6 +93,13 @@ func (m *mockTaskService) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	return fmt.Errorf("releaseTaskFunc not set")
 }
 
+func (m *mockTaskService) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+	if m.renewClaimFunc != nil {
+		return m.renewClaimFunc(ctx, projectId, taskId, runnerId)
+	}
+	return nil, fmt.Errorf("renewClaimFunc not set")
+}
+
 func (m *mockTaskService) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
 	if m.getClaimStatusFunc != nil {
 		return m.getClaimStatusFunc(ctx, projectId, taskId)
@@ -139,6 +147,10 @@ func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId str
 		return m.triggerTaskFunc(ctx, projectId, taskId)
 	}
 	return nil, fmt.Errorf("triggerTaskFunc not set")
+}
+
+func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.ClaimResponse, error) {
+	return nil, fmt.Errorf("dispatchTask not implemented in mock")
 }
 
 // =============================================================================
@@ -228,6 +240,7 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 
 			r.Post("/{taskId}/claim", h.HandleClaimTask)
 			r.Post("/{taskId}/release", h.HandleReleaseTask)
+			r.Post("/{taskId}/renew", h.HandleRenewClaim)
 			r.Get("/{taskId}/claim-status", h.HandleGetClaimStatus)
 			r.Post("/{taskId}/trigger", h.HandleTriggerTask)
 		})
@@ -672,6 +685,115 @@ func TestHandleReleaseTask(t *testing.T) {
 
 			if resp.StatusCode != tt.wantStatus {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Renew Claim Tests
+// =============================================================================
+
+func TestHandleRenewClaim(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       any
+		mockFn     func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name: "success",
+			body: map[string]any{"runnerId": "runner-001"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:   true,
+					TaskID:    taskId,
+					RunnerID:  runnerId,
+					ExpiresAt: "2024-01-01T00:10:00Z",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.RenewClaimResponse](t, resp)
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.ExpiresAt == "" {
+					t.Error("expected non-empty expiresAt")
+				}
+			},
+		},
+		{
+			name: "not found",
+			body: map[string]any{"runnerId": "runner-001"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:  false,
+					TaskID:   taskId,
+					RunnerID: runnerId,
+					Error:    "claim not found",
+				}, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.RenewClaimResponse](t, resp)
+				if body.Success {
+					t.Error("expected success = false")
+				}
+			},
+		},
+		{
+			name: "conflict - wrong runner",
+			body: map[string]any{"runnerId": "runner-002"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:  false,
+					TaskID:   taskId,
+					RunnerID: runnerId,
+					Error:    "claim owned by different runner",
+				}, ErrConflict
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "missing runnerId",
+			body:       map[string]any{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid JSON",
+			body:       "not json",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{renewClaimFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var body *bytes.Buffer
+			switch v := tt.body.(type) {
+			case string:
+				body = bytes.NewBufferString(v)
+			default:
+				body = jsonBody(t, v)
+			}
+
+			resp, err := http.Post(srv.URL+"/tasks/my-project/task1/renew", "application/json", body)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
 			}
 		})
 	}

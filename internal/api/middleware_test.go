@@ -20,13 +20,39 @@ import (
 // testValidator is a mock TokenValidator that accepts a single valid token.
 type testValidator struct {
 	validToken string
+	scope      string // optional: scope to assign (defaults to "admin:*")
 }
 
 func (v *testValidator) ValidateToken(_ context.Context, tokenValue string) (*storage.Token, error) {
 	if tokenValue == v.validToken {
-		return &storage.Token{Name: "test-token", Token: tokenValue}, nil
+		scope := v.scope
+		if scope == "" {
+			scope = "admin:*"
+		}
+		return &storage.Token{Name: "test-token", Token: tokenValue, Scope: scope}, nil
 	}
 	return nil, fmt.Errorf("token not found or revoked")
+}
+
+// scopedTokenValidator accepts multiple tokens with different scopes.
+type scopedTokenValidator struct {
+	tokens map[string]string // token value -> scope
+}
+
+func newScopedTokenValidator() *scopedTokenValidator {
+	return &scopedTokenValidator{tokens: make(map[string]string)}
+}
+
+func (v *scopedTokenValidator) addToken(token, scope string) {
+	v.tokens[token] = scope
+}
+
+func (v *scopedTokenValidator) ValidateToken(_ context.Context, tokenValue string) (*storage.Token, error) {
+	scope, ok := v.tokens[tokenValue]
+	if !ok {
+		return nil, fmt.Errorf("token not found or revoked")
+	}
+	return &storage.Token{Name: "token-" + scope, Token: tokenValue, Scope: scope}, nil
 }
 
 // revokedValidator always returns an error, simulating a revoked/invalid token.
@@ -747,6 +773,244 @@ func TestIsTLS(t *testing.T) {
 			got := isTLS(req)
 			if got != tt.want {
 				t.Errorf("isTLS() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SecureHeaders HSTS tests
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// RequireScope middleware tests
+// ---------------------------------------------------------------------------
+
+func TestRequireScope(t *testing.T) {
+	tests := []struct {
+		name       string
+		allowed    []string // scopes accepted by the middleware
+		tokenScope string   // scope of the authenticating token
+		authType   string   // "api_token" or "oauth"
+		wantStatus int
+	}{
+		{
+			name:       "admin scope passes any check",
+			allowed:    []string{"admin:*", "runner:*", "read:*"},
+			tokenScope: "admin:*",
+			authType:   "api_token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "admin scope passes admin-only check",
+			allowed:    []string{"admin:*"},
+			tokenScope: "admin:*",
+			authType:   "api_token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "runner scope passes runner check",
+			allowed:    []string{"admin:*", "runner:*"},
+			tokenScope: "runner:*",
+			authType:   "api_token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "runner scope blocked from admin-only",
+			allowed:    []string{"admin:*"},
+			tokenScope: "runner:*",
+			authType:   "api_token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "read scope passes read check",
+			allowed:    []string{"admin:*", "runner:*", "read:*"},
+			tokenScope: "read:*",
+			authType:   "api_token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "read scope blocked from runner-only",
+			allowed:    []string{"admin:*", "runner:*"},
+			tokenScope: "read:*",
+			authType:   "api_token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "read scope blocked from admin-only",
+			allowed:    []string{"admin:*"},
+			tokenScope: "read:*",
+			authType:   "api_token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "oauth token always passes scope check",
+			allowed:    []string{"admin:*"},
+			tokenScope: "read write",
+			authType:   "oauth",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "no auth result passes through (let auth middleware handle)",
+			allowed:    []string{"admin:*"},
+			tokenScope: "",
+			authType:   "", // empty means no auth result in context
+			wantStatus: http.StatusOK,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			middleware := RequireScope(tt.allowed...)
+			handler := middleware(okHandler)
+
+			req := httptest.NewRequest("GET", "/test", nil)
+
+			// Set auth result in context if authType is non-empty
+			if tt.authType != "" {
+				auth := &AuthResult{
+					Type:  tt.authType,
+					Scope: tt.tokenScope,
+				}
+				ctx := context.WithValue(req.Context(), ctxAuthResult, auth)
+				req = req.WithContext(ctx)
+			}
+
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+func TestBuildAuthResult_APITokenWithScope(t *testing.T) {
+	tok := &storage.Token{Name: "runner-token", Token: "abc123", Scope: "runner:*"}
+	result := buildAuthResult(tok)
+
+	if result.Type != "api_token" {
+		t.Errorf("type = %q, want %q", result.Type, "api_token")
+	}
+	if result.Scope != "runner:*" {
+		t.Errorf("scope = %q, want %q", result.Scope, "runner:*")
+	}
+}
+
+func TestScopeEnforcement_EndToEnd(t *testing.T) {
+	// Test the full auth + scope middleware chain
+	validator := newScopedTokenValidator()
+	validator.addToken("admin-token", "admin:*")
+	validator.addToken("runner-token", "runner:*")
+	validator.addToken("read-token", "read:*")
+
+	cfg := config.Config{
+		BrainDir:   "/tmp/test-brain",
+		Port:       3000,
+		Host:       "0.0.0.0",
+		EnableAuth: true,
+		CORSOrigin: "*",
+		LogLevel:   "info",
+	}
+
+	router := NewRouter(cfg, WithTokenValidator(validator))
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		token      string
+		wantStatus int
+	}{
+		// Admin token — full access
+		{
+			name:       "admin can read entries",
+			method:     "GET",
+			path:       "/api/v1/entries",
+			token:      "admin-token",
+			wantStatus: http.StatusNotImplemented, // 501 because no handler, but passes auth + scope
+		},
+		{
+			name:       "admin can list tokens",
+			method:     "GET",
+			path:       "/api/v1/tokens",
+			token:      "admin-token",
+			wantStatus: http.StatusNotImplemented,
+		},
+		{
+			name:       "admin can read stats",
+			method:     "GET",
+			path:       "/api/v1/stats",
+			token:      "admin-token",
+			wantStatus: http.StatusNotImplemented,
+		},
+
+		// Runner token — can read tasks and claim/release
+		{
+			name:       "runner can read tasks",
+			method:     "GET",
+			path:       "/api/v1/stats",
+			token:      "runner-token",
+			wantStatus: http.StatusNotImplemented, // passes auth + scope
+		},
+		{
+			name:       "runner blocked from token management",
+			method:     "GET",
+			path:       "/api/v1/tokens",
+			token:      "runner-token",
+			wantStatus: http.StatusForbidden,
+		},
+
+		// Read token — read-only
+		{
+			name:       "read can access stats",
+			method:     "GET",
+			path:       "/api/v1/stats",
+			token:      "read-token",
+			wantStatus: http.StatusNotImplemented,
+		},
+		{
+			name:       "read can access entries list",
+			method:     "GET",
+			path:       "/api/v1/entries",
+			token:      "read-token",
+			wantStatus: http.StatusNotImplemented,
+		},
+		{
+			name:       "read blocked from token management",
+			method:     "GET",
+			path:       "/api/v1/tokens",
+			token:      "read-token",
+			wantStatus: http.StatusForbidden,
+		},
+
+		// No token — 401
+		{
+			name:       "no token gets 401",
+			method:     "GET",
+			path:       "/api/v1/stats",
+			token:      "",
+			wantStatus: http.StatusUnauthorized,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest(tt.method, srv.URL+tt.path, nil)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
 			}
 		})
 	}

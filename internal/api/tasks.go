@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
@@ -13,12 +15,38 @@ import (
 
 // parseTaskFilterOptions extracts optional TaskFilterOptions from query parameters.
 // Returns nil if no filter parameters are present (backward compatible).
+//
+// Supported query params:
+//   - feature_id: filter by feature ID (repeatable)
+//   - executors: comma-separated list of executor types (e.g., "opencode,pi")
 func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
 	featureIDs := r.URL.Query()["feature_id"]
-	if len(featureIDs) == 0 {
+	executors := parseExecutors(r)
+
+	if len(featureIDs) == 0 && len(executors) == 0 {
 		return nil
 	}
-	return &TaskFilterOptions{FeatureIDs: featureIDs}
+	return &TaskFilterOptions{
+		FeatureIDs: featureIDs,
+		Executors:  executors,
+	}
+}
+
+// parseExecutors extracts executor types from the "executors" query parameter.
+// Supports comma-separated values: ?executors=opencode,pi
+func parseExecutors(r *http.Request) []string {
+	raw := r.URL.Query().Get("executors")
+	if raw == "" {
+		return nil
+	}
+	var executors []string
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		if e != "" {
+			executors = append(executors, e)
+		}
+	}
+	return executors
 }
 
 // HandleListProjects handles GET /tasks — list all projects.
@@ -131,6 +159,20 @@ func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 	}
 	h.emitEvent(r.Context(), evt)
 
+	// Publish task_claimed SSE event to project subscribers
+	if h.hub != nil && resp.Success {
+		h.hub.PublishTaskClaimed(projectId, types.SSETaskClaimedData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventTaskClaimed,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+				ProjectID: projectId,
+			},
+			TaskID:   taskId,
+			RunnerID: req.RunnerID,
+		})
+	}
+
 	WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -173,7 +215,126 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 	}
 	h.emitEvent(r.Context(), evt)
 
+	// Publish task_released SSE event to project subscribers
+	if h.hub != nil {
+		h.hub.PublishTaskReleased(projectId, types.SSETaskReleasedData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventTaskReleased,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+				ProjectID: projectId,
+			},
+			TaskID:   taskId,
+			RunnerID: req.RunnerID,
+		})
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// HandleDispatchTask handles POST /tasks/{projectId}/{taskId}/dispatch.
+// Dispatches a task directly to a specific runner by creating a pre-claim and sending an SSE command.
+func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.DispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	if req.TargetRunnerID == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "targetRunnerId", Message: "targetRunnerId is required"},
+		})
+		return
+	}
+
+	// Verify runner exists
+	if h.runnerRegistry != nil {
+		_, err := h.runnerRegistry.GetRunner(r.Context(), req.TargetRunnerID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+	}
+
+	// Create pre-claim for target runner (60 second expiry for dispatch)
+	preclaimResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
+	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, map[string]any{
+				"success": false,
+				"error":   "task is already claimed by another runner",
+			})
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	if !preclaimResp.Success {
+		WriteJSON(w, http.StatusConflict, map[string]any{
+			"success": false,
+			"error":   "failed to create pre-claim for target runner",
+		})
+		return
+	}
+
+	// Send dispatch command via SSE to target runner
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(req.TargetRunnerID, "dispatch", map[string]string{
+			"taskId":    taskId,
+			"projectId": projectId,
+		})
+	}
+
+	slog.Info("dispatch request", "project", projectId, "task_id", taskId, "target_runner", req.TargetRunnerID)
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"runnerId": req.TargetRunnerID,
+	})
+}
+
+// HandleRenewClaim handles POST /tasks/{projectId}/{taskId}/renew.
+func (h *Handler) HandleRenewClaim(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.ClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	if req.RunnerID == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "runnerId", Message: "runnerId is required"},
+		})
+		return
+	}
+
+	resp, err := h.tasks.RenewClaim(r.Context(), projectId, taskId, req.RunnerID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	slog.Info("renew request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // HandleGetClaimStatus handles GET /tasks/{projectId}/{taskId}/claim-status.

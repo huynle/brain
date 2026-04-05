@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/logbuffer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
@@ -23,13 +24,14 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host       string
-	Port       int
-	BrainDir   string
-	EnableAuth bool
-	LogLevel   string
-	CORSOrigin string
-	OAuthPIN   string
+	Host         string
+	Port         int
+	BrainDir     string
+	EnableAuth   bool
+	LogLevel     string
+	CORSOrigin   string
+	OAuthPIN     string
+	TaskDefaults config.TaskDefaultsConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -93,20 +95,28 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:   opts.BrainDir,
-		Host:       opts.Host,
-		Port:       opts.Port,
-		EnableAuth: opts.EnableAuth,
-		CORSOrigin: corsOrigin,
-		OAuthPIN:   opts.OAuthPIN,
+		BrainDir:     opts.BrainDir,
+		Host:         opts.Host,
+		Port:         opts.Port,
+		EnableAuth:   opts.EnableAuth,
+		CORSOrigin:   corsOrigin,
+		OAuthPIN:     opts.OAuthPIN,
+		TaskDefaults: opts.TaskDefaults,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
 	brainSvc := service.NewBrainService(&cfg, store, idx)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
+	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
+
+	// ─── Background Claim Cleanup ──────────────────────────────────
+	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
+
+	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
@@ -128,19 +138,53 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
 	go triggerDispatcher.Start(ctx)
 
+	// Wire hub into runner registry for lifecycle sweep SSE events
+	runnerRegistrySvc.SetHub(hub)
+
+	// ─── Log Buffer ─────────────────────────────────────────────────
+	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
+
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
+		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
+		api.WithLogBuffer(logBuf),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
+	// ─── Rate Limiting ─────────────────────────────────────────────
+	var rateLimiter *api.RateLimiter
+	if cfg.RateLimitPerMinute > 0 {
+		burst := cfg.RateLimitBurst
+		if burst <= 0 {
+			burst = cfg.RateLimitPerMinute
+		}
+		rateLimiter = api.NewRateLimiter(api.RateLimitConfig{
+			RequestsPerMinute: cfg.RateLimitPerMinute,
+			BurstSize:         burst,
+			CleanupInterval:   5 * time.Minute,
+		})
+		defer rateLimiter.Stop()
+		slog.Info("rate limiting enabled",
+			"requests_per_minute", cfg.RateLimitPerMinute,
+			"burst", burst,
+		)
+	}
+
+	routerOpts := []api.RouterOption{
+		api.WithHandler(handler),
+		api.WithDualAuth(store, store),
+	}
+	if rateLimiter != nil {
+		routerOpts = append(routerOpts, api.WithRateLimiter(rateLimiter))
+	}
+	router := api.NewRouter(cfg, routerOpts...)
 
 	// ─── OAuth ─────────────────────────────────────────────────────
 	oauthStore := oauth.NewStore()

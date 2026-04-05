@@ -20,7 +20,7 @@ type mockTokenValidator struct {
 
 func (m *mockTokenValidator) ValidateToken(_ context.Context, tokenValue string) (*storage.Token, error) {
 	if tokenValue == m.validToken {
-		return &storage.Token{Name: "test", Token: tokenValue}, nil
+		return &storage.Token{Name: "test", Token: tokenValue, Scope: "admin:*"}, nil
 	}
 	return nil, fmt.Errorf("invalid token")
 }

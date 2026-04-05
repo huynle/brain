@@ -17,6 +17,7 @@ const (
 	PanelTasks Panel = iota
 	PanelDetails
 	PanelLogs
+	PanelRunners
 )
 
 // String returns the display name for a panel.
@@ -28,6 +29,8 @@ func (p Panel) String() string {
 		return "details"
 	case PanelLogs:
 		return "logs"
+	case PanelRunners:
+		return "runners"
 	default:
 		return "unknown"
 	}
@@ -41,6 +44,27 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 	}
 	if logsVisible {
 		panels = append(panels, PanelLogs)
+	}
+
+	for i, p := range panels {
+		if p == current {
+			return panels[(i+1)%len(panels)]
+		}
+	}
+	return PanelTasks
+}
+
+// NextPanelWithRunners cycles to the next visible panel, including the runner panel.
+func NextPanelWithRunners(current Panel, detailVisible, logsVisible, runnerVisible bool) Panel {
+	panels := []Panel{PanelTasks}
+	if detailVisible {
+		panels = append(panels, PanelDetails)
+	}
+	if logsVisible {
+		panels = append(panels, PanelLogs)
+	}
+	if runnerVisible {
+		panels = append(panels, PanelRunners)
 	}
 
 	for i, p := range panels {

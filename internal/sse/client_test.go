@@ -411,6 +411,49 @@ func TestClient_StreamURL(t *testing.T) {
 	}
 }
 
+func TestNewClientWithURL(t *testing.T) {
+	c := NewClientWithURL("http://localhost:3333", "token", "http://localhost:3333/api/v1/runners/runner_abc/stream")
+	if c == nil {
+		t.Fatal("expected non-nil client")
+	}
+	// Direct URL mode: streamURL returns the full URL
+	url := c.streamURL()
+	expected := "http://localhost:3333/api/v1/runners/runner_abc/stream"
+	if url != expected {
+		t.Errorf("streamURL() = %q, want %q", url, expected)
+	}
+}
+
+func TestNewClientWithURL_ConnectsToExplicitURL(t *testing.T) {
+	server := newSSETestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvent(w, "connected", `{"type":"connected","runnerId":"runner_abc"}`)
+		<-r.Context().Done()
+	})
+	defer server.Close()
+
+	// Use the server URL directly via NewClientWithURL
+	c := NewClientWithURL("", "", server.URL+"/api/v1/tasks/ignored/stream")
+	// Override to just use server.URL (the test server handles any path)
+	c2 := NewClientWithURL("", "", server.URL+"/")
+	_ = c
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	ch := c2.Connect(ctx)
+
+	select {
+	case event := <-ch:
+		if event.Type != "connected" {
+			t.Errorf("expected type 'connected', got %q", event.Type)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for connected event from NewClientWithURL")
+	}
+
+	c2.Close()
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================

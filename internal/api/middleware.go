@@ -311,7 +311,64 @@ func buildAuthResult(tok *storage.Token) *AuthResult {
 		}
 	}
 	return &AuthResult{
-		Type: "api_token",
-		Name: tok.Name,
+		Type:  "api_token",
+		Name:  tok.Name,
+		Scope: tok.Scope,
 	}
+}
+
+// RequireScope returns middleware that checks the AuthResult scope against
+// the required scopes. If the authenticated token's scope is not in the
+// allowed list, it returns 403 Forbidden.
+// Admin scope ("admin:*") always passes all scope checks.
+func RequireScope(allowed ...string) func(http.Handler) http.Handler {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, s := range allowed {
+		allowedSet[s] = true
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth, ok := AuthResultFromContext(r.Context())
+			if !ok {
+				// No auth result — let the auth middleware handle 401
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// admin:* always passes
+			if auth.Scope == "admin:*" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// OAuth tokens pass scope checks (they have their own scope system)
+			if auth.Type == "oauth" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Check if token scope is in the allowed set
+			if allowedSet[auth.Scope] {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			WriteError(w, http.StatusForbidden, "Forbidden",
+				fmt.Sprintf("Token scope %q insufficient; requires one of: %s",
+					auth.Scope, scopeList(allowed)))
+		})
+	}
+}
+
+// scopeList formats a list of scopes for display.
+func scopeList(scopes []string) string {
+	if len(scopes) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, len(scopes))
+	for i, s := range scopes {
+		parts[i] = s
+	}
+	return strings.Join(parts, ", ")
 }

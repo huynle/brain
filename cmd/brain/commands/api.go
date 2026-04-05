@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 )
@@ -36,6 +37,7 @@ type UnifiedConfig struct {
 		LogMaxSize    int // MB
 		LogMaxBackups int
 		LogMaxAge     int // days
+		TaskDefaults  config.TaskDefaultsConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -72,13 +74,14 @@ func (c *APICommand) Type() string {
 func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Port:         c.Config.Server.Port,
+		Host:         c.Config.Server.Host,
+		BrainDir:     c.Config.Server.BrainDir,
+		EnableAuth:   c.Config.Server.EnableAuth,
+		LogLevel:     c.Config.Server.LogLevel,
+		CORSOrigin:   c.Config.Server.CORSOrigin,
+		OAuthPIN:     c.Config.Server.OAuthPIN,
+		TaskDefaults: c.Config.Server.TaskDefaults,
 	}
 
 	// Flags override config

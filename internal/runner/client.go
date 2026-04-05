@@ -121,17 +121,28 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]string, error) {
 	return data.Projects, nil
 }
 
-// GetReadyTasks returns tasks that are ready for execution in a project.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
+// buildTaskQueryParams encodes TaskFetchOptions into URL query parameters.
+func buildTaskQueryParams(opts *TaskFetchOptions) string {
+	if opts == nil {
+		return ""
 	}
+	params := url.Values{}
+	for _, fid := range opts.FeatureIDs {
+		params.Add("feature_id", fid)
+	}
+	if len(opts.Executors) > 0 {
+		params.Set("executors", strings.Join(opts.Executors, ","))
+	}
+	if encoded := params.Encode(); encoded != "" {
+		return "?" + encoded
+	}
+	return ""
+}
+
+// GetReadyTasks returns tasks that are ready for execution in a project.
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get ready tasks: %w", err)
@@ -150,16 +161,9 @@ func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, feature
 }
 
 // GetNextTask returns the highest-priority ready task, or nil if none.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
-	}
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get next task: %w", err)
@@ -351,10 +355,33 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// RenewClaim extends the lease on a claimed task.
+// Returns nil on success, or an error if the claim doesn't exist, is expired,
+// or is owned by a different runner. The caller should treat any error as a
+// signal to abort the task.
+func (c *APIClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/renew", projectID, taskID)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("renew claim: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ReleaseTask releases a previously claimed task.
-func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+// The runnerID must match the runner that originally claimed the task.
+func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/release", projectID, taskID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return fmt.Errorf("release task: %w", err)
 	}
@@ -657,6 +684,161 @@ func (c *APIClient) PostEvents(ctx context.Context, events []types.Event) error 
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
+// Runner Registration & Heartbeat
+// =============================================================================
+
+// RegisterRunner registers this runner with the Brain API server.
+// Returns the RunnerInfo on success or an error. A non-2xx response is returned
+// as an *APIError so callers can decide whether to treat it as fatal.
+func (c *APIClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/register", req)
+	if err != nil {
+		return nil, fmt.Errorf("register runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, c.readError(resp)
+	}
+
+	var info types.RunnerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	return &info, nil
+}
+
+// SendHeartbeat sends a heartbeat for this runner to the Brain API server.
+func (c *APIClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/heartbeat", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, req)
+	if err != nil {
+		return fmt.Errorf("send heartbeat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// DeregisterRunner removes this runner from the Brain API server.
+func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/deregister", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("deregister runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ListRunners fetches all registered runners from the Brain API.
+func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list runners: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.RunnerListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode runners response: %w", err)
+	}
+	return &result, nil
+}
+
+// UpdateRunnerConfig updates a runner's maxParallel configuration.
+func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, maxParallel int) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/config", runnerID)
+	body := map[string]int{"maxParallel": maxParallel}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ToggleRunnerFeature enables or disables a feature on a specific runner.
+func (c *APIClient) ToggleRunnerFeature(ctx context.Context, runnerID, featureID string, enabled bool) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/features/%s/toggle", runnerID, featureID)
+	body := map[string]bool{"enabled": enabled}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("toggle runner feature: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// UpdateRunnerAffinity updates which features a runner can execute.
+func (c *APIClient) UpdateRunnerAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/affinity", runnerID)
+	body := map[string][]string{"feature_ids": featureIDs}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner affinity: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
+// Log Streaming
+// =============================================================================
+
+// PostTaskLogs sends a batch of log lines to the Brain API for a given task.
+// This is fire-and-forget from the caller's perspective: failures are returned
+// but should not block task execution.
+func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs", projectID, taskID)
+	body := types.LogIngestRequest{
+		RunnerID: runnerID,
+		Lines:    lines,
+	}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("post task logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
 		return c.readError(resp)
 	}
 	return nil

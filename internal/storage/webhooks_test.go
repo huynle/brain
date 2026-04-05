@@ -691,8 +691,8 @@ func TestSchemaVersion_IsFive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSchemaVersion failed: %v", err)
 	}
-	if ver != 5 {
-		t.Errorf("schema version = %d, want 5", ver)
+	if ver != CurrentSchemaVersion {
+		t.Errorf("schema version = %d, want %d", ver, CurrentSchemaVersion)
 	}
 }
 

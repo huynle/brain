@@ -226,7 +226,7 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	tasks, err := client.GetReadyTasks(context.Background(), "brain-api")
+	tasks, err := client.GetReadyTasks(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAPIClient_GetNextTask_NotFound(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error for 404: %v", err)
 	}
@@ -437,15 +437,17 @@ func TestAPIClient_ClaimTask_AlreadyClaimed(t *testing.T) {
 
 func TestAPIClient_ReleaseTask(t *testing.T) {
 	var gotPath, gotMethod string
+	var gotBody map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	err := client.ReleaseTask(context.Background(), "brain-api", "abc123")
+	err := client.ReleaseTask(context.Background(), "brain-api", "abc123", "runner-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,6 +456,63 @@ func TestAPIClient_ReleaseTask(t *testing.T) {
 	}
 	if gotPath != "/api/v1/tasks/brain-api/abc123/release" {
 		t.Errorf("path = %q, want release path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RenewClaim
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_RenewClaim_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"taskId":    "abc123",
+			"runnerId":  "runner-1",
+			"expiresAt": "2024-01-01T00:10:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/abc123/renew" {
+		t.Errorf("path = %q, want renew path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
+	}
+}
+
+func TestAPIClient_RenewClaim_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "claim not found",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
 	}
 }
 
@@ -1719,5 +1778,190 @@ func TestAPIClient_DoRequestWithHeaders_OverridesDefaults(t *testing.T) {
 	// Auth should still be present
 	if gotAuth != "Bearer test-token" {
 		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer test-token")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RegisterRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_RegisterRunner_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody types.RunnerRegistration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.RunnerInfo{
+			RunnerID:    gotBody.RunnerID,
+			Hostname:    gotBody.Hostname,
+			MaxParallel: gotBody.MaxParallel,
+			Status:      types.RunnerStatusOnline,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	info, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID:    "runner_abc12345",
+		Hostname:    "test-host",
+		Executors:   []string{"opencode"},
+		MaxParallel: 3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/register" {
+		t.Errorf("path = %q, want /api/v1/runners/register", gotPath)
+	}
+	if gotBody.RunnerID != "runner_abc12345" {
+		t.Errorf("body runner_id = %q, want %q", gotBody.RunnerID, "runner_abc12345")
+	}
+	if gotBody.Hostname != "test-host" {
+		t.Errorf("body hostname = %q, want %q", gotBody.Hostname, "test-host")
+	}
+	if gotBody.MaxParallel != 3 {
+		t.Errorf("body max_parallel = %d, want 3", gotBody.MaxParallel)
+	}
+	if len(gotBody.Executors) != 1 || gotBody.Executors[0] != "opencode" {
+		t.Errorf("body executors = %v, want [opencode]", gotBody.Executors)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil RunnerInfo")
+	}
+	if info.RunnerID != "runner_abc12345" {
+		t.Errorf("info runner_id = %q, want %q", info.RunnerID, "runner_abc12345")
+	}
+	if info.Status != types.RunnerStatusOnline {
+		t.Errorf("info status = %q, want %q", info.Status, types.RunnerStatusOnline)
+	}
+}
+
+func TestAPIClient_RegisterRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID: "runner_abc12345",
+		Hostname: "test-host",
+	})
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SendHeartbeat
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_SendHeartbeat_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody types.RunnerHeartbeatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.SendHeartbeat(context.Background(), "runner_abc12345", types.RunnerHeartbeatRequest{
+		RunningTasks: 2,
+		Stats: map[string]interface{}{
+			"completed": 5,
+			"failed":    1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner_abc12345/heartbeat" {
+		t.Errorf("path = %q, want /api/v1/runners/runner_abc12345/heartbeat", gotPath)
+	}
+	if gotBody.RunningTasks != 2 {
+		t.Errorf("body running_tasks = %d, want 2", gotBody.RunningTasks)
+	}
+}
+
+func TestAPIClient_SendHeartbeat_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.SendHeartbeat(context.Background(), "runner_abc12345", types.RunnerHeartbeatRequest{})
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DeregisterRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_DeregisterRunner_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "runner_abc12345")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner_abc12345/deregister" {
+		t.Errorf("path = %q, want /api/v1/runners/runner_abc12345/deregister", gotPath)
+	}
+}
+
+func TestAPIClient_DeregisterRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "runner_abc12345")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+func TestAPIClient_DeregisterRunner_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "runner not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "nonexistent_runner")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
 	}
 }

@@ -18,7 +18,7 @@ import (
 
 type mockTokenService struct {
 	generateTokenFunc    func() (string, error)
-	createTokenFunc      func(ctx context.Context, name, token string) error
+	createTokenFunc      func(ctx context.Context, name, token, scope string) error
 	listTokensFunc       func(ctx context.Context, includeRevoked ...bool) ([]storage.Token, error)
 	getTokenByNameFunc   func(ctx context.Context, name string) (*storage.Token, error)
 	revokeTokenFunc      func(ctx context.Context, name string) error
@@ -32,9 +32,9 @@ func (m *mockTokenService) GenerateToken() (string, error) {
 	return "test-token-value-1234567890abcdef1234567890abcdef12345678901", nil
 }
 
-func (m *mockTokenService) CreateToken(ctx context.Context, name, token string) error {
+func (m *mockTokenService) CreateToken(ctx context.Context, name, token, scope string) error {
 	if m.createTokenFunc != nil {
-		return m.createTokenFunc(ctx, name, token)
+		return m.createTokenFunc(ctx, name, token, scope)
 	}
 	return nil
 }
@@ -92,7 +92,7 @@ func TestHandleCreateToken(t *testing.T) {
 		name          string
 		body          any
 		mockGenerate  func() (string, error)
-		mockCreate    func(ctx context.Context, name, token string) error
+		mockCreate    func(ctx context.Context, name, token, scope string) error
 		mockGetByName func(ctx context.Context, name string) (*storage.Token, error)
 		wantStatus    int
 		checkBody     func(t *testing.T, resp *http.Response)
@@ -104,7 +104,7 @@ func TestHandleCreateToken(t *testing.T) {
 				// First call: not found (no existing), Second call: return created
 				return nil, fmt.Errorf("token not found: %s", name)
 			},
-			mockCreate: func(_ context.Context, name, token string) error {
+			mockCreate: func(_ context.Context, name, token, scope string) error {
 				return nil
 			},
 			wantStatus: http.StatusCreated,
@@ -402,7 +402,7 @@ func TestHandleBootstrapToken(t *testing.T) {
 		body          any
 		mockCount     func(ctx context.Context) (int, error)
 		mockGenerate  func() (string, error)
-		mockCreate    func(ctx context.Context, name, token string) error
+		mockCreate    func(ctx context.Context, name, token, scope string) error
 		mockGetByName func(ctx context.Context, name string) (*storage.Token, error)
 		wantStatus    int
 		checkBody     func(t *testing.T, resp *http.Response)

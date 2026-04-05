@@ -85,6 +85,7 @@ type BrainService interface {
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs []string
+	Executors  []string // Filter tasks by executor type (e.g., "opencode", "pi")
 }
 
 // TaskService defines the interface for task queue operations.
@@ -114,6 +115,12 @@ type TaskService interface {
 
 	// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed.
 	ReleaseTask(ctx context.Context, projectId, taskId, runnerId string) error
+
+	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
+	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+
+	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
 
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
@@ -175,6 +182,28 @@ type EventService interface {
 	// after a task status update. Emits feature.completed or feature.progress
 	// events as appropriate. Safe to call with empty featureID.
 	CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string)
+}
+
+// RunnerRegistryService defines the interface for runner lifecycle management.
+// This handles registration, heartbeat, deregistration, and listing of runners.
+type RunnerRegistryService interface {
+	// Register registers or re-registers a runner.
+	Register(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+
+	// Heartbeat updates a runner's heartbeat timestamp and running task count.
+	Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+
+	// Deregister removes a runner and releases all its task claims.
+	Deregister(ctx context.Context, runnerID string) error
+
+	// ListRunners returns all runners with computed status.
+	ListRunners(ctx context.Context) (*types.RunnerListResponse, error)
+
+	// GetRunner returns a single runner by ID with computed status.
+	GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+
+	// UpdateAffinity updates a runner's feature affinity.
+	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 }
 
 // MonitorService defines the interface for monitor operations.

@@ -126,6 +126,11 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
+		Pi: PiConfig{
+			Bin:   getEnvOrDefault("PI_BIN", firstNonEmpty(fileCfg.Pi.Bin, "pi")),
+			Model: getEnvOrDefault("PI_MODEL", fileCfg.Pi.Model),
+		},
+		Executors:       defaultExecutors(getEnvCSVOrDefault("RUNNER_EXECUTORS", fileCfg.Executors)),
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		IncludeProjects: fileCfg.IncludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
@@ -136,8 +141,10 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Hooks:    inlineHooks,
 		},
 		// Deprecated fields kept for backward compat; values mirror Hooks.
-		HooksDir:    resolvedHooksDir,
-		HookTimeout: resolvedHookTimeout,
+		HooksDir:          resolvedHooksDir,
+		HookTimeout:       resolvedHookTimeout,
+		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
+		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -177,6 +184,9 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.IdleDetectionThreshold < 0 {
 		errs = append(errs, fmt.Sprintf("idleDetectionThreshold must be >= 0, got %d", cfg.IdleDetectionThreshold))
+	}
+	if cfg.HeartbeatInterval < 1 {
+		errs = append(errs, fmt.Sprintf("heartbeatInterval must be >= 1, got %d", cfg.HeartbeatInterval))
 	}
 
 	// Validate inline hook configs.
@@ -271,6 +281,16 @@ func getEnvCSVOrDefault(key string, defaultValue []string) []string {
 	return result
 }
 
+// defaultExecutors returns the executor list, defaulting to ["opencode"] if empty.
+// This ensures backward compatibility: runners that don't configure executors
+// still declare support for the opencode executor.
+func defaultExecutors(configured []string) []string {
+	if len(configured) > 0 {
+		return configured
+	}
+	return []string{"opencode"}
+}
+
 // defaultEnvPassthrough returns the env passthrough list, using defaults if empty.
 // The defaults ensure BRAIN_API_URL and BRAIN_API_TOKEN are always forwarded.
 func defaultEnvPassthrough(configured []string) []string {
@@ -278,4 +298,18 @@ func defaultEnvPassthrough(configured []string) []string {
 		return configured
 	}
 	return []string{"BRAIN_API_URL", "BRAIN_API_TOKEN"}
+}
+
+// defaultLogStreaming returns the configured value, defaulting to true.
+// The zero value of bool is false, so we need to detect whether the user
+// explicitly set it. Since YAML unmarshal sets false for unset bools,
+// we always default to true unless the env var is explicitly "false".
+func defaultLogStreaming(configured bool) bool {
+	// If configured is true, the file explicitly set it. If false, it
+	// could be either unset or explicitly false. We default to true
+	// and let the env var override.
+	if configured {
+		return true
+	}
+	return true // default to enabled
 }

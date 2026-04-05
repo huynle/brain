@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,25 +19,42 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// DefaultRenewInterval is how often the runner renews claims for running tasks.
+// Set to half the lease duration (DefaultLeaseDuration = 10min) so claims are
+// renewed well before they expire.
+const DefaultRenewInterval = 5 * time.Minute
+
 // =============================================================================
 // Interfaces for dependency injection
 // =============================================================================
+
+// TaskFetchOptions holds optional filters for fetching tasks from the Brain API.
+// Both fields are optional — nil/empty means no filter (return all).
+type TaskFetchOptions struct {
+	FeatureIDs []string // Filter by feature ID
+	Executors  []string // Filter by executor type (e.g., "opencode", "pi")
+}
 
 // Client abstracts the Brain API client for testability.
 type Client interface {
 	CheckHealth(ctx context.Context) (APIHealth, error)
 	ListProjects(ctx context.Context) ([]string, error)
-	GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error)
-	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
+	GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error)
+	GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
-	ReleaseTask(ctx context.Context, projectID, taskID string) error
+	RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error
+	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
+	RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+	SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+	DeregisterRunner(ctx context.Context, runnerID string) error
+	PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -101,8 +119,17 @@ type TaskRunnerOptions struct {
 	Logger *log.Logger
 
 	// Dependencies (injected for testability)
-	Client     Client
-	Executor   TaskExecutor
+	Client Client
+
+	// Executor is a single executor (backward compat). If set and Executors
+	// is nil, it is registered as the "opencode" executor.
+	Executor TaskExecutor
+
+	// Executors is a named registry of executors. Tasks are dispatched to the
+	// executor matching task.Executor. Takes precedence over Executor if both
+	// are set.
+	Executors map[string]TaskExecutor
+
 	ProcessMgr TaskProcessManager
 	StateMgr   TaskStateManager
 
@@ -136,7 +163,7 @@ type TaskRunner struct {
 	logger   *log.Logger
 
 	client     Client
-	executor   TaskExecutor
+	executors  map[string]TaskExecutor
 	processMgr TaskProcessManager
 	stateMgr   TaskStateManager
 
@@ -167,8 +194,13 @@ type TaskRunner struct {
 	// Event forwarding to Brain API server
 	eventForwarder *EventForwarder
 
+	// Log streamers (protected by logMu)
+	logMu        sync.Mutex
+	logStreamers map[string]*LogStreamer // keyed by task ID
+
 	// SSE reactive polling
 	wakeCh      chan struct{}
+	commandCh   chan RunnerCommand
 	sseListener *SSEListener
 
 	// Lifecycle
@@ -201,6 +233,19 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		logger = log.Default()
 	}
 
+	// Build executor registry
+	executors := opts.Executors
+	if executors == nil {
+		executors = make(map[string]TaskExecutor)
+	}
+	// Backward compat: if single Executor is set and not already in registry,
+	// register it as "opencode".
+	if opts.Executor != nil {
+		if _, exists := executors["opencode"]; !exists {
+			executors["opencode"] = opts.Executor
+		}
+	}
+
 	tr := &TaskRunner{
 		runnerID:        runnerID,
 		projects:        projects,
@@ -208,13 +253,15 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		mode:            mode,
 		logger:          logger,
 		client:          opts.Client,
-		executor:        opts.Executor,
+		executors:       executors,
 		processMgr:      opts.ProcessMgr,
 		stateMgr:        opts.StateMgr,
 		status:          RunnerStatusIdle,
 		pauseCache:      make(map[string]bool),
 		enabledFeatures: make(map[string]bool),
+		logStreamers:    make(map[string]*LogStreamer),
 		wakeCh:          make(chan struct{}, 1),
+		commandCh:       make(chan RunnerCommand, 16),
 		done:            make(chan struct{}),
 	}
 
@@ -292,6 +339,9 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		tr.eventForwarder.Start(ctx)
 	}
 
+	// Register with the Brain API (non-fatal on failure for backward compat)
+	tr.registerWithAPI(ctx)
+
 	// Emit runner started event
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
@@ -315,9 +365,47 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.projects,
 			tr.wakeCh,
 		)
+		// Wire up runner-scoped command stream
+		tr.sseListener.SetRunnerStream(tr.runnerID, tr.commandCh)
 		go tr.sseListener.Start(ctx)
-		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
+		slog.Info("SSE listener started for reactive polling",
+			"projects", len(tr.projects),
+			"runner_stream", true,
+			"runner_id", tr.runnerID,
+		)
 	}
+
+	// Start periodic claim renewal goroutine
+	renewTicker := time.NewTicker(DefaultRenewInterval)
+	go func() {
+		defer renewTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-renewTicker.C:
+				tr.renewClaims(ctx)
+			}
+		}
+	}()
+
+	// Start heartbeat goroutine
+	heartbeatInterval := time.Duration(tr.config.HeartbeatInterval) * time.Second
+	if heartbeatInterval < time.Second {
+		heartbeatInterval = 30 * time.Second
+	}
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	go func() {
+		defer heartbeatTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+				tr.sendHeartbeat(ctx)
+			}
+		}
+	}()
 
 	// Run initial poll immediately
 	tr.poll(ctx)
@@ -335,7 +423,61 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
+		case cmd := <-tr.commandCh:
+			tr.handleCommand(ctx, cmd)
 		}
+	}
+}
+
+// handleCommand processes a server-pushed command received via the runner SSE stream.
+func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
+	slog.Info("handling runner command", "type", cmd.Type, "runner_id", tr.runnerID)
+
+	switch cmd.Type {
+	case CommandAffinityUpdated:
+		tr.mu.Lock()
+		tr.config.FeatureIDs = cmd.FeatureIDs
+		tr.mu.Unlock()
+		slog.Info("affinity updated", "feature_ids", cmd.FeatureIDs)
+
+	case CommandConfigUpdated:
+		if cmd.MaxParallel != nil {
+			tr.SetMaxParallel(*cmd.MaxParallel)
+			slog.Info("max parallel updated", "max_parallel", *cmd.MaxParallel)
+		}
+		if cmd.Model != "" {
+			tr.mu.Lock()
+			tr.config.Opencode.Model = cmd.Model
+			tr.mu.Unlock()
+			slog.Info("model updated", "model", cmd.Model)
+		}
+		if cmd.Agent != "" {
+			tr.mu.Lock()
+			tr.config.Opencode.Agent = cmd.Agent
+			tr.mu.Unlock()
+			slog.Info("agent updated", "agent", cmd.Agent)
+		}
+
+	case CommandDispatch:
+		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
+		// Trigger immediate wake for targeted task pickup
+		select {
+		case tr.wakeCh <- struct{}{}:
+		default:
+		}
+
+	case CommandShutdown:
+		slog.Info("shutdown command received", "reason", cmd.Reason)
+		tr.emitEvent(RunnerEvent{
+			Type:   EventShutdown,
+			Reason: cmd.Reason,
+		})
+		if tr.cancel != nil {
+			tr.cancel()
+		}
+
+	default:
+		slog.Warn("unknown runner command type", "type", cmd.Type)
 	}
 }
 
@@ -347,6 +489,9 @@ func (tr *TaskRunner) Stop() error {
 
 	// Wait for the poll loop to exit
 	<-tr.done
+
+	// Deregister from the Brain API (best-effort)
+	tr.deregisterFromAPI()
 
 	// Stop SSE listener
 	if tr.sseListener != nil {
@@ -452,7 +597,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				continue // fully paused, no enabled features
 			}
 			// Paused but features enabled: poll only enabled features
-			task, err := tr.client.GetNextTask(ctx, projectID, projEnabledIDs...)
+			task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
+				FeatureIDs: projEnabledIDs,
+				Executors:  tr.config.Executors,
+			})
 			if err != nil || task == nil {
 				continue
 			}
@@ -464,8 +612,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			continue
 		}
 
-		// Get next task for this project (filtered by feature IDs if configured)
-		task, err := tr.client.GetNextTask(ctx, projectID, tr.config.FeatureIDs...)
+		// Get next task for this project (filtered by feature IDs and executors)
+		task, err := tr.client.GetNextTask(ctx, projectID, tr.buildFetchOptions())
 		if err != nil || task == nil {
 			continue
 		}
@@ -484,6 +632,43 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 7. Emit poll complete event
 	tr.emitPollComplete()
+}
+
+// buildFetchOptions creates TaskFetchOptions from the runner's current configuration.
+func (tr *TaskRunner) buildFetchOptions() *TaskFetchOptions {
+	opts := &TaskFetchOptions{
+		Executors: tr.config.Executors,
+	}
+	if len(tr.config.FeatureIDs) > 0 {
+		opts.FeatureIDs = tr.config.FeatureIDs
+	}
+	return opts
+}
+
+// =============================================================================
+// Executor Dispatch
+// =============================================================================
+
+// DefaultExecutorName is the executor name used when task.Executor is empty.
+const DefaultExecutorName = "opencode"
+
+// getExecutor returns the executor for the given name, defaulting to "opencode"
+// for empty names. Returns nil if no matching executor is registered.
+func (tr *TaskRunner) getExecutor(name string) TaskExecutor {
+	if name == "" {
+		name = DefaultExecutorName
+	}
+	return tr.executors[name]
+}
+
+// executorNames returns a sorted list of registered executor names.
+func (tr *TaskRunner) executorNames() []string {
+	names := make([]string, 0, len(tr.executors))
+	for name := range tr.executors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // =============================================================================
@@ -519,7 +704,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
 		// Release the claim on failure
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("update task status: %w", err)
 	}
 
@@ -545,7 +730,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
 			tr.logger.Printf("pre-task-start hook failed for %s/%s: %v", projectID, task.ID, err)
 			// Release claim and reset status
-			tr.client.ReleaseTask(ctx, projectID, task.ID)
+			tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 			_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
 			tr.emitEvent(RunnerEvent{
 				Type:       EventTaskStatusChanged,
@@ -567,8 +752,23 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		}
 	}
 
+	// Dispatch to the correct executor based on task.Executor field
+	executor := tr.getExecutor(task.Executor)
+	if executor == nil {
+		// No matching executor found — release claim and skip
+		tr.emitEvent(RunnerEvent{
+			Type:      EventTaskReleased,
+			TaskID:    task.ID,
+			ProjectID: projectID,
+			Reason:    fmt.Sprintf("no executor registered for %q", task.Executor),
+		})
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
+		return fmt.Errorf("no executor registered for %q", task.Executor)
+	}
+
 	// Resolve workdir (may create git worktree)
-	workdir, err := tr.executor.ResolveWorkdir(task)
+	workdir, err := executor.ResolveWorkdir(task)
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{
@@ -587,7 +787,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			FeatureID: task.FeatureID,
 			Reason:    "workdir resolution failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -597,8 +797,23 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir: workdir,
 	}
 
-	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
+	// Start log streamer if enabled
+	var logStreamer *LogStreamer
+	if tr.config.LogStreaming {
+		logStreamer = NewLogStreamer(LogStreamerConfig{
+			Client:    tr.client,
+			RunnerID:  tr.runnerID,
+			ProjectID: projectID,
+			TaskID:    task.ID,
+		})
+		spawnOpts.LogWriter = logStreamer
+	}
+
+	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
+		if logStreamer != nil {
+			logStreamer.Stop()
+		}
 		// Release the claim on failure
 		tr.emitEvent(RunnerEvent{
 			Type:      EventTaskReleased,
@@ -607,7 +822,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			FeatureID: task.FeatureID,
 			Reason:    "spawn failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("spawn task: %w", err)
 	}
 
@@ -633,6 +848,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		if err := tr.processMgr.Add(task.ID, runningTask, spawnResult.Proc); err != nil {
 			return fmt.Errorf("track process: %w", err)
 		}
+	}
+
+	// Track log streamer for cleanup on completion
+	if logStreamer != nil {
+		tr.trackLogStreamer(task.ID, logStreamer)
 	}
 
 	// Update status
@@ -812,6 +1032,76 @@ func discoverSessionID(port int) (string, error) {
 }
 
 // =============================================================================
+// Runner Registration & Heartbeat
+// =============================================================================
+
+// registerWithAPI registers this runner with the Brain API server.
+// Registration failure is non-fatal — the runner logs a warning and continues.
+// This ensures backward compatibility with older API servers that don't support
+// the runner registry endpoints.
+func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	req := types.RunnerRegistration{
+		RunnerID:    tr.runnerID,
+		Hostname:    hostname,
+		Executors:   tr.executorNames(),
+		MaxParallel: tr.getMaxParallel(),
+	}
+
+	info, err := tr.client.RegisterRunner(ctx, req)
+	if err != nil {
+		slog.Warn("runner registration failed (continuing without registration)", "error", err)
+		return
+	}
+
+	slog.Info("runner registered with API",
+		"runner_id", tr.runnerID,
+		"hostname", hostname,
+		"status", info.Status,
+	)
+}
+
+// sendHeartbeat sends a heartbeat to the Brain API with current runner stats.
+// Heartbeat failure is logged but does not stop the runner.
+func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
+	running := tr.processMgr.RunningCount()
+
+	tr.mu.RLock()
+	stats := tr.stats
+	tr.mu.RUnlock()
+
+	req := types.RunnerHeartbeatRequest{
+		RunningTasks: running,
+		Stats: map[string]interface{}{
+			"completed":    stats.Completed,
+			"failed":       stats.Failed,
+			"totalRuntime": stats.TotalRuntime,
+		},
+	}
+
+	if err := tr.client.SendHeartbeat(ctx, tr.runnerID, req); err != nil {
+		slog.Warn("heartbeat failed", "runner_id", tr.runnerID, "error", err)
+	}
+}
+
+// deregisterFromAPI deregisters this runner from the Brain API server.
+// This is called during graceful shutdown. Failure is logged but not fatal.
+func (tr *TaskRunner) deregisterFromAPI() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := tr.client.DeregisterRunner(ctx, tr.runnerID); err != nil {
+		slog.Warn("runner deregistration failed", "runner_id", tr.runnerID, "error", err)
+		return
+	}
+	slog.Info("runner deregistered from API", "runner_id", tr.runnerID)
+}
+
+// =============================================================================
 // Completion Checking
 // =============================================================================
 
@@ -835,6 +1125,9 @@ func (tr *TaskRunner) checkRunningTasks(ctx context.Context) {
 
 // handleTaskCompletion processes a completed task.
 func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, task RunningTask, status CompletionStatus) {
+	// Stop log streamer (flushes remaining lines)
+	tr.stopLogStreamer(taskID)
+
 	// Create result before removing from process manager
 	result := tr.processMgr.CreateTaskResult(taskID, status)
 
@@ -928,8 +1221,10 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Clean up tmux window (graceful: Ctrl+C then kill)
 	tr.cleanupTaskTmux(task)
 
-	// Cleanup temp files
-	tr.executor.Cleanup(taskID, task.ProjectID)
+	// Cleanup temp files (call all executors — cleanup is idempotent)
+	for _, exec := range tr.executors {
+		exec.Cleanup(taskID, task.ProjectID)
+	}
 
 	// Emit event
 	completionEvt := RunnerEvent{
@@ -947,6 +1242,66 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	if tr.hookDispatcher != nil {
 		completionEvt.RunnerID = tr.runnerID
 		tr.hookDispatcher.DispatchPost(completionEvt.ToEvent())
+	}
+}
+
+// =============================================================================
+// Claim Renewal
+// =============================================================================
+
+// renewClaims renews the lease for all running tasks. If renewal fails for a
+// task (404 = claim expired/force-released), the runner aborts that task and
+// releases it so another runner can pick it up.
+func (tr *TaskRunner) renewClaims(ctx context.Context) {
+	allProcesses := tr.processMgr.GetAll()
+	if len(allProcesses) == 0 {
+		return
+	}
+
+	for _, info := range allProcesses {
+		if ctx.Err() != nil {
+			return
+		}
+
+		task := info.Task
+		err := tr.client.RenewClaim(ctx, task.ProjectID, task.ID, tr.runnerID)
+		if err != nil {
+			tr.logger.Printf("WARNING: claim renewal failed for %s/%s: %v — aborting task", task.ProjectID, task.ID, err)
+
+			// Kill the running process
+			tr.processMgr.Kill(ctx, task.ID)
+
+			// Remove from process manager
+			tr.processMgr.Remove(task.ID)
+
+			// Set task back to pending so another runner can pick it up
+			if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
+				tr.logger.Printf("failed to reset task status for %s after renewal failure: %v", task.ID, updateErr)
+			}
+
+			// Clean up tmux
+			tr.cleanupTaskTmux(task)
+
+			// Emit event
+			tr.emitEvent(RunnerEvent{
+				Type:      EventTaskReleased,
+				TaskID:    task.ID,
+				ProjectID: task.ProjectID,
+				TaskPath:  task.Path,
+				Reason:    "claim renewal failed",
+			})
+
+			tr.mu.Lock()
+			tr.stats.Failed++
+			if tr.processMgr.RunningCount() == 0 {
+				tr.status = RunnerStatusPolling
+			}
+			tr.mu.Unlock()
+
+			continue
+		}
+
+		slog.Debug("claim renewed", "project", task.ProjectID, "task_id", task.ID)
 	}
 }
 
@@ -1303,6 +1658,31 @@ func (tr *TaskRunner) handleFeatureHookEvents(event RunnerEvent) {
 		// All feature events are dispatched as post-hooks (fire-and-forget).
 		// Feature events are derived from task events and cannot be blocked.
 		tr.hookDispatcher.DispatchPost(event.ToEvent())
+	}
+}
+
+// =============================================================================
+// Log Streamer Tracking
+// =============================================================================
+
+// trackLogStreamer records a log streamer for a task so it can be stopped on completion.
+func (tr *TaskRunner) trackLogStreamer(taskID string, ls *LogStreamer) {
+	tr.logMu.Lock()
+	tr.logStreamers[taskID] = ls
+	tr.logMu.Unlock()
+}
+
+// stopLogStreamer stops and removes the log streamer for a task.
+func (tr *TaskRunner) stopLogStreamer(taskID string) {
+	tr.logMu.Lock()
+	ls, ok := tr.logStreamers[taskID]
+	if ok {
+		delete(tr.logStreamers, taskID)
+	}
+	tr.logMu.Unlock()
+
+	if ok && ls != nil {
+		ls.Stop()
 	}
 }
 

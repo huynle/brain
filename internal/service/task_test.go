@@ -732,6 +732,105 @@ func TestGetClaimStatus_Claimed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RenewClaim
+// ---------------------------------------------------------------------------
+
+func TestRenewClaim_Success(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim a task first
+	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	// Renew the claim
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("RenewClaim failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if resp.TaskID != "task1" {
+		t.Errorf("TaskID = %q, want %q", resp.TaskID, "task1")
+	}
+	if resp.RunnerID != "runner-1" {
+		t.Errorf("RunnerID = %q, want %q", resp.RunnerID, "runner-1")
+	}
+	if resp.ExpiresAt == "" {
+		t.Error("expected non-empty ExpiresAt")
+	}
+}
+
+func TestRenewClaim_NotFound(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Renew a claim that doesn't exist
+	resp, err := svc.RenewClaim(ctx, "proj", "nonexistent", "runner-1")
+	if err != api.ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false")
+	}
+}
+
+func TestRenewClaim_WrongRunner(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim as runner-1
+	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	// Renew as runner-2 — should be rejected
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-2")
+	if err != api.ErrConflict {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false")
+	}
+	if resp.Error != "claim owned by different runner" {
+		t.Errorf("Error = %q, want %q", resp.Error, "claim owned by different runner")
+	}
+}
+
+func TestRenewClaim_ExpiredClaim(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed an expired claim via storage (1ms lease)
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "runner-1", 1*time.Millisecond)
+	if err != nil {
+		t.Fatalf("seed claim failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("seed claim should succeed")
+	}
+
+	// Wait for expiry
+	time.Sleep(5 * time.Millisecond)
+
+	// Renew should fail with not found (expired)
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-1")
+	if err != api.ErrNotFound {
+		t.Fatalf("expected ErrNotFound for expired claim, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false for expired claim")
+	}
+	if resp.Error != "claim expired" {
+		t.Errorf("Error = %q, want %q", resp.Error, "claim expired")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GetMultiTaskStatus
 // ---------------------------------------------------------------------------
 
@@ -1111,19 +1210,23 @@ func TestTaskServiceImpl_ImplementsInterface(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClaimTask_StaleClaim(t *testing.T) {
-	svc, _, _ := newTestTaskService(t)
+	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	// Manually insert a stale claim (11 minutes ago)
-	key := claimKey("proj", "task1")
-	svc.mu.Lock()
-	svc.claims[key] = &types.TaskClaim{
-		RunnerID:  "old-runner",
-		ClaimedAt: time.Now().Add(-11 * time.Minute).UnixMilli(),
+	// Insert a claim via storage with a very short lease so it's already expired
+	// Use a 1ms lease duration which will expire immediately
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "old-runner", 1*time.Millisecond)
+	if err != nil {
+		t.Fatalf("seed claim failed: %v", err)
 	}
-	svc.mu.Unlock()
+	if !ok {
+		t.Fatal("seed claim should succeed")
+	}
 
-	// New runner should be able to claim the stale task
+	// Wait for the claim to expire
+	time.Sleep(5 * time.Millisecond)
+
+	// New runner should be able to claim the expired task
 	resp, err := svc.ClaimTask(ctx, "proj", "task1", "new-runner")
 	if err != nil {
 		t.Fatalf("ClaimTask on stale claim failed: %v", err)
@@ -1133,6 +1236,47 @@ func TestClaimTask_StaleClaim(t *testing.T) {
 	}
 	if resp.RunnerID != "new-runner" {
 		t.Errorf("RunnerID = %q, want %q", resp.RunnerID, "new-runner")
+	}
+}
+
+// TestClaimTask_PersistsSurvivesRestart verifies claims survive service recreation.
+func TestClaimTask_PersistsSurvivesRestart(t *testing.T) {
+	// Create first service instance
+	svc1, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim a task
+	resp, err := svc1.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatal("expected success=true")
+	}
+
+	// Create a NEW service instance (simulating restart) with same storage
+	cfg := &config.Config{BrainDir: brainDir}
+	svc2 := NewTaskService(cfg, store)
+
+	// Verify the claim persists in the new instance
+	status, err := svc2.GetClaimStatus(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetClaimStatus failed: %v", err)
+	}
+	if !status.Claimed {
+		t.Error("expected claimed=true after restart")
+	}
+	if status.RunnerID != "runner-1" {
+		t.Errorf("RunnerID = %q, want %q", status.RunnerID, "runner-1")
+	}
+
+	// Verify the claim blocks other runners in the new instance
+	resp2, err := svc2.ClaimTask(ctx, "proj", "task1", "runner-2")
+	if err != api.ErrConflict {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	if resp2.Success {
+		t.Error("expected success=false after restart")
 	}
 }
 
@@ -1478,4 +1622,497 @@ func findSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Tests: applyTaskDefaults
+// ---------------------------------------------------------------------------
+
+// newTestTaskServiceWithDefaults creates a TaskServiceImpl with TaskDefaults configured.
+func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.StorageLayer, string) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+
+	store, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatalf("NewWithDB failed: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	brainDir := t.TempDir()
+	cfg := &config.Config{
+		BrainDir:     brainDir,
+		TaskDefaults: defaults,
+	}
+
+	svc := NewTaskService(cfg, store)
+	return svc, store, brainDir
+}
+
+func TestApplyTaskDefaults_EmptyTaskGetsDefaults(t *testing.T) {
+	// Task has no agent/model/etc set; config provides defaults.
+	// Expected: all empty fields filled from defaults.
+	trueVal := true
+	defaults := config.TaskDefaultsConfig{
+		Agent:              "tdd-dev",
+		Model:              "sonnet",
+		ExecutionMode:      "worktree",
+		CompleteOnIdle:     &trueVal,
+		MergePolicy:        "auto_merge",
+		MergeStrategy:      "squash",
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  &trueVal,
+		TargetWorkdir:      "/home/user/projects",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	// Insert a task with no execution fields set
+	insertTaskNote(t, store, "task01", "Empty task", "pending", "high", "proj1", map[string]interface{}{})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.Agent != "tdd-dev" {
+		t.Errorf("Agent = %q, want %q", task.Agent, "tdd-dev")
+	}
+	if task.Model != "sonnet" {
+		t.Errorf("Model = %q, want %q", task.Model, "sonnet")
+	}
+	if task.ExecutionMode != "worktree" {
+		t.Errorf("ExecutionMode = %q, want %q", task.ExecutionMode, "worktree")
+	}
+	if task.CompleteOnIdle == nil || !*task.CompleteOnIdle {
+		t.Errorf("CompleteOnIdle = %v, want true", task.CompleteOnIdle)
+	}
+	if task.MergePolicy != "auto_merge" {
+		t.Errorf("MergePolicy = %q, want %q", task.MergePolicy, "auto_merge")
+	}
+	if task.MergeStrategy != "squash" {
+		t.Errorf("MergeStrategy = %q, want %q", task.MergeStrategy, "squash")
+	}
+	if task.MergeTargetBranch != "main" {
+		t.Errorf("MergeTargetBranch = %q, want %q", task.MergeTargetBranch, "main")
+	}
+	if task.RemoteBranchPolicy != "delete" {
+		t.Errorf("RemoteBranchPolicy = %q, want %q", task.RemoteBranchPolicy, "delete")
+	}
+	if task.OpenPRBeforeMerge == nil || !*task.OpenPRBeforeMerge {
+		t.Errorf("OpenPRBeforeMerge = %v, want true", task.OpenPRBeforeMerge)
+	}
+	if task.TargetWorkdir != "/home/user/projects" {
+		t.Errorf("TargetWorkdir = %q, want %q", task.TargetWorkdir, "/home/user/projects")
+	}
+}
+
+func TestApplyTaskDefaults_FullTaskNotOverwritten(t *testing.T) {
+	// Task has all fields set; config provides different defaults.
+	// Expected: task values preserved, NOT overwritten by defaults.
+	trueVal := true
+	falseVal := false
+	defaults := config.TaskDefaultsConfig{
+		Agent:              "default-agent",
+		Model:              "default-model",
+		ExecutionMode:      "default-mode",
+		CompleteOnIdle:     &trueVal,
+		MergePolicy:        "default-merge-policy",
+		MergeStrategy:      "default-strategy",
+		MergeTargetBranch:  "default-branch",
+		RemoteBranchPolicy: "default-remote-policy",
+		OpenPRBeforeMerge:  &trueVal,
+		TargetWorkdir:      "/default/workdir",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	// Insert a task with ALL execution fields set to task-specific values
+	insertTaskNote(t, store, "task02", "Full task", "pending", "high", "proj1", map[string]interface{}{
+		"agent":                "task-agent",
+		"model":                "task-model",
+		"execution_mode":       "current_branch",
+		"complete_on_idle":     false,
+		"merge_policy":         "prompt_only",
+		"merge_strategy":       "merge",
+		"merge_target_branch":  "develop",
+		"remote_branch_policy": "keep",
+		"open_pr_before_merge": false,
+		"target_workdir":       "/task/workdir",
+	})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.Agent != "task-agent" {
+		t.Errorf("Agent = %q, want %q", task.Agent, "task-agent")
+	}
+	if task.Model != "task-model" {
+		t.Errorf("Model = %q, want %q", task.Model, "task-model")
+	}
+	if task.ExecutionMode != "current_branch" {
+		t.Errorf("ExecutionMode = %q, want %q", task.ExecutionMode, "current_branch")
+	}
+	if task.CompleteOnIdle == nil || *task.CompleteOnIdle != false {
+		t.Errorf("CompleteOnIdle = %v, want false", task.CompleteOnIdle)
+	}
+	if task.MergePolicy != "prompt_only" {
+		t.Errorf("MergePolicy = %q, want %q", task.MergePolicy, "prompt_only")
+	}
+	if task.MergeStrategy != "merge" {
+		t.Errorf("MergeStrategy = %q, want %q", task.MergeStrategy, "merge")
+	}
+	if task.MergeTargetBranch != "develop" {
+		t.Errorf("MergeTargetBranch = %q, want %q", task.MergeTargetBranch, "develop")
+	}
+	if task.RemoteBranchPolicy != "keep" {
+		t.Errorf("RemoteBranchPolicy = %q, want %q", task.RemoteBranchPolicy, "keep")
+	}
+	if task.OpenPRBeforeMerge == nil || *task.OpenPRBeforeMerge != false {
+		t.Errorf("OpenPRBeforeMerge = %v, want false", task.OpenPRBeforeMerge)
+	}
+	_ = falseVal // used above via metadata
+	if task.TargetWorkdir != "/task/workdir" {
+		t.Errorf("TargetWorkdir = %q, want %q", task.TargetWorkdir, "/task/workdir")
+	}
+}
+
+func TestApplyTaskDefaults_NoDefaultsConfigured(t *testing.T) {
+	// TaskDefaults is zero-value (empty). No defaults should be applied.
+	svc, store, _ := newTestTaskServiceWithDefaults(t, config.TaskDefaultsConfig{})
+
+	insertTaskNote(t, store, "task03", "Task no defaults", "pending", "high", "proj1", map[string]interface{}{})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	// All execution fields should remain empty/nil
+	if task.Agent != "" {
+		t.Errorf("Agent = %q, want empty", task.Agent)
+	}
+	if task.Model != "" {
+		t.Errorf("Model = %q, want empty", task.Model)
+	}
+	if task.ExecutionMode != "" {
+		t.Errorf("ExecutionMode = %q, want empty", task.ExecutionMode)
+	}
+	if task.CompleteOnIdle != nil {
+		t.Errorf("CompleteOnIdle = %v, want nil", task.CompleteOnIdle)
+	}
+	if task.MergePolicy != "" {
+		t.Errorf("MergePolicy = %q, want empty", task.MergePolicy)
+	}
+	if task.MergeStrategy != "" {
+		t.Errorf("MergeStrategy = %q, want empty", task.MergeStrategy)
+	}
+	if task.MergeTargetBranch != "" {
+		t.Errorf("MergeTargetBranch = %q, want empty", task.MergeTargetBranch)
+	}
+	if task.RemoteBranchPolicy != "" {
+		t.Errorf("RemoteBranchPolicy = %q, want empty", task.RemoteBranchPolicy)
+	}
+	if task.OpenPRBeforeMerge != nil {
+		t.Errorf("OpenPRBeforeMerge = %v, want nil", task.OpenPRBeforeMerge)
+	}
+	if task.TargetWorkdir != "" {
+		t.Errorf("TargetWorkdir = %q, want empty", task.TargetWorkdir)
+	}
+}
+
+func TestApplyTaskDefaults_GetNextAlsoAppliesDefaults(t *testing.T) {
+	// Defaults should also be applied when calling GetNext (via GetTasks).
+	defaults := config.TaskDefaultsConfig{
+		Agent: "default-agent",
+		Model: "default-model",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	insertTaskNote(t, store, "task04", "Next task", "pending", "high", "proj1", map[string]interface{}{})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	next, err := svc.GetNext(context.Background(), "proj1", nil)
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil {
+		t.Fatal("expected task, got nil")
+	}
+
+	if next.Agent != "default-agent" {
+		t.Errorf("Agent = %q, want %q", next.Agent, "default-agent")
+	}
+	if next.Model != "default-model" {
+		t.Errorf("Model = %q, want %q", next.Model, "default-model")
+	}
+}
+
+func TestApplyTaskDefaults_PartialOverlap(t *testing.T) {
+	// Task has some fields set, config has defaults for all fields.
+	// Expected: only empty task fields get defaults; set fields preserved.
+	trueVal := true
+	defaults := config.TaskDefaultsConfig{
+		Agent:             "default-agent",
+		Model:             "default-model",
+		ExecutionMode:     "worktree",
+		CompleteOnIdle:    &trueVal,
+		MergePolicy:       "auto_merge",
+		MergeStrategy:     "squash",
+		MergeTargetBranch: "main",
+		TargetWorkdir:     "/default/workdir",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	// Task only sets agent and model
+	insertTaskNote(t, store, "task05", "Partial task", "pending", "high", "proj1", map[string]interface{}{
+		"agent": "my-agent",
+		"model": "my-model",
+	})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	// Task-specific values preserved
+	if task.Agent != "my-agent" {
+		t.Errorf("Agent = %q, want %q", task.Agent, "my-agent")
+	}
+	if task.Model != "my-model" {
+		t.Errorf("Model = %q, want %q", task.Model, "my-model")
+	}
+
+	// Defaults fill in the rest
+	if task.ExecutionMode != "worktree" {
+		t.Errorf("ExecutionMode = %q, want %q", task.ExecutionMode, "worktree")
+	}
+	if task.CompleteOnIdle == nil || !*task.CompleteOnIdle {
+		t.Errorf("CompleteOnIdle = %v, want true", task.CompleteOnIdle)
+	}
+	if task.MergePolicy != "auto_merge" {
+		t.Errorf("MergePolicy = %q, want %q", task.MergePolicy, "auto_merge")
+	}
+	if task.MergeStrategy != "squash" {
+		t.Errorf("MergeStrategy = %q, want %q", task.MergeStrategy, "squash")
+	}
+	if task.MergeTargetBranch != "main" {
+		t.Errorf("MergeTargetBranch = %q, want %q", task.MergeTargetBranch, "main")
+	}
+	if task.TargetWorkdir != "/default/workdir" {
+		t.Errorf("TargetWorkdir = %q, want %q", task.TargetWorkdir, "/default/workdir")
+	}
+}
+
+func TestApplyTaskDefaults_BoolFieldNilGetsDefault(t *testing.T) {
+	// Test *bool fields specifically: nil gets default, non-nil preserved.
+	trueVal := true
+	falseVal := false
+
+	defaults := config.TaskDefaultsConfig{
+		CompleteOnIdle:    &trueVal,
+		OpenPRBeforeMerge: &falseVal,
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	// Task with nil *bool fields (not set in metadata)
+	insertTaskNote(t, store, "task06", "Bool test", "pending", "high", "proj1", map[string]interface{}{})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.CompleteOnIdle == nil {
+		t.Fatal("CompleteOnIdle should not be nil")
+	}
+	if *task.CompleteOnIdle != true {
+		t.Errorf("CompleteOnIdle = %v, want true", *task.CompleteOnIdle)
+	}
+
+	if task.OpenPRBeforeMerge == nil {
+		t.Fatal("OpenPRBeforeMerge should not be nil")
+	}
+	if *task.OpenPRBeforeMerge != false {
+		t.Errorf("OpenPRBeforeMerge = %v, want false", *task.OpenPRBeforeMerge)
+	}
+}
+
+func TestApplyTaskDefaults_BoolFieldSetNotOverwritten(t *testing.T) {
+	// Task has *bool set to false; default is true. Task value must win.
+	trueVal := true
+	defaults := config.TaskDefaultsConfig{
+		CompleteOnIdle:    &trueVal,
+		OpenPRBeforeMerge: &trueVal,
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+
+	insertTaskNote(t, store, "task07", "Bool override test", "pending", "high", "proj1", map[string]interface{}{
+		"complete_on_idle":     false,
+		"open_pr_before_merge": false,
+	})
+	createProjectDir(t, svc.config.BrainDir, "proj1")
+
+	result, err := svc.GetTasks(context.Background(), "proj1")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+
+	if task.CompleteOnIdle == nil {
+		t.Fatal("CompleteOnIdle should not be nil")
+	}
+	if *task.CompleteOnIdle != false {
+		t.Errorf("CompleteOnIdle = %v, want false (task value should win)", *task.CompleteOnIdle)
+	}
+
+	if task.OpenPRBeforeMerge == nil {
+		t.Fatal("OpenPRBeforeMerge should not be nil")
+	}
+	if *task.OpenPRBeforeMerge != false {
+		t.Errorf("OpenPRBeforeMerge = %v, want false (task value should win)", *task.OpenPRBeforeMerge)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// StartClaimCleanup - background stale claim cleanup
+// ---------------------------------------------------------------------------
+
+func TestStartClaimCleanup_ExpiresStale(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed two expired claims directly into storage with past expiry.
+	db := store.DB()
+	pastMs := time.Now().Add(-5 * time.Minute).UnixMilli()
+	for _, taskID := range []string{"task1", "task2"} {
+		_, err := db.Exec(
+			"INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+			"proj", taskID, "dead-runner", pastMs, pastMs,
+		)
+		if err != nil {
+			t.Fatalf("seed expired claim %s: %v", taskID, err)
+		}
+	}
+
+	// Seed one active (non-expired) claim.
+	ok, _, err := store.ClaimTask(ctx, "proj", "task3", "alive-runner", 5*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("seed active claim: err=%v ok=%v", err, ok)
+	}
+
+	// Run cleanup with a very short interval so it fires quickly, then cancel.
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	svc.StartClaimCleanup(cleanupCtx, 50*time.Millisecond)
+
+	// Wait enough for at least one tick.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	// Verify expired claims are gone.
+	for _, taskID := range []string{"task1", "task2"} {
+		claim, err := store.GetClaim(ctx, "proj", taskID)
+		if err != nil {
+			t.Fatalf("GetClaim %s: %v", taskID, err)
+		}
+		if claim != nil {
+			t.Errorf("expected expired claim for %s to be removed, still exists", taskID)
+		}
+	}
+
+	// Verify active claim is still present.
+	claim, err := store.GetClaim(ctx, "proj", "task3")
+	if err != nil {
+		t.Fatalf("GetClaim task3: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected active claim for task3 to survive cleanup")
+	}
+}
+
+func TestStartClaimCleanup_RespectsContextCancellation(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start cleanup goroutine.
+	svc.StartClaimCleanup(ctx, 50*time.Millisecond)
+
+	// Cancel immediately.
+	cancel()
+
+	// Wait to ensure goroutine exits without panic or hang.
+	// If it doesn't respect cancellation, the test will hang until timeout.
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestStartClaimCleanup_NoExpiredClaims(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed only active claims.
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "runner-1", 5*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("seed active claim: err=%v ok=%v", err, ok)
+	}
+
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	svc.StartClaimCleanup(cleanupCtx, 50*time.Millisecond)
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	// Active claim should still exist.
+	claim, err := store.GetClaim(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetClaim: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected active claim to survive cleanup")
+	}
 }

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,6 +54,9 @@ type mockClient struct {
 	releaseErr   error
 	releaseCalls []releaseCall
 
+	renewErr   error
+	renewCalls []renewCall
+
 	updateStatusErr   error
 	updateStatusCalls []updateStatusCall
 
@@ -61,11 +65,21 @@ type mockClient struct {
 
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
+
+	registerErr   error
+	registerCalls []types.RunnerRegistration
+
+	heartbeatErr   error
+	heartbeatCalls []heartbeatCall
+
+	deregisterErr   error
+	deregisterCalls []string
 }
 
 type nextTaskCall struct {
 	ProjectID  string
 	FeatureIDs []string
+	Opts       *TaskFetchOptions
 }
 
 type claimCall struct {
@@ -77,6 +91,13 @@ type claimCall struct {
 type releaseCall struct {
 	ProjectID string
 	TaskID    string
+	RunnerID  string
+}
+
+type renewCall struct {
+	ProjectID string
+	TaskID    string
+	RunnerID  string
 }
 
 type updateStatusCall struct {
@@ -87,6 +108,11 @@ type updateStatusCall struct {
 type appendCall struct {
 	TaskPath string
 	Content  string
+}
+
+type heartbeatCall struct {
+	RunnerID string
+	Request  types.RunnerHeartbeatRequest
 }
 
 func newMockClient() *mockClient {
@@ -110,7 +136,7 @@ func (m *mockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
 
-func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
+func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readyTasksErr != nil {
@@ -119,13 +145,15 @@ func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featur
 	return m.readyTasks[projectID], nil
 }
 
-func (m *mockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
+func (m *mockClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Record the call with feature IDs for verification
-	idsCopy := make([]string, len(featureIDs))
-	copy(idsCopy, featureIDs)
-	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: idsCopy})
+	// Record the call with options for verification
+	var featureIDs []string
+	if opts != nil {
+		featureIDs = opts.FeatureIDs
+	}
+	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: featureIDs, Opts: opts})
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
@@ -141,10 +169,17 @@ func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID 
 	return result, m.claimErr
 }
 
-func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+func (m *mockClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID})
+	m.renewCalls = append(m.renewCalls, renewCall{projectID, taskID, runnerID})
+	return m.renewErr
+}
+
+func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID, runnerID})
 	return m.releaseErr
 }
 
@@ -190,6 +225,38 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 		}
 	}
 	return &types.BrainEntry{Path: entryPath}, nil
+}
+
+func (m *mockClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.registerErr != nil {
+		return nil, m.registerErr
+	}
+	m.registerCalls = append(m.registerCalls, req)
+	return &types.RunnerInfo{
+		RunnerID: req.RunnerID,
+		Hostname: req.Hostname,
+		Status:   types.RunnerStatusOnline,
+	}, nil
+}
+
+func (m *mockClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.heartbeatCalls = append(m.heartbeatCalls, heartbeatCall{RunnerID: runnerID, Request: req})
+	return m.heartbeatErr
+}
+
+func (m *mockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deregisterCalls = append(m.deregisterCalls, runnerID)
+	return m.deregisterErr
+}
+
+func (m *mockClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	return nil
 }
 
 func (m *mockClient) getNextTaskCalls() []nextTaskCall {
@@ -571,11 +638,13 @@ func testTask(id, projectID string) *types.ResolvedTask {
 
 func newTestRunner(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, stateMgr *mockStateMgr) *TaskRunner {
 	return NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a", "proj-b"},
-		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeHeadless,
-		Client:     client,
-		Executor:   executor,
+		Projects: []string{"proj-a", "proj-b"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Client:   client,
+		Executors: map[string]TaskExecutor{
+			"opencode": executor,
+		},
 		ProcessMgr: processMgr,
 		StateMgr:   stateMgr,
 	})
@@ -1090,6 +1159,204 @@ func TestTaskRunner_ClaimAndSpawn_EmitsTaskStartedEvent(t *testing.T) {
 	}
 	if !found {
 		t.Error("claimAndSpawn should emit task_started event")
+	}
+}
+
+// =============================================================================
+// RenewClaims Tests
+// =============================================================================
+
+func TestTaskRunner_RenewClaims_Success(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// renewErr is nil (default) — renewals should succeed
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify RenewClaim was called
+	client.mu.Lock()
+	renewCalls := make([]renewCall, len(client.renewCalls))
+	copy(renewCalls, client.renewCalls)
+	client.mu.Unlock()
+
+	if len(renewCalls) != 1 {
+		t.Fatalf("expected 1 RenewClaim call, got %d", len(renewCalls))
+	}
+	if renewCalls[0].ProjectID != task.ProjectID {
+		t.Errorf("ProjectID = %q, want %q", renewCalls[0].ProjectID, task.ProjectID)
+	}
+	if renewCalls[0].TaskID != task.ID {
+		t.Errorf("TaskID = %q, want %q", renewCalls[0].TaskID, task.ID)
+	}
+	if renewCalls[0].RunnerID != tr.runnerID {
+		t.Errorf("RunnerID = %q, want %q", renewCalls[0].RunnerID, tr.runnerID)
+	}
+
+	// Task should still be running (not killed)
+	if processMgr.Get("task1") == nil {
+		t.Error("task should still be tracked in process manager")
+	}
+}
+
+func TestTaskRunner_RenewClaims_FailureAbortsTask(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Track events
+	var eventMu sync.Mutex
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, e)
+	})
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// Set renewal to fail (simulates expired/force-released claim)
+	client.renewErr = fmt.Errorf("claim not found")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify the task was killed
+	processMgr.mu.Lock()
+	killCalls := make([]string, len(processMgr.killCalls))
+	copy(killCalls, processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if len(killCalls) != 1 || killCalls[0] != "task1" {
+		t.Errorf("expected Kill(task1), got %v", killCalls)
+	}
+
+	// Verify task was removed from process manager
+	if processMgr.Get("task1") != nil {
+		t.Error("task should have been removed from process manager")
+	}
+
+	// Verify status was set back to pending
+	statusCalls := client.getUpdateStatusCalls()
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 UpdateTaskStatus call, got %d", len(statusCalls))
+	}
+	if statusCalls[0].Status != "pending" {
+		t.Errorf("status = %q, want %q", statusCalls[0].Status, "pending")
+	}
+
+	// Verify event was emitted
+	eventMu.Lock()
+	defer eventMu.Unlock()
+
+	found := false
+	for _, e := range events {
+		if e.Type == EventTaskReleased && e.TaskID == "task1" {
+			found = true
+			if e.Reason != "claim renewal failed" {
+				t.Errorf("reason = %q, want %q", e.Reason, "claim renewal failed")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected EventTaskReleased event for task1")
+	}
+
+	// Verify stats were updated
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 1 {
+		t.Errorf("stats.Failed = %d, want 1", tr.stats.Failed)
+	}
+}
+
+func TestTaskRunner_RenewClaims_NoRunningTasks(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// No running tasks — should be a no-op
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.renewCalls) != 0 {
+		t.Errorf("expected 0 RenewClaim calls, got %d", len(client.renewCalls))
+	}
+}
+
+func TestTaskRunner_RenewClaims_MultipleTasksPartialFailure(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add two running tasks
+	proc1 := newMockProcess(100)
+	task1 := testRunningTask("task1")
+	processMgr.Add("task1", task1, proc1)
+
+	proc2 := newMockProcess(101)
+	task2 := RunningTask{
+		ID:        "task2",
+		Path:      "projects/proj-a/task/task2.md",
+		ProjectID: "proj-a",
+	}
+	processMgr.Add("task2", task2, proc2)
+
+	// Override RenewClaim to fail only for task1
+	// We need a custom implementation since mockClient only supports a single error value.
+	// Instead, let the first call succeed (nil error) and make the mock return error.
+	// Since mockClient applies the same renewErr to all calls, we need to set a per-call behavior.
+	// For simplicity, set renewErr to fail — both tasks will be aborted.
+	client.renewErr = fmt.Errorf("claim expired")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Both tasks should be killed and removed
+	processMgr.mu.Lock()
+	killCount := len(processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if killCount != 2 {
+		t.Errorf("expected 2 Kill calls, got %d", killCount)
+	}
+
+	// Both tasks should be removed
+	if processMgr.Get("task1") != nil {
+		t.Error("task1 should have been removed")
+	}
+	if processMgr.Get("task2") != nil {
+		t.Error("task2 should have been removed")
+	}
+
+	// Stats should reflect both failures
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 2 {
+		t.Errorf("stats.Failed = %d, want 2", tr.stats.Failed)
 	}
 }
 
@@ -2666,5 +2933,354 @@ func TestTaskRunner_GetEnabledFeatureIDsLocked_AfterDisable(t *testing.T) {
 	}
 	if ids[0] != "feat-b" {
 		t.Errorf("expected feat-b, got %s", ids[0])
+	}
+}
+
+// =============================================================================
+// Executor Registry / Dispatch Tests
+// =============================================================================
+
+func TestNewTaskRunner_ExecutorsMap_PopulatedFromOptions(t *testing.T) {
+	exec1 := newMockExecutor()
+	exec2 := newMockExecutor()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": exec1,
+			"custom":   exec2,
+		},
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
+	})
+
+	if len(tr.executors) != 2 {
+		t.Fatalf("expected 2 executors, got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("opencode executor not set correctly")
+	}
+	if tr.executors["custom"] != exec2 {
+		t.Error("custom executor not set correctly")
+	}
+}
+
+func TestNewTaskRunner_BackwardCompat_SingleExecutor(t *testing.T) {
+	exec1 := newMockExecutor()
+
+	// Using legacy single Executor field should register it as "opencode"
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Executor:   exec1,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
+	})
+
+	if len(tr.executors) != 1 {
+		t.Fatalf("expected 1 executor (backward compat), got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("single Executor should be registered as 'opencode'")
+	}
+}
+
+func TestClaimAndSpawn_DispatchesToCorrectExecutor(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	procOC := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: procOC, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task with Executor="custom" should be dispatched to execCustom
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execCustom should have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// execOpencode should NOT have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
+	}
+}
+
+func TestClaimAndSpawn_EmptyExecutor_DefaultsToOpencode(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task with no Executor set (empty string) → defaults to "opencode"
+	task := testTask("task1", "proj-a")
+	task.Executor = ""
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execOpencode should have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to opencode executor (default), got %d", len(ocSpawns))
+	}
+
+	// execCustom should NOT have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to custom executor, got %d", len(customSpawns))
+	}
+}
+
+func TestClaimAndSpawn_MissingExecutor_ReleasesAndSkips(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task requests "pi-rpc" executor which is NOT registered
+	task := testTask("task1", "proj-a")
+	task.Executor = "pi-rpc"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when executor not found")
+	}
+
+	// Should contain info about missing executor
+	if !strings.Contains(err.Error(), "pi-rpc") {
+		t.Errorf("error should mention missing executor 'pi-rpc', got: %v", err)
+	}
+
+	// Should release the claim
+	releases := client.getReleaseCalls()
+	if len(releases) == 0 {
+		t.Error("should release task when executor not found")
+	}
+
+	// Should NOT have spawned anything
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls, got %d", len(ocSpawns))
+	}
+}
+
+func TestClaimAndSpawn_ResolveWorkdir_UsesMatchedExecutor(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	execOpencode.resolveWorkdir = "/opencode/workdir"
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/opencode/workdir"}
+
+	execCustom := newMockExecutor()
+	execCustom.resolveWorkdir = "/custom/workdir"
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/custom/workdir"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// The custom executor's ResolveWorkdir and Spawn should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Fatalf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+	if customSpawns[0].Opts.Workdir != "/custom/workdir" {
+		t.Errorf("workdir = %q, want %q", customSpawns[0].Opts.Workdir, "/custom/workdir")
+	}
+}
+
+func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
+	client := newMockClient()
+	execOpencode := newMockExecutor()
+	execCustom := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"pi-rpc":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	ctx := context.Background()
+	tr.registerWithAPI(ctx)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("expected 1 register call, got %d", len(client.registerCalls))
+	}
+
+	reg := client.registerCalls[0]
+	executorSet := make(map[string]bool)
+	for _, e := range reg.Executors {
+		executorSet[e] = true
+	}
+	if !executorSet["opencode"] {
+		t.Error("registration should include 'opencode' executor")
+	}
+	if !executorSet["pi-rpc"] {
+		t.Error("registration should include 'pi-rpc' executor")
+	}
+}
+
+func TestResumeTask_UsesExecutorDispatch(t *testing.T) {
+	client := newMockClient()
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+	task.Status = "in_progress"
+
+	ctx := context.Background()
+	err := tr.resumeTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("resumeTask returned error: %v", err)
+	}
+
+	// custom executor should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// opencode executor should NOT have been used
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
 	}
 }

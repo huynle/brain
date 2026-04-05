@@ -668,6 +668,11 @@ type ClaimRequest struct {
 	RunnerID string `json:"runnerId"`
 }
 
+// DispatchRequest is the request body for POST /tasks/:projectId/:taskId/dispatch.
+type DispatchRequest struct {
+	TargetRunnerID string `json:"targetRunnerId"`
+}
+
 // ClaimResponse is the response for POST /tasks/:projectId/:taskId/claim.
 type ClaimResponse struct {
 	Success   bool   `json:"success"`
@@ -687,6 +692,15 @@ type ClaimStatusResponse struct {
 	RunnerID  string `json:"runnerId,omitempty"`
 	ClaimedAt string `json:"claimedAt,omitempty"`
 	IsStale   bool   `json:"isStale"`
+}
+
+// RenewClaimResponse is the response for POST /tasks/:projectId/:taskId/renew.
+type RenewClaimResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // MultiTaskStatusRequest is the request body for POST /tasks/:projectId/status.
@@ -757,6 +771,53 @@ type RunnerStatusResponse struct {
 }
 
 // =============================================================================
+// Runner Registry Types
+// =============================================================================
+
+// RunnerStatus represents the computed status of a runner based on heartbeat age.
+type RunnerStatus string
+
+const (
+	RunnerStatusOnline  RunnerStatus = "online"
+	RunnerStatusStale   RunnerStatus = "stale"
+	RunnerStatusOffline RunnerStatus = "offline"
+)
+
+// RunnerRegistration is the request body for POST /runners (register).
+type RunnerRegistration struct {
+	RunnerID    string            `json:"runner_id"`
+	Hostname    string            `json:"hostname"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Executors   []string          `json:"executors,omitempty"`
+	MaxParallel int               `json:"max_parallel,omitempty"`
+}
+
+// RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
+type RunnerHeartbeatRequest struct {
+	RunningTasks int                    `json:"running_tasks"`
+	Stats        map[string]interface{} `json:"stats,omitempty"`
+}
+
+// RunnerInfo is the API-level runner representation with computed status.
+type RunnerInfo struct {
+	RunnerID      string            `json:"runner_id"`
+	Hostname      string            `json:"hostname"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Executors     []string          `json:"executors,omitempty"`
+	MaxParallel   int               `json:"max_parallel"`
+	FeatureIDs    string            `json:"feature_ids,omitempty"`
+	RegisteredAt  string            `json:"registered_at"`
+	LastHeartbeat string            `json:"last_heartbeat"`
+	Status        RunnerStatus      `json:"status"`
+}
+
+// RunnerListResponse is the response for GET /runners.
+type RunnerListResponse struct {
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
+}
+
+// =============================================================================
 // Health / Stats Types
 // =============================================================================
 
@@ -804,11 +865,18 @@ type ValidationDetail struct {
 type SSEEventType string
 
 const (
-	SSEEventConnected     SSEEventType = "connected"
-	SSEEventTasksSnapshot SSEEventType = "tasks_snapshot"
-	SSEEventProjectDirty  SSEEventType = "project_dirty"
-	SSEEventHeartbeat     SSEEventType = "heartbeat"
-	SSEEventError         SSEEventType = "error"
+	SSEEventConnected        SSEEventType = "connected"
+	SSEEventTasksSnapshot    SSEEventType = "tasks_snapshot"
+	SSEEventProjectDirty     SSEEventType = "project_dirty"
+	SSEEventHeartbeat        SSEEventType = "heartbeat"
+	SSEEventError            SSEEventType = "error"
+	SSEEventTasksChanged     SSEEventType = "tasks_changed"
+	SSEEventCommand          SSEEventType = "command"
+	SSEEventRunnerLog        SSEEventType = "runner_log"
+	SSEEventRunnerRegistered SSEEventType = "runner_registered"
+	SSEEventRunnerOffline    SSEEventType = "runner_offline"
+	SSEEventTaskClaimed      SSEEventType = "task_claimed"
+	SSEEventTaskReleased     SSEEventType = "task_released"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -842,6 +910,110 @@ type SSEProjectDirtyData struct {
 type SSEErrorData struct {
 	SSEEventData
 	Message string `json:"message"`
+}
+
+// =============================================================================
+// Runner SSE Event Types
+// =============================================================================
+
+// RunnerSSEEventData is the base data structure for runner-scoped SSE events.
+type RunnerSSEEventData struct {
+	Type      SSEEventType `json:"type"`
+	Transport string       `json:"transport"`
+	Timestamp string       `json:"timestamp"`
+	RunnerID  string       `json:"runnerId"`
+}
+
+// RunnerSSEConnectedData is the data for a runner "connected" SSE event.
+type RunnerSSEConnectedData struct {
+	RunnerSSEEventData
+}
+
+// RunnerSSECommandData is the data for a runner "command" SSE event.
+// Commands include: affinity, config, dispatch, shutdown.
+type RunnerSSECommandData struct {
+	RunnerSSEEventData
+	Command string      `json:"command"`
+	Payload interface{} `json:"payload,omitempty"`
+}
+
+// =============================================================================
+// Runner Lifecycle SSE Event Types (published to project subscribers)
+// =============================================================================
+
+// SSERunnerRegisteredData is the payload for a "runner_registered" event.
+// Emitted when a runner registers or re-registers with the API.
+type SSERunnerRegisteredData struct {
+	SSEEventData
+	RunnerID    string            `json:"runnerId"`
+	Hostname    string            `json:"hostname"`
+	Executors   []string          `json:"executors"`
+	MaxParallel int               `json:"maxParallel"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// SSERunnerOfflineData is the payload for a "runner_offline" event.
+// Emitted when a runner transitions to stale or offline status.
+type SSERunnerOfflineData struct {
+	SSEEventData
+	RunnerID string `json:"runnerId"`
+	Hostname string `json:"hostname,omitempty"`
+	Status   string `json:"status"`
+	Reason   string `json:"reason"`
+}
+
+// SSETaskClaimedData is the payload for a "task_claimed" event.
+// Emitted when a task is successfully claimed by a runner.
+type SSETaskClaimedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// SSETaskReleasedData is the payload for a "task_released" event.
+// Emitted when a task claim is released by a runner.
+type SSETaskReleasedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// =============================================================================
+// Log Ingestion Types
+// =============================================================================
+
+// LogLine represents a single log line from a runner.
+type LogLine struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Content   string `json:"content"`
+}
+
+// LogIngestRequest is the request body for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestRequest struct {
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
+}
+
+// LogIngestResponse is the response for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestResponse struct {
+	Accepted int `json:"accepted"`
+}
+
+// LogQueryResponse is the response for GET /tasks/{projectId}/{taskId}/logs.
+type LogQueryResponse struct {
+	Lines  []LogLine `json:"lines"`
+	Total  int       `json:"total"`
+	Offset int       `json:"offset"`
+	Limit  int       `json:"limit"`
+}
+
+// SSERunnerLogData is the data for a "runner_log" SSE event.
+type SSERunnerLogData struct {
+	SSEEventData
+	TaskID   string    `json:"taskId"`
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
 }
 
 // =============================================================================

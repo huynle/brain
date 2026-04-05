@@ -177,7 +177,9 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.mu.Unlock()
 
 		tr.cleanupTaskTmux(task)
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		for _, exec := range tr.executors {
+			exec.Cleanup(task.ID, task.ProjectID)
+		}
 
 		tr.emitEvent(RunnerEvent{
 			Type:   eventType,
@@ -232,7 +234,9 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		for _, exec := range tr.executors {
+			exec.Cleanup(task.ID, task.ProjectID)
+		}
 
 		// Emit completion event
 		tr.emitEvent(RunnerEvent{
@@ -269,7 +273,9 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		for _, exec := range tr.executors {
+			exec.Cleanup(task.ID, task.ProjectID)
+		}
 
 		// Emit event
 		tr.emitEvent(RunnerEvent{

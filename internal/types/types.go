@@ -850,13 +850,18 @@ type ValidationDetail struct {
 type SSEEventType string
 
 const (
-	SSEEventConnected     SSEEventType = "connected"
-	SSEEventTasksSnapshot SSEEventType = "tasks_snapshot"
-	SSEEventProjectDirty  SSEEventType = "project_dirty"
-	SSEEventHeartbeat     SSEEventType = "heartbeat"
-	SSEEventError         SSEEventType = "error"
-	SSEEventTasksChanged  SSEEventType = "tasks_changed"
-	SSEEventCommand       SSEEventType = "command"
+	SSEEventConnected        SSEEventType = "connected"
+	SSEEventTasksSnapshot    SSEEventType = "tasks_snapshot"
+	SSEEventProjectDirty     SSEEventType = "project_dirty"
+	SSEEventHeartbeat        SSEEventType = "heartbeat"
+	SSEEventError            SSEEventType = "error"
+	SSEEventTasksChanged     SSEEventType = "tasks_changed"
+	SSEEventCommand          SSEEventType = "command"
+	SSEEventRunnerLog        SSEEventType = "runner_log"
+	SSEEventRunnerRegistered SSEEventType = "runner_registered"
+	SSEEventRunnerOffline    SSEEventType = "runner_offline"
+	SSEEventTaskClaimed      SSEEventType = "task_claimed"
+	SSEEventTaskReleased     SSEEventType = "task_released"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -915,6 +920,85 @@ type RunnerSSECommandData struct {
 	RunnerSSEEventData
 	Command string      `json:"command"`
 	Payload interface{} `json:"payload,omitempty"`
+}
+
+// =============================================================================
+// Runner Lifecycle SSE Event Types (published to project subscribers)
+// =============================================================================
+
+// SSERunnerRegisteredData is the payload for a "runner_registered" event.
+// Emitted when a runner registers or re-registers with the API.
+type SSERunnerRegisteredData struct {
+	SSEEventData
+	RunnerID    string            `json:"runnerId"`
+	Hostname    string            `json:"hostname"`
+	Executors   []string          `json:"executors"`
+	MaxParallel int               `json:"maxParallel"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// SSERunnerOfflineData is the payload for a "runner_offline" event.
+// Emitted when a runner transitions to stale or offline status.
+type SSERunnerOfflineData struct {
+	SSEEventData
+	RunnerID string `json:"runnerId"`
+	Hostname string `json:"hostname,omitempty"`
+	Status   string `json:"status"`
+	Reason   string `json:"reason"`
+}
+
+// SSETaskClaimedData is the payload for a "task_claimed" event.
+// Emitted when a task is successfully claimed by a runner.
+type SSETaskClaimedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// SSETaskReleasedData is the payload for a "task_released" event.
+// Emitted when a task claim is released by a runner.
+type SSETaskReleasedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// =============================================================================
+// Log Ingestion Types
+// =============================================================================
+
+// LogLine represents a single log line from a runner.
+type LogLine struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Content   string `json:"content"`
+}
+
+// LogIngestRequest is the request body for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestRequest struct {
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
+}
+
+// LogIngestResponse is the response for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestResponse struct {
+	Accepted int `json:"accepted"`
+}
+
+// LogQueryResponse is the response for GET /tasks/{projectId}/{taskId}/logs.
+type LogQueryResponse struct {
+	Lines  []LogLine `json:"lines"`
+	Total  int       `json:"total"`
+	Offset int       `json:"offset"`
+	Limit  int       `json:"limit"`
+}
+
+// SSERunnerLogData is the data for a "runner_log" SSE event.
+type SSERunnerLogData struct {
+	SSEEventData
+	TaskID   string    `json:"taskId"`
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
 }
 
 // =============================================================================

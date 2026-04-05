@@ -114,3 +114,48 @@ func (h *Hub) PublishRunnerTasksChanged(runnerID string, data interface{}) {
 		Data:  data,
 	})
 }
+
+// PublishRunnerLog sends a runner_log event to all subscribers of the project.
+// Used to re-broadcast log lines from runners to TUI clients via SSE.
+func (h *Hub) PublishRunnerLog(projectId string, data interface{}) {
+	h.publish(projectId, SSEMessage{
+		Event: "runner_log",
+		Data:  data,
+	})
+}
+
+// RunnerLifecycleTopic is the global topic for runner lifecycle events.
+// TUI clients subscribe to this to receive runner_registered, runner_offline, etc.
+const RunnerLifecycleTopic = "runners"
+
+// PublishRunnerRegistered sends a runner_registered event to all lifecycle subscribers.
+func (h *Hub) PublishRunnerRegistered(data interface{}) {
+	h.publish(RunnerLifecycleTopic, SSEMessage{
+		Event: "runner_registered",
+		Data:  data,
+	})
+}
+
+// PublishRunnerOffline sends a runner_offline event to all lifecycle subscribers.
+func (h *Hub) PublishRunnerOffline(data interface{}) {
+	h.publish(RunnerLifecycleTopic, SSEMessage{
+		Event: "runner_offline",
+		Data:  data,
+	})
+}
+
+// PublishTaskClaimed sends a task_claimed event to all subscribers of the project.
+func (h *Hub) PublishTaskClaimed(projectId string, data interface{}) {
+	h.publish(projectId, SSEMessage{
+		Event: "task_claimed",
+		Data:  data,
+	})
+}
+
+// PublishTaskReleased sends a task_released event to all subscribers of the project.
+func (h *Hub) PublishTaskReleased(projectId string, data interface{}) {
+	h.publish(projectId, SSEMessage{
+		Event: "task_released",
+		Data:  data,
+	})
+}

@@ -13,6 +13,7 @@ import (
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/logbuffer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
@@ -119,6 +120,12 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
 
+	// Wire hub into runner registry for lifecycle sweep SSE events
+	runnerRegistrySvc.SetHub(hub)
+
+	// ─── Log Buffer ─────────────────────────────────────────────────
+	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
+
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
 		brainSvc,
@@ -128,6 +135,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
+		api.WithLogBuffer(logBuf),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────

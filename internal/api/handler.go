@@ -1,6 +1,9 @@
 package api
 
-import "github.com/huynle/brain-api/internal/realtime"
+import (
+	"github.com/huynle/brain-api/internal/logbuffer"
+	"github.com/huynle/brain-api/internal/realtime"
+)
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
@@ -11,6 +14,7 @@ type Handler struct {
 	monitor        MonitorService
 	tokens         TokenService
 	hub            *realtime.Hub
+	logBuffer      *logbuffer.Buffer
 }
 
 // HandlerOption configures a Handler.

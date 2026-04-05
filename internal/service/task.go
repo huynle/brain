@@ -266,7 +266,13 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 // ClaimTask claims a task for a runner. Returns ErrConflict if already claimed by another runner.
 // Claims are persisted to SQLite via the storage layer, surviving API server restarts.
 func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error) {
-	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, DefaultLeaseDuration)
+	return s.ClaimTaskWithDuration(ctx, projectId, taskId, runnerId, DefaultLeaseDuration)
+}
+
+// ClaimTaskWithDuration claims a task with a custom lease duration.
+// Used for pre-claims (dispatch) with shorter expiry.
+func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, taskId, runnerId string, leaseDuration time.Duration) (*types.ClaimResponse, error) {
+	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, leaseDuration)
 	if err != nil {
 		return nil, fmt.Errorf("storage claim task: %w", err)
 	}
@@ -402,6 +408,13 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 		ClaimedAt: claimedAt,
 		IsStale:   expired,
 	}, nil
+}
+
+// DispatchTask creates a pre-claim for direct dispatch to a target runner.
+// Pre-claims have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
+func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error) {
+	const dispatchLeaseDuration = 60 * time.Second
+	return s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
 }
 
 // GetMultiTaskStatus returns status of multiple tasks.

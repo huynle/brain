@@ -658,6 +658,11 @@ type ClaimRequest struct {
 	RunnerID string `json:"runnerId"`
 }
 
+// DispatchRequest is the request body for POST /tasks/:projectId/:taskId/dispatch.
+type DispatchRequest struct {
+	TargetRunnerID string `json:"targetRunnerId"`
+}
+
 // ClaimResponse is the response for POST /tasks/:projectId/:taskId/claim.
 type ClaimResponse struct {
 	Success   bool   `json:"success"`

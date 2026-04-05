@@ -211,6 +211,76 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// HandleDispatchTask handles POST /tasks/{projectId}/{taskId}/dispatch.
+// Dispatches a task directly to a specific runner by creating a pre-claim and sending an SSE command.
+func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.DispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	if req.TargetRunnerID == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "targetRunnerId", Message: "targetRunnerId is required"},
+		})
+		return
+	}
+
+	// Verify runner exists
+	if h.runnerRegistry != nil {
+		_, err := h.runnerRegistry.GetRunner(r.Context(), req.TargetRunnerID)
+		if err != nil {
+			if errors.Is(err, ErrNotFound) {
+				WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+				return
+			}
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+			return
+		}
+	}
+
+	// Create pre-claim for target runner (60 second expiry for dispatch)
+	preclaimResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
+	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, map[string]any{
+				"success": false,
+				"error":   "task is already claimed by another runner",
+			})
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	if !preclaimResp.Success {
+		WriteJSON(w, http.StatusConflict, map[string]any{
+			"success": false,
+			"error":   "failed to create pre-claim for target runner",
+		})
+		return
+	}
+
+	// Send dispatch command via SSE to target runner
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(req.TargetRunnerID, "dispatch", map[string]string{
+			"taskId":    taskId,
+			"projectId": projectId,
+		})
+	}
+
+	slog.Info("dispatch request", "project", projectId, "task_id", taskId, "target_runner", req.TargetRunnerID)
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"runnerId": req.TargetRunnerID,
+	})
+}
+
 // HandleRenewClaim handles POST /tasks/{projectId}/{taskId}/renew.
 func (h *Handler) HandleRenewClaim(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

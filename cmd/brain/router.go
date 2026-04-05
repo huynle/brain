@@ -12,7 +12,6 @@ import (
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
-	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
 // =============================================================================
@@ -442,15 +441,23 @@ func wantsHelp(args []string) bool {
 func defaultConfig() *UnifiedConfig {
 	cfg := &UnifiedConfig{}
 
-	// Server defaults
+	// Server defaults — respect XDG_STATE_HOME and BRAIN_DIR
+	homeDir, _ := os.UserHomeDir()
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(homeDir, ".local", "state")
+	}
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
+
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
-	cfg.Server.BrainDir = pathutil.ExpandTilde("~/brain")
+	cfg.Server.BrainDir = brainDir
 	cfg.Server.LogLevel = "info"
-
-	homeDir, _ := os.UserHomeDir()
-	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
-	cfg.Server.LogFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+	cfg.Server.PIDFile = filepath.Join(stateHome, "brain-api", "brain-api.pid")
+	cfg.Server.LogFile = filepath.Join(stateHome, "brain-api", "brain-api.log")
 
 	// Load unified config for server settings (enable_auth, cors_origin, etc.)
 	ucfg, err := uconfig.LoadConfig()

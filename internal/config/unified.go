@@ -147,18 +147,27 @@ type PluginsConfig struct {
 }
 
 // defaultConfig returns a UnifiedConfig with sensible defaults.
-// All paths use standard XDG Base Directory locations where appropriate.
+// All paths respect XDG Base Directory environment variables:
+//   - XDG_STATE_HOME: PID files, runner state (default ~/.local/state)
+//   - BRAIN_DIR: brain data directory (default ~/.brain)
 func defaultConfig() UnifiedConfig {
 	homeDir, _ := os.UserHomeDir()
+	stateHome := getStateHome()
+
+	// Brain data directory: BRAIN_DIR env var > ~/.brain
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
 
 	return UnifiedConfig{
 		Server: ServerConfig{
 			Port:       3333,
 			Host:       "localhost",
-			BrainDir:   filepath.Join(homeDir, ".brain"),
+			BrainDir:   brainDir,
 			LogLevel:   "info",
-			PIDFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid"),
-			LogFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log"),
+			PIDFile:    filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:    filepath.Join(stateHome, "brain-api", "brain-api.log"),
 			EnableAuth: false,
 			CORSOrigin: "*",
 		},
@@ -167,7 +176,7 @@ func defaultConfig() UnifiedConfig {
 			PollInterval:           5, // Seconds between task queue polls
 			TaskPollInterval:       5, // Seconds between task status polls
 			WorkDir:                homeDir,
-			StateDir:               filepath.Join(homeDir, ".local", "state", "brain-runner"),
+			StateDir:               filepath.Join(stateHome, "brain-runner"),
 			LogDir:                 filepath.Join(homeDir, ".local", "log"),
 			APITimeout:             5000,  // Milliseconds
 			TaskTimeout:            0,     // 0 = no timeout
@@ -201,6 +210,15 @@ func getConfigHome() string {
 		return filepath.Join(homeDir, ".config")
 	}
 	return configHome
+}
+
+// getStateHome returns the XDG state directory, with fallback to ~/.local/state.
+func getStateHome() string {
+	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
+		return v
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".local", "state")
 }
 
 // getUnifiedConfigPath returns the path to the unified config file.

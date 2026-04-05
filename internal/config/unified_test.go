@@ -9,6 +9,10 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
+	// Clear env vars that affect defaults so we test the built-in fallbacks
+	t.Setenv("BRAIN_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
 	cfg := defaultConfig()
 
 	// Server defaults

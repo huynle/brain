@@ -5,14 +5,19 @@ package lifecycle
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
 )
 
 // WritePID writes the given PID to the specified file path.
+// Creates parent directories if they don't exist.
 // The file is created with 0644 permissions.
 func WritePID(path string, pid int) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
 	data := []byte(strconv.Itoa(pid))
 	return os.WriteFile(path, data, 0o644)
 }

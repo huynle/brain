@@ -85,6 +85,7 @@ type BrainService interface {
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs []string
+	Executors  []string // Filter tasks by executor type (e.g., "opencode", "pi")
 }
 
 // TaskService defines the interface for task queue operations.

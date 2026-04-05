@@ -28,12 +28,19 @@ const DefaultRenewInterval = 5 * time.Minute
 // Interfaces for dependency injection
 // =============================================================================
 
+// TaskFetchOptions holds optional filters for fetching tasks from the Brain API.
+// Both fields are optional — nil/empty means no filter (return all).
+type TaskFetchOptions struct {
+	FeatureIDs []string // Filter by feature ID
+	Executors  []string // Filter by executor type (e.g., "opencode", "pi")
+}
+
 // Client abstracts the Brain API client for testability.
 type Client interface {
 	CheckHealth(ctx context.Context) (APIHealth, error)
 	ListProjects(ctx context.Context) ([]string, error)
-	GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error)
-	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
+	GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error)
+	GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error
@@ -46,6 +53,7 @@ type Client interface {
 	RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
 	SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
 	DeregisterRunner(ctx context.Context, runnerID string) error
+	PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -172,6 +180,10 @@ type TaskRunner struct {
 	eventMu  sync.RWMutex
 	handlers []EventHandler
 
+	// Log streamers (protected by logMu)
+	logMu        sync.Mutex
+	logStreamers map[string]*LogStreamer // keyed by task ID
+
 	// SSE reactive polling
 	wakeCh      chan struct{}
 	commandCh   chan RunnerCommand
@@ -233,6 +245,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		status:          RunnerStatusIdle,
 		pauseCache:      make(map[string]bool),
 		enabledFeatures: make(map[string]bool),
+		logStreamers:    make(map[string]*LogStreamer),
 		wakeCh:          make(chan struct{}, 1),
 		commandCh:       make(chan RunnerCommand, 16),
 		done:            make(chan struct{}),
@@ -520,7 +533,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				continue // fully paused, no enabled features
 			}
 			// Paused but features enabled: poll only enabled features
-			task, err := tr.client.GetNextTask(ctx, projectID, projEnabledIDs...)
+			task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
+				FeatureIDs: projEnabledIDs,
+				Executors:  tr.config.Executors,
+			})
 			if err != nil || task == nil {
 				continue
 			}
@@ -532,8 +548,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			continue
 		}
 
-		// Get next task for this project (filtered by feature IDs if configured)
-		task, err := tr.client.GetNextTask(ctx, projectID, tr.config.FeatureIDs...)
+		// Get next task for this project (filtered by feature IDs and executors)
+		task, err := tr.client.GetNextTask(ctx, projectID, tr.buildFetchOptions())
 		if err != nil || task == nil {
 			continue
 		}
@@ -552,6 +568,17 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// 7. Emit poll complete event
 	tr.emitPollComplete()
+}
+
+// buildFetchOptions creates TaskFetchOptions from the runner's current configuration.
+func (tr *TaskRunner) buildFetchOptions() *TaskFetchOptions {
+	opts := &TaskFetchOptions{
+		Executors: tr.config.Executors,
+	}
+	if len(tr.config.FeatureIDs) > 0 {
+		opts.FeatureIDs = tr.config.FeatureIDs
+	}
+	return opts
 }
 
 // =============================================================================
@@ -667,8 +694,23 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir: workdir,
 	}
 
+	// Start log streamer if enabled
+	var logStreamer *LogStreamer
+	if tr.config.LogStreaming {
+		logStreamer = NewLogStreamer(LogStreamerConfig{
+			Client:    tr.client,
+			RunnerID:  tr.runnerID,
+			ProjectID: projectID,
+			TaskID:    task.ID,
+		})
+		spawnOpts.LogWriter = logStreamer
+	}
+
 	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
+		if logStreamer != nil {
+			logStreamer.Stop()
+		}
 		// Release the claim on failure
 		tr.emitEvent(RunnerEvent{
 			Type:      EventTaskReleased,
@@ -701,6 +743,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		if err := tr.processMgr.Add(task.ID, runningTask, spawnResult.Proc); err != nil {
 			return fmt.Errorf("track process: %w", err)
 		}
+	}
+
+	// Track log streamer for cleanup on completion
+	if logStreamer != nil {
+		tr.trackLogStreamer(task.ID, logStreamer)
 	}
 
 	// Update status
@@ -966,6 +1013,9 @@ func (tr *TaskRunner) checkRunningTasks(ctx context.Context) {
 
 // handleTaskCompletion processes a completed task.
 func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, task RunningTask, status CompletionStatus) {
+	// Stop log streamer (flushes remaining lines)
+	tr.stopLogStreamer(taskID)
+
 	// Create result before removing from process manager
 	result := tr.processMgr.CreateTaskResult(taskID, status)
 
@@ -1439,6 +1489,31 @@ func (tr *TaskRunner) emitPollComplete() {
 		Type:         EventPollComplete,
 		RunningCount: tr.processMgr.RunningCount(),
 	})
+}
+
+// =============================================================================
+// Log Streamer Tracking
+// =============================================================================
+
+// trackLogStreamer records a log streamer for a task so it can be stopped on completion.
+func (tr *TaskRunner) trackLogStreamer(taskID string, ls *LogStreamer) {
+	tr.logMu.Lock()
+	tr.logStreamers[taskID] = ls
+	tr.logMu.Unlock()
+}
+
+// stopLogStreamer stops and removes the log streamer for a task.
+func (tr *TaskRunner) stopLogStreamer(taskID string) {
+	tr.logMu.Lock()
+	ls, ok := tr.logStreamers[taskID]
+	if ok {
+		delete(tr.logStreamers, taskID)
+	}
+	tr.logMu.Unlock()
+
+	if ok && ls != nil {
+		ls.Stop()
+	}
 }
 
 // =============================================================================

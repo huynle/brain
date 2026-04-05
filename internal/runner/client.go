@@ -121,17 +121,28 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]string, error) {
 	return data.Projects, nil
 }
 
-// GetReadyTasks returns tasks that are ready for execution in a project.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
+// buildTaskQueryParams encodes TaskFetchOptions into URL query parameters.
+func buildTaskQueryParams(opts *TaskFetchOptions) string {
+	if opts == nil {
+		return ""
 	}
+	params := url.Values{}
+	for _, fid := range opts.FeatureIDs {
+		params.Add("feature_id", fid)
+	}
+	if len(opts.Executors) > 0 {
+		params.Set("executors", strings.Join(opts.Executors, ","))
+	}
+	if encoded := params.Encode(); encoded != "" {
+		return "?" + encoded
+	}
+	return ""
+}
+
+// GetReadyTasks returns tasks that are ready for execution in a project.
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get ready tasks: %w", err)
@@ -150,16 +161,9 @@ func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, feature
 }
 
 // GetNextTask returns the highest-priority ready task, or nil if none.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
-	}
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get next task: %w", err)
@@ -712,6 +716,36 @@ func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error
 	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return fmt.Errorf("deregister runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
+// Log Streaming
+// =============================================================================
+
+// PostTaskLogs sends a batch of log lines to the Brain API for a given task.
+// This is fire-and-forget from the caller's perspective: failures are returned
+// but should not block task execution.
+func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs", projectID, taskID)
+	body := types.LogIngestRequest{
+		RunnerID: runnerID,
+		Lines:    lines,
+	}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("post task logs: %w", err)
 	}
 	defer resp.Body.Close()
 

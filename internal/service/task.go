@@ -198,14 +198,20 @@ func (s *TaskServiceImpl) getAllTasks(ctx context.Context, projectId string) ([]
 
 // GetReady returns tasks that are ready to execute.
 // If opts is non-nil and contains FeatureIDs, only tasks matching those features are returned.
+// If opts contains Executors, only tasks matching those executor types are returned.
 func (s *TaskServiceImpl) GetReady(ctx context.Context, projectId string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
 	ready := GetReadyTasks(result)
-	if opts != nil && len(opts.FeatureIDs) > 0 {
-		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+	if opts != nil {
+		if len(opts.FeatureIDs) > 0 {
+			ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+		}
+		if len(opts.Executors) > 0 {
+			ready = filterByExecutors(ready, opts.Executors)
+		}
 	}
 	return ready, nil
 }
@@ -230,6 +236,7 @@ func (s *TaskServiceImpl) GetBlocked(ctx context.Context, projectId string) ([]t
 
 // GetNext returns the next task to execute (highest priority ready task).
 // If opts is non-nil and contains FeatureIDs, only tasks matching those features are considered.
+// If opts contains Executors, only tasks matching those executor types are considered.
 func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *api.TaskFilterOptions) (*types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
@@ -239,10 +246,15 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 	if next == nil {
 		return nil, nil
 	}
-	if opts != nil && len(opts.FeatureIDs) > 0 {
-		// Filter ready tasks by feature, then pick the next from the filtered set
+	if opts != nil && (len(opts.FeatureIDs) > 0 || len(opts.Executors) > 0) {
+		// Apply filters to ready tasks, then pick the best from the filtered set
 		ready := GetReadyTasks(result)
-		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+		if len(opts.FeatureIDs) > 0 {
+			ready = filterByFeatureIDs(ready, opts.FeatureIDs)
+		}
+		if len(opts.Executors) > 0 {
+			ready = filterByExecutors(ready, opts.Executors)
+		}
 		if len(ready) == 0 {
 			return nil, nil
 		}

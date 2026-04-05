@@ -576,10 +576,10 @@ func (m *schedMockClient) CheckHealth(ctx context.Context) (APIHealth, error) {
 func (m *schedMockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
-func (m *schedMockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
+func (m *schedMockClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
 	return m.readyTasks[projectID], nil
 }
-func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
+func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
 	return m.nextTask[projectID], nil
 }
 func (m *schedMockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
@@ -648,6 +648,10 @@ func (m *schedMockClient) SendHeartbeat(ctx context.Context, runnerID string, re
 	return nil
 }
 func (m *schedMockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	return nil
+}
+
+func (m *schedMockClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
 	return nil
 }
 

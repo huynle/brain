@@ -79,6 +79,7 @@ type mockClient struct {
 type nextTaskCall struct {
 	ProjectID  string
 	FeatureIDs []string
+	Opts       *TaskFetchOptions
 }
 
 type claimCall struct {
@@ -135,7 +136,7 @@ func (m *mockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
 
-func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
+func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readyTasksErr != nil {
@@ -144,13 +145,15 @@ func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featur
 	return m.readyTasks[projectID], nil
 }
 
-func (m *mockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
+func (m *mockClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Record the call with feature IDs for verification
-	idsCopy := make([]string, len(featureIDs))
-	copy(idsCopy, featureIDs)
-	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: idsCopy})
+	// Record the call with options for verification
+	var featureIDs []string
+	if opts != nil {
+		featureIDs = opts.FeatureIDs
+	}
+	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: featureIDs, Opts: opts})
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
@@ -246,6 +249,10 @@ func (m *mockClient) DeregisterRunner(ctx context.Context, runnerID string) erro
 	defer m.mu.Unlock()
 	m.deregisterCalls = append(m.deregisterCalls, runnerID)
 	return m.deregisterErr
+}
+
+func (m *mockClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	return nil
 }
 
 func (m *mockClient) getNextTaskCalls() []nextTaskCall {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,12 +14,38 @@ import (
 
 // parseTaskFilterOptions extracts optional TaskFilterOptions from query parameters.
 // Returns nil if no filter parameters are present (backward compatible).
+//
+// Supported query params:
+//   - feature_id: filter by feature ID (repeatable)
+//   - executors: comma-separated list of executor types (e.g., "opencode,pi")
 func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
 	featureIDs := r.URL.Query()["feature_id"]
-	if len(featureIDs) == 0 {
+	executors := parseExecutors(r)
+
+	if len(featureIDs) == 0 && len(executors) == 0 {
 		return nil
 	}
-	return &TaskFilterOptions{FeatureIDs: featureIDs}
+	return &TaskFilterOptions{
+		FeatureIDs: featureIDs,
+		Executors:  executors,
+	}
+}
+
+// parseExecutors extracts executor types from the "executors" query parameter.
+// Supports comma-separated values: ?executors=opencode,pi
+func parseExecutors(r *http.Request) []string {
+	raw := r.URL.Query().Get("executors")
+	if raw == "" {
+		return nil
+	}
+	var executors []string
+	for _, e := range strings.Split(raw, ",") {
+		e = strings.TrimSpace(e)
+		if e != "" {
+			executors = append(executors, e)
+		}
+	}
+	return executors
 }
 
 // HandleListProjects handles GET /tasks — list all projects.

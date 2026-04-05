@@ -226,7 +226,7 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	tasks, err := client.GetReadyTasks(context.Background(), "brain-api")
+	tasks, err := client.GetReadyTasks(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -254,7 +254,7 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestAPIClient_GetNextTask_NotFound(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error for 404: %v", err)
 	}

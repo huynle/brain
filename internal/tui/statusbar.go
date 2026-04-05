@@ -16,6 +16,14 @@ type StatusBar struct {
 	IsPaused            bool
 	EnabledFeatureCount int
 	ActiveFeatureCount  int
+	RunnerMetrics       *RunnerMetrics
+}
+
+// RunnerMetrics represents aggregate runner statistics.
+type RunnerMetrics struct {
+	TotalRunners  int
+	OnlineRunners int
+	StaleRunners  int
 }
 
 // NewStatusBar creates a new StatusBar for the given project.
@@ -107,6 +115,27 @@ func (s StatusBar) renderFirstRow(width int) string {
 	// Add selected count if > 0
 	if s.SelectedCount > 0 {
 		stats += SelectedCountStyle.Render(fmt.Sprintf("  • %d selected", s.SelectedCount))
+	}
+
+	// Add runner metrics if available
+	if s.RunnerMetrics != nil && s.RunnerMetrics.TotalRunners > 0 {
+		runnerStats := fmt.Sprintf("  %s %d runners",
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("⚙"),
+			s.RunnerMetrics.TotalRunners,
+		)
+		if s.RunnerMetrics.OnlineRunners > 0 || s.RunnerMetrics.StaleRunners > 0 {
+			runnerStats += fmt.Sprintf(" | %s %d online",
+				lipgloss.NewStyle().Foreground(ColorReady).Render("●"),
+				s.RunnerMetrics.OnlineRunners,
+			)
+			if s.RunnerMetrics.StaleRunners > 0 {
+				runnerStats += fmt.Sprintf(" | %s %d stale",
+					lipgloss.NewStyle().Foreground(ColorWaiting).Render("●"),
+					s.RunnerMetrics.StaleRunners,
+				)
+			}
+		}
+		stats += lipgloss.NewStyle().Foreground(ColorDim).Render(runnerStats)
 	}
 
 	// Right side: connection indicator

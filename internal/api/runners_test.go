@@ -19,11 +19,13 @@ import (
 // =============================================================================
 
 type mockRunnerRegistryService struct {
-	registerFunc    func(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
-	heartbeatFunc   func(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
-	deregisterFunc  func(ctx context.Context, runnerID string) error
-	listRunnersFunc func(ctx context.Context) (*types.RunnerListResponse, error)
-	getRunnerFunc   func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+	registerFunc       func(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+	heartbeatFunc      func(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+	deregisterFunc     func(ctx context.Context, runnerID string) error
+	listRunnersFunc    func(ctx context.Context) (*types.RunnerListResponse, error)
+	getRunnerFunc      func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+	updateConfigFunc   func(ctx context.Context, runnerID string, maxParallel int) error
+	updateAffinityFunc func(ctx context.Context, runnerID string, featureIDs []string) error
 }
 
 func (m *mockRunnerRegistryService) Register(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
@@ -66,6 +68,20 @@ func (m *mockRunnerRegistryService) GetRunner(ctx context.Context, runnerID stri
 	return nil, ErrNotFound
 }
 
+func (m *mockRunnerRegistryService) UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error {
+	if m.updateConfigFunc != nil {
+		return m.updateConfigFunc(ctx, runnerID, maxParallel)
+	}
+	return nil
+}
+
+func (m *mockRunnerRegistryService) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	if m.updateAffinityFunc != nil {
+		return m.updateAffinityFunc(ctx, runnerID, featureIDs)
+	}
+	return nil
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -78,6 +94,8 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 		r.Get("/", h.HandleListRunners)
 		r.Post("/{runnerId}/heartbeat", h.HandleHeartbeat)
 		r.Post("/{runnerId}/deregister", h.HandleDeregisterRunner)
+		r.Patch("/{runnerId}/config", h.HandleUpdateRunnerConfig)
+		r.Post("/{runnerId}/features/{featureId}/toggle", h.HandleToggleRunnerFeature)
 	})
 	return r
 }
@@ -636,4 +654,157 @@ func TestRunnerStreamClientDisconnect(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// If we get here without panic, the test passes
+}
+
+// =============================================================================
+// Tests: PATCH /runners/{runnerId}/config
+// =============================================================================
+
+func TestHandleUpdateRunnerConfig(t *testing.T) {
+	tests := []struct {
+		name             string
+		runnerID         string
+		body             string
+		mockUpdateConfig func(ctx context.Context, runnerID string, maxParallel int) error
+		mockGetRunner    func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+		wantStatus       int
+		wantSuccess      bool
+	}{
+		{
+			name:     "success",
+			runnerID: "runner-1",
+			body:     `{"maxParallel":8}`,
+			mockUpdateConfig: func(ctx context.Context, runnerID string, maxParallel int) error {
+				return nil
+			},
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return &types.RunnerInfo{RunnerID: runnerID, MaxParallel: 8}, nil
+			},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+		},
+		{
+			name:       "invalid json",
+			runnerID:   "runner-1",
+			body:       `{invalid}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid maxParallel",
+			runnerID:   "runner-1",
+			body:       `{"maxParallel":0}`,
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockRunnerRegistryService{
+				updateConfigFunc: tt.mockUpdateConfig,
+				getRunnerFunc:    tt.mockGetRunner,
+			}
+			router := newRunnerTestRouter(mock)
+
+			req := httptest.NewRequest(http.MethodPatch, "/runners/"+tt.runnerID+"/config", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d\nBody: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantSuccess {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				if success, ok := resp["success"].(bool); !ok || !success {
+					t.Errorf("expected success=true, got %v", resp["success"])
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests: POST /runners/{runnerId}/features/{featureId}/toggle
+// =============================================================================
+
+func TestHandleToggleRunnerFeature(t *testing.T) {
+	tests := []struct {
+		name          string
+		runnerID      string
+		featureID     string
+		body          string
+		mockGetRunner func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+		wantStatus    int
+		wantSuccess   bool
+	}{
+		{
+			name:      "enable feature",
+			runnerID:  "runner-1",
+			featureID: "feature-1",
+			body:      `{"enabled":true}`,
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return &types.RunnerInfo{RunnerID: runnerID}, nil
+			},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+		},
+		{
+			name:      "disable feature",
+			runnerID:  "runner-1",
+			featureID: "feature-1",
+			body:      `{"enabled":false}`,
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return &types.RunnerInfo{RunnerID: runnerID}, nil
+			},
+			wantStatus:  http.StatusOK,
+			wantSuccess: true,
+		},
+		{
+			name:       "invalid json",
+			runnerID:   "runner-1",
+			featureID:  "feature-1",
+			body:       `{invalid}`,
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:      "runner not found",
+			runnerID:  "runner-1",
+			featureID: "feature-1",
+			body:      `{"enabled":true}`,
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockRunnerRegistryService{
+				getRunnerFunc: tt.mockGetRunner,
+			}
+			router := newRunnerTestRouter(mock)
+
+			req := httptest.NewRequest(http.MethodPost, "/runners/"+tt.runnerID+"/features/"+tt.featureID+"/toggle", strings.NewReader(tt.body))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d\nBody: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantSuccess {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				if success, ok := resp["success"].(bool); !ok || !success {
+					t.Errorf("expected success=true, got %v", resp["success"])
+				}
+			}
+		})
+	}
 }

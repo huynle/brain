@@ -149,6 +149,10 @@ func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId str
 	return nil, fmt.Errorf("triggerTaskFunc not set")
 }
 
+func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.ClaimResponse, error) {
+	return nil, fmt.Errorf("dispatchTask not implemented in mock")
+}
+
 // =============================================================================
 // Mock RunnerService
 // =============================================================================

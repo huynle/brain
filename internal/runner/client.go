@@ -778,6 +778,23 @@ func (c *APIClient) ToggleRunnerFeature(ctx context.Context, runnerID, featureID
 	return nil
 }
 
+// UpdateRunnerAffinity updates which features a runner can execute.
+func (c *APIClient) UpdateRunnerAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/affinity", runnerID)
+	body := map[string][]string{"feature_ids": featureIDs}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner affinity: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // =============================================================================
 // Log Streaming
 // =============================================================================

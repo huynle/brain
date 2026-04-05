@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -109,8 +110,17 @@ type TaskRunnerOptions struct {
 	Logger *log.Logger
 
 	// Dependencies (injected for testability)
-	Client     Client
-	Executor   TaskExecutor
+	Client Client
+
+	// Executor is a single executor (backward compat). If set and Executors
+	// is nil, it is registered as the "opencode" executor.
+	Executor TaskExecutor
+
+	// Executors is a named registry of executors. Tasks are dispatched to the
+	// executor matching task.Executor. Takes precedence over Executor if both
+	// are set.
+	Executors map[string]TaskExecutor
+
 	ProcessMgr TaskProcessManager
 	StateMgr   TaskStateManager
 }
@@ -140,7 +150,7 @@ type TaskRunner struct {
 	logger   *log.Logger
 
 	client     Client
-	executor   TaskExecutor
+	executors  map[string]TaskExecutor
 	processMgr TaskProcessManager
 	stateMgr   TaskStateManager
 
@@ -164,6 +174,7 @@ type TaskRunner struct {
 
 	// SSE reactive polling
 	wakeCh      chan struct{}
+	commandCh   chan RunnerCommand
 	sseListener *SSEListener
 
 	// Lifecycle
@@ -196,6 +207,19 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		logger = log.Default()
 	}
 
+	// Build executor registry
+	executors := opts.Executors
+	if executors == nil {
+		executors = make(map[string]TaskExecutor)
+	}
+	// Backward compat: if single Executor is set and not already in registry,
+	// register it as "opencode".
+	if opts.Executor != nil {
+		if _, exists := executors["opencode"]; !exists {
+			executors["opencode"] = opts.Executor
+		}
+	}
+
 	tr := &TaskRunner{
 		runnerID:        runnerID,
 		projects:        projects,
@@ -203,13 +227,14 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		mode:            mode,
 		logger:          logger,
 		client:          opts.Client,
-		executor:        opts.Executor,
+		executors:       executors,
 		processMgr:      opts.ProcessMgr,
 		stateMgr:        opts.StateMgr,
 		status:          RunnerStatusIdle,
 		pauseCache:      make(map[string]bool),
 		enabledFeatures: make(map[string]bool),
 		wakeCh:          make(chan struct{}, 1),
+		commandCh:       make(chan RunnerCommand, 16),
 		done:            make(chan struct{}),
 	}
 
@@ -268,8 +293,14 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.projects,
 			tr.wakeCh,
 		)
+		// Wire up runner-scoped command stream
+		tr.sseListener.SetRunnerStream(tr.runnerID, tr.commandCh)
 		go tr.sseListener.Start(ctx)
-		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
+		slog.Info("SSE listener started for reactive polling",
+			"projects", len(tr.projects),
+			"runner_stream", true,
+			"runner_id", tr.runnerID,
+		)
 	}
 
 	// Start periodic claim renewal goroutine
@@ -320,7 +351,61 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
+		case cmd := <-tr.commandCh:
+			tr.handleCommand(ctx, cmd)
 		}
+	}
+}
+
+// handleCommand processes a server-pushed command received via the runner SSE stream.
+func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
+	slog.Info("handling runner command", "type", cmd.Type, "runner_id", tr.runnerID)
+
+	switch cmd.Type {
+	case CommandAffinityUpdated:
+		tr.mu.Lock()
+		tr.config.FeatureIDs = cmd.FeatureIDs
+		tr.mu.Unlock()
+		slog.Info("affinity updated", "feature_ids", cmd.FeatureIDs)
+
+	case CommandConfigUpdated:
+		if cmd.MaxParallel != nil {
+			tr.SetMaxParallel(*cmd.MaxParallel)
+			slog.Info("max parallel updated", "max_parallel", *cmd.MaxParallel)
+		}
+		if cmd.Model != "" {
+			tr.mu.Lock()
+			tr.config.Opencode.Model = cmd.Model
+			tr.mu.Unlock()
+			slog.Info("model updated", "model", cmd.Model)
+		}
+		if cmd.Agent != "" {
+			tr.mu.Lock()
+			tr.config.Opencode.Agent = cmd.Agent
+			tr.mu.Unlock()
+			slog.Info("agent updated", "agent", cmd.Agent)
+		}
+
+	case CommandDispatch:
+		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
+		// Trigger immediate wake for targeted task pickup
+		select {
+		case tr.wakeCh <- struct{}{}:
+		default:
+		}
+
+	case CommandShutdown:
+		slog.Info("shutdown command received", "reason", cmd.Reason)
+		tr.emitEvent(RunnerEvent{
+			Type:   EventShutdown,
+			Reason: cmd.Reason,
+		})
+		if tr.cancel != nil {
+			tr.cancel()
+		}
+
+	default:
+		slog.Warn("unknown runner command type", "type", cmd.Type)
 	}
 }
 
@@ -470,6 +555,32 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 }
 
 // =============================================================================
+// Executor Dispatch
+// =============================================================================
+
+// DefaultExecutorName is the executor name used when task.Executor is empty.
+const DefaultExecutorName = "opencode"
+
+// getExecutor returns the executor for the given name, defaulting to "opencode"
+// for empty names. Returns nil if no matching executor is registered.
+func (tr *TaskRunner) getExecutor(name string) TaskExecutor {
+	if name == "" {
+		name = DefaultExecutorName
+	}
+	return tr.executors[name]
+}
+
+// executorNames returns a sorted list of registered executor names.
+func (tr *TaskRunner) executorNames() []string {
+	names := make([]string, 0, len(tr.executors))
+	for name := range tr.executors {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// =============================================================================
 // Claim and Spawn
 // =============================================================================
 
@@ -513,8 +624,23 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		ToStatus:   "in_progress",
 	})
 
+	// Dispatch to the correct executor based on task.Executor field
+	executor := tr.getExecutor(task.Executor)
+	if executor == nil {
+		// No matching executor found — release claim and skip
+		tr.emitEvent(RunnerEvent{
+			Type:      EventTaskReleased,
+			TaskID:    task.ID,
+			ProjectID: projectID,
+			Reason:    fmt.Sprintf("no executor registered for %q", task.Executor),
+		})
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
+		return fmt.Errorf("no executor registered for %q", task.Executor)
+	}
+
 	// Resolve workdir (may create git worktree)
-	workdir, err := tr.executor.ResolveWorkdir(task)
+	workdir, err := executor.ResolveWorkdir(task)
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{
@@ -541,7 +667,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir: workdir,
 	}
 
-	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
+	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		// Release the claim on failure
 		tr.emitEvent(RunnerEvent{
@@ -763,7 +889,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 	req := types.RunnerRegistration{
 		RunnerID:    tr.runnerID,
 		Hostname:    hostname,
-		Executors:   []string{"opencode"},
+		Executors:   tr.executorNames(),
 		MaxParallel: tr.getMaxParallel(),
 	}
 
@@ -903,8 +1029,10 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Clean up tmux window (graceful: Ctrl+C then kill)
 	tr.cleanupTaskTmux(task)
 
-	// Cleanup temp files
-	tr.executor.Cleanup(taskID, task.ProjectID)
+	// Cleanup temp files (call all executors — cleanup is idempotent)
+	for _, exec := range tr.executors {
+		exec.Cleanup(taskID, task.ProjectID)
+	}
 
 	// Emit event
 	tr.emitEvent(RunnerEvent{

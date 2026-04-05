@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -626,11 +627,13 @@ func testTask(id, projectID string) *types.ResolvedTask {
 
 func newTestRunner(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, stateMgr *mockStateMgr) *TaskRunner {
 	return NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a", "proj-b"},
-		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeHeadless,
-		Client:     client,
-		Executor:   executor,
+		Projects: []string{"proj-a", "proj-b"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Client:   client,
+		Executors: map[string]TaskExecutor{
+			"opencode": executor,
+		},
 		ProcessMgr: processMgr,
 		StateMgr:   stateMgr,
 	})
@@ -2919,5 +2922,354 @@ func TestTaskRunner_GetEnabledFeatureIDsLocked_AfterDisable(t *testing.T) {
 	}
 	if ids[0] != "feat-b" {
 		t.Errorf("expected feat-b, got %s", ids[0])
+	}
+}
+
+// =============================================================================
+// Executor Registry / Dispatch Tests
+// =============================================================================
+
+func TestNewTaskRunner_ExecutorsMap_PopulatedFromOptions(t *testing.T) {
+	exec1 := newMockExecutor()
+	exec2 := newMockExecutor()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": exec1,
+			"custom":   exec2,
+		},
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
+	})
+
+	if len(tr.executors) != 2 {
+		t.Fatalf("expected 2 executors, got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("opencode executor not set correctly")
+	}
+	if tr.executors["custom"] != exec2 {
+		t.Error("custom executor not set correctly")
+	}
+}
+
+func TestNewTaskRunner_BackwardCompat_SingleExecutor(t *testing.T) {
+	exec1 := newMockExecutor()
+
+	// Using legacy single Executor field should register it as "opencode"
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Executor:   exec1,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
+	})
+
+	if len(tr.executors) != 1 {
+		t.Fatalf("expected 1 executor (backward compat), got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("single Executor should be registered as 'opencode'")
+	}
+}
+
+func TestClaimAndSpawn_DispatchesToCorrectExecutor(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	procOC := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: procOC, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task with Executor="custom" should be dispatched to execCustom
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execCustom should have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// execOpencode should NOT have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
+	}
+}
+
+func TestClaimAndSpawn_EmptyExecutor_DefaultsToOpencode(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task with no Executor set (empty string) → defaults to "opencode"
+	task := testTask("task1", "proj-a")
+	task.Executor = ""
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execOpencode should have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to opencode executor (default), got %d", len(ocSpawns))
+	}
+
+	// execCustom should NOT have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to custom executor, got %d", len(customSpawns))
+	}
+}
+
+func TestClaimAndSpawn_MissingExecutor_ReleasesAndSkips(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task requests "pi-rpc" executor which is NOT registered
+	task := testTask("task1", "proj-a")
+	task.Executor = "pi-rpc"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when executor not found")
+	}
+
+	// Should contain info about missing executor
+	if !strings.Contains(err.Error(), "pi-rpc") {
+		t.Errorf("error should mention missing executor 'pi-rpc', got: %v", err)
+	}
+
+	// Should release the claim
+	releases := client.getReleaseCalls()
+	if len(releases) == 0 {
+		t.Error("should release task when executor not found")
+	}
+
+	// Should NOT have spawned anything
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls, got %d", len(ocSpawns))
+	}
+}
+
+func TestClaimAndSpawn_ResolveWorkdir_UsesMatchedExecutor(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	execOpencode.resolveWorkdir = "/opencode/workdir"
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/opencode/workdir"}
+
+	execCustom := newMockExecutor()
+	execCustom.resolveWorkdir = "/custom/workdir"
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/custom/workdir"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// The custom executor's ResolveWorkdir and Spawn should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Fatalf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+	if customSpawns[0].Opts.Workdir != "/custom/workdir" {
+		t.Errorf("workdir = %q, want %q", customSpawns[0].Opts.Workdir, "/custom/workdir")
+	}
+}
+
+func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
+	client := newMockClient()
+	execOpencode := newMockExecutor()
+	execCustom := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"pi-rpc":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	ctx := context.Background()
+	tr.registerWithAPI(ctx)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("expected 1 register call, got %d", len(client.registerCalls))
+	}
+
+	reg := client.registerCalls[0]
+	executorSet := make(map[string]bool)
+	for _, e := range reg.Executors {
+		executorSet[e] = true
+	}
+	if !executorSet["opencode"] {
+		t.Error("registration should include 'opencode' executor")
+	}
+	if !executorSet["pi-rpc"] {
+		t.Error("registration should include 'pi-rpc' executor")
+	}
+}
+
+func TestResumeTask_UsesExecutorDispatch(t *testing.T) {
+	client := newMockClient()
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+	task.Status = "in_progress"
+
+	ctx := context.Background()
+	err := tr.resumeTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("resumeTask returned error: %v", err)
+	}
+
+	// custom executor should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// opencode executor should NOT have been used
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
 	}
 }

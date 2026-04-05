@@ -490,10 +490,12 @@ func TestMetadataModalFeature_SaveField_FeatureDependsOn_ArraySerialization(t *t
 			apiClient := runner.NewAPIClient(cfg)
 			modal := NewMetadataModalFeature("deps-test", "brain-api", apiClient)
 
+			// Initialize (Init returns a batch)
 			cmd := modal.Init()
-			msg := cmd()
-			modalInterface, _ := modal.Update(msg)
-			modal = modalInterface.(*MetadataModal)
+			for _, msg := range executeBatchCmd(cmd) {
+				modalInterface, _ := modal.Update(msg)
+				modal = modalInterface.(*MetadataModal)
+			}
 
 			// Set the field value and focus
 			modal.focusedField = FieldFeatureDependsOn

@@ -1996,31 +1996,6 @@ func findSubstring(s, substr string) bool {
 // Tests: applyTaskDefaults
 // ---------------------------------------------------------------------------
 
-// newTestTaskServiceWithDefaults creates a TaskServiceImpl with TaskDefaults configured.
-func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.StorageLayer, string) {
-	t.Helper()
-
-	db, err := sql.Open("sqlite", ":memory:")
-	if err != nil {
-		t.Fatalf("sql.Open failed: %v", err)
-	}
-
-	store, err := storage.NewWithDB(db)
-	if err != nil {
-		t.Fatalf("NewWithDB failed: %v", err)
-	}
-	t.Cleanup(func() { store.Close() })
-
-	brainDir := t.TempDir()
-	cfg := &config.Config{
-		BrainDir:     brainDir,
-		TaskDefaults: defaults,
-	}
-
-	svc := NewTaskService(cfg, store)
-	return svc, store, brainDir
-}
-
 func TestApplyTaskDefaults_EmptyTaskGetsDefaults(t *testing.T) {
 	// Task has no agent/model/etc set; config provides defaults.
 	// Expected: all empty fields filled from defaults.

@@ -744,6 +744,40 @@ func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse,
 	return &result, nil
 }
 
+// UpdateRunnerConfig updates a runner's maxParallel configuration.
+func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, maxParallel int) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/config", runnerID)
+	body := map[string]int{"maxParallel": maxParallel}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ToggleRunnerFeature enables or disables a feature on a specific runner.
+func (c *APIClient) ToggleRunnerFeature(ctx context.Context, runnerID, featureID string, enabled bool) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/features/%s/toggle", runnerID, featureID)
+	body := map[string]bool{"enabled": enabled}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("toggle runner feature: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // =============================================================================
 // Log Streaming
 // =============================================================================

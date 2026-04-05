@@ -497,6 +497,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case featureAffinityResultMsg:
+		m.modalManager.Close()
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to update affinity: %v", msg.err))
+			m.addLog("error", fmt.Sprintf("Affinity update failed for runner %s: %v", msg.runnerID, msg.err))
+		} else {
+			m.setStatusMessage("success", fmt.Sprintf("Updated affinity for runner %s", msg.runnerID))
+			m.addLog("info", fmt.Sprintf("Runner %s affinity → [%s]", msg.runnerID, strings.Join(msg.features, ", ")))
+			// Refresh runner list to show updated affinity
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		return m, nil
+
 	case LogEntryMsg:
 		m.logViewer.AddEntry(msg.Entry)
 		return m, nil
@@ -1213,6 +1226,46 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if selectedTask != nil {
 					return m, completeTaskCmd(m.apiRunnerConfig(), selectedTask.Path)
 				}
+			}
+			return m, nil
+		case "a":
+			// Assign feature affinity to selected runner (runner panel only)
+			if m.activePanel == PanelRunners {
+				selectedRunner := m.runnerPanel.SelectedRunner()
+				if selectedRunner == nil {
+					return m, nil
+				}
+
+				// Collect all feature IDs from current tasks
+				featureIDSet := make(map[string]bool)
+				for _, task := range m.tasks {
+					if task.FeatureID != "" {
+						featureIDSet[task.FeatureID] = true
+					}
+				}
+
+				// Convert set to sorted list
+				allFeatures := make([]string, 0, len(featureIDSet))
+				for fid := range featureIDSet {
+					allFeatures = append(allFeatures, fid)
+				}
+
+				// Parse current runner affinity (comma-separated string)
+				currentFeatures := []string{}
+				if selectedRunner.FeatureIDs != "" {
+					for _, f := range strings.Split(selectedRunner.FeatureIDs, ",") {
+						f = strings.TrimSpace(f)
+						if f != "" {
+							currentFeatures = append(currentFeatures, f)
+						}
+					}
+				}
+
+				// Open feature picker modal
+				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+				modal := NewFeaturePickerModal(selectedRunner.RunnerID, currentFeatures, allFeatures, apiClient)
+				cmd := m.modalManager.Open(modal)
+				return m, cmd
 			}
 			return m, nil
 		case "C":

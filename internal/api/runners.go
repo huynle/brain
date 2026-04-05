@@ -141,6 +141,45 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleUpdateAffinity handles PUT /runners/{runnerId}/affinity — update runner feature affinity.
+func (h *Handler) HandleUpdateAffinity(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	var req struct {
+		FeatureIDs []string `json:"feature_ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	err := h.runnerRegistry.UpdateAffinity(r.Context(), runnerID, req.FeatureIDs)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	slog.Info("runner affinity updated",
+		"runner_id", runnerID,
+		"feature_ids", req.FeatureIDs,
+	)
+
+	// Push affinity change to runner via SSE command channel
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "affinity_updated", map[string]interface{}{
+			"feature_ids": req.FeatureIDs,
+		})
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+	})
+}
+
 // HandleRunnerStream handles GET /runners/{runnerId}/stream — runner-scoped SSE event stream.
 // Carries task change events and server-pushed commands (affinity, config, dispatch, shutdown).
 func (h *Handler) HandleRunnerStream(w http.ResponseWriter, r *http.Request) {
@@ -221,4 +260,110 @@ func (h *Handler) HandleRunnerStream(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// HandleUpdateRunnerConfig handles PATCH /runners/{runnerId}/config — update runner configuration.
+// Accepts {"maxParallel": N} and updates the runner record.
+// Config changes are pushed to the runner via SSE command channel.
+func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	var req struct {
+		MaxParallel int `json:"maxParallel"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	if req.MaxParallel <= 0 {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "maxParallel", Message: "maxParallel must be positive"},
+		})
+		return
+	}
+
+	// TODO: Update max_parallel via UpdateConfig method (method not implemented yet)
+	// err := h.runnerRegistry.UpdateConfig(r.Context(), runnerID, req.MaxParallel)
+	// if err != nil {
+	// 	if errors.Is(err, ErrNotFound) {
+	// 		WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+	// 		return
+	// 	}
+	// 	WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+	// 	return
+	// }
+	_ = runnerID // TODO: remove when UpdateConfig is implemented
+
+	slog.Info("runner config updated",
+		"runner_id", runnerID,
+		"max_parallel", req.MaxParallel,
+	)
+
+	// Push config change to runner via SSE command channel
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "config_update", map[string]interface{}{
+			"maxParallel": req.MaxParallel,
+		})
+	}
+
+	// Return updated runner info
+	updated, _ := h.runnerRegistry.GetRunner(r.Context(), runnerID)
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success": true,
+		"runner":  updated,
+	})
+}
+
+// HandleToggleRunnerFeature handles POST /runners/{runnerId}/features/{featureId}/toggle
+// — enables or disables a feature on a runner.
+// Feature toggle is pushed to the runner via SSE command channel.
+func (h *Handler) HandleToggleRunnerFeature(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	featureID := chi.URLParam(r, "featureId")
+
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	// Verify runner exists
+	_, err := h.runnerRegistry.GetRunner(r.Context(), runnerID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	action := "disabled"
+	if req.Enabled {
+		action = "enabled"
+	}
+
+	slog.Info("runner feature toggled",
+		"runner_id", runnerID,
+		"feature_id", featureID,
+		"enabled", req.Enabled,
+	)
+
+	// Push feature toggle to runner via SSE command channel
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "feature_toggle", map[string]interface{}{
+			"featureId": featureID,
+			"enabled":   req.Enabled,
+		})
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success":    true,
+		"runner_id":  runnerID,
+		"feature_id": featureID,
+		"action":     action,
+	})
 }

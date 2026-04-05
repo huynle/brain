@@ -142,6 +142,15 @@ func (s *RunnerRegistryServiceImpl) GetRunner(ctx context.Context, runnerID stri
 	return info, nil
 }
 
+// UpdateAffinity updates a runner's feature affinity.
+func (s *RunnerRegistryServiceImpl) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	err := s.storage.UpdateAffinity(ctx, runnerID, featureIDs)
+	if err != nil {
+		return fmt.Errorf("update affinity: %w", err)
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Lifecycle Management
 // ---------------------------------------------------------------------------

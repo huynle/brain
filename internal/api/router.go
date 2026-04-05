@@ -266,9 +266,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						if o.handler != nil && o.handler.tasks != nil {
 							r.Post("/features/{featureId}/checkout", o.handler.HandleCheckoutFeature)
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
+							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 						} else {
 							r.Post("/features/{featureId}/checkout", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
+							r.Post("/{taskId}/dispatch", notImplemented)
 						}
 					})
 				})
@@ -297,10 +299,12 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/register", o.handler.HandleRegisterRunner)
 						r.Post("/{runnerId}/heartbeat", o.handler.HandleHeartbeat)
 						r.Post("/{runnerId}/deregister", o.handler.HandleDeregisterRunner)
+						r.Put("/{runnerId}/affinity", o.handler.HandleUpdateAffinity)
 					} else {
 						r.Post("/register", notImplemented)
 						r.Post("/{runnerId}/heartbeat", notImplemented)
 						r.Post("/{runnerId}/deregister", notImplemented)
+						r.Put("/{runnerId}/affinity", notImplemented)
 					}
 				})
 

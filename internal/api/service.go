@@ -119,6 +119,9 @@ type TaskService interface {
 	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
 	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 
+	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
+
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 
@@ -176,6 +179,9 @@ type RunnerRegistryService interface {
 
 	// GetRunner returns a single runner by ID with computed status.
 	GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+
+	// UpdateAffinity updates a runner's feature affinity.
+	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 }
 
 // MonitorService defines the interface for monitor operations.

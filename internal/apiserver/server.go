@@ -156,6 +156,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithLogBuffer(logBuf),
+		api.WithTaskDefaults(cfg.TaskDefaults),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────

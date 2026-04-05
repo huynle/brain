@@ -88,21 +88,6 @@ type ServerConfig struct {
 	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
 }
 
-// TaskDefaultsConfig holds server-side default values for task execution.
-// These defaults are applied when a task does not specify its own values.
-type TaskDefaultsConfig struct {
-	Agent              string `yaml:"agent"`
-	Model              string `yaml:"model"`
-	ExecutionMode      string `yaml:"execution_mode"`
-	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty"`
-	MergePolicy        string `yaml:"merge_policy"`
-	MergeStrategy      string `yaml:"merge_strategy"`
-	MergeTargetBranch  string `yaml:"merge_target_branch"`
-	RemoteBranchPolicy string `yaml:"remote_branch_policy"`
-	OpenPRBeforeMerge  *bool  `yaml:"open_pr_before_merge,omitempty"`
-	TargetWorkdir      string `yaml:"target_workdir"`
-}
-
 // RunnerConfig holds task runner configuration.
 type RunnerConfig struct {
 	MaxParallel            int              `yaml:"max_parallel"`
@@ -127,6 +112,22 @@ type OpencodeSettings struct {
 	Bin   string `yaml:"bin"`
 	Agent string `yaml:"agent"`
 	Model string `yaml:"model"`
+}
+
+// TaskDefaultsConfig holds default values for task execution settings.
+// These defaults are applied by the API server when resolving tasks.
+// Task frontmatter values always take precedence over these defaults.
+type TaskDefaultsConfig struct {
+	Agent              string `yaml:"agent"`
+	Model              string `yaml:"model"`
+	ExecutionMode      string `yaml:"execution_mode"`
+	CompleteOnIdle     *bool  `yaml:"complete_on_idle"`
+	MergePolicy        string `yaml:"merge_policy"`
+	MergeStrategy      string `yaml:"merge_strategy"`
+	MergeTargetBranch  string `yaml:"merge_target_branch"`
+	RemoteBranchPolicy string `yaml:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool  `yaml:"open_pr_before_merge"`
+	TargetWorkdir      string `yaml:"target_workdir"`
 }
 
 // TUIConfig holds TUI display and keybinding configuration.

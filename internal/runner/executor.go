@@ -168,12 +168,19 @@ func (e *Executor) ensureWorktree(task *types.ResolvedTask) (string, error) {
 	if task.ExecutionMode == "current_branch" {
 		return "", nil
 	}
-	// Guard: no branch specified
-	if task.GitBranch == "" {
-		return "", nil
+
+	// Determine effective branch: explicit git_branch wins, then derive from feature_id
+	branch := task.GitBranch
+	if branch == "" {
+		if task.FeatureID != "" {
+			branch = task.FeatureID
+		} else {
+			return "", nil
+		}
 	}
+
 	// Guard: skip for default branches
-	if task.GitBranch == "main" || task.GitBranch == "master" {
+	if branch == "main" || branch == "master" {
 		return "", nil
 	}
 
@@ -195,7 +202,7 @@ func (e *Executor) ensureWorktree(task *types.ResolvedTask) (string, error) {
 	// Check if branch is the current branch in the main repo
 	cmd := e.CommandFactory("git", "-C", mainRepoPath, "branch", "--show-current")
 	if out, err := cmd.Output(); err == nil {
-		if strings.TrimSpace(string(out)) == task.GitBranch {
+		if strings.TrimSpace(string(out)) == branch {
 			return "", nil // Branch is current in main repo, run there
 		}
 	}
@@ -203,13 +210,13 @@ func (e *Executor) ensureWorktree(task *types.ResolvedTask) (string, error) {
 	// Check if branch already checked out in an existing worktree
 	cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "list", "--porcelain")
 	if out, err := cmd.Output(); err == nil {
-		if existingPath := findWorktreeForBranch(string(out), task.GitBranch); existingPath != "" {
+		if existingPath := findWorktreeForBranch(string(out), branch); existingPath != "" {
 			return existingPath, nil
 		}
 	}
 
 	// Compute worktree path: {mainRepo}/.worktrees/{sanitized-branch}
-	sanitizedBranch := sanitizeBranchName(task.GitBranch)
+	sanitizedBranch := sanitizeBranchName(branch)
 	worktreePath := filepath.Join(mainRepoPath, ".worktrees", sanitizedBranch)
 
 	// If already exists on disk, reuse
@@ -232,16 +239,16 @@ func (e *Executor) ensureWorktree(task *types.ResolvedTask) (string, error) {
 	ensureWorktreesIgnored(mainRepoPath)
 
 	// Check if branch exists
-	checkCmd := e.CommandFactory("git", "-C", mainRepoPath, "rev-parse", "--verify", task.GitBranch)
+	checkCmd := e.CommandFactory("git", "-C", mainRepoPath, "rev-parse", "--verify", branch)
 	branchExists := checkCmd.Run() == nil
 
 	// Create worktree
 	if branchExists {
-		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", worktreePath, task.GitBranch)
+		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", worktreePath, branch)
 	} else {
 		// Get default branch
 		defaultBranch := getDefaultBranch(e.CommandFactory, mainRepoPath)
-		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", "-b", task.GitBranch, worktreePath, defaultBranch)
+		cmd = e.CommandFactory("git", "-C", mainRepoPath, "worktree", "add", "-b", branch, worktreePath, defaultBranch)
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("git worktree add failed: %s: %w", strings.TrimSpace(string(out)), err)
@@ -315,7 +322,17 @@ func ensureWorktreesIgnored(repoPath string) {
 // =============================================================================
 
 // GetEffectiveAgent returns the effective agent for a task.
-// Precedence: task.Agent > config.Opencode.Agent
+//
+// Precedence: task.Agent (includes server task_defaults) > config.Opencode.Agent (runner-local override)
+//
+// The full precedence chain from creation to execution:
+//  1. Task-level agent (set explicitly on the task at creation)
+//  2. Server task_defaults agent (applied by the API server when the task field is empty)
+//  3. Runner config agent (config.Opencode.Agent — runner-local override for this runner instance)
+//
+// By the time the runner sees task.Agent, steps 1-2 have already been resolved
+// server-side. The runner's config.Opencode.Agent only applies when the task
+// field is still empty after server defaults (e.g., no server-level default configured).
 func (e *Executor) GetEffectiveAgent(task *types.ResolvedTask) string {
 	if task.Agent != "" {
 		return task.Agent
@@ -324,7 +341,18 @@ func (e *Executor) GetEffectiveAgent(task *types.ResolvedTask) string {
 }
 
 // GetEffectiveModel returns the effective model for a task.
-// Precedence: task.Model > runtimeDefaultModel > config.Opencode.Model
+//
+// Precedence: task.Model (includes server task_defaults) > runtimeDefaultModel (TUI override) > config.Opencode.Model (runner-local override)
+//
+// The full precedence chain from creation to execution:
+//  1. Task-level model (set explicitly on the task at creation)
+//  2. Server task_defaults model (applied by the API server when the task field is empty)
+//  3. Runtime default model (runtimeDefaultModel — set interactively via TUI model picker)
+//  4. Runner config model (config.Opencode.Model — runner-local override for this runner instance)
+//
+// By the time the runner sees task.Model, steps 1-2 have already been resolved
+// server-side. The runtimeDefaultModel and config.Opencode.Model only apply when
+// the task field is still empty after server defaults.
 func (e *Executor) GetEffectiveModel(task *types.ResolvedTask, runtimeDefaultModel string) string {
 	if task.Model != "" {
 		return task.Model

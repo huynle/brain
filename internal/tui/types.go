@@ -90,6 +90,9 @@ type RunnerController interface {
 	// SetMaxParallel updates the maximum number of parallel tasks at runtime.
 	// Values <= 0 are clamped to 1.
 	SetMaxParallel(n int)
+	// SetDefaultModel updates the runtime default model override.
+	// An empty string clears the override.
+	SetDefaultModel(model string)
 
 	// EnableFeature adds a feature to the enabled whitelist.
 	// When a project is paused, only enabled features are polled for new tasks.

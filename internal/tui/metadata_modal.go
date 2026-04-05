@@ -69,6 +69,11 @@ type monitorToggleResultMsg struct {
 	err       error
 }
 
+// taskDefaultsFetchedMsg is sent when task defaults have been fetched from the API.
+type taskDefaultsFetchedMsg struct {
+	defaults *runner.TaskDefaultsResponse
+}
+
 // ============================================================================
 // Monitor Template Types
 // ============================================================================
@@ -152,6 +157,10 @@ type MetadataModal struct {
 	projectsList    []string // all available projects
 	projectsLoaded  bool     // whether projects have been fetched
 	filteredOptions []string // filtered project list based on editBuffer
+
+	// Config defaults state
+	taskDefaults       *runner.TaskDefaultsResponse // nil until fetched
+	taskDefaultsLoaded bool
 
 	// Monitor template state (feature mode only)
 	monitorTemplates    []MonitorTemplateState
@@ -590,6 +599,14 @@ func (m *MetadataModal) saveField() tea.Cmd {
 // Init initializes the modal by fetching entry data.
 func (m *MetadataModal) Init() tea.Cmd {
 	m.loading = true
+	return tea.Batch(
+		m.fetchEntriesCmd(),
+		m.fetchTaskDefaultsCmd(),
+	)
+}
+
+// fetchEntriesCmd returns a tea.Cmd that fetches task entries.
+func (m *MetadataModal) fetchEntriesCmd() tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
 
@@ -638,6 +655,15 @@ func (m *MetadataModal) Init() tea.Cmd {
 			entries: entries,
 			err:     nil,
 		}
+	}
+}
+
+// fetchTaskDefaultsCmd returns a tea.Cmd that fetches task defaults from the API.
+func (m *MetadataModal) fetchTaskDefaultsCmd() tea.Cmd {
+	return func() tea.Msg {
+		ctx := context.Background()
+		defaults, _ := m.apiClient.GetTaskDefaults(ctx)
+		return taskDefaultsFetchedMsg{defaults: defaults}
 	}
 }
 
@@ -768,6 +794,11 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			return m, m.fetchMonitorTemplatesCmd()
 		}
 
+		return m, nil
+
+	case taskDefaultsFetchedMsg:
+		m.taskDefaultsLoaded = true
+		m.taskDefaults = msg.defaults
 		return m, nil
 
 	case metadataUpdatedMsg:
@@ -1162,6 +1193,7 @@ func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
 		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
 	}
 
+	dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 	fieldType := getFieldType(field)
 
 	switch fieldType {
@@ -1172,17 +1204,71 @@ func (m *MetadataModal) getFieldDisplayValue(field MetadataField) string {
 			}
 			return "false"
 		}
-		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+		// Check config default for bool fields
+		if cfgVal := m.getConfigDefault(field); cfgVal != "" {
+			return m.renderConfigDefault(cfgVal)
+		}
+		return dimStyle.Render("(none)")
 
 	case FieldTypeText, FieldTypeDropdown, FieldTypeMultiFilterDropdown:
 		if val, ok := m.values[field]; ok && val != "" {
 			return val
 		}
-		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+		// Check config default for text/dropdown fields
+		if cfgVal := m.getConfigDefault(field); cfgVal != "" {
+			return m.renderConfigDefault(cfgVal)
+		}
+		return dimStyle.Render("(none)")
 
 	default:
-		return lipgloss.NewStyle().Foreground(ColorDim).Render("(none)")
+		return dimStyle.Render("(none)")
 	}
+}
+
+// getConfigDefault returns the config default value for a field, or "" if none.
+func (m *MetadataModal) getConfigDefault(field MetadataField) string {
+	if m.taskDefaults == nil {
+		return ""
+	}
+	d := m.taskDefaults
+	switch field {
+	case FieldAgent:
+		return d.Agent
+	case FieldModel:
+		return d.Model
+	case FieldExecutionMode:
+		return d.ExecutionMode
+	case FieldMergePolicy:
+		return d.MergePolicy
+	case FieldMergeStrategy:
+		return d.MergeStrategy
+	case FieldMergeTargetBranch:
+		return d.MergeTargetBranch
+	case FieldTargetWorkdir:
+		return d.TargetWorkdir
+	case FieldCompleteOnIdle:
+		if d.CompleteOnIdle != nil {
+			if *d.CompleteOnIdle {
+				return "true"
+			}
+			return "false"
+		}
+	case FieldOpenPRBeforeMerge:
+		if d.OpenPRBeforeMerge != nil {
+			if *d.OpenPRBeforeMerge {
+				return "true"
+			}
+			return "false"
+		}
+	}
+	return ""
+}
+
+// renderConfigDefault renders a config default value with the (config) indicator.
+func (m *MetadataModal) renderConfigDefault(value string) string {
+	valueStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#5fafd7")) // blue/cyan
+	suffixStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+	return valueStyle.Render(value) + suffixStyle.Render(" (config)")
 }
 
 // HandleKey handles a key press.

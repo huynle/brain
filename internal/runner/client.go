@@ -845,6 +845,44 @@ func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerI
 }
 
 // =============================================================================
+// Configuration
+// =============================================================================
+
+// TaskDefaultsResponse mirrors the JSON from GET /api/v1/config/task-defaults.
+type TaskDefaultsResponse struct {
+	Agent              string `json:"agent"`
+	Model              string `json:"model"`
+	ExecutionMode      string `json:"execution_mode"`
+	CompleteOnIdle     *bool  `json:"complete_on_idle"`
+	MergePolicy        string `json:"merge_policy"`
+	MergeStrategy      string `json:"merge_strategy"`
+	MergeTargetBranch  string `json:"merge_target_branch"`
+	RemoteBranchPolicy string `json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge"`
+	TargetWorkdir      string `json:"target_workdir"`
+}
+
+// GetTaskDefaults fetches the server's task_defaults configuration.
+// Returns nil (not an error) if the endpoint is unavailable (e.g., older server).
+func (c *APIClient) GetTaskDefaults(ctx context.Context) (*TaskDefaultsResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/config/task-defaults", nil)
+	if err != nil {
+		return nil, nil // graceful fallback
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil // graceful fallback for older servers
+	}
+
+	var defaults TaskDefaultsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&defaults); err != nil {
+		return nil, nil // graceful fallback
+	}
+	return &defaults, nil
+}
+
+// =============================================================================
 // Runner Pause/Resume
 // =============================================================================
 

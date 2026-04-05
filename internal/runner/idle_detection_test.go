@@ -123,6 +123,46 @@ func TestResolveCompleteOnIdle_NoDirectPrompt_DefaultsFalse(t *testing.T) {
 	}
 }
 
+// Server-applied task_defaults scenarios for resolveCompleteOnIdle
+
+func TestResolveCompleteOnIdle_ServerDefaultTrue_NoDirectPrompt(t *testing.T) {
+	// Scenario: Server applied complete_on_idle=true via task_defaults.
+	// Even without a direct_prompt, the explicit true should be honored.
+	trueVal := true
+	result := resolveCompleteOnIdle(&trueVal, "")
+	if !result {
+		t.Error("resolveCompleteOnIdle should return true when server default sets complete_on_idle=true, even without direct_prompt")
+	}
+}
+
+func TestResolveCompleteOnIdle_ServerDefaultFalse_WithDirectPrompt(t *testing.T) {
+	// Scenario: Server applied complete_on_idle=false via task_defaults,
+	// but the task also has a direct_prompt. Explicit false wins.
+	falseVal := false
+	result := resolveCompleteOnIdle(&falseVal, "run this command")
+	if result {
+		t.Error("resolveCompleteOnIdle should return false when server default sets complete_on_idle=false, even with direct_prompt")
+	}
+}
+
+func TestResolveCompleteOnIdle_ServerDefaultTrue_WithDirectPrompt(t *testing.T) {
+	// Scenario: Both server default and direct_prompt agree on true.
+	trueVal := true
+	result := resolveCompleteOnIdle(&trueVal, "do something")
+	if !result {
+		t.Error("resolveCompleteOnIdle should return true when both server default and direct_prompt indicate true")
+	}
+}
+
+func TestResolveCompleteOnIdle_NilCompleteOnIdle_NoDirectPrompt_ServerDidNotSetDefault(t *testing.T) {
+	// Scenario: Server had no task_defaults for complete_on_idle,
+	// task has no direct_prompt. Should default to false.
+	result := resolveCompleteOnIdle(nil, "")
+	if result {
+		t.Error("resolveCompleteOnIdle should default to false when server did not set a default and no direct_prompt")
+	}
+}
+
 // =============================================================================
 // idleDetectionThreshold Tests
 // =============================================================================
@@ -1073,6 +1113,173 @@ func TestClaimAndSpawn_SetsCompleteOnIdle_DefaultFalse(t *testing.T) {
 	}
 	if info.Task.CompleteOnIdle {
 		t.Error("CompleteOnIdle should be false when neither DirectPrompt nor CompleteOnIdle is set")
+	}
+}
+
+// =============================================================================
+// RuntimeDefaultModel in claimAndSpawn / resumeTask Tests
+// =============================================================================
+
+func TestClaimAndSpawn_PassesRuntimeDefaultModel(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.SetDefaultModel("tui-selected-model")
+
+	task := testTask("task1", "proj-a")
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// Verify SpawnOptions.RuntimeDefaultModel was populated
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].Opts.RuntimeDefaultModel != "tui-selected-model" {
+		t.Errorf("SpawnOptions.RuntimeDefaultModel = %q, want %q", spawns[0].Opts.RuntimeDefaultModel, "tui-selected-model")
+	}
+}
+
+func TestClaimAndSpawn_RuntimeDefaultModel_EmptyWhenNotSet(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	// Do NOT call SetDefaultModel — defaultModel should be ""
+
+	task := testTask("task1", "proj-a")
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].Opts.RuntimeDefaultModel != "" {
+		t.Errorf("SpawnOptions.RuntimeDefaultModel = %q, want empty", spawns[0].Opts.RuntimeDefaultModel)
+	}
+}
+
+func TestResumeTask_PassesRuntimeDefaultModel(t *testing.T) {
+	client := newMockClient()
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.SetDefaultModel("tui-selected-model")
+
+	task := testTask("task1", "proj-a")
+	task.Status = "in_progress"
+
+	ctx := context.Background()
+	err := tr.resumeTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("resumeTask returned error: %v", err)
+	}
+
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].Opts.RuntimeDefaultModel != "tui-selected-model" {
+		t.Errorf("SpawnOptions.RuntimeDefaultModel = %q, want %q", spawns[0].Opts.RuntimeDefaultModel, "tui-selected-model")
+	}
+}
+
+func TestResumeTask_SetsIsResumeFlag(t *testing.T) {
+	client := newMockClient()
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := testTask("task1", "proj-a")
+	task.Status = "in_progress"
+
+	ctx := context.Background()
+	err := tr.resumeTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("resumeTask returned error: %v", err)
+	}
+
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if !spawns[0].Opts.IsResume {
+		t.Error("SpawnOptions.IsResume should be true for resumeTask")
+	}
+}
+
+func TestClaimAndSpawn_ServerDefaultModel_NotOverriddenByRuntimeDefault(t *testing.T) {
+	// Scenario: Server pre-filled task.Model via task_defaults.
+	// TUI also has a runtime default model set.
+	// The executor should see task.Model taking precedence.
+	// This test verifies the SpawnOptions flow; the actual precedence
+	// is tested in executor_test.go. Here we verify that both values
+	// are passed through correctly for the executor to decide.
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.SetDefaultModel("tui-runtime-model")
+
+	task := testTask("task1", "proj-a")
+	task.Model = "server-default-model" // Pre-filled by server
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// Verify RuntimeDefaultModel is passed (executor handles precedence)
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
+	}
+	if spawns[0].Opts.RuntimeDefaultModel != "tui-runtime-model" {
+		t.Errorf("SpawnOptions.RuntimeDefaultModel = %q, want %q", spawns[0].Opts.RuntimeDefaultModel, "tui-runtime-model")
 	}
 }
 

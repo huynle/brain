@@ -1,6 +1,7 @@
 package api
 
 import (
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/logbuffer"
 	"github.com/huynle/brain-api/internal/realtime"
 )
@@ -17,6 +18,7 @@ type Handler struct {
 	webhooks       WebhookService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
+	taskDefaults   config.TaskDefaultsConfig
 }
 
 // HandlerOption configures a Handler.
@@ -77,5 +79,12 @@ func WithWebhookService(ws WebhookService) HandlerOption {
 func WithHub(hub *realtime.Hub) HandlerOption {
 	return func(h *Handler) {
 		h.hub = hub
+	}
+}
+
+// WithTaskDefaults sets the task defaults configuration on the Handler.
+func WithTaskDefaults(td config.TaskDefaultsConfig) HandlerOption {
+	return func(h *Handler) {
+		h.taskDefaults = td
 	}
 }

@@ -173,7 +173,8 @@ type TaskRunner struct {
 	stats           RunnerStats
 	startedAt       time.Time
 	lastCronCheckAt time.Time
-	maxParallel     int // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	maxParallel     int    // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	defaultModel    string // runtime-adjustable default model (empty = no override)
 
 	// Pause state (protected by pauseMu)
 	pauseMu         sync.RWMutex
@@ -793,8 +794,9 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	}
 
 	spawnOpts := SpawnOptions{
-		Mode:    tr.mode,
-		Workdir: workdir,
+		Mode:                tr.mode,
+		Workdir:             workdir,
+		RuntimeDefaultModel: tr.getDefaultModel(),
 	}
 
 	// Start log streamer if enabled
@@ -1572,6 +1574,26 @@ func (tr *TaskRunner) getMaxParallel() int {
 		return n
 	}
 	return tr.config.MaxParallel
+}
+
+// =============================================================================
+// Default Model
+// =============================================================================
+
+// SetDefaultModel updates the runtime default model override.
+// An empty string clears the override.
+func (tr *TaskRunner) SetDefaultModel(model string) {
+	tr.mu.Lock()
+	tr.defaultModel = model
+	tr.mu.Unlock()
+}
+
+// getDefaultModel returns the current runtime default model.
+func (tr *TaskRunner) getDefaultModel() string {
+	tr.mu.RLock()
+	m := tr.defaultModel
+	tr.mu.RUnlock()
+	return m
 }
 
 // =============================================================================

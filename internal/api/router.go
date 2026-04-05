@@ -173,6 +173,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						// Per-task operations
 						r.Post("/{taskId}/claim", o.handler.HandleClaimTask)
 						r.Post("/{taskId}/release", o.handler.HandleReleaseTask)
+						r.Post("/{taskId}/renew", o.handler.HandleRenewClaim)
 						r.Get("/{taskId}/claim-status", o.handler.HandleGetClaimStatus)
 						r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 					} else {
@@ -208,6 +209,21 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Post("/", notImplemented)
 					r.Get("/", notImplemented)
 					r.Delete("/{name}", notImplemented)
+				}
+			})
+
+			// ─── Runners (Registry) ─────────────────────────────
+			r.Route("/runners", func(r chi.Router) {
+				if o.handler != nil && o.handler.runnerRegistry != nil {
+					r.Post("/register", o.handler.HandleRegisterRunner)
+					r.Get("/", o.handler.HandleListRunners)
+					r.Post("/{runnerId}/heartbeat", o.handler.HandleHeartbeat)
+					r.Post("/{runnerId}/deregister", o.handler.HandleDeregisterRunner)
+				} else {
+					r.Post("/register", notImplemented)
+					r.Get("/", notImplemented)
+					r.Post("/{runnerId}/heartbeat", notImplemented)
+					r.Post("/{runnerId}/deregister", notImplemented)
 				}
 			})
 

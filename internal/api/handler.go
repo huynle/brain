@@ -4,12 +4,13 @@ import "github.com/huynle/brain-api/internal/realtime"
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
-	brain   BrainService
-	tasks   TaskService
-	runner  RunnerService
-	monitor MonitorService
-	tokens  TokenService
-	hub     *realtime.Hub
+	brain          BrainService
+	tasks          TaskService
+	runner         RunnerService
+	runnerRegistry RunnerRegistryService
+	monitor        MonitorService
+	tokens         TokenService
+	hub            *realtime.Hub
 }
 
 // HandlerOption configures a Handler.
@@ -42,6 +43,13 @@ func WithRunnerService(rs RunnerService) HandlerOption {
 func WithMonitorService(ms MonitorService) HandlerOption {
 	return func(h *Handler) {
 		h.monitor = ms
+	}
+}
+
+// WithRunnerRegistryService sets the RunnerRegistryService on the Handler.
+func WithRunnerRegistryService(rrs RunnerRegistryService) HandlerOption {
+	return func(h *Handler) {
+		h.runnerRegistry = rrs
 	}
 }
 

@@ -107,10 +107,14 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	brainSvc := service.NewBrainService(&cfg, store, idx)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
+	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 
 	// ─── Background Claim Cleanup ──────────────────────────────────
 	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
+
+	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
@@ -120,6 +124,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
+		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

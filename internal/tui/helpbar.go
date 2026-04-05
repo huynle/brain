@@ -8,14 +8,15 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel      Panel
-	ViewMode         ViewMode
-	TextWrap         bool
-	IsPaused         bool
-	AllPaused        bool
-	HasTaskSessions  bool       // whether selected task has sessions (shows o/O shortcuts)
-	HasSelectedTasks bool       // whether tasks are currently selected (shows delete shortcut)
-	ActiveContentTab ContentTab // which content tab is active (Tasks/Dream)
+	ActivePanel        Panel
+	ViewMode           ViewMode
+	TextWrap           bool
+	IsPaused           bool
+	AllPaused          bool
+	HasTaskSessions    bool       // whether selected task has sessions (shows o/O shortcuts)
+	HasSelectedTasks   bool       // whether tasks are currently selected (shows delete shortcut)
+	ActiveContentTab   ContentTab // which content tab is active (Tasks/Dream)
+	RunnerPanelVisible bool       // whether the runner panel is shown
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -79,7 +80,10 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	shortcuts += fmt.Sprintf("%s Top/Bottom  ", bold("g/G"))
 
 	// Panel-specific shortcuts (view mode aware)
-	if h.ActivePanel == PanelLogs {
+	if h.ActivePanel == PanelRunners {
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Info  ", bold("i"))
+	} else if h.ActivePanel == PanelLogs {
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
 	} else if h.ActivePanel == PanelDetails {
 		if h.ViewMode == ViewModeSchedules {
@@ -144,6 +148,9 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+
+	// R Runners
+	shortcuts += fmt.Sprintf("%s Runners  ", bold("R"))
 
 	// r Refresh
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))

@@ -71,3 +71,9 @@ type DreamContentMsg struct {
 	Content string
 	Error   error
 }
+
+// RunnerListMsg is sent when the runner list has been fetched from the API.
+type RunnerListMsg struct {
+	Runners []types.RunnerInfo
+	Err     error
+}

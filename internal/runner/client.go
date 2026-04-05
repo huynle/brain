@@ -725,6 +725,25 @@ func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error
 	return nil
 }
 
+// ListRunners fetches all registered runners from the Brain API.
+func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list runners: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.RunnerListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode runners response: %w", err)
+	}
+	return &result, nil
+}
+
 // =============================================================================
 // Log Streaming
 // =============================================================================

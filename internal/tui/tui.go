@@ -123,6 +123,10 @@ type Model struct {
 	// Content tab state (Tasks / Dream)
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
+
+	// Runner panel state
+	runnerPanel        RunnerPanel
+	runnerPanelVisible bool
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -175,6 +179,7 @@ func NewModel(cfg Config) Model {
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:  make(map[string]bool),
 		dreamViewer:      NewDreamViewer(),
+		runnerPanel:      NewRunnerPanel(),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -408,7 +413,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()))
+		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
+		// Fetch runners periodically when runner panel is visible
+		if m.runnerPanelVisible {
+			cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
+		}
+		return m, tea.Batch(cmds...)
+
+	case RunnerListMsg:
+		if msg.Err == nil {
+			m.runnerPanel.SetRunners(msg.Runners)
+		}
+		return m, nil
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -955,7 +971,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyTab:
-		m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		if m.runnerPanelVisible {
+			m.activePanel = NextPanelWithRunners(m.activePanel, m.detailVisible, m.logsVisible, true)
+		} else {
+			m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		}
 		m.helpBar.ActivePanel = m.activePanel
 		return m, nil
 
@@ -1053,6 +1073,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			modal := NewHelpModal(m.config.IsMultiProject())
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
+		case "R":
+			// Toggle runner panel visibility
+			m.runnerPanelVisible = !m.runnerPanelVisible
+			m.helpBar.RunnerPanelVisible = m.runnerPanelVisible
+			if m.runnerPanelVisible {
+				// Switch focus to runner panel and fetch runners immediately
+				m.activePanel = PanelRunners
+				m.helpBar.ActivePanel = m.activePanel
+				return m, fetchRunnerListCmd(m.apiRunnerConfig())
+			}
+			// Closing runner panel: return focus to tasks
+			if m.activePanel == PanelRunners {
+				m.activePanel = PanelTasks
+				m.helpBar.ActivePanel = m.activePanel
+			}
+			return m, nil
 		case "S":
 			// Open settings modal with task counts per status group and per-project running counts
 			taskCounts := m.computeTaskCountsByStatus()
@@ -1412,7 +1448,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "j":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveDown()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveDown()
 					m.syncScheduleDetail()
@@ -1429,7 +1467,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "k":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveUp()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveUp()
 					m.syncScheduleDetail()
@@ -2581,7 +2621,7 @@ func (m Model) renderBaseView() string {
 	}
 
 	// Determine if right panels are visible
-	hasBottomPanel := m.detailVisible || m.logsVisible
+	hasBottomPanel := m.detailVisible || m.logsVisible || m.runnerPanelVisible
 
 	// Calculate heights - ensure total equals mainHeight exactly
 	var topHeight, bottomHeight int
@@ -2662,6 +2702,27 @@ func (m Model) renderBaseView() string {
 			Height(mainHeight - 2).
 			Render(dreamView)
 		mainContent = dreamPanel
+	} else if m.runnerPanelVisible {
+		// Runner panel visible: split into task panel (top) + runner panel (bottom)
+		// Use the same bottom panel area for the runner panel
+		runnerPanelStyle := InactiveBorder
+		if m.activePanel == PanelRunners {
+			runnerPanelStyle = ActiveBorder
+		}
+
+		runnerInnerHeight := bottomHeight - 2
+		if runnerInnerHeight < 1 {
+			runnerInnerHeight = 1
+		}
+		runnerView := m.runnerPanel.View(innerWidth, runnerInnerHeight)
+		runnerView = truncateToHeight(runnerView, runnerInnerHeight)
+		runnerPanelView := runnerPanelStyle.
+			Width(m.width - 2).
+			Height(runnerInnerHeight).
+			MaxHeight(bottomHeight).
+			Render(runnerView)
+
+		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, runnerPanelView)
 	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
@@ -3395,6 +3456,19 @@ func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerControl
 			err = apiClient.PauseAll(ctx)
 		}
 		return pauseAllToggledMsg{paused: !currentlyPaused, err: err}
+	}
+}
+
+// fetchRunnerListCmd fetches the list of registered runners from the API.
+func fetchRunnerListCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		resp, err := apiClient.ListRunners(ctx)
+		if err != nil {
+			return RunnerListMsg{Err: err}
+		}
+		return RunnerListMsg{Runners: resp.Runners}
 	}
 }
 

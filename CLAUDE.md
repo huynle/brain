@@ -52,12 +52,107 @@ go run ./cmd/brain-api  # Run API server without building
 - `graph.go` - Graph relationship storage
 
 ### Task Runner (`internal/runner/`)
-- `task_runner.go` - Main runner orchestration
-- `api_client.go` - Brain API client
-- `opencode_executor.go` - OpenCode process spawning
-- `process_manager.go` - Child process lifecycle
+- `runner.go` - Main runner orchestration (poll loop, claim/spawn, completion)
+- `client.go` - Brain API HTTP client
+- `executor.go` - OpenCode executor (`TaskExecutor` interface impl)
+- `pi_executor.go` - Pi executor (`TaskExecutor` interface impl)
+- `executor_factory.go` - `ExecutorRegistry` and `ResolveExecutorForTask` precedence chain
+- `executor_common.go` - Shared logic: workdir resolution, prompt building, env exports, cleanup
+- `idle_detection.go` - Idle detection: OpenCode HTTP polling, Pi process-exit detection
+- `process_manager.go` - Child process lifecycle and tracking
 - `state_manager.go` - Persistent state for runner
+- `types.go` - All config, execution, state, and event types
 - `signals.go` - Graceful shutdown handling
+- `execute.go` - Manual TUI execution and feature batch execution
+- `schedule.go` - Cron scheduling for recurring tasks
+- `logging.go` - slog-based event handler for headless mode
+- `sse_listener.go` - SSE stream watcher for task changes
+
+#### Multi-Executor Architecture
+
+The runner supports multiple executor backends via the `TaskExecutor` interface and `ExecutorRegistry`:
+
+```
+ExecutorRegistry
+├── "opencode" → OpenCodeExecutor  (HTTP API-based, port polling for idle detection)
+└── "pi"       → PiExecutor        (RPC mode via stdin, process-exit for completion)
+```
+
+**TaskExecutor interface:**
+```go
+type TaskExecutor interface {
+    BuildPrompt(task *types.ResolvedTask, isResume bool) string
+    ResolveWorkdir(task *types.ResolvedTask) (string, error)
+    Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error)
+    Cleanup(taskID, projectID string) error
+}
+```
+
+**Executor resolution precedence:**
+```
+task.Executor > task_defaults.executor > config.DefaultExecutor > "opencode"
+```
+
+#### Pi Executor
+
+The Pi executor spawns [Pi](https://github.com/anthropics/pi) processes in RPC mode (`--mode rpc`). Key features:
+
+- **Agent bundles**: Resolved from `~/.pi/brain-agents/<agentName>/config.json`
+  - `system_prompt_file`: Path to system prompt markdown
+  - `extension`: Agent-bundled TypeScript extension
+  - `thinking`: Thinking level (off/minimal/low/medium/high/xhigh)
+  - `tools`: Tool restriction list
+- **Extension composition** (3 layers, all additive):
+  - Layer 1: Agent-bundled extension (from agent bundle config.json)
+  - Layer 2: Config always-on extensions (`config.Pi.Extensions`)
+  - Layer 3: Per-task extensions (`task.Extensions`)
+- **Short name resolution**: `"code-review"` resolves to `~/.pi/extensions/brain-code-review.ts`
+- **Model precedence**: `task.Model > runtime default > config.Pi.Model`
+- **Idle detection**: Pi RPC processes exit when done (process exit = completion); no HTTP polling needed
+- **Graceful fallback**: Missing agent bundle falls back to `--append-system-prompt`
+
+#### Configuration
+
+**Config types** (`types.go`):
+```yaml
+# Runner config (config.yaml or env vars)
+pi:
+  bin: "pi"                           # PI_BIN env var
+  model: "anthropic/claude-sonnet-4-20250514"    # PI_MODEL
+  thinking: "high"                    # PI_THINKING (off/minimal/low/medium/high/xhigh)
+  agents_dir: "~/.pi/brain-agents"    # Agent bundle directory
+  extensions_dir: "~/.pi/extensions"  # Extension resolution base
+  extensions:                         # Always-on extensions (Layer 2)
+    - "/path/to/ext.ts"
+  no_session: true                    # --no-session flag
+
+default_executor: "opencode"          # DEFAULT_EXECUTOR (opencode/pi)
+
+task_defaults:                        # Defaults for all tasks
+  agent: "tdd-dev"
+  model: "anthropic/claude-sonnet-4-20250514"
+  executor: "pi"
+  execution_mode: "worktree"
+  merge_policy: "auto_pr"
+  merge_strategy: "squash"
+  merge_target_branch: "main"
+  remote_branch_policy: "delete"
+  target_workdir: "/path/to/work"
+```
+
+**CLI flags:**
+- `--executor <name>` - Override default executor (opencode/pi)
+- `--pi-bin <path>` - Path to pi binary
+- `--pi-model <model>` - Model for Pi executor
+- `--pi-thinking <level>` - Thinking level for Pi
+
+#### Idle Detection
+
+Two mechanisms based on executor type:
+- **OpenCode**: HTTP polling via `/session/status` endpoint. Empty response = idle.
+- **Pi**: Process exit detection. A running Pi RPC process is always "busy". Completion is detected when the process exits (handled by `checkRunningTasks` → `CheckCompletion`).
+
+Mixed workloads (OpenCode + Pi tasks running simultaneously) are supported with correct per-task routing.
 
 ### TUI Dashboard (`internal/tui/`)
 

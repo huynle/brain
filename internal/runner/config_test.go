@@ -21,6 +21,7 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
 		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
 		"BRAIN_AUTO_MONITORS",
+		"RUNNER_EXECUTORS", "PI_BIN", "PI_MODEL",
 	}
 	for _, key := range envVars {
 		os.Unsetenv(key)
@@ -70,6 +71,16 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.AutoMonitors {
 		t.Error("AutoMonitors should default to false")
+	}
+	// Executor defaults
+	if len(cfg.Executors) != 1 || cfg.Executors[0] != "opencode" {
+		t.Errorf("Executors = %v, want [\"opencode\"]", cfg.Executors)
+	}
+	if cfg.Pi.Bin != "pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "pi")
+	}
+	if cfg.Pi.Model != "" {
+		t.Errorf("Pi.Model = %q, want empty", cfg.Pi.Model)
 	}
 	homeDir, _ := os.UserHomeDir()
 	if cfg.WorkDir != homeDir {
@@ -321,5 +332,218 @@ func TestValidateConfig_NegativeTimeout(t *testing.T) {
 	}
 	if err := ValidateConfig(cfg); err == nil {
 		t.Error("expected error for negative apiTimeout")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor config — env var overrides
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ExecutorEnvOverrides(t *testing.T) {
+	t.Setenv("RUNNER_EXECUTORS", "opencode,pi")
+	t.Setenv("PI_BIN", "/usr/local/bin/pi")
+	t.Setenv("PI_MODEL", "claude-sonnet")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cfg.Executors) != 2 {
+		t.Fatalf("Executors len = %d, want 2", len(cfg.Executors))
+	}
+	if cfg.Executors[0] != "opencode" || cfg.Executors[1] != "pi" {
+		t.Errorf("Executors = %v, want [opencode pi]", cfg.Executors)
+	}
+	if cfg.Pi.Bin != "/usr/local/bin/pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/usr/local/bin/pi")
+	}
+	if cfg.Pi.Model != "claude-sonnet" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "claude-sonnet")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor config — YAML file
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ExecutorYAMLFile(t *testing.T) {
+	for _, key := range []string{"RUNNER_EXECUTORS", "PI_BIN", "PI_MODEL"} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `brain_api_url: "http://localhost:3333"
+executors:
+  - opencode
+  - pi
+pi:
+  bin: "/opt/pi"
+  model: "gpt-4o"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cfg.Executors) != 2 {
+		t.Fatalf("Executors len = %d, want 2", len(cfg.Executors))
+	}
+	if cfg.Executors[0] != "opencode" || cfg.Executors[1] != "pi" {
+		t.Errorf("Executors = %v, want [opencode pi]", cfg.Executors)
+	}
+	if cfg.Pi.Bin != "/opt/pi" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/opt/pi")
+	}
+	if cfg.Pi.Model != "gpt-4o" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "gpt-4o")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor config — nested YAML format (under runner: key)
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ExecutorNestedYAML(t *testing.T) {
+	for _, key := range []string{"RUNNER_EXECUTORS", "PI_BIN", "PI_MODEL"} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `runner:
+  brain_api_url: "http://localhost:3333"
+  executors:
+    - opencode
+    - pi
+  pi:
+    bin: "/opt/pi-nested"
+    model: "claude-opus"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(cfg.Executors) != 2 {
+		t.Fatalf("Executors len = %d, want 2", len(cfg.Executors))
+	}
+	if cfg.Executors[0] != "opencode" || cfg.Executors[1] != "pi" {
+		t.Errorf("Executors = %v, want [opencode pi]", cfg.Executors)
+	}
+	if cfg.Pi.Bin != "/opt/pi-nested" {
+		t.Errorf("Pi.Bin = %q, want %q", cfg.Pi.Bin, "/opt/pi-nested")
+	}
+	if cfg.Pi.Model != "claude-opus" {
+		t.Errorf("Pi.Model = %q, want %q", cfg.Pi.Model, "claude-opus")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor config — backward compat: missing executors defaults to ["opencode"]
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ExecutorBackwardCompat(t *testing.T) {
+	for _, key := range []string{"RUNNER_EXECUTORS", "PI_BIN", "PI_MODEL"} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `brain_api_url: "http://localhost:3333"
+opencode:
+  bin: "opencode"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// No executors configured → should default to ["opencode"]
+	if len(cfg.Executors) != 1 || cfg.Executors[0] != "opencode" {
+		t.Errorf("Executors = %v, want [\"opencode\"] (backward compat default)", cfg.Executors)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Executor config — env overrides file for executors
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_ExecutorEnvOverridesFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `brain_api_url: "http://localhost:3333"
+executors:
+  - opencode
+pi:
+  bin: "/from/file"
+  model: "file-model"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	// Env overrides file values
+	t.Setenv("RUNNER_EXECUTORS", "opencode,pi")
+	t.Setenv("PI_BIN", "/from/env")
+	t.Setenv("PI_MODEL", "env-model")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Env should override
+	if len(cfg.Executors) != 2 {
+		t.Fatalf("Executors len = %d, want 2 (env override)", len(cfg.Executors))
+	}
+	if cfg.Pi.Bin != "/from/env" {
+		t.Errorf("Pi.Bin = %q, want %q (env override)", cfg.Pi.Bin, "/from/env")
+	}
+	if cfg.Pi.Model != "env-model" {
+		t.Errorf("Pi.Model = %q, want %q (env override)", cfg.Pi.Model, "env-model")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// defaultExecutors helper
+// ---------------------------------------------------------------------------
+
+func TestDefaultExecutors(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    []string
+		expected []string
+	}{
+		{"nil input defaults to opencode", nil, []string{"opencode"}},
+		{"empty input defaults to opencode", []string{}, []string{"opencode"}},
+		{"configured preserves value", []string{"opencode", "pi"}, []string{"opencode", "pi"}},
+		{"single executor preserved", []string{"pi"}, []string{"pi"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := defaultExecutors(tt.input)
+			if len(got) != len(tt.expected) {
+				t.Fatalf("len = %d, want %d", len(got), len(tt.expected))
+			}
+			for i := range got {
+				if got[i] != tt.expected[i] {
+					t.Errorf("got[%d] = %q, want %q", i, got[i], tt.expected[i])
+				}
+			}
+		})
 	}
 }

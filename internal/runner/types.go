@@ -24,6 +24,8 @@ type RunnerConfig struct {
 	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
 	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
+	Pi                     PiConfig       `yaml:"pi" json:"pi"`
+	Executors              []string       `yaml:"executors" json:"executors"`
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
 
@@ -41,12 +43,23 @@ type RunnerConfig struct {
 	// HeartbeatInterval is how often (in seconds) the runner sends heartbeats
 	// to the Brain API. Default: 30s. Set via RUNNER_HEARTBEAT_INTERVAL env var.
 	HeartbeatInterval int `yaml:"heartbeat_interval" json:"heartbeat_interval"`
+
+	// LogStreaming enables runner-side log streaming. When true, the runner
+	// captures executor stdout/stderr and POSTs batches to the Brain API.
+	// Default: true. Set via RUNNER_LOG_STREAMING env var.
+	LogStreaming bool `yaml:"log_streaming" json:"log_streaming"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
 type OpencodeConfig struct {
 	Bin   string `yaml:"bin" json:"bin"`
 	Agent string `yaml:"agent" json:"agent"`
+	Model string `yaml:"model" json:"model"`
+}
+
+// PiConfig holds configuration for the Pi executor.
+type PiConfig struct {
+	Bin   string `yaml:"bin" json:"bin"`
 	Model string `yaml:"model" json:"model"`
 }
 

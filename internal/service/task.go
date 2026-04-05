@@ -89,12 +89,72 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 }
 
 // GetTasks returns all tasks for a project with dependency resolution.
+// Server-side task defaults are applied after resolution: empty task fields
+// are filled from config.TaskDefaults so runners receive ready-to-use tasks.
 func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*types.TaskListResponse, error) {
 	entries, err := s.getAllTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
-	return ResolveDependencies(entries), nil
+	result := ResolveDependencies(entries)
+	s.applyTaskDefaults(result.Tasks)
+	return result, nil
+}
+
+// applyTaskDefaults fills empty fields on resolved tasks from server-side
+// config.TaskDefaults. Non-empty task fields are never overwritten (task
+// frontmatter wins). Nil *bool fields get the config default; non-nil keep
+// their value. If TaskDefaults is zero-value, this is a no-op.
+func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
+	d := s.config.TaskDefaults
+
+	// Quick check: if all defaults are zero, nothing to do.
+	if d.Agent == "" && d.Model == "" && d.ExecutionMode == "" &&
+		d.CompleteOnIdle == nil && d.MergePolicy == "" && d.MergeStrategy == "" &&
+		d.MergeTargetBranch == "" && d.RemoteBranchPolicy == "" &&
+		d.OpenPRBeforeMerge == nil && d.TargetWorkdir == "" {
+		return
+	}
+
+	for i := range tasks {
+		t := &tasks[i]
+
+		// String fields: fill only if task field is empty
+		if t.Agent == "" && d.Agent != "" {
+			t.Agent = d.Agent
+		}
+		if t.Model == "" && d.Model != "" {
+			t.Model = d.Model
+		}
+		if t.ExecutionMode == "" && d.ExecutionMode != "" {
+			t.ExecutionMode = d.ExecutionMode
+		}
+		if t.MergePolicy == "" && d.MergePolicy != "" {
+			t.MergePolicy = d.MergePolicy
+		}
+		if t.MergeStrategy == "" && d.MergeStrategy != "" {
+			t.MergeStrategy = d.MergeStrategy
+		}
+		if t.MergeTargetBranch == "" && d.MergeTargetBranch != "" {
+			t.MergeTargetBranch = d.MergeTargetBranch
+		}
+		if t.RemoteBranchPolicy == "" && d.RemoteBranchPolicy != "" {
+			t.RemoteBranchPolicy = d.RemoteBranchPolicy
+		}
+		if t.TargetWorkdir == "" && d.TargetWorkdir != "" {
+			t.TargetWorkdir = d.TargetWorkdir
+		}
+
+		// *bool fields: fill only if task field is nil
+		if t.CompleteOnIdle == nil && d.CompleteOnIdle != nil {
+			v := *d.CompleteOnIdle
+			t.CompleteOnIdle = &v
+		}
+		if t.OpenPRBeforeMerge == nil && d.OpenPRBeforeMerge != nil {
+			v := *d.OpenPRBeforeMerge
+			t.OpenPRBeforeMerge = &v
+		}
+	}
 }
 
 // getAllTasks fetches all task BrainEntries for a project from storage.

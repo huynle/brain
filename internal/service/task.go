@@ -42,6 +42,36 @@ func NewTaskService(cfg *config.Config, store *storage.StorageLayer) *TaskServic
 	}
 }
 
+// DefaultClaimCleanupInterval is the default interval for the background claim cleanup goroutine.
+const DefaultClaimCleanupInterval = 60 * time.Second
+
+// StartClaimCleanup launches a background goroutine that periodically expires stale claims.
+// The goroutine calls storage.ExpireStaleClaims on each tick and logs the count of removed claims.
+// It respects context cancellation for clean shutdown.
+func (s *TaskServiceImpl) StartClaimCleanup(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("claim cleanup goroutine stopped")
+				return
+			case <-ticker.C:
+				count, err := s.storage.ExpireStaleClaims(ctx)
+				if err != nil {
+					slog.Error("claim cleanup failed", "error", err)
+					continue
+				}
+				if count > 0 {
+					slog.Info("expired stale claims", "count", count)
+				}
+			}
+		}
+	}()
+}
+
 // isExpired returns true if the claim's lease has expired (expires_at < now).
 func isExpired(claim *storage.TaskClaimRow) bool {
 	return time.Now().UnixMilli() > claim.ExpiresAt

@@ -1919,3 +1919,101 @@ func TestApplyTaskDefaults_BoolFieldSetNotOverwritten(t *testing.T) {
 		t.Errorf("OpenPRBeforeMerge = %v, want false (task value should win)", *task.OpenPRBeforeMerge)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// StartClaimCleanup - background stale claim cleanup
+// ---------------------------------------------------------------------------
+
+func TestStartClaimCleanup_ExpiresStale(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed two expired claims directly into storage with past expiry.
+	db := store.DB()
+	pastMs := time.Now().Add(-5 * time.Minute).UnixMilli()
+	for _, taskID := range []string{"task1", "task2"} {
+		_, err := db.Exec(
+			"INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+			"proj", taskID, "dead-runner", pastMs, pastMs,
+		)
+		if err != nil {
+			t.Fatalf("seed expired claim %s: %v", taskID, err)
+		}
+	}
+
+	// Seed one active (non-expired) claim.
+	ok, _, err := store.ClaimTask(ctx, "proj", "task3", "alive-runner", 5*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("seed active claim: err=%v ok=%v", err, ok)
+	}
+
+	// Run cleanup with a very short interval so it fires quickly, then cancel.
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	svc.StartClaimCleanup(cleanupCtx, 50*time.Millisecond)
+
+	// Wait enough for at least one tick.
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	// Verify expired claims are gone.
+	for _, taskID := range []string{"task1", "task2"} {
+		claim, err := store.GetClaim(ctx, "proj", taskID)
+		if err != nil {
+			t.Fatalf("GetClaim %s: %v", taskID, err)
+		}
+		if claim != nil {
+			t.Errorf("expected expired claim for %s to be removed, still exists", taskID)
+		}
+	}
+
+	// Verify active claim is still present.
+	claim, err := store.GetClaim(ctx, "proj", "task3")
+	if err != nil {
+		t.Fatalf("GetClaim task3: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected active claim for task3 to survive cleanup")
+	}
+}
+
+func TestStartClaimCleanup_RespectsContextCancellation(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Start cleanup goroutine.
+	svc.StartClaimCleanup(ctx, 50*time.Millisecond)
+
+	// Cancel immediately.
+	cancel()
+
+	// Wait to ensure goroutine exits without panic or hang.
+	// If it doesn't respect cancellation, the test will hang until timeout.
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestStartClaimCleanup_NoExpiredClaims(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed only active claims.
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "runner-1", 5*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("seed active claim: err=%v ok=%v", err, ok)
+	}
+
+	cleanupCtx, cancel := context.WithCancel(ctx)
+	svc.StartClaimCleanup(cleanupCtx, 50*time.Millisecond)
+
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+
+	// Active claim should still exist.
+	claim, err := store.GetClaim(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetClaim: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected active claim to survive cleanup")
+	}
+}

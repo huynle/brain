@@ -109,6 +109,9 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	runnerSvc := service.NewRunnerService()
 	monitorSvc := service.NewMonitorService(brainSvc)
 
+	// ─── Background Claim Cleanup ──────────────────────────────────
+	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
+
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
 

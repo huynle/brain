@@ -127,6 +127,18 @@ func (c *SSEClient) convertEvent(event sse.Event) tea.Msg {
 	case "disconnected":
 		return SSEDisconnectedMsg{ProjectID: c.projectID}
 
+	case "runner_log":
+		var data types.SSERunnerLogData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return SSEErrorMsg{Err: fmt.Errorf("parse runner_log event: %w", err), ProjectID: c.projectID}
+		}
+		return RunnerLogMsg{
+			ProjectID: data.ProjectID,
+			TaskID:    data.TaskID,
+			RunnerID:  data.RunnerID,
+			Lines:     data.Lines,
+		}
+
 	default:
 		// Unknown or ignored event types (heartbeat, project_dirty handled by sse.Client)
 		return nil

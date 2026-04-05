@@ -22,6 +22,7 @@ type LogEntry struct {
 	Message   string
 	TaskID    string
 	ProjectID string
+	RunnerID  string
 	Context   map[string]interface{}
 }
 
@@ -138,6 +139,12 @@ func (lv *LogViewer) renderEntry(entry LogEntry) string {
 		projectPrefix = DimStyle.Render(fmt.Sprintf("[%s] ", entry.ProjectID))
 	}
 
+	// Runner ID prefix (always shown when present to distinguish local vs remote logs)
+	var runnerPrefix string
+	if entry.RunnerID != "" {
+		runnerPrefix = DimStyle.Render(fmt.Sprintf("[%s] ", entry.RunnerID))
+	}
+
 	// Timestamp: HH:MM:SS
 	ts := formatTimestamp(entry.Timestamp)
 	tsStyled := DimStyle.Render(ts)
@@ -155,7 +162,7 @@ func (lv *LogViewer) renderEntry(entry LogEntry) string {
 		msg += " " + DimStyle.Render(contextStr)
 	}
 
-	return fmt.Sprintf("%s%s %s %s", projectPrefix, tsStyled, levelStyled, msg)
+	return fmt.Sprintf("%s%s%s %s %s", projectPrefix, runnerPrefix, tsStyled, levelStyled, msg)
 }
 
 // formatTimestamp formats a time as HH:MM:SS.
@@ -226,6 +233,7 @@ type logEntryJSON struct {
 	Message   string                 `json:"message"`
 	TaskID    string                 `json:"taskId,omitempty"`
 	ProjectID string                 `json:"projectId,omitempty"`
+	RunnerID  string                 `json:"runnerId,omitempty"`
 	Context   map[string]interface{} `json:"context,omitempty"`
 }
 
@@ -242,6 +250,7 @@ func (lv *LogViewer) serializeEntry(entry LogEntry) string {
 		Message:   entry.Message,
 		TaskID:    entry.TaskID,
 		ProjectID: entry.ProjectID,
+		RunnerID:  entry.RunnerID,
 		Context:   entry.Context,
 	}
 	data, err := json.Marshal(j)
@@ -280,6 +289,7 @@ func (lv *LogViewer) deserializeEntry(line string) (LogEntry, error) {
 		Message:   j.Message,
 		TaskID:    j.TaskID,
 		ProjectID: j.ProjectID,
+		RunnerID:  j.RunnerID,
 		Context:   j.Context,
 	}, nil
 }

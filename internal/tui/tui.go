@@ -414,15 +414,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Schedule next tick and sync runner pause state
 		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
-		// Fetch runners periodically when runner panel is visible
-		if m.runnerPanelVisible {
-			cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
-		}
+		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
+		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
 		return m, tea.Batch(cmds...)
 
 	case RunnerListMsg:
 		if msg.Err == nil {
 			m.runnerPanel.SetRunners(msg.Runners)
+			// Compute runner metrics for status bar
+			m.statusBar.RunnerMetrics = computeRunnerMetrics(msg.Runners)
 		}
 		return m, nil
 
@@ -499,6 +499,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case LogEntryMsg:
 		m.logViewer.AddEntry(msg.Entry)
+		return m, nil
+
+	case RunnerLogMsg:
+		// Convert runner_log SSE event lines to LogEntry and add to viewer.
+		// This enables monitor-only mode to display logs from remote runners.
+		// In hybrid mode, these remote logs are merged chronologically with local logs.
+		for _, line := range msg.Lines {
+			ts, err := time.Parse(time.RFC3339, line.Timestamp)
+			if err != nil {
+				// Fallback to current time if parse fails
+				ts = time.Now()
+			}
+			entry := LogEntry{
+				Timestamp: ts,
+				Level:     line.Level,
+				Message:   line.Content,
+				TaskID:    msg.TaskID,
+				ProjectID: msg.ProjectID,
+				RunnerID:  msg.RunnerID,
+			}
+			m.logViewer.AddEntry(entry)
+		}
 		return m, nil
 
 	case SessionDiscoveredMsg:
@@ -3617,6 +3639,28 @@ func (m Model) computeRunningPerProject() map[string]int {
 		}
 	}
 	return running
+}
+
+// computeRunnerMetrics calculates aggregate runner statistics from a list of runners.
+func computeRunnerMetrics(runners []types.RunnerInfo) *RunnerMetrics {
+	if len(runners) == 0 {
+		return nil
+	}
+
+	metrics := &RunnerMetrics{
+		TotalRunners: len(runners),
+	}
+
+	for _, r := range runners {
+		switch r.Status {
+		case types.RunnerStatusOnline:
+			metrics.OnlineRunners++
+		case types.RunnerStatusStale:
+			metrics.StaleRunners++
+		}
+	}
+
+	return metrics
 }
 
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.

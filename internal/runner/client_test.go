@@ -437,15 +437,17 @@ func TestAPIClient_ClaimTask_AlreadyClaimed(t *testing.T) {
 
 func TestAPIClient_ReleaseTask(t *testing.T) {
 	var gotPath, gotMethod string
+	var gotBody map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	err := client.ReleaseTask(context.Background(), "brain-api", "abc123")
+	err := client.ReleaseTask(context.Background(), "brain-api", "abc123", "runner-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,6 +456,9 @@ func TestAPIClient_ReleaseTask(t *testing.T) {
 	}
 	if gotPath != "/api/v1/tasks/brain-api/abc123/release" {
 		t.Errorf("path = %q, want release path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
 	}
 }
 

@@ -30,7 +30,7 @@ type Client interface {
 	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
-	ReleaseTask(ctx context.Context, projectID, taskID string) error
+	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
@@ -453,7 +453,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
 		// Release the claim on failure
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("update task status: %w", err)
 	}
 
@@ -484,7 +484,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			ProjectID: projectID,
 			Reason:    "workdir resolution failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -503,7 +503,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			ProjectID: projectID,
 			Reason:    "spawn failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID)
+		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("spawn task: %w", err)
 	}
 

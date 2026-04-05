@@ -77,6 +77,7 @@ type claimCall struct {
 type releaseCall struct {
 	ProjectID string
 	TaskID    string
+	RunnerID  string
 }
 
 type updateStatusCall struct {
@@ -141,10 +142,10 @@ func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID 
 	return result, m.claimErr
 }
 
-func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID})
+	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID, runnerID})
 	return m.releaseErr
 }
 

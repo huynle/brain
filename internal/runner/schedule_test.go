@@ -585,7 +585,7 @@ func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, fea
 func (m *schedMockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
 	return m.claimResult, nil
 }
-func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	return nil
 }
 func (m *schedMockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -2069,4 +2069,3 @@ func TestCheckScheduledTasks_MaxRunsNotReached(t *testing.T) {
 		t.Error("should trigger when max_runs not yet reached")
 	}
 }
-

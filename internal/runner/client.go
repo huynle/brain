@@ -352,9 +352,12 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 }
 
 // ReleaseTask releases a previously claimed task.
-func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+// The runnerID must match the runner that originally claimed the task.
+func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/release", projectID, taskID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return fmt.Errorf("release task: %w", err)
 	}

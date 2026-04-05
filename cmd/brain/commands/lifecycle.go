@@ -125,13 +125,14 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 // startForeground runs the API server in the current process.
 func (c *StartCommand) startForeground(pidFile string) error {
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Port:         c.Config.Server.Port,
+		Host:         c.Config.Server.Host,
+		BrainDir:     c.Config.Server.BrainDir,
+		EnableAuth:   c.Config.Server.EnableAuth,
+		LogLevel:     c.Config.Server.LogLevel,
+		CORSOrigin:   c.Config.Server.CORSOrigin,
+		OAuthPIN:     c.Config.Server.OAuthPIN,
+		TaskDefaults: c.Config.Server.TaskDefaults,
 	}
 
 	// Create context with signal handling for graceful shutdown

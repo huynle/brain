@@ -235,6 +235,136 @@ func TestPublishRunnerTasksChanged(t *testing.T) {
 	}
 }
 
+func TestPublishRunnerRegistered(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.Subscribe(RunnerLifecycleTopic)
+	defer unsub()
+
+	hub.PublishRunnerRegistered(map[string]string{"runnerId": "runner-1", "hostname": "host-a"})
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "runner_registered" {
+			t.Errorf("event = %q, want %q", msg.Event, "runner_registered")
+		}
+		if msg.Data == nil {
+			t.Error("data should not be nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner_registered event")
+	}
+}
+
+func TestPublishRunnerOffline(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.Subscribe(RunnerLifecycleTopic)
+	defer unsub()
+
+	hub.PublishRunnerOffline(map[string]string{"runnerId": "runner-1", "reason": "heartbeat timeout"})
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "runner_offline" {
+			t.Errorf("event = %q, want %q", msg.Event, "runner_offline")
+		}
+		if msg.Data == nil {
+			t.Error("data should not be nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner_offline event")
+	}
+}
+
+func TestPublishTaskClaimed(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.Subscribe("project-a")
+	defer unsub()
+
+	hub.PublishTaskClaimed("project-a", map[string]string{"taskId": "task-1", "runnerId": "runner-1"})
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "task_claimed" {
+			t.Errorf("event = %q, want %q", msg.Event, "task_claimed")
+		}
+		if msg.Data == nil {
+			t.Error("data should not be nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task_claimed event")
+	}
+}
+
+func TestPublishTaskReleased(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.Subscribe("project-a")
+	defer unsub()
+
+	hub.PublishTaskReleased("project-a", map[string]string{"taskId": "task-1", "runnerId": "runner-1"})
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "task_released" {
+			t.Errorf("event = %q, want %q", msg.Event, "task_released")
+		}
+		if msg.Data == nil {
+			t.Error("data should not be nil")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for task_released event")
+	}
+}
+
+func TestRunnerLifecycleTopicIsolation(t *testing.T) {
+	hub := NewHub()
+	projectCh, projectUnsub := hub.Subscribe("my-project")
+	defer projectUnsub()
+	lifecycleCh, lifecycleUnsub := hub.Subscribe(RunnerLifecycleTopic)
+	defer lifecycleUnsub()
+
+	// Publish runner lifecycle event
+	hub.PublishRunnerRegistered(map[string]string{"runnerId": "runner-1"})
+
+	// Lifecycle subscriber should receive
+	select {
+	case msg := <-lifecycleCh:
+		if msg.Event != "runner_registered" {
+			t.Errorf("event = %q, want %q", msg.Event, "runner_registered")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("lifecycle: timed out waiting for runner_registered event")
+	}
+
+	// Project subscriber should NOT receive lifecycle events
+	select {
+	case msg := <-projectCh:
+		t.Fatalf("project should not receive lifecycle message, got: %+v", msg)
+	case <-time.After(50 * time.Millisecond):
+		// Expected
+	}
+
+	// Publish project-scoped task_claimed event
+	hub.PublishTaskClaimed("my-project", map[string]string{"taskId": "t1"})
+
+	// Project subscriber should receive
+	select {
+	case msg := <-projectCh:
+		if msg.Event != "task_claimed" {
+			t.Errorf("event = %q, want %q", msg.Event, "task_claimed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("project: timed out waiting for task_claimed event")
+	}
+
+	// Lifecycle subscriber should NOT receive project events
+	select {
+	case msg := <-lifecycleCh:
+		t.Fatalf("lifecycle should not receive project message, got: %+v", msg)
+	case <-time.After(50 * time.Millisecond):
+		// Expected
+	}
+}
+
 func TestRunnerTopicDoesNotInterfereWithProjectTopics(t *testing.T) {
 	hub := NewHub()
 	projectCh, projectUnsub := hub.Subscribe("my-project")

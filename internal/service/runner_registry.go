@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -26,11 +27,18 @@ var _ api.RunnerRegistryService = (*RunnerRegistryServiceImpl)(nil)
 // RunnerRegistryServiceImpl implements api.RunnerRegistryService using the storage layer.
 type RunnerRegistryServiceImpl struct {
 	storage *storage.StorageLayer
+	hub     *realtime.Hub
 }
 
 // NewRunnerRegistryService creates a new RunnerRegistryServiceImpl.
 func NewRunnerRegistryService(store *storage.StorageLayer) *RunnerRegistryServiceImpl {
 	return &RunnerRegistryServiceImpl{storage: store}
+}
+
+// SetHub sets the realtime hub for publishing runner lifecycle SSE events.
+// This is called after construction to avoid circular dependencies.
+func (s *RunnerRegistryServiceImpl) SetHub(hub *realtime.Hub) {
+	s.hub = hub
 }
 
 // Register registers or re-registers a runner. Sets status to online and
@@ -205,6 +213,21 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 				"heartbeat_age", age.Round(time.Second),
 				"claims_released", released)
 
+			// Publish runner_offline SSE event
+			if s.hub != nil {
+				s.hub.PublishRunnerOffline(types.SSERunnerOfflineData{
+					SSEEventData: types.SSEEventData{
+						Type:      types.SSEEventRunnerOffline,
+						Transport: "sse",
+						Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+					},
+					RunnerID: row.RunnerID,
+					Hostname: row.Hostname,
+					Status:   string(types.RunnerStatusOffline),
+					Reason:   fmt.Sprintf("heartbeat timeout (%s)", age.Round(time.Second)),
+				})
+			}
+
 		} else if newStatus == types.RunnerStatusStale && row.Status != string(types.RunnerStatusStale) {
 			// Transition to stale (only if not already stale)
 			if err := s.storage.SetRunnerStatus(ctx, row.RunnerID, string(types.RunnerStatusStale)); err != nil {
@@ -215,6 +238,21 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 			slog.Info("runner transitioned to stale",
 				"runner_id", row.RunnerID,
 				"heartbeat_age", age.Round(time.Second))
+
+			// Publish runner_offline SSE event (stale is a degraded state worth notifying)
+			if s.hub != nil {
+				s.hub.PublishRunnerOffline(types.SSERunnerOfflineData{
+					SSEEventData: types.SSEEventData{
+						Type:      types.SSEEventRunnerOffline,
+						Transport: "sse",
+						Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+					},
+					RunnerID: row.RunnerID,
+					Hostname: row.Hostname,
+					Status:   string(types.RunnerStatusStale),
+					Reason:   fmt.Sprintf("heartbeat stale (%s)", age.Round(time.Second)),
+				})
+			}
 
 		} else if newStatus == types.RunnerStatusOnline && row.Status != string(types.RunnerStatusOnline) {
 			// Runner recovered (e.g., heartbeat came in) — set back to online

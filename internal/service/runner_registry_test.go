@@ -7,6 +7,7 @@ import (
 	"time"
 
 	_ "github.com/glebarez/go-sqlite"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -817,5 +818,199 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 	}
 	if statusMap["runner-offline"] != types.RunnerStatusOffline {
 		t.Errorf("expected runner-offline to be offline, got %s", statusMap["runner-offline"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SSE Events — Lifecycle Sweep
+// ---------------------------------------------------------------------------
+
+func newTestRunnerRegistryServiceWithHub(t *testing.T) (*RunnerRegistryServiceImpl, *storage.StorageLayer, *realtime.Hub) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+
+	store, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatalf("NewWithDB failed: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	hub := realtime.NewHub()
+	svc := NewRunnerRegistryService(store)
+	svc.SetHub(hub)
+	return svc, store, hub
+}
+
+func TestLifecycleSweep_EmitsOfflineSSEEvent(t *testing.T) {
+	svc, store, hub := newTestRunnerRegistryServiceWithHub(t)
+	ctx := context.Background()
+
+	// Subscribe to runner lifecycle events
+	ch, unsub := hub.Subscribe(realtime.RunnerLifecycleTopic)
+	defer unsub()
+
+	now := time.Now().UnixMilli()
+
+	// Register a runner with heartbeat 10 minutes ago (>5min = offline)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-dead",
+		Hostname:      "host-dead",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Should receive a runner_offline event
+	select {
+	case msg := <-ch:
+		if msg.Event != "runner_offline" {
+			t.Errorf("event = %q, want %q", msg.Event, "runner_offline")
+		}
+		data, ok := msg.Data.(types.SSERunnerOfflineData)
+		if !ok {
+			t.Fatalf("data type = %T, want types.SSERunnerOfflineData", msg.Data)
+		}
+		if data.RunnerID != "runner-dead" {
+			t.Errorf("runnerId = %q, want %q", data.RunnerID, "runner-dead")
+		}
+		if data.Status != "offline" {
+			t.Errorf("status = %q, want %q", data.Status, "offline")
+		}
+		if data.Hostname != "host-dead" {
+			t.Errorf("hostname = %q, want %q", data.Hostname, "host-dead")
+		}
+		if data.Timestamp == "" {
+			t.Error("timestamp should not be empty")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner_offline event")
+	}
+}
+
+func TestLifecycleSweep_EmitsStaleSSEEvent(t *testing.T) {
+	svc, store, hub := newTestRunnerRegistryServiceWithHub(t)
+	ctx := context.Background()
+
+	// Subscribe to runner lifecycle events
+	ch, unsub := hub.Subscribe(realtime.RunnerLifecycleTopic)
+	defer unsub()
+
+	now := time.Now().UnixMilli()
+
+	// Register a runner with heartbeat 2 minutes ago (>90s = stale)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-slow",
+		Hostname:      "host-slow",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Should receive a runner_offline event with stale status
+	select {
+	case msg := <-ch:
+		if msg.Event != "runner_offline" {
+			t.Errorf("event = %q, want %q", msg.Event, "runner_offline")
+		}
+		data, ok := msg.Data.(types.SSERunnerOfflineData)
+		if !ok {
+			t.Fatalf("data type = %T, want types.SSERunnerOfflineData", msg.Data)
+		}
+		if data.RunnerID != "runner-slow" {
+			t.Errorf("runnerId = %q, want %q", data.RunnerID, "runner-slow")
+		}
+		if data.Status != "stale" {
+			t.Errorf("status = %q, want %q", data.Status, "stale")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner_offline (stale) event")
+	}
+}
+
+func TestLifecycleSweep_NoEventForAlreadyOfflineRunner(t *testing.T) {
+	svc, store, hub := newTestRunnerRegistryServiceWithHub(t)
+	ctx := context.Background()
+
+	// Subscribe to runner lifecycle events
+	ch, unsub := hub.Subscribe(realtime.RunnerLifecycleTopic)
+	defer unsub()
+
+	now := time.Now().UnixMilli()
+
+	// Register a runner already marked offline
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-already-offline",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000,
+		Status:        "offline",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Should NOT receive any event (already offline)
+	select {
+	case msg := <-ch:
+		t.Fatalf("should not receive event for already-offline runner, got: %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+		// Expected — no event
+	}
+}
+
+func TestLifecycleSweep_NoEventForOnlineRunner(t *testing.T) {
+	svc, _, hub := newTestRunnerRegistryServiceWithHub(t)
+	ctx := context.Background()
+
+	// Subscribe to runner lifecycle events
+	ch, unsub := hub.Subscribe(realtime.RunnerLifecycleTopic)
+	defer unsub()
+
+	// Register a fresh runner (heartbeat is now)
+	_, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID: "runner-alive",
+		Hostname: "host-alive",
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Should NOT receive any event (runner is online)
+	select {
+	case msg := <-ch:
+		t.Fatalf("should not receive event for online runner, got: %+v", msg)
+	case <-time.After(100 * time.Millisecond):
+		// Expected — no event
 	}
 }

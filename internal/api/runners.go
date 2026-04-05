@@ -46,6 +46,22 @@ func (h *Handler) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 		"max_parallel", req.MaxParallel,
 	)
 
+	// Publish runner_registered SSE event to lifecycle subscribers
+	if h.hub != nil {
+		h.hub.PublishRunnerRegistered(types.SSERunnerRegisteredData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventRunnerRegistered,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+			},
+			RunnerID:    info.RunnerID,
+			Hostname:    info.Hostname,
+			Executors:   req.Executors,
+			MaxParallel: req.MaxParallel,
+			Labels:      req.Labels,
+		})
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"registered":             true,
 		"runner":                 info,
@@ -95,6 +111,20 @@ func (h *Handler) HandleDeregisterRunner(w http.ResponseWriter, r *http.Request)
 	}
 
 	slog.Info("runner deregistered", "runner_id", runnerID)
+
+	// Publish runner_offline SSE event for deregistration
+	if h.hub != nil {
+		h.hub.PublishRunnerOffline(types.SSERunnerOfflineData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventRunnerOffline,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+			},
+			RunnerID: runnerID,
+			Status:   "offline",
+			Reason:   "deregistered",
+		})
+	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,

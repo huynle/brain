@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
@@ -119,6 +120,21 @@ func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("claim request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID, "success", resp.Success)
+
+	// Publish task_claimed SSE event to project subscribers
+	if h.hub != nil && resp.Success {
+		h.hub.PublishTaskClaimed(projectId, types.SSETaskClaimedData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventTaskClaimed,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+				ProjectID: projectId,
+			},
+			TaskID:   taskId,
+			RunnerID: req.RunnerID,
+		})
+	}
+
 	WriteJSON(w, http.StatusOK, resp)
 }
 
@@ -150,6 +166,21 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	slog.Info("release request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
+
+	// Publish task_released SSE event to project subscribers
+	if h.hub != nil {
+		h.hub.PublishTaskReleased(projectId, types.SSETaskReleasedData{
+			SSEEventData: types.SSEEventData{
+				Type:      types.SSEEventTaskReleased,
+				Transport: "sse",
+				Timestamp: types.TimeNowUTC().Format(time.RFC3339),
+				ProjectID: projectId,
+			},
+			TaskID:   taskId,
+			RunnerID: req.RunnerID,
+		})
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -25,36 +24,27 @@ import (
 // Compile-time check that TaskServiceImpl implements api.TaskService.
 var _ api.TaskService = (*TaskServiceImpl)(nil)
 
-// TaskServiceImpl implements api.TaskService using a StorageLayer and in-memory claims.
+// TaskServiceImpl implements api.TaskService using a StorageLayer and persistent claims.
 type TaskServiceImpl struct {
 	config  *config.Config
 	storage *storage.StorageLayer
-
-	mu     sync.Mutex
-	claims map[string]*types.TaskClaim // key: "projectId:taskId"
 }
+
+// DefaultLeaseDuration is the default lease duration for task claims (10 minutes).
+// This matches the previous stale claim threshold.
+const DefaultLeaseDuration = 10 * time.Minute
 
 // NewTaskService creates a new TaskServiceImpl.
 func NewTaskService(cfg *config.Config, store *storage.StorageLayer) *TaskServiceImpl {
 	return &TaskServiceImpl{
 		config:  cfg,
 		storage: store,
-		claims:  make(map[string]*types.TaskClaim),
 	}
 }
 
-// claimKey returns the composite key for a task claim.
-func claimKey(projectId, taskId string) string {
-	return projectId + ":" + taskId
-}
-
-// staleClaimThreshold is the duration after which a claim is considered stale.
-const staleClaimThreshold = 10 * time.Minute
-
-// isStale returns true if the claim is older than staleClaimThreshold.
-func isStale(claim *types.TaskClaim) bool {
-	claimedAt := time.UnixMilli(claim.ClaimedAt)
-	return time.Since(claimedAt) > staleClaimThreshold
+// isExpired returns true if the claim's lease has expired (expires_at < now).
+func isExpired(claim *storage.TaskClaimRow) bool {
+	return time.Now().UnixMilli() > claim.ExpiresAt
 }
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
@@ -232,39 +222,36 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 }
 
 // ClaimTask claims a task for a runner. Returns ErrConflict if already claimed by another runner.
+// Claims are persisted to SQLite via the storage layer, surviving API server restarts.
 func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error) {
-	key := claimKey(projectId, taskId)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if existing, ok := s.claims[key]; ok {
-		stale := isStale(existing)
-		if !stale && existing.RunnerID != runnerId {
-			slog.Warn("claim conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "held_by", existing.RunnerID)
-			return &types.ClaimResponse{
-				Success:   false,
-				TaskID:    taskId,
-				RunnerID:  runnerId,
-				Error:     "already claimed",
-				Message:   fmt.Sprintf("task %s is already claimed by %s", taskId, existing.RunnerID),
-				ClaimedBy: existing.RunnerID,
-				IsStale:   &stale,
-			}, api.ErrConflict
-		}
-		// Stale claim or same runner — allow re-claim
-		if stale {
-			slog.Info("stale claim overridden", "project", projectId, "task_id", taskId, "new_runner", runnerId, "old_runner", existing.RunnerID)
-		}
+	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, DefaultLeaseDuration)
+	if err != nil {
+		return nil, fmt.Errorf("storage claim task: %w", err)
 	}
 
-	now := time.Now().UnixMilli()
-	s.claims[key] = &types.TaskClaim{
-		RunnerID:  runnerId,
-		ClaimedAt: now,
+	if !ok {
+		// Claim failed — another active runner holds it
+		stale := false
+		if existing != nil {
+			stale = isExpired(existing)
+		}
+		holder := ""
+		if existing != nil {
+			holder = existing.RunnerID
+		}
+		slog.Warn("claim conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "held_by", holder)
+		return &types.ClaimResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  runnerId,
+			Error:     "already claimed",
+			Message:   fmt.Sprintf("task %s is already claimed by %s", taskId, holder),
+			ClaimedBy: holder,
+			IsStale:   &stale,
+		}, api.ErrConflict
 	}
 
-	claimedAt := time.UnixMilli(now).UTC().Format(time.RFC3339)
+	claimedAt := time.Now().UTC().Format(time.RFC3339)
 	slog.Info("task claimed", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return &types.ClaimResponse{
 		Success:   true,
@@ -274,36 +261,41 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 	}, nil
 }
 
-// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed.
+// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed,
+// ErrConflict if claimed by a different runner.
 func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, runnerId string) error {
-	key := claimKey(projectId, taskId)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing, ok := s.claims[key]
-	if !ok {
+	// First check if a claim exists at all and who owns it
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return fmt.Errorf("storage get claim: %w", err)
+	}
+	if existing == nil {
 		return api.ErrNotFound
 	}
-
 	if existing.RunnerID != runnerId {
 		return api.ErrConflict
 	}
 
-	delete(s.claims, key)
+	released, err := s.storage.ReleaseClaim(ctx, projectId, taskId, runnerId)
+	if err != nil {
+		return fmt.Errorf("storage release claim: %w", err)
+	}
+	if !released {
+		return api.ErrNotFound
+	}
+
 	slog.Info("task released", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return nil
 }
 
 // GetClaimStatus returns the claim status of a task.
 func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
-	key := claimKey(projectId, taskId)
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, fmt.Errorf("storage get claim: %w", err)
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing, ok := s.claims[key]
-	if !ok {
+	if existing == nil {
 		return &types.ClaimStatusResponse{
 			TaskID:  taskId,
 			Claimed: false,
@@ -311,14 +303,14 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 		}, nil
 	}
 
-	stale := isStale(existing)
+	expired := isExpired(existing)
 	claimedAt := time.UnixMilli(existing.ClaimedAt).UTC().Format(time.RFC3339)
 	return &types.ClaimStatusResponse{
 		TaskID:    taskId,
 		Claimed:   true,
 		RunnerID:  existing.RunnerID,
 		ClaimedAt: claimedAt,
-		IsStale:   stale,
+		IsStale:   expired,
 	}, nil
 }
 

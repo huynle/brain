@@ -1111,19 +1111,23 @@ func TestTaskServiceImpl_ImplementsInterface(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestClaimTask_StaleClaim(t *testing.T) {
-	svc, _, _ := newTestTaskService(t)
+	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	// Manually insert a stale claim (11 minutes ago)
-	key := claimKey("proj", "task1")
-	svc.mu.Lock()
-	svc.claims[key] = &types.TaskClaim{
-		RunnerID:  "old-runner",
-		ClaimedAt: time.Now().Add(-11 * time.Minute).UnixMilli(),
+	// Insert a claim via storage with a very short lease so it's already expired
+	// Use a 1ms lease duration which will expire immediately
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "old-runner", 1*time.Millisecond)
+	if err != nil {
+		t.Fatalf("seed claim failed: %v", err)
 	}
-	svc.mu.Unlock()
+	if !ok {
+		t.Fatal("seed claim should succeed")
+	}
 
-	// New runner should be able to claim the stale task
+	// Wait for the claim to expire
+	time.Sleep(5 * time.Millisecond)
+
+	// New runner should be able to claim the expired task
 	resp, err := svc.ClaimTask(ctx, "proj", "task1", "new-runner")
 	if err != nil {
 		t.Fatalf("ClaimTask on stale claim failed: %v", err)
@@ -1133,6 +1137,47 @@ func TestClaimTask_StaleClaim(t *testing.T) {
 	}
 	if resp.RunnerID != "new-runner" {
 		t.Errorf("RunnerID = %q, want %q", resp.RunnerID, "new-runner")
+	}
+}
+
+// TestClaimTask_PersistsSurvivesRestart verifies claims survive service recreation.
+func TestClaimTask_PersistsSurvivesRestart(t *testing.T) {
+	// Create first service instance
+	svc1, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim a task
+	resp, err := svc1.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Fatal("expected success=true")
+	}
+
+	// Create a NEW service instance (simulating restart) with same storage
+	cfg := &config.Config{BrainDir: brainDir}
+	svc2 := NewTaskService(cfg, store)
+
+	// Verify the claim persists in the new instance
+	status, err := svc2.GetClaimStatus(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetClaimStatus failed: %v", err)
+	}
+	if !status.Claimed {
+		t.Error("expected claimed=true after restart")
+	}
+	if status.RunnerID != "runner-1" {
+		t.Errorf("RunnerID = %q, want %q", status.RunnerID, "runner-1")
+	}
+
+	// Verify the claim blocks other runners in the new instance
+	resp2, err := svc2.ClaimTask(ctx, "proj", "task1", "runner-2")
+	if err != api.ErrConflict {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	if resp2.Success {
+		t.Error("expected success=false after restart")
 	}
 }
 

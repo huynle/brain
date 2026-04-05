@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,11 @@ type SpawnOptions struct {
 	PaneID              string
 	WindowName          string
 	RuntimeDefaultModel string
+
+	// LogWriter is an optional io.Writer that receives copies of executor
+	// stdout/stderr for log streaming. If non-nil, output is tee'd to both
+	// the local log file and this writer.
+	LogWriter io.Writer
 }
 
 // SpawnResult holds the result of spawning a task process.
@@ -359,7 +365,7 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 
 	switch opts.Mode {
 	case ExecutionModeHeadless:
-		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
+		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeTUI:
 		return e.spawnTUI(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeDashboard:
@@ -380,7 +386,7 @@ func (e *Executor) spawnHeadless(
 	projectID string,
 	workdir string,
 	promptFile string,
-	runtimeDefaultModel string,
+	opts SpawnOptions,
 ) (*SpawnResult, error) {
 	// Create output log file
 	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
@@ -398,7 +404,7 @@ func (e *Executor) spawnHeadless(
 
 	// Build command args
 	agent := e.GetEffectiveAgent(task)
-	model := e.GetEffectiveModel(task, runtimeDefaultModel)
+	model := e.GetEffectiveModel(task, opts.RuntimeDefaultModel)
 
 	args := []string{"run"}
 	if agent != "" {
@@ -412,8 +418,14 @@ func (e *Executor) spawnHeadless(
 	// Create command via factory (allows test injection)
 	cmd := e.CommandFactory(e.config.Opencode.Bin, args...)
 	cmd.Dir = workdir
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+
+	// Set up output writers: always write to log file, optionally tee to LogWriter
+	var output io.Writer = logFile
+	if opts.LogWriter != nil {
+		output = io.MultiWriter(logFile, opts.LogWriter)
+	}
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	if err := cmd.Start(); err != nil {
 		logFile.Close()

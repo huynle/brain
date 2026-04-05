@@ -53,8 +53,23 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		IsResume: true,
 	}
 
+	// Start log streamer if enabled
+	var logStreamer *LogStreamer
+	if tr.config.LogStreaming {
+		logStreamer = NewLogStreamer(LogStreamerConfig{
+			Client:    tr.client,
+			RunnerID:  tr.runnerID,
+			ProjectID: projectID,
+			TaskID:    task.ID,
+		})
+		spawnOpts.LogWriter = logStreamer
+	}
+
 	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
+		if logStreamer != nil {
+			logStreamer.Stop()
+		}
 		return fmt.Errorf("spawn task: %w", err)
 	}
 
@@ -79,6 +94,11 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		if err := tr.processMgr.Add(task.ID, runningTask, spawnResult.Proc); err != nil {
 			return fmt.Errorf("track process: %w", err)
 		}
+	}
+
+	// Track log streamer for cleanup on completion
+	if logStreamer != nil {
+		tr.trackLogStreamer(task.ID, logStreamer)
 	}
 
 	// Emit event

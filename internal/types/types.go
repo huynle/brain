@@ -679,6 +679,15 @@ type ClaimStatusResponse struct {
 	IsStale   bool   `json:"isStale"`
 }
 
+// RenewClaimResponse is the response for POST /tasks/:projectId/:taskId/renew.
+type RenewClaimResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
 // MultiTaskStatusRequest is the request body for POST /tasks/:projectId/status.
 type MultiTaskStatusRequest struct {
 	TaskIDs []string `json:"taskIds"`
@@ -744,6 +753,53 @@ type RunnerStatusResponse struct {
 	Running        bool     `json:"running"`
 	Paused         bool     `json:"paused"`
 	PausedProjects []string `json:"pausedProjects"`
+}
+
+// =============================================================================
+// Runner Registry Types
+// =============================================================================
+
+// RunnerStatus represents the computed status of a runner based on heartbeat age.
+type RunnerStatus string
+
+const (
+	RunnerStatusOnline  RunnerStatus = "online"
+	RunnerStatusStale   RunnerStatus = "stale"
+	RunnerStatusOffline RunnerStatus = "offline"
+)
+
+// RunnerRegistration is the request body for POST /runners (register).
+type RunnerRegistration struct {
+	RunnerID    string            `json:"runner_id"`
+	Hostname    string            `json:"hostname"`
+	Labels      map[string]string `json:"labels,omitempty"`
+	Executors   []string          `json:"executors,omitempty"`
+	MaxParallel int               `json:"max_parallel,omitempty"`
+}
+
+// RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
+type RunnerHeartbeatRequest struct {
+	RunningTasks int                    `json:"running_tasks"`
+	Stats        map[string]interface{} `json:"stats,omitempty"`
+}
+
+// RunnerInfo is the API-level runner representation with computed status.
+type RunnerInfo struct {
+	RunnerID      string            `json:"runner_id"`
+	Hostname      string            `json:"hostname"`
+	Labels        map[string]string `json:"labels,omitempty"`
+	Executors     []string          `json:"executors,omitempty"`
+	MaxParallel   int               `json:"max_parallel"`
+	FeatureIDs    string            `json:"feature_ids,omitempty"`
+	RegisteredAt  string            `json:"registered_at"`
+	LastHeartbeat string            `json:"last_heartbeat"`
+	Status        RunnerStatus      `json:"status"`
+}
+
+// RunnerListResponse is the response for GET /runners.
+type RunnerListResponse struct {
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
 }
 
 // =============================================================================

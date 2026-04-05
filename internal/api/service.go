@@ -115,6 +115,9 @@ type TaskService interface {
 	// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed.
 	ReleaseTask(ctx context.Context, projectId, taskId, runnerId string) error
 
+	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
+	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 
@@ -153,6 +156,25 @@ type RunnerService interface {
 
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
+}
+
+// RunnerRegistryService defines the interface for runner lifecycle management.
+// This handles registration, heartbeat, deregistration, and listing of runners.
+type RunnerRegistryService interface {
+	// Register registers or re-registers a runner.
+	Register(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+
+	// Heartbeat updates a runner's heartbeat timestamp and running task count.
+	Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+
+	// Deregister removes a runner and releases all its task claims.
+	Deregister(ctx context.Context, runnerID string) error
+
+	// ListRunners returns all runners with computed status.
+	ListRunners(ctx context.Context) (*types.RunnerListResponse, error)
+
+	// GetRunner returns a single runner by ID with computed status.
+	GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
 }
 
 // MonitorService defines the interface for monitor operations.

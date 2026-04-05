@@ -35,7 +35,7 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
 		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
-		"task_claims"}
+		"task_claims", "runners"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -683,8 +683,157 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IsFive(t *testing.T) {
-	if CurrentSchemaVersion != 5 {
-		t.Errorf("CurrentSchemaVersion = %d, want 5", CurrentSchemaVersion)
+func TestSchemaVersion_IsSix(t *testing.T) {
+	if CurrentSchemaVersion != 6 {
+		t.Errorf("CurrentSchemaVersion = %d, want 6", CurrentSchemaVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runners table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestRunnersTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Table should exist
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='runners'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("runners table not found: %v", err)
+	}
+
+	// Verify columns by inserting and querying a row
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status)
+		VALUES ('runner-1', 'host1.local', '{"env":"prod"}', '["opencode"]', 4, 'feat-a,feat-b', 1000, 2000, 'online')`)
+	if err != nil {
+		t.Fatalf("insert into runners failed: %v", err)
+	}
+
+	var runnerID, hostname, labels, executors, featureIDs, status string
+	var maxParallel int
+	var registeredAt, lastHeartbeat int64
+	err = s.DB().QueryRow("SELECT runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status FROM runners").
+		Scan(&runnerID, &hostname, &labels, &executors, &maxParallel, &featureIDs, &registeredAt, &lastHeartbeat, &status)
+	if err != nil {
+		t.Fatalf("select from runners failed: %v", err)
+	}
+	if runnerID != "runner-1" || hostname != "host1.local" {
+		t.Errorf("got (runner_id=%q, hostname=%q), want (runner-1, host1.local)", runnerID, hostname)
+	}
+	if labels != `{"env":"prod"}` || executors != `["opencode"]` {
+		t.Errorf("got (labels=%q, executors=%q), want JSON values", labels, executors)
+	}
+	if maxParallel != 4 {
+		t.Errorf("max_parallel = %d, want 4", maxParallel)
+	}
+	if featureIDs != "feat-a,feat-b" {
+		t.Errorf("feature_ids = %q, want %q", featureIDs, "feat-a,feat-b")
+	}
+	if registeredAt != 1000 || lastHeartbeat != 2000 {
+		t.Errorf("got (registered_at=%d, last_heartbeat=%d), want (1000, 2000)", registeredAt, lastHeartbeat)
+	}
+	if status != "online" {
+		t.Errorf("status = %q, want %q", status, "online")
+	}
+}
+
+func TestRunnersTable_DefaultStatus(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Insert without explicit status — should default to 'online'
+	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-2', 'host2.local', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert with defaults failed: %v", err)
+	}
+
+	var status string
+	err = s.DB().QueryRow("SELECT status FROM runners WHERE runner_id = 'runner-2'").Scan(&status)
+	if err != nil {
+		t.Fatalf("select status failed: %v", err)
+	}
+	if status != "online" {
+		t.Errorf("default status = %q, want %q", status, "online")
+	}
+}
+
+func TestRunnersTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host1', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	// Duplicate runner_id should fail
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host2', 2, 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate runner_id, got nil")
+	}
+}
+
+func TestRunnersTable_Index(t *testing.T) {
+	s := newTestStorage(t)
+
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runners_status'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("index idx_runners_status not found: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runners table: migration from v5 to v6
+// ---------------------------------------------------------------------------
+
+func TestRunnersTable_MigrationFromV5(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	// Simulate a v5 database: create schema_version and set version to 5
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (5)")
+	if err != nil {
+		t.Fatalf("insert v5: %v", err)
+	}
+
+	// Run migration
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	// runners table should now exist
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='runners'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("runners table not found after migration: %v", err)
+	}
+
+	// Should be able to insert data
+	_, err = db.Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host1.local', 2, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
+	}
+
+	// Index should exist
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runners_status'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("idx_runners_status not found after migration: %v", err)
 	}
 }

@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -145,6 +145,19 @@ CREATE TABLE IF NOT EXISTS task_claims (
   PRIMARY KEY (project_id, task_id)
 );`
 
+const createRunnersTable = `
+CREATE TABLE IF NOT EXISTS runners (
+  runner_id TEXT PRIMARY KEY,
+  hostname TEXT NOT NULL,
+  labels TEXT DEFAULT '{}',
+  executors TEXT DEFAULT '[]',
+  max_parallel INTEGER NOT NULL DEFAULT 1,
+  feature_ids TEXT DEFAULT '',
+  registered_at INTEGER NOT NULL,
+  last_heartbeat INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online'
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -163,6 +176,8 @@ var createIndexes = []string{
 	// Task claims indexes
 	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
+	// Runners indexes
+	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -305,6 +320,19 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 6 {
+		// v6: add runners table for runner registration (horizontal scaling).
+		if _, err := db.Exec(createRunnersTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v6 (runners table): %w", err)
+			}
+		}
+		// Index for runners status
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
+			return fmt.Errorf("migrate v6 (runners index): %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -353,6 +381,7 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
 		createTaskClaimsTable,
+		createRunnersTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

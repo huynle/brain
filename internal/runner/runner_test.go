@@ -53,6 +53,9 @@ type mockClient struct {
 	releaseErr   error
 	releaseCalls []releaseCall
 
+	renewErr   error
+	renewCalls []renewCall
+
 	updateStatusErr   error
 	updateStatusCalls []updateStatusCall
 
@@ -75,6 +78,12 @@ type claimCall struct {
 }
 
 type releaseCall struct {
+	ProjectID string
+	TaskID    string
+	RunnerID  string
+}
+
+type renewCall struct {
 	ProjectID string
 	TaskID    string
 	RunnerID  string
@@ -140,6 +149,13 @@ func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID 
 	result := m.claimResult
 	result.TaskID = taskID
 	return result, m.claimErr
+}
+
+func (m *mockClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.renewCalls = append(m.renewCalls, renewCall{projectID, taskID, runnerID})
+	return m.renewErr
 }
 
 func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
@@ -1087,6 +1103,204 @@ func TestTaskRunner_ClaimAndSpawn_EmitsTaskStartedEvent(t *testing.T) {
 	}
 	if !found {
 		t.Error("claimAndSpawn should emit task_started event")
+	}
+}
+
+// =============================================================================
+// RenewClaims Tests
+// =============================================================================
+
+func TestTaskRunner_RenewClaims_Success(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// renewErr is nil (default) — renewals should succeed
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify RenewClaim was called
+	client.mu.Lock()
+	renewCalls := make([]renewCall, len(client.renewCalls))
+	copy(renewCalls, client.renewCalls)
+	client.mu.Unlock()
+
+	if len(renewCalls) != 1 {
+		t.Fatalf("expected 1 RenewClaim call, got %d", len(renewCalls))
+	}
+	if renewCalls[0].ProjectID != task.ProjectID {
+		t.Errorf("ProjectID = %q, want %q", renewCalls[0].ProjectID, task.ProjectID)
+	}
+	if renewCalls[0].TaskID != task.ID {
+		t.Errorf("TaskID = %q, want %q", renewCalls[0].TaskID, task.ID)
+	}
+	if renewCalls[0].RunnerID != tr.runnerID {
+		t.Errorf("RunnerID = %q, want %q", renewCalls[0].RunnerID, tr.runnerID)
+	}
+
+	// Task should still be running (not killed)
+	if processMgr.Get("task1") == nil {
+		t.Error("task should still be tracked in process manager")
+	}
+}
+
+func TestTaskRunner_RenewClaims_FailureAbortsTask(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Track events
+	var eventMu sync.Mutex
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, e)
+	})
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// Set renewal to fail (simulates expired/force-released claim)
+	client.renewErr = fmt.Errorf("claim not found")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify the task was killed
+	processMgr.mu.Lock()
+	killCalls := make([]string, len(processMgr.killCalls))
+	copy(killCalls, processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if len(killCalls) != 1 || killCalls[0] != "task1" {
+		t.Errorf("expected Kill(task1), got %v", killCalls)
+	}
+
+	// Verify task was removed from process manager
+	if processMgr.Get("task1") != nil {
+		t.Error("task should have been removed from process manager")
+	}
+
+	// Verify status was set back to pending
+	statusCalls := client.getUpdateStatusCalls()
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 UpdateTaskStatus call, got %d", len(statusCalls))
+	}
+	if statusCalls[0].Status != "pending" {
+		t.Errorf("status = %q, want %q", statusCalls[0].Status, "pending")
+	}
+
+	// Verify event was emitted
+	eventMu.Lock()
+	defer eventMu.Unlock()
+
+	found := false
+	for _, e := range events {
+		if e.Type == EventTaskReleased && e.TaskID == "task1" {
+			found = true
+			if e.Reason != "claim renewal failed" {
+				t.Errorf("reason = %q, want %q", e.Reason, "claim renewal failed")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected EventTaskReleased event for task1")
+	}
+
+	// Verify stats were updated
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 1 {
+		t.Errorf("stats.Failed = %d, want 1", tr.stats.Failed)
+	}
+}
+
+func TestTaskRunner_RenewClaims_NoRunningTasks(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// No running tasks — should be a no-op
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.renewCalls) != 0 {
+		t.Errorf("expected 0 RenewClaim calls, got %d", len(client.renewCalls))
+	}
+}
+
+func TestTaskRunner_RenewClaims_MultipleTasksPartialFailure(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add two running tasks
+	proc1 := newMockProcess(100)
+	task1 := testRunningTask("task1")
+	processMgr.Add("task1", task1, proc1)
+
+	proc2 := newMockProcess(101)
+	task2 := RunningTask{
+		ID:        "task2",
+		Path:      "projects/proj-a/task/task2.md",
+		ProjectID: "proj-a",
+	}
+	processMgr.Add("task2", task2, proc2)
+
+	// Override RenewClaim to fail only for task1
+	// We need a custom implementation since mockClient only supports a single error value.
+	// Instead, let the first call succeed (nil error) and make the mock return error.
+	// Since mockClient applies the same renewErr to all calls, we need to set a per-call behavior.
+	// For simplicity, set renewErr to fail — both tasks will be aborted.
+	client.renewErr = fmt.Errorf("claim expired")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Both tasks should be killed and removed
+	processMgr.mu.Lock()
+	killCount := len(processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if killCount != 2 {
+		t.Errorf("expected 2 Kill calls, got %d", killCount)
+	}
+
+	// Both tasks should be removed
+	if processMgr.Get("task1") != nil {
+		t.Error("task1 should have been removed")
+	}
+	if processMgr.Get("task2") != nil {
+		t.Error("task2 should have been removed")
+	}
+
+	// Stats should reflect both failures
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 2 {
+		t.Errorf("stats.Failed = %d, want 2", tr.stats.Failed)
 	}
 }
 

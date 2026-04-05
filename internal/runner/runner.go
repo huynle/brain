@@ -18,6 +18,11 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// DefaultRenewInterval is how often the runner renews claims for running tasks.
+// Set to half the lease duration (DefaultLeaseDuration = 10min) so claims are
+// renewed well before they expire.
+const DefaultRenewInterval = 5 * time.Minute
+
 // =============================================================================
 // Interfaces for dependency injection
 // =============================================================================
@@ -30,6 +35,7 @@ type Client interface {
 	GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error)
 	GetAllTasks(ctx context.Context, projectID string) ([]types.ResolvedTask, error)
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
+	RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error
 	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
@@ -259,6 +265,20 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		go tr.sseListener.Start(ctx)
 		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
 	}
+
+	// Start periodic claim renewal goroutine
+	renewTicker := time.NewTicker(DefaultRenewInterval)
+	go func() {
+		defer renewTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-renewTicker.C:
+				tr.renewClaims(ctx)
+			}
+		}
+	}()
 
 	// Run initial poll immediately
 	tr.poll(ctx)
@@ -795,6 +815,66 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		Result: result,
 		TaskID: taskID,
 	})
+}
+
+// =============================================================================
+// Claim Renewal
+// =============================================================================
+
+// renewClaims renews the lease for all running tasks. If renewal fails for a
+// task (404 = claim expired/force-released), the runner aborts that task and
+// releases it so another runner can pick it up.
+func (tr *TaskRunner) renewClaims(ctx context.Context) {
+	allProcesses := tr.processMgr.GetAll()
+	if len(allProcesses) == 0 {
+		return
+	}
+
+	for _, info := range allProcesses {
+		if ctx.Err() != nil {
+			return
+		}
+
+		task := info.Task
+		err := tr.client.RenewClaim(ctx, task.ProjectID, task.ID, tr.runnerID)
+		if err != nil {
+			tr.logger.Printf("WARNING: claim renewal failed for %s/%s: %v — aborting task", task.ProjectID, task.ID, err)
+
+			// Kill the running process
+			tr.processMgr.Kill(ctx, task.ID)
+
+			// Remove from process manager
+			tr.processMgr.Remove(task.ID)
+
+			// Set task back to pending so another runner can pick it up
+			if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
+				tr.logger.Printf("failed to reset task status for %s after renewal failure: %v", task.ID, updateErr)
+			}
+
+			// Clean up tmux
+			tr.cleanupTaskTmux(task)
+
+			// Emit event
+			tr.emitEvent(RunnerEvent{
+				Type:      EventTaskReleased,
+				TaskID:    task.ID,
+				ProjectID: task.ProjectID,
+				TaskPath:  task.Path,
+				Reason:    "claim renewal failed",
+			})
+
+			tr.mu.Lock()
+			tr.stats.Failed++
+			if tr.processMgr.RunningCount() == 0 {
+				tr.status = RunnerStatusPolling
+			}
+			tr.mu.Unlock()
+
+			continue
+		}
+
+		slog.Debug("claim renewed", "project", task.ProjectID, "task_id", task.ID)
+	}
 }
 
 // =============================================================================

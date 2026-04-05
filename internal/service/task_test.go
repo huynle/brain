@@ -732,6 +732,105 @@ func TestGetClaimStatus_Claimed(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RenewClaim
+// ---------------------------------------------------------------------------
+
+func TestRenewClaim_Success(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim a task first
+	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	// Renew the claim
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("RenewClaim failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if resp.TaskID != "task1" {
+		t.Errorf("TaskID = %q, want %q", resp.TaskID, "task1")
+	}
+	if resp.RunnerID != "runner-1" {
+		t.Errorf("RunnerID = %q, want %q", resp.RunnerID, "runner-1")
+	}
+	if resp.ExpiresAt == "" {
+		t.Error("expected non-empty ExpiresAt")
+	}
+}
+
+func TestRenewClaim_NotFound(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Renew a claim that doesn't exist
+	resp, err := svc.RenewClaim(ctx, "proj", "nonexistent", "runner-1")
+	if err != api.ErrNotFound {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false")
+	}
+}
+
+func TestRenewClaim_WrongRunner(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Claim as runner-1
+	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+
+	// Renew as runner-2 — should be rejected
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-2")
+	if err != api.ErrConflict {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false")
+	}
+	if resp.Error != "claim owned by different runner" {
+		t.Errorf("Error = %q, want %q", resp.Error, "claim owned by different runner")
+	}
+}
+
+func TestRenewClaim_ExpiredClaim(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// Seed an expired claim via storage (1ms lease)
+	ok, _, err := store.ClaimTask(ctx, "proj", "task1", "runner-1", 1*time.Millisecond)
+	if err != nil {
+		t.Fatalf("seed claim failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("seed claim should succeed")
+	}
+
+	// Wait for expiry
+	time.Sleep(5 * time.Millisecond)
+
+	// Renew should fail with not found (expired)
+	resp, err := svc.RenewClaim(ctx, "proj", "task1", "runner-1")
+	if err != api.ErrNotFound {
+		t.Fatalf("expected ErrNotFound for expired claim, got %v", err)
+	}
+	if resp.Success {
+		t.Error("expected success=false for expired claim")
+	}
+	if resp.Error != "claim expired" {
+		t.Errorf("Error = %q, want %q", resp.Error, "claim expired")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GetMultiTaskStatus
 // ---------------------------------------------------------------------------
 

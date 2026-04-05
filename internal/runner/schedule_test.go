@@ -585,6 +585,9 @@ func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, fea
 func (m *schedMockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
 	return m.claimResult, nil
 }
+func (m *schedMockClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	return nil
+}
 func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	return nil
 }

@@ -463,6 +463,60 @@ func TestAPIClient_ReleaseTask(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// RenewClaim
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_RenewClaim_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"taskId":    "abc123",
+			"runnerId":  "runner-1",
+			"expiresAt": "2024-01-01T00:10:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/abc123/renew" {
+		t.Errorf("path = %q, want renew path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
+	}
+}
+
+func TestAPIClient_RenewClaim_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "claim not found",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Timeout
 // ---------------------------------------------------------------------------
 

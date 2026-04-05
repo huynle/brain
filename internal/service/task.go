@@ -318,6 +318,54 @@ func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	return nil
 }
 
+// RenewClaim extends the claim's expiry by DefaultLeaseDuration.
+// Returns ErrNotFound if the claim doesn't exist, is expired, or is owned by a different runner.
+func (s *TaskServiceImpl) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+	// Verify the claim exists and is owned by this runner
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, fmt.Errorf("storage get claim: %w", err)
+	}
+	if existing == nil {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim not found",
+		}, api.ErrNotFound
+	}
+	if existing.RunnerID != runnerId {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim owned by different runner",
+		}, api.ErrConflict
+	}
+	if isExpired(existing) {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim expired",
+		}, api.ErrNotFound
+	}
+
+	// Extend the expiry
+	newExpiry := time.Now().Add(DefaultLeaseDuration)
+	if err := s.storage.RenewClaim(ctx, projectId, taskId, runnerId, newExpiry); err != nil {
+		return nil, fmt.Errorf("storage renew claim: %w", err)
+	}
+
+	slog.Info("claim renewed", "project", projectId, "task_id", taskId, "runner_id", runnerId, "expires_at", newExpiry.UTC().Format(time.RFC3339))
+	return &types.RenewClaimResponse{
+		Success:   true,
+		TaskID:    taskId,
+		RunnerID:  runnerId,
+		ExpiresAt: newExpiry.UTC().Format(time.RFC3339),
+	}, nil
+}
+
 // GetClaimStatus returns the claim status of a task.
 func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
 	existing, err := s.storage.GetClaim(ctx, projectId, taskId)

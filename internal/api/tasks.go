@@ -153,6 +153,41 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
+// HandleRenewClaim handles POST /tasks/{projectId}/{taskId}/renew.
+func (h *Handler) HandleRenewClaim(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.ClaimRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	if req.RunnerID == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "runnerId", Message: "runnerId is required"},
+		})
+		return
+	}
+
+	resp, err := h.tasks.RenewClaim(r.Context(), projectId, taskId, req.RunnerID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	slog.Info("renew request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleGetClaimStatus handles GET /tasks/{projectId}/{taskId}/claim-status.
 func (h *Handler) HandleGetClaimStatus(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

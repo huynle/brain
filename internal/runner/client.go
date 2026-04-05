@@ -351,6 +351,26 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// RenewClaim extends the lease on a claimed task.
+// Returns nil on success, or an error if the claim doesn't exist, is expired,
+// or is owned by a different runner. The caller should treat any error as a
+// signal to abort the task.
+func (c *APIClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/renew", projectID, taskID)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("renew claim: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ReleaseTask releases a previously claimed task.
 // The runnerID must match the runner that originally claimed the task.
 func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {

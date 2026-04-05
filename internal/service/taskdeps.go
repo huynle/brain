@@ -207,6 +207,8 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		DirectPrompt:        task.DirectPrompt,
 		Agent:               task.Agent,
 		Model:               task.Model,
+		Executor:            task.Executor,
+		Extensions:          task.Extensions,
 		Sessions:            task.Sessions,
 		Schedule:            task.Schedule,
 		ScheduleEnabled:     task.ScheduleEnabled,

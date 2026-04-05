@@ -161,12 +161,14 @@ type BrainEntry struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 
 	// Task execution fields
-	UserOriginalRequest string `json:"user_original_request,omitempty"`
-	DirectPrompt        string `json:"direct_prompt,omitempty"`
-	Agent               string `json:"agent,omitempty"`
-	Model               string `json:"model,omitempty"`
-	CompleteOnIdle      *bool  `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string `json:"target_workdir,omitempty"`
+	UserOriginalRequest string   `json:"user_original_request,omitempty"`
+	DirectPrompt        string   `json:"direct_prompt,omitempty"`
+	Agent               string   `json:"agent,omitempty"`
+	Model               string   `json:"model,omitempty"`
+	Executor            string   `json:"executor,omitempty"`
+	Extensions          []string `json:"extensions,omitempty"`
+	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 
 	// Feature grouping
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -267,9 +269,11 @@ type CreateEntryRequest struct {
 	FeaturePriority     string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn    []string `json:"feature_depends_on,omitempty"`
 
-	DirectPrompt string `json:"direct_prompt,omitempty"`
-	Agent        string `json:"agent,omitempty"`
-	Model        string `json:"model,omitempty"`
+	DirectPrompt string   `json:"direct_prompt,omitempty"`
+	Agent        string   `json:"agent,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Executor     string   `json:"executor,omitempty"`
+	Extensions   []string `json:"extensions,omitempty"`
 
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`
@@ -324,9 +328,11 @@ type UpdateEntryRequest struct {
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
 	FeatureDependsOn *[]string `json:"feature_depends_on,omitempty"`
 
-	DirectPrompt *string `json:"direct_prompt,omitempty"`
-	Agent        *string `json:"agent,omitempty"`
-	Model        *string `json:"model,omitempty"`
+	DirectPrompt *string   `json:"direct_prompt,omitempty"`
+	Agent        *string   `json:"agent,omitempty"`
+	Model        *string   `json:"model,omitempty"`
+	Executor     *string   `json:"executor,omitempty"`
+	Extensions   *[]string `json:"extensions,omitempty"`
 
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`

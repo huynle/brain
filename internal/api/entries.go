@@ -560,6 +560,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		DirectPrompt:       strPtr(fm.DirectPrompt),
 		Agent:              strPtr(fm.Agent),
 		Model:              strPtr(fm.Model),
+		Executor:           strPtr(fm.Executor),
 		Schedule:           strPtr(fm.Schedule),
 	}
 
@@ -583,6 +584,12 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 	if len(fm.FeatureDependsOn) > 0 {
 		fdeps := fm.FeatureDependsOn
 		req.FeatureDependsOn = &fdeps
+	}
+
+	// Extensions (pointer to slice)
+	if len(fm.Extensions) > 0 {
+		exts := fm.Extensions
+		req.Extensions = &exts
 	}
 
 	// Boolean pointer fields — only set when present in frontmatter

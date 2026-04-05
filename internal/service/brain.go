@@ -124,6 +124,8 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
 		Model:               req.Model,
+		Executor:            frontmatter.SanitizeSimpleValue(req.Executor),
+		Extensions:          req.Extensions,
 		Generated:           req.Generated,
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,
@@ -367,6 +369,12 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["model"].(string); ok {
 			fm.Model = v
 		}
+		if v, ok := meta["executor"].(string); ok {
+			fm.Executor = v
+		}
+		if v, ok := meta["extensions"]; ok {
+			fm.Extensions = metaToStringSlice(v)
+		}
 		if v, ok := meta["target_workdir"].(string); ok {
 			fm.TargetWorkdir = v
 		}
@@ -543,6 +551,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.Model != nil {
 		fm.Model = *req.Model
+	}
+	if req.Executor != nil {
+		fm.Executor = *req.Executor
+	}
+	if req.Extensions != nil {
+		fm.Extensions = *req.Extensions
 	}
 
 	// Generated fields

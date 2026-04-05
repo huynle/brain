@@ -92,10 +92,12 @@ type Frontmatter struct {
 	TargetWorkdir      string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 
 	// User intent / prompts
-	UserOriginalRequest string `yaml:"user_original_request,omitempty" json:"user_original_request,omitempty"`
-	DirectPrompt        string `yaml:"direct_prompt,omitempty" json:"direct_prompt,omitempty"`
-	Agent               string `yaml:"agent,omitempty" json:"agent,omitempty"`
-	Model               string `yaml:"model,omitempty" json:"model,omitempty"`
+	UserOriginalRequest string   `yaml:"user_original_request,omitempty" json:"user_original_request,omitempty"`
+	DirectPrompt        string   `yaml:"direct_prompt,omitempty" json:"direct_prompt,omitempty"`
+	Agent               string   `yaml:"agent,omitempty" json:"agent,omitempty"`
+	Model               string   `yaml:"model,omitempty" json:"model,omitempty"`
+	Executor            string   `yaml:"executor,omitempty" json:"executor,omitempty"`
+	Extensions          []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 
 	// Generated task metadata
 	Generated     *bool  `yaml:"generated,omitempty" json:"generated,omitempty"`
@@ -158,6 +160,8 @@ type GenerateOptions struct {
 	DirectPrompt        string
 	Agent               string
 	Model               string
+	Executor            string
+	Extensions          []string
 
 	Generated     *bool
 	GeneratedKind string
@@ -223,6 +227,8 @@ type rawFrontmatter struct {
 	DirectPrompt        string                     `yaml:"direct_prompt"`
 	Agent               string                     `yaml:"agent"`
 	Model               string                     `yaml:"model"`
+	Executor            string                     `yaml:"executor"`
+	Extensions          []string                   `yaml:"extensions"`
 	Generated           *bool                      `yaml:"generated"`
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
@@ -251,6 +257,7 @@ var knownFields = map[string]bool{
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
+	"executor": true, "extensions": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true,
 	"sessions":     true, "run_finalizations": true,
@@ -378,6 +385,8 @@ func Parse(content string) (*Document, error) {
 		DirectPrompt:        raw.DirectPrompt,
 		Agent:               raw.Agent,
 		Model:               raw.Model,
+		Executor:            raw.Executor,
+		Extensions:          raw.Extensions,
 		Generated:           raw.Generated,
 		GeneratedKind:       raw.GeneratedKind,
 		GeneratedKey:        raw.GeneratedKey,
@@ -598,6 +607,15 @@ func Serialize(fm *Frontmatter) string {
 
 	emit("agent", fm.Agent)
 	emit("model", fm.Model)
+	emitPlain("executor", fm.Executor)
+
+	// Extensions
+	if len(fm.Extensions) > 0 {
+		lines = append(lines, "extensions:")
+		for _, ext := range fm.Extensions {
+			lines = append(lines, "  - "+EscapeYamlValue(ext))
+		}
+	}
 
 	if fm.Generated != nil {
 		lines = append(lines, fmt.Sprintf("generated: %v", *fm.Generated))
@@ -723,6 +741,8 @@ func Generate(opts *GenerateOptions) string {
 		DirectPrompt:        opts.DirectPrompt,
 		Agent:               opts.Agent,
 		Model:               opts.Model,
+		Executor:            opts.Executor,
+		Extensions:          opts.Extensions,
 		Generated:           opts.Generated,
 		GeneratedKind:       opts.GeneratedKind,
 		GeneratedKey:        opts.GeneratedKey,

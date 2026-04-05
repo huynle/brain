@@ -959,6 +959,18 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "model"); ok {
 		entry.Model = v
 	}
+	if v, ok := metaString(meta, "executor"); ok {
+		entry.Executor = v
+	}
+	if v, ok := meta["extensions"]; ok {
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					entry.Extensions = append(entry.Extensions, s)
+				}
+			}
+		}
+	}
 	if v, ok := metaBool(meta, "complete_on_idle"); ok {
 		entry.CompleteOnIdle = &v
 	}

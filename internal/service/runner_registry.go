@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -131,6 +132,102 @@ func (s *RunnerRegistryServiceImpl) GetRunner(ctx context.Context, runnerID stri
 	info := rowToRunnerInfo(row)
 	info.Status = computeRunnerStatus(row.LastHeartbeat)
 	return info, nil
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle Management
+// ---------------------------------------------------------------------------
+
+// DefaultLifecycleInterval is the default interval for the background lifecycle goroutine.
+const DefaultLifecycleInterval = 60 * time.Second
+
+// StartLifecycleManager launches a background goroutine that periodically sweeps
+// all runners and transitions their status based on heartbeat age. Stale runners
+// (heartbeat > 90s) get marked "stale". Offline runners (heartbeat > 5min) get
+// marked "offline" and have all their claims released. Respects context cancellation.
+func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("runner lifecycle manager stopped")
+				return
+			case <-ticker.C:
+				s.RunLifecycleSweep(ctx)
+			}
+		}
+	}()
+}
+
+// RunLifecycleSweep performs a single lifecycle sweep across all runners.
+// For each runner that is not already "offline":
+//   - heartbeat age >= RunnerStaleThreshold (5min): transition to "offline", release all claims
+//   - heartbeat age >= RunnerOnlineThreshold (90s): transition to "stale"
+//   - otherwise: ensure status is "online"
+//
+// This method is exported to allow direct testing without timers.
+func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
+	rows, err := s.storage.ListRunners(ctx)
+	if err != nil {
+		slog.Error("lifecycle sweep: list runners failed", "error", err)
+		return
+	}
+
+	for i := range rows {
+		row := &rows[i]
+
+		// Skip already-offline runners — they were handled on transition
+		if row.Status == string(types.RunnerStatusOffline) {
+			continue
+		}
+
+		age := time.Since(time.UnixMilli(row.LastHeartbeat))
+		newStatus := computeRunnerStatus(row.LastHeartbeat)
+
+		if newStatus == types.RunnerStatusOffline {
+			// Transition to offline: update status and release all claims
+			if err := s.storage.SetRunnerStatus(ctx, row.RunnerID, string(types.RunnerStatusOffline)); err != nil {
+				slog.Error("lifecycle sweep: set offline failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			released, err := s.storage.ReleaseAllByRunner(ctx, row.RunnerID)
+			if err != nil {
+				slog.Error("lifecycle sweep: release claims failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			slog.Info("runner transitioned to offline",
+				"runner_id", row.RunnerID,
+				"heartbeat_age", age.Round(time.Second),
+				"claims_released", released)
+
+		} else if newStatus == types.RunnerStatusStale && row.Status != string(types.RunnerStatusStale) {
+			// Transition to stale (only if not already stale)
+			if err := s.storage.SetRunnerStatus(ctx, row.RunnerID, string(types.RunnerStatusStale)); err != nil {
+				slog.Error("lifecycle sweep: set stale failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			slog.Info("runner transitioned to stale",
+				"runner_id", row.RunnerID,
+				"heartbeat_age", age.Round(time.Second))
+
+		} else if newStatus == types.RunnerStatusOnline && row.Status != string(types.RunnerStatusOnline) {
+			// Runner recovered (e.g., heartbeat came in) — set back to online
+			if err := s.storage.SetRunnerStatus(ctx, row.RunnerID, string(types.RunnerStatusOnline)); err != nil {
+				slog.Error("lifecycle sweep: set online failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			slog.Info("runner recovered to online",
+				"runner_id", row.RunnerID,
+				"heartbeat_age", age.Round(time.Second))
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

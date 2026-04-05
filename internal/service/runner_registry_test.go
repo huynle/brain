@@ -397,6 +397,363 @@ func TestRunnerRegistry_StatusComputation_Offline(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Lifecycle Management — StartLifecycleManager
+// ---------------------------------------------------------------------------
+
+func TestLifecycleManager_MarksStaleRunners(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+
+	// Register a runner with heartbeat 2 minutes ago (>90s = stale threshold)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-stale",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000, // 2 min ago
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Run one lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Verify runner is now marked stale in the DB
+	row, err := store.GetRunner(ctx, "runner-stale")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "stale" {
+		t.Errorf("expected status 'stale', got %q", row.Status)
+	}
+}
+
+func TestLifecycleManager_MarksOfflineAndReleasesClaims(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+
+	// Register a runner with heartbeat 10 minutes ago (>5min = offline threshold)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-dead",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000, // 10 min ago
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Create a claim held by this runner
+	ok, _, claimErr := store.ClaimTask(ctx, "proj1", "task1", "runner-dead", 30*time.Minute)
+	if claimErr != nil {
+		t.Fatalf("ClaimTask failed: %v", claimErr)
+	}
+	if !ok {
+		t.Fatal("ClaimTask should have succeeded")
+	}
+
+	// Run one lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Verify runner is now offline
+	row, err := store.GetRunner(ctx, "runner-dead")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "offline" {
+		t.Errorf("expected status 'offline', got %q", row.Status)
+	}
+
+	// Verify claim was released
+	claim, err := store.GetClaim(ctx, "proj1", "task1")
+	if err != nil {
+		t.Fatalf("GetClaim failed: %v", err)
+	}
+	if claim != nil {
+		t.Error("expected claim to be released for offline runner")
+	}
+}
+
+func TestLifecycleManager_StaleToOfflineTransition(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+
+	// Runner already marked stale, heartbeat 6 minutes ago (>5min = should go offline)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-stale-old",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 360000,
+		LastHeartbeat: now - 360000, // 6 min ago
+		Status:        "stale",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Create a claim
+	ok, _, claimErr := store.ClaimTask(ctx, "proj1", "task2", "runner-stale-old", 30*time.Minute)
+	if claimErr != nil {
+		t.Fatalf("ClaimTask failed: %v", claimErr)
+	}
+	if !ok {
+		t.Fatal("ClaimTask should have succeeded")
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Should transition to offline
+	row, err := store.GetRunner(ctx, "runner-stale-old")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "offline" {
+		t.Errorf("expected status 'offline', got %q", row.Status)
+	}
+
+	// Claim should be released
+	claim, err := store.GetClaim(ctx, "proj1", "task2")
+	if err != nil {
+		t.Fatalf("GetClaim failed: %v", err)
+	}
+	if claim != nil {
+		t.Error("expected claim to be released for offline runner")
+	}
+}
+
+func TestLifecycleManager_OnlineRunnerUnchanged(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	// Register a runner with fresh heartbeat (should stay online)
+	_, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:    "runner-fresh",
+		Hostname:    "host-a",
+		MaxParallel: 1,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	// Create a claim
+	ok, _, claimErr := store.ClaimTask(ctx, "proj1", "task3", "runner-fresh", 30*time.Minute)
+	if claimErr != nil {
+		t.Fatalf("ClaimTask failed: %v", claimErr)
+	}
+	if !ok {
+		t.Fatal("ClaimTask should have succeeded")
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Status should still be online
+	row, err := store.GetRunner(ctx, "runner-fresh")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "online" {
+		t.Errorf("expected status 'online', got %q", row.Status)
+	}
+
+	// Claim should still exist
+	claim, err := store.GetClaim(ctx, "proj1", "task3")
+	if err != nil {
+		t.Fatalf("GetClaim failed: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected claim to still exist for online runner")
+	}
+}
+
+func TestLifecycleManager_MixedRunners(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+
+	// Fresh runner (online — should stay)
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-online",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// 2 min old heartbeat (should become stale)
+	err = store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-becoming-stale",
+		Hostname:      "host-b",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// 10 min old heartbeat (should become offline)
+	err = store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-becoming-offline",
+		Hostname:      "host-c",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Run one lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Verify each runner's state
+	tests := []struct {
+		runnerID       string
+		expectedStatus string
+	}{
+		{"runner-online", "online"},
+		{"runner-becoming-stale", "stale"},
+		{"runner-becoming-offline", "offline"},
+	}
+
+	for _, tt := range tests {
+		row, err := store.GetRunner(ctx, tt.runnerID)
+		if err != nil {
+			t.Fatalf("GetRunner(%s) failed: %v", tt.runnerID, err)
+		}
+		if row.Status != tt.expectedStatus {
+			t.Errorf("runner %s: expected status %q, got %q", tt.runnerID, tt.expectedStatus, row.Status)
+		}
+	}
+}
+
+func TestLifecycleManager_BackgroundGoroutine(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	now := time.Now().UnixMilli()
+
+	// Register a stale runner
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-bg",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000, // 2 min ago
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Start lifecycle manager with a very short interval
+	svc.StartLifecycleManager(ctx, 50*time.Millisecond)
+
+	// Wait for at least one sweep
+	time.Sleep(150 * time.Millisecond)
+
+	// Verify runner was transitioned
+	row, err := store.GetRunner(ctx, "runner-bg")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "stale" {
+		t.Errorf("expected status 'stale' after background sweep, got %q", row.Status)
+	}
+
+	// Cancel context and verify goroutine stops (no panics)
+	cancel()
+	time.Sleep(100 * time.Millisecond)
+}
+
+func TestLifecycleManager_AlreadyOfflineNotReprocessed(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	now := time.Now().UnixMilli()
+
+	// Runner already offline — should not be reprocessed
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-already-offline",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000,
+		Status:        "offline",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	// Create a claim (simulating leftover — normally wouldn't exist, but tests robustness)
+	ok, _, claimErr := store.ClaimTask(ctx, "proj1", "task-leftover", "runner-already-offline", 30*time.Minute)
+	if claimErr != nil {
+		t.Fatalf("ClaimTask failed: %v", claimErr)
+	}
+	if !ok {
+		t.Fatal("ClaimTask should have succeeded")
+	}
+
+	// Run lifecycle sweep
+	svc.RunLifecycleSweep(ctx)
+
+	// Status should remain offline
+	row, err := store.GetRunner(ctx, "runner-already-offline")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if row.Status != "offline" {
+		t.Errorf("expected status 'offline', got %q", row.Status)
+	}
+
+	// Claim should still exist — we don't re-release for already-offline runners
+	// (that was handled on the transition to offline)
+	claim, err := store.GetClaim(ctx, "proj1", "task-leftover")
+	if err != nil {
+		t.Fatalf("GetClaim failed: %v", err)
+	}
+	if claim == nil {
+		t.Error("expected claim to still exist for already-offline runner (no re-release)")
+	}
+}
+
 func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 	svc, store := newTestRunnerRegistryService(t)
 	ctx := context.Background()

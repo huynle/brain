@@ -1188,3 +1188,157 @@ func TestHandleRunnerStatusError(t *testing.T) {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
 	}
 }
+
+// =============================================================================
+// Task Event Emission Tests
+// =============================================================================
+
+func newTaskTestRouterWithEvents(taskMock *mockTaskService, es *mockEventService) *chi.Mux {
+	hub := realtime.NewHub()
+	h := NewHandler(
+		&mockBrainService{},
+		WithTaskService(taskMock),
+		WithRunnerService(&mockRunnerService{}),
+		WithEventService(es),
+		WithHub(hub),
+	)
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}", func(r chi.Router) {
+		r.Post("/{taskId}/claim", h.HandleClaimTask)
+		r.Post("/{taskId}/release", h.HandleReleaseTask)
+		r.Post("/{taskId}/trigger", h.HandleTriggerTask)
+	})
+	return r
+}
+
+func TestHandleClaimTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		claimTaskFunc: func(_ context.Context, _, _, _ string) (*types.ClaimResponse, error) {
+			return &types.ClaimResponse{Success: true}, nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{"runnerId": "runner-1"})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/claim", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST claim failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskClaimed {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskClaimed)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+	if evt.Metadata["runner_id"] != "runner-1" {
+		t.Errorf("metadata[runner_id] = %q, want %q", evt.Metadata["runner_id"], "runner-1")
+	}
+}
+
+func TestHandleReleaseTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		releaseTaskFunc: func(_ context.Context, _, _, _ string) error {
+			return nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{"runnerId": "runner-1"})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/release", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST release failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskReleased {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskReleased)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+}
+
+func TestHandleTriggerTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		triggerTaskFunc: func(_ context.Context, _, _ string) (*types.TriggerResponse, error) {
+			return &types.TriggerResponse{
+				Triggered: true,
+				TaskID:    "task123",
+				Success:   true,
+			}, nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/trigger", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST trigger failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskTriggered {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskTriggered)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+}

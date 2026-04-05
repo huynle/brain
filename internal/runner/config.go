@@ -87,6 +87,26 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
 
 	// Build final config: file defaults → built-in defaults → env overrides
+	// Resolve hooks directory: Hooks.HooksDir > legacy HooksDir > env > default
+	defaultHooksDir := filepath.Join(homeDir, ".config", "brain", "hooks")
+	resolvedHooksDir := getEnvOrDefault("RUNNER_HOOKS_DIR",
+		firstNonEmpty(fileCfg.Hooks.HooksDir,
+			firstNonEmpty(fileCfg.HooksDir, defaultHooksDir)))
+	resolvedHooksDir = expandTilde(resolvedHooksDir, homeDir)
+
+	// Resolve hook timeout: legacy HookTimeout > env > default (30s)
+	resolvedHookTimeout := getEnvIntOrDefault("RUNNER_HOOK_TIMEOUT",
+		firstNonZero(fileCfg.HookTimeout, 30))
+
+	// Expand tilde in inline hook script paths.
+	inlineHooks := fileCfg.Hooks.Hooks
+	if inlineHooks != nil {
+		for name, h := range inlineHooks {
+			h.Script = expandTilde(h.Script, homeDir)
+			inlineHooks[name] = h
+		}
+	}
+
 	cfg := RunnerConfig{
 		BrainAPIURL:            getEnvOrDefault("BRAIN_API_URL", firstNonEmpty(fileCfg.BrainAPIURL, "http://localhost:3333")),
 		APIToken:               getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken),
@@ -111,6 +131,13 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
+		Hooks: HooksConfig{
+			HooksDir: resolvedHooksDir,
+			Hooks:    inlineHooks,
+		},
+		// Deprecated fields kept for backward compat; values mirror Hooks.
+		HooksDir:    resolvedHooksDir,
+		HookTimeout: resolvedHookTimeout,
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -150,6 +177,19 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.IdleDetectionThreshold < 0 {
 		errs = append(errs, fmt.Sprintf("idleDetectionThreshold must be >= 0, got %d", cfg.IdleDetectionThreshold))
+	}
+
+	// Validate inline hook configs.
+	for name, h := range cfg.Hooks.Hooks {
+		if h.Command == "" && h.Script == "" {
+			errs = append(errs, fmt.Sprintf("hook %q must define either command or script", name))
+		}
+		if h.Command != "" && h.Script != "" {
+			errs = append(errs, fmt.Sprintf("hook %q defines both command and script; use only one", name))
+		}
+		if h.Timeout.Duration < 0 {
+			errs = append(errs, fmt.Sprintf("hook %q timeout must be >= 0, got %v", name, h.Timeout.Duration))
+		}
 	}
 
 	if len(errs) > 0 {

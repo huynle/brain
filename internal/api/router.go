@@ -187,6 +187,19 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				})
 			})
 
+			// ─── Events ──────────────────────────────────────────
+			r.Route("/events", func(r chi.Router) {
+				if o.handler != nil && o.handler.events != nil {
+					r.Post("/", o.handler.HandleIngestEvents)
+					r.Get("/stream", o.handler.HandleEventStream)
+					r.Get("/recent", o.handler.HandleRecentEvents)
+				} else {
+					r.Post("/", notImplemented)
+					r.Get("/stream", notImplemented)
+					r.Get("/recent", notImplemented)
+				}
+			})
+
 			// ─── Tokens ──────────────────────────────────────────
 			r.Route("/tokens", func(r chi.Router) {
 				if o.handler != nil && o.handler.tokens != nil {
@@ -197,6 +210,25 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 					r.Post("/", notImplemented)
 					r.Get("/", notImplemented)
 					r.Delete("/{name}", notImplemented)
+				}
+			})
+
+			// ─── Webhooks ────────────────────────────────────────
+			r.Route("/webhooks", func(r chi.Router) {
+				if o.handler != nil && o.handler.webhooks != nil {
+					r.Post("/", o.handler.HandleCreateWebhook)
+					r.Get("/", o.handler.HandleListWebhooks)
+					r.Get("/{id}", o.handler.HandleGetWebhook)
+					r.Patch("/{id}", o.handler.HandleUpdateWebhook)
+					r.Delete("/{id}", o.handler.HandleDeleteWebhook)
+					r.Get("/{id}/deliveries", o.handler.HandleListWebhookDeliveries)
+				} else {
+					r.Post("/", notImplemented)
+					r.Get("/", notImplemented)
+					r.Get("/{id}", notImplemented)
+					r.Patch("/{id}", notImplemented)
+					r.Delete("/{id}", notImplemented)
+					r.Get("/{id}/deliveries", notImplemented)
 				}
 			})
 

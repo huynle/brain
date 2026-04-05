@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -135,6 +135,32 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   created_at INTEGER NOT NULL
 );`
 
+const createWebhooksTable = `
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL,
+  filter TEXT DEFAULT '{}',
+  secret TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`
+
+const createWebhookDeliveriesTable = `
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  status_code INTEGER,
+  success INTEGER NOT NULL,
+  latency_ms INTEGER,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -157,6 +183,10 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires ON oauth_access_tokens(expires_at);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires ON oauth_refresh_tokens(expires_at);",
+	// Webhook indexes
+	"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);",
 }
 
 // ---------------------------------------------------------------------------
@@ -273,6 +303,21 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 5 {
+		// v5: add webhooks and webhook_deliveries tables for event hook system.
+		webhookTables := []string{
+			createWebhooksTable,
+			createWebhookDeliveriesTable,
+		}
+		for _, ddl := range webhookTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v5 (webhook tables): %w", err)
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -320,6 +365,8 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
+		createWebhooksTable,
+		createWebhookDeliveriesTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

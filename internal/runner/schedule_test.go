@@ -639,6 +639,10 @@ func (m *schedMockClient) GetAllTasks(ctx context.Context, projectID string) ([]
 	return m.allTasks[projectID], nil
 }
 
+func (m *schedMockClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	return nil, nil
+}
+
 func (m *schedMockClient) getUpdateMetadataCalls() []updateMetadataCall {
 	m.mu2.Lock()
 	defer m.mu2.Unlock()
@@ -2069,4 +2073,3 @@ func TestCheckScheduledTasks_MaxRunsNotReached(t *testing.T) {
 		t.Error("should trigger when max_runs not yet reached")
 	}
 }
-

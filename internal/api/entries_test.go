@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -2298,5 +2299,292 @@ func TestHandleBulkUpdate(t *testing.T) {
 				tt.checkBody(t, resp)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Event Emission Tests
+// =============================================================================
+
+// newTestRouterWithEvents creates a chi router with entry handlers wired to
+// both a mock BrainService and a mock EventService for testing event emission.
+func newTestRouterWithEvents(mock *mockBrainService, es *mockEventService) *chi.Mux {
+	hub := realtime.NewHub()
+	h := NewHandler(mock,
+		WithEventService(es),
+		WithHub(hub),
+	)
+	r := chi.NewRouter()
+	r.Route("/entries", func(r chi.Router) {
+		r.Post("/", h.HandleCreateEntry)
+		r.Get("/", h.HandleListEntries)
+		r.Post("/{id}/move", h.HandleMoveEntry)
+		r.Post("/bulk-update", h.HandleBulkUpdate)
+		r.Get("/*", h.HandleGetEntry)
+		r.Patch("/*", h.HandleUpdateOrMetadata)
+		r.Delete("/*", h.HandleDeleteEntry)
+	})
+	return r
+}
+
+func TestHandleCreateEntry_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		saveFunc: func(_ context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+			return &types.CreateEntryResponse{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/test.md",
+				Title: req.Title,
+				Type:  req.Type,
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"type":    "plan",
+		"title":   "My Plan",
+		"content": "Plan content",
+	})
+	resp, err := http.Post(srv.URL+"/entries", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST /entries failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventEntryCreated {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventEntryCreated)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.Metadata["entry_type"] != "plan" {
+		t.Errorf("metadata[entry_type] = %q, want %q", evt.Metadata["entry_type"], "plan")
+	}
+}
+
+func TestHandleUpdateEntry_EmitsEvents(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "pending",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateFunc: func(_ context.Context, _ string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+			status := "pending"
+			if req.Status != nil {
+				status = *req.Status
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    status,
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/abc12def", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/abc12def failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Should emit both entry.updated and task.status_changed
+	if len(es.ingested) != 2 {
+		t.Fatalf("ingested events = %d, want 2", len(es.ingested))
+	}
+
+	// First event: entry.updated
+	if es.ingested[0].Type != types.EventEntryUpdated {
+		t.Errorf("event[0].type = %q, want %q", es.ingested[0].Type, types.EventEntryUpdated)
+	}
+	if es.ingested[0].Source != types.EventSourceAPI {
+		t.Errorf("event[0].source = %q, want %q", es.ingested[0].Source, types.EventSourceAPI)
+	}
+	if es.ingested[0].TaskID != "abc12def" {
+		t.Errorf("event[0].task_id = %q, want %q", es.ingested[0].TaskID, "abc12def")
+	}
+
+	// Second event: task.status_changed
+	if es.ingested[1].Type != types.EventTaskStatusChanged {
+		t.Errorf("event[1].type = %q, want %q", es.ingested[1].Type, types.EventTaskStatusChanged)
+	}
+	if es.ingested[1].FromStatus != "pending" {
+		t.Errorf("event[1].from_status = %q, want %q", es.ingested[1].FromStatus, "pending")
+	}
+	if es.ingested[1].ToStatus != "completed" {
+		t.Errorf("event[1].to_status = %q, want %q", es.ingested[1].ToStatus, "completed")
+	}
+	if es.ingested[1].FeatureID != "feat-1" {
+		t.Errorf("event[1].feature_id = %q, want %q", es.ingested[1].FeatureID, "feat-1")
+	}
+}
+
+func TestHandleDeleteEntry_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/task/abc12def.md",
+				Type:  "task",
+				Title: "Test Task",
+			}, nil
+		},
+		deleteFunc: func(_ context.Context, _ string) error {
+			return nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest("DELETE", srv.URL+"/entries/projects/myproj/task/abc12def.md?confirm=true", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventEntryDeleted {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventEntryDeleted)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.TaskID != "abc12def" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "abc12def")
+	}
+}
+
+func TestHandleUpdateEntry_NoStatusChange_EmitsSingleEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		updateFunc: func(_ context.Context, _ string, _ types.UpdateEntryRequest) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/abc12def.md",
+				Type:  "plan",
+				Title: "Updated Plan",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"title": "Updated Plan",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/abc12def", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/abc12def failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Should emit only entry.updated (no status change, no task.status_changed)
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	if es.ingested[0].Type != types.EventEntryUpdated {
+		t.Errorf("event type = %q, want %q", es.ingested[0].Type, types.EventEntryUpdated)
+	}
+}
+
+func TestNoEventsForReadOnly(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/abc12def.md",
+				Type:  "plan",
+				Title: "Test Plan",
+			}, nil
+		},
+		listFunc: func(_ context.Context, _ types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
+			return &types.ListEntriesResponse{Entries: []types.BrainEntry{}}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// GET entry
+	resp, err := http.Get(srv.URL + "/entries/abc12def")
+	if err != nil {
+		t.Fatalf("GET /entries/abc12def failed: %v", err)
+	}
+	resp.Body.Close()
+
+	// GET list
+	resp, err = http.Get(srv.URL + "/entries")
+	if err != nil {
+		t.Fatalf("GET /entries failed: %v", err)
+	}
+	resp.Body.Close()
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 0 {
+		t.Errorf("ingested events = %d, want 0 for read-only operations", len(es.ingested))
 	}
 }

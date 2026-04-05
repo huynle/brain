@@ -322,3 +322,175 @@ func TestValidateConfig_NegativeTimeout(t *testing.T) {
 		t.Error("expected error for negative apiTimeout")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Hooks Config
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_HooksDefaults(t *testing.T) {
+	for _, key := range []string{"RUNNER_HOOKS_DIR", "RUNNER_HOOK_TIMEOUT"} {
+		os.Unsetenv(key)
+	}
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	wantDir := filepath.Join(homeDir, ".config", "brain", "hooks")
+	if cfg.Hooks.HooksDir != wantDir {
+		t.Errorf("Hooks.HooksDir = %q, want %q", cfg.Hooks.HooksDir, wantDir)
+	}
+	// Legacy field should mirror.
+	if cfg.HooksDir != wantDir {
+		t.Errorf("HooksDir (legacy) = %q, want %q", cfg.HooksDir, wantDir)
+	}
+	if cfg.HookTimeout != 30 {
+		t.Errorf("HookTimeout = %d, want 30", cfg.HookTimeout)
+	}
+}
+
+func TestLoadConfig_HooksFromYAML(t *testing.T) {
+	for _, key := range []string{"RUNNER_HOOKS_DIR", "RUNNER_HOOK_TIMEOUT"} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `runner:
+  brain_api_url: "http://localhost:3333"
+  max_parallel: 2
+  hooks:
+    hooks_dir: /custom/hooks
+    hooks:
+      post-task-blocked:
+        command: "curl -X POST https://slack.webhook/notify"
+        timeout: 10s
+      pre-task-start:
+        script: /usr/local/bin/check-deps
+        timeout: 30s
+        blocking: true
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Hooks.HooksDir != "/custom/hooks" {
+		t.Errorf("Hooks.HooksDir = %q, want %q", cfg.Hooks.HooksDir, "/custom/hooks")
+	}
+	if len(cfg.Hooks.Hooks) != 2 {
+		t.Fatalf("Hooks.Hooks len = %d, want 2", len(cfg.Hooks.Hooks))
+	}
+
+	ptb := cfg.Hooks.Hooks["post-task-blocked"]
+	if ptb.Command != "curl -X POST https://slack.webhook/notify" {
+		t.Errorf("post-task-blocked command = %q", ptb.Command)
+	}
+	if ptb.Timeout.Duration.Seconds() != 10 {
+		t.Errorf("post-task-blocked timeout = %v, want 10s", ptb.Timeout.Duration)
+	}
+
+	pts := cfg.Hooks.Hooks["pre-task-start"]
+	if pts.Script != "/usr/local/bin/check-deps" {
+		t.Errorf("pre-task-start script = %q", pts.Script)
+	}
+	if !pts.IsBlocking() {
+		t.Error("pre-task-start should be blocking")
+	}
+}
+
+func TestLoadConfig_HooksEnvOverride(t *testing.T) {
+	t.Setenv("RUNNER_HOOKS_DIR", "/env/hooks")
+	t.Setenv("RUNNER_HOOK_TIMEOUT", "60")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Hooks.HooksDir != "/env/hooks" {
+		t.Errorf("Hooks.HooksDir = %q, want %q", cfg.Hooks.HooksDir, "/env/hooks")
+	}
+	if cfg.HookTimeout != 60 {
+		t.Errorf("HookTimeout = %d, want 60", cfg.HookTimeout)
+	}
+}
+
+func TestLoadConfig_HooksTildeExpansion(t *testing.T) {
+	for _, key := range []string{"RUNNER_HOOKS_DIR"} {
+		os.Unsetenv(key)
+	}
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `hooks:
+  hooks_dir: ~/my-hooks
+  hooks:
+    pre-task-start:
+      script: ~/scripts/check.sh
+      timeout: 5s
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	homeDir, _ := os.UserHomeDir()
+	wantDir := filepath.Join(homeDir, "my-hooks")
+	if cfg.Hooks.HooksDir != wantDir {
+		t.Errorf("Hooks.HooksDir = %q, want %q", cfg.Hooks.HooksDir, wantDir)
+	}
+
+	pts := cfg.Hooks.Hooks["pre-task-start"]
+	wantScript := filepath.Join(homeDir, "scripts", "check.sh")
+	if pts.Script != wantScript {
+		t.Errorf("pre-task-start script = %q, want %q", pts.Script, wantScript)
+	}
+}
+
+func TestValidateConfig_HookNeitherCommandNorScript(t *testing.T) {
+	cfg := RunnerConfig{
+		PollInterval:      1,
+		TaskPollInterval:  1,
+		MaxParallel:       2,
+		MaxTotalProcesses: 10,
+		Hooks: HooksConfig{
+			Hooks: map[string]InlineHookConfig{
+				"pre-task-start": {},
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error when hook has neither command nor script")
+	}
+}
+
+func TestValidateConfig_HookBothCommandAndScript(t *testing.T) {
+	cfg := RunnerConfig{
+		PollInterval:      1,
+		TaskPollInterval:  1,
+		MaxParallel:       2,
+		MaxTotalProcesses: 10,
+		Hooks: HooksConfig{
+			Hooks: map[string]InlineHookConfig{
+				"pre-task-start": {
+					Command: "echo hi",
+					Script:  "/bin/check",
+				},
+			},
+		},
+	}
+	if err := ValidateConfig(cfg); err == nil {
+		t.Error("expected error when hook has both command and script")
+	}
+}

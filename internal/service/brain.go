@@ -136,6 +136,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
+		Trigger:             fmTriggerFromTypes(req.Trigger),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,
@@ -605,6 +606,11 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.GeneratedBy != nil {
 		fm.GeneratedBy = *req.GeneratedBy
+	}
+
+	// Trigger
+	if req.Trigger != nil {
+		fm.Trigger = fmTriggerFromTypes(req.Trigger)
 	}
 
 	// Sessions
@@ -1898,4 +1904,30 @@ func coerceStringSlice(v interface{}, sanitize func(string) (string, bool)) []st
 		}
 	}
 	return result
+}
+
+// fmTriggerFromTypes converts a types.TriggerConfig to a frontmatter.TriggerConfig.
+func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &frontmatter.TriggerConfig{
+		Event:         t.Event,
+		Filter:        t.Filter,
+		Cooldown:      t.Cooldown,
+		MaxConcurrent: t.MaxConcurrent,
+	}
+}
+
+// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
+func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TriggerConfig{
+		Event:         t.Event,
+		Filter:        t.Filter,
+		Cooldown:      t.Cooldown,
+		MaxConcurrent: t.MaxConcurrent,
+	}
 }

@@ -38,6 +38,21 @@ type RunnerConfig struct {
 	// When empty, all features are eligible. Supports multiple feature IDs.
 	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
 	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
+
+	// Hooks holds the event hook system configuration, including hooks directory
+	// and inline hook definitions.
+	Hooks HooksConfig `yaml:"hooks" json:"hooks"`
+
+	// HooksDir is the directory containing hook scripts (pre-*/post-* executables).
+	// Default: ~/.config/brain/hooks
+	// Deprecated: Use Hooks.HooksDir instead. Kept for backward compatibility.
+	HooksDir string `yaml:"hooks_dir" json:"hooks_dir"`
+
+	// HookTimeout is the maximum duration in seconds for pre-hook execution.
+	// Post-hooks are fire-and-forget and not subject to this timeout.
+	// Default: 30
+	// Deprecated: Use per-hook timeout in Hooks.Hooks[name].Timeout instead.
+	HookTimeout int `yaml:"hook_timeout" json:"hook_timeout"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -45,6 +60,89 @@ type OpencodeConfig struct {
 	Bin   string `yaml:"bin" json:"bin"`
 	Agent string `yaml:"agent" json:"agent"`
 	Model string `yaml:"model" json:"model"`
+}
+
+// HooksConfig holds configuration for the event hook system.
+// It supports both directory-based hook discovery and inline hook definitions.
+type HooksConfig struct {
+	// HooksDir is the directory containing hook scripts (pre-*/post-* executables).
+	// Default: ~/.config/brain/hooks
+	HooksDir string `yaml:"hooks_dir" json:"hooks_dir"`
+
+	// Inline hook definitions keyed by hook name (e.g., "post-task-blocked").
+	// YAML config inline hooks take precedence over directory scripts.
+	Hooks map[string]InlineHookConfig `yaml:"hooks" json:"hooks"`
+}
+
+// InlineHookConfig defines an inline hook from YAML configuration.
+// Either Command or Script must be set, but not both.
+type InlineHookConfig struct {
+	// Command is a shell command string to execute (run via "sh -c").
+	Command string `yaml:"command" json:"command"`
+	// Script is the path to an executable script file.
+	Script string `yaml:"script" json:"script"`
+	// Timeout is the maximum duration for hook execution.
+	// Defaults to 30s for pre-hooks, 10s for post-hooks.
+	Timeout Duration `yaml:"timeout" json:"timeout"`
+	// Blocking controls whether a pre-hook blocks the action on failure.
+	// Only meaningful for pre-hooks. Default: true for pre-hooks.
+	Blocking *bool `yaml:"blocking" json:"blocking"`
+	// Enabled controls whether this hook is active. Default: true.
+	Enabled *bool `yaml:"enabled" json:"enabled"`
+}
+
+// Duration is a time.Duration that supports YAML unmarshaling from strings like "10s", "5m".
+type Duration struct {
+	time.Duration
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler for Duration.
+func (d *Duration) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var s string
+	if err := unmarshal(&s); err != nil {
+		// Try as integer (seconds).
+		var secs int
+		if err2 := unmarshal(&secs); err2 != nil {
+			return err
+		}
+		d.Duration = time.Duration(secs) * time.Second
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	d.Duration = parsed
+	return nil
+}
+
+// MarshalYAML implements yaml.Marshaler for Duration.
+func (d Duration) MarshalYAML() (interface{}, error) {
+	return d.Duration.String(), nil
+}
+
+// IsEnabled returns whether the inline hook is enabled (defaults to true).
+func (h InlineHookConfig) IsEnabled() bool {
+	if h.Enabled == nil {
+		return true
+	}
+	return *h.Enabled
+}
+
+// IsBlocking returns whether the inline hook is blocking (defaults to true for pre-hooks).
+func (h InlineHookConfig) IsBlocking() bool {
+	if h.Blocking == nil {
+		return true
+	}
+	return *h.Blocking
+}
+
+// GetTimeout returns the configured timeout, or the given default if not set.
+func (h InlineHookConfig) GetTimeout(defaultTimeout time.Duration) time.Duration {
+	if h.Timeout.Duration > 0 {
+		return h.Timeout.Duration
+	}
+	return defaultTimeout
 }
 
 // =============================================================================
@@ -79,6 +177,7 @@ type RunningTask struct {
 	CompleteOnIdle  bool      `json:"completeOnIdle,omitempty"`
 	ScheduledTaskID string    `json:"scheduledTaskId,omitempty"`
 	RunID           string    `json:"runId,omitempty"`
+	FeatureID       string    `json:"featureId,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.
@@ -163,6 +262,12 @@ const (
 	EventTaskStatusChanged RunnerEventType = "task_status_changed"
 	EventTaskReleased      RunnerEventType = "task_released"
 	EventRunnerStarted     RunnerEventType = "runner_started"
+
+	// Feature lifecycle events (emitted by FeatureTracker).
+	EventFeatureStarted   RunnerEventType = "feature_started"
+	EventFeatureCompleted RunnerEventType = "feature_completed"
+	EventFeatureBlocked   RunnerEventType = "feature_blocked"
+	EventFeatureProgress  RunnerEventType = "feature_progress"
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.

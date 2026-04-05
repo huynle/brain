@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -112,6 +114,19 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Notify SSE clients about the change
 	h.notifyProjectChanged(r, resp.Path, req.Type)
+
+	// Emit entry.created event
+	evt := types.NewEvent(types.EventEntryCreated, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(resp.Path)
+	evt.TaskPath = resp.Path
+	evt.Metadata = map[string]string{
+		"entry_type": req.Type,
+		"title":      req.Title,
+	}
+	if req.FeatureID != "" {
+		evt.FeatureID = req.FeatureID
+	}
+	h.emitEvent(r.Context(), evt)
 
 	WriteJSON(w, http.StatusCreated, resp)
 }
@@ -367,6 +382,14 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture old status before update for status_changed events.
+	var oldStatus string
+	if req.Status != nil && h.events != nil {
+		if oldEntry, err := h.brain.Recall(r.Context(), id); err == nil {
+			oldStatus = oldEntry.Status
+		}
+	}
+
 	entry, err := h.brain.Update(r.Context(), id, req)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -379,6 +402,38 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Notify SSE clients about the change
 	h.notifyProjectChanged(r, entry.Path, entry.Type)
+
+	// Check feature completion when a task status changes to completed/validated
+	h.checkFeatureCompletionForEntry(r.Context(), entry, req.Status)
+
+	// Emit entry.updated event
+	projectID := extractProjectID(entry.Path)
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	evt.ProjectID = projectID
+	evt.TaskPath = entry.Path
+	evt.TaskID = entry.ID
+	evt.FeatureID = entry.FeatureID
+	evt.Metadata = map[string]string{
+		"entry_type": entry.Type,
+		"title":      entry.Title,
+	}
+	if req.Status != nil {
+		evt.Metadata["new_status"] = *req.Status
+	}
+	h.emitEvent(r.Context(), evt)
+
+	// Emit task.status_changed when a task's status actually changed
+	if entry.Type == "task" && req.Status != nil && oldStatus != "" && oldStatus != *req.Status {
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectID
+		statusEvt.TaskID = entry.ID
+		statusEvt.TaskPath = entry.Path
+		statusEvt.TaskTitle = entry.Title
+		statusEvt.FeatureID = entry.FeatureID
+		statusEvt.FromStatus = oldStatus
+		statusEvt.ToStatus = *req.Status
+		h.emitEvent(r.Context(), statusEvt)
+	}
 
 	WriteJSON(w, http.StatusOK, entry)
 }
@@ -425,6 +480,18 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	// Notify SSE clients about the change
 	h.notifyProjectChanged(r, entry.Path, entry.Type)
 
+	// Emit entry.updated event for metadata change
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(entry.Path)
+	evt.TaskPath = entry.Path
+	evt.TaskID = entry.ID
+	evt.FeatureID = entry.FeatureID
+	evt.Metadata = map[string]string{
+		"entry_type": entry.Type,
+		"action":     "metadata_update",
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, entry)
 }
 
@@ -443,6 +510,12 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recall entry before deletion for event metadata.
+	var deletedEntry *types.BrainEntry
+	if h.events != nil {
+		deletedEntry, _ = h.brain.Recall(r.Context(), id)
+	}
+
 	err := h.brain.Delete(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -455,6 +528,20 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 	// Notify SSE clients about the deletion
 	h.notifyProjectChanged(r, id, "task") // id may be a path like projects/test1/task/xxx.md
+
+	// Emit entry.deleted event
+	evt := types.NewEvent(types.EventEntryDeleted, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(id)
+	evt.TaskPath = id
+	if deletedEntry != nil {
+		evt.TaskID = deletedEntry.ID
+		evt.FeatureID = deletedEntry.FeatureID
+		evt.Metadata = map[string]string{
+			"entry_type": deletedEntry.Type,
+			"title":      deletedEntry.Title,
+		}
+	}
+	h.emitEvent(r.Context(), evt)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -539,6 +626,23 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 				h.notifyProjectChanged(r, result.Path, "task")
 			}
 		}
+
+		// Emit entry.updated events for each successful update
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+			evt.ProjectID = extractProjectID(result.Path)
+			evt.TaskPath = result.Path
+			evt.Metadata = map[string]string{
+				"bulk": "true",
+			}
+			h.emitEvent(r.Context(), evt)
+		}
+
+		// Check feature completion for bulk-updated tasks
+		h.checkFeatureCompletionForBulkUpdate(r.Context(), req, resp)
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -645,6 +749,19 @@ func (h *Handler) HandleMoveEntry(w http.ResponseWriter, r *http.Request) {
 	h.notifyProjectChanged(r, result.From, "task") // source project
 	h.notifyProjectChanged(r, result.To, "task")   // target project
 
+	// Emit entry.updated event for move
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(result.To)
+	evt.TaskPath = result.To
+	evt.Metadata = map[string]string{
+		"action":       "move",
+		"from_path":    result.From,
+		"to_path":      result.To,
+		"from_project": extractProjectID(result.From),
+		"to_project":   extractProjectID(result.To),
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, result)
 }
 
@@ -685,6 +802,133 @@ func (h *Handler) notifyProjectChanged(r *http.Request, entryPath string, entryT
 				Cycles: resp.Cycles,
 			})
 		}
+	}
+}
+
+// =============================================================================
+// Event Emission Helper
+// =============================================================================
+
+// emitEvent publishes an event through the EventService if configured.
+// It is a fire-and-forget helper — errors are logged but never block the
+// HTTP response path.
+func (h *Handler) emitEvent(ctx context.Context, evt types.Event) {
+	if h.events == nil {
+		return
+	}
+	if err := h.events.Ingest(ctx, []types.Event{evt}); err != nil {
+		slog.Warn("failed to emit event",
+			"event_type", evt.Type,
+			"error", err,
+		)
+	}
+}
+
+// =============================================================================
+// Feature Completion Detection
+// =============================================================================
+
+// checkFeatureCompletionForEntry checks if a task's feature is now complete
+// after a single entry update. Only triggers when:
+// 1. The entry is a task type
+// 2. The status was explicitly changed to "completed" or "validated"
+// 3. The entry has a feature_id
+// 4. An event service is configured
+func (h *Handler) checkFeatureCompletionForEntry(ctx context.Context, entry *types.BrainEntry, newStatus *string) {
+	if h.events == nil || entry == nil {
+		return
+	}
+	if entry.Type != "task" {
+		return
+	}
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+	if entry.FeatureID == "" {
+		return
+	}
+
+	projectID := extractProjectID(entry.Path)
+	if projectID == "" {
+		return
+	}
+
+	h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+}
+
+// checkFeatureCompletionForBulkUpdate checks feature completion for tasks
+// updated in a bulk update operation. It recalls each successfully updated
+// entry to check if it's a task with a feature_id.
+func (h *Handler) checkFeatureCompletionForBulkUpdate(ctx context.Context, req types.BulkUpdateRequest, resp *types.BulkUpdateResponse) {
+	if h.events == nil || resp == nil {
+		return
+	}
+
+	// Determine the status being set
+	var newStatus *string
+	if req.Updates != nil && req.Updates.Status != nil {
+		newStatus = req.Updates.Status
+	}
+
+	// For explicit mode, check each entry's status
+	if newStatus == nil && len(req.Entries) > 0 {
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			for _, reqEntry := range req.Entries {
+				if reqEntry.Path == result.Path && reqEntry.Updates.Status != nil {
+					s := *reqEntry.Updates.Status
+					if s == "completed" || s == "validated" {
+						entry, err := h.brain.Recall(ctx, result.Path)
+						if err == nil && entry.Type == "task" && entry.FeatureID != "" {
+							projectID := extractProjectID(entry.Path)
+							if projectID != "" {
+								h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+		return
+	}
+
+	// For filter mode with status change to completed/validated
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+
+	// Check each successfully updated entry
+	seenFeatures := make(map[string]bool)
+	for _, result := range resp.Results {
+		if result.Status != "ok" {
+			continue
+		}
+		entry, err := h.brain.Recall(ctx, result.Path)
+		if err != nil {
+			continue
+		}
+		if entry.Type != "task" || entry.FeatureID == "" {
+			continue
+		}
+		projectID := extractProjectID(entry.Path)
+		if projectID == "" {
+			continue
+		}
+		featureKey := projectID + ":" + entry.FeatureID
+		if seenFeatures[featureKey] {
+			continue // Already checked this feature
+		}
+		seenFeatures[featureKey] = true
+		h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
 	}
 }
 

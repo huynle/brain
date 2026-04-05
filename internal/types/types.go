@@ -190,6 +190,9 @@ type BrainEntry struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
+	// Event trigger configuration
+	Trigger *TriggerConfig `json:"trigger,omitempty"`
+
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`
@@ -296,6 +299,8 @@ type CreateEntryRequest struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
+	Trigger *TriggerConfig `json:"trigger,omitempty"`
+
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 }
@@ -366,6 +371,8 @@ type UpdateEntryRequest struct {
 	GeneratedKind *string `json:"generated_kind,omitempty"`
 	GeneratedKey  *string `json:"generated_key,omitempty"`
 	GeneratedBy   *string `json:"generated_by,omitempty"`
+
+	Trigger *TriggerConfig `json:"trigger,omitempty"`
 }
 
 // =============================================================================
@@ -613,6 +620,9 @@ type ResolvedTask struct {
 	GeneratedKind string `json:"generated_kind,omitempty"`
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
+
+	// Event trigger configuration
+	Trigger *TriggerConfig `json:"trigger,omitempty"`
 
 	// Dependency resolution fields
 	ResolvedDeps    []string `json:"resolved_deps"`

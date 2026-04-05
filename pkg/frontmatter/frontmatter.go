@@ -28,6 +28,19 @@ type SessionInfo struct {
 	RunID     string `yaml:"run_id,omitempty" json:"run_id,omitempty"`
 }
 
+// TriggerConfig defines when a hook should fire based on an event.
+// This mirrors internal/types.TriggerConfig for the frontmatter package boundary.
+type TriggerConfig struct {
+	// Event is the event pattern to match (e.g., "task.completed", "task.*").
+	Event string `yaml:"event" json:"event"`
+	// Filter is optional key-value filters applied to event fields.
+	Filter map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	// Cooldown is the minimum interval between firings (e.g., "5m", "1h").
+	Cooldown string `yaml:"cooldown,omitempty" json:"cooldown,omitempty"`
+	// MaxConcurrent limits the number of concurrent executions.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+}
+
 // CronRun represents a single cron execution run.
 type CronRun struct {
 	RunID      string `yaml:"run_id" json:"run_id"`
@@ -112,6 +125,9 @@ type Frontmatter struct {
 	GeneratedKey  string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
 	GeneratedBy   string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
 
+	// Event trigger configuration
+	Trigger *TriggerConfig `yaml:"trigger,omitempty" json:"trigger,omitempty"`
+
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 	RunFinalizations map[string]RunFinalization `yaml:"run_finalizations,omitempty" json:"run_finalizations,omitempty"`
@@ -181,6 +197,8 @@ type GenerateOptions struct {
 	GeneratedKind string
 	GeneratedKey  string
 	GeneratedBy   string
+
+	Trigger *TriggerConfig
 
 	Sessions         map[string]SessionInfo
 	RunFinalizations map[string]RunFinalization
@@ -254,6 +272,7 @@ type rawFrontmatter struct {
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
+	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`
 	RunFinalizations    map[string]RunFinalization `yaml:"run_finalizations"`
 
@@ -284,6 +303,7 @@ var knownFields = map[string]bool{
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true,
+	"trigger":      true,
 	"sessions":     true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
@@ -422,6 +442,7 @@ func Parse(content string) (*Document, error) {
 		GeneratedKind:       raw.GeneratedKind,
 		GeneratedKey:        raw.GeneratedKey,
 		GeneratedBy:         raw.GeneratedBy,
+		Trigger:             raw.Trigger,
 		Sessions:            sessions,
 		RunFinalizations:    raw.RunFinalizations,
 	}
@@ -663,6 +684,30 @@ func Serialize(fm *Frontmatter) string {
 	emit("generated_key", fm.GeneratedKey)
 	emit("generated_by", fm.GeneratedBy)
 
+	// Trigger config
+	if fm.Trigger != nil {
+		lines = append(lines, "trigger:")
+		emit("  event", fm.Trigger.Event)
+		if len(fm.Trigger.Filter) > 0 {
+			lines = append(lines, "  filter:")
+			// Sort keys for deterministic output
+			filterKeys := make([]string, 0, len(fm.Trigger.Filter))
+			for k := range fm.Trigger.Filter {
+				filterKeys = append(filterKeys, k)
+			}
+			sort.Strings(filterKeys)
+			for _, k := range filterKeys {
+				lines = append(lines, "    "+k+": "+EscapeYamlValue(fm.Trigger.Filter[k]))
+			}
+		}
+		if fm.Trigger.Cooldown != "" {
+			lines = append(lines, "  cooldown: "+EscapeYamlValue(fm.Trigger.Cooldown))
+		}
+		if fm.Trigger.MaxConcurrent > 0 {
+			lines = append(lines, fmt.Sprintf("  max_concurrent: %d", fm.Trigger.MaxConcurrent))
+		}
+	}
+
 	// Sessions map
 	if len(fm.Sessions) > 0 {
 		lines = append(lines, "sessions:")
@@ -793,6 +838,7 @@ func Generate(opts *GenerateOptions) string {
 		GeneratedKind:       opts.GeneratedKind,
 		GeneratedKey:        opts.GeneratedKey,
 		GeneratedBy:         opts.GeneratedBy,
+		Trigger:             opts.Trigger,
 		Sessions:            opts.Sessions,
 		RunFinalizations:    opts.RunFinalizations,
 	}

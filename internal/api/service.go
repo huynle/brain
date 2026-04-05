@@ -155,6 +155,28 @@ type RunnerService interface {
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
+// EventService defines the interface for event ingestion and querying.
+// Implementations accept events from runners and API mutations,
+// publish them to the EventHub, and support querying recent events.
+type EventService interface {
+	// Ingest accepts a batch of events, validates them, assigns IDs if missing,
+	// deduplicates by ID, and publishes to the EventHub.
+	Ingest(ctx context.Context, events []types.Event) error
+
+	// Recent returns recent events from the ring buffer with optional filters.
+	// Filters are key-value pairs matching event fields (e.g., "project_id", "type").
+	Recent(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
+
+	// Subscribe returns a channel of events matching the given filters and
+	// an unsubscribe function. Used by the SSE handler for real-time streaming.
+	Subscribe(ctx context.Context, filters map[string]string) (<-chan types.Event, func())
+
+	// CheckFeatureCompletion checks if all tasks in a feature are completed
+	// after a task status update. Emits feature.completed or feature.progress
+	// events as appropriate. Safe to call with empty featureID.
+	CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string)
+}
+
 // MonitorService defines the interface for monitor operations.
 type MonitorService interface {
 	// ListTemplates returns all available monitor templates.
@@ -180,4 +202,32 @@ type MonitorService interface {
 
 	// Find finds an existing monitor for a template+scope combo.
 	Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error)
+}
+
+// WebhookService defines the interface for webhook CRUD, event matching,
+// and HTTP delivery with HMAC signing.
+type WebhookService interface {
+	// Create registers a new webhook.
+	Create(ctx context.Context, req types.CreateWebhookRequest) (*types.WebhookResponse, error)
+
+	// Get returns a webhook by ID.
+	Get(ctx context.Context, id string) (*types.WebhookResponse, error)
+
+	// List returns all webhooks, optionally filtered by enabled status.
+	List(ctx context.Context, enabledOnly bool) ([]types.WebhookResponse, error)
+
+	// Update modifies an existing webhook.
+	Update(ctx context.Context, id string, req types.UpdateWebhookRequest) (*types.WebhookResponse, error)
+
+	// Delete removes a webhook by ID.
+	Delete(ctx context.Context, id string) error
+
+	// Deliver sends an event to all matching webhooks.
+	// It matches the event type and filters against registered webhooks,
+	// delivers via HTTP POST with HMAC-SHA256 signing, retries on failure,
+	// and logs delivery results.
+	Deliver(ctx context.Context, event types.Event) error
+
+	// ListDeliveries returns recent delivery attempts for a webhook.
+	ListDeliveries(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error)
 }

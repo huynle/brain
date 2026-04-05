@@ -219,9 +219,16 @@ func NewModel(cfg Config) Model {
 		if cfg.LogDir != "" {
 			logPath = filepath.Join(cfg.LogDir, cfg.Project, "tui-logs.jsonl")
 		} else {
-			homeDir, err := os.UserHomeDir()
-			if err == nil {
-				logPath = filepath.Join(homeDir, ".local", "log", "brain-runner", cfg.Project, "tui-logs.jsonl")
+			// Respect XDG_STATE_HOME for log directory fallback
+			stateHome := os.Getenv("XDG_STATE_HOME")
+			if stateHome == "" {
+				homeDir, err := os.UserHomeDir()
+				if err == nil {
+					stateHome = filepath.Join(homeDir, ".local", "state")
+				}
+			}
+			if stateHome != "" {
+				logPath = filepath.Join(stateHome, "brain-runner", cfg.Project, "tui-logs.jsonl")
 			}
 		}
 		if logPath != "" {

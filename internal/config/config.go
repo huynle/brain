@@ -57,9 +57,15 @@ type Config struct {
 func Load() Config {
 	homeDir, _ := os.UserHomeDir()
 
-	// Layer 1: Built-in defaults (aligned with unified.go defaults)
+	// Layer 1: Built-in defaults (aligned with unified.go defaults).
+	// BRAIN_DIR env var is checked here so it applies even when no config file exists.
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
+
 	cfg := Config{
-		BrainDir:   filepath.Join(homeDir, ".brain"),
+		BrainDir:   brainDir,
 		Port:       3333,
 		Host:       "localhost",
 		EnableAuth: false,

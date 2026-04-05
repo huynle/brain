@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
@@ -100,8 +99,7 @@ func (c *APICommand) Execute() error {
 	if c.Flags.Daemon {
 		pidFile := c.Config.Server.PIDFile
 		if pidFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+			pidFile = defaultPIDFile()
 		}
 
 		logFile := c.Flags.LogFile
@@ -109,8 +107,7 @@ func (c *APICommand) Execute() error {
 			logFile = c.Config.Server.LogFile
 		}
 		if logFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+			logFile = defaultLogFile()
 		}
 
 		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config)

@@ -33,13 +33,16 @@ func getDefaultGroupVisible() map[string]bool {
 }
 
 // getSettingsPath returns the path to the settings file.
-// Uses ~/.brain/tui-settings.json
+// Respects BRAIN_DIR env var; falls back to ~/.brain/tui-settings.json.
 func getSettingsPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		brainDir = filepath.Join(home, ".brain")
 	}
-	brainDir := filepath.Join(home, ".brain")
 	if err := os.MkdirAll(brainDir, 0755); err != nil {
 		return "", err
 	}

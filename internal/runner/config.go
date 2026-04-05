@@ -14,18 +14,38 @@ import (
 // Config File Locations
 // =============================================================================
 
-// DefaultConfigPath returns the primary config file path.
-func DefaultConfigPath() string {
+// xdgConfigHome returns the XDG config directory, respecting XDG_CONFIG_HOME.
+// Falls back to ~/.config if the variable is unset, matching the XDG Base Dir spec.
+func xdgConfigHome() string {
+	if v := os.Getenv("XDG_CONFIG_HOME"); v != "" {
+		return v
+	}
 	homeDir, _ := os.UserHomeDir()
-	return filepath.Join(homeDir, ".config", "brain", "config.yaml")
+	return filepath.Join(homeDir, ".config")
+}
+
+// xdgStateHome returns the XDG state directory, respecting XDG_STATE_HOME.
+// Falls back to ~/.local/state if the variable is unset.
+func xdgStateHome() string {
+	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
+		return v
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".local", "state")
+}
+
+// DefaultConfigPath returns the primary config file path.
+// Respects XDG_CONFIG_HOME: $XDG_CONFIG_HOME/brain/config.yaml
+func DefaultConfigPath() string {
+	return filepath.Join(xdgConfigHome(), "brain", "config.yaml")
 }
 
 // configFiles returns the list of config file paths to check, in priority order.
-// Checks ~/.config/brain/ first (preferred), then ~/.config/brain-runner/ (legacy).
+// Respects XDG_CONFIG_HOME for both the primary and legacy paths.
 func configFiles() []string {
-	homeDir, _ := os.UserHomeDir()
-	primaryDir := filepath.Join(homeDir, ".config", "brain")
-	legacyDir := filepath.Join(homeDir, ".config", "brain-runner")
+	configHome := xdgConfigHome()
+	primaryDir := filepath.Join(configHome, "brain")
+	legacyDir := filepath.Join(configHome, "brain-runner")
 	return []string{
 		filepath.Join(primaryDir, "config.yaml"),
 		filepath.Join(primaryDir, "config.yml"),
@@ -88,7 +108,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Build final config: file defaults → built-in defaults → env overrides
 	// Resolve hooks directory: Hooks.HooksDir > legacy HooksDir > env > default
-	defaultHooksDir := filepath.Join(homeDir, ".config", "brain", "hooks")
+	defaultHooksDir := filepath.Join(xdgConfigHome(), "brain", "hooks")
 	resolvedHooksDir := getEnvOrDefault("RUNNER_HOOKS_DIR",
 		firstNonEmpty(fileCfg.Hooks.HooksDir,
 			firstNonEmpty(fileCfg.HooksDir, defaultHooksDir)))
@@ -113,7 +133,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		PollInterval:           getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
 		TaskPollInterval:       getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:            getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
-		StateDir:               getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, filepath.Join(homeDir, ".local", "state", "brain-runner"))),
+		StateDir:               getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, filepath.Join(xdgStateHome(), "brain-runner"))),
 		LogDir:                 getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
 		WorkDir:                getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
 		APITimeout:             getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),

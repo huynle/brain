@@ -37,6 +37,10 @@ type RunnerConfig struct {
 	// When empty, all features are eligible. Supports multiple feature IDs.
 	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
 	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
+
+	// HeartbeatInterval is how often (in seconds) the runner sends heartbeats
+	// to the Brain API. Default: 30s. Set via RUNNER_HEARTBEAT_INTERVAL env var.
+	HeartbeatInterval int `yaml:"heartbeat_interval" json:"heartbeat_interval"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.

@@ -106,10 +106,11 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
-		ExcludeProjects: fileCfg.ExcludeProjects,
-		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
-		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
-		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
+		ExcludeProjects:   fileCfg.ExcludeProjects,
+		AutoMonitors:      getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
+		EnvPassthrough:    defaultEnvPassthrough(fileCfg.EnvPassthrough),
+		FeatureIDs:        getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
+		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -149,6 +150,9 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.IdleDetectionThreshold < 0 {
 		errs = append(errs, fmt.Sprintf("idleDetectionThreshold must be >= 0, got %d", cfg.IdleDetectionThreshold))
+	}
+	if cfg.HeartbeatInterval < 1 {
+		errs = append(errs, fmt.Sprintf("heartbeatInterval must be >= 1, got %d", cfg.HeartbeatInterval))
 	}
 
 	if len(errs) > 0 {

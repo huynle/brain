@@ -64,6 +64,15 @@ type mockClient struct {
 
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
+
+	registerErr   error
+	registerCalls []types.RunnerRegistration
+
+	heartbeatErr   error
+	heartbeatCalls []heartbeatCall
+
+	deregisterErr   error
+	deregisterCalls []string
 }
 
 type nextTaskCall struct {
@@ -97,6 +106,11 @@ type updateStatusCall struct {
 type appendCall struct {
 	TaskPath string
 	Content  string
+}
+
+type heartbeatCall struct {
+	RunnerID string
+	Request  types.RunnerHeartbeatRequest
 }
 
 func newMockClient() *mockClient {
@@ -203,6 +217,34 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 		}
 	}
 	return &types.BrainEntry{Path: entryPath}, nil
+}
+
+func (m *mockClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.registerErr != nil {
+		return nil, m.registerErr
+	}
+	m.registerCalls = append(m.registerCalls, req)
+	return &types.RunnerInfo{
+		RunnerID: req.RunnerID,
+		Hostname: req.Hostname,
+		Status:   types.RunnerStatusOnline,
+	}, nil
+}
+
+func (m *mockClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.heartbeatCalls = append(m.heartbeatCalls, heartbeatCall{RunnerID: runnerID, Request: req})
+	return m.heartbeatErr
+}
+
+func (m *mockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deregisterCalls = append(m.deregisterCalls, runnerID)
+	return m.deregisterErr
 }
 
 func (m *mockClient) getNextTaskCalls() []nextTaskCall {

@@ -667,6 +667,61 @@ func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullC
 }
 
 // =============================================================================
+// Runner Registration & Heartbeat
+// =============================================================================
+
+// RegisterRunner registers this runner with the Brain API server.
+// Returns the RunnerInfo on success or an error. A non-2xx response is returned
+// as an *APIError so callers can decide whether to treat it as fatal.
+func (c *APIClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/register", req)
+	if err != nil {
+		return nil, fmt.Errorf("register runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return nil, c.readError(resp)
+	}
+
+	var info types.RunnerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	return &info, nil
+}
+
+// SendHeartbeat sends a heartbeat for this runner to the Brain API server.
+func (c *APIClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/heartbeat", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, req)
+	if err != nil {
+		return fmt.Errorf("send heartbeat: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// DeregisterRunner removes this runner from the Brain API server.
+func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/deregister", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("deregister runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
 // Runner Pause/Resume
 // =============================================================================
 

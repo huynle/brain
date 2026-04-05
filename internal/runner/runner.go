@@ -42,6 +42,9 @@ type Client interface {
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
+	RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+	SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+	DeregisterRunner(ctx context.Context, runnerID string) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -239,6 +242,9 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// Save initial state
 	tr.saveState()
 
+	// Register with the Brain API (non-fatal on failure for backward compat)
+	tr.registerWithAPI(ctx)
+
 	// Emit runner started event
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
@@ -280,6 +286,24 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Start heartbeat goroutine
+	heartbeatInterval := time.Duration(tr.config.HeartbeatInterval) * time.Second
+	if heartbeatInterval < time.Second {
+		heartbeatInterval = 30 * time.Second
+	}
+	heartbeatTicker := time.NewTicker(heartbeatInterval)
+	go func() {
+		defer heartbeatTicker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+				tr.sendHeartbeat(ctx)
+			}
+		}
+	}()
+
 	// Run initial poll immediately
 	tr.poll(ctx)
 
@@ -308,6 +332,9 @@ func (tr *TaskRunner) Stop() error {
 
 	// Wait for the poll loop to exit
 	<-tr.done
+
+	// Deregister from the Brain API (best-effort)
+	tr.deregisterFromAPI()
 
 	// Stop SSE listener
 	if tr.sseListener != nil {
@@ -717,6 +744,76 @@ func discoverSessionID(port int) (string, error) {
 		}
 	}
 	return latest.ID, nil
+}
+
+// =============================================================================
+// Runner Registration & Heartbeat
+// =============================================================================
+
+// registerWithAPI registers this runner with the Brain API server.
+// Registration failure is non-fatal — the runner logs a warning and continues.
+// This ensures backward compatibility with older API servers that don't support
+// the runner registry endpoints.
+func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+
+	req := types.RunnerRegistration{
+		RunnerID:    tr.runnerID,
+		Hostname:    hostname,
+		Executors:   []string{"opencode"},
+		MaxParallel: tr.getMaxParallel(),
+	}
+
+	info, err := tr.client.RegisterRunner(ctx, req)
+	if err != nil {
+		slog.Warn("runner registration failed (continuing without registration)", "error", err)
+		return
+	}
+
+	slog.Info("runner registered with API",
+		"runner_id", tr.runnerID,
+		"hostname", hostname,
+		"status", info.Status,
+	)
+}
+
+// sendHeartbeat sends a heartbeat to the Brain API with current runner stats.
+// Heartbeat failure is logged but does not stop the runner.
+func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
+	running := tr.processMgr.RunningCount()
+
+	tr.mu.RLock()
+	stats := tr.stats
+	tr.mu.RUnlock()
+
+	req := types.RunnerHeartbeatRequest{
+		RunningTasks: running,
+		Stats: map[string]interface{}{
+			"completed":    stats.Completed,
+			"failed":       stats.Failed,
+			"totalRuntime": stats.TotalRuntime,
+		},
+	}
+
+	if err := tr.client.SendHeartbeat(ctx, tr.runnerID, req); err != nil {
+		slog.Warn("heartbeat failed", "runner_id", tr.runnerID, "error", err)
+	}
+}
+
+// deregisterFromAPI deregisters this runner from the Brain API server.
+// This is called during graceful shutdown. Failure is logged but not fatal.
+func (tr *TaskRunner) deregisterFromAPI() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := tr.client.DeregisterRunner(ctx, tr.runnerID); err != nil {
+		slog.Warn("runner deregistration failed", "runner_id", tr.runnerID, "error", err)
+		return
+	}
+	slog.Info("runner deregistered from API", "runner_id", tr.runnerID)
 }
 
 // =============================================================================

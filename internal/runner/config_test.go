@@ -256,6 +256,7 @@ func TestValidateConfig_Valid(t *testing.T) {
 		APITimeout:             5000,
 		TaskTimeout:            0,
 		IdleDetectionThreshold: 60000,
+		HeartbeatInterval:      30,
 	}
 	if err := ValidateConfig(cfg); err != nil {
 		t.Errorf("unexpected error for valid config: %v", err)

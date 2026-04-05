@@ -683,9 +683,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IsSix(t *testing.T) {
-	if CurrentSchemaVersion != 6 {
-		t.Errorf("CurrentSchemaVersion = %d, want 6", CurrentSchemaVersion)
+func TestSchemaVersion_IsSeven(t *testing.T) {
+	if CurrentSchemaVersion != 7 {
+		t.Errorf("CurrentSchemaVersion = %d, want 7", CurrentSchemaVersion)
 	}
 }
 

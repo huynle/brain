@@ -61,23 +61,27 @@ func TestCreateToken_Success(t *testing.T) {
 		t.Fatalf("GenerateToken failed: %v", err)
 	}
 
-	err = s.CreateToken(ctx, "test-token", token)
+	err = s.CreateToken(ctx, "test-token", token, "")
 	if err != nil {
 		t.Fatalf("CreateToken failed: %v", err)
 	}
 
-	// Verify token was stored
+	// Verify token was stored with default scope
 	var storedToken string
 	var createdAt string
+	var scope string
 	err = s.DB().QueryRowContext(ctx,
-		"SELECT token, created_at FROM api_tokens WHERE name = ?", "test-token",
-	).Scan(&storedToken, &createdAt)
+		"SELECT token, scope, created_at FROM api_tokens WHERE name = ?", "test-token",
+	).Scan(&storedToken, &scope, &createdAt)
 	if err != nil {
 		t.Fatalf("query token failed: %v", err)
 	}
 
 	if storedToken != token {
 		t.Errorf("stored token = %q, want %q", storedToken, token)
+	}
+	if scope != "admin:*" {
+		t.Errorf("scope = %q, want %q (default)", scope, "admin:*")
 	}
 	if createdAt == "" {
 		t.Error("created_at should not be empty")
@@ -92,13 +96,13 @@ func TestCreateToken_DuplicateName(t *testing.T) {
 	token2, _ := s.GenerateToken()
 
 	// Create first token
-	err := s.CreateToken(ctx, "duplicate", token1)
+	err := s.CreateToken(ctx, "duplicate", token1, "")
 	if err != nil {
 		t.Fatalf("CreateToken (1) failed: %v", err)
 	}
 
 	// Creating with same name should fail
-	err = s.CreateToken(ctx, "duplicate", token2)
+	err = s.CreateToken(ctx, "duplicate", token2, "")
 	if err == nil {
 		t.Fatal("expected error for duplicate name, got nil")
 	}
@@ -111,13 +115,13 @@ func TestCreateToken_DuplicateToken(t *testing.T) {
 	token, _ := s.GenerateToken()
 
 	// Create first token
-	err := s.CreateToken(ctx, "name1", token)
+	err := s.CreateToken(ctx, "name1", token, "")
 	if err != nil {
 		t.Fatalf("CreateToken (1) failed: %v", err)
 	}
 
 	// Creating with same token should fail
-	err = s.CreateToken(ctx, "name2", token)
+	err = s.CreateToken(ctx, "name2", token, "")
 	if err == nil {
 		t.Fatal("expected error for duplicate token, got nil")
 	}
@@ -132,7 +136,7 @@ func TestValidateToken_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "validate-me", tokenValue)
+	_ = s.CreateToken(ctx, "validate-me", tokenValue, "")
 
 	// Validate should return the token
 	token, err := s.ValidateToken(ctx, tokenValue)
@@ -155,7 +159,7 @@ func TestValidateToken_RevokedToken(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "revoke-validate", tokenValue)
+	_ = s.CreateToken(ctx, "revoke-validate", tokenValue, "")
 
 	// Revoke the token
 	err := s.RevokeToken(ctx, "revoke-validate")
@@ -192,7 +196,7 @@ func TestValidateToken_UpdatesLastUsed(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "last-used-test", tokenValue)
+	_ = s.CreateToken(ctx, "last-used-test", tokenValue, "")
 
 	// Validate the token
 	_, err := s.ValidateToken(ctx, tokenValue)
@@ -229,9 +233,9 @@ func TestListTokens_Success(t *testing.T) {
 	token2, _ := s.GenerateToken()
 	token3, _ := s.GenerateToken()
 
-	_ = s.CreateToken(ctx, "token1", token1)
-	_ = s.CreateToken(ctx, "token2", token2)
-	_ = s.CreateToken(ctx, "token3", token3)
+	_ = s.CreateToken(ctx, "token1", token1, "")
+	_ = s.CreateToken(ctx, "token2", token2, "")
+	_ = s.CreateToken(ctx, "token3", token3, "")
 
 	tokens, err := s.ListTokens(ctx)
 	if err != nil {
@@ -259,7 +263,7 @@ func TestListTokens_ReturnsPrefix(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "prefix-test", tokenValue)
+	_ = s.CreateToken(ctx, "prefix-test", tokenValue, "")
 
 	tokens, err := s.ListTokens(ctx)
 	if err != nil {
@@ -285,8 +289,8 @@ func TestListTokens_ExcludesRevokedByDefault(t *testing.T) {
 	token1, _ := s.GenerateToken()
 	token2, _ := s.GenerateToken()
 
-	_ = s.CreateToken(ctx, "active-token", token1)
-	_ = s.CreateToken(ctx, "revoked-token", token2)
+	_ = s.CreateToken(ctx, "active-token", token1, "")
+	_ = s.CreateToken(ctx, "revoked-token", token2, "")
 	_ = s.RevokeToken(ctx, "revoked-token")
 
 	// Default: exclude revoked
@@ -309,8 +313,8 @@ func TestListTokens_IncludeRevoked(t *testing.T) {
 	token1, _ := s.GenerateToken()
 	token2, _ := s.GenerateToken()
 
-	_ = s.CreateToken(ctx, "active-token", token1)
-	_ = s.CreateToken(ctx, "revoked-token", token2)
+	_ = s.CreateToken(ctx, "active-token", token1, "")
+	_ = s.CreateToken(ctx, "revoked-token", token2, "")
 	_ = s.RevokeToken(ctx, "revoked-token")
 
 	// Include revoked
@@ -349,7 +353,7 @@ func TestGetTokenByName_Success(t *testing.T) {
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "test-token", token)
+	_ = s.CreateToken(ctx, "test-token", token, "")
 
 	retrieved, err := s.GetTokenByName(ctx, "test-token")
 	if err != nil {
@@ -389,7 +393,7 @@ func TestRevokeToken_Success(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "revoke-me", tokenValue)
+	_ = s.CreateToken(ctx, "revoke-me", tokenValue, "")
 
 	err := s.RevokeToken(ctx, "revoke-me")
 	if err != nil {
@@ -433,7 +437,7 @@ func TestRevokeToken_AlreadyRevoked(t *testing.T) {
 	ctx := context.Background()
 
 	tokenValue, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "double-revoke", tokenValue)
+	_ = s.CreateToken(ctx, "double-revoke", tokenValue, "")
 
 	// Revoke once
 	err := s.RevokeToken(ctx, "double-revoke")
@@ -457,7 +461,7 @@ func TestDeleteTokenPermanent_Success(t *testing.T) {
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "delete-me", token)
+	_ = s.CreateToken(ctx, "delete-me", token, "")
 
 	err := s.DeleteTokenPermanent(ctx, "delete-me")
 	if err != nil {
@@ -490,7 +494,7 @@ func TestUpdateTokenLastUsed_Success(t *testing.T) {
 	ctx := context.Background()
 
 	token, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "use-me", token)
+	_ = s.CreateToken(ctx, "use-me", token, "")
 
 	// Update last_used
 	err := s.UpdateTokenLastUsed(ctx, "use-me")
@@ -534,8 +538,8 @@ func TestCountActiveTokens_WithTokens(t *testing.T) {
 
 	token1, _ := s.GenerateToken()
 	token2, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "token1", token1)
-	_ = s.CreateToken(ctx, "token2", token2)
+	_ = s.CreateToken(ctx, "token1", token1, "")
+	_ = s.CreateToken(ctx, "token2", token2, "")
 
 	count, err := s.CountActiveTokens(ctx)
 	if err != nil {
@@ -553,9 +557,9 @@ func TestCountActiveTokens_ExcludesRevoked(t *testing.T) {
 	token1, _ := s.GenerateToken()
 	token2, _ := s.GenerateToken()
 	token3, _ := s.GenerateToken()
-	_ = s.CreateToken(ctx, "active1", token1)
-	_ = s.CreateToken(ctx, "active2", token2)
-	_ = s.CreateToken(ctx, "revoked1", token3)
+	_ = s.CreateToken(ctx, "active1", token1, "")
+	_ = s.CreateToken(ctx, "active2", token2, "")
+	_ = s.CreateToken(ctx, "revoked1", token3, "")
 	_ = s.RevokeToken(ctx, "revoked1")
 
 	count, err := s.CountActiveTokens(ctx)
@@ -574,5 +578,117 @@ func TestUpdateTokenLastUsed_NotFound(t *testing.T) {
 	err := s.UpdateTokenLastUsed(ctx, "nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent token, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Token Scopes
+// ---------------------------------------------------------------------------
+
+func TestCreateToken_WithScope(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token, _ := s.GenerateToken()
+	err := s.CreateToken(ctx, "runner-token", token, "runner:*")
+	if err != nil {
+		t.Fatalf("CreateToken with scope failed: %v", err)
+	}
+
+	// Verify scope stored correctly
+	var scope string
+	err = s.DB().QueryRowContext(ctx,
+		"SELECT scope FROM api_tokens WHERE name = ?", "runner-token",
+	).Scan(&scope)
+	if err != nil {
+		t.Fatalf("query scope failed: %v", err)
+	}
+	if scope != "runner:*" {
+		t.Errorf("scope = %q, want %q", scope, "runner:*")
+	}
+}
+
+func TestCreateToken_DefaultScope(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token, _ := s.GenerateToken()
+	err := s.CreateToken(ctx, "default-scope", token, "")
+	if err != nil {
+		t.Fatalf("CreateToken with empty scope failed: %v", err)
+	}
+
+	// Verify default scope is admin:*
+	var scope string
+	err = s.DB().QueryRowContext(ctx,
+		"SELECT scope FROM api_tokens WHERE name = ?", "default-scope",
+	).Scan(&scope)
+	if err != nil {
+		t.Fatalf("query scope failed: %v", err)
+	}
+	if scope != "admin:*" {
+		t.Errorf("scope = %q, want %q (default)", scope, "admin:*")
+	}
+}
+
+func TestValidateToken_ReturnsScope(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "scoped-token", tokenValue, "runner:*")
+
+	token, err := s.ValidateToken(ctx, tokenValue)
+	if err != nil {
+		t.Fatalf("ValidateToken failed: %v", err)
+	}
+	if token.Scope != "runner:*" {
+		t.Errorf("scope = %q, want %q", token.Scope, "runner:*")
+	}
+}
+
+func TestListTokens_IncludesScope(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	token1, _ := s.GenerateToken()
+	token2, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "admin-token", token1, "admin:*")
+	_ = s.CreateToken(ctx, "runner-token", token2, "runner:*")
+
+	tokens, err := s.ListTokens(ctx)
+	if err != nil {
+		t.Fatalf("ListTokens failed: %v", err)
+	}
+	if len(tokens) != 2 {
+		t.Fatalf("got %d tokens, want 2", len(tokens))
+	}
+
+	// Find each token and verify scope
+	scopesByName := map[string]string{}
+	for _, tok := range tokens {
+		scopesByName[tok.Name] = tok.Scope
+	}
+	if scopesByName["admin-token"] != "admin:*" {
+		t.Errorf("admin-token scope = %q, want %q", scopesByName["admin-token"], "admin:*")
+	}
+	if scopesByName["runner-token"] != "runner:*" {
+		t.Errorf("runner-token scope = %q, want %q", scopesByName["runner-token"], "runner:*")
+	}
+}
+
+func TestGetTokenByName_ReturnsScope(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	tokenValue, _ := s.GenerateToken()
+	_ = s.CreateToken(ctx, "read-token", tokenValue, "read:*")
+
+	token, err := s.GetTokenByName(ctx, "read-token")
+	if err != nil {
+		t.Fatalf("GetTokenByName failed: %v", err)
+	}
+	if token.Scope != "read:*" {
+		t.Errorf("scope = %q, want %q", token.Scope, "read:*")
 	}
 }

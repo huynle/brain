@@ -27,7 +27,8 @@ type TokenCommand struct {
 
 // TokenFlags holds token command flags.
 type TokenFlags struct {
-	Name string
+	Name  string
+	Scope string // "admin:*", "runner:*", or "read:*"; defaults to "admin:*"
 }
 
 // Type returns the command type identifier.
@@ -169,7 +170,12 @@ func isAuthError(err error) bool {
 // createTokenViaBootstrap creates a token through the unauthenticated bootstrap endpoint.
 // This only works when zero tokens exist on the server.
 func (c *TokenCommand) createTokenViaBootstrap() error {
-	reqBody, _ := json.Marshal(map[string]string{"name": c.Name})
+	payload := map[string]string{"name": c.Name}
+	// Bootstrap tokens always get admin:* scope (server-enforced), but include scope if set
+	if c.Flags != nil && c.Flags.Scope != "" {
+		payload["scope"] = c.Flags.Scope
+	}
+	reqBody, _ := json.Marshal(payload)
 	url := c.apiURL() + "/api/v1/tokens/bootstrap"
 	req, err := http.NewRequest("POST", url, bytes.NewReader(reqBody))
 	if err != nil {
@@ -225,7 +231,11 @@ func (c *TokenCommand) createTokenViaBootstrap() error {
 
 // createTokenViaAPI creates a token through the API.
 func (c *TokenCommand) createTokenViaAPI() error {
-	reqBody, _ := json.Marshal(map[string]string{"name": c.Name})
+	payload := map[string]string{"name": c.Name}
+	if c.Flags != nil && c.Flags.Scope != "" {
+		payload["scope"] = c.Flags.Scope
+	}
+	reqBody, _ := json.Marshal(payload)
 	data, status, err := c.apiRequest("POST", "/api/v1/tokens", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("create token via API: %w", err)
@@ -265,7 +275,11 @@ func (c *TokenCommand) createTokenViaAPI() error {
 
 // createTokenDirect creates a token via direct DB access (fallback).
 func (c *TokenCommand) createTokenDirect(brainDir string) error {
-	token, err := tokens.CreateTokenDirect(brainDir, c.Name)
+	scope := ""
+	if c.Flags != nil && c.Flags.Scope != "" {
+		scope = c.Flags.Scope
+	}
+	token, err := tokens.CreateTokenDirect(brainDir, c.Name, scope)
 	if err != nil {
 		return fmt.Errorf("create token: %w", err)
 	}

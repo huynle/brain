@@ -17,8 +17,9 @@ type TokenService interface {
 	// GenerateToken generates a secure random token string.
 	GenerateToken() (string, error)
 
-	// CreateToken stores a new token with the given name and value.
-	CreateToken(ctx context.Context, name, token string) error
+	// CreateToken stores a new token with the given name, value, and scope.
+	// If scope is empty, it defaults to "admin:*".
+	CreateToken(ctx context.Context, name, token, scope string) error
 
 	// ListTokens returns all tokens. Token values are masked to prefix only.
 	// Pass true to include revoked tokens.
@@ -41,15 +42,24 @@ func WithTokenService(ts TokenService) HandlerOption {
 	}
 }
 
+// ValidScopes defines the recognized token scopes.
+var ValidScopes = map[string]bool{
+	"admin:*":  true, // Full access to all endpoints
+	"runner:*": true, // Runner operations: claim/release/heartbeat, task read
+	"read:*":   true, // Read-only access to entries and tasks
+}
+
 // createTokenRequest is the request body for POST /tokens.
 type createTokenRequest struct {
-	Name string `json:"name"`
+	Name  string `json:"name"`
+	Scope string `json:"scope,omitempty"` // "admin:*", "runner:*", or "read:*"; defaults to "admin:*"
 }
 
 // createTokenResponse is the response for POST /tokens.
 type createTokenResponse struct {
 	Name      string `json:"name"`
 	Token     string `json:"token"`
+	Scope     string `json:"scope"`
 	CreatedAt string `json:"created_at"`
 }
 
@@ -57,6 +67,7 @@ type createTokenResponse struct {
 type tokenListItem struct {
 	Name        string `json:"name"`
 	TokenPrefix string `json:"token_prefix"`
+	Scope       string `json:"scope"`
 	CreatedAt   string `json:"created_at"`
 	LastUsed    string `json:"last_used,omitempty"`
 	Status      string `json:"status"`
@@ -114,7 +125,9 @@ func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.tokens.CreateToken(r.Context(), req.Name, tokenValue); err != nil {
+	// Bootstrap tokens always get admin:* scope
+	scope := "admin:*"
+	if err := h.tokens.CreateToken(r.Context(), req.Name, tokenValue, scope); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			WriteError(w, http.StatusConflict, "Conflict",
 				fmt.Sprintf("Token with name '%s' already exists", req.Name))
@@ -130,6 +143,7 @@ func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusCreated, createTokenResponse{
 			Name:  req.Name,
 			Token: tokenValue,
+			Scope: scope,
 		})
 		return
 	}
@@ -137,6 +151,7 @@ func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, createTokenResponse{
 		Name:      created.Name,
 		Token:     tokenValue,
+		Scope:     created.Scope,
 		CreatedAt: created.CreatedAt,
 	})
 }
@@ -154,9 +169,22 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" {
 		details = append(details, types.ValidationDetail{Field: "name", Message: "required"})
 	}
+	// Validate scope if provided
+	if req.Scope != "" && !ValidScopes[req.Scope] {
+		details = append(details, types.ValidationDetail{
+			Field:   "scope",
+			Message: fmt.Sprintf("invalid scope %q; must be one of: admin:*, runner:*, read:*", req.Scope),
+		})
+	}
 	if len(details) > 0 {
 		WriteValidationError(w, details)
 		return
+	}
+
+	// Default scope
+	scope := req.Scope
+	if scope == "" {
+		scope = "admin:*"
 	}
 
 	// Check for existing active token with same name
@@ -174,7 +202,7 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.tokens.CreateToken(r.Context(), req.Name, tokenValue); err != nil {
+	if err := h.tokens.CreateToken(r.Context(), req.Name, tokenValue, scope); err != nil {
 		// Handle unique constraint violation (name already exists but revoked, then re-inserted)
 		if strings.Contains(err.Error(), "UNIQUE constraint") {
 			WriteError(w, http.StatusConflict, "Conflict",
@@ -192,6 +220,7 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, http.StatusCreated, createTokenResponse{
 			Name:  req.Name,
 			Token: tokenValue,
+			Scope: scope,
 		})
 		return
 	}
@@ -199,6 +228,7 @@ func (h *Handler) HandleCreateToken(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, createTokenResponse{
 		Name:      created.Name,
 		Token:     tokenValue,
+		Scope:     created.Scope,
 		CreatedAt: created.CreatedAt,
 	})
 }
@@ -228,6 +258,7 @@ func (h *Handler) HandleListTokens(w http.ResponseWriter, r *http.Request) {
 		items = append(items, tokenListItem{
 			Name:        t.Name,
 			TokenPrefix: t.Token, // Already masked to 8-char prefix by storage
+			Scope:       t.Scope,
 			CreatedAt:   t.CreatedAt,
 			LastUsed:    t.LastUsed,
 			Status:      status,

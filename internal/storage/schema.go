@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -81,6 +81,7 @@ const createAPITokensTable = `
 CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'admin:*',
   created_at TEXT DEFAULT (datetime('now')),
   last_used TEXT,
   revoked_at TEXT
@@ -330,6 +331,22 @@ func migrateSchema(db *sql.DB) error {
 		// Index for runners status
 		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
 			return fmt.Errorf("migrate v6 (runners index): %w", err)
+		}
+	}
+
+	if ver < 7 {
+		// v7: add scope column to api_tokens for scoped authorization.
+		// Existing tokens default to 'admin:*' (full access) for backward compatibility.
+		// Only alter if api_tokens exists (it may not in partial schema scenarios).
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'admin:*'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v7 (add scope to api_tokens): %w", err)
+				}
+			}
 		}
 	}
 

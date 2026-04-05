@@ -598,6 +598,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Foreground:   flags.Foreground,
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
+		Monitor:      flags.Monitor,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,
@@ -619,7 +620,8 @@ func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
 
 func convertToCommandsTokenFlags(flags *TokenFlags) *commands.TokenFlags {
 	return &commands.TokenFlags{
-		Name: flags.Name,
+		Name:  flags.Name,
+		Scope: flags.Scope,
 	}
 }
 

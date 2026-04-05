@@ -120,6 +120,72 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	return nil
 }
 
+// RunMonitorTUI starts the TUI in monitor-only mode — no local TaskRunner.
+// The TUI connects to the remote Brain API via SSE for real-time task data
+// and uses HTTP API calls for pause/resume and task execution (priority bump).
+// This is a pure control panel mode for observing and managing remote runners.
+func RunMonitorTUI(ctx context.Context, opts RunnerOptions) error {
+	if len(opts.Projects) == 0 {
+		return fmt.Errorf("no projects specified")
+	}
+
+	cfg := opts.Config
+
+	// Apply defaults for required fields
+	if cfg.APITimeout == 0 {
+		cfg.APITimeout = 5000
+	}
+
+	// In TUI mode, redirect logging to a file or discard so it doesn't
+	// corrupt Bubbletea's alternate screen.
+	if cfg.LogDir != "" {
+		if err := os.MkdirAll(cfg.LogDir, 0o755); err == nil {
+			logPath := filepath.Join(cfg.LogDir, "monitor.log")
+			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+			if err == nil {
+				defer logFile.Close()
+				slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
+					Level: slog.LevelDebug,
+				})))
+			}
+		}
+	} else {
+		slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}
+
+	// Get BrainDir from environment or use default
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		brainDir = homeDir + "/.brain"
+	}
+	brainDir = pathutil.ExpandTilde(brainDir)
+
+	// Create TUI model with Runner: nil (monitor-only, no embedded runner)
+	tuiCfg := tui.Config{
+		APIURL:      cfg.BrainAPIURL,
+		APIToken:    cfg.APIToken,
+		APITimeout:  cfg.APITimeout,
+		Project:     opts.Projects[0],
+		Projects:    opts.Projects,
+		BrainDir:    brainDir,
+		LogDir:      cfg.LogDir,
+		Runner:      nil, // No local runner — pure monitor mode
+		KeyBindings: opts.KeyBindings,
+	}
+	model := tui.NewModel(tuiCfg)
+	p := tea.NewProgram(model, tea.WithAltScreen())
+
+	slog.Info("starting monitor TUI", "projects", opts.Projects, "api", cfg.BrainAPIURL)
+
+	// Run TUI (blocks until quit)
+	if _, err := p.Run(); err != nil {
+		return fmt.Errorf("monitor TUI failed: %w", err)
+	}
+
+	return nil
+}
+
 // RunTUI starts the task runner with interactive TUI and blocks until context is cancelled or user quits.
 func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	if len(opts.Projects) == 0 {

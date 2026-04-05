@@ -24,6 +24,7 @@ CORE COMMANDS:
 
 RUNNER COMMANDS:
   start [project|all]            Open runner TUI (default project: all)
+  start [project|all] --monitor  Monitor-only TUI (no local runner)
   run <subcommand> [project]     Runner management subcommands
   runner <subcommand> [project]  Alias for run
 
@@ -63,6 +64,7 @@ GLOBAL HELP:
 EXAMPLES:
   brain start
   brain start my-project --max-parallel 5
+  brain start all --monitor
   brain api --port 3000
   brain api start --dry-run
   brain api logs -f -n 200
@@ -225,9 +227,11 @@ USAGE:
   brain start
   brain start <project>
   brain start all [filters]
+  brain start <project> --monitor
 
 FLAGS:
   --tui                          TUI mode (default behavior)
+  --monitor                      Monitor-only TUI (no local runner)
   -f, --foreground               Foreground mode without TUI
   -b, --headless                 Headless mode (no TUI, no tmux)
   --dashboard                    Dashboard mode
@@ -242,9 +246,17 @@ FLAGS:
   --follow                       Follow logs mode
   -h, --help                     Show this help
 
+MONITOR MODE:
+  The --monitor flag launches the TUI as a pure remote control panel.
+  No local task runner is started. The TUI connects to the Brain API
+  via SSE for real-time task updates and uses HTTP API for actions
+  like pause/resume and task execution (priority bump).
+
 EXAMPLES:
   brain start
   brain start my-project
+  brain start my-project --monitor
+  brain start all --monitor
   brain start all -i 'prod-*' -e 'legacy-*'
   brain start all --max-parallel 5 --poll-interval 3
 `
@@ -417,15 +429,24 @@ EXAMPLES:
 const tokenCreateHelp = `brain token create - Create API token
 
 USAGE:
-  brain token create --name <name>
+  brain token create --name <name> [--scope <scope>]
   brain token create <name>
 
 FLAGS:
   --name <name>                  Token name
+  --scope <scope>                Token scope (default: admin:*)
+                                 Values: admin:*, runner:*, read:*
   -h, --help                     Show this help
+
+SCOPES:
+  admin:*                        Full access to all endpoints
+  runner:*                       Runner operations (claim/release/heartbeat) + read
+  read:*                         Read-only access to entries and tasks
 
 EXAMPLES:
   brain token create --name dev
+  brain token create --name runner-1 --scope runner:*
+  brain token create --name monitoring --scope read:*
   brain token create ci-bot
 `
 

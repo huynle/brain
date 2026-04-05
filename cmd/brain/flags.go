@@ -33,6 +33,7 @@ type RunnerFlags struct {
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
+	Monitor      bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -51,7 +52,8 @@ type MCPFlags struct {
 
 // TokenFlags for token command
 type TokenFlags struct {
-	Name string
+	Name  string
+	Scope string
 }
 
 // PluginFlags for plugin commands (install, uninstall, plugin-status)
@@ -115,6 +117,7 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no TUI, no tmux)")
 	fs.BoolVar(&flags.Headless, "b", false, "Headless (short)")
 	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Tmux dashboard")
+	fs.BoolVar(&flags.Monitor, "monitor", false, "Monitor-only TUI (no local runner)")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Max parallel tasks")
 	fs.IntVar(&flags.MaxParallel, "p", 0, "Max parallel (short)")
 	fs.IntVar(&flags.PollInterval, "poll-interval", 0, "Poll interval seconds")
@@ -178,6 +181,7 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 
 	fs.StringVar(&flags.Name, "name", "", "Token name")
+	fs.StringVar(&flags.Scope, "scope", "", "Token scope: admin:*, runner:*, or read:* (default: admin:*)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

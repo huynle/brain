@@ -67,8 +67,18 @@ func (c *RunnerTUICommand) Type() string {
 	return "runner_tui"
 }
 
-// Execute starts the runner in TUI mode.
+// Execute starts the runner, dispatching to TUI, headless, or other modes based on flags.
 func (c *RunnerTUICommand) Execute() error {
+	// Determine mode from flags (same pattern as RunCommand.runStart)
+	mode := "tui"
+	if c.Flags.Foreground {
+		mode = "foreground"
+	} else if c.Flags.Headless {
+		mode = "headless"
+	} else if c.Flags.Dashboard {
+		mode = "dashboard"
+	}
+
 	// Start with the full runner config (all fields preserved)
 	cfg := c.Config.Runner
 
@@ -90,7 +100,7 @@ func (c *RunnerTUICommand) Execute() error {
 	opts := runnercli.RunnerOptions{
 		Projects:    projects,
 		Config:      cfg,
-		Mode:        "tui",
+		Mode:        mode,
 		StartPaused: true,
 		KeyBindings: c.Config.TUI.KeyBindings,
 	}
@@ -102,7 +112,12 @@ func (c *RunnerTUICommand) Execute() error {
 		return runnercli.RunMonitorTUI(ctx, opts)
 	}
 
-	// Run with TUI
+	// Non-TUI modes (headless, foreground, dashboard) go through RunTaskRunner
+	if mode != "tui" {
+		return runnercli.RunTaskRunner(ctx, opts)
+	}
+
+	// Default: run with TUI
 	return runnercli.RunTUI(ctx, opts)
 }
 

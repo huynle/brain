@@ -142,6 +142,104 @@ func (h *Handler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, task)
 }
 
+// TaskMetadataResponse contains only execution config fields for a task,
+// excluding content/title (which are returned by HandleGetTask).
+type TaskMetadataResponse struct {
+	Path               string                       `json:"path"`
+	Agent              string                       `json:"agent"`
+	Model              string                       `json:"model"`
+	ExecutionMode      string                       `json:"execution_mode"`
+	GitBranch          string                       `json:"git_branch"`
+	GitRemote          string                       `json:"git_remote"`
+	MergePolicy        string                       `json:"merge_policy"`
+	MergeStrategy      string                       `json:"merge_strategy"`
+	MergeTargetBranch  string                       `json:"merge_target_branch"`
+	RemoteBranchPolicy string                       `json:"remote_branch_policy"`
+	CompleteOnIdle     *bool                        `json:"complete_on_idle"`
+	OpenPRBeforeMerge  *bool                        `json:"open_pr_before_merge"`
+	TargetWorkdir      string                       `json:"target_workdir"`
+	ResolvedWorkdir    string                       `json:"resolved_workdir"`
+	DirectPrompt       string                       `json:"direct_prompt"`
+	Executor           string                       `json:"executor"`
+	FeatureID          string                       `json:"feature_id"`
+	FeaturePriority    string                       `json:"feature_priority"`
+	FeatureDependsOn   []string                     `json:"feature_depends_on"`
+	DependsOn          []string                     `json:"depends_on"`
+	ResolvedDeps       []string                     `json:"resolved_deps"`
+	UnresolvedDeps     []string                     `json:"unresolved_deps"`
+	BlockedBy          []string                     `json:"blocked_by"`
+	BlockedByReason    string                       `json:"blocked_by_reason"`
+	WaitingOn          []string                     `json:"waiting_on"`
+	InCycle            bool                         `json:"in_cycle"`
+	Status             string                       `json:"status"`
+	Priority           string                       `json:"priority"`
+	Classification     string                       `json:"classification"`
+	Created            string                       `json:"created"`
+	Tags               []string                     `json:"tags"`
+	Sessions           map[string]types.SessionInfo `json:"sessions"`
+	Env                map[string]string            `json:"env"`
+	Extensions         []string                     `json:"extensions"`
+}
+
+// HandleGetTaskMetadata handles GET /tasks/{projectId}/{taskId}/metadata.
+// Returns only execution metadata fields, not content or title.
+func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	task, err := h.tasks.GetTask(r.Context(), projectId, taskId)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		if task == nil {
+			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	resp := TaskMetadataResponse{
+		Path:               task.Path,
+		Agent:              task.Agent,
+		Model:              task.Model,
+		ExecutionMode:      task.ExecutionMode,
+		GitBranch:          task.GitBranch,
+		GitRemote:          task.GitRemote,
+		MergePolicy:        task.MergePolicy,
+		MergeStrategy:      task.MergeStrategy,
+		MergeTargetBranch:  task.MergeTargetBranch,
+		RemoteBranchPolicy: task.RemoteBranchPolicy,
+		CompleteOnIdle:     task.CompleteOnIdle,
+		OpenPRBeforeMerge:  task.OpenPRBeforeMerge,
+		TargetWorkdir:      task.TargetWorkdir,
+		ResolvedWorkdir:    task.ResolvedWorkdir,
+		DirectPrompt:       task.DirectPrompt,
+		Executor:           task.Executor,
+		FeatureID:          task.FeatureID,
+		FeaturePriority:    task.FeaturePriority,
+		FeatureDependsOn:   task.FeatureDependsOn,
+		DependsOn:          task.DependsOn,
+		ResolvedDeps:       task.ResolvedDeps,
+		UnresolvedDeps:     task.UnresolvedDeps,
+		BlockedBy:          task.BlockedBy,
+		BlockedByReason:    task.BlockedByReason,
+		WaitingOn:          task.WaitingOn,
+		InCycle:            task.InCycle,
+		Status:             task.Status,
+		Priority:           task.Priority,
+		Classification:     task.Classification,
+		Created:            task.Created,
+		Sessions:           task.Sessions,
+		Env:                task.Env,
+		Extensions:         task.Extensions,
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleClaimTask handles POST /tasks/{projectId}/{taskId}/claim.
 func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

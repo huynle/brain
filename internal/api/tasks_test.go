@@ -247,6 +247,7 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 			r.Get("/stream", h.HandleSSEStream)
 
 			r.Get("/{taskId}", h.HandleGetTask)
+			r.Get("/{taskId}/metadata", h.HandleGetTaskMetadata)
 			r.Post("/{taskId}/claim", h.HandleClaimTask)
 			r.Post("/{taskId}/release", h.HandleReleaseTask)
 			r.Post("/{taskId}/renew", h.HandleRenewClaim)
@@ -1504,6 +1505,186 @@ func TestHandleReleaseTask_EmitsEvent(t *testing.T) {
 	}
 	if evt.TaskID != "task123" {
 		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+}
+
+// =============================================================================
+// Get Task Metadata Tests
+// =============================================================================
+
+func TestHandleGetTaskMetadata_ReturnsExecutionFields(t *testing.T) {
+	completeOnIdle := true
+	openPR := false
+
+	tests := []struct {
+		name       string
+		projectId  string
+		taskId     string
+		mockFn     func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:      "returns metadata fields without content or title",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return &types.ResolvedTask{
+					ID:                  taskId,
+					Path:                "projects/my-project/task/abc12def.md",
+					Title:               "Some Task Title",
+					Agent:               "tdd-dev",
+					Model:               "claude-sonnet",
+					ExecutionMode:       "worktree",
+					GitBranch:           "feature/abc",
+					GitRemote:           "origin",
+					MergePolicy:         "auto_merge",
+					MergeStrategy:       "squash",
+					MergeTargetBranch:   "main",
+					RemoteBranchPolicy:  "delete",
+					CompleteOnIdle:      &completeOnIdle,
+					OpenPRBeforeMerge:   &openPR,
+					TargetWorkdir:       "/tmp/work",
+					ResolvedWorkdir:     "/tmp/work/resolved",
+					DirectPrompt:        "Fix the auth bug",
+					Executor:            "opencode",
+					FeatureID:           "auth-system",
+					FeaturePriority:     "high",
+					FeatureDependsOn:    []string{"setup-feat"},
+					DependsOn:           []string{"dep1"},
+					ResolvedDeps:        []string{"dep1"},
+					UnresolvedDeps:      []string{},
+					Classification:      "ready",
+					BlockedBy:           []string{},
+					WaitingOn:           []string{},
+					InCycle:             false,
+					Status:              "pending",
+					Priority:            "high",
+					Created:             "2025-01-01T00:00:00Z",
+					UserOriginalRequest: "Please fix the auth bug",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[TaskMetadataResponse](t, resp)
+
+				// Verify metadata fields are present
+				if body.Agent != "tdd-dev" {
+					t.Errorf("agent = %q, want %q", body.Agent, "tdd-dev")
+				}
+				if body.Model != "claude-sonnet" {
+					t.Errorf("model = %q, want %q", body.Model, "claude-sonnet")
+				}
+				if body.ExecutionMode != "worktree" {
+					t.Errorf("execution_mode = %q, want %q", body.ExecutionMode, "worktree")
+				}
+				if body.GitBranch != "feature/abc" {
+					t.Errorf("git_branch = %q, want %q", body.GitBranch, "feature/abc")
+				}
+				if body.MergePolicy != "auto_merge" {
+					t.Errorf("merge_policy = %q, want %q", body.MergePolicy, "auto_merge")
+				}
+				if body.FeatureID != "auth-system" {
+					t.Errorf("feature_id = %q, want %q", body.FeatureID, "auth-system")
+				}
+				if body.DirectPrompt != "Fix the auth bug" {
+					t.Errorf("direct_prompt = %q, want %q", body.DirectPrompt, "Fix the auth bug")
+				}
+				if body.Path != "projects/my-project/task/abc12def.md" {
+					t.Errorf("path = %q, want %q", body.Path, "projects/my-project/task/abc12def.md")
+				}
+				if body.Executor != "opencode" {
+					t.Errorf("executor = %q, want %q", body.Executor, "opencode")
+				}
+				if body.CompleteOnIdle == nil || !*body.CompleteOnIdle {
+					t.Error("expected complete_on_idle = true")
+				}
+				if body.OpenPRBeforeMerge == nil || *body.OpenPRBeforeMerge {
+					t.Error("expected open_pr_before_merge = false")
+				}
+
+				// Verify content and title are NOT in the response
+				// (We decode into a raw map to check for absence of these keys)
+			},
+		},
+		{
+			name:      "returns 404 for nonexistent task",
+			projectId: "my-project",
+			taskId:    "nonexistent",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{getTaskFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/tasks/" + tt.projectId + "/" + tt.taskId + "/metadata")
+			if err != nil {
+				t.Fatalf("GET /tasks/%s/%s/metadata failed: %v", tt.projectId, tt.taskId, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+func TestHandleGetTaskMetadata_ExcludesTitleAndContent(t *testing.T) {
+	taskMock := &mockTaskService{
+		getTaskFunc: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+			return &types.ResolvedTask{
+				ID:                  taskId,
+				Title:               "Should Not Appear",
+				Agent:               "tdd-dev",
+				UserOriginalRequest: "Should Not Appear Either",
+			}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/abc12def/metadata")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Decode into a raw map to verify title and user_original_request are absent
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if _, ok := raw["title"]; ok {
+		t.Error("response should NOT contain 'title' field")
+	}
+	if _, ok := raw["user_original_request"]; ok {
+		t.Error("response should NOT contain 'user_original_request' field")
+	}
+	if _, ok := raw["id"]; ok {
+		t.Error("response should NOT contain 'id' field")
+	}
+
+	// But metadata fields should be present
+	if _, ok := raw["agent"]; !ok {
+		t.Error("response should contain 'agent' field")
 	}
 }
 

@@ -227,6 +227,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 							// Claim status (read)
 							r.Get("/{taskId}/claim-status", o.handler.HandleGetClaimStatus)
+
+							// Task metadata (read)
+							r.Get("/{taskId}/metadata", o.handler.HandleGetTaskMetadata)
 						} else {
 							r.Get("/", notImplemented)
 							r.Get("/ready", notImplemented)
@@ -243,6 +246,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 							r.Get("/{taskId}", notImplemented)
 							r.Get("/{taskId}/claim-status", notImplemented)
+							r.Get("/{taskId}/metadata", notImplemented)
 						}
 					})
 

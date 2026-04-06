@@ -27,6 +27,9 @@ func (h *Handler) HandleCreateWebhook(w http.ResponseWriter, r *http.Request) {
 
 	// Validate required fields
 	var details []types.ValidationDetail
+	if req.Name == "" {
+		details = append(details, types.ValidationDetail{Field: "name", Message: "required"})
+	}
 	if req.URL == "" {
 		details = append(details, types.ValidationDetail{Field: "url", Message: "required"})
 	}

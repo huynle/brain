@@ -211,6 +211,87 @@ func TestHandleGetLogs(t *testing.T) {
 	}
 }
 
+func TestHandleIngestLogs_EmptyContentLines_Rejected(t *testing.T) {
+	tests := []struct {
+		name         string
+		body         string // raw JSON to simulate wrong field names
+		wantStatus   int
+		wantAccepted int // -1 means don't check
+		wantStored   int // expected lines in buffer after request
+	}{
+		{
+			name:       "all lines have wrong field name (empty content)",
+			body:       `{"runnerId":"runner-1","lines":[{"timestamp":"2025-01-01T00:00:00Z","level":"info","text":"hello"}]}`,
+			wantStatus: http.StatusBadRequest,
+			wantStored: 0,
+		},
+		{
+			name:       "all lines have explicitly empty content",
+			body:       `{"runnerId":"runner-1","lines":[{"timestamp":"2025-01-01T00:00:00Z","level":"info","content":""}]}`,
+			wantStatus: http.StatusBadRequest,
+			wantStored: 0,
+		},
+		{
+			name:       "all lines have whitespace-only content",
+			body:       `{"runnerId":"runner-1","lines":[{"timestamp":"2025-01-01T00:00:00Z","level":"info","content":"   "}]}`,
+			wantStatus: http.StatusBadRequest,
+			wantStored: 0,
+		},
+		{
+			name:         "valid content accepted normally",
+			body:         `{"runnerId":"runner-1","lines":[{"timestamp":"2025-01-01T00:00:00Z","level":"info","content":"hello world"}]}`,
+			wantStatus:   http.StatusOK,
+			wantAccepted: 1,
+			wantStored:   1,
+		},
+		{
+			name:         "mix of valid and empty-content lines stores only valid",
+			body:         `{"runnerId":"runner-1","lines":[{"timestamp":"2025-01-01T00:00:00Z","level":"info","content":"good line"},{"timestamp":"2025-01-01T00:00:01Z","level":"info","text":"wrong field"},{"timestamp":"2025-01-01T00:00:02Z","level":"info","content":"another good"}]}`,
+			wantStatus:   http.StatusOK,
+			wantAccepted: 2,
+			wantStored:   2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hub := realtime.NewHub()
+			lb := logbuffer.New(logbuffer.DefaultMaxLines)
+			router := newLogTestRouter(lb, hub)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Post(srv.URL+"/tasks/my-project/task-456/logs/", "application/json", bytes.NewBufferString(tt.body))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+
+			if tt.wantAccepted > 0 {
+				result := decodeJSON[types.LogIngestResponse](t, resp)
+				if result.Accepted != tt.wantAccepted {
+					t.Errorf("accepted = %d, want %d", result.Accepted, tt.wantAccepted)
+				}
+			}
+
+			// Verify what actually got stored in the buffer
+			stored, total := lb.Query("my-project", "task-456", 0, 100)
+			if total != tt.wantStored {
+				t.Errorf("stored lines = %d, want %d", total, tt.wantStored)
+			}
+			for i, line := range stored {
+				if line.Content == "" {
+					t.Errorf("stored line[%d] has empty content", i)
+				}
+			}
+		})
+	}
+}
+
 func TestIngestLogs_SSEBroadcast(t *testing.T) {
 	hub := realtime.NewHub()
 	lb := logbuffer.New(logbuffer.DefaultMaxLines)

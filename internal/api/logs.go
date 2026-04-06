@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -45,8 +46,22 @@ func (h *Handler) HandleIngestLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Filter out lines with empty content (protects against wrong field names)
+	validLines := req.Lines[:0]
+	for _, line := range req.Lines {
+		if strings.TrimSpace(line.Content) != "" {
+			validLines = append(validLines, line)
+		}
+	}
+	if len(validLines) == 0 {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "lines", Message: "all lines have empty content"},
+		})
+		return
+	}
+
 	// Store in bounded buffer
-	accepted := h.logBuffer.Append(projectId, taskId, req.Lines)
+	accepted := h.logBuffer.Append(projectId, taskId, validLines)
 
 	// Re-broadcast via SSE to project subscribers
 	if h.hub != nil {
@@ -59,7 +74,7 @@ func (h *Handler) HandleIngestLogs(w http.ResponseWriter, r *http.Request) {
 			},
 			TaskID:   taskId,
 			RunnerID: req.RunnerID,
-			Lines:    req.Lines,
+			Lines:    validLines,
 		})
 	}
 

@@ -801,6 +801,84 @@ func TestHandleUpdateRunnerConfig(t *testing.T) {
 }
 
 // =============================================================================
+// Tests: PATCH /runners/{runnerId}/config — persistence verification
+// =============================================================================
+
+func TestHandleUpdateRunnerConfig_PersistsMaxParallel(t *testing.T) {
+	var calledRunnerID string
+	var calledMaxParallel int
+
+	mock := &mockRunnerRegistryService{
+		updateConfigFunc: func(ctx context.Context, runnerID string, maxParallel int) error {
+			calledRunnerID = runnerID
+			calledMaxParallel = maxParallel
+			return nil
+		},
+		getRunnerFunc: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+			return &types.RunnerInfo{
+				RunnerID:    runnerID,
+				Hostname:    "host-1",
+				MaxParallel: calledMaxParallel, // reflect the updated value
+				Status:      types.RunnerStatusOnline,
+			}, nil
+		},
+	}
+	router := newRunnerTestRouter(mock)
+
+	// PATCH /runners/runner-1/config with maxParallel=5
+	req := httptest.NewRequest(http.MethodPatch, "/runners/runner-1/config", strings.NewReader(`{"maxParallel":5}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("PATCH status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify UpdateConfig was called with correct args
+	if calledRunnerID != "runner-1" {
+		t.Errorf("UpdateConfig runnerID = %q, want %q", calledRunnerID, "runner-1")
+	}
+	if calledMaxParallel != 5 {
+		t.Errorf("UpdateConfig maxParallel = %d, want %d", calledMaxParallel, 5)
+	}
+
+	// Verify response contains updated runner with max_parallel=5
+	var resp map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if success, ok := resp["success"].(bool); !ok || !success {
+		t.Errorf("expected success=true, got %v", resp["success"])
+	}
+	runner, ok := resp["runner"].(map[string]interface{})
+	if !ok {
+		t.Fatal("expected runner object in response")
+	}
+	if mp, ok := runner["max_parallel"].(float64); !ok || int(mp) != 5 {
+		t.Errorf("response runner max_parallel = %v, want 5", runner["max_parallel"])
+	}
+}
+
+func TestHandleUpdateRunnerConfig_NotFound(t *testing.T) {
+	mock := &mockRunnerRegistryService{
+		updateConfigFunc: func(ctx context.Context, runnerID string, maxParallel int) error {
+			return ErrNotFound
+		},
+	}
+	router := newRunnerTestRouter(mock)
+
+	req := httptest.NewRequest(http.MethodPatch, "/runners/nonexistent/config", strings.NewReader(`{"maxParallel":5}`))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want %d; body = %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+}
+
+// =============================================================================
 // Tests: POST /runners/{runnerId}/features/{featureId}/toggle
 // =============================================================================
 

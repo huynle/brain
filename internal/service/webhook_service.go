@@ -11,8 +11,10 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	api "github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -151,6 +153,56 @@ func (s *WebhookServiceImpl) Update(ctx context.Context, id string, req types.Up
 // Delete removes a webhook by ID.
 func (s *WebhookServiceImpl) Delete(ctx context.Context, id string) error {
 	return s.store.DeleteWebhook(ctx, id)
+}
+
+// TestDeliver sends a test event to a specific webhook synchronously and
+// returns the delivery result. Unlike Deliver, this targets a single webhook
+// by ID and does not run asynchronously.
+func (s *WebhookServiceImpl) TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
+	wh, err := s.store.GetWebhook(ctx, webhookID)
+	if err != nil {
+		// Check if the error indicates the webhook was not found
+		if strings.Contains(err.Error(), "not found") {
+			return nil, api.ErrNotFound
+		}
+		return nil, fmt.Errorf("get webhook: %w", err)
+	}
+
+	payload, err := json.Marshal(event)
+	if err != nil {
+		return nil, fmt.Errorf("marshal event: %w", err)
+	}
+
+	start := time.Now()
+	statusCode, deliveryErr := s.doHTTPDelivery(ctx, wh, payload)
+	latencyMs := int(time.Since(start).Milliseconds())
+
+	success := deliveryErr == nil && statusCode >= 200 && statusCode < 300
+
+	var errMsg string
+	if deliveryErr != nil {
+		errMsg = deliveryErr.Error()
+	} else if !success {
+		errMsg = fmt.Sprintf("HTTP %d", statusCode)
+	}
+
+	// Log the delivery attempt
+	var scPtr *int
+	if statusCode > 0 {
+		scPtr = &statusCode
+	}
+	s.logDelivery(ctx, wh.ID, event.Type, scPtr, success, &latencyMs, errMsg)
+
+	return &types.WebhookDeliveryResponse{
+		ID:         fmt.Sprintf("test_%s_%d", webhookID, time.Now().UnixMilli()),
+		WebhookID:  webhookID,
+		EventType:  event.Type,
+		StatusCode: scPtr,
+		Success:    success,
+		LatencyMs:  &latencyMs,
+		Error:      errMsg,
+		CreatedAt:  time.Now().UTC().Format(time.RFC3339),
+	}, nil
 }
 
 // Deliver sends an event to all matching enabled webhooks.

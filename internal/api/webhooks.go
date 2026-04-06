@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
@@ -170,6 +171,40 @@ func (h *Handler) HandleDeleteWebhook(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"success": true,
 	})
+}
+
+// HandleTestWebhook handles POST /webhooks/{id}/test.
+// It fires a synthetic test event to the specified webhook and returns the
+// delivery result synchronously, allowing users to verify their webhook URL
+// and payload format without creating a real event.
+func (h *Handler) HandleTestWebhook(w http.ResponseWriter, r *http.Request) {
+	if h.webhooks == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "Webhook service not configured")
+		return
+	}
+
+	webhookID := chi.URLParam(r, "id")
+
+	// Build a synthetic test event
+	testEvent := types.Event{
+		ID:        "evt_test_" + webhookID,
+		Type:      "webhook.test",
+		Source:    "api",
+		Timestamp: time.Now().UTC(),
+		Metadata:  map[string]string{"webhook_id": webhookID},
+	}
+
+	delivery, err := h.webhooks.TestDeliver(r.Context(), webhookID, testEvent)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Webhook not found: %s", webhookID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, delivery)
 }
 
 // HandleListWebhookDeliveries handles GET /webhooks/{id}/deliveries.

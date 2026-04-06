@@ -205,6 +205,9 @@ type RunnerRegistryService interface {
 	// GetRunner returns a single runner by ID with computed status.
 	GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
 
+	// UpdateConfig updates a runner's max_parallel configuration and persists it to the database.
+	UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error
+
 	// UpdateAffinity updates a runner's feature affinity.
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 }
@@ -262,4 +265,9 @@ type WebhookService interface {
 
 	// ListDeliveries returns recent delivery attempts for a webhook.
 	ListDeliveries(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error)
+
+	// TestDeliver sends a synthetic test event to a specific webhook synchronously
+	// and returns the delivery result. Unlike Deliver, this targets a single webhook
+	// by ID and waits for the result.
+	TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error)
 }

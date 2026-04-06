@@ -303,17 +303,14 @@ func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// TODO: Update max_parallel via UpdateConfig method (method not implemented yet)
-	// err := h.runnerRegistry.UpdateConfig(r.Context(), runnerID, req.MaxParallel)
-	// if err != nil {
-	// 	if errors.Is(err, ErrNotFound) {
-	// 		WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
-	// 		return
-	// 	}
-	// 	WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
-	// 	return
-	// }
-	_ = runnerID // TODO: remove when UpdateConfig is implemented
+	if err := h.runnerRegistry.UpdateConfig(r.Context(), runnerID, req.MaxParallel); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
 
 	slog.Info("runner config updated",
 		"runner_id", runnerID,

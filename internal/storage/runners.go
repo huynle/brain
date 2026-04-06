@@ -243,6 +243,26 @@ func (s *StorageLayer) SetRunnerStatus(ctx context.Context, runnerID, status str
 	return nil
 }
 
+// UpdateRunnerMaxParallel updates a runner's max_parallel setting.
+// Returns an error if the runner does not exist.
+func (s *StorageLayer) UpdateRunnerMaxParallel(ctx context.Context, runnerID string, maxParallel int) error {
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET max_parallel = ? WHERE runner_id = ?",
+		maxParallel, runnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("update runner max_parallel: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("max_parallel rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("runner %q not found", runnerID)
+	}
+	return nil
+}
+
 // ExpireStaleRunners marks runners as "offline" if their last heartbeat is
 // older than the given threshold. Returns the number of runners updated.
 func (s *StorageLayer) ExpireStaleRunners(ctx context.Context, threshold time.Duration) (int64, error) {

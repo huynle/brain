@@ -142,6 +142,14 @@ func (s *RunnerRegistryServiceImpl) GetRunner(ctx context.Context, runnerID stri
 	return info, nil
 }
 
+// UpdateConfig updates a runner's max_parallel configuration and persists it to the database.
+func (s *RunnerRegistryServiceImpl) UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error {
+	if err := s.storage.UpdateRunnerMaxParallel(ctx, runnerID, maxParallel); err != nil {
+		return fmt.Errorf("update config: %w", err)
+	}
+	return nil
+}
+
 // UpdateAffinity updates a runner's feature affinity.
 func (s *RunnerRegistryServiceImpl) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
 	err := s.storage.UpdateAffinity(ctx, runnerID, featureIDs)

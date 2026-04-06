@@ -320,6 +320,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Patch("/{id}", o.handler.HandleUpdateWebhook)
 					r.Delete("/{id}", o.handler.HandleDeleteWebhook)
 					r.Get("/{id}/deliveries", o.handler.HandleListWebhookDeliveries)
+					r.Post("/{id}/test", o.handler.HandleTestWebhook)
 				} else {
 					r.Post("/", notImplemented)
 					r.Get("/", notImplemented)
@@ -327,6 +328,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Patch("/{id}", notImplemented)
 					r.Delete("/{id}", notImplemented)
 					r.Get("/{id}/deliveries", notImplemented)
+					r.Post("/{id}/test", notImplemented)
 				}
 			})
 

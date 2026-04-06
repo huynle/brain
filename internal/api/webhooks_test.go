@@ -24,6 +24,7 @@ type mockWebhookService struct {
 	deleteFunc         func(ctx context.Context, id string) error
 	deliverFunc        func(ctx context.Context, event types.Event) error
 	listDeliveriesFunc func(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error)
+	testDeliverFunc    func(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error)
 }
 
 func (m *mockWebhookService) Create(ctx context.Context, req types.CreateWebhookRequest) (*types.WebhookResponse, error) {
@@ -75,6 +76,13 @@ func (m *mockWebhookService) ListDeliveries(ctx context.Context, webhookID strin
 	return []types.WebhookDeliveryResponse{}, nil
 }
 
+func (m *mockWebhookService) TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
+	if m.testDeliverFunc != nil {
+		return m.testDeliverFunc(ctx, webhookID, event)
+	}
+	return nil, ErrNotFound
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -88,6 +96,7 @@ func newWebhookTestRouter(mock *mockWebhookService) *chi.Mux {
 	r.Patch("/webhooks/{id}", h.HandleUpdateWebhook)
 	r.Delete("/webhooks/{id}", h.HandleDeleteWebhook)
 	r.Get("/webhooks/{id}/deliveries", h.HandleListWebhookDeliveries)
+	r.Post("/webhooks/{id}/test", h.HandleTestWebhook)
 	return r
 }
 
@@ -193,6 +202,138 @@ func TestHandleCreateWebhook_ValidPayload_Returns201(t *testing.T) {
 
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected status 201, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// =============================================================================
+// HandleTestWebhook Tests
+// =============================================================================
+
+func TestHandleTestWebhook_DeliversTestEvent(t *testing.T) {
+	var capturedEvent types.Event
+	var capturedWebhookID string
+
+	mock := &mockWebhookService{
+		testDeliverFunc: func(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
+			capturedWebhookID = webhookID
+			capturedEvent = event
+			sc := 200
+			lat := 42
+			return &types.WebhookDeliveryResponse{
+				ID:         "del_test123",
+				WebhookID:  webhookID,
+				EventType:  event.Type,
+				StatusCode: &sc,
+				Success:    true,
+				LatencyMs:  &lat,
+				CreatedAt:  "2025-01-01T00:00:00Z",
+			}, nil
+		},
+	}
+
+	router := newWebhookTestRouter(mock)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/wh_abc123/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	// Verify the webhook ID was passed correctly
+	if capturedWebhookID != "wh_abc123" {
+		t.Errorf("expected webhook ID 'wh_abc123', got %q", capturedWebhookID)
+	}
+
+	// Verify the event is a test event
+	if capturedEvent.Type != "webhook.test" {
+		t.Errorf("expected event type 'webhook.test', got %q", capturedEvent.Type)
+	}
+	if capturedEvent.Source != "api" {
+		t.Errorf("expected event source 'api', got %q", capturedEvent.Source)
+	}
+
+	// Verify response body contains delivery result
+	var resp types.WebhookDeliveryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected successful delivery in response")
+	}
+	if resp.WebhookID != "wh_abc123" {
+		t.Errorf("expected webhook_id 'wh_abc123' in response, got %q", resp.WebhookID)
+	}
+}
+
+func TestHandleTestWebhook_NonexistentWebhook_Returns404(t *testing.T) {
+	mock := &mockWebhookService{
+		testDeliverFunc: func(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
+			return nil, ErrNotFound
+		},
+	}
+
+	router := newWebhookTestRouter(mock)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/wh_nonexistent/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected status 404, got %d; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHandleTestWebhook_DeliveryFailure_Returns200WithError(t *testing.T) {
+	mock := &mockWebhookService{
+		testDeliverFunc: func(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
+			sc := 502
+			lat := 5000
+			return &types.WebhookDeliveryResponse{
+				ID:         "del_fail456",
+				WebhookID:  webhookID,
+				EventType:  event.Type,
+				StatusCode: &sc,
+				Success:    false,
+				LatencyMs:  &lat,
+				Error:      "HTTP 502",
+				CreatedAt:  "2025-01-01T00:00:00Z",
+			}, nil
+		},
+	}
+
+	router := newWebhookTestRouter(mock)
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/wh_abc123/test", nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	// Delivery failure returns 200 with delivery record showing error
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200 (delivery result even on webhook failure), got %d; body: %s", w.Code, w.Body.String())
+	}
+
+	var resp types.WebhookDeliveryResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Success {
+		t.Error("expected unsuccessful delivery in response")
+	}
+	if resp.Error == "" {
+		t.Error("expected error message in delivery response")
+	}
+}
+
+func TestHandleTestWebhook_NilWebhookService_Returns501(t *testing.T) {
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Post("/webhooks/{id}/test", h.HandleTestWebhook)
+
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/wh_abc123/test", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("expected status 501, got %d; body: %s", w.Code, w.Body.String())
 	}
 }
 

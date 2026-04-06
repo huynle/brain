@@ -2459,3 +2459,92 @@ func TestStartClaimCleanup_NoExpiredClaims(t *testing.T) {
 		t.Error("expected active claim to survive cleanup")
 	}
 }
+
+// TestApplyTaskDefaults_DerivesGitBranchFromFeatureID verifies that when a task
+// has execution_mode=worktree and feature_id set but git_branch empty, the
+// service layer auto-derives git_branch = feature_id.
+func TestApplyTaskDefaults_DerivesGitBranchFromFeatureID(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		ExecutionMode: "worktree",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	// Task with feature_id set but git_branch empty and execution_mode=worktree
+	insertTaskNote(t, store, "feat1111", "Feature Task", "pending", "high", "proj", map[string]interface{}{
+		"feature_id":     "auth-refactor",
+		"execution_mode": "worktree",
+	})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+	if task.GitBranch != "auth-refactor" {
+		t.Errorf("GitBranch = %q, want %q (should be derived from feature_id)", task.GitBranch, "auth-refactor")
+	}
+}
+
+// TestApplyTaskDefaults_DoesNotOverwriteExplicitGitBranch verifies that an
+// explicit git_branch on a task is never overwritten by feature_id derivation.
+func TestApplyTaskDefaults_DoesNotOverwriteExplicitGitBranch(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{
+		ExecutionMode: "worktree",
+	}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	// Task with both git_branch and feature_id explicitly set
+	insertTaskNote(t, store, "feat2222", "Explicit Branch Task", "pending", "high", "proj", map[string]interface{}{
+		"feature_id":     "auth-refactor",
+		"git_branch":     "my-explicit-branch",
+		"execution_mode": "worktree",
+	})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+	if task.GitBranch != "my-explicit-branch" {
+		t.Errorf("GitBranch = %q, want %q (explicit git_branch must not be overwritten)", task.GitBranch, "my-explicit-branch")
+	}
+}
+
+// TestApplyTaskDefaults_NoGitBranchDerivationForCurrentBranch verifies that
+// git_branch is NOT derived when execution_mode=current_branch.
+func TestApplyTaskDefaults_NoGitBranchDerivationForCurrentBranch(t *testing.T) {
+	defaults := config.TaskDefaultsConfig{}
+
+	svc, store, _ := newTestTaskServiceWithDefaults(t, defaults)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "feat3333", "Current Branch Task", "pending", "high", "proj", map[string]interface{}{
+		"feature_id":     "auth-refactor",
+		"execution_mode": "current_branch",
+	})
+
+	result, err := svc.GetTasks(ctx, "proj")
+	if err != nil {
+		t.Fatalf("GetTasks failed: %v", err)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("expected 1 task, got %d", len(result.Tasks))
+	}
+
+	task := result.Tasks[0]
+	if task.GitBranch != "" {
+		t.Errorf("GitBranch = %q, want empty (should not derive for current_branch mode)", task.GitBranch)
+	}
+}

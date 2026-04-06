@@ -374,6 +374,12 @@ const (
 	// CommandDispatch signals the runner to immediately wake for targeted task pickup.
 	CommandDispatch RunnerCommandType = "dispatch"
 
+	// CommandPause signals the runner to pause all task claims.
+	CommandPause RunnerCommandType = "pause"
+
+	// CommandResume signals the runner to resume task claims.
+	CommandResume RunnerCommandType = "resume"
+
 	// CommandShutdown signals the runner to initiate graceful shutdown.
 	CommandShutdown RunnerCommandType = "shutdown"
 )

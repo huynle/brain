@@ -459,6 +459,14 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 			slog.Info("agent updated", "agent", cmd.Agent)
 		}
 
+	case CommandPause:
+		tr.PauseAll()
+		slog.Info("runner paused via SSE command")
+
+	case CommandResume:
+		tr.ResumeAll()
+		slog.Info("runner resumed via SSE command")
+
 	case CommandDispatch:
 		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
 		// Trigger immediate wake for targeted task pickup

@@ -335,6 +335,58 @@ func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Reques
 	})
 }
 
+// HandlePauseRunner handles PUT /runners/{runnerId}/pause — pause a runner via SSE command.
+func (h *Handler) HandlePauseRunner(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	if _, err := h.runnerRegistry.GetRunner(r.Context(), runnerID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	slog.Info("runner pause requested", "runner_id", runnerID)
+
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "pause", nil)
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"runnerId": runnerID,
+		"action":   "pause",
+		"success":  true,
+	})
+}
+
+// HandleResumeRunner handles PUT /runners/{runnerId}/resume — resume a runner via SSE command.
+func (h *Handler) HandleResumeRunner(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	if _, err := h.runnerRegistry.GetRunner(r.Context(), runnerID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	slog.Info("runner resume requested", "runner_id", runnerID)
+
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "resume", nil)
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"runnerId": runnerID,
+		"action":   "resume",
+		"success":  true,
+	})
+}
+
 // HandleToggleRunnerFeature handles POST /runners/{runnerId}/features/{featureId}/toggle
 // — enables or disables a feature on a runner.
 // Feature toggle is pushed to the runner via SSE command channel.

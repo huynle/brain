@@ -340,6 +340,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/{runnerId}/heartbeat", o.handler.HandleHeartbeat)
 						r.Post("/{runnerId}/deregister", o.handler.HandleDeregisterRunner)
 						r.Put("/{runnerId}/affinity", o.handler.HandleUpdateAffinity)
+						r.Put("/{runnerId}/pause", o.handler.HandlePauseRunner)
+						r.Put("/{runnerId}/resume", o.handler.HandleResumeRunner)
 						r.Patch("/{runnerId}/config", o.handler.HandleUpdateRunnerConfig)
 						r.Post("/{runnerId}/features/{featureId}/toggle", o.handler.HandleToggleRunnerFeature)
 					} else {
@@ -347,6 +349,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/{runnerId}/heartbeat", notImplemented)
 						r.Post("/{runnerId}/deregister", notImplemented)
 						r.Put("/{runnerId}/affinity", notImplemented)
+						r.Put("/{runnerId}/pause", notImplemented)
+						r.Put("/{runnerId}/resume", notImplemented)
 						r.Patch("/{runnerId}/config", notImplemented)
 						r.Post("/{runnerId}/features/{featureId}/toggle", notImplemented)
 					}

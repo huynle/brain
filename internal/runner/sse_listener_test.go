@@ -529,6 +529,42 @@ func TestTaskRunner_HandleCommand_Shutdown(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_HandleCommand_Pause(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	cmd := RunnerCommand{
+		Type: CommandPause,
+	}
+
+	ctx := context.Background()
+	tr.handleCommand(ctx, cmd)
+
+	if !tr.IsAllPaused() {
+		t.Error("runner should be paused after pause command")
+	}
+}
+
+func TestTaskRunner_HandleCommand_Resume(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	// First pause, then resume
+	tr.PauseAll()
+	if !tr.IsAllPaused() {
+		t.Fatal("runner should be paused after PauseAll()")
+	}
+
+	cmd := RunnerCommand{
+		Type: CommandResume,
+	}
+
+	ctx := context.Background()
+	tr.handleCommand(ctx, cmd)
+
+	if tr.IsAllPaused() {
+		t.Error("runner should not be paused after resume command")
+	}
+}
+
 func TestTaskRunner_HasCommandChannel(t *testing.T) {
 	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
 

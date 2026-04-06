@@ -95,6 +95,8 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 		r.Get("/{runnerId}", h.HandleGetRunner)
 		r.Post("/{runnerId}/heartbeat", h.HandleHeartbeat)
 		r.Post("/{runnerId}/deregister", h.HandleDeregisterRunner)
+		r.Put("/{runnerId}/pause", h.HandlePauseRunner)
+		r.Put("/{runnerId}/resume", h.HandleResumeRunner)
 		r.Patch("/{runnerId}/config", h.HandleUpdateRunnerConfig)
 		r.Post("/{runnerId}/features/{featureId}/toggle", h.HandleToggleRunnerFeature)
 	})
@@ -872,6 +874,136 @@ func TestHandleToggleRunnerFeature(t *testing.T) {
 				var resp map[string]interface{}
 				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				if success, ok := resp["success"].(bool); !ok || !success {
+					t.Errorf("expected success=true, got %v", resp["success"])
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests: PUT /runners/{runnerId}/pause
+// =============================================================================
+
+func TestHandlePauseRunner_SendsSSECommand(t *testing.T) {
+	tests := []struct {
+		name          string
+		runnerID      string
+		mockGetRunner func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+		wantStatus    int
+		wantAction    string
+	}{
+		{
+			name:     "pause existing runner",
+			runnerID: "runner-1",
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return &types.RunnerInfo{RunnerID: runnerID}, nil
+			},
+			wantStatus: http.StatusOK,
+			wantAction: "pause",
+		},
+		{
+			name:     "runner not found",
+			runnerID: "nonexistent",
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockRunnerRegistryService{
+				getRunnerFunc: tt.mockGetRunner,
+			}
+			router := newRunnerTestRouter(mock)
+
+			req := httptest.NewRequest(http.MethodPut, "/runners/"+tt.runnerID+"/pause", nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d\nBody: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantAction != "" {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				if resp["runnerId"] != tt.runnerID {
+					t.Errorf("runnerId = %v, want %v", resp["runnerId"], tt.runnerID)
+				}
+				if resp["action"] != tt.wantAction {
+					t.Errorf("action = %v, want %v", resp["action"], tt.wantAction)
+				}
+				if success, ok := resp["success"].(bool); !ok || !success {
+					t.Errorf("expected success=true, got %v", resp["success"])
+				}
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Tests: PUT /runners/{runnerId}/resume
+// =============================================================================
+
+func TestHandleResumeRunner_SendsSSECommand(t *testing.T) {
+	tests := []struct {
+		name          string
+		runnerID      string
+		mockGetRunner func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+		wantStatus    int
+		wantAction    string
+	}{
+		{
+			name:     "resume existing runner",
+			runnerID: "runner-1",
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return &types.RunnerInfo{RunnerID: runnerID}, nil
+			},
+			wantStatus: http.StatusOK,
+			wantAction: "resume",
+		},
+		{
+			name:     "runner not found",
+			runnerID: "nonexistent",
+			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mock := &mockRunnerRegistryService{
+				getRunnerFunc: tt.mockGetRunner,
+			}
+			router := newRunnerTestRouter(mock)
+
+			req := httptest.NewRequest(http.MethodPut, "/runners/"+tt.runnerID+"/resume", nil)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Errorf("got status %d, want %d\nBody: %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+
+			if tt.wantAction != "" {
+				var resp map[string]interface{}
+				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+					t.Fatalf("failed to unmarshal response: %v", err)
+				}
+				if resp["runnerId"] != tt.runnerID {
+					t.Errorf("runnerId = %v, want %v", resp["runnerId"], tt.runnerID)
+				}
+				if resp["action"] != tt.wantAction {
+					t.Errorf("action = %v, want %v", resp["action"], tt.wantAction)
 				}
 				if success, ok := resp["success"].(bool); !ok || !success {
 					t.Errorf("expected success=true, got %v", resp["success"])

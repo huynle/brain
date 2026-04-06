@@ -222,6 +222,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							// SSE stream
 							r.Get("/stream", o.handler.HandleSSEStream)
 
+							// Single task by ID (read)
+							r.Get("/{taskId}", o.handler.HandleGetTask)
+
 							// Claim status (read)
 							r.Get("/{taskId}/claim-status", o.handler.HandleGetClaimStatus)
 						} else {
@@ -238,6 +241,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 							r.Get("/stream", notImplemented)
 
+							r.Get("/{taskId}", notImplemented)
 							r.Get("/{taskId}/claim-status", notImplemented)
 						}
 					})

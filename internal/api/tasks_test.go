@@ -35,6 +35,7 @@ type mockTaskService struct {
 	getFeatureFunc       func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
 	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
 
 func (m *mockTaskService) ListProjects(ctx context.Context) ([]string, error) {
@@ -153,6 +154,13 @@ func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, r
 	return nil, fmt.Errorf("dispatchTask not implemented in mock")
 }
 
+func (m *mockTaskService) GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+	if m.getTaskFunc != nil {
+		return m.getTaskFunc(ctx, projectId, taskId)
+	}
+	return nil, fmt.Errorf("getTaskFunc not set")
+}
+
 // =============================================================================
 // Mock RunnerService
 // =============================================================================
@@ -238,6 +246,7 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 
 			r.Get("/stream", h.HandleSSEStream)
 
+			r.Get("/{taskId}", h.HandleGetTask)
 			r.Post("/{taskId}/claim", h.HandleClaimTask)
 			r.Post("/{taskId}/release", h.HandleReleaseTask)
 			r.Post("/{taskId}/renew", h.HandleRenewClaim)
@@ -382,6 +391,84 @@ func TestHandleGetTasks(t *testing.T) {
 			resp, err := http.Get(srv.URL + "/tasks/" + tt.projectId)
 			if err != nil {
 				t.Fatalf("GET /tasks/%s failed: %v", tt.projectId, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Get Single Task Tests
+// =============================================================================
+
+func TestHandleGetTask_ReturnsTaskWithDefaults(t *testing.T) {
+	tests := []struct {
+		name       string
+		projectId  string
+		taskId     string
+		mockFn     func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:      "returns existing task",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return &types.ResolvedTask{
+					ID:             taskId,
+					Classification: "ready",
+					Agent:          "tdd-dev",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ResolvedTask](t, resp)
+				if body.ID != "abc12def" {
+					t.Errorf("id = %q, want %q", body.ID, "abc12def")
+				}
+				if body.Agent != "tdd-dev" {
+					t.Errorf("agent = %q, want %q", body.Agent, "tdd-dev")
+				}
+			},
+		},
+		{
+			name:      "returns 404 for nonexistent task",
+			projectId: "my-project",
+			taskId:    "nonexistent",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:      "service error returns 500",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, fmt.Errorf("unexpected disk error")
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{getTaskFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/tasks/" + tt.projectId + "/" + tt.taskId)
+			if err != nil {
+				t.Fatalf("GET /tasks/%s/%s failed: %v", tt.projectId, tt.taskId, err)
 			}
 			defer resp.Body.Close()
 

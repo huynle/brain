@@ -120,6 +120,28 @@ func (h *Handler) HandleGetNext(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, task)
 }
 
+// HandleGetTask handles GET /tasks/{projectId}/{taskId} — fetch a single task by ID.
+func (h *Handler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	task, err := h.tasks.GetTask(r.Context(), projectId, taskId)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		// Check for "not found" string from service layer
+		if task == nil {
+			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, task)
+}
+
 // HandleClaimTask handles POST /tasks/{projectId}/{taskId}/claim.
 func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

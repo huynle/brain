@@ -140,6 +140,9 @@ type TaskService interface {
 	// CheckoutFeature marks a feature for checkout.
 	CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 
+	// GetTask returns a single task by ID with dependency resolution applied.
+	GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+
 	// TriggerTask manually triggers a scheduled task.
 	TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
 }

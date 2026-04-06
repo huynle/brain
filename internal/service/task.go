@@ -121,6 +121,22 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	return result, nil
 }
 
+// GetTask returns a single resolved task by ID for a project.
+// Server-side defaults are applied (same as GetTasks).
+func (s *TaskServiceImpl) GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+	resp, err := s.GetTasks(ctx, projectId)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range resp.Tasks {
+		if t.ID == taskId {
+			task := t
+			return &task, nil
+		}
+	}
+	return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+}
+
 // applyTaskDefaults fills empty fields on resolved tasks from server-side
 // config.TaskDefaults. Non-empty task fields are never overwritten (task
 // frontmatter wins). Nil *bool fields get the config default; non-nil keep
@@ -163,6 +179,13 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 		}
 		if t.TargetWorkdir == "" && d.TargetWorkdir != "" {
 			t.TargetWorkdir = d.TargetWorkdir
+		}
+
+		// Auto-derive git_branch from feature_id in worktree mode (defense-in-depth:
+		// the runner layer also does this, but deriving here ensures the API response
+		// already has the correct git_branch field set).
+		if t.GitBranch == "" && t.ExecutionMode == "worktree" && t.FeatureID != "" {
+			t.GitBranch = t.FeatureID
 		}
 
 		// *bool fields: fill only if task field is nil

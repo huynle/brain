@@ -353,9 +353,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 					if o.handler != nil && o.handler.runnerRegistry != nil {
 						r.Get("/", o.handler.HandleListRunners)
+						r.Get("/{runnerId}", o.handler.HandleGetRunner)
 						r.Get("/{runnerId}/stream", o.handler.HandleRunnerStream)
 					} else {
 						r.Get("/", notImplemented)
+						r.Get("/{runnerId}", notImplemented)
 						r.Get("/{runnerId}/stream", notImplemented)
 					}
 				})

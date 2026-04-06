@@ -92,6 +92,7 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 	r.Route("/runners", func(r chi.Router) {
 		r.Post("/register", h.HandleRegisterRunner)
 		r.Get("/", h.HandleListRunners)
+		r.Get("/{runnerId}", h.HandleGetRunner)
 		r.Post("/{runnerId}/heartbeat", h.HandleHeartbeat)
 		r.Post("/{runnerId}/deregister", h.HandleDeregisterRunner)
 		r.Patch("/{runnerId}/config", h.HandleUpdateRunnerConfig)
@@ -388,6 +389,77 @@ func TestHandleListRunners(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Tests: GET /runners/{runnerId}
+// =============================================================================
+
+func TestHandleGetRunner_ReturnsRunner(t *testing.T) {
+	mock := &mockRunnerRegistryService{
+		getRunnerFunc: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+			if runnerID == "runner-abc" {
+				return &types.RunnerInfo{
+					RunnerID:      "runner-abc",
+					Hostname:      "host-1",
+					Status:        types.RunnerStatusOnline,
+					MaxParallel:   4,
+					LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
+				}, nil
+			}
+			return nil, ErrNotFound
+		},
+	}
+	router := newRunnerTestRouter(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/runners/runner-abc", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var runner types.RunnerInfo
+	if err := json.NewDecoder(w.Body).Decode(&runner); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if runner.RunnerID != "runner-abc" {
+		t.Errorf("RunnerID = %q, want %q", runner.RunnerID, "runner-abc")
+	}
+	if runner.Hostname != "host-1" {
+		t.Errorf("Hostname = %q, want %q", runner.Hostname, "host-1")
+	}
+	if runner.Status != types.RunnerStatusOnline {
+		t.Errorf("Status = %q, want %q", runner.Status, types.RunnerStatusOnline)
+	}
+	if runner.MaxParallel != 4 {
+		t.Errorf("MaxParallel = %d, want %d", runner.MaxParallel, 4)
+	}
+}
+
+func TestHandleGetRunner_NotFound(t *testing.T) {
+	mock := &mockRunnerRegistryService{
+		getRunnerFunc: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+			return nil, ErrNotFound
+		},
+	}
+	router := newRunnerTestRouter(mock)
+
+	req := httptest.NewRequest(http.MethodGet, "/runners/nonexistent", nil)
+	w := httptest.NewRecorder()
+
+	router.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusNotFound, w.Body.String())
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "not found") {
+		t.Errorf("body should contain 'not found', got: %s", body)
 	}
 }
 

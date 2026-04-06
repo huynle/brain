@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -139,6 +140,25 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleGetRunner handles GET /runners/{runnerId} — get a single runner by ID.
+func (h *Handler) HandleGetRunner(w http.ResponseWriter, r *http.Request) {
+	if h.runnerRegistry == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "runner registry not available")
+		return
+	}
+	runnerID := chi.URLParam(r, "runnerId")
+	runner, err := h.runnerRegistry.GetRunner(r.Context(), runnerID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, runner)
 }
 
 // HandleUpdateAffinity handles PUT /runners/{runnerId}/affinity — update runner feature affinity.

@@ -391,15 +391,24 @@ func parseRunCommand(args []string) (Command, error) {
 	subArgs := args[1:]
 
 	cfg := defaultConfig()
-	flags, err := ParseRunnerFlags(subArgs)
-	if err != nil {
-		return nil, err
+
+	// Pre-scan args to find positional project arg regardless of flag order.
+	// This mirrors parseDreamCommand: find first non-flag arg before calling
+	// ParseRunnerFlags so that "brain run start <project> --headless" works
+	// the same as "brain run start --headless <project>".
+	project := "all"
+	var flagArgs []string
+	for _, a := range subArgs {
+		if !isFlag(a) && project == "all" {
+			project = a
+		} else {
+			flagArgs = append(flagArgs, a)
+		}
 	}
 
-	// Determine project from subArgs or default to "all"
-	project := "all"
-	if len(subArgs) > 0 && !isFlag(subArgs[0]) {
-		project = subArgs[0]
+	flags, err := ParseRunnerFlags(flagArgs)
+	if err != nil {
+		return nil, err
 	}
 
 	return &commands.RunCommand{

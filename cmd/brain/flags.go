@@ -1052,6 +1052,44 @@ func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.Automati
 	}
 }
 
+// MigrateFlags for migrate command
+type MigrateFlags struct {
+	DryRun bool
+	Force  bool
+	Format string
+}
+
+// ParseMigrateFlags parses migrate command flags from args.
+func ParseMigrateFlags(args []string) (*MigrateFlags, error) {
+	flags := &MigrateFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--dry-run":
+			flags.DryRun = true
+		case "--force":
+			flags.Force = true
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsMigrateFlags converts main.MigrateFlags to commands.MigrateFlags.
+func convertToCommandsMigrateFlags(flags *MigrateFlags) *commands.MigrateFlags {
+	return &commands.MigrateFlags{
+		DryRun: flags.DryRun,
+		Force:  flags.Force,
+		Format: flags.Format,
+	}
+}
+
 // convertToCommandsEntryListFlags converts main.EntryListFlags to commands.EntryListFlags.
 func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListFlags {
 	f := &commands.EntryListFlags{

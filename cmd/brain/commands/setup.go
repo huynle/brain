@@ -49,6 +49,7 @@ func (c *InitCommand) Execute() error {
 		filepath.Join(brainDir, config.DataDir),
 		filepath.Join(brainDir, config.DataDir, "templates"),
 		filepath.Join(brainDir, "global"),
+		filepath.Join(brainDir, "global", "automation"),
 		filepath.Join(brainDir, "projects"),
 	}
 
@@ -109,6 +110,51 @@ func (c *InitCommand) Execute() error {
 
 		createdCount++
 		fmt.Fprintf(out, "✅ Created %s\n", templateName)
+	}
+
+	// Copy default automation entries to global/automation/
+	automations := assets.ListAutomations()
+	automationsDir := filepath.Join(brainDir, "global", "automation")
+
+	for _, automationName := range automations {
+		destPath := filepath.Join(automationsDir, automationName)
+
+		// Check if file exists
+		exists := fileExists(destPath)
+
+		if exists && !c.Flags.Force {
+			skippedCount++
+			if !c.Flags.DryRun {
+				fmt.Fprintf(out, "⏭  Skipped automation/%s (already exists)\n", automationName)
+			}
+			continue
+		}
+
+		if c.Flags.DryRun {
+			if exists {
+				fmt.Fprintf(out, "DRY RUN: Would overwrite automation/%s\n", automationName)
+			} else {
+				fmt.Fprintf(out, "DRY RUN: Would create automation/%s\n", automationName)
+			}
+			createdCount++
+			continue
+		}
+
+		// Get automation content
+		content, err := assets.GetAutomation(automationName)
+		if err != nil {
+			fmt.Fprintf(out, "⚠️  Failed to load automation %s: %v\n", automationName, err)
+			continue
+		}
+
+		// Write automation
+		if err := os.WriteFile(destPath, content, 0644); err != nil {
+			fmt.Fprintf(out, "⚠️  Failed to write automation %s: %v\n", automationName, err)
+			continue
+		}
+
+		createdCount++
+		fmt.Fprintf(out, "✅ Created automation/%s\n", automationName)
 	}
 
 	// Copy config.toml

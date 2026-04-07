@@ -91,6 +91,7 @@ var builtinCommands = map[string]bool{
 	"search":        true,
 	"list":          true,
 	"automation":    true,
+	"migrate":       true,
 	"help":          true,
 }
 
@@ -262,6 +263,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parsePluginStatusCommand(cmdArgs)
 	case "automation":
 		return parseAutomationCommand(cmdArgs)
+	case "migrate":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "migrate"}, nil
+		}
+		return parseMigrateCommand(cmdArgs)
 	case "run", "runner":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
@@ -977,6 +983,41 @@ func parseListCommand(args []string) (Command, error) {
 	return &commands.ListCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsEntryListFlags(flags),
+	}, nil
+}
+
+// parseMigrateCommand creates a MigrateCommand from args.
+// Usage: brain migrate <subcommand> [flags]
+func parseMigrateCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		cfg := defaultConfig()
+		return &commands.MigrateCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      &commands.MigrateFlags{},
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "migrate"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "migrate " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseMigrateFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.MigrateCommand{
+		Subcommand: subcommand,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsMigrateFlags(flags),
 	}, nil
 }
 

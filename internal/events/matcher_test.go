@@ -424,6 +424,7 @@ func TestAutomationMatcher_LoopPrevention(t *testing.T) {
 				Trigger: types.AutomationTrigger{
 					Type:  "event",
 					Event: "entry.created",
+					// IgnoreAutomationEvents defaults to nil (= true, ignore automation events)
 				},
 				Action: types.AutomationAction{
 					Type:         "prompt",
@@ -456,6 +457,17 @@ func TestAutomationMatcher_LoopPrevention(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 	assert.Empty(t, creator.getCreated(), "should ignore events from automation_matcher (loop prevention)")
+
+	// Also test Source = "automation" is blocked
+	bus.Publish(Event{
+		Type:      EntryCreated,
+		Source:    "automation",
+		ProjectID: "test",
+		Payload:   map[string]any{"id": "task2"},
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, creator.getCreated(), "should ignore events from automation source (loop prevention)")
 }
 
 func TestAutomationMatcher_UpdateActionCallsUpdateDirectly(t *testing.T) {
@@ -864,4 +876,393 @@ func TestAutomationMatcher_GlobalAutomationMatchesAllProjects(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(creator.getCreated()) > 0
 	}, 3*time.Second, 50*time.Millisecond, "global automation should match events from any project")
+}
+
+// =============================================================================
+// Mock EventMarker
+// =============================================================================
+
+type mockEventMarker struct {
+	mu        sync.Mutex
+	processed []int64
+}
+
+func (m *mockEventMarker) MarkProcessed(ctx context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.processed = append(m.processed, id)
+	return nil
+}
+
+func (m *mockEventMarker) getProcessed() []int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]int64, len(m.processed))
+	copy(result, m.processed)
+	return result
+}
+
+// =============================================================================
+// Tests: Per-Automation Loop Prevention Override
+// =============================================================================
+
+func TestAutomationMatcher_LoopPreventionOverrideAllowsAutomationEvents(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	falseVal := false
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto-chain",
+				Path:      "projects/test/automation/auto-chain.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:                   "event",
+					Event:                  "entry.created",
+					IgnoreAutomationEvents: &falseVal, // Explicit opt-in
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Chain automation",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish an automation-generated event
+	bus.Publish(Event{
+		Type:      EntryCreated,
+		Source:    "automation_matcher",
+		ProjectID: "test",
+		Payload:   map[string]any{"id": "task1"},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(creator.getCreated()) > 0
+	}, 3*time.Second, 50*time.Millisecond,
+		"automation with ignore_automation_events:false should process automation events")
+
+	assert.Equal(t, "auto-chain", creator.getCreated()[0].AutomationID)
+}
+
+func TestAutomationMatcher_LoopPreventionExplicitTrueBlocksAutomationEvents(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	trueVal := true
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto1",
+				Path:      "projects/test/automation/auto1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:                   "event",
+					Event:                  "entry.created",
+					IgnoreAutomationEvents: &trueVal, // Explicit true
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Process entry",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(Event{
+		Type:      EntryCreated,
+		Source:    "automation",
+		ProjectID: "test",
+		Payload:   map[string]any{"id": "task1"},
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, creator.getCreated(), "explicit ignore_automation_events:true should block automation events")
+}
+
+func TestAutomationMatcher_MixedOverrideAutomations(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	falseVal := false
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto-block",
+				Path:      "projects/test/automation/auto-block.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:  "event",
+					Event: "entry.created",
+					// nil = default = ignore automation events
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Blocked",
+				},
+				Status: "active",
+			},
+			{
+				ID:        "auto-allow",
+				Path:      "projects/test/automation/auto-allow.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:                   "event",
+					Event:                  "entry.created",
+					IgnoreAutomationEvents: &falseVal,
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Allowed",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(Event{
+		Type:      EntryCreated,
+		Source:    "automation_matcher",
+		ProjectID: "test",
+		Payload:   map[string]any{"id": "task1"},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(creator.getCreated()) > 0
+	}, 3*time.Second, 50*time.Millisecond)
+
+	// Only the opt-in automation should fire
+	created := creator.getCreated()
+	assert.Len(t, created, 1)
+	assert.Equal(t, "auto-allow", created[0].AutomationID)
+}
+
+// =============================================================================
+// Tests: Event Processed Marking
+// =============================================================================
+
+func TestAutomationMatcher_MarksEventAsProcessed(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	marker := &mockEventMarker{}
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto1",
+				Path:      "projects/test/automation/auto1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:  "event",
+					Event: "task.completed",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Review task",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+		Marker:  marker,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(Event{
+		Type:      TaskCompleted,
+		ProjectID: "test",
+		Payload: map[string]any{
+			"id":            "task123",
+			"_event_log_id": int64(42),
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(marker.getProcessed()) > 0
+	}, 3*time.Second, 50*time.Millisecond, "event should be marked as processed")
+
+	assert.Contains(t, marker.getProcessed(), int64(42))
+}
+
+func TestAutomationMatcher_NoMarkerDoesNotPanic(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto1",
+				Path:      "projects/test/automation/auto1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:  "event",
+					Event: "task.completed",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Review task",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+		// Marker not set — should not panic
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	bus.Publish(Event{
+		Type:      TaskCompleted,
+		ProjectID: "test",
+		Payload: map[string]any{
+			"id":            "task123",
+			"_event_log_id": int64(42),
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(creator.getCreated()) > 0
+	}, 3*time.Second, 50*time.Millisecond, "should still create tasks without marker")
+}
+
+func TestAutomationMatcher_MarksProcessedWithFloat64ID(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	marker := &mockEventMarker{}
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "auto1",
+				Path:      "projects/test/automation/auto1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:  "event",
+					Event: "task.completed",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Review task",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+		Marker:  marker,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// JSON unmarshaling often produces float64 for numbers
+	bus.Publish(Event{
+		Type:      TaskCompleted,
+		ProjectID: "test",
+		Payload: map[string]any{
+			"id":            "task123",
+			"_event_log_id": float64(99),
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(marker.getProcessed()) > 0
+	}, 3*time.Second, 50*time.Millisecond)
+
+	assert.Contains(t, marker.getProcessed(), int64(99))
+}
+
+// =============================================================================
+// Tests: isAutomationSource helper
+// =============================================================================
+
+func TestIsAutomationSource(t *testing.T) {
+	tests := []struct {
+		source   string
+		expected bool
+	}{
+		{"automation_matcher", true},
+		{"automation", true},
+		{"service", false},
+		{"external", false},
+		{"", false},
+		{"auto", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			assert.Equal(t, tt.expected, isAutomationSource(tt.source))
+		})
+	}
 }

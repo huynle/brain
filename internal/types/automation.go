@@ -6,12 +6,13 @@ package types
 
 // AutomationTrigger defines when an automation fires.
 type AutomationTrigger struct {
-	Type     string            `json:"type" yaml:"type"`                             // cron, event, webhook, session
-	Event    string            `json:"event,omitempty" yaml:"event,omitempty"`       // event name for type=event
-	Schedule string            `json:"schedule,omitempty" yaml:"schedule,omitempty"` // cron expression for type=cron
-	Filter   map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`     // key-value filter conditions
-	OncePer  string            `json:"once_per,omitempty" yaml:"once_per,omitempty"` // dedup key (e.g. "session", "day")
-	Webhook  string            `json:"webhook,omitempty" yaml:"webhook,omitempty"`   // webhook path for type=webhook
+	Type                   string            `json:"type" yaml:"type"`                                                             // cron, event, webhook, session
+	Event                  string            `json:"event,omitempty" yaml:"event,omitempty"`                                       // event name for type=event
+	Schedule               string            `json:"schedule,omitempty" yaml:"schedule,omitempty"`                                 // cron expression for type=cron
+	Filter                 map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`                                     // key-value filter conditions
+	OncePer                string            `json:"once_per,omitempty" yaml:"once_per,omitempty"`                                 // dedup key (e.g. "session", "day")
+	Webhook                string            `json:"webhook,omitempty" yaml:"webhook,omitempty"`                                   // webhook path for type=webhook
+	IgnoreAutomationEvents *bool             `json:"ignore_automation_events,omitempty" yaml:"ignore_automation_events,omitempty"` // default true; set false to process automation-generated events
 }
 
 // AutomationAction defines what an automation does when triggered.

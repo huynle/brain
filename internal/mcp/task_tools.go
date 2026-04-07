@@ -859,7 +859,7 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 func registerBrainMonitorEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_monitor_enable",
-		Description: "Enable a monitor template for a feature. Creates an automated task (scheduled or dependency-gated depending on the template). Use GET /monitors/templates to discover available templates.",
+		Description: "(Deprecated - use automations) Enable a monitor template for a feature. Creates an automated task. Prefer brain_automation_list and creating automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -916,7 +916,7 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 func registerBrainMonitorDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_monitor_disable",
-		Description: "Disable a monitor template for a feature. Permanently removes the monitor task. Can be re-enabled with brain_monitor_enable.",
+		Description: "(Deprecated - use automations) Disable a monitor template for a feature. Permanently removes the monitor task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -970,7 +970,7 @@ func registerBrainMonitorDisable(s *Server, client *APIClient) {
 func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_feature_review_enable",
-		Description: "Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks in the feature are completed. The review validates that the implementation matches the original requirements.",
+		Description: "(Deprecated - use automations) Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks complete. Prefer creating an automation entry with trigger type 'event' and event 'feature.all_completed'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1019,7 +1019,7 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_feature_review_disable",
-		Description: "Disable Feature Code Review for a feature. Permanently removes the review task. Can be re-enabled later with brain_feature_review_enable.",
+		Description: "(Deprecated - use automations) Disable Feature Code Review for a feature. Permanently removes the review task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1067,7 +1067,7 @@ func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_blocked_inspector_enable",
-		Description: "Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task that periodically checks for blocked tasks and attempts to unblock them by analyzing dependencies, suggesting fixes, or escalating.",
+		Description: "(Deprecated - use automations) Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task. Prefer creating an automation entry with trigger type 'cron'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1122,7 +1122,7 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_blocked_inspector_disable",
-		Description: "Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Can be re-enabled later with brain_blocked_inspector_enable.",
+		Description: "(Deprecated - use automations) Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1170,7 +1170,7 @@ func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 func registerBrainDreamEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_dream_enable",
-		Description: "Enable Dream Mode for a project. Creates a recurring scheduled task that periodically consolidates all project knowledge into a single injectable dream entry. The dream builds long-term project memory across sessions.",
+		Description: "(Deprecated - use automations) Enable Dream Mode for a project. Creates a recurring dream consolidation task. Prefer creating an automation entry with trigger type 'cron'.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1222,7 +1222,7 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 func registerBrainDreamDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_dream_disable",
-		Description: "Disable Dream Mode for a project. Removes the dream consolidation task. Existing dream entries are preserved. Can be re-enabled with brain_dream_enable.",
+		Description: "(Deprecated - use automations) Disable Dream Mode for a project. Removes the dream consolidation task. Existing dream entries are preserved. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{

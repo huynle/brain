@@ -10,7 +10,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// RegisterBrainTools registers all 20 brain core tools on the server.
+// RegisterBrainTools registers all 22 brain core tools on the server.
 func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainSave(s, client)
 	registerBrainRecall(s, client)
@@ -32,6 +32,8 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainBacklinks(s, client)
 	registerBrainOutlinks(s, client)
 	registerBrainRelated(s, client)
+	registerBrainAutomationList(s, client)
+	registerBrainAutomationTest(s, client)
 }
 
 // =============================================================================
@@ -1443,4 +1445,179 @@ func registerBrainRelated(s *Server, client *APIClient) {
 
 		return strings.Join(lines, "\n"), nil
 	})
+}
+
+// =============================================================================
+// brain_automation_list
+// =============================================================================
+
+func registerBrainAutomationList(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_automation_list",
+		Description: "List active automations with their trigger type, status, and last-fired info. Automations are event-driven behaviors stored as brain entries that replace hardcoded monitors.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"project": {Type: "string", Description: "Filter by project (optional, lists all if omitted)"},
+				"status":  {Type: "string", Description: "Filter by status (default: all)", Enum: []string{"active", "archived", "draft"}},
+			},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		params := map[string]string{
+			"type": "automation",
+		}
+		if project := StringArg(args, "project", ""); project != "" {
+			params["project"] = project
+		}
+		if status := StringArg(args, "status", ""); status != "" {
+			params["status"] = status
+		}
+
+		var resp struct {
+			Entries []types.BrainEntry `json:"entries"`
+			Total   int                `json:"total"`
+		}
+		if err := client.Request(ctx, "GET", "/entries", nil, params, &resp); err != nil {
+			return "", err
+		}
+
+		if len(resp.Entries) == 0 {
+			return "No automations found.\n\nCreate one with `brain automation create` or save a brain entry with type: automation.", nil
+		}
+
+		lines := []string{
+			fmt.Sprintf("## Automations (%d)", resp.Total),
+			"",
+		}
+
+		for _, entry := range resp.Entries {
+			triggerType := ""
+			triggerDetail := ""
+			if entry.Trigger != nil {
+				triggerType = entry.Trigger.Type
+				switch entry.Trigger.Type {
+				case "event":
+					triggerDetail = entry.Trigger.Event
+				case "cron":
+					triggerDetail = entry.Trigger.Schedule
+				case "webhook":
+					triggerDetail = entry.Trigger.Webhook
+				}
+			}
+
+			actionType := ""
+			if entry.Action != nil {
+				actionType = entry.Action.Type
+			}
+
+			project := entry.ProjectID
+			if project == "" {
+				project = "(global)"
+			}
+
+			statusIcon := "●"
+			if entry.Status != "active" {
+				statusIcon = "○"
+			}
+
+			lines = append(lines, fmt.Sprintf("%s **%s** (`%s`)", statusIcon, entry.Title, entry.ID))
+			lines = append(lines, fmt.Sprintf("  Trigger: %s %s | Action: %s | Project: %s | Status: %s",
+				triggerType, triggerDetail, actionType, project, entry.Status))
+			lines = append(lines, "")
+		}
+
+		return strings.Join(lines, "\n"), nil
+	})
+}
+
+// =============================================================================
+// brain_automation_test
+// =============================================================================
+
+func registerBrainAutomationTest(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_automation_test",
+		Description: "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
+		InputSchema: InputSchema{
+			Type: "object",
+			Properties: map[string]Property{
+				"event":   {Type: "string", Description: "Event name to simulate (e.g., 'task.completed', 'feature.all_completed')"},
+				"project": {Type: "string", Description: "Filter automations by project (optional)"},
+			},
+			Required: []string{"event"},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		eventName := StringArg(args, "event", "")
+
+		params := map[string]string{
+			"type":   "automation",
+			"status": "active",
+		}
+		if project := StringArg(args, "project", ""); project != "" {
+			params["project"] = project
+		}
+
+		var resp struct {
+			Entries []types.BrainEntry `json:"entries"`
+			Total   int                `json:"total"`
+		}
+		if err := client.Request(ctx, "GET", "/entries", nil, params, &resp); err != nil {
+			return "", err
+		}
+
+		lines := []string{
+			fmt.Sprintf("## Simulating event: %q (dry-run)", eventName),
+			"",
+		}
+
+		matched := 0
+		for _, entry := range resp.Entries {
+			if entry.Trigger == nil || entry.Trigger.Type != "event" {
+				continue
+			}
+			if !matchesAutomationEvent(entry.Trigger.Event, eventName) {
+				continue
+			}
+			matched++
+			lines = append(lines, fmt.Sprintf("**MATCH:** %s (`%s`)", entry.Title, entry.ID))
+			lines = append(lines, fmt.Sprintf("  Trigger: event=%s", entry.Trigger.Event))
+			if entry.Action != nil {
+				lines = append(lines, fmt.Sprintf("  Action: %s", entry.Action.Type))
+				if entry.Action.DirectPrompt != "" {
+					prompt := entry.Action.DirectPrompt
+					if len(prompt) > 80 {
+						prompt = prompt[:77] + "..."
+					}
+					lines = append(lines, fmt.Sprintf("  Prompt: %s", prompt))
+				}
+				if entry.Action.Command != "" {
+					lines = append(lines, fmt.Sprintf("  Command: %s", entry.Action.Command))
+				}
+			}
+			lines = append(lines, "")
+		}
+
+		if matched == 0 {
+			lines = append(lines, fmt.Sprintf("No automations matched event %q (dry-run, no tasks created)", eventName))
+		} else {
+			lines = append(lines, fmt.Sprintf("---\n%d automation(s) would match (dry-run, no tasks created)", matched))
+		}
+		return strings.Join(lines, "\n"), nil
+	})
+}
+
+// matchesAutomationEvent checks if an automation event pattern matches a given event name.
+// Supports exact match and wildcard prefix (e.g., "task.*" matches "task.completed").
+func matchesAutomationEvent(pattern, eventName string) bool {
+	if pattern == eventName {
+		return true
+	}
+	if strings.HasSuffix(pattern, ".*") {
+		prefix := strings.TrimSuffix(pattern, ".*")
+		return strings.HasPrefix(eventName, prefix+".")
+	}
+	if pattern == "*" {
+		return true
+	}
+	return false
 }

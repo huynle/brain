@@ -20,8 +20,8 @@ func TestRegisterBrainTools_Count(t *testing.T) {
 
 	// Count registered tools
 	count := len(s.tools)
-	if count != 20 {
-		t.Errorf("expected 20 brain tools registered, got %d", count)
+	if count != 22 {
+		t.Errorf("expected 22 brain tools registered, got %d", count)
 	}
 }
 
@@ -51,6 +51,8 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 		"brain_backlinks",
 		"brain_outlinks",
 		"brain_related",
+		"brain_automation_list",
+		"brain_automation_test",
 	}
 
 	for _, name := range expectedTools {
@@ -875,5 +877,299 @@ func TestBrainSave_APIError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "title is required") {
 		t.Errorf("error should contain API message, got: %v", err)
+	}
+}
+
+// =============================================================================
+// brain_automation_list Tests
+// =============================================================================
+
+func TestBrainAutomationList_Schema(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterBrainTools(s, client)
+
+	tool := s.tools["brain_automation_list"].tool
+
+	// No required fields (all optional)
+	if len(tool.InputSchema.Required) != 0 {
+		t.Errorf("brain_automation_list required = %v, want []", tool.InputSchema.Required)
+	}
+
+	// Has project and status properties
+	if _, ok := tool.InputSchema.Properties["project"]; !ok {
+		t.Error("brain_automation_list missing 'project' property")
+	}
+	if _, ok := tool.InputSchema.Properties["status"]; !ok {
+		t.Error("brain_automation_list missing 'status' property")
+	}
+
+	// Status has enum
+	statusProp := tool.InputSchema.Properties["status"]
+	if len(statusProp.Enum) != 3 {
+		t.Errorf("status enum has %d values, want 3", len(statusProp.Enum))
+	}
+}
+
+func TestBrainAutomationList_Handler_Empty(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || !strings.Contains(r.URL.Path, "/api/v1/entries") {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("type") != "automation" {
+			t.Errorf("expected type=automation, got %q", r.URL.Query().Get("type"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"entries": []any{},
+			"total":   0,
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_automation_list"].handler
+	result, err := handler(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "No automations found") {
+		t.Errorf("result should indicate no automations, got: %s", result)
+	}
+}
+
+func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"entries": []map[string]any{
+				{
+					"id":         "auto1234",
+					"title":      "On Task Complete",
+					"type":       "automation",
+					"status":     "active",
+					"project_id": "my-project",
+					"trigger":    map[string]any{"type": "event", "event": "task.completed"},
+					"action":     map[string]any{"type": "prompt", "direct_prompt": "Review task"},
+				},
+				{
+					"id":         "auto5678",
+					"title":      "Nightly Build",
+					"type":       "automation",
+					"status":     "active",
+					"project_id": "my-project",
+					"trigger":    map[string]any{"type": "cron", "schedule": "0 0 * * *"},
+					"action":     map[string]any{"type": "script", "command": "make build"},
+				},
+			},
+			"total": 2,
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_automation_list"].handler
+	result, err := handler(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "Automations (2)") {
+		t.Errorf("result should show count, got: %s", result)
+	}
+	if !strings.Contains(result, "On Task Complete") {
+		t.Errorf("result should contain automation title, got: %s", result)
+	}
+	if !strings.Contains(result, "auto1234") {
+		t.Errorf("result should contain automation ID, got: %s", result)
+	}
+}
+
+func TestBrainAutomationList_Handler_WithProjectFilter(t *testing.T) {
+	var capturedQuery string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.Query().Get("project")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"entries": []any{},
+			"total":   0,
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_automation_list"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"project": "my-project",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if capturedQuery != "my-project" {
+		t.Errorf("project query = %q, want %q", capturedQuery, "my-project")
+	}
+}
+
+// =============================================================================
+// brain_automation_test Tests
+// =============================================================================
+
+func TestBrainAutomationTest_Schema(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterBrainTools(s, client)
+
+	tool := s.tools["brain_automation_test"].tool
+
+	// Required: event
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "event" {
+		t.Errorf("brain_automation_test required = %v, want [event]", tool.InputSchema.Required)
+	}
+
+	// Has event and project properties
+	if _, ok := tool.InputSchema.Properties["event"]; !ok {
+		t.Error("brain_automation_test missing 'event' property")
+	}
+	if _, ok := tool.InputSchema.Properties["project"]; !ok {
+		t.Error("brain_automation_test missing 'project' property")
+	}
+}
+
+func TestBrainAutomationTest_Handler_NoMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"entries": []map[string]any{
+				{
+					"id":      "auto1234",
+					"title":   "On Feature Complete",
+					"type":    "automation",
+					"status":  "active",
+					"trigger": map[string]any{"type": "event", "event": "feature.all_completed"},
+					"action":  map[string]any{"type": "prompt"},
+				},
+			},
+			"total": 1,
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_automation_test"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"event": "task.completed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "No automations matched") {
+		t.Errorf("result should indicate no match, got: %s", result)
+	}
+	if !strings.Contains(result, "task.completed") {
+		t.Errorf("result should contain event name, got: %s", result)
+	}
+}
+
+func TestBrainAutomationTest_Handler_WithMatch(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"entries": []map[string]any{
+				{
+					"id":      "auto1234",
+					"title":   "On Task Complete",
+					"type":    "automation",
+					"status":  "active",
+					"trigger": map[string]any{"type": "event", "event": "task.completed"},
+					"action":  map[string]any{"type": "prompt", "direct_prompt": "Review the task"},
+				},
+				{
+					"id":      "auto5678",
+					"title":   "On Task Wildcard",
+					"type":    "automation",
+					"status":  "active",
+					"trigger": map[string]any{"type": "event", "event": "task.*"},
+					"action":  map[string]any{"type": "script", "command": "echo done"},
+				},
+				{
+					"id":      "cron1234",
+					"title":   "Nightly",
+					"type":    "automation",
+					"status":  "active",
+					"trigger": map[string]any{"type": "cron", "schedule": "0 0 * * *"},
+					"action":  map[string]any{"type": "script"},
+				},
+			},
+			"total": 3,
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_automation_test"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"event": "task.completed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "MATCH") {
+		t.Errorf("result should contain MATCH, got: %s", result)
+	}
+	if !strings.Contains(result, "On Task Complete") {
+		t.Errorf("result should contain matched automation title, got: %s", result)
+	}
+	if !strings.Contains(result, "On Task Wildcard") {
+		t.Errorf("result should match wildcard automation, got: %s", result)
+	}
+	if !strings.Contains(result, "2 automation(s) would match") {
+		t.Errorf("result should show 2 matches (not cron), got: %s", result)
+	}
+}
+
+// =============================================================================
+// matchesAutomationEvent Tests
+// =============================================================================
+
+func TestMatchesAutomationEvent(t *testing.T) {
+	tests := []struct {
+		pattern   string
+		eventName string
+		want      bool
+	}{
+		{"task.completed", "task.completed", true},
+		{"task.completed", "task.failed", false},
+		{"task.*", "task.completed", true},
+		{"task.*", "task.failed", true},
+		{"task.*", "feature.all_completed", false},
+		{"*", "anything", true},
+		{"feature.all_completed", "task.completed", false},
+	}
+
+	for _, tt := range tests {
+		got := matchesAutomationEvent(tt.pattern, tt.eventName)
+		if got != tt.want {
+			t.Errorf("matchesAutomationEvent(%q, %q) = %v, want %v",
+				tt.pattern, tt.eventName, got, tt.want)
+		}
 	}
 }

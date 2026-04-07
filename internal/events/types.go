@@ -31,7 +31,8 @@ const (
 	ScheduleFired EventType = "schedule.fired"
 
 	// Runner events
-	RunnerStarted EventType = "runner.started"
+	RunnerStarted        EventType = "runner.started"
+	RunnerFirstTaskToday EventType = "runner.first_task_today"
 
 	// Webhook events
 	WebhookReceived EventType = "webhook.received"

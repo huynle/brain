@@ -1,15 +1,19 @@
 package api
 
-import "github.com/huynle/brain-api/internal/realtime"
+import (
+	"github.com/huynle/brain-api/internal/events"
+	"github.com/huynle/brain-api/internal/realtime"
+)
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
-	brain   BrainService
-	tasks   TaskService
-	runner  RunnerService
-	monitor MonitorService
-	tokens  TokenService
-	hub     *realtime.Hub
+	brain    BrainService
+	tasks    TaskService
+	runner   RunnerService
+	monitor  MonitorService
+	tokens   TokenService
+	hub      *realtime.Hub
+	eventBus events.Bus
 }
 
 // HandlerOption configures a Handler.
@@ -49,5 +53,12 @@ func WithMonitorService(ms MonitorService) HandlerOption {
 func WithHub(hub *realtime.Hub) HandlerOption {
 	return func(h *Handler) {
 		h.hub = hub
+	}
+}
+
+// WithEventBus sets the event bus on the Handler.
+func WithEventBus(bus events.Bus) HandlerOption {
+	return func(h *Handler) {
+		h.eventBus = bus
 	}
 }

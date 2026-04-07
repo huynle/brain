@@ -188,6 +188,10 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 	return &types.BrainEntry{Path: entryPath}, nil
 }
 
+func (m *mockClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
+	return nil
+}
+
 func (m *mockClient) getNextTaskCalls() []nextTaskCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()

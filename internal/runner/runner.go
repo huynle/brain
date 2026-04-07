@@ -36,6 +36,7 @@ type Client interface {
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
+	EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -141,7 +142,8 @@ type TaskRunner struct {
 	stats           RunnerStats
 	startedAt       time.Time
 	lastCronCheckAt time.Time
-	maxParallel     int // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	maxParallel     int    // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu)
 	pauseMu         sync.RWMutex
@@ -233,12 +235,23 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// Save initial state
 	tr.saveState()
 
-	// Emit runner started event
+	// Emit runner started event (local)
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
 		Projects: tr.projects,
 		Mode:     string(tr.mode),
 	})
+
+	// Emit runner.started event to domain event bus via API
+	go func() {
+		emitCtx, emitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer emitCancel()
+		_ = tr.client.EmitEvent(emitCtx, "runner.started", map[string]any{
+			"runner_id": tr.runnerID,
+			"projects":  tr.projects,
+			"mode":      string(tr.mode),
+		}, "runner-started-"+tr.runnerID)
+	}()
 
 	pollInterval := time.Duration(tr.config.PollInterval) * time.Second
 	if pollInterval < time.Second {
@@ -449,6 +462,27 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		ProjectID: projectID,
 		TaskPath:  task.Path,
 	})
+
+	// Check if this is the first claim today → emit runner.first_task_today
+	today := time.Now().UTC().Format("2006-01-02")
+	tr.mu.Lock()
+	isFirstToday := tr.lastClaimDate != today
+	if isFirstToday {
+		tr.lastClaimDate = today
+	}
+	tr.mu.Unlock()
+	if isFirstToday {
+		go func() {
+			emitCtx, emitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer emitCancel()
+			_ = tr.client.EmitEvent(emitCtx, "runner.first_task_today", map[string]any{
+				"runner_id":  tr.runnerID,
+				"project_id": projectID,
+				"task_id":    task.ID,
+				"date":       today,
+			}, "first-task-"+today+"-"+tr.runnerID)
+		}()
+	}
 
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {

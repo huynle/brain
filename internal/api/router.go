@@ -200,6 +200,15 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				}
 			})
 
+			// ─── Events ─────────────────────────────────────
+			r.Route("/events", func(r chi.Router) {
+				if o.handler != nil && o.handler.eventBus != nil {
+					r.Post("/emit", o.handler.HandleEmitEvent)
+				} else {
+					r.Post("/emit", notImplemented)
+				}
+			})
+
 			// ─── Monitors ────────────────────────────────────────
 			r.Route("/monitors", func(r chi.Router) {
 				if o.handler != nil && o.handler.monitor != nil {

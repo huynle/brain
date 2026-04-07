@@ -12,6 +12,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
@@ -27,14 +28,24 @@ type BrainServiceImpl struct {
 	config  *config.Config
 	storage *storage.StorageLayer
 	indexer *indexer.Indexer
+	bus     events.Bus
 }
 
 // NewBrainService creates a new BrainServiceImpl.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer) *BrainServiceImpl {
+// The bus parameter is optional; if nil, no events are published.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
 	return &BrainServiceImpl{
 		config:  cfg,
 		storage: store,
 		indexer: idx,
+		bus:     bus,
+	}
+}
+
+// publish sends an event on the bus if one is configured.
+func (s *BrainServiceImpl) publish(e events.Event) {
+	if s.bus != nil {
+		s.bus.Publish(e)
 	}
 }
 
@@ -199,14 +210,31 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		}
 	}
 
-	return &types.CreateEntryResponse{
+	resp := &types.CreateEntryResponse{
 		ID:     shortID,
 		Path:   relPath,
 		Title:  title,
 		Type:   req.Type,
 		Status: status,
 		Link:   link,
-	}, nil
+	}
+
+	// Publish entry.created event
+	s.publish(events.Event{
+		Type:      events.EntryCreated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":      shortID,
+			"path":    relPath,
+			"type":    req.Type,
+			"project": project,
+			"title":   title,
+			"status":  status,
+		},
+	})
+
+	return resp, nil
 }
 
 // =============================================================================
@@ -501,6 +529,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	fm := &doc.Frontmatter
 	body := doc.Body
 
+	// Capture pre-update state for event derivation
+	oldStatus := fm.Status
+
 	// Apply field updates
 	if req.Title != nil {
 		fm.Title = frontmatter.SanitizeTitle(*req.Title)
@@ -782,6 +813,78 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		}
 	}
 
+	// Publish entry.updated event
+	project := extractProjectFromPath(row.Path)
+	var changes []string
+	if req.Title != nil {
+		changes = append(changes, "title")
+	}
+	if req.Status != nil {
+		changes = append(changes, "status")
+	}
+	if req.Priority != nil {
+		changes = append(changes, "priority")
+	}
+	if req.Tags != nil {
+		changes = append(changes, "tags")
+	}
+	if req.DependsOn != nil {
+		changes = append(changes, "depends_on")
+	}
+	if req.Append != nil {
+		changes = append(changes, "append")
+	}
+	if req.Content != nil {
+		changes = append(changes, "content")
+	}
+	if req.Note != nil {
+		changes = append(changes, "note")
+	}
+	s.publish(events.Event{
+		Type:      events.EntryUpdated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":      row.ShortID,
+			"path":    row.Path,
+			"type":    fm.Type,
+			"project": project,
+			"changes": changes,
+		},
+	})
+
+	// Derive task lifecycle events from status transitions
+	if fm.Type == "task" && req.Status != nil {
+		newStatus := *req.Status
+		switch {
+		case newStatus == "completed" && oldStatus != "completed":
+			s.publish(events.Event{
+				Type:      events.TaskCompleted,
+				Source:    "service",
+				ProjectID: project,
+				Payload: map[string]any{
+					"id":         row.ShortID,
+					"path":       row.Path,
+					"project":    project,
+					"old_status": oldStatus,
+				},
+			})
+		case (newStatus == "cancelled" || newStatus == "blocked") && oldStatus != newStatus:
+			s.publish(events.Event{
+				Type:      events.TaskFailed,
+				Source:    "service",
+				ProjectID: project,
+				Payload: map[string]any{
+					"id":         row.ShortID,
+					"path":       row.Path,
+					"project":    project,
+					"old_status": oldStatus,
+					"new_status": newStatus,
+				},
+			})
+		}
+	}
+
 	// Re-read and return
 	return s.Recall(ctx, row.Path)
 }
@@ -1012,6 +1115,30 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 		return nil, api.ErrNotFound
 	}
 
+	// Publish entry.updated event for metadata changes
+	project := extractProjectFromPath(row.Path)
+	var changes []string
+	for k := range fields {
+		changes = append(changes, k)
+	}
+	var entryType string
+	if row.Type != nil {
+		entryType = *row.Type
+	}
+	s.publish(events.Event{
+		Type:      events.EntryUpdated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":       row.ShortID,
+			"path":     row.Path,
+			"type":     entryType,
+			"project":  project,
+			"changes":  changes,
+			"metadata": true,
+		},
+	})
+
 	entry := NoteRowToBrainEntry(updated)
 	return &entry, nil
 }
@@ -1219,6 +1346,15 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 		return api.ErrNotFound
 	}
 
+	// Capture metadata for event before deletion
+	delPath := row.Path
+	delID := row.ShortID
+	var delType string
+	if row.Type != nil {
+		delType = *row.Type
+	}
+	delProject := extractProjectFromPath(delPath)
+
 	// Delete file from disk
 	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
@@ -1229,6 +1365,19 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	if err := s.indexer.RemoveFile(row.Path); err != nil {
 		return fmt.Errorf("remove from index %q: %w", row.Path, err)
 	}
+
+	// Publish entry.deleted event
+	s.publish(events.Event{
+		Type:      events.EntryDeleted,
+		Source:    "service",
+		ProjectID: delProject,
+		Payload: map[string]any{
+			"id":      delID,
+			"path":    delPath,
+			"type":    delType,
+			"project": delProject,
+		},
+	})
 
 	return nil
 }
@@ -1523,7 +1672,7 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		slog.Error("move: failed to index new file (will self-heal on re-index)", "path", newPath, "error", err)
 	}
 
-	return &types.MoveResult{
+	result := &types.MoveResult{
 		Success: true,
 		From:    oldPath,
 		To:      newPath,
@@ -1532,7 +1681,38 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		Project: targetProject,
 		ID:      entry.ID,
 		Title:   entry.Title,
-	}, nil
+	}
+
+	// Publish entry.deleted for the source project and entry.created for the target
+	srcProject := extractProjectFromPath(oldPath)
+	if srcProject != "" {
+		s.publish(events.Event{
+			Type:      events.EntryDeleted,
+			Source:    "service",
+			ProjectID: srcProject,
+			Payload: map[string]any{
+				"id":      entry.ID,
+				"path":    oldPath,
+				"type":    entry.Type,
+				"project": srcProject,
+				"reason":  "moved",
+			},
+		})
+	}
+	s.publish(events.Event{
+		Type:      events.EntryCreated,
+		Source:    "service",
+		ProjectID: targetProject,
+		Payload: map[string]any{
+			"id":      entry.ID,
+			"path":    newPath,
+			"type":    entry.Type,
+			"project": targetProject,
+			"reason":  "moved",
+		},
+	})
+
+	return result, nil
 }
 
 // computeMovedPath replaces the project segment in a path.

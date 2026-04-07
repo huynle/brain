@@ -110,9 +110,6 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify SSE clients about the change
-	h.notifyProjectChanged(r, resp.Path, req.Type)
-
 	WriteJSON(w, http.StatusCreated, resp)
 }
 
@@ -377,9 +374,6 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify SSE clients about the change
-	h.notifyProjectChanged(r, entry.Path, entry.Type)
-
 	WriteJSON(w, http.StatusOK, entry)
 }
 
@@ -422,9 +416,6 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify SSE clients about the change
-	h.notifyProjectChanged(r, entry.Path, entry.Type)
-
 	WriteJSON(w, http.StatusOK, entry)
 }
 
@@ -452,9 +443,6 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
-
-	// Notify SSE clients about the deletion
-	h.notifyProjectChanged(r, id, "task") // id may be a path like projects/test1/task/xxx.md
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -524,21 +512,6 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
-	}
-
-	// Send deduplicated SSE notifications (skip for dry runs)
-	if !req.DryRun {
-		seen := make(map[string]bool)
-		for _, result := range resp.Results {
-			if result.Status != "ok" {
-				continue
-			}
-			projectID := extractProjectID(result.Path)
-			if projectID != "" && !seen[projectID] {
-				seen[projectID] = true
-				h.notifyProjectChanged(r, result.Path, "task")
-			}
-		}
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -641,64 +614,7 @@ func (h *Handler) HandleMoveEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Notify both source and target projects
-	h.notifyProjectChanged(r, result.From, "task") // source project
-	h.notifyProjectChanged(r, result.To, "task")   // target project
-
 	WriteJSON(w, http.StatusOK, result)
-}
-
-// =============================================================================
-// SSE Notification Helpers
-// =============================================================================
-
-// notifyProjectChanged publishes SSE events after an entry mutation.
-// It publishes both a project_dirty and a tasks_snapshot event for the
-// project extracted from the entry path.
-func (h *Handler) notifyProjectChanged(r *http.Request, entryPath string, entryType string) {
-	if h.hub == nil {
-		return
-	}
-
-	// Only publish for task-type entries (or always dirty for any mutation)
-	projectID := extractProjectID(entryPath)
-	if projectID == "" {
-		return
-	}
-
-	h.hub.PublishProjectDirty(projectID)
-
-	// Also send a fresh tasks_snapshot so SSE clients get updated data
-	if h.tasks != nil {
-		resp, err := h.tasks.GetTasks(r.Context(), projectID)
-		if err == nil {
-			h.hub.PublishTaskSnapshot(projectID, types.SSETasksSnapshotData{
-				SSEEventData: types.SSEEventData{
-					Type:      types.SSEEventTasksSnapshot,
-					Transport: "sse",
-					Timestamp: types.TimeNowUTC().Format("2006-01-02T15:04:05Z"),
-					ProjectID: projectID,
-				},
-				Tasks:  resp.Tasks,
-				Count:  resp.Count,
-				Stats:  resp.Stats,
-				Cycles: resp.Cycles,
-			})
-		}
-	}
-}
-
-// extractProjectID extracts the project ID from an entry path.
-// Path format: "projects/{projectId}/task/{shortId}.md"
-func extractProjectID(path string) string {
-	if !strings.HasPrefix(path, "projects/") {
-		return ""
-	}
-	parts := strings.SplitN(path, "/", 4)
-	if len(parts) < 2 {
-		return ""
-	}
-	return parts[1]
 }
 
 // =============================================================================

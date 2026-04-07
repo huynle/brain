@@ -41,7 +41,7 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
-	svc := NewBrainService(cfg, store, idx)
+	svc := NewBrainService(cfg, store, idx, nil)
 	return svc, store, brainDir
 }
 

@@ -144,6 +144,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExpiresAt:           req.ExpiresAt,
 		RunOnceAt:           req.RunOnceAt,
 		Timezone:            req.Timezone,
+		Trigger:             automationTriggerToFM(req.Trigger),
+		Action:              automationActionToFM(req.Action),
+		Retry:               automationRetryToFM(req.Retry),
 	}
 
 	if !isGlobal {
@@ -427,6 +430,23 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+
+		// Automation fields (nested maps from metadata JSON)
+		if v, ok := meta["trigger"]; ok {
+			if t := metaToAutomationTriggerFM(v); t != nil {
+				fm.Trigger = t
+			}
+		}
+		if v, ok := meta["action"]; ok {
+			if a := metaToAutomationActionFM(v); a != nil {
+				fm.Action = a
+			}
+		}
+		if v, ok := meta["retry"]; ok {
+			if r := metaToAutomationRetryFM(v); r != nil {
+				fm.Retry = r
+			}
+		}
 	}
 
 	return fm
@@ -605,6 +625,17 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.GeneratedBy != nil {
 		fm.GeneratedBy = *req.GeneratedBy
+	}
+
+	// Automation fields
+	if req.Trigger != nil {
+		fm.Trigger = automationTriggerToFM(req.Trigger)
+	}
+	if req.Action != nil {
+		fm.Action = automationActionToFM(req.Action)
+	}
+	if req.Retry != nil {
+		fm.Retry = automationRetryToFM(req.Retry)
 	}
 
 	// Sessions

@@ -26,6 +26,7 @@ var EntryTypes = []string{
 	"execution",
 	"task",
 	"dream",
+	"automation",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -190,6 +191,11 @@ type BrainEntry struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
+	// Automation fields (type=automation entries)
+	Trigger *AutomationTrigger `json:"trigger,omitempty"`
+	Action  *AutomationAction  `json:"action,omitempty"`
+	Retry   *AutomationRetry   `json:"retry,omitempty"`
+
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`
@@ -296,6 +302,11 @@ type CreateEntryRequest struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
+	// Automation fields (type=automation entries)
+	Trigger *AutomationTrigger `json:"trigger,omitempty"`
+	Action  *AutomationAction  `json:"action,omitempty"`
+	Retry   *AutomationRetry   `json:"retry,omitempty"`
+
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 }
@@ -366,6 +377,11 @@ type UpdateEntryRequest struct {
 	GeneratedKind *string `json:"generated_kind,omitempty"`
 	GeneratedKey  *string `json:"generated_key,omitempty"`
 	GeneratedBy   *string `json:"generated_by,omitempty"`
+
+	// Automation fields (type=automation entries)
+	Trigger *AutomationTrigger `json:"trigger,omitempty"`
+	Action  *AutomationAction  `json:"action,omitempty"`
+	Retry   *AutomationRetry   `json:"retry,omitempty"`
 }
 
 // =============================================================================
@@ -613,6 +629,11 @@ type ResolvedTask struct {
 	GeneratedKind string `json:"generated_kind,omitempty"`
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
+
+	// Automation fields (type=automation entries)
+	Trigger *AutomationTrigger `json:"trigger,omitempty"`
+	Action  *AutomationAction  `json:"action,omitempty"`
+	Retry   *AutomationRetry   `json:"retry,omitempty"`
 
 	// Dependency resolution fields
 	ResolvedDeps    []string `json:"resolved_deps"`

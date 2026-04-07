@@ -47,6 +47,36 @@ type RunFinalization struct {
 	SessionID   string `yaml:"session_id,omitempty" json:"session_id,omitempty"`
 }
 
+// AutomationTrigger defines when an automation fires (frontmatter representation).
+type AutomationTrigger struct {
+	Type     string            `yaml:"type" json:"type"`
+	Event    string            `yaml:"event,omitempty" json:"event,omitempty"`
+	Schedule string            `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	Filter   map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	OncePer  string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`
+	Webhook  string            `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+}
+
+// AutomationAction defines what an automation does when triggered (frontmatter representation).
+type AutomationAction struct {
+	Type               string `yaml:"type" json:"type"`
+	DirectPrompt       string `yaml:"direct_prompt,omitempty" json:"direct_prompt,omitempty"`
+	Command            string `yaml:"command,omitempty" json:"command,omitempty"`
+	Agent              string `yaml:"agent,omitempty" json:"agent,omitempty"`
+	Model              string `yaml:"model,omitempty" json:"model,omitempty"`
+	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
+	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+	RequiresCapability string `yaml:"requires_capability,omitempty" json:"requires_capability,omitempty"`
+}
+
+// AutomationRetry defines retry behavior for failed automation actions (frontmatter representation).
+type AutomationRetry struct {
+	MaxAttempts int    `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
+	Backoff     string `yaml:"backoff,omitempty" json:"backoff,omitempty"`
+	Delay       string `yaml:"delay,omitempty" json:"delay,omitempty"`
+}
+
 // Frontmatter holds all known brain entry frontmatter fields.
 // Boolean fields use *bool so nil (absent) is distinguishable from false.
 // Integer fields use *int for the same reason.
@@ -111,6 +141,11 @@ type Frontmatter struct {
 	GeneratedKind string `yaml:"generated_kind,omitempty" json:"generated_kind,omitempty"`
 	GeneratedKey  string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
 	GeneratedBy   string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
+
+	// Automation fields (type=automation entries)
+	Trigger *AutomationTrigger `yaml:"trigger,omitempty" json:"trigger,omitempty"`
+	Action  *AutomationAction  `yaml:"action,omitempty" json:"action,omitempty"`
+	Retry   *AutomationRetry   `yaml:"retry,omitempty" json:"retry,omitempty"`
 
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
@@ -181,6 +216,11 @@ type GenerateOptions struct {
 	GeneratedKind string
 	GeneratedKey  string
 	GeneratedBy   string
+
+	// Automation fields
+	Trigger *AutomationTrigger
+	Action  *AutomationAction
+	Retry   *AutomationRetry
 
 	Sessions         map[string]SessionInfo
 	RunFinalizations map[string]RunFinalization
@@ -254,6 +294,9 @@ type rawFrontmatter struct {
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
+	Trigger             *AutomationTrigger         `yaml:"trigger"`
+	Action              *AutomationAction          `yaml:"action"`
+	Retry               *AutomationRetry           `yaml:"retry"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`
 	RunFinalizations    map[string]RunFinalization `yaml:"run_finalizations"`
 
@@ -284,7 +327,8 @@ var knownFields = map[string]bool{
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true,
-	"sessions":     true, "run_finalizations": true,
+	"trigger":      true, "action": true, "retry": true,
+	"sessions": true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
 	// Legacy cron_ids (ignored)
@@ -422,6 +466,9 @@ func Parse(content string) (*Document, error) {
 		GeneratedKind:       raw.GeneratedKind,
 		GeneratedKey:        raw.GeneratedKey,
 		GeneratedBy:         raw.GeneratedBy,
+		Trigger:             raw.Trigger,
+		Action:              raw.Action,
+		Retry:               raw.Retry,
 		Sessions:            sessions,
 		RunFinalizations:    raw.RunFinalizations,
 	}
@@ -518,6 +565,26 @@ func escapeDependsOnEntry(dep string) string {
 	escaped := strings.ReplaceAll(dep, `\`, `\\`)
 	escaped = strings.ReplaceAll(escaped, `"`, `\"`)
 	return `"` + escaped + `"`
+}
+
+// serializeNestedStruct marshals a struct value as a nested YAML block under the given key.
+// It uses gopkg.in/yaml.v3 to marshal the struct, then indents each line by 2 spaces.
+func serializeNestedStruct(key string, value interface{}) []string {
+	data, err := yaml.Marshal(value)
+	if err != nil {
+		return nil
+	}
+	yamlStr := strings.TrimRight(string(data), "\n")
+	if yamlStr == "{}" || yamlStr == "" {
+		return nil
+	}
+	result := []string{key + ":"}
+	for _, line := range strings.Split(yamlStr, "\n") {
+		if line != "" {
+			result = append(result, "  "+line)
+		}
+	}
+	return result
 }
 
 // Serialize converts a Frontmatter struct to a YAML string (without the ---
@@ -663,6 +730,17 @@ func Serialize(fm *Frontmatter) string {
 	emit("generated_key", fm.GeneratedKey)
 	emit("generated_by", fm.GeneratedBy)
 
+	// Automation fields (nested YAML structs)
+	if fm.Trigger != nil {
+		lines = append(lines, serializeNestedStruct("trigger", fm.Trigger)...)
+	}
+	if fm.Action != nil {
+		lines = append(lines, serializeNestedStruct("action", fm.Action)...)
+	}
+	if fm.Retry != nil {
+		lines = append(lines, serializeNestedStruct("retry", fm.Retry)...)
+	}
+
 	// Sessions map
 	if len(fm.Sessions) > 0 {
 		lines = append(lines, "sessions:")
@@ -793,6 +871,9 @@ func Generate(opts *GenerateOptions) string {
 		GeneratedKind:       opts.GeneratedKind,
 		GeneratedKey:        opts.GeneratedKey,
 		GeneratedBy:         opts.GeneratedBy,
+		Trigger:             opts.Trigger,
+		Action:              opts.Action,
+		Retry:               opts.Retry,
 		Sessions:            opts.Sessions,
 		RunFinalizations:    opts.RunFinalizations,
 	}

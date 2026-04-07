@@ -1022,6 +1022,17 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 		entry.GeneratedBy = v
 	}
 
+	// Automation fields (nested maps from metadata JSON)
+	if v, ok := meta["trigger"]; ok {
+		entry.Trigger = metaToAutomationTrigger(v)
+	}
+	if v, ok := meta["action"]; ok {
+		entry.Action = metaToAutomationAction(v)
+	}
+	if v, ok := meta["retry"]; ok {
+		entry.Retry = metaToAutomationRetry(v)
+	}
+
 	// Sessions: map[string]SessionInfo from metadata JSON
 	if sessionsRaw, ok := meta["sessions"]; ok {
 		if sessionsMap, ok := sessionsRaw.(map[string]interface{}); ok {

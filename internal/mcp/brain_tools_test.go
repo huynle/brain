@@ -88,8 +88,8 @@ func TestRegisterBrainTools_Schemas(t *testing.T) {
 	if !ok {
 		t.Fatal("brain_save missing 'type' property")
 	}
-	if len(typeProp.Enum) != 13 {
-		t.Errorf("brain_save type enum has %d values, want 13", len(typeProp.Enum))
+	if len(typeProp.Enum) != 14 {
+		t.Errorf("brain_save type enum has %d values, want 14", len(typeProp.Enum))
 	}
 
 	// Verify brain_search has required query

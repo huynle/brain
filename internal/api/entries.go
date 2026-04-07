@@ -860,5 +860,61 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.MaxRuns = fm.MaxRuns
 	}
 
+	// Automation fields
+	if fm.Trigger != nil {
+		req.Trigger = fmTriggerToTypeForAPI(fm.Trigger)
+	}
+	if fm.Action != nil {
+		req.Action = fmActionToTypeForAPI(fm.Action)
+	}
+	if fm.Retry != nil {
+		req.Retry = fmRetryToTypeForAPI(fm.Retry)
+	}
+
 	return req
+}
+
+// fmTriggerToTypeForAPI converts a frontmatter AutomationTrigger to a types AutomationTrigger.
+func fmTriggerToTypeForAPI(t *frontmatter.AutomationTrigger) *types.AutomationTrigger {
+	if t == nil {
+		return nil
+	}
+	return &types.AutomationTrigger{
+		Type:     t.Type,
+		Event:    t.Event,
+		Schedule: t.Schedule,
+		Filter:   t.Filter,
+		OncePer:  t.OncePer,
+		Webhook:  t.Webhook,
+	}
+}
+
+// fmActionToTypeForAPI converts a frontmatter AutomationAction to a types AutomationAction.
+func fmActionToTypeForAPI(a *frontmatter.AutomationAction) *types.AutomationAction {
+	if a == nil {
+		return nil
+	}
+	return &types.AutomationAction{
+		Type:               a.Type,
+		DirectPrompt:       a.DirectPrompt,
+		Command:            a.Command,
+		Agent:              a.Agent,
+		Model:              a.Model,
+		ExecutionMode:      a.ExecutionMode,
+		CompleteOnIdle:     a.CompleteOnIdle,
+		Timeout:            a.Timeout,
+		RequiresCapability: a.RequiresCapability,
+	}
+}
+
+// fmRetryToTypeForAPI converts a frontmatter AutomationRetry to a types AutomationRetry.
+func fmRetryToTypeForAPI(r *frontmatter.AutomationRetry) *types.AutomationRetry {
+	if r == nil {
+		return nil
+	}
+	return &types.AutomationRetry{
+		MaxAttempts: r.MaxAttempts,
+		Backoff:     r.Backoff,
+		Delay:       r.Delay,
+	}
 }

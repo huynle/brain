@@ -856,6 +856,47 @@ type SSEErrorData struct {
 }
 
 // =============================================================================
+// Runner Registration Types
+// =============================================================================
+
+// RegisterRunnerRequest is the request body for POST /runners/register.
+type RegisterRunnerRequest struct {
+	RunnerID     string   `json:"runner_id"`
+	Hostname     string   `json:"hostname"`
+	Projects     []string `json:"projects,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	MaxParallel  int      `json:"max_parallel,omitempty"`
+	Version      string   `json:"version,omitempty"`
+}
+
+// HeartbeatRequest is the request body for POST /runners/heartbeat.
+type HeartbeatRequest struct {
+	RunnerID    string `json:"runner_id"`
+	ActiveTasks int    `json:"active_tasks,omitempty"`
+	Version     string `json:"version,omitempty"`
+}
+
+// RunnerInfo represents a registered runner's info.
+type RunnerInfo struct {
+	RunnerID      string   `json:"runner_id"`
+	Hostname      string   `json:"hostname"`
+	Projects      []string `json:"projects,omitempty"`
+	Capabilities  []string `json:"capabilities,omitempty"`
+	MaxParallel   int      `json:"max_parallel"`
+	ActiveTasks   int      `json:"active_tasks"`
+	Status        string   `json:"status"` // "online", "lost"
+	Version       string   `json:"version,omitempty"`
+	RegisteredAt  string   `json:"registered_at"`
+	LastHeartbeat string   `json:"last_heartbeat"`
+}
+
+// RunnerListResponse is the response for GET /runners.
+type RunnerListResponse struct {
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

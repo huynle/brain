@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 5
+const CurrentSchemaVersion = 6
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -146,6 +146,20 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   created_at INTEGER NOT NULL
 );`
 
+const createRunnersTable = `
+CREATE TABLE IF NOT EXISTS runners (
+  runner_id TEXT PRIMARY KEY,
+  hostname TEXT NOT NULL DEFAULT '',
+  projects TEXT NOT NULL DEFAULT '[]',
+  capabilities TEXT NOT NULL DEFAULT '[]',
+  max_parallel INTEGER NOT NULL DEFAULT 1,
+  active_tasks INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'online',
+  version TEXT NOT NULL DEFAULT '',
+  registered_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -164,6 +178,9 @@ var createIndexes = []string{
 	// Event log indexes
 	"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at);",
 	"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL;",
+	// Runner indexes
+	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
+	"CREATE INDEX IF NOT EXISTS idx_runners_last_heartbeat ON runners(last_heartbeat);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -296,6 +313,15 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 6 {
+		// v6: add runners table for distributed runner registration and heartbeats.
+		if _, err := db.Exec(createRunnersTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v6 (runners table): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -344,6 +370,7 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
+		createRunnersTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

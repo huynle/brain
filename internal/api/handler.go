@@ -10,6 +10,7 @@ type Handler struct {
 	brain    BrainService
 	tasks    TaskService
 	runner   RunnerService
+	runners  RunnersService
 	monitor  MonitorService
 	tokens   TokenService
 	hub      *realtime.Hub
@@ -39,6 +40,13 @@ func WithTaskService(ts TaskService) HandlerOption {
 func WithRunnerService(rs RunnerService) HandlerOption {
 	return func(h *Handler) {
 		h.runner = rs
+	}
+}
+
+// WithRunnersService sets the RunnersService on the Handler.
+func WithRunnersService(rs RunnersService) HandlerOption {
+	return func(h *Handler) {
+		h.runners = rs
 	}
 }
 

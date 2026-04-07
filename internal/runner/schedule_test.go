@@ -641,6 +641,12 @@ func (m *schedMockClient) GetAllTasks(ctx context.Context, projectID string) ([]
 func (m *schedMockClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
 	return nil
 }
+func (m *schedMockClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
+	return &types.RunnerInfo{RunnerID: req.RunnerID, Hostname: req.Hostname}, nil
+}
+func (m *schedMockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+	return nil
+}
 
 func (m *schedMockClient) getUpdateMetadataCalls() []updateMetadataCall {
 	m.mu2.Lock()

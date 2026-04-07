@@ -37,6 +37,8 @@ type Client interface {
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
 	EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error
+	RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error)
+	HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -253,6 +255,9 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		}, "runner-started-"+tr.runnerID)
 	}()
 
+	// Register runner with the API server for distributed discovery
+	go tr.registerRunner(ctx)
+
 	pollInterval := time.Duration(tr.config.PollInterval) * time.Second
 	if pollInterval < time.Second {
 		pollInterval = time.Second
@@ -273,6 +278,10 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
 	}
 
+	// Heartbeat ticker — sends heartbeats at half the stale threshold (every 30s)
+	heartbeatTicker := time.NewTicker(30 * time.Second)
+	defer heartbeatTicker.Stop()
+
 	// Run initial poll immediately
 	tr.poll(ctx)
 
@@ -289,6 +298,8 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
+		case <-heartbeatTicker.C:
+			tr.sendHeartbeat(ctx)
 		}
 	}
 }
@@ -1168,6 +1179,53 @@ func (tr *TaskRunner) emitPollComplete() {
 		Type:         EventPollComplete,
 		RunningCount: tr.processMgr.RunningCount(),
 	})
+}
+
+// =============================================================================
+// Runner Registration & Heartbeat
+// =============================================================================
+
+// registerRunner registers this runner with the brain API server.
+// Called once on startup. Failures are logged but not fatal.
+func (tr *TaskRunner) registerRunner(ctx context.Context) {
+	hostname, _ := os.Hostname()
+	req := types.RegisterRunnerRequest{
+		RunnerID:    tr.runnerID,
+		Hostname:    hostname,
+		Projects:    tr.projects,
+		MaxParallel: tr.getMaxParallel(),
+	}
+
+	regCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	info, err := tr.client.RegisterRunner(regCtx, req)
+	if err != nil {
+		slog.Warn("failed to register runner with API", "runner_id", tr.runnerID, "error", err)
+		return
+	}
+	slog.Info("runner registered with API", "runner_id", info.RunnerID, "hostname", info.Hostname)
+}
+
+// sendHeartbeat sends a heartbeat to the brain API server.
+// Called periodically. Failures are logged but not fatal.
+func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
+	activeTasks := 0
+	if tr.processMgr != nil {
+		activeTasks = tr.processMgr.RunningCount()
+	}
+
+	req := types.HeartbeatRequest{
+		RunnerID:    tr.runnerID,
+		ActiveTasks: activeTasks,
+	}
+
+	hbCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	if err := tr.client.HeartbeatRunner(hbCtx, req); err != nil {
+		slog.Debug("heartbeat failed", "runner_id", tr.runnerID, "error", err)
+	}
 }
 
 // =============================================================================

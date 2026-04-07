@@ -200,6 +200,19 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				}
 			})
 
+			// ─── Runners ─────────────────────────────────────
+			r.Route("/runners", func(r chi.Router) {
+				if o.handler != nil && o.handler.runners != nil {
+					r.Post("/register", o.handler.HandleRegisterRunner)
+					r.Post("/heartbeat", o.handler.HandleHeartbeatRunner)
+					r.Get("/", o.handler.HandleListRunners)
+				} else {
+					r.Post("/register", notImplemented)
+					r.Post("/heartbeat", notImplemented)
+					r.Get("/", notImplemented)
+				}
+			})
+
 			// ─── Events ─────────────────────────────────────
 			r.Route("/events", func(r chi.Router) {
 				if o.handler != nil && o.handler.eventBus != nil {

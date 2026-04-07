@@ -51,8 +51,8 @@ func TestSchemaV5_VersionBumped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSchemaVersion: %v", err)
 	}
-	if ver != 5 {
-		t.Errorf("got schema version %d, want 5", ver)
+	if ver != CurrentSchemaVersion {
+		t.Errorf("got schema version %d, want %d", ver, CurrentSchemaVersion)
 	}
 }
 

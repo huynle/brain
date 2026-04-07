@@ -192,6 +192,14 @@ func (m *mockClient) EmitEvent(ctx context.Context, eventType string, payload ma
 	return nil
 }
 
+func (m *mockClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
+	return &types.RunnerInfo{RunnerID: req.RunnerID, Hostname: req.Hostname}, nil
+}
+
+func (m *mockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+	return nil
+}
+
 func (m *mockClient) getNextTaskCalls() []nextTaskCall {
 	m.mu.Lock()
 	defer m.mu.Unlock()

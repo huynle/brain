@@ -110,6 +110,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	brainSvc := service.NewBrainService(&cfg, store, idx, eventBus)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
+	runnersSvc := service.NewRunnersService(store, taskSvc)
 	monitorSvc := service.NewMonitorService(brainSvc)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
@@ -123,6 +124,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
+		api.WithRunnersService(runnersSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
@@ -156,6 +158,25 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
+
+	// ─── Stale Runner Detection ────────────────────────────────────
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				staleIDs, err := runnersSvc.MarkStaleAndRelease(ctx)
+				if err != nil {
+					slog.Debug("stale runner check failed", "error", err)
+				} else if len(staleIDs) > 0 {
+					slog.Info("stale runners detected and tasks released", "runners", staleIDs)
+				}
+			}
+		}
+	}()
 
 	// ─── Cron Emitter ──────────────────────────────────────────────
 	cronSource := events.NewStorageScheduleSource(store)

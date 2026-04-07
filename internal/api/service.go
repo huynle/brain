@@ -155,6 +155,22 @@ type RunnerService interface {
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
+// RunnersService defines the interface for runner registration and discovery.
+// This is separate from RunnerService (which handles pause/resume control).
+type RunnersService interface {
+	// Register registers a runner or updates its registration.
+	Register(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error)
+
+	// Heartbeat updates a runner's heartbeat timestamp.
+	Heartbeat(ctx context.Context, req types.HeartbeatRequest) error
+
+	// List returns all registered runners with status.
+	List(ctx context.Context) (*types.RunnerListResponse, error)
+
+	// MarkStaleAndRelease detects stale runners and releases their claimed tasks.
+	MarkStaleAndRelease(ctx context.Context) ([]string, error)
+}
+
 // MonitorService defines the interface for monitor operations.
 type MonitorService interface {
 	// ListTemplates returns all available monitor templates.

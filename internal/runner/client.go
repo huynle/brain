@@ -672,6 +672,62 @@ func (c *APIClient) EmitEvent(ctx context.Context, eventType string, payload map
 }
 
 // =============================================================================
+// Runner Registration
+// =============================================================================
+
+// RegisterRunner registers this runner with the brain API server.
+func (c *APIClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/register", req)
+	if err != nil {
+		return nil, fmt.Errorf("register runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var info types.RunnerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	return &info, nil
+}
+
+// HeartbeatRunner sends a heartbeat to the brain API server.
+func (c *APIClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/heartbeat", req)
+	if err != nil {
+		return fmt.Errorf("heartbeat runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ListRunners returns all registered runners from the brain API.
+func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)
+	if err != nil {
+		return nil, fmt.Errorf("list runners: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data types.RunnerListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode runners list: %w", err)
+	}
+	return &data, nil
+}
+
+// =============================================================================
 // Runner Pause/Resume
 // =============================================================================
 

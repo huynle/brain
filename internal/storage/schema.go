@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 4
+const CurrentSchemaVersion = 5
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -86,6 +86,17 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   revoked_at TEXT
 );`
 
+const createEventLogTable = `
+CREATE TABLE IF NOT EXISTS event_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  dedup_key TEXT,
+  source TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
+);`
+
 const createOAuthClientsTable = `
 CREATE TABLE IF NOT EXISTS oauth_clients (
   client_id TEXT PRIMARY KEY,
@@ -150,6 +161,9 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
+	// Event log indexes
+	"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at);",
+	"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL;",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -273,6 +287,15 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 5 {
+		// v5: add event_log table for at-least-once event delivery.
+		if _, err := db.Exec(createEventLogTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v5 (event_log table): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -315,6 +338,7 @@ func InitSchema(db *sql.DB) error {
 		createEntryMetaTable,
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
+		createEventLogTable,
 		createAPITokensTable,
 		createOAuthClientsTable,
 		createOAuthAuthCodesTable,

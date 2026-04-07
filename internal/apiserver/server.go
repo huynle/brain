@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
@@ -101,14 +102,21 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		OAuthPIN:   opts.OAuthPIN,
 	}
 
+	// ─── Event Bus ──────────────────────────────────────────────────
+	eventBus := events.NewMemoryBus()
+	defer eventBus.Close()
+
 	// ─── Services ───────────────────────────────────────────────────
-	brainSvc := service.NewBrainService(&cfg, store, idx)
+	brainSvc := service.NewBrainService(&cfg, store, idx, eventBus)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	monitorSvc := service.NewMonitorService(brainSvc)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
+
+	// Bridge: subscribe Hub to EventBus entry events for backward-compatible SSE
+	realtime.BridgeBusToHub(eventBus, hub, taskSvc)
 
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
@@ -118,6 +126,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
+		api.WithEventBus(eventBus),
 	)
 
 	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
@@ -147,6 +156,15 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
+
+	// ─── Cron Emitter ──────────────────────────────────────────────
+	cronSource := events.NewStorageScheduleSource(store)
+	cronEmitter := events.NewCronEmitter(events.CronEmitterConfig{
+		Bus:    eventBus,
+		Source: cronSource,
+		// Default 30s tick interval
+	})
+	go cronEmitter.Start(ctx)
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)

@@ -948,14 +948,20 @@ func TestExecutor_Spawn_PiExecutor_CustomBin(t *testing.T) {
 	_ = result.Proc.Kill(nil)
 }
 
-func TestExecutor_Spawn_ScriptExecutor_NotImplemented(t *testing.T) {
+// =============================================================================
+// Script Executor Tests
+// =============================================================================
+
+func TestExecutor_Spawn_Script_DisabledByDefault(t *testing.T) {
 	stateDir := t.TempDir()
 	cfg := testExecutorConfig()
 	cfg.StateDir = stateDir
+	// Script.Enabled is false by default
 	e := NewExecutor(cfg)
 
 	task := testResolvedTask("abc123")
 	task.Executor = "script"
+	task.DirectPrompt = "echo hello"
 
 	ctx := context.Background()
 	opts := SpawnOptions{
@@ -965,10 +971,298 @@ func TestExecutor_Spawn_ScriptExecutor_NotImplemented(t *testing.T) {
 
 	_, err := e.Spawn(ctx, task, "test-project", opts)
 	if err == nil {
-		t.Error("Spawn(script) should return error (not yet implemented)")
+		t.Error("Spawn(script) should return error when scripts are disabled")
 	}
-	if !strings.Contains(err.Error(), "script executor is not yet implemented") {
-		t.Errorf("error should mention not yet implemented, got: %v", err)
+	if !strings.Contains(err.Error(), "script executor is disabled") {
+		t.Errorf("error should mention disabled, got: %v", err)
+	}
+}
+
+func TestExecutor_Spawn_Script_RequiresDirectPrompt(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.Script.Enabled = true
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	task.DirectPrompt = "" // empty
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	_, err := e.Spawn(ctx, task, "test-project", opts)
+	if err == nil {
+		t.Error("Spawn(script) should return error when DirectPrompt is empty")
+	}
+	if !strings.Contains(err.Error(), "direct_prompt") {
+		t.Errorf("error should mention direct_prompt, got: %v", err)
+	}
+}
+
+func TestExecutor_Spawn_Script_Success(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.Script.Enabled = true
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	task.DirectPrompt = "echo hello"
+
+	workdir := t.TempDir()
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: workdir,
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(script) returned error: %v", err)
+	}
+
+	if result.PID <= 0 {
+		t.Errorf("PID = %d, want > 0", result.PID)
+	}
+	if result.Proc == nil {
+		t.Error("Proc should not be nil")
+	}
+	if result.Workdir != workdir {
+		t.Errorf("Workdir = %q, want %q", result.Workdir, workdir)
+	}
+
+	// Wait for process to complete
+	proc := result.Proc.(*OsProcess)
+	<-proc.Done()
+
+	if proc.ExitCode() != 0 {
+		t.Errorf("ExitCode = %d, want 0", proc.ExitCode())
+	}
+
+	// Verify output was captured
+	outputFile := filepath.Join(stateDir, "output_test-project_abc123.log")
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	if !strings.Contains(string(data), "hello") {
+		t.Errorf("output should contain 'hello', got: %q", string(data))
+	}
+}
+
+func TestExecutor_Spawn_Script_NonZeroExit(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.Script.Enabled = true
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	task.DirectPrompt = "exit 42"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(script) returned error: %v", err)
+	}
+
+	proc := result.Proc.(*OsProcess)
+	<-proc.Done()
+
+	if proc.ExitCode() != 42 {
+		t.Errorf("ExitCode = %d, want 42", proc.ExitCode())
+	}
+}
+
+func TestExecutor_Spawn_Script_CapturesStderr(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.Script.Enabled = true
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	task.DirectPrompt = "echo out-msg && echo err-msg >&2"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(script) returned error: %v", err)
+	}
+
+	proc := result.Proc.(*OsProcess)
+	<-proc.Done()
+
+	outputFile := filepath.Join(stateDir, "output_test-project_abc123.log")
+	data, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("read output file: %v", err)
+	}
+	output := string(data)
+	if !strings.Contains(output, "out-msg") {
+		t.Errorf("output should contain stdout 'out-msg', got: %q", output)
+	}
+	if !strings.Contains(output, "err-msg") {
+		t.Errorf("output should contain stderr 'err-msg', got: %q", output)
+	}
+}
+
+func TestExecutor_Spawn_Script_Timeout(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.Script.Enabled = true
+	cfg.Script.MaxTimeout = 1 // 1 second timeout
+
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	task.DirectPrompt = "sleep 30" // will be killed by timeout
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(script) returned error: %v", err)
+	}
+
+	proc := result.Proc.(*OsProcess)
+	<-proc.Done()
+
+	if proc.ExitCode() == 0 {
+		t.Error("ExitCode should be non-zero for killed process")
+	}
+}
+
+// =============================================================================
+// Script Command Validation Tests
+// =============================================================================
+
+func TestValidateScriptCommand_AllowedCommands(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.Script.AllowedCommands = []string{"echo ", "npm ", "go "}
+	e := NewExecutor(cfg)
+
+	// Allowed
+	if err := e.validateScriptCommand("echo hello"); err != nil {
+		t.Errorf("'echo hello' should be allowed: %v", err)
+	}
+	if err := e.validateScriptCommand("npm run build"); err != nil {
+		t.Errorf("'npm run build' should be allowed: %v", err)
+	}
+
+	// Not allowed
+	if err := e.validateScriptCommand("rm -rf /"); err == nil {
+		t.Error("'rm -rf /' should be rejected")
+	}
+	if err := e.validateScriptCommand("sudo anything"); err == nil {
+		t.Error("'sudo anything' should be rejected")
+	}
+}
+
+func TestValidateScriptCommand_BlockedCommands(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.Script.BlockedCommands = []string{"rm -rf /", "sudo "}
+	e := NewExecutor(cfg)
+
+	// Allowed (not blocked)
+	if err := e.validateScriptCommand("echo hello"); err != nil {
+		t.Errorf("'echo hello' should be allowed: %v", err)
+	}
+
+	// Blocked
+	if err := e.validateScriptCommand("rm -rf /everything"); err == nil {
+		t.Error("'rm -rf /' should be blocked")
+	}
+	if err := e.validateScriptCommand("sudo rm -rf /"); err == nil {
+		t.Error("'sudo ...' should be blocked")
+	}
+}
+
+func TestValidateScriptCommand_AllowedAndBlockedCombined(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.Script.AllowedCommands = []string{"npm "}
+	cfg.Script.BlockedCommands = []string{"npm publish"}
+	e := NewExecutor(cfg)
+
+	// Allowed and not blocked
+	if err := e.validateScriptCommand("npm run build"); err != nil {
+		t.Errorf("'npm run build' should be allowed: %v", err)
+	}
+
+	// Allowed but blocked
+	if err := e.validateScriptCommand("npm publish --access public"); err == nil {
+		t.Error("'npm publish' should be blocked even though 'npm ' is allowed")
+	}
+}
+
+func TestValidateScriptCommand_NoRestrictions(t *testing.T) {
+	cfg := testExecutorConfig()
+	// No allowed or blocked commands
+	e := NewExecutor(cfg)
+
+	if err := e.validateScriptCommand("anything goes"); err != nil {
+		t.Errorf("should allow any command with no restrictions: %v", err)
+	}
+}
+
+// =============================================================================
+// Script Workdir Validation Tests
+// =============================================================================
+
+func TestValidateScriptWorkdir_NoRestrictions(t *testing.T) {
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	if err := e.validateScriptWorkdir("/any/path"); err != nil {
+		t.Errorf("should allow any workdir with no restrictions: %v", err)
+	}
+}
+
+func TestValidateScriptWorkdir_Allowed(t *testing.T) {
+	dir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.Script.WorkdirRestrict = []string{dir}
+	e := NewExecutor(cfg)
+
+	subdir := filepath.Join(dir, "subproject")
+	os.MkdirAll(subdir, 0o755)
+
+	if err := e.validateScriptWorkdir(subdir); err != nil {
+		t.Errorf("workdir under restriction should be allowed: %v", err)
+	}
+}
+
+func TestValidateScriptWorkdir_Rejected(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.Script.WorkdirRestrict = []string{"/allowed/path"}
+	e := NewExecutor(cfg)
+
+	if err := e.validateScriptWorkdir("/not/allowed"); err == nil {
+		t.Error("workdir outside restriction should be rejected")
 	}
 }
 

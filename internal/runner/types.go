@@ -24,6 +24,7 @@ type RunnerConfig struct {
 	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
 	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
+	Script                 ScriptConfig   `yaml:"script" json:"script"`
 	PiBin                  string         `yaml:"pi_bin" json:"pi_bin"` // Path to Pi binary (default: "pi")
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
@@ -51,6 +52,31 @@ type OpencodeConfig struct {
 	Bin   string `yaml:"bin" json:"bin"`
 	Agent string `yaml:"agent" json:"agent"`
 	Model string `yaml:"model" json:"model"`
+}
+
+// ScriptConfig holds configuration for the script executor.
+// Scripts are disabled by default and must be explicitly enabled.
+type ScriptConfig struct {
+	// Enabled must be true to allow script execution. Default: false.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// AllowedCommands is a whitelist of command prefixes that are permitted.
+	// If non-empty, only commands starting with one of these prefixes are allowed.
+	// Example: ["npm ", "go ", "make"]
+	AllowedCommands []string `yaml:"allowed_commands" json:"allowed_commands"`
+
+	// BlockedCommands is a blacklist of command prefixes that are rejected.
+	// Checked after AllowedCommands. Example: ["rm -rf /", "sudo"]
+	BlockedCommands []string `yaml:"blocked_commands" json:"blocked_commands"`
+
+	// MaxTimeout is the maximum execution time in seconds. Default: 300 (5 min).
+	// The process is killed (SIGKILL) after this duration.
+	MaxTimeout int `yaml:"max_timeout" json:"max_timeout"`
+
+	// WorkdirRestrict limits script execution to paths under these directories.
+	// If non-empty, the resolved workdir must be under one of these prefixes.
+	// Example: ["/home/user/projects"]
+	WorkdirRestrict []string `yaml:"workdir_restrict" json:"workdir_restrict"`
 }
 
 // =============================================================================

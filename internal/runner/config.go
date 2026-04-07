@@ -106,6 +106,13 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
+		Script: ScriptConfig{
+			Enabled:         getEnvBoolOrDefault("RUNNER_SCRIPT_ENABLED", fileCfg.Script.Enabled),
+			AllowedCommands: fileCfg.Script.AllowedCommands,
+			BlockedCommands: fileCfg.Script.BlockedCommands,
+			MaxTimeout:      getEnvIntOrDefault("RUNNER_SCRIPT_MAX_TIMEOUT", firstNonZero(fileCfg.Script.MaxTimeout, 300)),
+			WorkdirRestrict: fileCfg.Script.WorkdirRestrict,
+		},
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),

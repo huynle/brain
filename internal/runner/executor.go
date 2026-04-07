@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -454,11 +455,155 @@ func (e *Executor) spawnPi(ctx context.Context, task *types.ResolvedTask, projec
 	}, nil
 }
 
-// spawnScript is a placeholder for script-based task execution.
-// Full implementation is in task #11; this stub returns an error
-// so callers get a clear message that script execution is not yet available.
+// spawnScript runs a shell command directly instead of spawning an AI agent.
+// The task's DirectPrompt field contains the command to execute via bash -c.
+// Output (stdout+stderr) is captured to a log file and the process is tracked
+// via the standard Process interface for completion detection.
+//
+// Security: requires ScriptConfig.Enabled, validates against allowed/blocked
+// command lists, enforces workdir restrictions, and applies timeout.
 func (e *Executor) spawnScript(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
-	return nil, fmt.Errorf("script executor is not yet implemented (see task #11)")
+	// 1. Check if scripts are enabled
+	if !e.config.Script.Enabled {
+		return nil, fmt.Errorf("script executor is disabled: set script.enabled=true in runner config to allow script execution")
+	}
+
+	// 2. Extract command from DirectPrompt (script tasks use direct_prompt as the command)
+	command := task.DirectPrompt
+	if command == "" {
+		return nil, fmt.Errorf("script executor requires direct_prompt to contain the shell command")
+	}
+
+	// 3. Validate command against allowed/blocked lists
+	if err := e.validateScriptCommand(command); err != nil {
+		return nil, fmt.Errorf("script command rejected: %w", err)
+	}
+
+	// 4. Validate workdir against restrictions
+	if err := e.validateScriptWorkdir(workdir); err != nil {
+		return nil, fmt.Errorf("script workdir rejected: %w", err)
+	}
+
+	// 5. Apply timeout
+	timeout := e.config.Script.MaxTimeout
+	if timeout <= 0 {
+		timeout = 300 // default 5 minutes
+	}
+	scriptCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+
+	// 6. Create output log file
+	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
+	logFile, err := os.Create(outputFile)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("create output log: %w", err)
+	}
+
+	// 7. Build the command
+	cmd := e.CommandFactory("bash", "-c", command)
+	cmd.Dir = workdir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// Propagate environment
+	cmd.Env = os.Environ()
+	if e.config.BrainAPIURL != "" {
+		cmd.Env = append(cmd.Env, "BRAIN_API_URL="+e.config.BrainAPIURL)
+	}
+	if e.config.APIToken != "" {
+		cmd.Env = append(cmd.Env, "BRAIN_API_TOKEN="+e.config.APIToken)
+	}
+	// Task-level env overrides
+	for k, v := range task.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+
+	// 8. Start the process
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		cancel()
+		return nil, fmt.Errorf("start script process: %w", err)
+	}
+
+	// 9. Create process wrapper
+	proc := NewOsProcess(cmd)
+
+	// Close log file and cancel context when process exits
+	go func() {
+		<-proc.Done()
+		logFile.Close()
+		cancel()
+	}()
+
+	// Enforce timeout: kill process if context deadline exceeded
+	go func() {
+		<-scriptCtx.Done()
+		if scriptCtx.Err() == context.DeadlineExceeded {
+			// Force kill the process on timeout
+			_ = proc.Kill(syscall.SIGKILL)
+		}
+	}()
+
+	return &SpawnResult{
+		PID:        cmd.Process.Pid,
+		Proc:       proc,
+		PromptFile: promptFile,
+		Workdir:    workdir,
+	}, nil
+}
+
+// validateScriptCommand checks the command against allowed and blocked lists.
+func (e *Executor) validateScriptCommand(command string) error {
+	cfg := e.config.Script
+
+	// Check allowed commands (whitelist)
+	if len(cfg.AllowedCommands) > 0 {
+		allowed := false
+		for _, prefix := range cfg.AllowedCommands {
+			if strings.HasPrefix(command, prefix) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("command %q does not match any allowed command prefix", command)
+		}
+	}
+
+	// Check blocked commands (blacklist)
+	for _, prefix := range cfg.BlockedCommands {
+		if strings.HasPrefix(command, prefix) {
+			return fmt.Errorf("command %q matches blocked command prefix %q", command, prefix)
+		}
+	}
+
+	return nil
+}
+
+// validateScriptWorkdir checks workdir against workdir_restrict list.
+func (e *Executor) validateScriptWorkdir(workdir string) error {
+	restrictions := e.config.Script.WorkdirRestrict
+	if len(restrictions) == 0 {
+		return nil // no restrictions
+	}
+
+	absWorkdir, err := filepath.Abs(workdir)
+	if err != nil {
+		return fmt.Errorf("resolve absolute workdir: %w", err)
+	}
+
+	for _, allowed := range restrictions {
+		absAllowed, err := filepath.Abs(allowed)
+		if err != nil {
+			continue
+		}
+		// Check if workdir is under the allowed prefix
+		if strings.HasPrefix(absWorkdir, absAllowed) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("workdir %q is not under any allowed path: %v", workdir, restrictions)
 }
 
 // =============================================================================

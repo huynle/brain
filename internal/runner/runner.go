@@ -837,6 +837,11 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		tr.logger.Printf("failed to update task status for %s: %v", taskID, err)
 	}
 
+	// For script executor tasks: save exit code and captured output to task metadata
+	if task.Executor == "script" && result != nil {
+		tr.finalizeScriptTask(ctx, task, result)
+	}
+
 	// Update run record if this was a scheduled task
 	if task.RunID != "" {
 		tr.finalizeRun(ctx, task, status)
@@ -936,6 +941,48 @@ func (tr *TaskRunner) finalizeRun(ctx context.Context, task RunningTask, status 
 		tr.logger.Printf("cron: finalized run %s for %s: status=%s", task.RunID, task.ID, runStatus)
 	}
 }
+
+// =============================================================================
+// Script Task Finalization
+// =============================================================================
+
+// finalizeScriptTask saves exit code and captured output to the task's metadata.
+// Output is read from the output log file and truncated to maxScriptOutputBytes (10KB).
+func (tr *TaskRunner) finalizeScriptTask(ctx context.Context, task RunningTask, result *TaskResult) {
+	// Read output log file
+	outputFile := fmt.Sprintf("%s/output_%s_%s.log", tr.config.StateDir, task.ProjectID, task.ID)
+	output := ""
+	if data, err := os.ReadFile(outputFile); err == nil {
+		output = string(data)
+		// Truncate to maxScriptOutputBytes, keeping the tail (most recent output)
+		if len(output) > maxScriptOutputBytes {
+			output = "...(truncated)...\n" + output[len(output)-maxScriptOutputBytes:]
+		}
+	}
+
+	// Determine exit code
+	exitCode := -1
+	if result.ExitCode != nil {
+		exitCode = *result.ExitCode
+	}
+
+	// Save exit_code and output to task metadata
+	metaCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	fields := map[string]interface{}{
+		"exit_code":     exitCode,
+		"script_output": output,
+	}
+	if err := tr.client.UpdateMetadata(metaCtx, task.Path, fields); err != nil {
+		tr.logger.Printf("script: failed to save output metadata for %s: %v", task.ID, err)
+	} else {
+		tr.logger.Printf("script: saved output (%d bytes, exit=%d) for %s", len(output), exitCode, task.ID)
+	}
+}
+
+// maxScriptOutputBytes is the maximum size of captured script output (10KB).
+const maxScriptOutputBytes = 10 * 1024
 
 // =============================================================================
 // Tmux Cleanup

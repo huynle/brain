@@ -38,6 +38,12 @@ type RunnerConfig struct {
 	// When empty, all features are eligible. Supports multiple feature IDs.
 	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
 	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
+
+	// Capabilities declares what this runner can do. Tasks with requires_capability
+	// tags are only claimable by runners whose capabilities include all required values.
+	// Untagged tasks are claimable by any runner (backward compatible).
+	// Set via config file or RUNNER_CAPABILITIES env var (comma-separated).
+	Capabilities []string `yaml:"capabilities" json:"capabilities"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.

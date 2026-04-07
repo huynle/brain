@@ -625,6 +625,13 @@ type ResolvedTask struct {
 	// Session tracking
 	Sessions map[string]SessionInfo `json:"sessions,omitempty"`
 
+	// Tags from the brain entry (used for capability-based routing)
+	Tags []string `json:"tags,omitempty"`
+
+	// RequiresCapability specifies capabilities a runner must have to claim this task.
+	// Tasks without this field are claimable by any runner (backward compatible).
+	RequiresCapability []string `json:"requires_capability,omitempty"`
+
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`
 	GeneratedKey  string `json:"generated_key,omitempty"`

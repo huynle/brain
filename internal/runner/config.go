@@ -110,6 +110,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
+		Capabilities:    getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {

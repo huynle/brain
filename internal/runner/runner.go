@@ -416,6 +416,16 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			if err != nil || task == nil {
 				continue
 			}
+			// Filter by capability match before claiming
+			if !tr.matchesCapabilities(task) {
+				slog.Debug("skipping task (paused/enabled): runner lacks required capabilities",
+					"task_id", task.ID,
+					"project", projectID,
+					"requires", task.RequiresCapability,
+					"runner_capabilities", tr.config.Capabilities,
+				)
+				continue
+			}
 			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
 				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
 				continue
@@ -427,6 +437,17 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		// Get next task for this project (filtered by feature IDs if configured)
 		task, err := tr.client.GetNextTask(ctx, projectID, tr.config.FeatureIDs...)
 		if err != nil || task == nil {
+			continue
+		}
+
+		// Filter by capability match before claiming
+		if !tr.matchesCapabilities(task) {
+			slog.Debug("skipping task: runner lacks required capabilities",
+				"task_id", task.ID,
+				"project", projectID,
+				"requires", task.RequiresCapability,
+				"runner_capabilities", tr.config.Capabilities,
+			)
 			continue
 		}
 
@@ -1199,10 +1220,11 @@ func (tr *TaskRunner) emitPollComplete() {
 func (tr *TaskRunner) registerRunner(ctx context.Context) {
 	hostname, _ := os.Hostname()
 	req := types.RegisterRunnerRequest{
-		RunnerID:    tr.runnerID,
-		Hostname:    hostname,
-		Projects:    tr.projects,
-		MaxParallel: tr.getMaxParallel(),
+		RunnerID:     tr.runnerID,
+		Hostname:     hostname,
+		Projects:     tr.projects,
+		Capabilities: tr.config.Capabilities,
+		MaxParallel:  tr.getMaxParallel(),
 	}
 
 	regCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -1235,6 +1257,36 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 	if err := tr.client.HeartbeatRunner(hbCtx, req); err != nil {
 		slog.Debug("heartbeat failed", "runner_id", tr.runnerID, "error", err)
 	}
+}
+
+// =============================================================================
+// Capability Filtering
+// =============================================================================
+
+// matchesCapabilities checks whether this runner has all capabilities required
+// by the given task. Tasks without RequiresCapability are claimable by any runner
+// (backward compatible). Returns true if the runner can handle the task.
+func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
+	if len(task.RequiresCapability) == 0 {
+		return true // untagged tasks are claimable by any runner
+	}
+	if len(tr.config.Capabilities) == 0 {
+		return false // runner has no capabilities but task requires some
+	}
+
+	// Build a set of runner capabilities for O(1) lookup
+	capSet := make(map[string]bool, len(tr.config.Capabilities))
+	for _, cap := range tr.config.Capabilities {
+		capSet[cap] = true
+	}
+
+	// All required capabilities must be present
+	for _, req := range task.RequiresCapability {
+		if !capSet[req] {
+			return false
+		}
+	}
+	return true
 }
 
 // =============================================================================

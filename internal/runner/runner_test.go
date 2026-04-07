@@ -2676,3 +2676,189 @@ func TestTaskRunner_GetEnabledFeatureIDsLocked_AfterDisable(t *testing.T) {
 		t.Errorf("expected feat-b, got %s", ids[0])
 	}
 }
+
+// =============================================================================
+// Capability-Based Task Routing Tests
+// =============================================================================
+
+func TestMatchesCapabilities_NoRequirements_AnyRunnerMatches(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: nil}
+	if !tr.matchesCapabilities(task) {
+		t.Error("task with no RequiresCapability should be claimable by any runner")
+	}
+}
+
+func TestMatchesCapabilities_EmptyRequirements_AnyRunnerMatches(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{}}
+	if !tr.matchesCapabilities(task) {
+		t.Error("task with empty RequiresCapability should be claimable by any runner")
+	}
+}
+
+func TestMatchesCapabilities_RunnerHasAllRequired(t *testing.T) {
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"gpu", "docker", "ssh"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     newMockClient(),
+		Executor:   newMockExecutor(),
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu", "docker"}}
+	if !tr.matchesCapabilities(task) {
+		t.Error("runner with all required capabilities should match")
+	}
+}
+
+func TestMatchesCapabilities_RunnerMissingRequired(t *testing.T) {
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"docker"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     newMockClient(),
+		Executor:   newMockExecutor(),
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu", "docker"}}
+	if tr.matchesCapabilities(task) {
+		t.Error("runner missing 'gpu' capability should NOT match")
+	}
+}
+
+func TestMatchesCapabilities_RunnerNoCapabilities_TaskRequiresSome(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+	// default testRunnerConfig has no capabilities
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu"}}
+	if tr.matchesCapabilities(task) {
+		t.Error("runner with no capabilities should NOT match task requiring capabilities")
+	}
+}
+
+func TestMatchesCapabilities_ExactMatch(t *testing.T) {
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"gpu"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     newMockClient(),
+		Executor:   newMockExecutor(),
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu"}}
+	if !tr.matchesCapabilities(task) {
+		t.Error("runner with exact capability match should match")
+	}
+}
+
+func TestPoll_SkipsTaskWhenCapabilityMismatch(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.RequiresCapability = []string{"gpu"}
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	// Runner has no capabilities
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should NOT spawn — runner lacks 'gpu' capability
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("should not spawn task when runner lacks required capability")
+	}
+}
+
+func TestPoll_SpawnsTaskWhenCapabilityMatches(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.RequiresCapability = []string{"docker"}
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"docker", "ssh"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should spawn — runner has the required capability
+	if len(executor.getSpawnCalls()) == 0 {
+		t.Error("should spawn task when runner has required capability")
+	}
+}
+
+func TestPoll_SpawnsUntaggedTaskFromRunnerWithCapabilities(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	// No RequiresCapability — should be claimable by any runner
+	client.nextTask["proj-a"] = task
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"gpu", "docker"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	// Should spawn — untagged tasks are claimable by any runner (backward compatible)
+	if len(executor.getSpawnCalls()) == 0 {
+		t.Error("runner with capabilities should still claim untagged tasks")
+	}
+}

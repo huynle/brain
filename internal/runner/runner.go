@@ -552,6 +552,12 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("spawn task: %w", err)
 	}
 
+	// Resolve executor type for tracking (empty defaults to "opencode")
+	executorType := task.Executor
+	if executorType == "" {
+		executorType = "opencode"
+	}
+
 	// Build running task record
 	runningTask := RunningTask{
 		ID:             task.ID,
@@ -564,6 +570,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		WindowName:     spawnResult.WindowName,
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
+		Executor:       executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 	}
@@ -586,8 +593,10 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Task: &runningTask,
 	})
 
-	// Discover opencode session ID and port in background
-	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	// Discover opencode session ID and port in background (only for opencode executor)
+	if executorType == "opencode" {
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	}
 
 	return nil
 }

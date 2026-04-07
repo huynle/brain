@@ -760,6 +760,246 @@ func TestExecutor_Spawn_UnknownMode(t *testing.T) {
 }
 
 // =============================================================================
+// Executor Dispatch Tests
+// =============================================================================
+
+func TestResolveExecutorType_EmptyDefaultsToOpencode(t *testing.T) {
+	task := testResolvedTask("abc123")
+	task.Executor = ""
+	got := resolveExecutorType(task)
+	if got != "opencode" {
+		t.Errorf("resolveExecutorType(empty) = %q, want %q", got, "opencode")
+	}
+}
+
+func TestResolveExecutorType_ExplicitOpencode(t *testing.T) {
+	task := testResolvedTask("abc123")
+	task.Executor = "opencode"
+	got := resolveExecutorType(task)
+	if got != "opencode" {
+		t.Errorf("resolveExecutorType(opencode) = %q, want %q", got, "opencode")
+	}
+}
+
+func TestResolveExecutorType_Pi(t *testing.T) {
+	task := testResolvedTask("abc123")
+	task.Executor = "pi"
+	got := resolveExecutorType(task)
+	if got != "pi" {
+		t.Errorf("resolveExecutorType(pi) = %q, want %q", got, "pi")
+	}
+}
+
+func TestResolveExecutorType_Script(t *testing.T) {
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+	got := resolveExecutorType(task)
+	if got != "script" {
+		t.Errorf("resolveExecutorType(script) = %q, want %q", got, "script")
+	}
+}
+
+func TestExecutor_Spawn_DefaultExecutorRoutesToOpencode(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+
+	var capturedName string
+
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		capturedName = name
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	task := testResolvedTask("abc123")
+	// Executor is empty — should default to opencode
+	task.Executor = ""
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	_, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn returned error: %v", err)
+	}
+
+	// Should have invoked the opencode binary
+	if capturedName != "opencode" {
+		t.Errorf("command name = %q, want %q (opencode)", capturedName, "opencode")
+	}
+}
+
+func TestExecutor_Spawn_ExplicitOpencodeExecutor(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+
+	var capturedName string
+
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		capturedName = name
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	task := testResolvedTask("abc123")
+	task.Executor = "opencode"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	_, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn returned error: %v", err)
+	}
+
+	if capturedName != "opencode" {
+		t.Errorf("command name = %q, want %q", capturedName, "opencode")
+	}
+}
+
+func TestExecutor_Spawn_PiExecutor(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+
+	var capturedName string
+
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		capturedName = name
+		// Use a command that reads stdin and writes JSONL to stdout
+		// "cat" will read from stdin and exit when stdin is closed
+		return exec.Command("/bin/cat")
+	}
+
+	task := testResolvedTask("abc123")
+	task.Executor = "pi"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(pi) returned error: %v", err)
+	}
+
+	// Should have invoked the "pi" binary (default)
+	if capturedName != "pi" {
+		t.Errorf("command name = %q, want %q (pi)", capturedName, "pi")
+	}
+
+	if result.PID <= 0 {
+		t.Errorf("PID = %d, want > 0", result.PID)
+	}
+	if result.Proc == nil {
+		t.Error("Proc should not be nil for pi executor")
+	}
+	if result.Workdir == "" {
+		t.Error("Workdir should be set")
+	}
+
+	// Clean up the process
+	_ = result.Proc.Kill(nil)
+}
+
+func TestExecutor_Spawn_PiExecutor_CustomBin(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	cfg.PiBin = "/usr/local/bin/my-pi"
+
+	var capturedName string
+
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		capturedName = name
+		return exec.Command("/bin/cat")
+	}
+
+	task := testResolvedTask("abc123")
+	task.Executor = "pi"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	result, err := e.Spawn(ctx, task, "test-project", opts)
+	if err != nil {
+		t.Fatalf("Spawn(pi custom bin) returned error: %v", err)
+	}
+
+	if capturedName != "/usr/local/bin/my-pi" {
+		t.Errorf("command name = %q, want %q", capturedName, "/usr/local/bin/my-pi")
+	}
+
+	_ = result.Proc.Kill(nil)
+}
+
+func TestExecutor_Spawn_ScriptExecutor_NotImplemented(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "script"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	_, err := e.Spawn(ctx, task, "test-project", opts)
+	if err == nil {
+		t.Error("Spawn(script) should return error (not yet implemented)")
+	}
+	if !strings.Contains(err.Error(), "script executor is not yet implemented") {
+		t.Errorf("error should mention not yet implemented, got: %v", err)
+	}
+}
+
+func TestExecutor_Spawn_UnknownExecutorType(t *testing.T) {
+	stateDir := t.TempDir()
+	cfg := testExecutorConfig()
+	cfg.StateDir = stateDir
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Executor = "kubernetes"
+
+	ctx := context.Background()
+	opts := SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	}
+
+	_, err := e.Spawn(ctx, task, "test-project", opts)
+	if err == nil {
+		t.Error("Spawn should return error for unknown executor type")
+	}
+	if !strings.Contains(err.Error(), "unknown executor type") {
+		t.Errorf("error should mention unknown executor type, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "kubernetes") {
+		t.Errorf("error should mention the invalid type, got: %v", err)
+	}
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

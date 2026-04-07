@@ -47,7 +47,8 @@ type CommandFactory func(name string, args ...string) *exec.Cmd
 // Executor
 // =============================================================================
 
-// Executor builds prompts and spawns OpenCode processes.
+// Executor builds prompts and spawns task processes. It dispatches to different
+// backends (OpenCode, Pi RPC, script) based on the task's executor field.
 type Executor struct {
 	config         RunnerConfig
 	CommandFactory CommandFactory
@@ -333,7 +334,22 @@ func (e *Executor) GetEffectiveModel(task *types.ResolvedTask, runtimeDefaultMod
 // Spawning
 // =============================================================================
 
-// Spawn dispatches to mode-specific spawners.
+// resolveExecutorType returns the effective executor type for a task.
+// Empty or unset executor defaults to "opencode" for backward compatibility.
+func resolveExecutorType(task *types.ResolvedTask) string {
+	if task.Executor == "" {
+		return "opencode"
+	}
+	return task.Executor
+}
+
+// Spawn dispatches to executor-specific and mode-specific spawners.
+// The task's Executor field determines which executor backend is used:
+//   - "opencode" (default): spawns an OpenCode process via headless/TUI/dashboard modes
+//   - "pi": spawns a Pi RPC subprocess communicating via JSONL over stdin/stdout
+//   - "script": placeholder for script-based execution (implemented in task #11)
+//
+// Unknown executor types fail the task with a clear error message.
 func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error) {
 	// Ensure state directory exists
 	if err := os.MkdirAll(e.config.StateDir, 0o755); err != nil {
@@ -357,6 +373,22 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 		}
 	}
 
+	// Dispatch based on executor type
+	executorType := resolveExecutorType(task)
+	switch executorType {
+	case "opencode":
+		return e.spawnOpencode(ctx, task, projectID, workdir, promptFile, opts)
+	case "pi":
+		return e.spawnPi(ctx, task, projectID, workdir, promptFile)
+	case "script":
+		return e.spawnScript(ctx, task, projectID, workdir, promptFile)
+	default:
+		return nil, fmt.Errorf("unknown executor type: %q (valid types: opencode, pi, script)", executorType)
+	}
+}
+
+// spawnOpencode dispatches to mode-specific OpenCode spawners.
+func (e *Executor) spawnOpencode(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (*SpawnResult, error) {
 	switch opts.Mode {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
@@ -367,6 +399,66 @@ func (e *Executor) Spawn(ctx context.Context, task *types.ResolvedTask, projectI
 	default:
 		return nil, fmt.Errorf("unknown execution mode: %s", opts.Mode)
 	}
+}
+
+// spawnPi spawns a Pi RPC subprocess that communicates via JSONL over stdin/stdout.
+// It uses the existing PiRPCProcess infrastructure from pi_rpc.go.
+func (e *Executor) spawnPi(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
+	// Read prompt content
+	promptContent, err := os.ReadFile(promptFile)
+	if err != nil {
+		return nil, fmt.Errorf("read prompt file: %w", err)
+	}
+
+	// Build command — use "pi" binary, configurable via PiBin if set
+	piBin := "pi"
+	if e.config.PiBin != "" {
+		piBin = e.config.PiBin
+	}
+
+	cmd := e.CommandFactory(piBin)
+	cmd.Dir = workdir
+
+	// Create output log for stderr (stdout is used for JSONL protocol)
+	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
+	logFile, err := os.Create(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("create output log: %w", err)
+	}
+	cmd.Stderr = logFile
+
+	// Start via PiRPCProcess — handles stdin/stdout pipes and process lifecycle
+	piProc, err := NewPiRPCProcess(cmd)
+	if err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("start pi process: %w", err)
+	}
+
+	// Close log file when process exits
+	go func() {
+		<-piProc.Done()
+		logFile.Close()
+	}()
+
+	// Send the initial prompt
+	if err := piProc.SendPrompt(string(promptContent)); err != nil {
+		_ = piProc.Kill(nil)
+		return nil, fmt.Errorf("send initial prompt to pi: %w", err)
+	}
+
+	return &SpawnResult{
+		PID:        piProc.PID(),
+		Proc:       piProc,
+		PromptFile: promptFile,
+		Workdir:    workdir,
+	}, nil
+}
+
+// spawnScript is a placeholder for script-based task execution.
+// Full implementation is in task #11; this stub returns an error
+// so callers get a clear message that script execution is not yet available.
+func (e *Executor) spawnScript(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
+	return nil, fmt.Errorf("script executor is not yet implemented (see task #11)")
 }
 
 // =============================================================================

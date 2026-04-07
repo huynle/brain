@@ -24,6 +24,7 @@ type RunnerConfig struct {
 	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
 	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
+	PiBin                  string         `yaml:"pi_bin" json:"pi_bin"` // Path to Pi binary (default: "pi")
 	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
 	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
 
@@ -72,6 +73,7 @@ type RunningTask struct {
 	StartedAt       time.Time `json:"startedAt"`
 	IsResume        bool      `json:"isResume"`
 	Workdir         string    `json:"workdir"`
+	Executor        string    `json:"executor,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp

@@ -116,7 +116,7 @@ var MergePolicies = []string{"prompt_only", "auto_pr", "auto_merge"}
 var MergeStrategies = []string{"squash", "merge", "rebase"}
 var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
-var Executors = []string{"opencode", "pi"}
+var Executors = []string{"opencode", "pi", "script"}
 
 // =============================================================================
 // Domain Structs

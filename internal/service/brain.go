@@ -49,6 +49,48 @@ func (s *BrainServiceImpl) publish(e events.Event) {
 	}
 }
 
+// checkFeatureCompletion checks if all tasks in a feature are completed
+// and publishes a feature.all_completed event if so.
+func (s *BrainServiceImpl) checkFeatureCompletion(ctx context.Context, featureID, project string) {
+	if featureID == "" {
+		return
+	}
+
+	// Query all tasks in this feature
+	listResp, err := s.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   project,
+		FeatureID: featureID,
+		Limit:     1000,
+	})
+	if err != nil || len(listResp.Entries) == 0 {
+		return
+	}
+
+	// Convert to ResolvedTask for ComputeFeatureStatus
+	resolved := make([]types.ResolvedTask, len(listResp.Entries))
+	for i := range listResp.Entries {
+		resolved[i] = brainEntryToResolvedTask(&listResp.Entries[i])
+	}
+
+	status := ComputeFeatureStatus(resolved)
+	if status != "completed" {
+		return
+	}
+
+	s.publish(events.Event{
+		Type:      events.FeatureAllCompleted,
+		Source:    "service",
+		ProjectID: project,
+		DedupKey:  "feature-completed:" + project + ":" + featureID,
+		Payload: map[string]any{
+			"feature_id": featureID,
+			"project":    project,
+			"task_count": len(listResp.Entries),
+		},
+	})
+}
+
 // =============================================================================
 // Save
 // =============================================================================
@@ -869,6 +911,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 					"old_status": oldStatus,
 				},
 			})
+
+			// Check if all tasks in this feature are now complete
+			s.checkFeatureCompletion(ctx, fm.FeatureID, project)
+
 		case (newStatus == "cancelled" || newStatus == "blocked") && oldStatus != newStatus:
 			s.publish(events.Event{
 				Type:      events.TaskFailed,

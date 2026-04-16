@@ -63,6 +63,32 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		)
 	}
 
+	// Runners tab has navigation help
+	if h.ActiveContentTab == ContentTabRunners {
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
+		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
+
+		// Focus indicator on the right
+		focusLabel := dim("Tab: ") +
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Runners")
+
+		leftStyle := lipgloss.NewStyle().
+			PaddingLeft(1).
+			Width(width - 20)
+
+		rightStyle := lipgloss.NewStyle().
+			Align(lipgloss.Right).
+			Width(18)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			leftStyle.Render(dim(shortcuts)),
+			rightStyle.Render(focusLabel),
+		)
+	}
+
 	// Multi-project tab shortcuts (matches TypeScript: h/l/[/]/1-9)
 	if isMultiProject {
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("h/l/[/]/1-9"))

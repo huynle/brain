@@ -120,9 +120,10 @@ type Model struct {
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
 
-	// Content tab state (Tasks / Dream)
+	// Content tab state (Tasks / Dream / Runners)
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
+	runnersPanel     RunnersPanel
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -175,6 +176,7 @@ func NewModel(cfg Config) Model {
 		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:  make(map[string]bool),
 		dreamViewer:      NewDreamViewer(),
+		runnersPanel:     NewRunnersPanel(),
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -408,7 +410,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		return m, tea.Batch(tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()))
+		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
+		// Poll runner list when Runners tab is active (every tick = ~2s)
+		if m.activeContentTab == ContentTabRunners {
+			cmds = append(cmds, fetchRunnersListCmd(m.apiRunnerConfig()))
+		}
+		return m, tea.Batch(cmds...)
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -507,6 +514,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.dreamViewer.SetContent(msg.Content)
 		}
+		return m, nil
+
+	case RunnersUpdatedMsg:
+		m.runnersPanel.SetRunners(msg.Runners)
 		return m, nil
 
 	case featureExecutedMsg:
@@ -839,7 +850,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.NextContentTab) {
-		if m.activeContentTab < ContentTabDream {
+		if m.activeContentTab < ContentTabRunners {
 			m.activeContentTab++
 		} else {
 			m.activeContentTab = ContentTabTasks
@@ -854,13 +865,17 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
 		}
+		// Fetch runners lazily when switching to Runners tab
+		if m.activeContentTab == ContentTabRunners {
+			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.PrevContentTab) {
 		if m.activeContentTab > ContentTabTasks {
 			m.activeContentTab--
 		} else {
-			m.activeContentTab = ContentTabDream
+			m.activeContentTab = ContentTabRunners
 		}
 		m.helpBar.ActiveContentTab = m.activeContentTab
 		// Fetch dream content lazily when switching to Dream tab
@@ -871,6 +886,47 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				project = m.activeProjectID
 			}
 			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		}
+		// Fetch runners lazily when switching to Runners tab
+		if m.activeContentTab == ContentTabRunners {
+			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+		}
+		return m, nil
+	}
+
+	// When on Runners tab, handle runner-specific keys
+	if m.activeContentTab == ContentTabRunners {
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case tea.KeyEsc:
+			m.activeContentTab = ContentTabTasks
+			m.helpBar.ActiveContentTab = m.activeContentTab
+			return m, nil
+		}
+		switch string(msg.Runes) {
+		case "j":
+			m.runnersPanel.MoveDown()
+			return m, nil
+		case "k":
+			m.runnersPanel.MoveUp()
+			return m, nil
+		case "g":
+			m.runnersPanel.GotoTop()
+			return m, nil
+		case "G":
+			m.runnersPanel.GotoBottom()
+			return m, nil
+		case "r":
+			// Refresh runners list
+			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+		case "q":
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case "?":
+			m.modalManager.Open(NewHelpModal(m.config.IsMultiProject()))
+			return m, nil
 		}
 		return m, nil
 	}
@@ -1617,23 +1673,28 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Click on content tab bar (the row just above mainContentStartY)
 	contentTabBarY := mainContentStartY - 1
 	if y == contentTabBarY {
-		// Layout: " " + " Tasks " + "  " + " Dream "
+		// Layout: " " + " Tasks " + "  " + " Dream " + "  " + " Runners "
 		// Calculate hit zones from actual text widths
 		const tabPadding = 1 // leading " "
 		const tabGap = 2     // "  " between tabs
 		tasksText := " Tasks "
 		dreamText := " Dream "
+		runnersText := " Runners "
 
 		tasksStart := tabPadding
 		tasksEnd := tasksStart + len(tasksText)
 		dreamStart := tasksEnd + tabGap
 		dreamEnd := dreamStart + len(dreamText)
+		runnersStart := dreamEnd + tabGap
+		runnersEnd := runnersStart + len(runnersText)
 
 		var newTab ContentTab = m.activeContentTab
 		if x >= tasksStart && x < tasksEnd {
 			newTab = ContentTabTasks
 		} else if x >= dreamStart && x < dreamEnd {
 			newTab = ContentTabDream
+		} else if x >= runnersStart && x < runnersEnd {
+			newTab = ContentTabRunners
 		}
 
 		if newTab != m.activeContentTab {
@@ -1646,6 +1707,9 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					project = m.activeProjectID
 				}
 				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			}
+			if m.activeContentTab == ContentTabRunners {
+				return m, fetchRunnersListCmd(m.apiRunnerConfig())
 			}
 		}
 		return m, nil
@@ -2462,19 +2526,29 @@ func (m Model) renderBaseView() string {
 		projectTabsView = m.projectTabs.View(m.width)
 	}
 
-	// Render content tab bar (Tasks / Dream)
+	// Render content tab bar (Tasks / Dream / Runners)
 	var contentTabBarView string
 	{
+		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorCyan)
+
 		tasksLabel := " Tasks "
 		dreamLabel := " Dream "
-		if m.activeContentTab == ContentTabTasks {
-			tasksLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(tasksLabel)
+		runnersLabel := " Runners "
+		switch m.activeContentTab {
+		case ContentTabTasks:
+			tasksLabel = activeStyle.Render(tasksLabel)
 			dreamLabel = DimStyle.Render(dreamLabel)
-		} else {
+			runnersLabel = DimStyle.Render(runnersLabel)
+		case ContentTabDream:
 			tasksLabel = DimStyle.Render(tasksLabel)
-			dreamLabel = lipgloss.NewStyle().Bold(true).Foreground(ColorCyan).Render(dreamLabel)
+			dreamLabel = activeStyle.Render(dreamLabel)
+			runnersLabel = DimStyle.Render(runnersLabel)
+		case ContentTabRunners:
+			tasksLabel = DimStyle.Render(tasksLabel)
+			dreamLabel = DimStyle.Render(dreamLabel)
+			runnersLabel = activeStyle.Render(runnersLabel)
 		}
-		contentTabBarView = " " + tasksLabel + "  " + dreamLabel
+		contentTabBarView = " " + tasksLabel + "  " + dreamLabel + "  " + runnersLabel
 	}
 
 	// Render status bar at top
@@ -2654,7 +2728,15 @@ func (m Model) renderBaseView() string {
 
 	// Build main content based on active content tab
 	var mainContent string
-	if m.activeContentTab == ContentTabDream {
+	if m.activeContentTab == ContentTabRunners {
+		// Runners tab: full-width runners panel, no task/detail/log panels
+		runnersView := m.runnersPanel.View(m.width-4, mainHeight-2)
+		runnersPanel := InactiveBorder.
+			Width(m.width - 2).
+			Height(mainHeight - 2).
+			Render(runnersView)
+		mainContent = runnersPanel
+	} else if m.activeContentTab == ContentTabDream {
 		// Dream tab: full-width dream viewer, no task/detail/log panels
 		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
 		dreamPanel := InactiveBorder.
@@ -3554,4 +3636,18 @@ func getEditorCmd(filePath string) *exec.Cmd {
 
 	cmd := exec.Command(editor, filePath)
 	return cmd
+}
+
+// fetchRunnersListCmd returns a tea.Cmd that fetches the runner list from the API.
+func fetchRunnersListCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		resp, err := apiClient.ListRunners(ctx)
+		if err != nil {
+			// Silently ignore errors — runners panel will just show stale data
+			return nil
+		}
+		return RunnersUpdatedMsg{Runners: resp.Runners}
+	}
 }

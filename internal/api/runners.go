@@ -1,9 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -39,6 +41,9 @@ func (h *Handler) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Publish runners_update SSE event so TUI picks up the new runner
+	h.publishRunnersUpdate(r.Context())
+
 	WriteJSON(w, http.StatusOK, info)
 }
 
@@ -68,6 +73,9 @@ func (h *Handler) HandleHeartbeatRunner(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Publish runners_update SSE event so TUI tracks heartbeat state
+	h.publishRunnersUpdate(r.Context())
+
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -94,4 +102,25 @@ func searchStr(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// publishRunnersUpdate fetches the current runner list and broadcasts it
+// via SSE to all connected TUI clients.
+func (h *Handler) publishRunnersUpdate(ctx context.Context) {
+	if h.hub == nil || h.runners == nil {
+		return
+	}
+	resp, err := h.runners.List(ctx)
+	if err != nil {
+		return
+	}
+	h.hub.PublishRunnersUpdate(types.SSERunnersUpdateData{
+		SSEEventData: types.SSEEventData{
+			Type:      types.SSEEventRunnersUpdate,
+			Transport: "sse",
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+		},
+		Runners: resp.Runners,
+		Total:   resp.Total,
+	})
 }

@@ -89,3 +89,22 @@ func (h *Hub) PublishError(projectId string, message string) {
 		Data:  message,
 	})
 }
+
+// PublishRunnersUpdate sends a runners_update event to all subscribers across all projects.
+// Runner events are global (not project-scoped), so this broadcasts to every connected client.
+func (h *Hub) PublishRunnersUpdate(data interface{}) {
+	h.mu.RLock()
+	projectIDs := make([]string, 0, len(h.subscribers))
+	for pid := range h.subscribers {
+		projectIDs = append(projectIDs, pid)
+	}
+	h.mu.RUnlock()
+
+	msg := SSEMessage{
+		Event: "runners_update",
+		Data:  data,
+	}
+	for _, pid := range projectIDs {
+		h.publish(pid, msg)
+	}
+}

@@ -827,6 +827,7 @@ const (
 	SSEEventProjectDirty  SSEEventType = "project_dirty"
 	SSEEventHeartbeat     SSEEventType = "heartbeat"
 	SSEEventError         SSEEventType = "error"
+	SSEEventRunnersUpdate SSEEventType = "runners_update"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -860,6 +861,14 @@ type SSEProjectDirtyData struct {
 type SSEErrorData struct {
 	SSEEventData
 	Message string `json:"message"`
+}
+
+// SSERunnersUpdateData is the data for a "runners_update" SSE event.
+// Sent when runner state changes (register, heartbeat, lost).
+type SSERunnersUpdateData struct {
+	SSEEventData
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
 }
 
 // =============================================================================

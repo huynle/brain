@@ -71,3 +71,8 @@ type DreamContentMsg struct {
 	Content string
 	Error   error
 }
+
+// RunnersUpdatedMsg is sent when the runner list is refreshed (via SSE or polling).
+type RunnersUpdatedMsg struct {
+	Runners []types.RunnerInfo
+}

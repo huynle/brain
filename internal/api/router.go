@@ -217,8 +217,10 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 			r.Route("/events", func(r chi.Router) {
 				if o.handler != nil && o.handler.eventBus != nil {
 					r.Post("/emit", o.handler.HandleEmitEvent)
+					r.Post("/webhook/*", o.handler.HandleWebhookTrigger)
 				} else {
 					r.Post("/emit", notImplemented)
+					r.Post("/webhook/*", notImplemented)
 				}
 			})
 

@@ -1247,6 +1247,186 @@ func TestAutomationMatcher_MarksProcessedWithFloat64ID(t *testing.T) {
 // Tests: isAutomationSource helper
 // =============================================================================
 
+// =============================================================================
+// Tests: Webhook Trigger Matching
+// =============================================================================
+
+func TestAutomationMatcher_WebhookTrigger(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "wh1",
+				Path:      "projects/test/automation/wh1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:    "webhook",
+					Webhook: "/hooks/deploy",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Deploy triggered by webhook",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a webhook.received event matching the automation
+	bus.Publish(Event{
+		Type:   WebhookReceived,
+		Source: "webhook",
+		Payload: map[string]any{
+			"webhook_path": "hooks/deploy",
+			"repo":         "my-app",
+		},
+	})
+
+	require.Eventually(t, func() bool {
+		return len(creator.getCreated()) > 0
+	}, 3*time.Second, 50*time.Millisecond, "expected task to be created for webhook trigger")
+
+	created := creator.getCreated()
+	assert.Len(t, created, 1)
+	assert.Equal(t, "wh1", created[0].AutomationID)
+	assert.Equal(t, "task", created[0].Req.Type)
+	assert.Equal(t, "pending", created[0].Req.Status)
+}
+
+func TestAutomationMatcher_WebhookTrigger_NoMatch(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "wh1",
+				Path:      "projects/test/automation/wh1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:    "webhook",
+					Webhook: "/hooks/deploy",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Deploy triggered",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a webhook.received event with non-matching path
+	bus.Publish(Event{
+		Type:   WebhookReceived,
+		Source: "webhook",
+		Payload: map[string]any{
+			"webhook_path": "hooks/build",
+		},
+	})
+
+	// Give it time to process — should not create a task
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, creator.getCreated(), "no task should be created for non-matching webhook path")
+}
+
+func TestAutomationMatcher_WebhookTrigger_IgnoresNonWebhookEvents(t *testing.T) {
+	bus := NewMemoryBus()
+	defer bus.Close()
+
+	creator := newMockTaskCreator()
+	source := &mockAutomationSource{
+		entries: []AutomationEntry{
+			{
+				ID:        "wh1",
+				Path:      "projects/test/automation/wh1.md",
+				ProjectID: "test",
+				Trigger: types.AutomationTrigger{
+					Type:    "webhook",
+					Webhook: "/hooks/deploy",
+				},
+				Action: types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Deploy triggered",
+				},
+				Status: "active",
+			},
+		},
+	}
+
+	matcher := NewAutomationMatcher(AutomationMatcherConfig{
+		Bus:     bus,
+		Source:  source,
+		Creator: creator,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go matcher.Start(ctx)
+	time.Sleep(50 * time.Millisecond)
+
+	// Publish a non-webhook event — webhook automations should NOT match
+	bus.Publish(Event{
+		Type:      TaskCompleted,
+		ProjectID: "test",
+		Payload: map[string]any{
+			"webhook_path": "hooks/deploy",
+		},
+	})
+
+	time.Sleep(200 * time.Millisecond)
+	assert.Empty(t, creator.getCreated(), "webhook automation should not match non-webhook events")
+}
+
+func TestNormalizeWebhookPath(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"/hooks/deploy", "hooks/deploy"},
+		{"hooks/deploy", "hooks/deploy"},
+		{"/hooks/deploy/", "hooks/deploy"},
+		{"///hooks/deploy///", "hooks/deploy"},
+		{"  /hooks/deploy  ", "hooks/deploy"},
+		{"", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%q", tt.input), func(t *testing.T) {
+			assert.Equal(t, tt.expected, normalizeWebhookPath(tt.input))
+		})
+	}
+}
+
 func TestIsAutomationSource(t *testing.T) {
 	tests := []struct {
 		source   string

@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -150,11 +151,19 @@ func (am *AutomationMatcher) isAutomationEntryChange(event Event) bool {
 
 // matches checks whether an event matches an automation's trigger criteria.
 func (am *AutomationMatcher) matches(event Event, auto AutomationEntry) bool {
-	// Only match event-type triggers (cron handled by CronEmitter)
-	if auto.Trigger.Type != "event" {
+	switch auto.Trigger.Type {
+	case "event":
+		return am.matchesEvent(event, auto)
+	case "webhook":
+		return am.matchesWebhook(event, auto)
+	default:
+		// cron handled by CronEmitter, other types not matched here
 		return false
 	}
+}
 
+// matchesEvent checks whether an event matches an event-type automation trigger.
+func (am *AutomationMatcher) matchesEvent(event Event, auto AutomationEntry) bool {
 	// Loop prevention: by default, ignore events from automation-generated sources.
 	// Per-automation override: set ignore_automation_events: false to opt-in to
 	// processing automation-generated events.
@@ -188,6 +197,46 @@ func (am *AutomationMatcher) matches(event Event, auto AutomationEntry) bool {
 	}
 
 	return true
+}
+
+// matchesWebhook checks whether a webhook.received event matches a webhook-type automation trigger.
+// The webhook path is expected in event.Payload["webhook_path"].
+func (am *AutomationMatcher) matchesWebhook(event Event, auto AutomationEntry) bool {
+	// Only webhook.received events can trigger webhook automations
+	if event.Type != WebhookReceived {
+		return false
+	}
+
+	// Extract webhook path from event payload
+	incomingPath, ok := event.Payload["webhook_path"].(string)
+	if !ok || incomingPath == "" {
+		return false
+	}
+
+	// Match the webhook path (normalize by trimming slashes)
+	if normalizeWebhookPath(auto.Trigger.Webhook) != normalizeWebhookPath(incomingPath) {
+		return false
+	}
+
+	// Filter matching (if any filters are set on the webhook automation)
+	if !am.matchFilters(event, auto.Trigger.Filter) {
+		return false
+	}
+
+	return true
+}
+
+// normalizeWebhookPath strips leading and trailing slashes for consistent comparison.
+func normalizeWebhookPath(p string) string {
+	// Trim leading/trailing whitespace and slashes
+	p = strings.TrimSpace(p)
+	for len(p) > 0 && p[0] == '/' {
+		p = p[1:]
+	}
+	for len(p) > 0 && p[len(p)-1] == '/' {
+		p = p[:len(p)-1]
+	}
+	return p
 }
 
 // matchFilters checks that all filter conditions match the event.

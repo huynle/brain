@@ -1621,11 +1621,11 @@ func TestMetadataModal_VisibleTabRange_LastTab(t *testing.T) {
 	modal.loading = false
 	modal.width = 30
 
-	// Switch to Monitors (last tab)
-	modal.switchToTab(MetaTabMonitors)
+	// Switch to Automations (last tab)
+	modal.switchToTab(MetaTabAutomations)
 	lo, hi := modal.visibleTabRange()
 	if hi != len(modal.tabs)-1 {
-		t.Errorf("expected hi=%d (Monitors visible), got %d", len(modal.tabs)-1, hi)
+		t.Errorf("expected hi=%d (Automations visible), got %d", len(modal.tabs)-1, hi)
 	}
 	if lo <= 0 {
 		// With narrow width, first tabs should be hidden

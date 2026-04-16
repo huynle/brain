@@ -166,7 +166,7 @@ func TestTabsForMode_Feature(t *testing.T) {
 	if len(tabs) != 5 {
 		t.Errorf("Feature mode tab count = %d, want 5", len(tabs))
 	}
-	expected := []MetadataTab{MetaTabFeature, MetaTabTask, MetaTabExecution, MetaTabGitMerge, MetaTabMonitors}
+	expected := []MetadataTab{MetaTabFeature, MetaTabTask, MetaTabExecution, MetaTabGitMerge, MetaTabAutomations}
 	for i, tab := range expected {
 		if tabs[i] != tab {
 			t.Errorf("tabs[%d] = %v, want %v", i, tabs[i], tab)
@@ -285,6 +285,14 @@ func TestFieldsForTab_MonitorsTab(t *testing.T) {
 	}
 }
 
+// TestFieldsForTab_AutomationsTab tests that Automations tab has no regular fields.
+func TestFieldsForTab_AutomationsTab(t *testing.T) {
+	fields := fieldsForTab(MetaTabAutomations, ModeFeature)
+	if len(fields) != 0 {
+		t.Errorf("Automations tab field count = %d, want 0", len(fields))
+	}
+}
+
 // TestTabLabel tests tab label display strings.
 func TestTabLabel(t *testing.T) {
 	tests := []struct {
@@ -296,6 +304,7 @@ func TestTabLabel(t *testing.T) {
 		{MetaTabExecution, "Execution"},
 		{MetaTabGitMerge, "Git & Merge"},
 		{MetaTabMonitors, "Monitors"},
+		{MetaTabAutomations, "Automations"},
 	}
 	for _, tt := range tests {
 		label := tabLabel(tt.tab)

@@ -232,7 +232,8 @@ const (
 	MetaTabTask
 	MetaTabExecution
 	MetaTabGitMerge
-	MetaTabMonitors
+	MetaTabMonitors    // Deprecated: use MetaTabAutomations
+	MetaTabAutomations // Replaces MetaTabMonitors
 )
 
 // tabLabel returns the display label for a tab.
@@ -248,6 +249,8 @@ func tabLabel(tab MetadataTab) string {
 		return "Git & Merge"
 	case MetaTabMonitors:
 		return "Monitors"
+	case MetaTabAutomations:
+		return "Automations"
 	default:
 		return "Unknown"
 	}
@@ -261,7 +264,7 @@ func tabsForMode(mode MetadataMode) []MetadataTab {
 			MetaTabTask,
 			MetaTabExecution,
 			MetaTabGitMerge,
-			MetaTabMonitors,
+			MetaTabAutomations,
 		}
 	}
 	// Single and Batch modes
@@ -342,7 +345,10 @@ func fieldsForTab(tab MetadataTab, mode MetadataMode) []MetadataField {
 			FieldOpenPRBeforeMerge,
 		}
 	case MetaTabMonitors:
-		// Monitors tab has no regular fields — only monitor template rows
+		// Deprecated: Monitors tab has no regular fields — only monitor template rows
+		return []MetadataField{}
+	case MetaTabAutomations:
+		// Automations tab has no regular fields — only automation entry rows
 		return []MetadataField{}
 	default:
 		return []MetadataField{}

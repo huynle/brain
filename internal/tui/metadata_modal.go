@@ -70,16 +70,46 @@ type monitorToggleResultMsg struct {
 }
 
 // ============================================================================
-// Monitor Template Types
+// Monitor Template Types (legacy)
 // ============================================================================
 
 // MonitorTemplateState represents the state of a monitor template in the metadata modal.
+// Deprecated: Use AutomationState for new code.
 type MonitorTemplateState struct {
 	TemplateID string
 	Label      string
 	Status     string // "loading", "enabled", "create"
 	Schedule   string
 	TaskPath   string // path for deletion when enabled
+}
+
+// ============================================================================
+// Automation Entry Types
+// ============================================================================
+
+// AutomationState represents an automation entry displayed in the Automations tab.
+type AutomationState struct {
+	ID          string // 8-char automation entry ID
+	Path        string // Full brain path
+	Title       string
+	TriggerType string // "event", "cron", "webhook", "session"
+	TriggerInfo string // event name, cron schedule, webhook path, etc.
+	ActionType  string // "prompt", "script", "update", "http"
+	Status      string // "active", "archived", "draft", "loading"
+	ProjectID   string // project scope (empty = global)
+}
+
+// automationsFetchedMsg is sent when automation entries have been fetched.
+type automationsFetchedMsg struct {
+	automations []AutomationState
+	err         error
+}
+
+// automationToggleResultMsg is sent when an automation toggle completes.
+type automationToggleResultMsg struct {
+	index     int
+	newStatus string
+	err       error
 }
 
 // ============================================================================
@@ -153,11 +183,16 @@ type MetadataModal struct {
 	projectsLoaded  bool     // whether projects have been fetched
 	filteredOptions []string // filtered project list based on editBuffer
 
-	// Monitor template state (feature mode only)
+	// Monitor template state (feature mode only) — legacy
 	monitorTemplates    []MonitorTemplateState
 	monitorLoading      bool
 	focusedMonitorIndex int // -1 when not in monitor zone
 	monitorClient       *MonitorClient
+
+	// Automation entries (Automations tab)
+	automations        []AutomationState
+	automationsLoading bool
+	focusedAutoIndex   int // -1 when not in automation zone
 }
 
 // NewMetadataModal creates a new metadata editing modal for a single task.
@@ -196,10 +231,13 @@ func NewMetadataModalFeature(featureID, projectID string, apiClient *runner.APIC
 		focusedIndex:        0,
 		width:               60,
 		height:              24,
-		monitorTemplates:    nil, // fetched from API in Init
+		monitorTemplates:    nil, // fetched from API in Init (legacy)
 		monitorLoading:      true,
 		focusedMonitorIndex: -1,
 		monitorClient:       mc,
+		automations:         nil, // fetched from API in Init
+		automationsLoading:  true,
+		focusedAutoIndex:    -1,
 		tabs:                tabs,
 		currentTab:          tabs[0],
 	}
@@ -223,6 +261,7 @@ func newMetadataModal(taskPaths []string, mode MetadataMode, apiClient *runner.A
 		width:               60,
 		height:              25,
 		focusedMonitorIndex: -1,
+		focusedAutoIndex:    -1,
 		tabs:                tabs,
 		currentTab:          tabs[0],
 	}
@@ -252,12 +291,22 @@ func (m *MetadataModal) hasMonitorRows() bool {
 	return m.mode == ModeFeature && m.currentTab == MetaTabMonitors && len(m.monitorTemplates) > 0 && !m.monitorLoading
 }
 
+// hasAutomationRows returns true if this modal has automation entry rows to display.
+func (m *MetadataModal) hasAutomationRows() bool {
+	return m.mode == ModeFeature && m.currentTab == MetaTabAutomations && len(m.automations) > 0 && !m.automationsLoading
+}
+
 // inMonitorZone returns true if focus is currently in the monitor rows zone.
 func (m *MetadataModal) inMonitorZone() bool {
 	return m.focusedMonitorIndex >= 0
 }
 
-// moveDown moves focus to the next field or monitor row (wraps to top).
+// inAutomationZone returns true if focus is currently in the automation rows zone.
+func (m *MetadataModal) inAutomationZone() bool {
+	return m.focusedAutoIndex >= 0
+}
+
+// moveDown moves focus to the next field or monitor/automation row (wraps to top).
 func (m *MetadataModal) moveDown() {
 	if m.inMonitorZone() {
 		// In monitor zone: move to next monitor row or wrap to first monitor
@@ -269,11 +318,21 @@ func (m *MetadataModal) moveDown() {
 		return
 	}
 
+	if m.inAutomationZone() {
+		m.focusedAutoIndex++
+		if m.focusedAutoIndex >= len(m.automations) {
+			m.focusedAutoIndex = 0
+		}
+		return
+	}
+
 	// In field zone
 	if len(m.fieldList) == 0 {
-		// No fields (e.g., Monitors tab) — stay in monitor zone if available
+		// No fields (e.g., Monitors/Automations tab) — enter item zone if available
 		if m.hasMonitorRows() {
 			m.focusedMonitorIndex = 0
+		} else if m.hasAutomationRows() {
+			m.focusedAutoIndex = 0
 		}
 		return
 	}
@@ -288,7 +347,7 @@ func (m *MetadataModal) moveDown() {
 	}
 }
 
-// moveUp moves focus to the previous field or monitor row (wraps to bottom).
+// moveUp moves focus to the previous field or monitor/automation row (wraps to bottom).
 func (m *MetadataModal) moveUp() {
 	if m.inMonitorZone() {
 		// In monitor zone: move to previous monitor row or wrap to last monitor
@@ -300,11 +359,21 @@ func (m *MetadataModal) moveUp() {
 		return
 	}
 
+	if m.inAutomationZone() {
+		m.focusedAutoIndex--
+		if m.focusedAutoIndex < 0 {
+			m.focusedAutoIndex = len(m.automations) - 1
+		}
+		return
+	}
+
 	// In field zone
 	if len(m.fieldList) == 0 {
-		// No fields (e.g., Monitors tab) — stay in monitor zone if available
+		// No fields (e.g., Monitors/Automations tab) — enter item zone if available
 		if m.hasMonitorRows() {
 			m.focusedMonitorIndex = len(m.monitorTemplates) - 1
+		} else if m.hasAutomationRows() {
+			m.focusedAutoIndex = len(m.automations) - 1
 		}
 		return
 	}
@@ -319,21 +388,27 @@ func (m *MetadataModal) moveUp() {
 	}
 }
 
-// moveToTop moves focus to the first field or first monitor row.
+// moveToTop moves focus to the first field or first monitor/automation row.
 func (m *MetadataModal) moveToTop() {
 	m.focusedMonitorIndex = -1
+	m.focusedAutoIndex = -1
 	if len(m.fieldList) > 0 {
 		m.focusedIndex = 0
 		m.focusedField = m.fieldList[0]
 	} else if m.hasMonitorRows() {
 		m.focusedMonitorIndex = 0
+	} else if m.hasAutomationRows() {
+		m.focusedAutoIndex = 0
 	}
 }
 
-// moveToBottom moves focus to the last field or last monitor row.
+// moveToBottom moves focus to the last field or last monitor/automation row.
 func (m *MetadataModal) moveToBottom() {
 	if m.hasMonitorRows() {
 		m.focusedMonitorIndex = len(m.monitorTemplates) - 1
+		m.focusedIndex = len(m.fieldList)
+	} else if m.hasAutomationRows() {
+		m.focusedAutoIndex = len(m.automations) - 1
 		m.focusedIndex = len(m.fieldList)
 	} else if len(m.fieldList) > 0 {
 		m.focusedIndex = len(m.fieldList) - 1
@@ -641,6 +716,54 @@ func (m *MetadataModal) Init() tea.Cmd {
 	}
 }
 
+// fetchAutomationsCmd fetches automation entries from the API for the Automations tab.
+func (m *MetadataModal) fetchAutomationsCmd() tea.Cmd {
+	client := m.monitorClient
+	projectID := m.projectID
+	return func() tea.Msg {
+		ctx := context.Background()
+		entries, err := client.FetchAutomations(ctx, projectID)
+		if err != nil {
+			return automationsFetchedMsg{err: err}
+		}
+
+		automations := make([]AutomationState, len(entries))
+		for i, e := range entries {
+			triggerType := ""
+			triggerInfo := ""
+			if e.Trigger != nil {
+				triggerType = e.Trigger.Type
+				switch e.Trigger.Type {
+				case "event":
+					triggerInfo = e.Trigger.Event
+				case "cron":
+					triggerInfo = e.Trigger.Schedule
+				case "webhook":
+					triggerInfo = e.Trigger.Webhook
+				}
+			}
+
+			actionType := ""
+			if e.Action != nil {
+				actionType = e.Action.Type
+			}
+
+			automations[i] = AutomationState{
+				ID:          e.ID,
+				Path:        e.Path,
+				Title:       e.Title,
+				TriggerType: triggerType,
+				TriggerInfo: triggerInfo,
+				ActionType:  actionType,
+				Status:      e.Status,
+				ProjectID:   e.ProjectID,
+			}
+		}
+
+		return automationsFetchedMsg{automations: automations}
+	}
+}
+
 // fetchMonitorStatusesCmd returns a tea.Cmd that fetches monitor template statuses.
 // fetchMonitorTemplatesCmd fetches available templates from the API.
 func (m *MetadataModal) fetchMonitorTemplatesCmd() tea.Cmd {
@@ -763,9 +886,10 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 			m.boolValues[FieldScheduleEnabled] = *entry.ScheduleEnabled
 		}
 
-		// In feature mode, kick off template list fetch from API
+		// In feature mode, kick off template list fetch and automations fetch from API
 		if m.mode == ModeFeature && m.monitorClient != nil {
-			return m, m.fetchMonitorTemplatesCmd()
+			cmds := []tea.Cmd{m.fetchMonitorTemplatesCmd(), m.fetchAutomationsCmd()}
+			return m, tea.Batch(cmds...)
 		}
 
 		return m, nil
@@ -883,6 +1007,20 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 		if msg.index >= 0 && msg.index < len(m.monitorTemplates) {
 			m.monitorTemplates[msg.index].Status = msg.newStatus
 			m.monitorTemplates[msg.index].TaskPath = msg.taskPath
+		}
+		return m, nil
+
+	case automationsFetchedMsg:
+		m.automationsLoading = false
+		if msg.err != nil {
+			return m, nil
+		}
+		m.automations = msg.automations
+		return m, nil
+
+	case automationToggleResultMsg:
+		if msg.index >= 0 && msg.index < len(m.automations) {
+			m.automations[msg.index].Status = msg.newStatus
 		}
 		return m, nil
 	}
@@ -1104,6 +1242,75 @@ func (m *MetadataModal) View() string {
 		}
 	}
 
+	// Render automation entries section (Automations tab only)
+	if m.mode == ModeFeature && m.currentTab == MetaTabAutomations {
+		b.WriteString("\n")
+		separatorStyle := lipgloss.NewStyle().Foreground(ColorDim).Bold(true)
+		b.WriteString(separatorStyle.Render("── Automations ──"))
+		b.WriteString("\n")
+
+		if m.automationsLoading {
+			loadingStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+			b.WriteString(loadingStyle.Render("  Loading..."))
+			b.WriteString("\n")
+		} else if len(m.automations) == 0 {
+			emptyStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
+			b.WriteString(emptyStyle.Render("  No automations found"))
+			b.WriteString("\n")
+		} else {
+			for i, auto := range m.automations {
+				isFocused := m.focusedAutoIndex == i
+
+				var indicator string
+				if isFocused {
+					indicator = "→"
+				} else {
+					indicator = " "
+				}
+
+				// Status icon
+				var icon, statusTag string
+				switch auto.Status {
+				case "active":
+					icon = lipgloss.NewStyle().Foreground(ColorReady).Render("●")
+					statusTag = lipgloss.NewStyle().Foreground(ColorReady).Render("[active]")
+				case "loading":
+					icon = lipgloss.NewStyle().Foreground(ColorWaiting).Render("◌")
+					statusTag = lipgloss.NewStyle().Foreground(ColorWaiting).Render("[loading]")
+				case "draft":
+					icon = lipgloss.NewStyle().Foreground(ColorDim).Render("○")
+					statusTag = lipgloss.NewStyle().Foreground(ColorDim).Render("[draft]")
+				default: // "archived", etc.
+					icon = lipgloss.NewStyle().Foreground(ColorDim).Render("○")
+					statusTag = lipgloss.NewStyle().Foreground(ColorDim).Render(fmt.Sprintf("[%s]", auto.Status))
+				}
+
+				// Title
+				var title string
+				if isFocused {
+					title = lipgloss.NewStyle().Foreground(ColorCyan).Bold(true).Render(auto.Title)
+				} else {
+					title = auto.Title
+				}
+
+				// Trigger info
+				var triggerLabel string
+				if auto.TriggerType != "" {
+					detail := auto.TriggerInfo
+					if detail != "" {
+						triggerLabel = " " + lipgloss.NewStyle().Foreground(ColorDim).Render(fmt.Sprintf("%s:%s", auto.TriggerType, detail))
+					} else {
+						triggerLabel = " " + lipgloss.NewStyle().Foreground(ColorDim).Render(auto.TriggerType)
+					}
+				}
+
+				line := fmt.Sprintf("%s %s %s %s%s", indicator, icon, title, statusTag, triggerLabel)
+				b.WriteString(line)
+				b.WriteString("\n")
+			}
+		}
+	}
+
 	// Add footer help text
 	b.WriteString("\n")
 	helpStyle := lipgloss.NewStyle().Foreground(ColorDim).Italic(true)
@@ -1258,6 +1465,17 @@ func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) 
 		}
 	}
 
+	// Click on an automation row (Automations tab)
+	if m.currentTab == MetaTabAutomations && m.hasAutomationRows() {
+		autoStartY := fieldStartY + 2 // blank line + separator "── Automations ──"
+		autoRow := y - autoStartY
+		if autoRow >= 0 && autoRow < len(m.automations) {
+			m.focusedAutoIndex = autoRow
+			m.focusedIndex = len(m.fieldList) // move past fields
+			return true, nil
+		}
+	}
+
 	return false, nil
 }
 
@@ -1380,12 +1598,16 @@ func (m *MetadataModal) switchToTab(tab MetadataTab) {
 	m.currentTab = tab
 	m.focusedIndex = 0
 	m.focusedMonitorIndex = -1
+	m.focusedAutoIndex = -1
 	m.fieldList = m.buildFieldList()
 	if len(m.fieldList) > 0 {
 		m.focusedField = m.fieldList[0]
 	} else if m.hasMonitorRows() {
 		// Monitors tab: jump directly to monitor rows
 		m.focusedMonitorIndex = 0
+	} else if m.hasAutomationRows() {
+		// Automations tab: jump directly to automation rows
+		m.focusedAutoIndex = 0
 	}
 }
 
@@ -1442,6 +1664,9 @@ func (m *MetadataModal) handleNavigateMode(key string) (bool, tea.Cmd) {
 		if m.inMonitorZone() {
 			return m.toggleMonitorTemplate()
 		}
+		if m.inAutomationZone() {
+			return m.toggleAutomation()
+		}
 		if key == "enter" && len(m.fieldList) > 0 {
 			// Check if we need to fetch async data first
 			if cmd := m.enterEditModeCmd(); cmd != nil {
@@ -1479,6 +1704,41 @@ func (m *MetadataModal) toggleMonitorTemplate() (bool, tea.Cmd) {
 
 	idx := m.focusedMonitorIndex
 	return true, toggleMonitorTemplateCmd(m.monitorClient, idx, m.monitorTemplates[idx], m.featureID, m.projectID, prevStatus)
+}
+
+// toggleAutomation toggles the focused automation between active/archived.
+func (m *MetadataModal) toggleAutomation() (bool, tea.Cmd) {
+	if m.focusedAutoIndex < 0 || m.focusedAutoIndex >= len(m.automations) {
+		return false, nil
+	}
+
+	auto := &m.automations[m.focusedAutoIndex]
+	if auto.Status == "loading" {
+		return true, nil // Already loading, ignore
+	}
+
+	prevStatus := auto.Status
+	auto.Status = "loading"
+
+	idx := m.focusedAutoIndex
+	autoID := auto.ID
+	client := m.monitorClient
+
+	var newStatus string
+	if prevStatus == "active" {
+		newStatus = "archived"
+	} else {
+		newStatus = "active"
+	}
+
+	return true, func() tea.Msg {
+		ctx := context.Background()
+		err := client.ToggleAutomation(ctx, autoID, newStatus)
+		if err != nil {
+			return automationToggleResultMsg{index: idx, newStatus: prevStatus, err: err}
+		}
+		return automationToggleResultMsg{index: idx, newStatus: newStatus}
+	}
 }
 
 // toggleMonitorTemplateCmd creates a tea.Cmd that toggles a monitor template.

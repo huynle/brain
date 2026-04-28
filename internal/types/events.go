@@ -134,10 +134,21 @@ type Event struct {
 
 // TriggerConfig defines when a hook should fire based on an event.
 type TriggerConfig struct {
+	// Type is optional and used by automation entries (event, cron, webhook, session).
+	// For legacy trigger-based tasks, this is typically empty and Event carries the match rule.
+	Type string `json:"type,omitempty" yaml:"type,omitempty"`
 	// Event is the event pattern to match (e.g., "task.completed", "task.*").
 	Event string `json:"event" yaml:"event"`
+	// Schedule is used by cron-style automations.
+	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	Filter map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`
+	// OncePer is an automation dedup key (e.g. feature_id, session, day).
+	OncePer string `json:"once_per,omitempty" yaml:"once_per,omitempty"`
+	// Webhook is the webhook path for webhook-triggered automations.
+	Webhook string `json:"webhook,omitempty" yaml:"webhook,omitempty"`
+	// IgnoreAutomationEvents defaults automation matching away from self-generated events.
+	IgnoreAutomationEvents *bool `json:"ignore_automation_events,omitempty" yaml:"ignore_automation_events,omitempty"`
 	// Cooldown is the minimum interval between firings (e.g., "5m", "1h").
 	Cooldown string `json:"cooldown,omitempty" yaml:"cooldown,omitempty"`
 	// MaxConcurrent limits the number of concurrent executions.

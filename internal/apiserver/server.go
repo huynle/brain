@@ -105,7 +105,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
-	brainSvc := service.NewBrainService(&cfg, store, idx)
+	brainSvc := service.NewBrainService(&cfg, store, idx, nil)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)

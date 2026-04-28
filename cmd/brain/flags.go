@@ -1031,6 +1031,94 @@ func convertToCommandsEntryEditFlags(flags *EntryEditFlags) *commands.EntryEditF
 	return f
 }
 
+// AutomationFlags for automation command
+type AutomationFlags struct {
+	Project string
+	Format  string
+	Limit   int
+	Quiet   bool
+}
+
+// ParseAutomationFlags parses automation command flags from args.
+func ParseAutomationFlags(args []string) (*AutomationFlags, error) {
+	flags := &AutomationFlags{Limit: 20}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsAutomationFlags converts main.AutomationFlags to commands.AutomationFlags.
+func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.AutomationFlags {
+	return &commands.AutomationFlags{
+		Project: flags.Project,
+		Format:  flags.Format,
+		Limit:   flags.Limit,
+		Quiet:   flags.Quiet,
+	}
+}
+
+// MigrateFlags for migrate command
+type MigrateFlags struct {
+	DryRun bool
+	Force  bool
+	Format string
+}
+
+// ParseMigrateFlags parses migrate command flags from args.
+func ParseMigrateFlags(args []string) (*MigrateFlags, error) {
+	flags := &MigrateFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--dry-run":
+			flags.DryRun = true
+		case "--force":
+			flags.Force = true
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsMigrateFlags converts main.MigrateFlags to commands.MigrateFlags.
+func convertToCommandsMigrateFlags(flags *MigrateFlags) *commands.MigrateFlags {
+	return &commands.MigrateFlags{
+		DryRun: flags.DryRun,
+		Force:  flags.Force,
+		Format: flags.Format,
+	}
+}
+
 // convertToCommandsEntryListFlags converts main.EntryListFlags to commands.EntryListFlags.
 func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListFlags {
 	f := &commands.EntryListFlags{

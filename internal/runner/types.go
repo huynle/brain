@@ -24,6 +24,7 @@ type RunnerConfig struct {
 	MaxTotalProcesses      int                `yaml:"max_total_processes" json:"max_total_processes"`
 	MemoryThresholdPercent int                `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
 	Opencode               OpencodeConfig     `yaml:"opencode" json:"opencode"`
+	Script                 ScriptConfig       `yaml:"script" json:"script"`
 	Pi                     PiConfig           `yaml:"pi" json:"pi"`
 	Executors              []string           `yaml:"executors" json:"executors"`
 	DefaultExecutor        string             `yaml:"default_executor" json:"default_executor"`
@@ -66,6 +67,12 @@ type RunnerConfig struct {
 	// captures executor stdout/stderr and POSTs batches to the Brain API.
 	// Default: true. Set via RUNNER_LOG_STREAMING env var.
 	LogStreaming bool `yaml:"log_streaming" json:"log_streaming"`
+
+	// Capabilities declares what this runner can do. Tasks with requires_capability
+	// tags are only claimable by runners whose capabilities include all required values.
+	// Untagged tasks are claimable by any runner (backward compatible).
+	// Set via config file or RUNNER_CAPABILITIES env var (comma-separated).
+	Capabilities []string `yaml:"capabilities" json:"capabilities"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -186,6 +193,16 @@ type TaskDefaultsConfig struct {
 	TargetWorkdir      string   `yaml:"target_workdir" json:"target_workdir"`
 }
 
+// ScriptConfig holds configuration for the script executor.
+// Scripts are disabled by default and must be explicitly enabled.
+type ScriptConfig struct {
+	Enabled         bool     `yaml:"enabled" json:"enabled"`
+	AllowedCommands []string `yaml:"allowed_commands" json:"allowed_commands"`
+	BlockedCommands []string `yaml:"blocked_commands" json:"blocked_commands"`
+	MaxTimeout      int      `yaml:"max_timeout" json:"max_timeout"`
+	WorkdirRestrict []string `yaml:"workdir_restrict" json:"workdir_restrict"`
+}
+
 // =============================================================================
 // Execution Types
 // =============================================================================
@@ -212,7 +229,8 @@ type RunningTask struct {
 	StartedAt       time.Time `json:"startedAt"`
 	IsResume        bool      `json:"isResume"`
 	Workdir         string    `json:"workdir"`
-	ExecutorType    string    `json:"executorType,omitempty"` // "opencode" or "pi"
+	ExecutorType    string    `json:"executorType,omitempty"` // "opencode", "pi", or "script"
+	Executor        string    `json:"executor,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp

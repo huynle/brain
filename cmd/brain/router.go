@@ -89,6 +89,8 @@ var builtinCommands = map[string]bool{
 	"edit":          true,
 	"search":        true,
 	"list":          true,
+	"automation":    true,
+	"migrate":       true,
 	"help":          true,
 }
 
@@ -258,6 +260,13 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "plugin-status"}, nil
 		}
 		return parsePluginStatusCommand(cmdArgs)
+	case "automation":
+		return parseAutomationCommand(cmdArgs)
+	case "migrate":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "migrate"}, nil
+		}
+		return parseMigrateCommand(cmdArgs)
 	case "run", "runner":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
@@ -1002,5 +1011,88 @@ func parseListCommand(args []string) (Command, error) {
 	return &commands.ListCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags:  convertToCommandsEntryListFlags(flags),
+	}, nil
+}
+
+// parseMigrateCommand creates a MigrateCommand from args.
+// Usage: brain migrate <subcommand> [flags]
+func parseMigrateCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		cfg := defaultConfig()
+		return &commands.MigrateCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      &commands.MigrateFlags{},
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "migrate"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "migrate " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseMigrateFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.MigrateCommand{
+		Subcommand: subcommand,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsMigrateFlags(flags),
+	}, nil
+}
+
+// parseAutomationCommand creates an AutomationCommand from args.
+// Usage: brain automation <subcommand> [id] [flags]
+func parseAutomationCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		// Default: list automations
+		cfg := defaultConfig()
+		return &commands.AutomationCommand{
+			Subcommand: "list",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      convertToCommandsAutomationFlags(&AutomationFlags{Limit: 20}),
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "automation"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "automation " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	// Extract positional ID/name argument (first non-flag arg after subcommand)
+	idOrName := ""
+	var flagArgs []string
+	for i := 0; i < len(subArgs); i++ {
+		if !isFlag(subArgs[i]) && idOrName == "" {
+			idOrName = subArgs[i]
+		} else {
+			flagArgs = append(flagArgs, subArgs[i])
+		}
+	}
+
+	cfg := defaultConfig()
+	flags, err := ParseAutomationFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.AutomationCommand{
+		Subcommand: subcommand,
+		IDOrName:   idOrName,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsAutomationFlags(flags),
 	}, nil
 }

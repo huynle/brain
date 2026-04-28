@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -123,8 +124,27 @@ func (e *OpenCodeExecutor) GetEffectiveModel(task *types.ResolvedTask, runtimeDe
 // Spawning
 // =============================================================================
 
-// Spawn dispatches to mode-specific spawners.
+// resolveExecutorType returns the effective executor type for a task.
+// Empty or unset executor defaults to "opencode" for backward compatibility.
+func resolveExecutorType(task *types.ResolvedTask) string {
+	if task.Executor == "" {
+		return "opencode"
+	}
+	return task.Executor
+}
+
+// Spawn dispatches to executor-specific and mode-specific spawners.
+// The task's Executor field determines which executor backend is used:
+//   - "opencode" (default): spawns an OpenCode process via headless/TUI/dashboard modes
+//   - "pi": spawns a Pi RPC subprocess communicating via JSONL over stdin/stdout
+//   - "script": placeholder for script-based execution (implemented in task #11)
+//
+// Unknown executor types fail the task with a clear error message.
 func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error) {
+	// Ensure state directory exists
+	if err := os.MkdirAll(e.config.StateDir, 0o755); err != nil {
+		return nil, fmt.Errorf("ensure state dir: %w", err)
+	}
 	// Build and save prompt
 	prompt := e.BuildPrompt(task, opts.IsResume)
 	promptFile, err := WritePromptFile(e.config.StateDir, projectID, task.ID, prompt)
@@ -141,6 +161,22 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 		}
 	}
 
+	// Dispatch based on executor type
+	executorType := resolveExecutorType(task)
+	switch executorType {
+	case "opencode":
+		return e.spawnOpencode(ctx, task, projectID, workdir, promptFile, opts)
+	case "pi":
+		return e.spawnPi(ctx, task, projectID, workdir, promptFile)
+	case "script":
+		return e.spawnScript(ctx, task, projectID, workdir, promptFile)
+	default:
+		return nil, fmt.Errorf("unknown executor type: %q (valid types: opencode, pi, script)", executorType)
+	}
+}
+
+// spawnOpencode dispatches to mode-specific OpenCode spawners.
+func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (*SpawnResult, error) {
 	switch opts.Mode {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts)
@@ -151,6 +187,210 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 	default:
 		return nil, fmt.Errorf("unknown execution mode: %s", opts.Mode)
 	}
+}
+
+// spawnPi spawns a Pi RPC subprocess that communicates via JSONL over stdin/stdout.
+// It uses the existing PiRPCProcess infrastructure from pi_rpc.go.
+func (e *OpenCodeExecutor) spawnPi(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
+	// Read prompt content
+	promptContent, err := os.ReadFile(promptFile)
+	if err != nil {
+		return nil, fmt.Errorf("read prompt file: %w", err)
+	}
+
+	// Build command — use "pi" binary, configurable via PiBin if set
+	piBin := "pi"
+	if e.config.Pi.Bin != "" {
+		piBin = e.config.Pi.Bin
+	}
+
+	cmd := e.CommandFactory(piBin)
+	cmd.Dir = workdir
+
+	// Create output log for stderr (stdout is used for JSONL protocol)
+	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
+	logFile, err := os.Create(outputFile)
+	if err != nil {
+		return nil, fmt.Errorf("create output log: %w", err)
+	}
+	cmd.Stderr = logFile
+
+	// Start via PiRPCProcess — handles stdin/stdout pipes and process lifecycle
+	piProc, err := NewPiRPCProcess(cmd)
+	if err != nil {
+		logFile.Close()
+		return nil, fmt.Errorf("start pi process: %w", err)
+	}
+
+	// Close log file when process exits
+	go func() {
+		<-piProc.Done()
+		logFile.Close()
+	}()
+
+	// Send the initial prompt
+	if err := piProc.SendPrompt(string(promptContent)); err != nil {
+		_ = piProc.Kill(nil)
+		return nil, fmt.Errorf("send initial prompt to pi: %w", err)
+	}
+
+	return &SpawnResult{
+		PID:        piProc.PID(),
+		Proc:       piProc,
+		PromptFile: promptFile,
+		Workdir:    workdir,
+	}, nil
+}
+
+// spawnScript runs a shell command directly instead of spawning an AI agent.
+// The task's DirectPrompt field contains the command to execute via bash -c.
+// Output (stdout+stderr) is captured to a log file and the process is tracked
+// via the standard Process interface for completion detection.
+//
+// Security: requires ScriptConfig.Enabled, validates against allowed/blocked
+// command lists, enforces workdir restrictions, and applies timeout.
+func (e *OpenCodeExecutor) spawnScript(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
+	// 1. Check if scripts are enabled
+	if !e.config.Script.Enabled {
+		return nil, fmt.Errorf("script executor is disabled: set script.enabled=true in runner config to allow script execution")
+	}
+
+	// 2. Extract command from DirectPrompt (script tasks use direct_prompt as the command)
+	command := task.DirectPrompt
+	if command == "" {
+		return nil, fmt.Errorf("script executor requires direct_prompt to contain the shell command")
+	}
+
+	// 3. Validate command against allowed/blocked lists
+	if err := e.validateScriptCommand(command); err != nil {
+		return nil, fmt.Errorf("script command rejected: %w", err)
+	}
+
+	// 4. Validate workdir against restrictions
+	if err := e.validateScriptWorkdir(workdir); err != nil {
+		return nil, fmt.Errorf("script workdir rejected: %w", err)
+	}
+
+	// 5. Apply timeout
+	timeout := e.config.Script.MaxTimeout
+	if timeout <= 0 {
+		timeout = 300 // default 5 minutes
+	}
+	scriptCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
+
+	// 6. Create output log file
+	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
+	logFile, err := os.Create(outputFile)
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("create output log: %w", err)
+	}
+
+	// 7. Build the command
+	cmd := e.CommandFactory("bash", "-c", command)
+	cmd.Dir = workdir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	// Propagate environment
+	cmd.Env = os.Environ()
+	if e.config.BrainAPIURL != "" {
+		cmd.Env = append(cmd.Env, "BRAIN_API_URL="+e.config.BrainAPIURL)
+	}
+	if e.config.APIToken != "" {
+		cmd.Env = append(cmd.Env, "BRAIN_API_TOKEN="+e.config.APIToken)
+	}
+	// Task-level env overrides
+	for k, v := range task.Env {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+
+	// 8. Start the process
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		cancel()
+		return nil, fmt.Errorf("start script process: %w", err)
+	}
+
+	// 9. Create process wrapper
+	proc := NewOsProcess(cmd)
+
+	// Close log file and cancel context when process exits
+	go func() {
+		<-proc.Done()
+		logFile.Close()
+		cancel()
+	}()
+
+	// Enforce timeout: kill process if context deadline exceeded
+	go func() {
+		<-scriptCtx.Done()
+		if scriptCtx.Err() == context.DeadlineExceeded {
+			// Force kill the process on timeout
+			_ = proc.Kill(syscall.SIGKILL)
+		}
+	}()
+
+	return &SpawnResult{
+		PID:        cmd.Process.Pid,
+		Proc:       proc,
+		PromptFile: promptFile,
+		Workdir:    workdir,
+	}, nil
+}
+
+// validateScriptCommand checks the command against allowed and blocked lists.
+func (e *OpenCodeExecutor) validateScriptCommand(command string) error {
+	cfg := e.config.Script
+
+	// Check allowed commands (whitelist)
+	if len(cfg.AllowedCommands) > 0 {
+		allowed := false
+		for _, prefix := range cfg.AllowedCommands {
+			if strings.HasPrefix(command, prefix) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			return fmt.Errorf("command %q does not match any allowed command prefix", command)
+		}
+	}
+
+	// Check blocked commands (blacklist)
+	for _, prefix := range cfg.BlockedCommands {
+		if strings.HasPrefix(command, prefix) {
+			return fmt.Errorf("command %q matches blocked command prefix %q", command, prefix)
+		}
+	}
+
+	return nil
+}
+
+// validateScriptWorkdir checks workdir against workdir_restrict list.
+func (e *OpenCodeExecutor) validateScriptWorkdir(workdir string) error {
+	restrictions := e.config.Script.WorkdirRestrict
+	if len(restrictions) == 0 {
+		return nil // no restrictions
+	}
+
+	absWorkdir, err := filepath.Abs(workdir)
+	if err != nil {
+		return fmt.Errorf("resolve absolute workdir: %w", err)
+	}
+
+	for _, allowed := range restrictions {
+		absAllowed, err := filepath.Abs(allowed)
+		if err != nil {
+			continue
+		}
+		// Check if workdir is under the allowed prefix
+		if strings.HasPrefix(absWorkdir, absAllowed) {
+			return nil
+		}
+	}
+
+	return fmt.Errorf("workdir %q is not under any allowed path: %v", workdir, restrictions)
 }
 
 // =============================================================================

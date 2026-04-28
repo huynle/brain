@@ -178,7 +178,7 @@ func TestMetadataModalFeature_Has5Tabs(t *testing.T) {
 	}
 
 	// Verify tab order
-	expectedTabs := []MetadataTab{MetaTabFeature, MetaTabTask, MetaTabExecution, MetaTabGitMerge, MetaTabMonitors}
+	expectedTabs := []MetadataTab{MetaTabFeature, MetaTabTask, MetaTabExecution, MetaTabGitMerge, MetaTabAutomations}
 	for i, tab := range expectedTabs {
 		if modal.tabs[i] != tab {
 			t.Errorf("tabs[%d] = %v, want %v", i, modal.tabs[i], tab)
@@ -232,6 +232,7 @@ func TestMetadataModalFeature_TabHeaderRendered(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("feat-auth", "brain-api", apiClient)
 	modal.loading = false
+	modal.width = 80 // Ensure all tabs fit within the visible tab range
 
 	view := modal.View()
 
@@ -248,8 +249,8 @@ func TestMetadataModalFeature_TabHeaderRendered(t *testing.T) {
 	if !strings.Contains(view, "Git & Merge") {
 		t.Error("View should contain 'Git & Merge' tab label")
 	}
-	if !strings.Contains(view, "Monitors") {
-		t.Error("View should contain 'Monitors' tab label")
+	if !strings.Contains(view, "Automations") {
+		t.Error("View should contain 'Automations' tab label")
 	}
 }
 

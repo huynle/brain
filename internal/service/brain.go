@@ -12,6 +12,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
@@ -27,15 +28,67 @@ type BrainServiceImpl struct {
 	config  *config.Config
 	storage *storage.StorageLayer
 	indexer *indexer.Indexer
+	bus     events.Bus
 }
 
 // NewBrainService creates a new BrainServiceImpl.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer) *BrainServiceImpl {
+// The bus parameter is optional; if nil, no events are published.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
 	return &BrainServiceImpl{
 		config:  cfg,
 		storage: store,
 		indexer: idx,
+		bus:     bus,
 	}
+}
+
+// publish sends an event on the bus if one is configured.
+func (s *BrainServiceImpl) publish(e events.Event) {
+	if s.bus != nil {
+		s.bus.Publish(e)
+	}
+}
+
+// checkFeatureCompletion checks if all tasks in a feature are completed
+// and publishes a feature.all_completed event if so.
+func (s *BrainServiceImpl) checkFeatureCompletion(ctx context.Context, featureID, project string) {
+	if featureID == "" {
+		return
+	}
+
+	// Query all tasks in this feature
+	listResp, err := s.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   project,
+		FeatureID: featureID,
+		Limit:     1000,
+	})
+	if err != nil || len(listResp.Entries) == 0 {
+		return
+	}
+
+	// Convert to ResolvedTask for ComputeFeatureStatus
+	resolved := make([]types.ResolvedTask, len(listResp.Entries))
+	for i := range listResp.Entries {
+		resolved[i] = brainEntryToResolvedTask(&listResp.Entries[i])
+	}
+
+	status := ComputeFeatureStatus(resolved)
+	if status != "completed" {
+		return
+	}
+
+	s.publish(events.Event{
+		Type:      events.FeatureAllCompleted,
+		Source:    "service",
+		ProjectID: project,
+		DedupKey:  "feature-completed:" + project + ":" + featureID,
+		Payload: map[string]any{
+			"feature_id": featureID,
+			"project":    project,
+			"task_count": len(listResp.Entries),
+		},
+	})
 }
 
 // =============================================================================
@@ -137,6 +190,8 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
 		Trigger:             fmTriggerFromTypes(req.Trigger),
+		Action:              automationActionToFM(req.Action),
+		Retry:               automationRetryToFM(req.Retry),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,
@@ -197,14 +252,31 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		}
 	}
 
-	return &types.CreateEntryResponse{
+	resp := &types.CreateEntryResponse{
 		ID:     shortID,
 		Path:   relPath,
 		Title:  title,
 		Type:   req.Type,
 		Status: status,
 		Link:   link,
-	}, nil
+	}
+
+	// Publish entry.created event
+	s.publish(events.Event{
+		Type:      events.EntryCreated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":      shortID,
+			"path":    relPath,
+			"type":    req.Type,
+			"project": project,
+			"title":   title,
+			"status":  status,
+		},
+	})
+
+	return resp, nil
 }
 
 // =============================================================================
@@ -434,6 +506,27 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["timezone"].(string); ok {
 			fm.Timezone = v
 		}
+
+		// Automation fields (nested maps from metadata JSON)
+		if v, ok := meta["trigger"]; ok {
+			data, err := json.Marshal(v)
+			if err == nil {
+				var t frontmatter.TriggerConfig
+				if err := json.Unmarshal(data, &t); err == nil {
+					fm.Trigger = &t
+				}
+			}
+		}
+		if v, ok := meta["action"]; ok {
+			if a := metaToAutomationActionFM(v); a != nil {
+				fm.Action = a
+			}
+		}
+		if v, ok := meta["retry"]; ok {
+			if r := metaToAutomationRetryFM(v); r != nil {
+				fm.Retry = r
+			}
+		}
 	}
 
 	return fm
@@ -487,6 +580,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 
 	fm := &doc.Frontmatter
 	body := doc.Body
+
+	// Capture pre-update state for event derivation
+	oldStatus := fm.Status
 
 	// Apply field updates
 	if req.Title != nil {
@@ -614,9 +710,14 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		fm.GeneratedBy = *req.GeneratedBy
 	}
 
-	// Trigger
 	if req.Trigger != nil {
 		fm.Trigger = fmTriggerFromTypes(req.Trigger)
+	}
+	if req.Action != nil {
+		fm.Action = automationActionToFM(req.Action)
+	}
+	if req.Retry != nil {
+		fm.Retry = automationRetryToFM(req.Retry)
 	}
 
 	// Sessions
@@ -760,6 +861,82 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 					)
 				}
 			}
+		}
+	}
+
+	// Publish entry.updated event
+	project := extractProjectFromPath(row.Path)
+	var changes []string
+	if req.Title != nil {
+		changes = append(changes, "title")
+	}
+	if req.Status != nil {
+		changes = append(changes, "status")
+	}
+	if req.Priority != nil {
+		changes = append(changes, "priority")
+	}
+	if req.Tags != nil {
+		changes = append(changes, "tags")
+	}
+	if req.DependsOn != nil {
+		changes = append(changes, "depends_on")
+	}
+	if req.Append != nil {
+		changes = append(changes, "append")
+	}
+	if req.Content != nil {
+		changes = append(changes, "content")
+	}
+	if req.Note != nil {
+		changes = append(changes, "note")
+	}
+	s.publish(events.Event{
+		Type:      events.EntryUpdated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":      row.ShortID,
+			"path":    row.Path,
+			"type":    fm.Type,
+			"project": project,
+			"changes": changes,
+		},
+	})
+
+	// Derive task lifecycle events from status transitions
+	if fm.Type == "task" && req.Status != nil {
+		newStatus := *req.Status
+		switch {
+		case newStatus == "completed" && oldStatus != "completed":
+			s.publish(events.Event{
+				Type:      events.TaskCompleted,
+				Source:    "service",
+				ProjectID: project,
+				Payload: map[string]any{
+					"id":         row.ShortID,
+					"path":       row.Path,
+					"project":    project,
+					"old_status": oldStatus,
+				},
+			})
+
+			// Check if all tasks in this feature are now complete
+			s.checkFeatureCompletion(ctx, fm.FeatureID, project)
+
+		case (newStatus == "cancelled" || newStatus == "blocked") && oldStatus != newStatus:
+			s.publish(events.Event{
+				Type:      events.TaskFailed,
+				Source:    "service",
+				ProjectID: project,
+				Payload: map[string]any{
+					"id":         row.ShortID,
+					"path":       row.Path,
+					"project":    project,
+					"old_status": oldStatus,
+					"new_status": newStatus,
+				},
+			})
 		}
 	}
 
@@ -993,6 +1170,30 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 		return nil, api.ErrNotFound
 	}
 
+	// Publish entry.updated event for metadata changes
+	project := extractProjectFromPath(row.Path)
+	var changes []string
+	for k := range fields {
+		changes = append(changes, k)
+	}
+	var entryType string
+	if row.Type != nil {
+		entryType = *row.Type
+	}
+	s.publish(events.Event{
+		Type:      events.EntryUpdated,
+		Source:    "service",
+		ProjectID: project,
+		Payload: map[string]any{
+			"id":       row.ShortID,
+			"path":     row.Path,
+			"type":     entryType,
+			"project":  project,
+			"changes":  changes,
+			"metadata": true,
+		},
+	})
+
 	entry := NoteRowToBrainEntry(updated)
 	return &entry, nil
 }
@@ -1200,6 +1401,15 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 		return api.ErrNotFound
 	}
 
+	// Capture metadata for event before deletion
+	delPath := row.Path
+	delID := row.ShortID
+	var delType string
+	if row.Type != nil {
+		delType = *row.Type
+	}
+	delProject := extractProjectFromPath(delPath)
+
 	// Delete file from disk
 	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
@@ -1210,6 +1420,19 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	if err := s.indexer.RemoveFile(row.Path); err != nil {
 		return fmt.Errorf("remove from index %q: %w", row.Path, err)
 	}
+
+	// Publish entry.deleted event
+	s.publish(events.Event{
+		Type:      events.EntryDeleted,
+		Source:    "service",
+		ProjectID: delProject,
+		Payload: map[string]any{
+			"id":      delID,
+			"path":    delPath,
+			"type":    delType,
+			"project": delProject,
+		},
+	})
 
 	return nil
 }
@@ -1504,7 +1727,7 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		slog.Error("move: failed to index new file (will self-heal on re-index)", "path", newPath, "error", err)
 	}
 
-	return &types.MoveResult{
+	result := &types.MoveResult{
 		Success: true,
 		From:    oldPath,
 		To:      newPath,
@@ -1513,7 +1736,38 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		Project: targetProject,
 		ID:      entry.ID,
 		Title:   entry.Title,
-	}, nil
+	}
+
+	// Publish entry.deleted for the source project and entry.created for the target
+	srcProject := extractProjectFromPath(oldPath)
+	if srcProject != "" {
+		s.publish(events.Event{
+			Type:      events.EntryDeleted,
+			Source:    "service",
+			ProjectID: srcProject,
+			Payload: map[string]any{
+				"id":      entry.ID,
+				"path":    oldPath,
+				"type":    entry.Type,
+				"project": srcProject,
+				"reason":  "moved",
+			},
+		})
+	}
+	s.publish(events.Event{
+		Type:      events.EntryCreated,
+		Source:    "service",
+		ProjectID: targetProject,
+		Payload: map[string]any{
+			"id":      entry.ID,
+			"path":    newPath,
+			"type":    entry.Type,
+			"project": targetProject,
+			"reason":  "moved",
+		},
+	})
+
+	return result, nil
 }
 
 // computeMovedPath replaces the project segment in a path.
@@ -1918,10 +2172,15 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		return nil
 	}
 	return &frontmatter.TriggerConfig{
-		Event:         t.Event,
-		Filter:        t.Filter,
-		Cooldown:      t.Cooldown,
-		MaxConcurrent: t.MaxConcurrent,
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
 	}
 }
 
@@ -1931,9 +2190,14 @@ func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
 		return nil
 	}
 	return &types.TriggerConfig{
-		Event:         t.Event,
-		Filter:        t.Filter,
-		Cooldown:      t.Cooldown,
-		MaxConcurrent: t.MaxConcurrent,
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
 	}
 }

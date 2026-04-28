@@ -231,6 +231,8 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		GeneratedKey:        task.GeneratedKey,
 		GeneratedBy:         task.GeneratedBy,
 		Trigger:             task.Trigger,
+		Action:              task.Action,
+		Retry:               task.Retry,
 	}
 }
 

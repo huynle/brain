@@ -78,6 +78,11 @@ type RunnerListMsg struct {
 	Err     error
 }
 
+// RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
+type RunnersUpdatedMsg struct {
+	Runners []types.RunnerInfo
+}
+
 // RunnerLogMsg is sent when a runner_log SSE event is received from a remote runner.
 // This enables monitor-only mode to display logs from runners executing elsewhere.
 type RunnerLogMsg struct {

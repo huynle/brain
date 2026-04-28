@@ -26,6 +26,7 @@ var EntryTypes = []string{
 	"execution",
 	"task",
 	"dream",
+	"automation",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -115,7 +116,7 @@ var MergePolicies = []string{"prompt_only", "auto_pr", "auto_merge"}
 var MergeStrategies = []string{"squash", "merge", "rebase"}
 var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
-var Executors = []string{"opencode", "pi"}
+var Executors = []string{"opencode", "pi", "script"}
 
 // =============================================================================
 // Domain Structs
@@ -191,7 +192,9 @@ type BrainEntry struct {
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
 	// Event trigger configuration
-	Trigger *TriggerConfig `json:"trigger,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
@@ -299,7 +302,9 @@ type CreateEntryRequest struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
-	Trigger *TriggerConfig `json:"trigger,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
@@ -372,7 +377,9 @@ type UpdateEntryRequest struct {
 	GeneratedKey  *string `json:"generated_key,omitempty"`
 	GeneratedBy   *string `json:"generated_by,omitempty"`
 
-	Trigger *TriggerConfig `json:"trigger,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 }
 
 // =============================================================================
@@ -616,13 +623,22 @@ type ResolvedTask struct {
 	// Session tracking
 	Sessions map[string]SessionInfo `json:"sessions,omitempty"`
 
+	// Tags from the brain entry (used for capability-based routing)
+	Tags []string `json:"tags,omitempty"`
+
+	// RequiresCapability specifies capabilities a runner must have to claim this task.
+	// Tasks without this field are claimable by any runner (backward compatible).
+	RequiresCapability []string `json:"requires_capability,omitempty"`
+
 	Generated     *bool  `json:"generated,omitempty"`
 	GeneratedKind string `json:"generated_kind,omitempty"`
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
 	// Event trigger configuration
-	Trigger *TriggerConfig `json:"trigger,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	// Dependency resolution fields
 	ResolvedDeps    []string `json:"resolved_deps"`
@@ -804,11 +820,15 @@ type RunnerInfo struct {
 	Hostname      string            `json:"hostname"`
 	Labels        map[string]string `json:"labels,omitempty"`
 	Executors     []string          `json:"executors,omitempty"`
+	Projects      []string          `json:"projects,omitempty"`
+	Capabilities  []string          `json:"capabilities,omitempty"`
 	MaxParallel   int               `json:"max_parallel"`
+	ActiveTasks   int               `json:"active_tasks,omitempty"`
 	FeatureIDs    string            `json:"feature_ids,omitempty"`
 	RegisteredAt  string            `json:"registered_at"`
 	LastHeartbeat string            `json:"last_heartbeat"`
 	Status        RunnerStatus      `json:"status"`
+	Version       string            `json:"version,omitempty"`
 }
 
 // RunnerListResponse is the response for GET /runners.
@@ -877,6 +897,7 @@ const (
 	SSEEventRunnerOffline    SSEEventType = "runner_offline"
 	SSEEventTaskClaimed      SSEEventType = "task_claimed"
 	SSEEventTaskReleased     SSEEventType = "task_released"
+	SSEEventRunnersUpdate    SSEEventType = "runners_update"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -910,6 +931,35 @@ type SSEProjectDirtyData struct {
 type SSEErrorData struct {
 	SSEEventData
 	Message string `json:"message"`
+}
+
+// SSERunnersUpdateData is the data for a "runners_update" SSE event.
+// Sent when runner state changes (register, heartbeat, lost).
+type SSERunnersUpdateData struct {
+	SSEEventData
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
+}
+
+// =============================================================================
+// Runner Registration Types
+// =============================================================================
+
+// RegisterRunnerRequest is the request body for POST /runners/register.
+type RegisterRunnerRequest struct {
+	RunnerID     string   `json:"runner_id"`
+	Hostname     string   `json:"hostname"`
+	Projects     []string `json:"projects,omitempty"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	MaxParallel  int      `json:"max_parallel,omitempty"`
+	Version      string   `json:"version,omitempty"`
+}
+
+// HeartbeatRequest is the request body for POST /runners/heartbeat.
+type HeartbeatRequest struct {
+	RunnerID    string `json:"runner_id"`
+	ActiveTasks int    `json:"active_tasks,omitempty"`
+	Version     string `json:"version,omitempty"`
 }
 
 // =============================================================================

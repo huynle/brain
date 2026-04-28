@@ -181,6 +181,7 @@ type TaskRunner struct {
 	lastCronCheckAt time.Time
 	maxParallel     int    // runtime-adjustable max parallel (0 = use config.MaxParallel)
 	defaultModel    string // runtime-adjustable default model (empty = no override)
+	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu)
 	pauseMu         sync.RWMutex
@@ -365,12 +366,26 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// Register with the Brain API (non-fatal on failure for backward compat)
 	tr.registerWithAPI(ctx)
 
-	// Emit runner started event
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
 		Projects: tr.projects,
 		Mode:     string(tr.mode),
 	})
+
+	// Emit runner.started to the domain event bus when the API supports it.
+	if emitter, ok := tr.client.(interface {
+		EmitEvent(context.Context, string, map[string]any, string) error
+	}); ok {
+		go func() {
+			emitCtx, emitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer emitCancel()
+			_ = emitter.EmitEvent(emitCtx, "runner.started", map[string]any{
+				"runner_id": tr.runnerID,
+				"projects":  tr.projects,
+				"mode":      string(tr.mode),
+			}, "runner-started-"+tr.runnerID)
+		}()
+	}
 
 	pollInterval := time.Duration(tr.config.PollInterval) * time.Second
 	if pollInterval < time.Second {
@@ -635,6 +650,16 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			if err != nil || task == nil {
 				continue
 			}
+			// Filter by capability match before claiming
+			if !tr.matchesCapabilities(task) {
+				slog.Debug("skipping task (paused/enabled): runner lacks required capabilities",
+					"task_id", task.ID,
+					"project", projectID,
+					"requires", task.RequiresCapability,
+					"runner_capabilities", tr.config.Capabilities,
+				)
+				continue
+			}
 			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
 				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
 				continue
@@ -646,6 +671,17 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		// Get next task for this project (filtered by feature IDs and executors)
 		task, err := tr.client.GetNextTask(ctx, projectID, tr.buildFetchOptions())
 		if err != nil || task == nil {
+			continue
+		}
+
+		// Filter by capability match before claiming
+		if !tr.matchesCapabilities(task) {
+			slog.Debug("skipping task: runner lacks required capabilities",
+				"task_id", task.ID,
+				"project", projectID,
+				"requires", task.RequiresCapability,
+				"runner_capabilities", tr.config.Capabilities,
+			)
 			continue
 		}
 
@@ -783,6 +819,31 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		FeatureID: task.FeatureID,
 	})
 
+	// Check if this is the first claim today → emit runner.first_task_today
+	today := time.Now().UTC().Format("2006-01-02")
+	tr.mu.Lock()
+	isFirstToday := tr.lastClaimDate != today
+	if isFirstToday {
+		tr.lastClaimDate = today
+	}
+	tr.mu.Unlock()
+	if isFirstToday {
+		if emitter, ok := tr.client.(interface {
+			EmitEvent(context.Context, string, map[string]any, string) error
+		}); ok {
+			go func() {
+				emitCtx, emitCancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer emitCancel()
+				_ = emitter.EmitEvent(emitCtx, "runner.first_task_today", map[string]any{
+					"runner_id":  tr.runnerID,
+					"project_id": projectID,
+					"task_id":    task.ID,
+					"date":       today,
+				}, "first-task-"+today+"-"+tr.runnerID)
+			}()
+		}
+	}
+
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
 		// Release the claim on failure
@@ -914,6 +975,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
 		ExecutorType:   executorType,
+		Executor:       executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
@@ -949,9 +1011,8 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
 	}
 
-	// Discover opencode session ID and port in background.
-	// Pi tasks don't expose an HTTP server, so skip discovery for them.
-	if executorType != "pi" {
+	// Discover opencode session ID and port in background (only for opencode executor)
+	if executorType == "opencode" {
 		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
 	}
 
@@ -1276,6 +1337,11 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		tr.logger.Printf("failed to update task status for %s: %v", taskID, err)
 	}
 
+	// For script executor tasks: save exit code and captured output to task metadata
+	if task.Executor == "script" && result != nil {
+		tr.finalizeScriptTask(ctx, task, result)
+	}
+
 	// Update run record if this was a scheduled task
 	if task.RunID != "" {
 		tr.finalizeRun(ctx, task, status)
@@ -1445,6 +1511,48 @@ func (tr *TaskRunner) finalizeRun(ctx context.Context, task RunningTask, status 
 		tr.logger.Printf("cron: finalized run %s for %s: status=%s", task.RunID, task.ID, runStatus)
 	}
 }
+
+// =============================================================================
+// Script Task Finalization
+// =============================================================================
+
+// finalizeScriptTask saves exit code and captured output to the task's metadata.
+// Output is read from the output log file and truncated to maxScriptOutputBytes (10KB).
+func (tr *TaskRunner) finalizeScriptTask(ctx context.Context, task RunningTask, result *TaskResult) {
+	// Read output log file
+	outputFile := fmt.Sprintf("%s/output_%s_%s.log", tr.config.StateDir, task.ProjectID, task.ID)
+	output := ""
+	if data, err := os.ReadFile(outputFile); err == nil {
+		output = string(data)
+		// Truncate to maxScriptOutputBytes, keeping the tail (most recent output)
+		if len(output) > maxScriptOutputBytes {
+			output = "...(truncated)...\n" + output[len(output)-maxScriptOutputBytes:]
+		}
+	}
+
+	// Determine exit code
+	exitCode := -1
+	if result.ExitCode != nil {
+		exitCode = *result.ExitCode
+	}
+
+	// Save exit_code and output to task metadata
+	metaCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+
+	fields := map[string]interface{}{
+		"exit_code":     exitCode,
+		"script_output": output,
+	}
+	if err := tr.client.UpdateMetadata(metaCtx, task.Path, fields); err != nil {
+		tr.logger.Printf("script: failed to save output metadata for %s: %v", task.ID, err)
+	} else {
+		tr.logger.Printf("script: saved output (%d bytes, exit=%d) for %s", len(output), exitCode, task.ID)
+	}
+}
+
+// maxScriptOutputBytes is the maximum size of captured script output (10KB).
+const maxScriptOutputBytes = 10 * 1024
 
 // =============================================================================
 // Tmux Cleanup
@@ -1780,6 +1888,36 @@ func (tr *TaskRunner) stopLogStreamer(taskID string) {
 	if ok && ls != nil {
 		ls.Stop()
 	}
+}
+
+// =============================================================================
+// Capability Filtering
+// =============================================================================
+
+// matchesCapabilities checks whether this runner has all capabilities required
+// by the given task. Tasks without RequiresCapability are claimable by any runner
+// (backward compatible). Returns true if the runner can handle the task.
+func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
+	if len(task.RequiresCapability) == 0 {
+		return true // untagged tasks are claimable by any runner
+	}
+	if len(tr.config.Capabilities) == 0 {
+		return false // runner has no capabilities but task requires some
+	}
+
+	// Build a set of runner capabilities for O(1) lookup
+	capSet := make(map[string]bool, len(tr.config.Capabilities))
+	for _, cap := range tr.config.Capabilities {
+		capSet[cap] = true
+	}
+
+	// All required capabilities must be present
+	for _, req := range task.RequiresCapability {
+		if !capSet[req] {
+			return false
+		}
+	}
+	return true
 }
 
 // =============================================================================

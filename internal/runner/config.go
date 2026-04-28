@@ -148,6 +148,13 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
 			Model: getEnvOrDefault("OPENCODE_MODEL", fileCfg.Opencode.Model),
 		},
+		Script: ScriptConfig{
+			Enabled:         getEnvBoolOrDefault("RUNNER_SCRIPT_ENABLED", fileCfg.Script.Enabled),
+			AllowedCommands: fileCfg.Script.AllowedCommands,
+			BlockedCommands: fileCfg.Script.BlockedCommands,
+			MaxTimeout:      getEnvIntOrDefault("RUNNER_SCRIPT_MAX_TIMEOUT", firstNonZero(fileCfg.Script.MaxTimeout, 300)),
+			WorkdirRestrict: fileCfg.Script.WorkdirRestrict,
+		},
 		Pi: PiConfig{
 			Bin:           getEnvOrDefault("PI_BIN", firstNonEmpty(fileCfg.Pi.Bin, "pi")),
 			Model:         getEnvOrDefault("PI_MODEL", fileCfg.Pi.Model),
@@ -174,6 +181,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		HookTimeout:       resolvedHookTimeout,
 		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
 		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
+		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {

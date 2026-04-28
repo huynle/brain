@@ -689,6 +689,28 @@ func (c *APIClient) PostEvents(ctx context.Context, events []types.Event) error 
 	return nil
 }
 
+// EmitEvent publishes an event into the event bus via POST /api/v1/events/emit.
+func (c *APIClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
+	body := map[string]any{"type": eventType}
+	if payload != nil {
+		body["payload"] = payload
+	}
+	if dedupKey != "" {
+		body["dedup_key"] = dedupKey
+	}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/events/emit", body)
+	if err != nil {
+		return fmt.Errorf("emit event: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // =============================================================================
 // Runner Registration & Heartbeat
 // =============================================================================

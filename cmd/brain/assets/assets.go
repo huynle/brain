@@ -13,6 +13,7 @@ import (
 )
 
 //go:embed templates/*.md
+//go:embed automations/*.md
 //go:embed config.toml
 //go:embed plugins/**/*
 var embeddedFS embed.FS
@@ -55,6 +56,32 @@ func ListTemplates() []string {
 // GetTemplatesFS returns the embedded filesystem for direct access
 func GetTemplatesFS() fs.FS {
 	return embeddedFS
+}
+
+// GetAutomation returns the content of an automation template by name.
+func GetAutomation(name string) ([]byte, error) {
+	path := filepath.Join("automations", name)
+	content, err := embeddedFS.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("automation template %q not found: %w", name, err)
+	}
+	return content, nil
+}
+
+// ListAutomations returns all available automation template names.
+func ListAutomations() []string {
+	entries, err := fs.ReadDir(embeddedFS, "automations")
+	if err != nil {
+		return nil
+	}
+
+	automations := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".md") {
+			automations = append(automations, entry.Name())
+		}
+	}
+	return automations
 }
 
 // GetPluginFile returns the content of a plugin file by target and path

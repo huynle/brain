@@ -269,6 +269,20 @@ function resolveProjectName(homeRelativePath: string): string {
   return segments[segments.length - 1] || homeRelativePath;
 }
 
+/**
+ * Checks if an automation event pattern matches a given event name.
+ * Supports exact match and wildcard prefix (e.g., "task.*" matches "task.completed").
+ */
+function matchesEvent(pattern: string, eventName: string): boolean {
+  if (pattern === eventName) return true;
+  if (pattern.endsWith(".*")) {
+    const prefix = pattern.slice(0, -2);
+    return eventName.startsWith(prefix + ".");
+  }
+  if (pattern === "*") return true;
+  return false;
+}
+
 function getExecutionContext(directory: string): ExecutionContext {
   const home = homedir();
 
@@ -3082,7 +3096,7 @@ Example - wait for completion:
       // ========================================
       brain_monitor_enable: tool({
         description:
-          "Enable a monitor template for a feature. Creates an automated task (scheduled or dependency-gated depending on the template). Available templates can be discovered via GET /monitors/templates.",
+          "(Deprecated - use automations) Enable a monitor template for a feature. Creates an automated task. Prefer brain_automation_list and creating automation entries directly.",
         args: {
           template_id: tool.schema
             .string()
@@ -3135,7 +3149,7 @@ Example - wait for completion:
       // ========================================
       brain_monitor_disable: tool({
         description:
-          "Disable a monitor template for a feature. Permanently removes the monitor task. Can be re-enabled with brain_monitor_enable.",
+          "(Deprecated - use automations) Disable a monitor template for a feature. Permanently removes the monitor task. Prefer managing automation entries directly.",
         args: {
           template_id: tool.schema
             .string()
@@ -3181,7 +3195,7 @@ Example - wait for completion:
       // ========================================
       brain_feature_review_enable: tool({
         description:
-          "Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks in the feature are completed. The review validates that the implementation matches the original requirements.",
+          "(Deprecated - use automations) Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks complete. Prefer creating an automation entry with trigger type 'event' and event 'feature.all_completed'.",
         args: {
           project: tool.schema
             .string()
@@ -3225,7 +3239,7 @@ Example - wait for completion:
       // ========================================
       brain_feature_review_disable: tool({
         description:
-          "Disable Feature Code Review for a feature. Permanently removes the review task. Can be re-enabled later with brain_feature_review_enable.",
+          "(Deprecated - use automations) Disable Feature Code Review for a feature. Permanently removes the review task. Prefer managing automation entries directly.",
         args: {
           project: tool.schema
             .string()
@@ -3264,7 +3278,7 @@ Example - wait for completion:
       // ========================================
       brain_blocked_inspector_enable: tool({
         description:
-          "Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task that periodically checks for blocked tasks and attempts to unblock them by analyzing dependencies, suggesting fixes, or escalating.",
+          "(Deprecated - use automations) Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task. Prefer creating an automation entry with trigger type 'cron'.",
         args: {
           project: tool.schema
             .string()
@@ -3315,7 +3329,7 @@ Example - wait for completion:
       // ========================================
       brain_blocked_inspector_disable: tool({
         description:
-          "Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Can be re-enabled later with brain_blocked_inspector_enable.",
+          "(Deprecated - use automations) Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Prefer managing automation entries directly.",
         args: {
           project: tool.schema
             .string()
@@ -3346,6 +3360,131 @@ Example - wait for completion:
             }
             return `Failed to disable Blocked Task Inspector: ${msg}`;
           }
+        },
+      }),
+
+      // ========================================
+      // brain_automation_list
+      // ========================================
+      brain_automation_list: tool({
+        description:
+          "List active automations with their trigger type, status, and last-fired info. Automations are event-driven behaviors stored as brain entries that replace hardcoded monitors.",
+        args: {
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Filter by project (optional, lists all if omitted)"),
+          status: tool.schema
+            .enum(["active", "archived", "draft"])
+            .optional()
+            .describe("Filter by status (default: all)"),
+        },
+        async execute(args) {
+          const params: Record<string, string> = { type: "automation" };
+          if (args.project) params.project = args.project;
+          if (args.status) params.status = args.status;
+
+          const query = new URLSearchParams(params).toString();
+          const response = await apiRequest<{
+            entries: Array<{
+              id: string;
+              title: string;
+              type: string;
+              status: string;
+              project_id: string;
+              trigger?: { type: string; event?: string; schedule?: string; webhook?: string };
+              action?: { type: string; direct_prompt?: string; command?: string };
+            }>;
+            total: number;
+          }>("GET", `/entries?${query}`);
+
+          if (response.entries.length === 0) {
+            return "No automations found.\n\nCreate one with `brain automation create` or save a brain entry with type: automation.";
+          }
+
+          const lines = [`## Automations (${response.total})`, ""];
+          for (const entry of response.entries) {
+            const triggerType = entry.trigger?.type ?? "";
+            let triggerDetail = "";
+            if (entry.trigger?.type === "event") triggerDetail = entry.trigger.event ?? "";
+            else if (entry.trigger?.type === "cron") triggerDetail = entry.trigger.schedule ?? "";
+            else if (entry.trigger?.type === "webhook") triggerDetail = entry.trigger.webhook ?? "";
+
+            const actionType = entry.action?.type ?? "";
+            const project = entry.project_id || "(global)";
+            const icon = entry.status === "active" ? "●" : "○";
+
+            lines.push(`${icon} **${entry.title}** (\`${entry.id}\`)`);
+            lines.push(`  Trigger: ${triggerType} ${triggerDetail} | Action: ${actionType} | Project: ${project} | Status: ${entry.status}`);
+            lines.push("");
+          }
+
+          return lines.join("\n");
+        },
+      }),
+
+      // ========================================
+      // brain_automation_test
+      // ========================================
+      brain_automation_test: tool({
+        description:
+          "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
+        args: {
+          event: tool.schema
+            .string()
+            .describe("Event name to simulate (e.g., 'task.completed', 'feature.all_completed')"),
+          project: tool.schema
+            .string()
+            .optional()
+            .describe("Filter automations by project (optional)"),
+        },
+        async execute(args) {
+          const params: Record<string, string> = { type: "automation", status: "active" };
+          if (args.project) params.project = args.project;
+
+          const query = new URLSearchParams(params).toString();
+          const response = await apiRequest<{
+            entries: Array<{
+              id: string;
+              title: string;
+              trigger?: { type: string; event?: string };
+              action?: { type: string; direct_prompt?: string; command?: string };
+            }>;
+            total: number;
+          }>("GET", `/entries?${query}`);
+
+          const lines = [`## Simulating event: "${args.event}" (dry-run)`, ""];
+          let matched = 0;
+
+          for (const entry of response.entries) {
+            if (!entry.trigger || entry.trigger.type !== "event") continue;
+            const pattern = entry.trigger.event ?? "";
+            if (!matchesEvent(pattern, args.event)) continue;
+
+            matched++;
+            lines.push(`**MATCH:** ${entry.title} (\`${entry.id}\`)`);
+            lines.push(`  Trigger: event=${pattern}`);
+            if (entry.action) {
+              lines.push(`  Action: ${entry.action.type}`);
+              if (entry.action.direct_prompt) {
+                const prompt = entry.action.direct_prompt.length > 80
+                  ? entry.action.direct_prompt.slice(0, 77) + "..."
+                  : entry.action.direct_prompt;
+                lines.push(`  Prompt: ${prompt}`);
+              }
+              if (entry.action.command) {
+                lines.push(`  Command: ${entry.action.command}`);
+              }
+            }
+            lines.push("");
+          }
+
+          if (matched === 0) {
+            lines.push(`No automations matched event "${args.event}" (dry-run, no tasks created)`);
+          } else {
+            lines.push(`---\n${matched} automation(s) would match (dry-run, no tasks created)`);
+          }
+          return lines.join("\n");
         },
       }),
     },

@@ -256,6 +256,82 @@ func (c *MonitorClient) DeleteMonitorTask(ctx context.Context, taskID string) er
 }
 
 // =============================================================================
+// Automation Entry Methods
+// =============================================================================
+
+// AutomationEntryInfo holds automation entry data fetched from the API.
+type AutomationEntryInfo struct {
+	ID        string                 `json:"id"`
+	Path      string                 `json:"path"`
+	Title     string                 `json:"title"`
+	Status    string                 `json:"status"`
+	ProjectID string                 `json:"project_id"`
+	Trigger   *AutomationTriggerInfo `json:"trigger,omitempty"`
+	Action    *AutomationActionInfo  `json:"action,omitempty"`
+}
+
+// AutomationTriggerInfo holds trigger data for an automation.
+type AutomationTriggerInfo struct {
+	Type     string `json:"type"`
+	Event    string `json:"event,omitempty"`
+	Schedule string `json:"schedule,omitempty"`
+	Webhook  string `json:"webhook,omitempty"`
+}
+
+// AutomationActionInfo holds action data for an automation.
+type AutomationActionInfo struct {
+	Type string `json:"type"`
+}
+
+// FetchAutomations fetches automation entries from the entries API.
+// If projectID is non-empty, filters to that project; otherwise returns all.
+func (c *MonitorClient) FetchAutomations(ctx context.Context, projectID string) ([]AutomationEntryInfo, error) {
+	path := "/api/v1/entries?type=automation"
+	if projectID != "" {
+		path += "&project=" + projectID
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data struct {
+		Entries []AutomationEntryInfo `json:"entries"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode automations response: %w", err)
+	}
+
+	return data.Entries, nil
+}
+
+// ToggleAutomation updates an automation entry's status (active/archived).
+func (c *MonitorClient) ToggleAutomation(ctx context.Context, automationID, newStatus string) error {
+	encodedID := encodeMonitorPathComponent(automationID)
+	body := map[string]interface{}{
+		"status": newStatus,
+	}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, "/api/v1/entries/"+encodedID, body)
+	if err != nil {
+		return fmt.Errorf("toggle automation: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return c.readError(resp)
+	}
+
+	return nil
+}
+
+// =============================================================================
 // Internal Helpers
 // =============================================================================
 

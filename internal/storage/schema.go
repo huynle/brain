@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 8
+const CurrentSchemaVersion = 9
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -85,6 +85,17 @@ CREATE TABLE IF NOT EXISTS api_tokens (
   created_at TEXT DEFAULT (datetime('now')),
   last_used TEXT,
   revoked_at TEXT
+);`
+
+const createEventLogTable = `
+CREATE TABLE IF NOT EXISTS event_log (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  event_type TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  dedup_key TEXT,
+  source TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  processed_at TEXT
 );`
 
 const createOAuthClientsTable = `
@@ -200,6 +211,8 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
+	"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at);",
+	"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL;",
 	// Task claims indexes
 	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
@@ -333,39 +346,55 @@ func migrateSchema(db *sql.DB) error {
 	}
 
 	if ver < 5 {
-		// v5: add task_claims table for persistent lease-based task claims (multi-runner support).
-		if _, err := db.Exec(createTaskClaimsTable); err != nil {
+		// v5: add event_log table for durable event delivery.
+		if _, err := db.Exec(createEventLogTable); err != nil {
 			if !isTableExistsError(err) {
-				return fmt.Errorf("migrate v5 (task_claims table): %w", err)
+				return fmt.Errorf("migrate v5 (event_log table): %w", err)
 			}
 		}
-		// Indexes for task_claims
+		eventIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL",
+		}
+		for _, stmt := range eventIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v5 (event_log indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 6 {
+		// v6: add task_claims table for persistent lease-based task claims (multi-runner support).
+		if _, err := db.Exec(createTaskClaimsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v6 (task_claims table): %w", err)
+			}
+		}
 		claimIndexes := []string{
 			"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id)",
 			"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at)",
 		}
 		for _, stmt := range claimIndexes {
 			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate v5 (task_claims indexes): %w", err)
+				return fmt.Errorf("migrate v6 (task_claims indexes): %w", err)
 			}
-		}
-	}
-
-	if ver < 6 {
-		// v6: add runners table for runner registration (horizontal scaling).
-		if _, err := db.Exec(createRunnersTable); err != nil {
-			if !isTableExistsError(err) {
-				return fmt.Errorf("migrate v6 (runners table): %w", err)
-			}
-		}
-		// Index for runners status
-		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
-			return fmt.Errorf("migrate v6 (runners index): %w", err)
 		}
 	}
 
 	if ver < 7 {
-		// v7: add scope column to api_tokens for scoped authorization.
+		// v7: add runners table for runner registration (horizontal scaling).
+		if _, err := db.Exec(createRunnersTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v7 (runners table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
+			return fmt.Errorf("migrate v7 (runners index): %w", err)
+		}
+	}
+
+	if ver < 8 {
+		// v8: add scope column to api_tokens for scoped authorization.
 		// Existing tokens default to 'admin:*' (full access) for backward compatibility.
 		// Only alter if api_tokens exists (it may not in partial schema scenarios).
 		var tblName string
@@ -374,14 +403,14 @@ func migrateSchema(db *sql.DB) error {
 			_, err := db.Exec("ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'admin:*'")
 			if err != nil {
 				if !isDuplicateColumnError(err) {
-					return fmt.Errorf("migrate v7 (add scope to api_tokens): %w", err)
+					return fmt.Errorf("migrate v8 (add scope to api_tokens): %w", err)
 				}
 			}
 		}
 	}
 
-	if ver < 8 {
-		// v8: add webhooks and webhook_deliveries tables for event hook system.
+	if ver < 9 {
+		// v9: add webhooks and webhook_deliveries tables for event hook system.
 		webhookTables := []string{
 			createWebhooksTable,
 			createWebhookDeliveriesTable,
@@ -389,11 +418,10 @@ func migrateSchema(db *sql.DB) error {
 		for _, ddl := range webhookTables {
 			if _, err := db.Exec(ddl); err != nil {
 				if !isTableExistsError(err) {
-					return fmt.Errorf("migrate v8 (webhook tables): %w", err)
+					return fmt.Errorf("migrate v9 (webhook tables): %w", err)
 				}
 			}
 		}
-		// Indexes for webhooks
 		webhookIndexes := []string{
 			"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled)",
 			"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id)",
@@ -401,7 +429,7 @@ func migrateSchema(db *sql.DB) error {
 		}
 		for _, stmt := range webhookIndexes {
 			if _, err := db.Exec(stmt); err != nil {
-				return fmt.Errorf("migrate v8 (webhook indexes): %w", err)
+				return fmt.Errorf("migrate v9 (webhook indexes): %w", err)
 			}
 		}
 	}
@@ -449,6 +477,7 @@ func InitSchema(db *sql.DB) error {
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
 		createAPITokensTable,
+		createEventLogTable,
 		createOAuthClientsTable,
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,

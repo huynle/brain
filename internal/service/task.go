@@ -1230,36 +1230,21 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 		entry.GeneratedBy = v
 	}
 
-	// Trigger config from metadata JSON
-	if triggerRaw, ok := meta["trigger"]; ok {
-		if triggerMap, ok := triggerRaw.(map[string]interface{}); ok {
-			tc := &types.TriggerConfig{}
-			if ev, ok := triggerMap["event"].(string); ok {
-				tc.Event = ev
+	// Automation fields (nested maps from metadata JSON)
+	if v, ok := meta["trigger"]; ok {
+		data, err := json.Marshal(v)
+		if err == nil {
+			var tc types.TriggerConfig
+			if err := json.Unmarshal(data, &tc); err == nil {
+				entry.Trigger = &tc
 			}
-			if cd, ok := triggerMap["cooldown"].(string); ok {
-				tc.Cooldown = cd
-			}
-			if mc, ok := triggerMap["max_concurrent"]; ok {
-				switch v := mc.(type) {
-				case float64:
-					tc.MaxConcurrent = int(v)
-				case int:
-					tc.MaxConcurrent = v
-				}
-			}
-			if filterRaw, ok := triggerMap["filter"]; ok {
-				if filterMap, ok := filterRaw.(map[string]interface{}); ok {
-					tc.Filter = make(map[string]string, len(filterMap))
-					for k, v := range filterMap {
-						if s, ok := v.(string); ok {
-							tc.Filter[k] = s
-						}
-					}
-				}
-			}
-			entry.Trigger = tc
 		}
+	}
+	if v, ok := meta["action"]; ok {
+		entry.Action = metaToAutomationAction(v)
+	}
+	if v, ok := meta["retry"]; ok {
+		entry.Retry = metaToAutomationRetry(v)
 	}
 
 	// Sessions: map[string]SessionInfo from metadata JSON

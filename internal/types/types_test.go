@@ -110,9 +110,9 @@ func TestIsValidTaskClassification(t *testing.T) {
 }
 
 func TestEntryTypeConstants(t *testing.T) {
-	// Verify the count matches TypeScript source (12 types)
-	if len(EntryTypes) != 13 {
-		t.Errorf("expected 13 entry types, got %d", len(EntryTypes))
+	// Verify the count matches TypeScript source (13 types + automation)
+	if len(EntryTypes) != 14 {
+		t.Errorf("expected 14 entry types, got %d", len(EntryTypes))
 	}
 }
 

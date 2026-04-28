@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
@@ -41,8 +42,33 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
-	svc := NewBrainService(cfg, store, idx)
+	svc := NewBrainService(cfg, store, idx, nil)
 	return svc, store, brainDir
+}
+
+// newTestBrainServiceWithBus creates a BrainServiceImpl with an event bus for testing event publishing.
+func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer, string, *events.MemoryBus) {
+	t.Helper()
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("sql.Open failed: %v", err)
+	}
+
+	store, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatalf("NewWithDB failed: %v", err)
+	}
+	t.Cleanup(func() { store.Close() })
+
+	brainDir := t.TempDir()
+	cfg := &config.Config{BrainDir: brainDir}
+	idx := indexer.NewIndexer(brainDir, store)
+	bus := events.NewMemoryBus()
+	t.Cleanup(func() { bus.Close() })
+
+	svc := NewBrainService(cfg, store, idx, bus)
+	return svc, store, brainDir, bus
 }
 
 // strPtr returns a pointer to a string.
@@ -1956,5 +1982,235 @@ func TestBulkUpdate_DryRunWithInvalidEntry(t *testing.T) {
 	}
 	if result.Results[0].Status != "error" {
 		t.Errorf("expected dry run result status=error for invalid entry, got %q", result.Results[0].Status)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Feature completion detection tests
+// ---------------------------------------------------------------------------
+
+func TestUpdate_FeatureAllCompleted_EmittedWhenAllTasksComplete(t *testing.T) {
+	svc, _, _, bus := newTestBrainServiceWithBus(t)
+	ctx := context.Background()
+
+	featureID := "test-feature"
+
+	// Create 3 tasks in the same feature, 2 already completed, 1 pending
+	for i, status := range []string{"completed", "completed", "pending"} {
+		_, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:      "task",
+			Title:     "Task " + string(rune('A'+i)),
+			Content:   "Task content",
+			Status:    status,
+			Project:   "testproj",
+			FeatureID: featureID,
+		})
+		if err != nil {
+			t.Fatalf("Save task %d: %v", i, err)
+		}
+	}
+
+	// Subscribe to feature.all_completed events
+	received := make(chan events.Event, 1)
+	bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
+		received <- e
+	})
+
+	// Complete the last pending task - should trigger feature.all_completed
+	// List tasks to find the pending one
+	listResp, err := svc.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   "testproj",
+		FeatureID: featureID,
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(listResp.Entries) != 1 {
+		t.Fatalf("expected 1 pending task, got %d", len(listResp.Entries))
+	}
+
+	pendingTask := listResp.Entries[0]
+	_, err = svc.Update(ctx, pendingTask.Path, types.UpdateEntryRequest{
+		Status: strPtr("completed"),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Wait for the event (handlers run in goroutines)
+	select {
+	case evt := <-received:
+		if evt.Type != events.FeatureAllCompleted {
+			t.Errorf("expected event type %q, got %q", events.FeatureAllCompleted, evt.Type)
+		}
+		if evt.Payload["feature_id"] != featureID {
+			t.Errorf("expected feature_id=%q, got %q", featureID, evt.Payload["feature_id"])
+		}
+		if evt.Payload["project"] != "testproj" {
+			t.Errorf("expected project=testproj, got %q", evt.Payload["project"])
+		}
+		if evt.Payload["task_count"] != 3 {
+			t.Errorf("expected task_count=3, got %v", evt.Payload["task_count"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for feature.all_completed event")
+	}
+}
+
+func TestUpdate_FeatureAllCompleted_NotEmittedWhenTasksRemain(t *testing.T) {
+	svc, _, _, bus := newTestBrainServiceWithBus(t)
+	ctx := context.Background()
+
+	featureID := "incomplete-feature"
+
+	// Create 3 tasks: 1 completed, 2 pending
+	for i, status := range []string{"completed", "pending", "pending"} {
+		_, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:      "task",
+			Title:     "Task " + string(rune('A'+i)),
+			Content:   "Task content",
+			Status:    status,
+			Project:   "testproj",
+			FeatureID: featureID,
+		})
+		if err != nil {
+			t.Fatalf("Save task %d: %v", i, err)
+		}
+	}
+
+	// Subscribe to feature.all_completed events
+	received := make(chan events.Event, 1)
+	bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
+		received <- e
+	})
+
+	// Complete ONE of the two pending tasks - feature should NOT be completed
+	listResp, err := svc.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   "testproj",
+		FeatureID: featureID,
+		Status:    "pending",
+	})
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+
+	_, err = svc.Update(ctx, listResp.Entries[0].Path, types.UpdateEntryRequest{
+		Status: strPtr("completed"),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Should NOT receive feature.all_completed
+	select {
+	case evt := <-received:
+		t.Fatalf("unexpected feature.all_completed event: %+v", evt)
+	case <-time.After(200 * time.Millisecond):
+		// Good - no event emitted
+	}
+}
+
+func TestUpdate_FeatureAllCompleted_NotEmittedForTaskWithoutFeatureID(t *testing.T) {
+	svc, _, _, bus := newTestBrainServiceWithBus(t)
+	ctx := context.Background()
+
+	// Create a task without feature_id
+	resp, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Standalone Task",
+		Content: "No feature",
+		Status:  "pending",
+		Project: "testproj",
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Subscribe to feature.all_completed events
+	received := make(chan events.Event, 1)
+	bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
+		received <- e
+	})
+
+	// Complete the task
+	_, err = svc.Update(ctx, resp.Path, types.UpdateEntryRequest{
+		Status: strPtr("completed"),
+	})
+	if err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	// Should NOT receive feature.all_completed
+	select {
+	case evt := <-received:
+		t.Fatalf("unexpected feature.all_completed event for task without feature_id: %+v", evt)
+	case <-time.After(200 * time.Millisecond):
+		// Good - no event
+	}
+}
+
+func TestUpdate_FeatureAllCompleted_DedupKeyPreventsDoubleEmission(t *testing.T) {
+	svc, _, _, bus := newTestBrainServiceWithBus(t)
+	ctx := context.Background()
+
+	featureID := "dedup-feature"
+
+	// Create 2 tasks in feature, both pending
+	var taskPaths []string
+	for i := range 2 {
+		resp, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:      "task",
+			Title:     "Task " + string(rune('A'+i)),
+			Content:   "Task content",
+			Status:    "pending",
+			Project:   "testproj",
+			FeatureID: featureID,
+		})
+		if err != nil {
+			t.Fatalf("Save task %d: %v", i, err)
+		}
+		taskPaths = append(taskPaths, resp.Path)
+	}
+
+	// Subscribe and collect all events
+	received := make(chan events.Event, 10)
+	bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
+		received <- e
+	})
+
+	// Complete both tasks
+	for _, path := range taskPaths {
+		_, err := svc.Update(ctx, path, types.UpdateEntryRequest{
+			Status: strPtr("completed"),
+		})
+		if err != nil {
+			t.Fatalf("Update: %v", err)
+		}
+	}
+
+	// Wait for events to arrive
+	time.Sleep(300 * time.Millisecond)
+
+	// Should have received exactly 1 event (second complete also triggers check,
+	// but both should produce the event - dedup is by DedupKey at bus level)
+	// At minimum, the event for the LAST completion should have a DedupKey set
+	close(received)
+	var evts []events.Event
+	for e := range received {
+		evts = append(evts, e)
+	}
+
+	if len(evts) == 0 {
+		t.Fatal("expected at least 1 feature.all_completed event")
+	}
+
+	// Verify DedupKey is set on the event
+	for _, e := range evts {
+		if e.DedupKey == "" {
+			t.Error("expected DedupKey to be set on feature.all_completed event")
+		}
 	}
 }

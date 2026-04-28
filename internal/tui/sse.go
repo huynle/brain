@@ -124,6 +124,13 @@ func (c *SSEClient) convertEvent(event sse.Event) tea.Msg {
 		}
 		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message), ProjectID: data.ProjectID}
 
+	case "runners_update":
+		var data types.SSERunnersUpdateData
+		if err := json.Unmarshal(event.Data, &data); err != nil {
+			return SSEErrorMsg{Err: fmt.Errorf("parse runners_update event: %w", err), ProjectID: c.projectID}
+		}
+		return RunnersUpdatedMsg{Runners: data.Runners}
+
 	case "disconnected":
 		return SSEDisconnectedMsg{ProjectID: c.projectID}
 
@@ -242,6 +249,13 @@ func parseSSEEvent(lines []string) (tea.Msg, error) {
 			return nil, fmt.Errorf("parse error event: %w", err)
 		}
 		return SSEErrorMsg{Err: fmt.Errorf("%s", data.Message), ProjectID: data.ProjectID}, nil
+
+	case "runners_update":
+		var data types.SSERunnersUpdateData
+		if err := json.Unmarshal([]byte(dataStr), &data); err != nil {
+			return nil, fmt.Errorf("parse runners_update event: %w", err)
+		}
+		return RunnersUpdatedMsg{Runners: data.Runners}, nil
 
 	default:
 		// Unknown event type - ignore

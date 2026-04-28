@@ -28,5 +28,6 @@ type Target interface {
 func GetAvailableTargets() []Target {
 	return []Target{
 		NewOpenCodeTarget(),
+		NewPiTarget(),
 	}
 }

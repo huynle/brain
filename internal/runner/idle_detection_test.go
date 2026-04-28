@@ -1117,6 +1117,242 @@ func TestClaimAndSpawn_SetsCompleteOnIdle_DefaultFalse(t *testing.T) {
 }
 
 // =============================================================================
+// Pi Executor Idle Detection Tests
+// =============================================================================
+
+func TestCheckIdleStatus_PiTask_RunningProcess_NoAction(t *testing.T) {
+	// A running Pi process is always "busy" — no idle detection needed
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.IdleDetectionThreshold = 100
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(200)
+	task := RunningTask{
+		ID:             "pi-task1",
+		Path:           "projects/proj-a/task/pi-task1.md",
+		Title:          "Pi Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            200,
+		StartedAt:      time.Now(),
+		ExecutorType:   "pi",
+		CompleteOnIdle: true,
+		OpencodePort:   0, // Pi tasks have no port
+	}
+	processMgr.Add("pi-task1", task, proc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	// Should not update status — Pi process still running
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should not update status for running Pi task, got: %+v", updates)
+	}
+
+	// IdleSince should NOT be set
+	info := processMgr.Get("pi-task1")
+	if info == nil {
+		t.Fatal("task should still be tracked")
+	}
+	if info.Task.IdleSince != "" {
+		t.Errorf("IdleSince should be empty for running Pi task, got %q", info.Task.IdleSince)
+	}
+}
+
+func TestCheckIdleStatus_PiTask_ExitedProcess_HandledByCheckRunningTasks(t *testing.T) {
+	// Exited Pi processes are filtered out by GetAllRunning().
+	// Process exit completion for Pi tasks is handled by checkRunningTasks
+	// → CheckCompletion, not by idle detection.
+	// This test verifies that exited Pi processes are NOT seen by checkIdleStatus.
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.IdleDetectionThreshold = 100
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(200)
+	proc.simulateExit(0) // Pi process has exited
+
+	task := RunningTask{
+		ID:             "pi-task1",
+		Path:           "projects/proj-a/task/pi-task1.md",
+		Title:          "Pi Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            200,
+		StartedAt:      time.Now(),
+		ExecutorType:   "pi",
+		CompleteOnIdle: true,
+		OpencodePort:   0,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("pi-task1", task, proc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	// Exited process is filtered by GetAllRunning — checkIdleStatus won't see it.
+	// No status updates should happen from idle detection.
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should not update status for exited Pi task via idle detection, got: %+v", updates)
+	}
+}
+
+func TestCheckIdleStatus_MixedWorkload_BothExecutorTypes(t *testing.T) {
+	// Test that OpenCode and Pi tasks can coexist and each uses the correct
+	// idle detection mechanism
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// OpenCode returns idle (empty map)
+		json.NewEncoder(w).Encode(map[string]interface{}{})
+	}))
+	defer server.Close()
+	port := serverPort(t, server)
+
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.IdleDetectionThreshold = 100
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// OpenCode task — has port, should use HTTP polling
+	ocProc := newMockProcess(100)
+	ocTask := RunningTask{
+		ID:             "oc-task1",
+		Path:           "projects/proj-a/task/oc-task1.md",
+		Title:          "OpenCode Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		ExecutorType:   "opencode",
+		CompleteOnIdle: true,
+		OpencodePort:   port,
+		IdleSince:      time.Now().Add(-1 * time.Second).Format(time.RFC3339),
+	}
+	processMgr.Add("oc-task1", ocTask, ocProc)
+
+	// Pi task — process still running, should NOT trigger idle
+	piProc := newMockProcess(200)
+	piTask := RunningTask{
+		ID:             "pi-task1",
+		Path:           "projects/proj-a/task/pi-task1.md",
+		Title:          "Pi Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            200,
+		StartedAt:      time.Now(),
+		ExecutorType:   "pi",
+		CompleteOnIdle: true,
+		OpencodePort:   0,
+	}
+	processMgr.Add("pi-task1", piTask, piProc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	// OpenCode task should be marked completed (idle threshold exceeded)
+	updates := client.getUpdateStatusCalls()
+	foundOCCompleted := false
+	for _, u := range updates {
+		if u.TaskPath == "projects/proj-a/task/oc-task1.md" && u.Status == "completed" {
+			foundOCCompleted = true
+		}
+	}
+	if !foundOCCompleted {
+		t.Errorf("expected OpenCode task to be marked completed, got updates: %+v", updates)
+	}
+
+	// Pi task should still be tracked (running, no idle action)
+	piInfo := processMgr.Get("pi-task1")
+	if piInfo == nil {
+		t.Error("Pi task should still be tracked when process is running")
+	}
+}
+
+func TestCheckIdleStatus_PiTask_NoExecutorType_FallsBackToOpencode(t *testing.T) {
+	// Tasks without ExecutorType set (legacy) should use OpenCode idle detection
+	// This verifies backward compatibility
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(100)
+	task := RunningTask{
+		ID:             "task1",
+		Path:           "projects/proj-a/task/task1.md",
+		Title:          "Legacy Task",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            100,
+		StartedAt:      time.Now(),
+		ExecutorType:   "", // Not set — legacy task
+		CompleteOnIdle: true,
+		OpencodePort:   0, // No port either
+	}
+	processMgr.Add("task1", task, proc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	// Should not crash and should use OpenCode path (which skips port=0 tasks)
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("should not update status for legacy task with no port, got: %+v", updates)
+	}
+}
+
+// =============================================================================
 // RuntimeDefaultModel in claimAndSpawn / resumeTask Tests
 // =============================================================================
 
@@ -1142,7 +1378,6 @@ func TestClaimAndSpawn_PassesRuntimeDefaultModel(t *testing.T) {
 		t.Fatalf("claimAndSpawn returned error: %v", err)
 	}
 
-	// Verify SpawnOptions.RuntimeDefaultModel was populated
 	spawns := executor.getSpawnCalls()
 	if len(spawns) != 1 {
 		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
@@ -1164,7 +1399,6 @@ func TestClaimAndSpawn_RuntimeDefaultModel_EmptyWhenNotSet(t *testing.T) {
 	stateMgr := newMockStateMgr()
 
 	tr := newTestRunner(client, executor, processMgr, stateMgr)
-	// Do NOT call SetDefaultModel — defaultModel should be ""
 
 	task := testTask("task1", "proj-a")
 
@@ -1245,12 +1479,6 @@ func TestResumeTask_SetsIsResumeFlag(t *testing.T) {
 }
 
 func TestClaimAndSpawn_ServerDefaultModel_NotOverriddenByRuntimeDefault(t *testing.T) {
-	// Scenario: Server pre-filled task.Model via task_defaults.
-	// TUI also has a runtime default model set.
-	// The executor should see task.Model taking precedence.
-	// This test verifies the SpawnOptions flow; the actual precedence
-	// is tested in executor_test.go. Here we verify that both values
-	// are passed through correctly for the executor to decide.
 	client := newMockClient()
 	client.claimResult = ClaimResult{Success: true}
 
@@ -1265,7 +1493,7 @@ func TestClaimAndSpawn_ServerDefaultModel_NotOverriddenByRuntimeDefault(t *testi
 	tr.SetDefaultModel("tui-runtime-model")
 
 	task := testTask("task1", "proj-a")
-	task.Model = "server-default-model" // Pre-filled by server
+	task.Model = "server-default-model"
 
 	ctx := context.Background()
 	err := tr.claimAndSpawn(ctx, task, "proj-a")
@@ -1273,13 +1501,97 @@ func TestClaimAndSpawn_ServerDefaultModel_NotOverriddenByRuntimeDefault(t *testi
 		t.Fatalf("claimAndSpawn returned error: %v", err)
 	}
 
-	// Verify RuntimeDefaultModel is passed (executor handles precedence)
 	spawns := executor.getSpawnCalls()
 	if len(spawns) != 1 {
 		t.Fatalf("expected 1 spawn call, got %d", len(spawns))
 	}
 	if spawns[0].Opts.RuntimeDefaultModel != "tui-runtime-model" {
 		t.Errorf("SpawnOptions.RuntimeDefaultModel = %q, want %q", spawns[0].Opts.RuntimeDefaultModel, "tui-runtime-model")
+	}
+}
+
+// =============================================================================
+// Executor Type Tracking Tests
+// =============================================================================
+
+func TestClaimAndSpawn_SetsExecutorType_Opencode(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := testTask("task1", "proj-a")
+	// No executor set — defaults to "opencode"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	info := processMgr.Get("task1")
+	if info == nil {
+		t.Fatal("task should be tracked")
+	}
+	if info.Task.ExecutorType != "opencode" {
+		t.Errorf("ExecutorType = %q, want %q", info.Task.ExecutorType, "opencode")
+	}
+}
+
+func TestClaimAndSpawn_SetsExecutorType_Pi(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	proc := newMockProcess(100)
+	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	// Use executor registry so ResolveExecutorForTask picks up the task's executor field
+	cfg := testRunnerConfig()
+	reg := &ExecutorRegistry{
+		executors: map[string]TaskExecutor{
+			"opencode": executor,
+			"pi":       executor,
+		},
+		config: cfg,
+	}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:         []string{"proj-a"},
+		Config:           cfg,
+		Mode:             ExecutionModeHeadless,
+		Client:           client,
+		Executor:         executor,
+		ProcessMgr:       processMgr,
+		StateMgr:         stateMgr,
+		ExecutorRegistry: reg,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "pi" // Explicitly set to Pi
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	info := processMgr.Get("task1")
+	if info == nil {
+		t.Fatal("task should be tracked")
+	}
+	if info.Task.ExecutorType != "pi" {
+		t.Errorf("ExecutorType = %q, want %q", info.Task.ExecutorType, "pi")
 	}
 }
 

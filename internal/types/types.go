@@ -168,10 +168,10 @@ type BrainEntry struct {
 	DirectPrompt        string   `json:"direct_prompt,omitempty"`
 	Agent               string   `json:"agent,omitempty"`
 	Model               string   `json:"model,omitempty"`
-	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 	Executor            string   `json:"executor,omitempty"`
 	Extensions          []string `json:"extensions,omitempty"`
+	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 
 	// Feature grouping
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -336,17 +336,17 @@ type UpdateEntryRequest struct {
 	RunOnceAt       *string `json:"run_once_at,omitempty"`
 	Timezone        *string `json:"timezone,omitempty"`
 
-	TargetWorkdir      *string  `json:"target_workdir,omitempty"`
-	GitBranch          *string  `json:"git_branch,omitempty"`
-	MergeTargetBranch  *string  `json:"merge_target_branch,omitempty"`
-	MergePolicy        *string  `json:"merge_policy,omitempty"`
-	MergeStrategy      *string  `json:"merge_strategy,omitempty"`
-	RemoteBranchPolicy *string  `json:"remote_branch_policy,omitempty"`
-	OpenPRBeforeMerge  *bool    `json:"open_pr_before_merge,omitempty"`
-	ExecutionMode      *string  `json:"execution_mode,omitempty"`
-	CompleteOnIdle     *bool    `json:"complete_on_idle,omitempty"`
-	Executor           *string  `json:"executor,omitempty"`
-	Extensions         []string `json:"extensions,omitempty"`
+	TargetWorkdir      *string   `json:"target_workdir,omitempty"`
+	GitBranch          *string   `json:"git_branch,omitempty"`
+	MergeTargetBranch  *string   `json:"merge_target_branch,omitempty"`
+	MergePolicy        *string   `json:"merge_policy,omitempty"`
+	MergeStrategy      *string   `json:"merge_strategy,omitempty"`
+	RemoteBranchPolicy *string   `json:"remote_branch_policy,omitempty"`
+	OpenPRBeforeMerge  *bool     `json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      *string   `json:"execution_mode,omitempty"`
+	CompleteOnIdle     *bool     `json:"complete_on_idle,omitempty"`
+	Executor           *string   `json:"executor,omitempty"`
+	Extensions         *[]string `json:"extensions,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -607,10 +607,10 @@ type ResolvedTask struct {
 	DirectPrompt        string            `json:"direct_prompt"`
 	Agent               string            `json:"agent"`
 	Model               string            `json:"model"`
-	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Executor            string            `json:"executor,omitempty"`
 	Extensions          []string          `json:"extensions,omitempty"`
+	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
 
 	// Session tracking

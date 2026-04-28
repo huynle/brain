@@ -39,6 +39,10 @@ type RunnerFlags struct {
 	Workdir      string
 	Agent        string
 	Model        string
+	Executor     string
+	PiBin        string
+	PiModel      string
+	PiThinking   string
 	Include      []string
 	Exclude      []string
 	FeatureIDs   []string
@@ -126,6 +130,10 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.StringVar(&flags.Agent, "agent", "", "OpenCode agent")
 	fs.StringVar(&flags.Model, "model", "", "Model to use")
 	fs.StringVar(&flags.Model, "m", "", "Model (short)")
+	fs.StringVar(&flags.Executor, "executor", "", "Default executor (opencode or pi)")
+	fs.StringVar(&flags.PiBin, "pi-bin", "", "Pi binary path")
+	fs.StringVar(&flags.PiModel, "pi-model", "", "Pi model")
+	fs.StringVar(&flags.PiThinking, "pi-thinking", "", "Pi thinking level (off, minimal, low, medium, high, xhigh)")
 	fs.BoolVar(&flags.Follow, "follow", false, "Follow logs")
 
 	// Multi-value flags
@@ -282,6 +290,18 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 		}
 		if len(flags.Include) > 0 {
 			cfg.Runner.IncludeProjects = append(cfg.Runner.IncludeProjects, flags.Include...)
+		}
+		if flags.Executor != "" {
+			cfg.Runner.DefaultExecutor = flags.Executor
+		}
+		if flags.PiBin != "" {
+			cfg.Runner.Pi.Bin = flags.PiBin
+		}
+		if flags.PiModel != "" {
+			cfg.Runner.Pi.Model = flags.PiModel
+		}
+		if flags.PiThinking != "" {
+			cfg.Runner.Pi.Thinking = flags.PiThinking
 		}
 		if len(flags.Exclude) > 0 {
 			cfg.Runner.ExcludeProjects = append(cfg.Runner.ExcludeProjects, flags.Exclude...)

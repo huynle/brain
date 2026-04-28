@@ -72,6 +72,8 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
+				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi"}, Description: "Executor backend for this task: 'opencode' (HTTP API-based) or 'pi' (RPC mode). Empty = use runner default."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false. Omit or set to 0 for unlimited runs."},
@@ -92,8 +94,6 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
-				"executor":              {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi'). Defaults to empty (opencode)."},
-				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor (e.g., browser, filesystem)"},
 				"relatedEntries":        {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -147,8 +147,12 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
-			body["executor"] = args["executor"]
-			body["extensions"] = args["extensions"]
+			if v, ok := args["executor"].(string); ok && v != "" {
+				body["executor"] = v
+			}
+			if v, ok := args["extensions"]; ok {
+				body["extensions"] = v
+			}
 		}
 
 		var resp struct {
@@ -471,8 +475,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
-				"executor":             {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi')"},
-				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor"},
+				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi"}, Description: "Executor backend for this task: 'opencode' or 'pi'. Empty = use runner default."},
+				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 			},
 			Required: []string{"path"},
 		},
@@ -516,6 +520,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"model":                args["model"],
 			"executor":             args["executor"],
 			"extensions":           args["extensions"],
+		}
+		if v, ok := args["executor"].(string); ok && v != "" {
+			body["executor"] = v
+		}
+		if v, ok := args["extensions"]; ok {
+			body["extensions"] = v
 		}
 
 		var resp struct {
@@ -633,6 +643,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 		if v := StringArg(args, "model", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Model: %s", v))
+		}
+		if v := StringArg(args, "executor", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Executor: %s", v))
+		}
+		if exts := StringSliceArg(args, "extensions"); exts != nil {
+			changes = append(changes, fmt.Sprintf("Extensions: %s", strings.Join(exts, ", ")))
 		}
 
 		changeLines := make([]string, len(changes))

@@ -51,14 +51,14 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		}
 	}
 
-	// Dispatch to the correct executor based on task.Executor field
-	executor := tr.getExecutor(task.Executor)
-	if executor == nil {
-		return fmt.Errorf("no executor registered for %q", task.Executor)
+	// Resolve executor for this task
+	taskExecutor, executorType, err := tr.resolveExecutor(task)
+	if err != nil {
+		return fmt.Errorf("resolve executor: %w", err)
 	}
 
 	// Resolve workdir (may create git worktree)
-	workdir, err := executor.ResolveWorkdir(task)
+	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -82,7 +82,7 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		spawnOpts.LogWriter = logStreamer
 	}
 
-	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
+	spawnResult, err := taskExecutor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		if logStreamer != nil {
 			logStreamer.Stop()
@@ -102,8 +102,10 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		WindowName:     spawnResult.WindowName,
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
+		ExecutorType:   executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
+		FeatureID:      task.FeatureID,
 	}
 
 	// Track in process manager
@@ -131,8 +133,11 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
 	}
 
-	// Discover opencode session ID in background and save to task entry
-	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	// Discover opencode session metadata in background. Pi tasks don't expose
+	// an HTTP session endpoint, so skip discovery for them.
+	if executorType != "pi" {
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	}
 
 	return nil
 }

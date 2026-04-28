@@ -145,7 +145,8 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 	d := s.config.TaskDefaults
 
 	// Quick check: if all defaults are zero, nothing to do.
-	if d.Agent == "" && d.Model == "" && d.ExecutionMode == "" &&
+	if d.Agent == "" && d.Model == "" && d.Executor == "" &&
+		len(d.Extensions) == 0 && d.ExecutionMode == "" &&
 		d.CompleteOnIdle == nil && d.MergePolicy == "" && d.MergeStrategy == "" &&
 		d.MergeTargetBranch == "" && d.RemoteBranchPolicy == "" &&
 		d.OpenPRBeforeMerge == nil && d.TargetWorkdir == "" {
@@ -161,6 +162,12 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 		}
 		if t.Model == "" && d.Model != "" {
 			t.Model = d.Model
+		}
+		if t.Executor == "" && d.Executor != "" {
+			t.Executor = d.Executor
+		}
+		if len(t.Extensions) == 0 && len(d.Extensions) > 0 {
+			t.Extensions = append([]string(nil), d.Extensions...)
 		}
 		if t.ExecutionMode == "" && d.ExecutionMode != "" {
 			t.ExecutionMode = d.ExecutionMode
@@ -1153,6 +1160,18 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaString(meta, "model"); ok {
 		entry.Model = v
+	}
+	if v, ok := metaString(meta, "executor"); ok {
+		entry.Executor = v
+	}
+	if v, ok := meta["extensions"]; ok {
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					entry.Extensions = append(entry.Extensions, s)
+				}
+			}
+		}
 	}
 	if v, ok := metaBool(meta, "complete_on_idle"); ok {
 		entry.CompleteOnIdle = &v

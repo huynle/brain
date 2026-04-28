@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-04-05T20:11:55.79105-06:00",
-  "updatedAt": "2026-04-05T20:11:55.893082-06:00",
+  "startedAt": "2026-04-28T06:46:18.728931-06:00",
+  "updatedAt": "2026-04-28T06:46:18.82997-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,
@@ -30,9 +30,29 @@
     },
     "pi": {
       "bin": "",
-      "model": ""
+      "model": "",
+      "thinking": "",
+      "agents_dir": "",
+      "extensions_dir": "",
+      "extensions": null,
+      "no_session": false
     },
     "executors": null,
+    "default_executor": "",
+    "task_defaults": {
+      "agent": "",
+      "model": "",
+      "executor": "",
+      "extensions": null,
+      "execution_mode": "",
+      "complete_on_idle": null,
+      "merge_policy": "",
+      "merge_strategy": "",
+      "merge_target_branch": "",
+      "remote_branch_policy": "",
+      "open_pr_before_merge": null,
+      "target_workdir": ""
+    },
     "exclude_projects": null,
     "include_projects": null,
     "auto_monitors": false,

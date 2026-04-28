@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -136,6 +135,11 @@ type TaskRunnerOptions struct {
 	// EventPoster enables event forwarding to the Brain API server.
 	// If nil (and Client is an *APIClient), the forwarder auto-wires.
 	EventPoster EventPoster
+
+	// ExecutorRegistry holds named executors for per-task dispatch.
+	// When set, the runner resolves executor per-task using the precedence chain.
+	// When nil, falls back to the single Executor field.
+	ExecutorRegistry *ExecutorRegistry
 }
 
 // RunnerStatusInfo is a snapshot of the runner's current state.
@@ -162,10 +166,12 @@ type TaskRunner struct {
 	mode     ExecutionMode
 	logger   *log.Logger
 
-	client     Client
-	executors  map[string]TaskExecutor
-	processMgr TaskProcessManager
-	stateMgr   TaskStateManager
+	client           Client
+	executor         TaskExecutor
+	executors        map[string]TaskExecutor
+	executorRegistry *ExecutorRegistry
+	processMgr       TaskProcessManager
+	stateMgr         TaskStateManager
 
 	// Mutable state (protected by mu)
 	mu              sync.RWMutex
@@ -234,36 +240,52 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		logger = log.Default()
 	}
 
-	// Build executor registry
-	executors := opts.Executors
-	if executors == nil {
-		executors = make(map[string]TaskExecutor)
+	// Build executor registry.
+	executorRegistry := opts.ExecutorRegistry
+	if executorRegistry == nil && (len(opts.Executors) > 0 || opts.Executor != nil) {
+		executorRegistry = &ExecutorRegistry{
+			executors: make(map[string]TaskExecutor),
+			config:    opts.Config,
+		}
+		for name, exec := range opts.Executors {
+			executorRegistry.executors[name] = exec
+		}
+		if opts.Executor != nil {
+			if _, exists := executorRegistry.executors[DefaultExecutorName]; !exists {
+				executorRegistry.executors[DefaultExecutorName] = opts.Executor
+			}
+		}
 	}
-	// Backward compat: if single Executor is set and not already in registry,
-	// register it as "opencode".
-	if opts.Executor != nil {
-		if _, exists := executors["opencode"]; !exists {
-			executors["opencode"] = opts.Executor
+
+	defaultExecutor := opts.Executor
+	if defaultExecutor == nil && executorRegistry != nil {
+		if exec, ok := executorRegistry.Get(DefaultExecutorName); ok {
+			defaultExecutor = exec
 		}
 	}
 
 	tr := &TaskRunner{
-		runnerID:        runnerID,
-		projects:        projects,
-		config:          opts.Config,
-		mode:            mode,
-		logger:          logger,
-		client:          opts.Client,
-		executors:       executors,
-		processMgr:      opts.ProcessMgr,
-		stateMgr:        opts.StateMgr,
-		status:          RunnerStatusIdle,
-		pauseCache:      make(map[string]bool),
-		enabledFeatures: make(map[string]bool),
-		logStreamers:    make(map[string]*LogStreamer),
-		wakeCh:          make(chan struct{}, 1),
-		commandCh:       make(chan RunnerCommand, 16),
-		done:            make(chan struct{}),
+		runnerID:         runnerID,
+		projects:         projects,
+		config:           opts.Config,
+		mode:             mode,
+		logger:           logger,
+		client:           opts.Client,
+		executor:         defaultExecutor,
+		executors:        nil,
+		executorRegistry: executorRegistry,
+		processMgr:       opts.ProcessMgr,
+		stateMgr:         opts.StateMgr,
+		status:           RunnerStatusIdle,
+		pauseCache:       make(map[string]bool),
+		enabledFeatures:  make(map[string]bool),
+		logStreamers:     make(map[string]*LogStreamer),
+		wakeCh:           make(chan struct{}, 1),
+		commandCh:        make(chan RunnerCommand, 16),
+		done:             make(chan struct{}),
+	}
+	if executorRegistry != nil {
+		tr.executors = executorRegistry.executors
 	}
 
 	if opts.StartPaused {
@@ -664,20 +686,71 @@ const DefaultExecutorName = "opencode"
 // getExecutor returns the executor for the given name, defaulting to "opencode"
 // for empty names. Returns nil if no matching executor is registered.
 func (tr *TaskRunner) getExecutor(name string) TaskExecutor {
-	if name == "" {
-		name = DefaultExecutorName
+	if tr.executorRegistry != nil {
+		if name == "" {
+			name = DefaultExecutorName
+		}
+		exec, _ := tr.executorRegistry.Get(name)
+		return exec
 	}
-	return tr.executors[name]
+	return tr.executor
 }
 
 // executorNames returns a sorted list of registered executor names.
 func (tr *TaskRunner) executorNames() []string {
-	names := make([]string, 0, len(tr.executors))
-	for name := range tr.executors {
-		names = append(names, name)
+	if tr.executorRegistry != nil {
+		return tr.executorRegistry.Names()
 	}
-	sort.Strings(names)
-	return names
+	if tr.executor != nil {
+		return []string{DefaultExecutorName}
+	}
+	return nil
+}
+
+// =============================================================================
+// Executor Resolution
+// =============================================================================
+
+// resolveExecutor returns the executor and resolved executor name for a task.
+// If an ExecutorRegistry is set, it resolves per-task using the precedence chain.
+// Otherwise, it falls back to the single injected executor.
+func (tr *TaskRunner) resolveExecutor(task *types.ResolvedTask) (TaskExecutor, string, error) {
+	if tr.executorRegistry != nil {
+		exec, name, err := tr.executorRegistry.ResolveForTask(task)
+		if err != nil {
+			return nil, "", fmt.Errorf("resolve executor: %w", err)
+		}
+		tr.logger.Printf("resolved executor %q for task %s", name, task.ID)
+		return exec, name, nil
+	}
+	if tr.executor == nil {
+		return nil, "", fmt.Errorf("no executor configured")
+	}
+	name := task.Executor
+	if name == "" {
+		name = DefaultExecutorName
+	}
+	return tr.executor, name, nil
+}
+
+func (tr *TaskRunner) cleanupTaskArtifacts(task RunningTask) {
+	if task.ExecutorType != "" && tr.executorRegistry != nil {
+		if exec, ok := tr.executorRegistry.Get(task.ExecutorType); ok && exec != nil {
+			_ = exec.Cleanup(task.ID, task.ProjectID)
+			return
+		}
+	}
+	if tr.executor != nil {
+		_ = tr.executor.Cleanup(task.ID, task.ProjectID)
+		return
+	}
+	if tr.executorRegistry != nil {
+		if exec, ok := tr.executorRegistry.Get(DefaultExecutorName); ok && exec != nil {
+			_ = exec.Cleanup(task.ID, task.ProjectID)
+			return
+		}
+	}
+	_ = CommonCleanup(tr.config.StateDir, task.ID, task.ProjectID)
 }
 
 // =============================================================================
@@ -761,23 +834,15 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		}
 	}
 
-	// Dispatch to the correct executor based on task.Executor field
-	executor := tr.getExecutor(task.Executor)
-	if executor == nil {
-		// No matching executor found — release claim and skip
-		tr.emitEvent(RunnerEvent{
-			Type:      EventTaskReleased,
-			TaskID:    task.ID,
-			ProjectID: projectID,
-			Reason:    fmt.Sprintf("no executor registered for %q", task.Executor),
-		})
+	// Resolve executor for this task
+	taskExecutor, executorType, err := tr.resolveExecutor(task)
+	if err != nil {
 		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
-		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
-		return fmt.Errorf("no executor registered for %q", task.Executor)
+		return fmt.Errorf("resolve executor: %w", err)
 	}
 
 	// Resolve workdir (may create git worktree)
-	workdir, err := executor.ResolveWorkdir(task)
+	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{
@@ -819,7 +884,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		spawnOpts.LogWriter = logStreamer
 	}
 
-	spawnResult, err := executor.Spawn(ctx, task, projectID, spawnOpts)
+	spawnResult, err := taskExecutor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
 		if logStreamer != nil {
 			logStreamer.Stop()
@@ -848,6 +913,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		WindowName:     spawnResult.WindowName,
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
+		ExecutorType:   executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
@@ -883,8 +949,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
 	}
 
-	// Discover opencode session ID and port in background
-	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	// Discover opencode session ID and port in background.
+	// Pi tasks don't expose an HTTP server, so skip discovery for them.
+	if executorType != "pi" {
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	}
 
 	return nil
 }
@@ -1231,10 +1300,7 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Clean up tmux window (graceful: Ctrl+C then kill)
 	tr.cleanupTaskTmux(task)
 
-	// Cleanup temp files (call all executors — cleanup is idempotent)
-	for _, exec := range tr.executors {
-		exec.Cleanup(taskID, task.ProjectID)
-	}
+	tr.cleanupTaskArtifacts(task)
 
 	// Emit event
 	completionEvt := RunnerEvent{

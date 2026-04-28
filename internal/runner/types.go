@@ -10,25 +10,27 @@ import "time"
 
 // RunnerConfig holds all configuration for the brain task runner.
 type RunnerConfig struct {
-	BrainAPIURL            string         `yaml:"brain_api_url" json:"brain_api_url"`
-	APIToken               string         `yaml:"api_token" json:"api_token"`
-	PollInterval           int            `yaml:"poll_interval" json:"poll_interval"`           // seconds
-	TaskPollInterval       int            `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
-	MaxParallel            int            `yaml:"max_parallel" json:"max_parallel"`
-	StateDir               string         `yaml:"state_dir" json:"state_dir"`
-	LogDir                 string         `yaml:"log_dir" json:"log_dir"`
-	WorkDir                string         `yaml:"work_dir" json:"work_dir"`
-	APITimeout             int            `yaml:"api_timeout" json:"api_timeout"`                           // ms
-	TaskTimeout            int            `yaml:"task_timeout" json:"task_timeout"`                         // ms
-	IdleDetectionThreshold int            `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
-	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
-	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
-	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
-	Pi                     PiConfig       `yaml:"pi" json:"pi"`
-	Executors              []string       `yaml:"executors" json:"executors"`
-	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
-	IncludeProjects        []string       `yaml:"include_projects" json:"include_projects"`
-	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
+	BrainAPIURL            string             `yaml:"brain_api_url" json:"brain_api_url"`
+	APIToken               string             `yaml:"api_token" json:"api_token"`
+	PollInterval           int                `yaml:"poll_interval" json:"poll_interval"`           // seconds
+	TaskPollInterval       int                `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
+	MaxParallel            int                `yaml:"max_parallel" json:"max_parallel"`
+	StateDir               string             `yaml:"state_dir" json:"state_dir"`
+	LogDir                 string             `yaml:"log_dir" json:"log_dir"`
+	WorkDir                string             `yaml:"work_dir" json:"work_dir"`
+	APITimeout             int                `yaml:"api_timeout" json:"api_timeout"`                           // ms
+	TaskTimeout            int                `yaml:"task_timeout" json:"task_timeout"`                         // ms
+	IdleDetectionThreshold int                `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
+	MaxTotalProcesses      int                `yaml:"max_total_processes" json:"max_total_processes"`
+	MemoryThresholdPercent int                `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
+	Opencode               OpencodeConfig     `yaml:"opencode" json:"opencode"`
+	Pi                     PiConfig           `yaml:"pi" json:"pi"`
+	Executors              []string           `yaml:"executors" json:"executors"`
+	DefaultExecutor        string             `yaml:"default_executor" json:"default_executor"`
+	TaskDefaults           TaskDefaultsConfig `yaml:"task_defaults" json:"task_defaults"`
+	ExcludeProjects        []string           `yaml:"exclude_projects" json:"exclude_projects"`
+	IncludeProjects        []string           `yaml:"include_projects" json:"include_projects"`
+	AutoMonitors           bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
 	// EnvPassthrough is a list of environment variable names to forward
 	// from the runner process to spawned OpenCode agents.
@@ -158,8 +160,30 @@ func (h InlineHookConfig) GetTimeout(defaultTimeout time.Duration) time.Duration
 
 // PiConfig holds configuration for the Pi executor.
 type PiConfig struct {
-	Bin   string `yaml:"bin" json:"bin"`
-	Model string `yaml:"model" json:"model"`
+	Bin           string   `yaml:"bin" json:"bin"`
+	Model         string   `yaml:"model" json:"model"`
+	Thinking      string   `yaml:"thinking" json:"thinking"`
+	AgentsDir     string   `yaml:"agents_dir" json:"agents_dir"`
+	ExtensionsDir string   `yaml:"extensions_dir" json:"extensions_dir"`
+	Extensions    []string `yaml:"extensions" json:"extensions"`
+	NoSession     bool     `yaml:"no_session" json:"no_session"`
+}
+
+// TaskDefaultsConfig holds default values applied to tasks when not overridden
+// by per-task metadata.
+type TaskDefaultsConfig struct {
+	Agent              string   `yaml:"agent" json:"agent"`
+	Model              string   `yaml:"model" json:"model"`
+	Executor           string   `yaml:"executor" json:"executor"`
+	Extensions         []string `yaml:"extensions" json:"extensions"`
+	ExecutionMode      string   `yaml:"execution_mode" json:"execution_mode"`
+	CompleteOnIdle     *bool    `yaml:"complete_on_idle" json:"complete_on_idle"`
+	MergePolicy        string   `yaml:"merge_policy" json:"merge_policy"`
+	MergeStrategy      string   `yaml:"merge_strategy" json:"merge_strategy"`
+	MergeTargetBranch  string   `yaml:"merge_target_branch" json:"merge_target_branch"`
+	RemoteBranchPolicy string   `yaml:"remote_branch_policy" json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge" json:"open_pr_before_merge"`
+	TargetWorkdir      string   `yaml:"target_workdir" json:"target_workdir"`
 }
 
 // =============================================================================
@@ -188,6 +212,7 @@ type RunningTask struct {
 	StartedAt       time.Time `json:"startedAt"`
 	IsResume        bool      `json:"isResume"`
 	Workdir         string    `json:"workdir"`
+	ExecutorType    string    `json:"executorType,omitempty"` // "opencode" or "pi"
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp

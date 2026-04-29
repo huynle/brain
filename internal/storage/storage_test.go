@@ -35,7 +35,7 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
 		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
-		"task_claims", "runners", "webhooks", "webhook_deliveries"}
+		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -683,9 +683,141 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IsNine(t *testing.T) {
-	if CurrentSchemaVersion != 9 {
-		t.Errorf("CurrentSchemaVersion = %d, want 9", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesFeatureAssignments(t *testing.T) {
+	if CurrentSchemaVersion != 10 {
+		t.Errorf("CurrentSchemaVersion = %d, want 10", CurrentSchemaVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// feature_assignments table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestFeatureAssignmentsTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_assignments'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_assignments table not found: %v", err)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert into feature_assignments failed: %v", err)
+	}
+
+	var projectID, featureID, runnerID, source, status string
+	var assignedAt, updatedAt int64
+	err = s.DB().QueryRow("SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at FROM feature_assignments").
+		Scan(&projectID, &featureID, &runnerID, &source, &status, &assignedAt, &updatedAt)
+	if err != nil {
+		t.Fatalf("select from feature_assignments failed: %v", err)
+	}
+	if projectID != "proj1" || featureID != "feat1" || runnerID != "runner1" {
+		t.Errorf("got (%q, %q, %q), want (proj1, feat1, runner1)", projectID, featureID, runnerID)
+	}
+	if source != "auto" || status != "active" {
+		t.Errorf("got (source=%q, status=%q), want (auto, active)", source, status)
+	}
+	if assignedAt != 1000 || updatedAt != 2000 {
+		t.Errorf("got (assigned_at=%d, updated_at=%d), want (1000, 2000)", assignedAt, updatedAt)
+	}
+}
+
+func TestFeatureAssignmentsTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	_, err := s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate (project_id, feature_id), got nil")
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj2', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
+	if err != nil {
+		t.Fatalf("insert with different project_id failed: %v", err)
+	}
+}
+
+func TestFeatureAssignmentsTable_Indexes(t *testing.T) {
+	s := newTestStorage(t)
+
+	indexes := []string{
+		"idx_feature_assignments_runner",
+		"idx_feature_assignments_project",
+		"idx_feature_assignments_status",
+	}
+	for _, idx := range indexes {
+		t.Run(idx, func(t *testing.T) {
+			var name string
+			err := s.DB().QueryRow(
+				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
+			).Scan(&name)
+			if err != nil {
+				t.Fatalf("index %q not found: %v", idx, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// feature_assignments table: migration from v9 to v10
+// ---------------------------------------------------------------------------
+
+func TestFeatureAssignmentsTable_MigrationFromV9(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (9)")
+	if err != nil {
+		t.Fatalf("insert v9: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE runners (
+		runner_id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		labels TEXT DEFAULT '{}',
+		executors TEXT DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1,
+		feature_ids TEXT DEFAULT '',
+		registered_at INTEGER NOT NULL,
+		last_heartbeat INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'online'
+	)`); err != nil {
+		t.Fatalf("create v9 runners table: %v", err)
+	}
+
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_assignments'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_assignments table not found after migration: %v", err)
+	}
+
+	_, err = db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
 	}
 }
 

@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 9
+const CurrentSchemaVersion = 10
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -157,6 +157,18 @@ CREATE TABLE IF NOT EXISTS task_claims (
   PRIMARY KEY (project_id, task_id)
 );`
 
+const createFeatureAssignmentsTable = `
+CREATE TABLE IF NOT EXISTS feature_assignments (
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, feature_id)
+);`
+
 const createRunnersTable = `
 CREATE TABLE IF NOT EXISTS runners (
   runner_id TEXT PRIMARY KEY,
@@ -216,6 +228,10 @@ var createIndexes = []string{
 	// Task claims indexes
 	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
+	// Feature assignment indexes
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status);",
 	// Runners indexes
 	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
 	// OAuth indexes
@@ -434,6 +450,25 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 10 {
+		// v10: add feature_assignments table for durable server-enforced feature affinity.
+		if _, err := db.Exec(createFeatureAssignmentsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v10 (feature_assignments table): %w", err)
+			}
+		}
+		featureAssignmentIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status)",
+		}
+		for _, stmt := range featureAssignmentIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v10 (feature_assignments indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -483,6 +518,7 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
 		createTaskClaimsTable,
+		createFeatureAssignmentsTable,
 		createRunnersTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,

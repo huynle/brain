@@ -19,6 +19,8 @@ func TestLoadConfig_Defaults(t *testing.T) {
 		"RUNNER_MEMORY_THRESHOLD", "RUNNER_IDLE_THRESHOLD",
 		"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR",
 		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
+		"RUNNER_REPO_CACHE_DIR", "RUNNER_GIT_TOKEN", "RUNNER_GIT_TOKEN_ENV",
+		"RUNNER_REQUIRE_HTTPS", "RUNNER_ALLOW_UNAUTHENTICATED_HTTPS",
 		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
 		"BRAIN_AUTO_MONITORS",
 	}
@@ -75,6 +77,22 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.WorkDir != homeDir {
 		t.Errorf("WorkDir = %q, want %q", cfg.WorkDir, homeDir)
 	}
+	wantRepoCacheDir := filepath.Join(homeDir, ".cache", "brain", "repos")
+	if cfg.RepoCacheDir != wantRepoCacheDir {
+		t.Errorf("RepoCacheDir = %q, want %q", cfg.RepoCacheDir, wantRepoCacheDir)
+	}
+	if cfg.GitToken != "" {
+		t.Errorf("GitToken = %q, want empty", cfg.GitToken)
+	}
+	if cfg.GitTokenEnv != "GITHUB_TOKEN" {
+		t.Errorf("GitTokenEnv = %q, want %q", cfg.GitTokenEnv, "GITHUB_TOKEN")
+	}
+	if !cfg.RequireHTTPS {
+		t.Error("RequireHTTPS should default to true")
+	}
+	if cfg.AllowUnauthenticatedHTTPS {
+		t.Error("AllowUnauthenticatedHTTPS should default to false")
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +110,11 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	t.Setenv("RUNNER_IDLE_THRESHOLD", "120000")
 	t.Setenv("RUNNER_API_TIMEOUT", "10000")
 	t.Setenv("RUNNER_TASK_TIMEOUT", "300000")
+	t.Setenv("RUNNER_REPO_CACHE_DIR", "/var/cache/brain/repos")
+	t.Setenv("RUNNER_GIT_TOKEN", "env-token")
+	t.Setenv("RUNNER_GIT_TOKEN_ENV", "BRAIN_GIT_TOKEN")
+	t.Setenv("RUNNER_REQUIRE_HTTPS", "false")
+	t.Setenv("RUNNER_ALLOW_UNAUTHENTICATED_HTTPS", "true")
 	t.Setenv("OPENCODE_BIN", "/usr/local/bin/opencode")
 	t.Setenv("OPENCODE_AGENT", "tdd-dev")
 	t.Setenv("OPENCODE_MODEL", "anthropic/claude-sonnet-4-20250514")
@@ -116,6 +139,21 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	}
 	if cfg.Opencode.Bin != "/usr/local/bin/opencode" {
 		t.Errorf("Opencode.Bin = %q, want %q", cfg.Opencode.Bin, "/usr/local/bin/opencode")
+	}
+	if cfg.RepoCacheDir != "/var/cache/brain/repos" {
+		t.Errorf("RepoCacheDir = %q, want %q", cfg.RepoCacheDir, "/var/cache/brain/repos")
+	}
+	if cfg.GitToken != "env-token" {
+		t.Errorf("GitToken = %q, want env override", cfg.GitToken)
+	}
+	if cfg.GitTokenEnv != "BRAIN_GIT_TOKEN" {
+		t.Errorf("GitTokenEnv = %q, want %q", cfg.GitTokenEnv, "BRAIN_GIT_TOKEN")
+	}
+	if cfg.RequireHTTPS {
+		t.Error("RequireHTTPS should be false from env override")
+	}
+	if !cfg.AllowUnauthenticatedHTTPS {
+		t.Error("AllowUnauthenticatedHTTPS should be true from env override")
 	}
 	if !cfg.AutoMonitors {
 		t.Error("AutoMonitors should be true when BRAIN_AUTO_MONITORS=true")
@@ -145,6 +183,11 @@ opencode:
   bin: "/opt/opencode"
   agent: "explorer"
   model: "gpt-4"
+repo_cache_dir: "/srv/brain/repos"
+git_token: "file-token"
+git_token_env: "CUSTOM_GIT_TOKEN"
+require_https: false
+allow_unauthenticated_https: true
 exclude_projects:
   - "test-*"
   - "legacy-*"
@@ -169,6 +212,21 @@ exclude_projects:
 	}
 	if cfg.Opencode.Bin != "/opt/opencode" {
 		t.Errorf("Opencode.Bin = %q, want %q", cfg.Opencode.Bin, "/opt/opencode")
+	}
+	if cfg.RepoCacheDir != "/srv/brain/repos" {
+		t.Errorf("RepoCacheDir = %q, want %q", cfg.RepoCacheDir, "/srv/brain/repos")
+	}
+	if cfg.GitToken != "file-token" {
+		t.Errorf("GitToken = %q, want %q", cfg.GitToken, "file-token")
+	}
+	if cfg.GitTokenEnv != "CUSTOM_GIT_TOKEN" {
+		t.Errorf("GitTokenEnv = %q, want %q", cfg.GitTokenEnv, "CUSTOM_GIT_TOKEN")
+	}
+	if cfg.RequireHTTPS {
+		t.Error("RequireHTTPS should be false from YAML")
+	}
+	if !cfg.AllowUnauthenticatedHTTPS {
+		t.Error("AllowUnauthenticatedHTTPS should be true from YAML")
 	}
 	if len(cfg.ExcludeProjects) != 2 {
 		t.Fatalf("ExcludeProjects len = %d, want 2", len(cfg.ExcludeProjects))
@@ -214,12 +272,13 @@ func TestLoadConfig_TildeExpansion(t *testing.T) {
 	yamlContent := `state_dir: "~/my-state"
 log_dir: "~/my-logs"
 work_dir: "~"
+repo_cache_dir: "~/repo-cache"
 `
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 
-	for _, key := range []string{"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR"} {
+	for _, key := range []string{"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR", "RUNNER_REPO_CACHE_DIR"} {
 		os.Unsetenv(key)
 	}
 
@@ -239,6 +298,84 @@ work_dir: "~"
 	}
 	if cfg.WorkDir != homeDir {
 		t.Errorf("WorkDir = %q, want %q", cfg.WorkDir, homeDir)
+	}
+	wantRepoCache := filepath.Join(homeDir, "repo-cache")
+	if cfg.RepoCacheDir != wantRepoCache {
+		t.Errorf("RepoCacheDir = %q, want %q", cfg.RepoCacheDir, wantRepoCache)
+	}
+}
+
+func TestLoadConfig_GitTokenEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `git_token_env: "CUSTOM_GIT_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("CUSTOM_GIT_TOKEN", "fallback-token")
+	os.Unsetenv("RUNNER_GIT_TOKEN")
+	os.Unsetenv("RUNNER_GIT_TOKEN_ENV")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.GitToken != "fallback-token" {
+		t.Errorf("GitToken = %q, want fallback token from CUSTOM_GIT_TOKEN", cfg.GitToken)
+	}
+	if cfg.GitTokenEnv != "CUSTOM_GIT_TOKEN" {
+		t.Errorf("GitTokenEnv = %q, want %q", cfg.GitTokenEnv, "CUSTOM_GIT_TOKEN")
+	}
+}
+
+func TestLoadConfig_ExplicitGitTokenPrecedenceOverTokenEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `git_token: "explicit-file-token"
+git_token_env: "CUSTOM_GIT_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("CUSTOM_GIT_TOKEN", "fallback-token")
+	os.Unsetenv("RUNNER_GIT_TOKEN")
+	os.Unsetenv("RUNNER_GIT_TOKEN_ENV")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.GitToken != "explicit-file-token" {
+		t.Errorf("GitToken = %q, want explicit file token", cfg.GitToken)
+	}
+}
+
+func TestLoadConfig_EnvGitTokenPrecedenceOverTokenEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `git_token: "explicit-file-token"
+git_token_env: "CUSTOM_GIT_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("RUNNER_GIT_TOKEN", "explicit-env-token")
+	t.Setenv("CUSTOM_GIT_TOKEN", "fallback-token")
+	os.Unsetenv("RUNNER_GIT_TOKEN_ENV")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.GitToken != "explicit-env-token" {
+		t.Errorf("GitToken = %q, want explicit env token", cfg.GitToken)
 	}
 }
 
@@ -541,6 +678,8 @@ func TestLoadConfig_UnifiedFormat_WithPi(t *testing.T) {
     bin: "/opt/pi"
     model: "claude-4"
     thinking: "low"
+  repo_cache_dir: "/srv/unified/repos"
+  git_token_env: "UNIFIED_GIT_TOKEN"
   default_executor: "pi"
 `
 	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
@@ -566,6 +705,12 @@ func TestLoadConfig_UnifiedFormat_WithPi(t *testing.T) {
 	}
 	if cfg.DefaultExecutor != "pi" {
 		t.Errorf("DefaultExecutor = %q, want %q", cfg.DefaultExecutor, "pi")
+	}
+	if cfg.RepoCacheDir != "/srv/unified/repos" {
+		t.Errorf("RepoCacheDir = %q, want %q", cfg.RepoCacheDir, "/srv/unified/repos")
+	}
+	if cfg.GitTokenEnv != "UNIFIED_GIT_TOKEN" {
+		t.Errorf("GitTokenEnv = %q, want %q", cfg.GitTokenEnv, "UNIFIED_GIT_TOKEN")
 	}
 }
 

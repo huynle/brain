@@ -2,6 +2,7 @@ package runner
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -35,7 +36,7 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 
 	// Worktree mode: try to create/find a git worktree
 	if executionMode == "worktree" {
-		worktreePath, err := ensureWorktreeForTask(task, cmdFactory)
+		worktreePath, err := ensureWorktreeForTaskWithConfig(task, config, cmdFactory)
 		if err != nil {
 			return "", fmt.Errorf("ensure worktree: %w", err)
 		}
@@ -43,6 +44,10 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 			return worktreePath, nil
 		}
 		// ensureWorktree returned "" (no branch set, or is main/master) — fall through
+		// only for tasks that did not request explicit worktree branch isolation.
+		if task.ExecutionMode == "worktree" || task.GitBranch != "" || task.FeatureID != "" || task.GitRemote != "" {
+			return "", fmt.Errorf("worktree mode requires a valid git repo context; set target_workdir/workdir to an existing git repo or provide git_remote with repo_cache_dir")
+		}
 	}
 
 	// Fallback chain (both modes)
@@ -52,8 +57,7 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 		}
 	}
 	if task.Workdir != "" {
-		homeDir, _ := os.UserHomeDir()
-		p := filepath.Join(homeDir, task.Workdir)
+		p := resolveTaskWorkdirPath(task.Workdir)
 		if _, err := os.Stat(p); err == nil {
 			return p, nil
 		}
@@ -70,6 +74,10 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 // Returns the worktree path, or "" if worktree mode doesn't apply.
 // Returns an error if worktree creation fails.
 func ensureWorktreeForTask(task *types.ResolvedTask, cmdFactory CommandFactory) (string, error) {
+	return ensureWorktreeForTaskWithConfig(task, RunnerConfig{}, cmdFactory)
+}
+
+func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
 	// Guard: explicit current_branch mode
 	if task.ExecutionMode == "current_branch" {
 		return "", nil
@@ -80,33 +88,28 @@ func ensureWorktreeForTask(task *types.ResolvedTask, cmdFactory CommandFactory) 
 	}
 	// Guard: no branch specified
 	if branch == "" {
-		return "", nil
-	}
-	// Guard: skip for default branches
-	if branch == "main" || branch == "master" {
-		return "", nil
+		return resolveRepoContext(task, config, cmdFactory)
 	}
 
-	// Resolve main repo path
-	mainRepoPath := ""
-	if task.Workdir != "" {
-		homeDir, _ := os.UserHomeDir()
-		mainRepoPath = filepath.Join(homeDir, task.Workdir)
-	} else if task.TargetWorkdir != "" {
-		if _, err := os.Stat(task.TargetWorkdir); err == nil {
-			mainRepoPath = task.TargetWorkdir
-		}
+	mainRepoPath, err := resolveRepoContext(task, config, cmdFactory)
+	if err != nil {
+		return "", err
 	}
 	if mainRepoPath == "" {
 		// No repo context, can't create worktree
 		return "", nil
 	}
 
+	// Skip separate worktrees for default branches, but keep the valid repo context.
+	if branch == "main" || branch == "master" {
+		return mainRepoPath, nil
+	}
+
 	// Check if branch is the current branch in the main repo
 	cmd := cmdFactory("git", "-C", mainRepoPath, "branch", "--show-current")
 	if out, err := cmd.Output(); err == nil {
 		if strings.TrimSpace(string(out)) == branch {
-			return "", nil // Branch is current in main repo, run there
+			return mainRepoPath, nil // Branch is current in main repo, run there
 		}
 	}
 
@@ -158,6 +161,123 @@ func ensureWorktreeForTask(task *types.ResolvedTask, cmdFactory CommandFactory) 
 	}
 
 	return worktreePath, nil
+}
+
+func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
+	if task.TargetWorkdir != "" {
+		if isGitRepo(task.TargetWorkdir, cmdFactory) {
+			return task.TargetWorkdir, nil
+		}
+	}
+
+	if task.Workdir != "" {
+		p := resolveTaskWorkdirPath(task.Workdir)
+		if isGitRepo(p, cmdFactory) {
+			return p, nil
+		}
+	}
+
+	if task.GitRemote != "" {
+		return ensureCachedRemoteRepo(task.GitRemote, config, cmdFactory)
+	}
+
+	return "", nil
+}
+
+func resolveTaskWorkdirPath(workdir string) string {
+	if filepath.IsAbs(workdir) {
+		return workdir
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, workdir)
+}
+
+func isGitRepo(path string, cmdFactory CommandFactory) bool {
+	if _, err := os.Stat(path); err != nil {
+		return false
+	}
+	cmd := cmdFactory("git", "-C", path, "rev-parse", "--show-toplevel")
+	return cmd.Run() == nil
+}
+
+func ensureCachedRemoteRepo(remote string, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
+	parsed, err := validateGitRemote(remote, config.RequireHTTPS)
+	if err != nil {
+		return "", err
+	}
+
+	token := config.GitToken
+	if token == "" && config.GitTokenEnv != "" {
+		token = os.Getenv(config.GitTokenEnv)
+	}
+	if token == "" && !config.AllowUnauthenticatedHTTPS {
+		return "", fmt.Errorf("git token is required for HTTPS git_remote; set git_token/git_token_env or enable allow_unauthenticated_https")
+	}
+	if config.RepoCacheDir == "" {
+		return "", fmt.Errorf("repo_cache_dir is required when git_remote is set")
+	}
+	if err := os.MkdirAll(config.RepoCacheDir, 0o755); err != nil {
+		return "", fmt.Errorf("create repo cache dir: %w", err)
+	}
+
+	repoPath := filepath.Join(config.RepoCacheDir, cacheDirNameForRemote(parsed))
+	if isGitRepo(repoPath, cmdFactory) {
+		args := gitAuthArgs(token, "-C", repoPath, "fetch", "--prune", "origin")
+		cmd := cmdFactory("git", args...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return "", fmt.Errorf("git fetch failed for cached repo %s: %s: %w", repoPath, redactGitToken(strings.TrimSpace(string(out)), token), err)
+		}
+		return repoPath, nil
+	}
+
+	args := gitAuthArgs(token, "clone", remote, repoPath)
+	cmd := cmdFactory("git", args...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git clone failed for %s: %s: %w", remote, redactGitToken(strings.TrimSpace(string(out)), token), err)
+	}
+	return repoPath, nil
+}
+
+func redactGitToken(output, token string) string {
+	redacted := strings.ReplaceAll(output, "Authorization: Bearer "+token, "<git token redacted>")
+	if token != "" {
+		redacted = strings.ReplaceAll(redacted, token, "<redacted>")
+	}
+	return redacted
+}
+
+func validateGitRemote(remote string, requireHTTPS bool) (*url.URL, error) {
+	parsed, err := url.Parse(remote)
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, fmt.Errorf("git_remote must be a valid HTTPS URL; SSH remotes are not allowed")
+	}
+	if parsed.Scheme == "ssh" || strings.HasPrefix(remote, "git@") {
+		return nil, fmt.Errorf("git_remote must use HTTPS; SSH remotes are not allowed")
+	}
+	if parsed.User != nil {
+		return nil, fmt.Errorf("git_remote must not contain embedded credentials")
+	}
+	if requireHTTPS && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("git_remote must use HTTPS when require_https is enabled")
+	}
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
+		return nil, fmt.Errorf("git_remote must use HTTP or HTTPS")
+	}
+	return parsed, nil
+}
+
+func cacheDirNameForRemote(remote *url.URL) string {
+	name := remote.Host + strings.TrimSuffix(remote.Path, ".git")
+	name = strings.Trim(name, "/")
+	return sanitizeBranchName(strings.ReplaceAll(name, "/", "-"))
+}
+
+func gitAuthArgs(token string, args ...string) []string {
+	if token == "" {
+		return args
+	}
+	withAuth := []string{"-c", "http.extraheader=Authorization: Bearer " + token}
+	return append(withAuth, args...)
 }
 
 // =============================================================================

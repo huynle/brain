@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -184,6 +185,481 @@ func TestExecutor_ResolveWorkdir_Priority_TargetOverResolved(t *testing.T) {
 	result, _ := e.ResolveWorkdir(task)
 	if result != targetDir {
 		t.Errorf("ResolveWorkdir = %q, want %q (target_workdir takes priority over resolved_workdir)", result, targetDir)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_WorktreeModeRequiresRepoContext(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail for worktree mode without repo context")
+	}
+	if !strings.Contains(err.Error(), "worktree") || !strings.Contains(err.Error(), "repo context") {
+		t.Fatalf("error should clearly mention missing worktree repo context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_ExplicitWorktreeWithoutBranchRequiresRepoContext(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail for explicit worktree mode without repo context")
+	}
+	if !strings.Contains(err.Error(), "worktree") || !strings.Contains(err.Error(), "repo context") {
+		t.Fatalf("error should clearly mention missing worktree repo context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_RejectsUnsafeGitRemotes(t *testing.T) {
+	tests := []struct {
+		name    string
+		remote  string
+		wantErr string
+	}{
+		{
+			name:    "ssh remote",
+			remote:  "git@github.com:owner/repo.git",
+			wantErr: "HTTPS",
+		},
+		{
+			name:    "embedded credentials",
+			remote:  "https://token@github.com/owner/repo.git",
+			wantErr: "embedded credentials",
+		},
+		{
+			name:    "non-https remote",
+			remote:  "http://github.com/owner/repo.git",
+			wantErr: "HTTPS",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testExecutorConfig()
+			cfg.RepoCacheDir = t.TempDir()
+			cfg.GitToken = "secret-token"
+			cfg.RequireHTTPS = true
+			e := NewExecutor(cfg)
+			e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+				return exec.Command("/bin/echo", "unexpected git command")
+			}
+
+			task := testResolvedTask("abc123")
+			task.ExecutionMode = "worktree"
+			task.GitBranch = "feature/bootstrap"
+			task.GitRemote = tt.remote
+
+			_, err := e.ResolveWorkdir(task)
+			if err == nil {
+				t.Fatalf("ResolveWorkdir should reject %s", tt.remote)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteRequiresTokenUnlessUnauthenticatedAllowed(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = t.TempDir()
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = ""
+	cfg.RequireHTTPS = true
+	cfg.AllowUnauthenticatedHTTPS = false
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = "https://github.com/owner/repo.git"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail when HTTPS git_remote has no token")
+	}
+	if !strings.Contains(err.Error(), "git token") && !strings.Contains(err.Error(), "unauthenticated") {
+		t.Fatalf("error should clearly mention missing git token or unauthenticated HTTPS policy, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(t *testing.T) {
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = ""
+	cfg.RequireHTTPS = true
+	cfg.AllowUnauthenticatedHTTPS = true
+	e := NewExecutor(cfg)
+
+	var cloneArgs []string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 3 && args[0] == "clone" {
+			cloneArgs = append([]string(nil), args...)
+			if args[1] != remote || args[2] != expectedRepo {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong clone target' && exit 1")
+			}
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != expectedWorktree {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expectedWorktree)
+	}
+	if len(cloneArgs) == 0 {
+		t.Fatal("expected unauthenticated git clone to run")
+	}
+	if containsArg(cloneArgs, "http.extraheader=Authorization: Bearer ") || containsArg(cloneArgs, "-c") {
+		t.Fatalf("unauthenticated clone should not include auth config, got: %v", cloneArgs)
+	}
+}
+
+func TestValidateGitRemote_AllowsHTTPOnlyWhenRequireHTTPSDisabled(t *testing.T) {
+	if _, err := validateGitRemote("http://github.com/owner/repo.git", true); err == nil {
+		t.Fatal("validateGitRemote should reject HTTP when require_https is enabled")
+	}
+	if _, err := validateGitRemote("http://github.com/owner/repo.git", false); err != nil {
+		t.Fatalf("validateGitRemote should allow HTTP when require_https is disabled: %v", err)
+	}
+	if _, err := validateGitRemote("ssh://github.com/owner/repo.git", false); err == nil {
+		t.Fatal("validateGitRemote should always reject SSH remotes")
+	}
+}
+
+func TestExecutor_ResolveWorkdir_WorktreeModeUsesAbsoluteWorkdirGitRepo(t *testing.T) {
+	repo := t.TempDir()
+	var worktreeAddArgs []string
+
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == repo && args[2] == "worktree" && args[3] == "add" {
+			worktreeAddArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.Workdir = repo
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	expected := filepath.Join(repo, ".worktrees", "feature-bootstrap")
+	if got != expected {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expected)
+	}
+	if len(worktreeAddArgs) == 0 {
+		t.Fatal("expected git worktree add to run against absolute workdir repo")
+	}
+}
+
+func TestExecutor_ResolveWorkdir_WorktreeModeUsesValidLocalRepoWhenSeparateWorktreeUnneeded(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentBranch string
+		gitBranch     string
+	}{
+		{name: "already on requested branch", currentBranch: "feature/bootstrap", gitBranch: "feature/bootstrap"},
+		{name: "default branch", currentBranch: "main", gitBranch: "main"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			cfg := testExecutorConfig()
+			cfg.WorkDir = "/unsafe/fallback"
+			e := NewExecutor(cfg)
+			e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+				if name != "git" {
+					return exec.Command("/bin/sh", "-c", "exit 1")
+				}
+				if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+					return exec.Command("/bin/sh", "-c", "exit 0")
+				}
+				if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "branch" && args[3] == "--show-current" {
+					return exec.Command("/bin/echo", tt.currentBranch)
+				}
+				return exec.Command("/bin/sh", "-c", "exit 1")
+			}
+
+			task := testResolvedTask("abc123")
+			task.ExecutionMode = "worktree"
+			task.GitBranch = tt.gitBranch
+			task.TargetWorkdir = repo
+
+			got, err := e.ResolveWorkdir(task)
+			if err != nil {
+				t.Fatalf("ResolveWorkdir returned error: %v", err)
+			}
+			if got != repo {
+				t.Fatalf("ResolveWorkdir = %q, want local repo %q", got, repo)
+			}
+		})
+	}
+}
+
+func TestExecutor_ResolveWorkdir_RedactsGitTokenFromCloneErrors(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = t.TempDir()
+	cfg.GitToken = "secret-token"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" && len(args) >= 4 && args[0] == "-c" && args[2] == "clone" {
+			return exec.Command("/bin/sh", "-c", "printf 'fatal: Authorization: Bearer secret-token rejected' && exit 1")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = "https://github.com/owner/repo.git"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should return clone failure")
+	}
+	if strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "Authorization: Bearer") {
+		t.Fatalf("clone error leaked git token/header: %v", err)
+	}
+	if !strings.Contains(err.Error(), "git clone failed") {
+		t.Fatalf("error should preserve useful clone context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(t *testing.T) {
+	t.Setenv("TEST_GIT_TOKEN", "env-secret-token")
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = "TEST_GIT_TOKEN"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+
+	var cloneArgs []string
+	var worktreeAddArgs []string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+			cloneArgs = append([]string(nil), args...)
+			if args[3] != remote {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong remote' && exit 1")
+			}
+			if args[4] != expectedRepo {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong cache path' && exit 1")
+			}
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
+			worktreeAddArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != expectedWorktree {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expectedWorktree)
+	}
+	if len(cloneArgs) == 0 {
+		t.Fatal("expected git clone to run")
+	}
+	if !containsArg(cloneArgs, "http.extraheader=Authorization: Bearer env-secret-token") {
+		t.Fatalf("clone args should include token via http.extraheader, got: %v", cloneArgs)
+	}
+	if strings.Contains(cloneArgs[3], "env-secret-token") {
+		t.Fatalf("clone remote should not embed token, got args: %v", cloneArgs)
+	}
+	if len(worktreeAddArgs) == 0 || !containsArg(worktreeAddArgs, expectedWorktree) {
+		t.Fatalf("expected worktree under cached repo, got worktree args: %v", worktreeAddArgs)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T) {
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	if err := os.MkdirAll(expectedRepo, 0o755); err != nil {
+		t.Fatalf("create cached repo: %v", err)
+	}
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = "secret-token"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+
+	var fetchArgs []string
+	var cloneRan bool
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-c" && args[2] == "-C" && args[3] == expectedRepo && args[4] == "fetch" {
+			fetchArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+			cloneRan = true
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "printf 'worktree /cached/worktree\nbranch refs/heads/feature/bootstrap\n'")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != "/cached/worktree" {
+		t.Fatalf("ResolveWorkdir = %q, want existing cached worktree", got)
+	}
+	if cloneRan {
+		t.Fatal("existing cached repo should fetch, not clone")
+	}
+	if len(fetchArgs) == 0 {
+		t.Fatal("expected git fetch for existing cached repo")
+	}
+	if !containsArg(fetchArgs, "http.extraheader=Authorization: Bearer secret-token") {
+		t.Fatalf("fetch args should include token via http.extraheader, got: %v", fetchArgs)
 	}
 }
 
@@ -961,6 +1437,9 @@ func TestEnsureWorktree_FeatureID_DerivesBranch(t *testing.T) {
 	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
 		if name == "git" {
 			gitCmds = append(gitCmds, args)
+			if len(args) >= 4 && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+				return exec.Command("/bin/sh", "-c", "exit 0")
+			}
 		}
 		// Default: return a command that fails (branch doesn't exist, etc.)
 		return exec.Command("false")
@@ -1019,6 +1498,9 @@ func TestEnsureWorktree_ExplicitGitBranch_OverridesFeatureID(t *testing.T) {
 	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
 		if name == "git" {
 			gitCmds = append(gitCmds, args)
+			if len(args) >= 4 && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+				return exec.Command("/bin/sh", "-c", "exit 0")
+			}
 		}
 		return exec.Command("false")
 	}
@@ -1696,4 +2178,8 @@ func indexOf(slice []string, item string) int {
 		}
 	}
 	return -1
+}
+
+func containsArg(slice []string, item string) bool {
+	return indexOf(slice, item) >= 0
 }

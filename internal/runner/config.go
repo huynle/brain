@@ -82,16 +82,18 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Start with file config (if any)
 	var fileCfg RunnerConfig
+	fileHasRequireHTTPS := false
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return RunnerConfig{}, fmt.Errorf("read config file: %w", err)
 		}
+		fileHasRequireHTTPS = yamlKeyPresent(data, "require_https") || yamlKeyPresent(data, "runner.require_https")
 		// Try unified config format first (runner fields nested under "runner:" key)
 		var wrapper struct {
 			Runner RunnerConfig `yaml:"runner"`
 		}
-		if err := yaml.Unmarshal(data, &wrapper); err == nil && wrapper.Runner.BrainAPIURL != "" || wrapper.Runner.MaxParallel != 0 {
+		if err := yaml.Unmarshal(data, &wrapper); err == nil && yamlKeyPresent(data, "runner") {
 			fileCfg = wrapper.Runner
 		} else {
 			// Fall back to flat/legacy format (runner fields at top level)
@@ -105,6 +107,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	fileCfg.StateDir = expandTilde(fileCfg.StateDir, homeDir)
 	fileCfg.LogDir = expandTilde(fileCfg.LogDir, homeDir)
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
+	fileCfg.RepoCacheDir = expandTilde(fileCfg.RepoCacheDir, homeDir)
 	fileCfg.Pi.AgentsDir = expandTilde(fileCfg.Pi.AgentsDir, homeDir)
 	fileCfg.Pi.ExtensionsDir = expandTilde(fileCfg.Pi.ExtensionsDir, homeDir)
 
@@ -119,6 +122,12 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	// Resolve hook timeout: legacy HookTimeout > env > default (30s)
 	resolvedHookTimeout := getEnvIntOrDefault("RUNNER_HOOK_TIMEOUT",
 		firstNonZero(fileCfg.HookTimeout, 30))
+	resolvedGitTokenEnv := getEnvOrDefault("RUNNER_GIT_TOKEN_ENV", firstNonEmpty(fileCfg.GitTokenEnv, "GITHUB_TOKEN"))
+	resolvedGitToken := getEnvOrDefault("RUNNER_GIT_TOKEN", fileCfg.GitToken)
+	if resolvedGitToken == "" && resolvedGitTokenEnv != "" {
+		resolvedGitToken = os.Getenv(resolvedGitTokenEnv)
+	}
+	resolvedRequireHTTPS := getEnvBoolOrDefault("RUNNER_REQUIRE_HTTPS", defaultRequireHTTPS(fileCfg.RequireHTTPS, fileHasRequireHTTPS))
 
 	// Expand tilde in inline hook script paths.
 	inlineHooks := fileCfg.Hooks.Hooks
@@ -130,19 +139,24 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	}
 
 	cfg := RunnerConfig{
-		BrainAPIURL:            getEnvOrDefault("BRAIN_API_URL", firstNonEmpty(fileCfg.BrainAPIURL, "http://localhost:3333")),
-		APIToken:               getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken),
-		PollInterval:           getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
-		TaskPollInterval:       getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
-		MaxParallel:            getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
-		StateDir:               getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, filepath.Join(xdgStateHome(), "brain-runner"))),
-		LogDir:                 getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
-		WorkDir:                getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
-		APITimeout:             getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
-		TaskTimeout:            getEnvIntOrDefault("RUNNER_TASK_TIMEOUT", fileCfg.TaskTimeout), // 0 is valid default
-		IdleDetectionThreshold: getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
-		MaxTotalProcesses:      getEnvIntOrDefault("RUNNER_MAX_TOTAL_PROCESSES", firstNonZero(fileCfg.MaxTotalProcesses, 10)),
-		MemoryThresholdPercent: getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
+		BrainAPIURL:               getEnvOrDefault("BRAIN_API_URL", firstNonEmpty(fileCfg.BrainAPIURL, "http://localhost:3333")),
+		APIToken:                  getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken),
+		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
+		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
+		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
+		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, filepath.Join(xdgStateHome(), "brain-runner"))),
+		LogDir:                    getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
+		WorkDir:                   getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
+		RepoCacheDir:              expandTilde(getEnvOrDefault("RUNNER_REPO_CACHE_DIR", firstNonEmpty(fileCfg.RepoCacheDir, filepath.Join(homeDir, ".cache", "brain", "repos"))), homeDir),
+		GitToken:                  resolvedGitToken,
+		GitTokenEnv:               resolvedGitTokenEnv,
+		RequireHTTPS:              resolvedRequireHTTPS,
+		AllowUnauthenticatedHTTPS: getEnvBoolOrDefault("RUNNER_ALLOW_UNAUTHENTICATED_HTTPS", fileCfg.AllowUnauthenticatedHTTPS),
+		APITimeout:                getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
+		TaskTimeout:               getEnvIntOrDefault("RUNNER_TASK_TIMEOUT", fileCfg.TaskTimeout), // 0 is valid default
+		IdleDetectionThreshold:    getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
+		MaxTotalProcesses:         getEnvIntOrDefault("RUNNER_MAX_TOTAL_PROCESSES", firstNonZero(fileCfg.MaxTotalProcesses, 10)),
+		MemoryThresholdPercent:    getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
 		Opencode: OpencodeConfig{
 			Bin:   getEnvOrDefault("OPENCODE_BIN", firstNonEmpty(fileCfg.Opencode.Bin, "opencode")),
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),
@@ -278,6 +292,41 @@ func expandTilde(path, homeDir string) string {
 		return filepath.Join(homeDir, path[2:])
 	}
 	return path
+}
+
+func yamlKeyPresent(data []byte, dottedKey string) bool {
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false
+	}
+	if len(root.Content) == 0 {
+		return false
+	}
+	node := root.Content[0]
+	for _, part := range strings.Split(dottedKey, ".") {
+		if node.Kind != yaml.MappingNode {
+			return false
+		}
+		var next *yaml.Node
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			if node.Content[i].Value == part {
+				next = node.Content[i+1]
+				break
+			}
+		}
+		if next == nil {
+			return false
+		}
+		node = next
+	}
+	return true
+}
+
+func defaultRequireHTTPS(configured bool, configuredInFile bool) bool {
+	if configuredInFile {
+		return configured
+	}
+	return true
 }
 
 func getEnvOrDefault(key, defaultValue string) string {

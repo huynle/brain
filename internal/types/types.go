@@ -801,11 +801,12 @@ const (
 
 // RunnerRegistration is the request body for POST /runners (register).
 type RunnerRegistration struct {
-	RunnerID    string            `json:"runner_id"`
-	Hostname    string            `json:"hostname"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	Executors   []string          `json:"executors,omitempty"`
-	MaxParallel int               `json:"max_parallel,omitempty"`
+	RunnerID     string            `json:"runner_id"`
+	Hostname     string            `json:"hostname"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Executors    []string          `json:"executors,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	MaxParallel  int               `json:"max_parallel,omitempty"`
 }
 
 // RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.

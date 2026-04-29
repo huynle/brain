@@ -15,6 +15,7 @@ type RunnerRow struct {
 	Hostname      string            `json:"hostname"`
 	Labels        map[string]string `json:"labels"`
 	Executors     []string          `json:"executors"`
+	Capabilities  []string          `json:"capabilities"`
 	MaxParallel   int               `json:"max_parallel"`
 	FeatureIDs    string            `json:"feature_ids"`
 	RegisteredAt  int64             `json:"registered_at"`  // Unix milliseconds
@@ -33,22 +34,27 @@ func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) erro
 	if err != nil {
 		return fmt.Errorf("marshal executors: %w", err)
 	}
+	capabilitiesJSON, err := json.Marshal(runner.Capabilities)
+	if err != nil {
+		return fmt.Errorf("marshal capabilities: %w", err)
+	}
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO runners
-			(runner_id, hostname, labels, executors, max_parallel,
+			(runner_id, hostname, labels, executors, capabilities, max_parallel,
 			 feature_ids, registered_at, last_heartbeat, status)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (runner_id) DO UPDATE SET
 			hostname       = excluded.hostname,
 			labels         = excluded.labels,
 			executors      = excluded.executors,
+			capabilities  = excluded.capabilities,
 			max_parallel   = excluded.max_parallel,
 			feature_ids    = excluded.feature_ids,
 			registered_at  = excluded.registered_at,
 			last_heartbeat = excluded.last_heartbeat,
 			status         = excluded.status`,
-		runner.RunnerID, runner.Hostname, string(labelsJSON), string(executorsJSON),
+		runner.RunnerID, runner.Hostname, string(labelsJSON), string(executorsJSON), string(capabilitiesJSON),
 		runner.MaxParallel, runner.FeatureIDs, runner.RegisteredAt, runner.LastHeartbeat,
 		runner.Status,
 	)
@@ -61,14 +67,14 @@ func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) erro
 // GetRunner returns a runner by ID, or nil if not found.
 func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerRow, error) {
 	var r RunnerRow
-	var labelsJSON, executorsJSON string
+	var labelsJSON, executorsJSON, capabilitiesJSON string
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT runner_id, hostname, labels, executors, max_parallel,
+		`SELECT runner_id, hostname, labels, executors, capabilities, max_parallel,
 		        feature_ids, registered_at, last_heartbeat, status
 		 FROM runners WHERE runner_id = ?`,
 		runnerID,
-	).Scan(&r.RunnerID, &r.Hostname, &labelsJSON, &executorsJSON,
+	).Scan(&r.RunnerID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON,
 		&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
 		&r.Status)
 
@@ -85,6 +91,9 @@ func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerR
 	if err := json.Unmarshal([]byte(executorsJSON), &r.Executors); err != nil {
 		return nil, fmt.Errorf("unmarshal executors: %w", err)
 	}
+	if err := json.Unmarshal([]byte(capabilitiesJSON), &r.Capabilities); err != nil {
+		return nil, fmt.Errorf("unmarshal capabilities: %w", err)
+	}
 
 	return &r, nil
 }
@@ -92,7 +101,7 @@ func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerR
 // ListRunners returns all runners ordered by registered_at descending (newest first).
 func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT runner_id, hostname, labels, executors, max_parallel,
+		`SELECT runner_id, hostname, labels, executors, capabilities, max_parallel,
 		        feature_ids, registered_at, last_heartbeat, status
 		 FROM runners ORDER BY registered_at DESC`,
 	)
@@ -107,7 +116,7 @@ func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
 // ListRunnersByStatus returns runners filtered by status.
 func (s *StorageLayer) ListRunnersByStatus(ctx context.Context, status string) ([]RunnerRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT runner_id, hostname, labels, executors, max_parallel,
+		`SELECT runner_id, hostname, labels, executors, capabilities, max_parallel,
 		        feature_ids, registered_at, last_heartbeat, status
 		 FROM runners WHERE status = ? ORDER BY registered_at DESC`,
 		status,
@@ -290,9 +299,9 @@ func scanRunners(rows *sql.Rows) ([]RunnerRow, error) {
 	var runners []RunnerRow
 	for rows.Next() {
 		var r RunnerRow
-		var labelsJSON, executorsJSON string
+		var labelsJSON, executorsJSON, capabilitiesJSON string
 
-		if err := rows.Scan(&r.RunnerID, &r.Hostname, &labelsJSON, &executorsJSON,
+		if err := rows.Scan(&r.RunnerID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON,
 			&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
 			&r.Status); err != nil {
 			return nil, fmt.Errorf("scan runner: %w", err)
@@ -303,6 +312,9 @@ func scanRunners(rows *sql.Rows) ([]RunnerRow, error) {
 		}
 		if err := json.Unmarshal([]byte(executorsJSON), &r.Executors); err != nil {
 			return nil, fmt.Errorf("unmarshal executors: %w", err)
+		}
+		if err := json.Unmarshal([]byte(capabilitiesJSON), &r.Capabilities); err != nil {
+			return nil, fmt.Errorf("unmarshal capabilities: %w", err)
 		}
 
 		runners = append(runners, r)

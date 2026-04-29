@@ -1186,10 +1186,11 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 	}
 
 	req := types.RunnerRegistration{
-		RunnerID:    tr.runnerID,
-		Hostname:    hostname,
-		Executors:   tr.executorNames(),
-		MaxParallel: tr.getMaxParallel(),
+		RunnerID:     tr.runnerID,
+		Hostname:     hostname,
+		Executors:    tr.executorNames(),
+		Capabilities: tr.config.Capabilities,
+		MaxParallel:  tr.getMaxParallel(),
 	}
 
 	info, err := tr.client.RegisterRunner(ctx, req)

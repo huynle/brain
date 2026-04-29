@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -123,6 +124,25 @@ func TestHandleRegisterRunner(t *testing.T) {
 			wantRegistered: true,
 		},
 		{
+			name: "success with capabilities",
+			body: `{"runner_id":"runner-1","hostname":"host-1","max_parallel":4,"executors":["opencode"],"capabilities":["docker","gpu"]}`,
+			mockRegister: func(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+				if !reflect.DeepEqual(req.Capabilities, []string{"docker", "gpu"}) {
+					t.Fatalf("registration capabilities = %v, want [docker gpu]", req.Capabilities)
+				}
+				return &types.RunnerInfo{
+					RunnerID:     req.RunnerID,
+					Hostname:     req.Hostname,
+					MaxParallel:  req.MaxParallel,
+					Executors:    req.Executors,
+					Capabilities: req.Capabilities,
+					Status:       types.RunnerStatusOnline,
+				}, nil
+			},
+			wantStatus:     http.StatusOK,
+			wantRegistered: true,
+		},
+		{
 			name:         "missing runner_id",
 			body:         `{"hostname":"host-1"}`,
 			wantStatus:   http.StatusBadRequest,
@@ -179,6 +199,19 @@ func TestHandleRegisterRunner(t *testing.T) {
 				leaseInterval, ok := resp["lease_renewal_interval"].(float64)
 				if !ok || leaseInterval != 300 {
 					t.Errorf("lease_renewal_interval = %v, want 300", resp["lease_renewal_interval"])
+				}
+				if tt.name == "success with capabilities" {
+					runner, ok := resp["runner"].(map[string]any)
+					if !ok {
+						t.Fatal("expected runner object in response")
+					}
+					capabilities, ok := runner["capabilities"].([]any)
+					if !ok {
+						t.Fatalf("runner capabilities = %v, want array", runner["capabilities"])
+					}
+					if len(capabilities) != 2 || capabilities[0] != "docker" || capabilities[1] != "gpu" {
+						t.Errorf("runner capabilities = %v, want [docker gpu]", capabilities)
+					}
 				}
 			}
 
@@ -346,7 +379,7 @@ func TestHandleListRunners(t *testing.T) {
 			mockList: func(ctx context.Context) (*types.RunnerListResponse, error) {
 				return &types.RunnerListResponse{
 					Runners: []types.RunnerInfo{
-						{RunnerID: "runner-1", Hostname: "host-1", Status: types.RunnerStatusOnline},
+						{RunnerID: "runner-1", Hostname: "host-1", Status: types.RunnerStatusOnline, Capabilities: []string{"docker", "gpu"}},
 						{RunnerID: "runner-2", Hostname: "host-2", Status: types.RunnerStatusStale},
 					},
 					Total: 2,
@@ -389,6 +422,9 @@ func TestHandleListRunners(t *testing.T) {
 				if len(resp.Runners) != tt.wantTotal {
 					t.Errorf("len(runners) = %d, want %d", len(resp.Runners), tt.wantTotal)
 				}
+				if tt.name == "with runners" && !reflect.DeepEqual(resp.Runners[0].Capabilities, []string{"docker", "gpu"}) {
+					t.Errorf("runner capabilities = %v, want [docker gpu]", resp.Runners[0].Capabilities)
+				}
 			}
 		})
 	}
@@ -407,6 +443,7 @@ func TestHandleGetRunner_ReturnsRunner(t *testing.T) {
 					Hostname:      "host-1",
 					Status:        types.RunnerStatusOnline,
 					MaxParallel:   4,
+					Capabilities:  []string{"docker", "gpu"},
 					LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 				}, nil
 			}
@@ -439,6 +476,9 @@ func TestHandleGetRunner_ReturnsRunner(t *testing.T) {
 	}
 	if runner.MaxParallel != 4 {
 		t.Errorf("MaxParallel = %d, want %d", runner.MaxParallel, 4)
+	}
+	if !reflect.DeepEqual(runner.Capabilities, []string{"docker", "gpu"}) {
+		t.Errorf("Capabilities = %v, want [docker gpu]", runner.Capabilities)
 	}
 }
 

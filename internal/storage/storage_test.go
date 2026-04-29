@@ -684,8 +684,8 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 }
 
 func TestSchemaVersion_IncludesFeatureAssignments(t *testing.T) {
-	if CurrentSchemaVersion != 10 {
-		t.Errorf("CurrentSchemaVersion = %d, want 10", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 11 {
+		t.Errorf("CurrentSchemaVersion = %d, want 11", CurrentSchemaVersion)
 	}
 }
 
@@ -869,6 +869,80 @@ func TestRunnersTable_FreshDB(t *testing.T) {
 	}
 	if status != "online" {
 		t.Errorf("status = %q, want %q", status, "online")
+	}
+}
+
+func TestRunnersTable_FreshDB_CapabilitiesColumn(t *testing.T) {
+	s := newTestStorage(t)
+
+	var columnName string
+	var defaultValue sql.NullString
+	err := s.DB().QueryRow(`SELECT name, dflt_value FROM pragma_table_info('runners') WHERE name = 'capabilities'`).
+		Scan(&columnName, &defaultValue)
+	if err != nil {
+		t.Fatalf("capabilities column not found in fresh runners table: %v", err)
+	}
+	if columnName != "capabilities" {
+		t.Fatalf("column name = %q, want capabilities", columnName)
+	}
+	if !defaultValue.Valid || defaultValue.String != "'[]'" {
+		t.Fatalf("capabilities default = %q (valid=%v), want '[]'", defaultValue.String, defaultValue.Valid)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, capabilities, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-cap', 'host-cap', '{}', '["opencode"]', '["gpu","docker"]', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert runner with capabilities failed: %v", err)
+	}
+
+	var capabilities string
+	err = s.DB().QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'runner-cap'").Scan(&capabilities)
+	if err != nil {
+		t.Fatalf("select capabilities failed: %v", err)
+	}
+	if capabilities != `["gpu","docker"]` {
+		t.Fatalf("capabilities = %q, want JSON array", capabilities)
+	}
+}
+
+func TestRunnersTable_MigrationFromV10AddsCapabilities(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(createSchemaVersionTable); err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schema_version (version) VALUES (10)"); err != nil {
+		t.Fatalf("insert v10: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE runners (
+		runner_id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		labels TEXT DEFAULT '{}',
+		executors TEXT DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1,
+		feature_ids TEXT DEFAULT '',
+		registered_at INTEGER NOT NULL,
+		last_heartbeat INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'online'
+	)`); err != nil {
+		t.Fatalf("create v10 runners table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, registered_at, last_heartbeat)
+		VALUES ('legacy-runner', 'legacy-host', '{}', '["opencode"]', 1, 1000, 2000)`); err != nil {
+		t.Fatalf("insert legacy runner: %v", err)
+	}
+
+	if err := migrateSchema(db); err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	var capabilities string
+	if err := db.QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'legacy-runner'").Scan(&capabilities); err != nil {
+		t.Fatalf("select migrated capabilities failed: %v", err)
+	}
+	if capabilities != "[]" {
+		t.Fatalf("legacy capabilities = %q, want []", capabilities)
 	}
 }
 

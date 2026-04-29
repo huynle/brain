@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"database/sql"
+	"reflect"
 	"testing"
 	"time"
 
@@ -71,6 +72,108 @@ func TestRunnerRegistry_Register_NewRunner(t *testing.T) {
 	}
 	if info.LastHeartbeat == "" {
 		t.Error("expected last_heartbeat to be set")
+	}
+}
+
+func TestRunnerRegistration_HasCapabilitiesField(t *testing.T) {
+	registrationType := reflect.TypeOf(types.RunnerRegistration{})
+	field, ok := registrationType.FieldByName("Capabilities")
+	if !ok {
+		t.Fatal("RunnerRegistration should accept capabilities")
+	}
+	if field.Type != reflect.TypeOf([]string{}) {
+		t.Fatalf("Capabilities type = %s, want []string", field.Type)
+	}
+}
+
+func TestRunnerRegistry_Register_PersistsCapabilities(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	info, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:     "runner-cap",
+		Hostname:     "host-cap",
+		Executors:    []string{"opencode"},
+		Capabilities: []string{"docker", "gpu"},
+		MaxParallel:  2,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	assertStringSliceEqual(t, info.Capabilities, []string{"docker", "gpu"})
+
+	got, err := svc.GetRunner(ctx, "runner-cap")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertStringSliceEqual(t, got.Capabilities, []string{"docker", "gpu"})
+}
+
+func TestRowToRunnerInfo_IncludesCapabilities(t *testing.T) {
+	now := time.Now().UnixMilli()
+	info := rowToRunnerInfo(&storage.RunnerRow{
+		RunnerID:      "runner-cap",
+		Hostname:      "host-cap",
+		Labels:        map[string]string{},
+		Executors:     []string{"opencode"},
+		Capabilities:  []string{"docker", "gpu"},
+		MaxParallel:   1,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        string(types.RunnerStatusOnline),
+	})
+
+	assertStringSliceEqual(t, info.Capabilities, []string{"docker", "gpu"})
+}
+
+func TestRunnerRegistry_GetListAndHeartbeatPreserveCapabilities(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	if err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-cap",
+		Hostname:      "host-cap",
+		Labels:        map[string]string{"env": "prod"},
+		Executors:     []string{"opencode"},
+		Capabilities:  []string{"docker", "gpu"},
+		MaxParallel:   2,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        string(types.RunnerStatusOnline),
+	}); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	got, err := svc.GetRunner(ctx, "runner-cap")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertStringSliceEqual(t, got.Capabilities, []string{"docker", "gpu"})
+
+	listed, err := svc.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+	if listed.Total != 1 {
+		t.Fatalf("Total = %d, want 1", listed.Total)
+	}
+	assertStringSliceEqual(t, listed.Runners[0].Capabilities, []string{"docker", "gpu"})
+
+	if err := svc.Heartbeat(ctx, "runner-cap", types.RunnerHeartbeatRequest{RunningTasks: 1}); err != nil {
+		t.Fatalf("Heartbeat failed: %v", err)
+	}
+	afterHeartbeat, err := svc.GetRunner(ctx, "runner-cap")
+	if err != nil {
+		t.Fatalf("GetRunner after heartbeat failed: %v", err)
+	}
+	assertStringSliceEqual(t, afterHeartbeat.Capabilities, []string{"docker", "gpu"})
+}
+
+func assertStringSliceEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
 	}
 }
 

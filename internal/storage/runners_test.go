@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -22,6 +23,13 @@ func makeRunner(id, hostname string) *RunnerRow {
 		RegisteredAt:  now,
 		LastHeartbeat: now,
 		Status:        "online",
+	}
+}
+
+func assertStringSliceEqual(t *testing.T, got, want []string) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
 	}
 }
 
@@ -112,6 +120,79 @@ func TestUpsertRunner_JSONFields(t *testing.T) {
 
 	if got.FeatureIDs != "feat-1,feat-2" {
 		t.Errorf("feature_ids = %q, want %q", got.FeatureIDs, "feat-1,feat-2")
+	}
+}
+
+func TestUpsertRunner_CapabilitiesRoundTripThroughGetListAndHeartbeat(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	r := makeRunner("runner-cap", "host-cap")
+	r.Capabilities = []string{"docker", "gpu"}
+	if err := s.UpsertRunner(ctx, r); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	got, err := s.GetRunner(ctx, "runner-cap")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertStringSliceEqual(t, got.Capabilities, []string{"docker", "gpu"})
+
+	listed, err := s.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ListRunners returned %d runners, want 1", len(listed))
+	}
+	assertStringSliceEqual(t, listed[0].Capabilities, []string{"docker", "gpu"})
+
+	byStatus, err := s.ListRunnersByStatus(ctx, "online")
+	if err != nil {
+		t.Fatalf("ListRunnersByStatus failed: %v", err)
+	}
+	if len(byStatus) != 1 {
+		t.Fatalf("ListRunnersByStatus returned %d runners, want 1", len(byStatus))
+	}
+	assertStringSliceEqual(t, byStatus[0].Capabilities, []string{"docker", "gpu"})
+
+	if err := s.UpdateHeartbeat(ctx, "runner-cap", 3, map[string]interface{}{"completed": 1}); err != nil {
+		t.Fatalf("UpdateHeartbeat failed: %v", err)
+	}
+	afterHeartbeat, err := s.GetRunner(ctx, "runner-cap")
+	if err != nil {
+		t.Fatalf("GetRunner after heartbeat failed: %v", err)
+	}
+	assertStringSliceEqual(t, afterHeartbeat.Capabilities, []string{"docker", "gpu"})
+}
+
+func TestUpsertRunner_BackwardCompatibleEmptyCapabilities(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	r := makeRunner("runner-no-cap", "host-no-cap")
+	if err := s.UpsertRunner(ctx, r); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	got, err := s.GetRunner(ctx, "runner-no-cap")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if len(got.Capabilities) != 0 {
+		t.Fatalf("Capabilities = %#v, want empty/nil", got.Capabilities)
+	}
+}
+
+func TestRunnerRow_HasCapabilitiesField(t *testing.T) {
+	rowType := reflect.TypeOf(RunnerRow{})
+	field, ok := rowType.FieldByName("Capabilities")
+	if !ok {
+		t.Fatal("RunnerRow should expose Capabilities for durable runner routing metadata")
+	}
+	if field.Type != reflect.TypeOf([]string{}) {
+		t.Fatalf("Capabilities type = %s, want []string", field.Type)
 	}
 }
 

@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3198,10 +3199,12 @@ func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
 	execCustom := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
+	config := testRunnerConfig()
+	config.Capabilities = []string{"docker", "gpu"}
 
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects: []string{"proj-a"},
-		Config:   testRunnerConfig(),
+		Config:   config,
 		Mode:     ExecutionModeHeadless,
 		Executors: map[string]TaskExecutor{
 			"opencode": execOpencode,
@@ -3232,6 +3235,9 @@ func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
 	}
 	if !executorSet["pi-rpc"] {
 		t.Error("registration should include 'pi-rpc' executor")
+	}
+	if !reflect.DeepEqual(reg.Capabilities, []string{"docker", "gpu"}) {
+		t.Errorf("registration capabilities = %v, want [docker gpu]", reg.Capabilities)
 	}
 }
 

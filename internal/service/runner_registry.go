@@ -60,12 +60,17 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	if executors == nil {
 		executors = []string{}
 	}
+	capabilities := req.Capabilities
+	if capabilities == nil {
+		capabilities = []string{}
+	}
 
 	row := &storage.RunnerRow{
 		RunnerID:      req.RunnerID,
 		Hostname:      req.Hostname,
 		Labels:        labels,
 		Executors:     executors,
+		Capabilities:  capabilities,
 		MaxParallel:   maxParallel,
 		RegisteredAt:  now,
 		LastHeartbeat: now,
@@ -312,6 +317,7 @@ func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 		Hostname:      row.Hostname,
 		Labels:        row.Labels,
 		Executors:     row.Executors,
+		Capabilities:  row.Capabilities,
 		MaxParallel:   row.MaxParallel,
 		FeatureIDs:    row.FeatureIDs,
 		RegisteredAt:  time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),

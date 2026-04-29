@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 10
+const CurrentSchemaVersion = 11
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -175,6 +175,7 @@ CREATE TABLE IF NOT EXISTS runners (
   hostname TEXT NOT NULL,
   labels TEXT DEFAULT '{}',
   executors TEXT DEFAULT '[]',
+  capabilities TEXT DEFAULT '[]',
   max_parallel INTEGER NOT NULL DEFAULT 1,
   feature_ids TEXT DEFAULT '',
   registered_at INTEGER NOT NULL,
@@ -465,6 +466,20 @@ func migrateSchema(db *sql.DB) error {
 		for _, stmt := range featureAssignmentIndexes {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate v10 (feature_assignments indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 11 {
+		// v11: persist runner capabilities for server-side capability routing.
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='runners'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE runners ADD COLUMN capabilities TEXT DEFAULT '[]'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v11 (add runner capabilities): %w", err)
+				}
 			}
 		}
 	}

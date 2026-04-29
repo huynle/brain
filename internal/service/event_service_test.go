@@ -380,6 +380,26 @@ type mockFeatureTaskLister struct {
 	err   error
 }
 
+// mockFeatureAssignmentCleaner implements the feature assignment cleanup
+// dependency for testing guarded cleanup behavior.
+type mockFeatureAssignmentCleaner struct {
+	calls []featureAssignmentCleanupCall
+	err   error
+}
+
+type featureAssignmentCleanupCall struct {
+	projectID string
+	featureID string
+}
+
+func (m *mockFeatureAssignmentCleaner) ClearFeatureAssignment(ctx context.Context, projectID, featureID string) (bool, error) {
+	m.calls = append(m.calls, featureAssignmentCleanupCall{projectID: projectID, featureID: featureID})
+	if m.err != nil {
+		return false, m.err
+	}
+	return true, nil
+}
+
 func (m *mockFeatureTaskLister) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
 	if m.err != nil {
 		return nil, m.err
@@ -427,6 +447,52 @@ func TestCheckFeatureCompletion_EmitsCompletedWhenAllDone(t *testing.T) {
 	}
 }
 
+func TestCheckFeatureCompletion_ClearsAssignmentWhenAllTasksCompleted(t *testing.T) {
+	svc, _ := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	cleaner := &mockFeatureAssignmentCleaner{}
+	svc.SetFeatureTaskLister(lister)
+	svc.SetFeatureAssignmentCleaner(cleaner)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("expected assignment cleanup once, got %d calls", len(cleaner.calls))
+	}
+	if cleaner.calls[0].projectID != "proj-1" || cleaner.calls[0].featureID != "feat-1" {
+		t.Fatalf("expected cleanup for proj-1/feat-1, got %s/%s", cleaner.calls[0].projectID, cleaner.calls[0].featureID)
+	}
+}
+
+func TestCheckFeatureCompletion_ClearsAssignmentWhenTasksCompletedOrValidated(t *testing.T) {
+	svc, _ := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "validated"},
+			{ID: "t3", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	cleaner := &mockFeatureAssignmentCleaner{}
+	svc.SetFeatureTaskLister(lister)
+	svc.SetFeatureAssignmentCleaner(cleaner)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t2")
+
+	if len(cleaner.calls) != 1 {
+		t.Fatalf("expected assignment cleanup once for completed+validated tasks, got %d calls", len(cleaner.calls))
+	}
+}
+
 func TestCheckFeatureCompletion_EmitsProgressWhenPartiallyDone(t *testing.T) {
 	svc, hub := newTestEventService()
 	ctx := context.Background()
@@ -464,6 +530,63 @@ func TestCheckFeatureCompletion_EmitsProgressWhenPartiallyDone(t *testing.T) {
 	}
 	if events[0].Metadata["total"] != "3" {
 		t.Errorf("expected total=3, got %q", events[0].Metadata["total"])
+	}
+}
+
+func TestCheckFeatureCompletion_DoesNotClearAssignmentWhenAnyTaskIncomplete(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "pending", status: "pending"},
+		{name: "active", status: "active"},
+		{name: "waiting", status: "waiting"},
+		{name: "blocked", status: "blocked"},
+		{name: "in_progress", status: "in_progress"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc, _ := newTestEventService()
+			ctx := context.Background()
+
+			lister := &mockFeatureTaskLister{
+				tasks: []types.ResolvedTask{
+					{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+					{ID: "t2", FeatureID: "feat-1", Status: tt.status},
+				},
+			}
+			cleaner := &mockFeatureAssignmentCleaner{}
+			svc.SetFeatureTaskLister(lister)
+			svc.SetFeatureAssignmentCleaner(cleaner)
+
+			svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+			if len(cleaner.calls) != 0 {
+				t.Fatalf("expected no assignment cleanup while task is %s, got %d calls", tt.status, len(cleaner.calls))
+			}
+		})
+	}
+}
+
+func TestCheckFeatureCompletion_DoesNotClearManualAssignmentWhenFeatureIncomplete(t *testing.T) {
+	svc, _ := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "manual-task", FeatureID: "feat-1", Status: "in_progress"},
+			{ID: "next-task", FeatureID: "feat-1", Status: "pending"},
+		},
+	}
+	cleaner := &mockFeatureAssignmentCleaner{}
+	svc.SetFeatureTaskLister(lister)
+	svc.SetFeatureAssignmentCleaner(cleaner)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "manual-task")
+
+	if len(cleaner.calls) != 0 {
+		t.Fatalf("expected manual assignment to remain while feature is incomplete, got %d cleanup calls", len(cleaner.calls))
 	}
 }
 

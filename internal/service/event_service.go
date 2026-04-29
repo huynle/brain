@@ -24,6 +24,12 @@ type FeatureTaskLister interface {
 	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
 }
 
+// FeatureAssignmentCleaner is the subset of storage needed to clear feature
+// assignments after service-level completion detection confirms all tasks are done.
+type FeatureAssignmentCleaner interface {
+	ClearFeatureAssignment(ctx context.Context, projectID, featureID string) (bool, error)
+}
+
 // EventServiceImpl implements api.EventService using the EventHub.
 // It handles event ingestion with validation and deduplication,
 // querying recent events, and subscribing to filtered event streams.
@@ -32,6 +38,9 @@ type EventServiceImpl struct {
 
 	// featureLister queries tasks by feature for completion detection.
 	featureLister FeatureTaskLister
+
+	// assignmentCleaner clears durable feature assignment only after completion.
+	assignmentCleaner FeatureAssignmentCleaner
 
 	// seenIDs tracks event IDs for deduplication.
 	mu      sync.RWMutex
@@ -51,6 +60,12 @@ func NewEventService(hub *realtime.EventHub) *EventServiceImpl {
 // circular dependencies between services.
 func (s *EventServiceImpl) SetFeatureTaskLister(lister FeatureTaskLister) {
 	s.featureLister = lister
+}
+
+// SetFeatureAssignmentCleaner sets the optional cleanup dependency used after
+// all tasks in a feature are completed or validated.
+func (s *EventServiceImpl) SetFeatureAssignmentCleaner(cleaner FeatureAssignmentCleaner) {
+	s.assignmentCleaner = cleaner
 }
 
 // =============================================================================
@@ -246,6 +261,16 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 	allDone := completed >= total
 
 	if allDone {
+		if s.assignmentCleaner != nil {
+			if _, err := s.assignmentCleaner.ClearFeatureAssignment(ctx, projectID, featureID); err != nil {
+				slog.Warn("feature completion check: failed to clear feature assignment",
+					"project_id", projectID,
+					"feature_id", featureID,
+					"error", err,
+				)
+			}
+		}
+
 		evt := types.NewEvent(types.EventFeatureCompleted, types.EventSourceAPI)
 		evt.ProjectID = projectID
 		evt.FeatureID = featureID

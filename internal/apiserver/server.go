@@ -124,6 +124,8 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// ─── Event Hub & Services ──────────────────────────────────────
 	eventHub := realtime.NewEventHub()
 	eventSvc := service.NewEventService(eventHub)
+	eventSvc.SetFeatureTaskLister(taskSvc)
+	eventSvc.SetFeatureAssignmentCleaner(store)
 
 	// ─── Webhook Dispatcher ────────────────────────────────────────
 	// Subscribe to all EventHub events and deliver to matching webhooks.

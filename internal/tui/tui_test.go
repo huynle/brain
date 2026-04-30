@@ -1,7 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -24,6 +27,82 @@ func TestNewModel_Init_ReturnsSSEConnectCmd(t *testing.T) {
 	cmd := m.Init()
 	if cmd == nil {
 		t.Error("Init() should return a non-nil command (SSE connect)")
+	}
+}
+
+func TestUpdate_RunnersTabSKey_ShutsDownSelectedRunner(t *testing.T) {
+	var requestedPath string
+	var requestedMethod string
+	var requestedReason string
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		requestedPath = r.URL.Path
+		requestedMethod = r.Method
+
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("failed to decode shutdown body: %v", err)
+		}
+		requestedReason = body["reason"]
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	m := NewModel(Config{APIURL: server.URL, Project: "brain-api"})
+	m.activeContentTab = ContentTabRunners
+	m.activePanel = PanelRunners
+	m.runnerPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host1", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-2", Hostname: "host2", Status: types.RunnerStatusOnline},
+	})
+	m.runnerPanel.MoveDown()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected shutdown command for selected runner")
+	}
+	if model.statusMessageType != "info" {
+		t.Fatalf("expected info status while shutdown is requested, got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "runner-2") || !strings.Contains(model.statusMessage, "shutdown") {
+		t.Fatalf("expected status message to mention runner-2 shutdown, got %q", model.statusMessage)
+	}
+
+	_ = cmd()
+
+	if requestCount != 1 {
+		t.Fatalf("expected one shutdown request, got %d", requestCount)
+	}
+	if requestedMethod != http.MethodPut {
+		t.Fatalf("expected PUT shutdown request, got %s", requestedMethod)
+	}
+	if requestedPath != "/api/v1/runners/runner-2/shutdown" {
+		t.Fatalf("expected selected runner shutdown path, got %s", requestedPath)
+	}
+	if requestedReason != "requested from TUI" {
+		t.Fatalf("expected TUI shutdown reason, got %q", requestedReason)
+	}
+}
+
+func TestUpdate_RunnersTabSKey_WithoutSelectionDoesNothing(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabRunners
+	m.activePanel = PanelRunners
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when no runner is selected")
+	}
+	if model.statusMessage != "" {
+		t.Fatalf("expected no status message when no runner is selected, got %q", model.statusMessage)
 	}
 }
 

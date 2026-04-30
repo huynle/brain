@@ -1400,6 +1400,52 @@ func TestAPIClient_ResumeAll_ServerError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ShutdownRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ShutdownRunner(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ShutdownRunner(context.Background(), "runner-1", "maintenance window")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner-1/shutdown" {
+		t.Errorf("path = %q, want /api/v1/runners/runner-1/shutdown", gotPath)
+	}
+	if gotBody["reason"] != "maintenance window" {
+		t.Errorf("reason = %q, want maintenance window", gotBody["reason"])
+	}
+}
+
+func TestAPIClient_ShutdownRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.ShutdownRunner(context.Background(), "missing-runner", "maintenance"); err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // GetRunnerStatus
 // ---------------------------------------------------------------------------
 

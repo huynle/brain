@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1019,6 +1020,25 @@ func (c *APIClient) ResumeAll(ctx context.Context) error {
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/resume", nil)
 	if err != nil {
 		return fmt.Errorf("resume all: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ShutdownRunner requests graceful shutdown for a specific registered runner.
+func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID string, reason string) error {
+	body, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		return fmt.Errorf("encode shutdown runner request: %w", err)
+	}
+	path := fmt.Sprintf("/api/v1/runners/%s/shutdown", runnerID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("shutdown runner: %w", err)
 	}
 	defer resp.Body.Close()
 

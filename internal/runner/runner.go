@@ -460,6 +460,7 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.mu.Lock()
 			tr.status = RunnerStatusStopped
 			tr.mu.Unlock()
+			tr.deregisterFromAPI()
 			tr.saveState()
 			close(tr.done)
 			return nil

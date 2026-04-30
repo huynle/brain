@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -102,6 +103,15 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 		r.Post("/{runnerId}/features/{featureId}/toggle", h.HandleToggleRunnerFeature)
 	})
 	return r
+}
+
+func newRunnerShutdownTestRouter(mock *mockRunnerRegistryService, hub *realtime.Hub) http.Handler {
+	h := NewHandler(
+		&mockBrainService{},
+		WithRunnerRegistryService(mock),
+		WithHub(hub),
+	)
+	return NewRouter(config.Config{}, WithHandler(h))
 }
 
 // =============================================================================
@@ -1307,5 +1317,86 @@ func TestHandleResumeRunner_SendsSSECommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Tests: PUT /api/v1/runners/{runnerId}/shutdown
+// =============================================================================
+
+func TestHandleShutdownRunner_PublishesShutdownCommandWithReason(t *testing.T) {
+	hub := realtime.NewHub()
+	ch, unsubscribe := hub.Subscribe(realtime.RunnerTopic("runner-1"))
+	defer unsubscribe()
+
+	mock := &mockRunnerRegistryService{
+		getRunnerFunc: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+			if runnerID != "runner-1" {
+				t.Fatalf("runnerID = %q, want runner-1", runnerID)
+			}
+			return &types.RunnerInfo{RunnerID: runnerID, Status: types.RunnerStatusOnline}, nil
+		},
+	}
+	router := newRunnerShutdownTestRouter(mock, hub)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/runners/runner-1/shutdown", strings.NewReader(`{"reason":"maintenance window"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d\nBody: %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp map[string]interface{}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to unmarshal response: %v", err)
+	}
+	if resp["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %v, want runner-1", resp["runnerId"])
+	}
+	if resp["action"] != "shutdown" {
+		t.Errorf("action = %v, want shutdown", resp["action"])
+	}
+
+	select {
+	case msg := <-ch:
+		if msg.Event != "command" {
+			t.Fatalf("event = %q, want command", msg.Event)
+		}
+		data, ok := msg.Data.(map[string]interface{})
+		if !ok {
+			t.Fatalf("command data type = %T, want map[string]interface{}", msg.Data)
+		}
+		if data["command"] != "shutdown" {
+			t.Errorf("command = %v, want shutdown", data["command"])
+		}
+		payload, ok := data["payload"].(map[string]interface{})
+		if !ok {
+			t.Fatalf("payload type = %T, want map[string]interface{}", data["payload"])
+		}
+		if payload["reason"] != "maintenance window" {
+			t.Errorf("reason = %v, want maintenance window", payload["reason"])
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("timed out waiting for shutdown command")
+	}
+}
+
+func TestHandleShutdownRunner_NotFound(t *testing.T) {
+	hub := realtime.NewHub()
+	mock := &mockRunnerRegistryService{
+		getRunnerFunc: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+			return nil, ErrNotFound
+		},
+	}
+	router := newRunnerShutdownTestRouter(mock, hub)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/runners/missing/shutdown", strings.NewReader(`{"reason":"maintenance"}`))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d\nBody: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }

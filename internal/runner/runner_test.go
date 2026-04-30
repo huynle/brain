@@ -728,6 +728,56 @@ func TestNewTaskRunner_SingleProject(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_Start_DeregistersWhenRemoteShutdownCancelsContext(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- tr.Start(ctx)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		client.mu.Lock()
+		registered := len(client.registerCalls) > 0
+		client.mu.Unlock()
+		if registered {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("runner did not register before deadline")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	tr.commandCh <- RunnerCommand{Type: CommandShutdown, Reason: "test shutdown"}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner did not stop after shutdown command")
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.deregisterCalls) != 1 {
+		t.Fatalf("deregister calls = %d, want 1", len(client.deregisterCalls))
+	}
+	if client.deregisterCalls[0] != tr.runnerID {
+		t.Fatalf("deregister runner ID = %q, want %q", client.deregisterCalls[0], tr.runnerID)
+	}
+}
+
 func TestNewTaskRunner_StartPaused(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:    []string{"proj-a"},

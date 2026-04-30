@@ -439,6 +439,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case runnerShutdownRequestedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to shutdown runner %s: %v", msg.runnerID, msg.err))
+			m.addLog("error", fmt.Sprintf("Runner shutdown failed: %s: %v", msg.runnerID, msg.err))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Shutdown requested for runner %s", msg.runnerID))
+		m.addLog("info", fmt.Sprintf("Runner shutdown requested: %s", msg.runnerID))
+		return m, fetchRunnerListCmd(m.apiRunnerConfig())
+
 	case taskCompletedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Failed to complete task: %v", msg.err))
@@ -1155,6 +1165,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
+			if m.activePanel == PanelRunners {
+				selectedRunner := m.runnerPanel.SelectedRunner()
+				if selectedRunner == nil {
+					return m, nil
+				}
+				m.setStatusMessage("info", fmt.Sprintf("Requesting shutdown for runner %s...", selectedRunner.RunnerID))
+				return m, shutdownRunnerCmd(m.apiRunnerConfig(), selectedRunner.RunnerID, "requested from TUI")
+			}
+
 			// Open metadata modal for selected task(s) (tasks view only)
 			if m.viewMode != ViewModeTasks {
 				return m, nil
@@ -3320,6 +3339,11 @@ type runnerStatusMsg struct {
 	err            error
 }
 
+type runnerShutdownRequestedMsg struct {
+	runnerID string
+	err      error
+}
+
 // =============================================================================
 // Command Functions
 // =============================================================================
@@ -3608,6 +3632,16 @@ func fetchRunnerListCmd(cfg runner.RunnerConfig) tea.Cmd {
 			return RunnerListMsg{Err: err}
 		}
 		return RunnerListMsg{Runners: resp.Runners}
+	}
+}
+
+// shutdownRunnerCmd requests graceful shutdown for a registered runner.
+func shutdownRunnerCmd(cfg runner.RunnerConfig, runnerID, reason string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		err := apiClient.ShutdownRunner(ctx, runnerID, reason)
+		return runnerShutdownRequestedMsg{runnerID: runnerID, err: err}
 	}
 }
 

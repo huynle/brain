@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"time"
@@ -380,6 +381,44 @@ func (h *Handler) HandleResumeRunner(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"runnerId": runnerID,
 		"action":   "resume",
+		"success":  true,
+	})
+}
+
+// HandleShutdownRunner handles PUT /runners/{runnerId}/shutdown — request runner shutdown via SSE command.
+func (h *Handler) HandleShutdownRunner(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	if _, err := h.runnerRegistry.GetRunner(r.Context(), runnerID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	slog.Info("runner shutdown requested", "runner_id", runnerID, "reason", req.Reason)
+
+	var payload map[string]interface{}
+	if req.Reason != "" {
+		payload = map[string]interface{}{"reason": req.Reason}
+	}
+	if h.hub != nil {
+		h.hub.PublishRunnerCommand(runnerID, "shutdown", payload)
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"runnerId": runnerID,
+		"action":   "shutdown",
 		"success":  true,
 	})
 }

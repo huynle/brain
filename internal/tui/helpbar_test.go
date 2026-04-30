@@ -116,3 +116,31 @@ func TestHelpBar_View_ShowsProjectAll_MultiProject(t *testing.T) {
 		t.Errorf("expected help bar to contain 'Pause (project/all)' in multi-project mode, got:\n%s", view)
 	}
 }
+
+func TestHelpBar_View_RunnersTabShowsShutdownShortcut(t *testing.T) {
+	h := NewHelpBar()
+	h.ActiveContentTab = ContentTabRunners
+
+	view := h.View(120, false, "brain-api")
+
+	if !strings.Contains(view, "Shutdown") {
+		t.Fatalf("expected runners tab help to contain Shutdown shortcut, got:\n%s", view)
+	}
+	if !strings.Contains(view, "s") {
+		t.Fatalf("expected runners tab help to contain s key for shutdown, got:\n%s", view)
+	}
+}
+
+func TestHelpBar_View_RunnersPanelShowsShutdownShortcut(t *testing.T) {
+	h := NewHelpBar()
+	h.ActivePanel = PanelRunners
+
+	view := h.View(120, false, "brain-api")
+
+	if !strings.Contains(view, "Shutdown") {
+		t.Fatalf("expected runners panel help to contain Shutdown shortcut, got:\n%s", view)
+	}
+	if !strings.Contains(view, "s") {
+		t.Fatalf("expected runners panel help to contain s key for shutdown, got:\n%s", view)
+	}
+}

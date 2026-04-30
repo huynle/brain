@@ -188,6 +188,7 @@ make lint
 - `POST /api/v1/tasks/:taskId/start` - Mark task in_progress
 - `POST /api/v1/tasks/:taskId/complete` - Mark task completed
 - `POST /api/v1/tasks/:taskId/block` - Mark task blocked
+- `PUT /api/v1/runners/:runnerId/shutdown` - Request graceful remote runner shutdown
 
 #### Feature Endpoints
 - `GET /api/v1/features/:projectId` - List features for project
@@ -428,6 +429,7 @@ The `--tui` flag enables an interactive terminal dashboard built with [Bubbletea
 | `p` | Pause/resume (project, feature, or task) |
 | `o` | Open settings popup |
 | `O` | Open OpenCode session in tmux |
+| `s` | Shutdown selected runner (runners panel) |
 | `r` | Refresh task list |
 | `L` | Toggle logs panel visibility |
 | `Backspace` | Open metadata popup |

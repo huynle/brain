@@ -90,7 +90,8 @@ type Model struct {
 	sseClients      map[string]*SSEClient
 
 	// Multi-select state
-	selectedTasks map[string]bool
+	selectedTasks   map[string]bool
+	selectedRunners map[string]bool
 
 	// Pause/resume state
 	pausedProjects   map[string]bool
@@ -167,6 +168,7 @@ func NewModel(cfg Config) Model {
 		sseClient:        NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
 		ctx:              context.Background(),
 		selectedTasks:    make(map[string]bool),
+		selectedRunners:  make(map[string]bool),
 		pausedProjects:   make(map[string]bool),
 		runnerController: cfg.Runner,
 		tasksByProject:   make(map[string][]types.ResolvedTask),
@@ -518,6 +520,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case RunnersUpdatedMsg:
 		m.runnersPanel.SetRunners(msg.Runners)
+		m.pruneRunnerSelection()
 		return m, nil
 
 	case featureExecutedMsg:
@@ -901,8 +904,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sseClient.Stop()
 			return m, tea.Quit
 		case tea.KeyEsc:
+			if len(m.selectedRunners) > 0 {
+				m.clearRunnerSelection()
+				return m, nil
+			}
 			m.activeContentTab = ContentTabTasks
 			m.helpBar.ActiveContentTab = m.activeContentTab
+			return m, nil
+		case tea.KeySpace:
+			m.toggleRunnerSelection()
 			return m, nil
 		}
 		switch string(msg.Runes) {
@@ -921,6 +931,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "r":
 			// Refresh runners list
 			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+		case " ":
+			m.toggleRunnerSelection()
+			return m, nil
+		case "A":
+			m.selectAllOnlineRunners()
+			return m, nil
+		case "D":
+			m.clearRunnerSelection()
+			return m, nil
 		case "q":
 			m.sseClient.Stop()
 			return m, tea.Quit
@@ -2462,6 +2481,57 @@ func (m *Model) getSelectedTasks() []types.ResolvedTask {
 	return selected
 }
 
+// toggleRunnerSelection toggles selection for the focused online runner.
+func (m *Model) toggleRunnerSelection() {
+	runner := m.runnersPanel.SelectedRunner()
+	if runner == nil || runner.Status != "online" {
+		return
+	}
+	if m.selectedRunners == nil {
+		m.selectedRunners = make(map[string]bool)
+	}
+	if m.selectedRunners[runner.RunnerID] {
+		delete(m.selectedRunners, runner.RunnerID)
+	} else {
+		m.selectedRunners[runner.RunnerID] = true
+	}
+}
+
+// selectAllOnlineRunners selects all currently listed online runners.
+func (m *Model) selectAllOnlineRunners() {
+	if m.selectedRunners == nil {
+		m.selectedRunners = make(map[string]bool)
+	}
+	for _, runner := range m.runnersPanel.runners {
+		if runner.Status == "online" {
+			m.selectedRunners[runner.RunnerID] = true
+		}
+	}
+}
+
+// clearRunnerSelection clears all selected runners.
+func (m *Model) clearRunnerSelection() {
+	m.selectedRunners = make(map[string]bool)
+}
+
+// pruneRunnerSelection removes selections for runners that disappeared or are no longer online.
+func (m *Model) pruneRunnerSelection() {
+	if len(m.selectedRunners) == 0 {
+		return
+	}
+	online := make(map[string]bool, len(m.runnersPanel.runners))
+	for _, runner := range m.runnersPanel.runners {
+		if runner.Status == "online" {
+			online[runner.RunnerID] = true
+		}
+	}
+	for runnerID := range m.selectedRunners {
+		if !online[runnerID] {
+			delete(m.selectedRunners, runnerID)
+		}
+	}
+}
+
 // View implements tea.Model. Renders the TUI layout.
 func (m Model) View() string {
 	// Don't block rendering when dimensions are unset - components handle zero dimensions gracefully
@@ -2730,7 +2800,7 @@ func (m Model) renderBaseView() string {
 	var mainContent string
 	if m.activeContentTab == ContentTabRunners {
 		// Runners tab: full-width runners panel, no task/detail/log panels
-		runnersView := m.runnersPanel.View(m.width-4, mainHeight-2)
+		runnersView := m.runnersPanel.ViewWithSelection(m.width-4, mainHeight-2, m.selectedRunners)
 		runnersPanel := InactiveBorder.
 			Width(m.width - 2).
 			Height(mainHeight - 2).

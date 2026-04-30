@@ -300,6 +300,105 @@ func TestUpdate_RefreshKey_ReconnectsSSE(t *testing.T) {
 	}
 }
 
+func TestUpdate_RunnersTabSpaceTogglesCurrentOnlineRunner(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.width = 120
+	m.height = 30
+	m.selectedTasks["task-1"] = true
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "online", MaxParallel: 2},
+		{RunnerID: "runner-2", Hostname: "host-2", Status: "lost", MaxParallel: 2},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	model := updated.(Model)
+
+	view := model.View()
+	if !strings.Contains(view, "[x]") || !strings.Contains(view, "runner-1") {
+		t.Fatalf("expected Space to select current online runner, got:\n%s", view)
+	}
+	if !model.selectedTasks["task-1"] || len(model.selectedTasks) != 1 {
+		t.Fatalf("expected runner selection to leave task selection unchanged, got %#v", model.selectedTasks)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeySpace})
+	model = updated.(Model)
+	if strings.Contains(model.View(), "[x]") {
+		t.Fatalf("expected second Space to clear current runner selection, got:\n%s", model.View())
+	}
+}
+
+func TestUpdate_RunnersTabSpaceIgnoresLostRunner(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.width = 120
+	m.height = 30
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "lost", MaxParallel: 2},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	model := updated.(Model)
+
+	if strings.Contains(model.View(), "[x]") {
+		t.Fatalf("expected Space to ignore lost runner, got:\n%s", model.View())
+	}
+}
+
+func TestUpdate_RunnersTabASelectsVisibleOnlineRunnersOnly(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.width = 120
+	m.height = 30
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "online", MaxParallel: 2},
+		{RunnerID: "runner-2", Hostname: "host-2", Status: "lost", MaxParallel: 2},
+		{RunnerID: "runner-3", Hostname: "host-3", Status: "online", MaxParallel: 2},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+	model := updated.(Model)
+	view := model.View()
+
+	if count := strings.Count(view, "[x]"); count != 2 {
+		t.Fatalf("expected A to select two online runners only, got %d selections in:\n%s", count, view)
+	}
+	if !strings.Contains(view, "[ ]") || !strings.Contains(view, "runner-2") {
+		t.Fatalf("expected lost runner to remain unselected, got:\n%s", view)
+	}
+}
+
+func TestUpdate_RunnersTabDAndEscClearRunnerSelections(t *testing.T) {
+	for _, keyMsg := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'D'}},
+		{Type: tea.KeyEsc},
+	} {
+		m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+		m.activeContentTab = ContentTabRunners
+		m.width = 120
+		m.height = 30
+		m.runnersPanel.SetRunners([]types.RunnerInfo{
+			{RunnerID: "runner-1", Hostname: "host-1", Status: "online", MaxParallel: 2},
+		})
+
+		updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'A'}})
+		model := updated.(Model)
+		if !strings.Contains(model.View(), "[x]") {
+			t.Fatalf("test setup failed: expected runner to be selected before clearing, got:\n%s", model.View())
+		}
+
+		updated, _ = model.Update(keyMsg)
+		model = updated.(Model)
+		if strings.Contains(model.View(), "[x]") {
+			t.Fatalf("expected %s to clear runner selections, got:\n%s", keyMsg.String(), model.View())
+		}
+		if model.activeContentTab != ContentTabRunners {
+			t.Fatalf("expected clearing selection to keep runners tab active, got %v", model.activeContentTab)
+		}
+	}
+}
+
 // =============================================================================
 // View Tests
 // =============================================================================

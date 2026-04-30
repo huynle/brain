@@ -87,6 +87,11 @@ func (p *RunnersPanel) ContentHeight() int {
 
 // View renders the runners panel.
 func (p *RunnersPanel) View(width, height int) string {
+	return p.ViewWithSelection(width, height, nil)
+}
+
+// ViewWithSelection renders the runners panel with selected runner markers.
+func (p *RunnersPanel) ViewWithSelection(width, height int, selectedRunners map[string]bool) string {
 	if width < 10 {
 		width = 10
 	}
@@ -108,7 +113,7 @@ func (p *RunnersPanel) View(width, height int) string {
 
 	// Runner rows
 	for i, r := range p.runners {
-		row := p.renderRunnerRow(r, i == p.cursor, width)
+		row := p.renderRunnerRowWithCursor(r, i == p.cursor, selectedRunners[r.RunnerID], width)
 		lines = append(lines, row)
 	}
 
@@ -148,11 +153,12 @@ func (p *RunnersPanel) View(width, height int) string {
 func (p *RunnersPanel) renderHeader(width int) string {
 	bold := BoldStyle
 
-	// Column layout: Status | Runner ID | Hostname | Tasks | Capabilities | Heartbeat
+	// Column layout: Select | Status | Runner ID | Hostname | Tasks | Capabilities | Heartbeat
 	cols := []struct {
 		label string
 		width int
 	}{
+		{"Sel", 4},
 		{"Status", 8},
 		{"Runner ID", 20},
 		{"Hostname", 16},
@@ -175,6 +181,11 @@ func (p *RunnersPanel) renderHeader(width int) string {
 
 // renderRunnerRow renders a single runner row.
 func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width int) string {
+	return p.renderRunnerRowWithCursor(r, false, selected, width)
+}
+
+// renderRunnerRowWithCursor renders a single runner row with separate cursor and selection state.
+func (p *RunnersPanel) renderRunnerRowWithCursor(r types.RunnerInfo, cursor, selected bool, width int) string {
 	// Status indicator
 	var statusIndicator string
 	var statusStyle lipgloss.Style
@@ -191,6 +202,11 @@ func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width 
 	}
 
 	statusCol := statusStyle.Render(fmt.Sprintf("%-8s", statusIndicator+" "+r.Status))
+	checkbox := "[ ]"
+	if selected {
+		checkbox = "[x]"
+	}
+	selectCol := fmt.Sprintf("%-4s", checkbox)
 
 	// Runner ID (truncate if needed)
 	runnerID := r.RunnerID
@@ -235,9 +251,9 @@ func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width 
 	// Heartbeat age
 	heartbeatCol := p.renderHeartbeatAge(r.LastHeartbeat)
 
-	row := fmt.Sprintf(" %s %s %s %s %s %s", statusCol, runnerIDCol, hostnameCol, tasksCol, capsCol, heartbeatCol)
+	row := fmt.Sprintf(" %s %s %s %s %s %s %s", selectCol, statusCol, runnerIDCol, hostnameCol, tasksCol, capsCol, heartbeatCol)
 
-	if selected {
+	if cursor {
 		row = GetSelectedRowStyle().Width(width).Render(row)
 	}
 

@@ -775,9 +775,25 @@ func (c *APIClient) RegisterRunner(ctx context.Context, req types.RunnerRegistra
 		return nil, c.readError(resp)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read register response body: %w", err)
+	}
+
 	var info types.RunnerInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	if info.RunnerID == "" {
+		var wrapped struct {
+			Runner types.RunnerInfo `json:"runner"`
+		}
+		if err := json.Unmarshal(body, &wrapped); err != nil {
+			return nil, fmt.Errorf("decode register response: %w", err)
+		}
+		if wrapped.Runner.RunnerID != "" {
+			info = wrapped.Runner
+		}
 	}
 	return &info, nil
 }

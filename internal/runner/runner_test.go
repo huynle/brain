@@ -1,8 +1,11 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"reflect"
 	"strings"
 	"sync"
@@ -1072,13 +1075,17 @@ func TestTaskRunner_ClaimAndSpawn_Success(t *testing.T) {
 
 func TestTaskRunner_ClaimAndSpawn_ClaimFails(t *testing.T) {
 	client := newMockClient()
-	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner"}
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner", Message: "assigned to another runner"}
 
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
 
 	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	var events []RunnerEvent
+	tr.OnEvent(func(event RunnerEvent) {
+		events = append(events, event)
+	})
 
 	task := testTask("task1", "proj-a")
 	ctx := context.Background()
@@ -1087,10 +1094,72 @@ func TestTaskRunner_ClaimAndSpawn_ClaimFails(t *testing.T) {
 	if err == nil {
 		t.Error("claimAndSpawn should return error when claim fails")
 	}
+	if !errors.Is(err, ErrTaskClaimConflict) {
+		t.Fatalf("claimAndSpawn error = %v, want ErrTaskClaimConflict", err)
+	}
+
+	var rejected *RunnerEvent
+	for i := range events {
+		if events[i].Type == EventTaskClaimRejected {
+			rejected = &events[i]
+			break
+		}
+	}
+	if rejected == nil {
+		t.Fatal("claimAndSpawn should emit task_claim_rejected event")
+	}
+	if rejected.ClaimedBy != "other-runner" {
+		t.Errorf("claim rejected ClaimedBy = %q, want %q", rejected.ClaimedBy, "other-runner")
+	}
 
 	// Should not spawn
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn when claim fails")
+	}
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("should not update task status when claim conflicts")
+	}
+	if len(client.getReleaseCalls()) > 0 {
+		t.Error("should not release task when claim was not acquired")
+	}
+}
+
+func TestTaskRunner_Poll_TreatsClaimConflictAsExpectedRace(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner", Message: "assigned to another runner"}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	var logs bytes.Buffer
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.logger = log.New(&logs, "", 0)
+
+	var claimRejected bool
+	tr.OnEvent(func(event RunnerEvent) {
+		if event.Type == EventTaskClaimRejected {
+			claimRejected = true
+		}
+	})
+
+	tr.poll(context.Background())
+
+	if !claimRejected {
+		t.Fatal("poll should preserve claim rejected event emission")
+	}
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("poll should not spawn after claim conflict")
+	}
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("poll should not mark task in progress or failed after claim conflict")
+	}
+	if len(client.getReleaseCalls()) > 0 {
+		t.Error("poll should not release a claim that was never acquired")
+	}
+	if strings.Contains(logs.String(), "claim and spawn failed") {
+		t.Fatalf("poll logged claim conflict as generic spawn failure: %q", logs.String())
 	}
 }
 
@@ -2498,7 +2567,7 @@ func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *t
 		t.Error("should spawn tasks when all-paused but features are enabled")
 	}
 
-	// Verify GetNextTask was called with the enabled feature IDs
+	// Verify GetNextTask was called with the enabled feature IDs and affinity filters.
 	nextCalls := client.getNextTaskCalls()
 	if len(nextCalls) == 0 {
 		t.Fatal("expected at least 1 GetNextTask call")
@@ -2509,6 +2578,15 @@ func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *t
 			if fid == "feat-auth" {
 				found = true
 			}
+		}
+		if call.RunnerID != tr.runnerID {
+			t.Errorf("GetNextTask RunnerID = %q, want %q", call.RunnerID, tr.runnerID)
+		}
+		if call.Opts == nil {
+			t.Fatal("GetNextTask opts should not be nil")
+		}
+		if len(call.Opts.Executors) != 1 || call.Opts.Executors[0] != "opencode" {
+			t.Errorf("GetNextTask executors = %v, want [opencode]", call.Opts.Executors)
 		}
 	}
 	if !found {
@@ -2569,6 +2647,7 @@ func TestTaskRunner_Poll_ProjectPaused_WithEnabledFeatures_PollsEnabledFeatures(
 	}
 
 	// Verify GetNextTask was called with enabled feature IDs (not config feature IDs)
+	// and retains runner affinity filters while the project is paused.
 	nextCalls := client.getNextTaskCalls()
 	foundEnabled := false
 	for _, call := range nextCalls {
@@ -2577,6 +2656,15 @@ func TestTaskRunner_Poll_ProjectPaused_WithEnabledFeatures_PollsEnabledFeatures(
 				if fid == "feat-deploy" {
 					foundEnabled = true
 				}
+			}
+			if call.RunnerID != tr.runnerID {
+				t.Errorf("GetNextTask RunnerID = %q, want %q", call.RunnerID, tr.runnerID)
+			}
+			if call.Opts == nil {
+				t.Fatal("GetNextTask opts should not be nil")
+			}
+			if len(call.Opts.Executors) != 1 || call.Opts.Executors[0] != "opencode" {
+				t.Errorf("GetNextTask executors = %v, want [opencode]", call.Opts.Executors)
 			}
 		}
 	}
@@ -3230,6 +3318,7 @@ func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
 	stateMgr := newMockStateMgr()
 	config := testRunnerConfig()
 	config.Capabilities = []string{"docker", "gpu"}
+	config.MaxParallel = 7
 
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects: []string{"proj-a"},
@@ -3267,6 +3356,9 @@ func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
 	}
 	if !reflect.DeepEqual(reg.Capabilities, []string{"docker", "gpu"}) {
 		t.Errorf("registration capabilities = %v, want [docker gpu]", reg.Capabilities)
+	}
+	if reg.MaxParallel != 7 {
+		t.Errorf("registration max_parallel = %d, want 7", reg.MaxParallel)
 	}
 }
 

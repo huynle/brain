@@ -239,6 +239,44 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	}
 }
 
+func TestAPIClient_GetReadyTasks_IncludesRunnerFeatureAndExecutorFilters(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: []types.ResolvedTask{}})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetReadyTasks(context.Background(), "brain-api", &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1", "feat-2"},
+		Executors:  []string{"opencode", "pi"},
+		RunnerID:   "runner-abc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if parsed.Path != "/api/v1/tasks/brain-api/ready" {
+		t.Fatalf("path = %q, want ready path", parsed.Path)
+	}
+	values := parsed.Query()
+	if got := values.Get("runner_id"); got != "runner-abc" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-abc")
+	}
+	if got := values.Get("executors"); got != "opencode,pi" {
+		t.Fatalf("executors = %q, want %q", got, "opencode,pi")
+	}
+	if got := values["feature_id"]; len(got) != 2 || got[0] != "feat-1" || got[1] != "feat-2" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1", "feat-2"})
+	}
+}
+
 func TestBuildTaskQueryParams_IncludesRunnerID(t *testing.T) {
 	opts := &TaskFetchOptions{RunnerID: "runner-abc"}
 
@@ -314,6 +352,44 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 	}
 	if task.ID != "xyz789" {
 		t.Errorf("task ID = %q, want %q", task.ID, "xyz789")
+	}
+}
+
+func TestAPIClient_GetNextTask_IncludesRunnerFeatureAndExecutorFilters(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ResolvedTask{ID: "task-1", Title: "Next task"})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetNextTask(context.Background(), "brain-api", &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1"},
+		Executors:  []string{"opencode"},
+		RunnerID:   "runner-xyz",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if parsed.Path != "/api/v1/tasks/brain-api/next" {
+		t.Fatalf("path = %q, want next path", parsed.Path)
+	}
+	values := parsed.Query()
+	if got := values.Get("runner_id"); got != "runner-xyz" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-xyz")
+	}
+	if got := values.Get("executors"); got != "opencode" {
+		t.Fatalf("executors = %q, want %q", got, "opencode")
+	}
+	if got := values["feature_id"]; len(got) != 1 || got[0] != "feat-1" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1"})
 	}
 }
 
@@ -1938,10 +2014,11 @@ func TestAPIClient_RegisterRunner_Success(t *testing.T) {
 
 	client := NewAPIClient(testConfig(srv.URL))
 	info, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
-		RunnerID:    "runner_abc12345",
-		Hostname:    "test-host",
-		Executors:   []string{"opencode"},
-		MaxParallel: 3,
+		RunnerID:     "runner_abc12345",
+		Hostname:     "test-host",
+		Executors:    []string{"opencode"},
+		Capabilities: []string{"docker", "gpu"},
+		MaxParallel:  3,
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -1964,6 +2041,9 @@ func TestAPIClient_RegisterRunner_Success(t *testing.T) {
 	if len(gotBody.Executors) != 1 || gotBody.Executors[0] != "opencode" {
 		t.Errorf("body executors = %v, want [opencode]", gotBody.Executors)
 	}
+	if len(gotBody.Capabilities) != 2 || gotBody.Capabilities[0] != "docker" || gotBody.Capabilities[1] != "gpu" {
+		t.Errorf("body capabilities = %v, want [docker gpu]", gotBody.Capabilities)
+	}
 	if info == nil {
 		t.Fatal("expected non-nil RunnerInfo")
 	}
@@ -1972,6 +2052,55 @@ func TestAPIClient_RegisterRunner_Success(t *testing.T) {
 	}
 	if info.Status != types.RunnerStatusOnline {
 		t.Errorf("info status = %q, want %q", info.Status, types.RunnerStatusOnline)
+	}
+}
+
+func TestAPIClient_RegisterRunner_DecodesWrappedResponse(t *testing.T) {
+	var gotBody types.RunnerRegistration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/runners/register" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]types.RunnerInfo{
+			"runner": {
+				RunnerID:     gotBody.RunnerID,
+				Hostname:     gotBody.Hostname,
+				Executors:    gotBody.Executors,
+				Capabilities: gotBody.Capabilities,
+				MaxParallel:  gotBody.MaxParallel,
+				Status:       types.RunnerStatusOnline,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	info, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID:     "runner_wrapped",
+		Hostname:     "test-host",
+		Executors:    []string{"opencode", "pi"},
+		Capabilities: []string{"docker", "gpu"},
+		MaxParallel:  4,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil RunnerInfo")
+	}
+	if info.RunnerID != "runner_wrapped" {
+		t.Errorf("info runner_id = %q, want %q", info.RunnerID, "runner_wrapped")
+	}
+	if info.MaxParallel != 4 {
+		t.Errorf("info max_parallel = %d, want 4", info.MaxParallel)
+	}
+	if len(info.Executors) != 2 || info.Executors[0] != "opencode" || info.Executors[1] != "pi" {
+		t.Errorf("info executors = %v, want [opencode pi]", info.Executors)
+	}
+	if len(info.Capabilities) != 2 || info.Capabilities[0] != "docker" || info.Capabilities[1] != "gpu" {
+		t.Errorf("info capabilities = %v, want [docker gpu]", info.Capabilities)
 	}
 }
 

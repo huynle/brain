@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -22,6 +23,10 @@ import (
 // Set to half the lease duration (DefaultLeaseDuration = 10min) so claims are
 // renewed well before they expire.
 const DefaultRenewInterval = 5 * time.Minute
+
+// ErrTaskClaimConflict indicates an expected runner race where another runner
+// claimed or was assigned the task before this runner could start it.
+var ErrTaskClaimConflict = errors.New("task claim conflict")
 
 // =============================================================================
 // Interfaces for dependency injection
@@ -663,6 +668,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				continue
 			}
 			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
+				if errors.Is(err, ErrTaskClaimConflict) {
+					continue
+				}
 				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
 				continue
 			}
@@ -689,6 +697,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 		// Claim and spawn
 		if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
+			if errors.Is(err, ErrTaskClaimConflict) {
+				continue
+			}
 			tr.logger.Printf("claim and spawn failed for %s/%s: %v", projectID, task.ID, err)
 			continue
 		}
@@ -811,7 +822,13 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			ClaimedBy: result.ClaimedBy,
 			FeatureID: task.FeatureID,
 		})
-		return fmt.Errorf("task already claimed by %s", result.ClaimedBy)
+		if result.Message != "" {
+			return fmt.Errorf("%w: %s", ErrTaskClaimConflict, result.Message)
+		}
+		if result.ClaimedBy != "" {
+			return fmt.Errorf("%w: task already claimed by %s", ErrTaskClaimConflict, result.ClaimedBy)
+		}
+		return ErrTaskClaimConflict
 	}
 
 	tr.emitEvent(RunnerEvent{

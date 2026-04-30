@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -105,8 +106,8 @@ func (rp RunnerPanel) View(width, height int) string {
 	}
 
 	// Column header
-	headerLine := fmt.Sprintf("  %-14s %-10s %-8s %-6s %-6s %s",
-		"ID", "Host", "Status", "Tasks", "Max", "Executors")
+	headerLine := fmt.Sprintf("  %-14s %-10s %-8s %-6s %-6s %-18s %s",
+		"ID", "Host", "Status", "Tasks", "Max", "Assigned", "Executors")
 	b.WriteString(DimStyle.Render(headerLine))
 	b.WriteString("\n")
 
@@ -163,9 +164,14 @@ func (rp RunnerPanel) ViewDetail(width, height int) string {
 		b.WriteString(fmt.Sprintf("  Executors:     %s\n", DimStyle.Render("none")))
 	}
 
-	// Feature affinity
+	// Durable feature assignments
+	if len(runner.FeatureAssignments) > 0 {
+		b.WriteString(fmt.Sprintf("  Assigned:      %s\n", formatRunnerAssignments(runner.FeatureAssignments, true)))
+	}
+
+	// Runner-side feature affinity
 	if runner.FeatureIDs != "" {
-		b.WriteString(fmt.Sprintf("  Features:      %s\n", runner.FeatureIDs))
+		b.WriteString(fmt.Sprintf("  Affinity:      %s\n", runner.FeatureIDs))
 	}
 
 	// Labels
@@ -220,16 +226,52 @@ func (rp RunnerPanel) renderRunnerLine(runner types.RunnerInfo, width int) strin
 
 	// Running tasks (from heartbeat stats, if available)
 	runningTasks := "-"
+	assignments := formatRunnerAssignments(runner.FeatureAssignments, false)
+	if assignments == "" {
+		assignments = "-"
+	}
+	if len(assignments) > 18 {
+		assignments = assignments[:15] + "..."
+	}
 
-	return fmt.Sprintf("  %s %-14s %-10s %-8s %-6s %-6d %s",
+	return fmt.Sprintf("  %s %-14s %-10s %-8s %-6s %-6d %-18s %s",
 		statusIndicator,
 		id,
 		host,
 		string(runner.Status),
 		runningTasks,
 		runner.MaxParallel,
+		assignments,
 		executors,
 	)
+}
+
+func formatRunnerAssignments(assignments []types.FeatureAssignmentResponse, includeProject bool) string {
+	if len(assignments) == 0 {
+		return ""
+	}
+
+	parts := make([]string, 0, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.FeatureID == "" {
+			continue
+		}
+		source := assignment.Source
+		if source == "" {
+			source = "unknown"
+		}
+
+		meta := source
+		if includeProject && assignment.ProjectID != "" {
+			meta = assignment.ProjectID + ", " + source
+		}
+		if assignment.Status != "" && assignment.Status != "active" {
+			meta += ", " + assignment.Status
+		}
+		parts = append(parts, fmt.Sprintf("%s (%s)", assignment.FeatureID, meta))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 // statusIndicator returns a colored status dot for a runner.

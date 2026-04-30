@@ -68,6 +68,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	if h.ActiveContentTab == ContentTabRunners {
 		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Assign  ", bold("a"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
@@ -109,6 +110,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	if h.ActivePanel == PanelRunners {
 		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Info  ", bold("i"))
+		shortcuts += fmt.Sprintf("%s Assign  ", bold("a"))
 	} else if h.ActivePanel == PanelLogs {
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
 	} else if h.ActivePanel == PanelDetails {

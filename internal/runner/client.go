@@ -481,6 +481,49 @@ func (c *APIClient) GetFeatures(ctx context.Context, projectID string) ([]types.
 	return data.Features, nil
 }
 
+// AssignFeatureToRunner manually assigns or reassigns a project feature to a runner.
+func (c *APIClient) AssignFeatureToRunner(ctx context.Context, projectID, featureID string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features/%s/assignment", projectID, featureID)
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, apiPath, req)
+	if err != nil {
+		return nil, fmt.Errorf("assign feature to runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.FeatureAssignmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode feature assignment: %w", err)
+	}
+	return &result, nil
+}
+
+// ClearFeatureAssignment manually clears a project feature assignment.
+func (c *APIClient) ClearFeatureAssignment(ctx context.Context, projectID, featureID string) (*types.FeatureAssignmentResponse, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features/%s/assignment/clear", projectID, featureID)
+	req := types.ClearFeatureAssignmentRequest{Intent: "clear"}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, apiPath, req)
+	if err != nil {
+		return nil, fmt.Errorf("clear feature assignment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.FeatureAssignmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode feature assignment clear: %w", err)
+	}
+	return &result, nil
+}
+
 // GetTasksByFeature fetches all tasks belonging to a feature within a project.
 // Uses the dedicated feature endpoint which correctly filters by feature ID.
 func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {

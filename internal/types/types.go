@@ -818,19 +818,20 @@ type RunnerHeartbeatRequest struct {
 
 // RunnerInfo is the API-level runner representation with computed status.
 type RunnerInfo struct {
-	RunnerID      string            `json:"runner_id"`
-	Hostname      string            `json:"hostname"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	Executors     []string          `json:"executors,omitempty"`
-	Projects      []string          `json:"projects,omitempty"`
-	Capabilities  []string          `json:"capabilities,omitempty"`
-	MaxParallel   int               `json:"max_parallel"`
-	ActiveTasks   int               `json:"active_tasks,omitempty"`
-	FeatureIDs    string            `json:"feature_ids,omitempty"`
-	RegisteredAt  string            `json:"registered_at"`
-	LastHeartbeat string            `json:"last_heartbeat"`
-	Status        RunnerStatus      `json:"status"`
-	Version       string            `json:"version,omitempty"`
+	RunnerID           string                      `json:"runner_id"`
+	Hostname           string                      `json:"hostname"`
+	Labels             map[string]string           `json:"labels,omitempty"`
+	Executors          []string                    `json:"executors,omitempty"`
+	Projects           []string                    `json:"projects,omitempty"`
+	Capabilities       []string                    `json:"capabilities,omitempty"`
+	MaxParallel        int                         `json:"max_parallel"`
+	ActiveTasks        int                         `json:"active_tasks,omitempty"`
+	FeatureIDs         string                      `json:"feature_ids,omitempty"`
+	FeatureAssignments []FeatureAssignmentResponse `json:"feature_assignments,omitempty"`
+	RegisteredAt       string                      `json:"registered_at"`
+	LastHeartbeat      string                      `json:"last_heartbeat"`
+	Status             RunnerStatus                `json:"status"`
+	Version            string                      `json:"version,omitempty"`
 }
 
 // RunnerListResponse is the response for GET /runners.

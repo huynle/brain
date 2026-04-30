@@ -123,6 +123,9 @@ func (s *RunnerRegistryServiceImpl) ListRunners(ctx context.Context) (*types.Run
 	for i := range rows {
 		info := rowToRunnerInfo(&rows[i])
 		info.Status = computeRunnerStatus(rows[i].LastHeartbeat)
+		if err := s.attachFeatureAssignments(ctx, info); err != nil {
+			return nil, err
+		}
 		runners = append(runners, *info)
 	}
 
@@ -144,6 +147,9 @@ func (s *RunnerRegistryServiceImpl) GetRunner(ctx context.Context, runnerID stri
 
 	info := rowToRunnerInfo(row)
 	info.Status = computeRunnerStatus(row.LastHeartbeat)
+	if err := s.attachFeatureAssignments(ctx, info); err != nil {
+		return nil, err
+	}
 	return info, nil
 }
 
@@ -324,4 +330,28 @@ func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 		LastHeartbeat: time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),
 		Status:        types.RunnerStatus(row.Status),
 	}
+}
+
+func (s *RunnerRegistryServiceImpl) attachFeatureAssignments(ctx context.Context, info *types.RunnerInfo) error {
+	assignments, err := s.storage.ListFeatureAssignmentsByRunner(ctx, info.RunnerID)
+	if err != nil {
+		return fmt.Errorf("list feature assignments for runner %s: %w", info.RunnerID, err)
+	}
+	if len(assignments) == 0 {
+		return nil
+	}
+
+	info.FeatureAssignments = make([]types.FeatureAssignmentResponse, 0, len(assignments))
+	for _, assignment := range assignments {
+		info.FeatureAssignments = append(info.FeatureAssignments, types.FeatureAssignmentResponse{
+			ProjectID:  assignment.ProjectID,
+			FeatureID:  assignment.FeatureID,
+			RunnerID:   assignment.RunnerID,
+			Source:     assignment.Source,
+			Status:     assignment.Status,
+			AssignedAt: time.UnixMilli(assignment.AssignedAt).UTC().Format(time.RFC3339),
+			UpdatedAt:  time.UnixMilli(assignment.UpdatedAt).UTC().Format(time.RFC3339),
+		})
+	}
+	return nil
 }

@@ -967,6 +967,89 @@ func TestAPIClient_GetFeatures_ServerError(t *testing.T) {
 	}
 }
 
+func TestAPIClient_AssignFeatureToRunner(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.FeatureAssignmentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureAssignmentResponse{
+			ProjectID: "brain-api",
+			FeatureID: "auth",
+			RunnerID:  "runner-1",
+			Source:    "manual",
+			Status:    "active",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	resp, err := client.AssignFeatureToRunner(context.Background(), "brain-api", "auth", types.FeatureAssignmentRequest{
+		RunnerID: "runner-1",
+		Intent:   "reassign",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/features/auth/assignment" {
+		t.Errorf("path = %q, want assignment endpoint", gotPath)
+	}
+	if gotBody.RunnerID != "runner-1" || gotBody.Intent != "reassign" {
+		t.Fatalf("request body = %+v, want runner-1 reassign", gotBody)
+	}
+	if resp.RunnerID != "runner-1" || resp.Source != "manual" || resp.Status != "active" {
+		t.Fatalf("response = %+v, want manual active assignment", resp)
+	}
+}
+
+func TestAPIClient_ClearFeatureAssignment(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.ClearFeatureAssignmentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureAssignmentResponse{
+			ProjectID:      "brain-api",
+			FeatureID:      "auth",
+			PreviousRunner: "runner-1",
+			Source:         "manual",
+			Status:         "cleared",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	resp, err := client.ClearFeatureAssignment(context.Background(), "brain-api", "auth")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/features/auth/assignment/clear" {
+		t.Errorf("path = %q, want clear endpoint", gotPath)
+	}
+	if gotBody.Intent != "clear" {
+		t.Fatalf("request body = %+v, want clear intent", gotBody)
+	}
+	if resp.PreviousRunner != "runner-1" || resp.Status != "cleared" {
+		t.Fatalf("response = %+v, want cleared assignment", resp)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // BulkUpdate
 // ---------------------------------------------------------------------------

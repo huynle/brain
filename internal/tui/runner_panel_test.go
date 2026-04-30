@@ -173,12 +173,16 @@ func TestRunnerPanel_ViewDetail(t *testing.T) {
 	rp := NewRunnerPanel()
 	runners := []types.RunnerInfo{
 		{
-			RunnerID:      "runner-1",
-			Hostname:      "my-laptop",
-			Status:        types.RunnerStatusOnline,
-			MaxParallel:   4,
-			Executors:     []string{"opencode", "shell"},
-			FeatureIDs:    "feature-auth,feature-api",
+			RunnerID:    "runner-1",
+			Hostname:    "my-laptop",
+			Status:      types.RunnerStatusOnline,
+			MaxParallel: 4,
+			Executors:   []string{"opencode", "shell"},
+			FeatureIDs:  "feature-auth,feature-api",
+			FeatureAssignments: []types.FeatureAssignmentResponse{
+				{ProjectID: "brain-api", FeatureID: "feature-auth", RunnerID: "runner-1", Source: "manual", Status: "active"},
+				{ProjectID: "brain-api", FeatureID: "feature-api", RunnerID: "runner-1", Source: "auto", Status: "active"},
+			},
 			RegisteredAt:  "2025-01-01T00:00:00Z",
 			LastHeartbeat: "2025-01-01T00:01:00Z",
 			Labels:        map[string]string{"env": "dev"},
@@ -202,6 +206,12 @@ func TestRunnerPanel_ViewDetail(t *testing.T) {
 	}
 	if !strings.Contains(detail, "feature-auth,feature-api") {
 		t.Error("expected feature IDs in detail")
+	}
+	if !strings.Contains(detail, "feature-auth (brain-api, manual)") {
+		t.Error("expected manual assignment details")
+	}
+	if !strings.Contains(detail, "feature-api (brain-api, auto)") {
+		t.Error("expected auto assignment details")
 	}
 	if !strings.Contains(detail, "env=dev") {
 		t.Error("expected labels in detail")

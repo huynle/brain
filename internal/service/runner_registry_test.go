@@ -372,6 +372,51 @@ func TestRunnerRegistry_ListRunners_Multiple(t *testing.T) {
 	}
 }
 
+func TestRunnerRegistry_ListRunnersIncludesFeatureAssignments(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	_, _ = svc.Register(ctx, types.RunnerRegistration{
+		RunnerID: "runner-1",
+		Hostname: "host-a",
+	})
+	_, _ = svc.Register(ctx, types.RunnerRegistration{
+		RunnerID: "runner-2",
+		Hostname: "host-b",
+	})
+	if _, err := store.ForceAssignFeature(ctx, "brain-api", "feature-manual", "runner-1", "manual", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature manual failed: %v", err)
+	}
+	if _, err := store.ForceAssignFeature(ctx, "brain-api", "feature-auto", "runner-1", "auto", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature auto failed: %v", err)
+	}
+
+	resp, err := svc.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+
+	var runnerOne *types.RunnerInfo
+	for i := range resp.Runners {
+		if resp.Runners[i].RunnerID == "runner-1" {
+			runnerOne = &resp.Runners[i]
+			break
+		}
+	}
+	if runnerOne == nil {
+		t.Fatal("runner-1 not found")
+	}
+	if len(runnerOne.FeatureAssignments) != 2 {
+		t.Fatalf("assignments = %d, want 2", len(runnerOne.FeatureAssignments))
+	}
+	if runnerOne.FeatureAssignments[0].FeatureID != "feature-auto" || runnerOne.FeatureAssignments[0].Source != "auto" {
+		t.Fatalf("first assignment = %+v, want feature-auto auto", runnerOne.FeatureAssignments[0])
+	}
+	if runnerOne.FeatureAssignments[1].FeatureID != "feature-manual" || runnerOne.FeatureAssignments[1].Source != "manual" {
+		t.Fatalf("second assignment = %+v, want feature-manual manual", runnerOne.FeatureAssignments[1])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GetRunner
 // ---------------------------------------------------------------------------

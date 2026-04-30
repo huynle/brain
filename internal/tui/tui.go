@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -509,15 +510,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case featureAffinityResultMsg:
+	case featureAssignmentResultMsg:
 		m.modalManager.Close()
 		if msg.err != nil {
-			m.setStatusMessage("error", fmt.Sprintf("Failed to update affinity: %v", msg.err))
-			m.addLog("error", fmt.Sprintf("Affinity update failed for runner %s: %v", msg.runnerID, msg.err))
+			m.setStatusMessage("error", fmt.Sprintf("Failed to %s feature %s: %v", msg.action, msg.featureID, msg.err))
+			m.addLog("error", fmt.Sprintf("Feature assignment %s failed for runner %s feature %s: %v", msg.action, msg.runnerID, msg.featureID, msg.err))
 		} else {
-			m.setStatusMessage("success", fmt.Sprintf("Updated affinity for runner %s", msg.runnerID))
-			m.addLog("info", fmt.Sprintf("Runner %s affinity → [%s]", msg.runnerID, strings.Join(msg.features, ", ")))
-			// Refresh runner list to show updated affinity
+			if msg.action == "clear" {
+				m.setStatusMessage("success", fmt.Sprintf("Cleared assignment for %s", msg.featureID))
+				m.addLog("info", fmt.Sprintf("Feature %s assignment cleared", msg.featureID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Assigned %s to runner %s", msg.featureID, msg.runnerID))
+				m.addLog("info", fmt.Sprintf("Feature %s assigned to runner %s via %s", msg.featureID, msg.runnerID, msg.action))
+			}
+			// Refresh runner list to show updated assignments.
 			return m, fetchRunnerListCmd(m.apiRunnerConfig())
 		}
 		return m, nil
@@ -1246,41 +1252,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "a":
-			// Assign feature affinity to selected runner (runner panel only)
+			// Assign a project feature to the selected runner (runner panel only).
 			if m.activePanel == PanelRunners {
 				selectedRunner := m.runnerPanel.SelectedRunner()
 				if selectedRunner == nil {
 					return m, nil
 				}
-
-				// Collect all feature IDs from current tasks
-				featureIDSet := make(map[string]bool)
-				for _, task := range m.tasks {
-					if task.FeatureID != "" {
-						featureIDSet[task.FeatureID] = true
-					}
+				projectID, ok := m.assignmentProjectID()
+				if !ok {
+					m.setStatusMessage("error", "Select a project tab before assigning a runner feature")
+					return m, nil
 				}
 
-				// Convert set to sorted list
-				allFeatures := make([]string, 0, len(featureIDSet))
-				for fid := range featureIDSet {
-					allFeatures = append(allFeatures, fid)
-				}
-
-				// Parse current runner affinity (comma-separated string)
-				currentFeatures := []string{}
-				if selectedRunner.FeatureIDs != "" {
-					for _, f := range strings.Split(selectedRunner.FeatureIDs, ",") {
-						f = strings.TrimSpace(f)
-						if f != "" {
-							currentFeatures = append(currentFeatures, f)
-						}
-					}
-				}
-
-				// Open feature picker modal
+				allFeatures := m.assignmentFeaturesForProject(projectID)
+				assignments := m.runnerAssignmentsForProject(projectID)
 				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-				modal := NewFeaturePickerModal(selectedRunner.RunnerID, currentFeatures, allFeatures, apiClient)
+				modal := NewFeaturePickerModal(selectedRunner.RunnerID, projectID, allFeatures, assignments, apiClient)
 				cmd := m.modalManager.Open(modal)
 				return m, cmd
 			}
@@ -3075,6 +3062,66 @@ func (m *Model) filteredTasks() []types.ResolvedTask {
 		return m.tasks
 	}
 	return FilterTasks(m.tasks, m.filterQuery)
+}
+
+func (m Model) assignmentProjectID() (string, bool) {
+	if m.config.IsMultiProject() {
+		if m.activeProjectID == "" || m.activeProjectID == "all" {
+			return "", false
+		}
+		return m.activeProjectID, true
+	}
+	if m.config.Project == "" || m.config.Project == "all" {
+		return "", false
+	}
+	return m.config.Project, true
+}
+
+func (m Model) assignmentFeaturesForProject(projectID string) []string {
+	tasks := m.tasks
+	if projectTasks, ok := m.tasksByProject[projectID]; ok {
+		tasks = projectTasks
+	}
+
+	featureIDSet := make(map[string]bool)
+	for _, task := range tasks {
+		if task.ProjectID != "" && task.ProjectID != projectID {
+			continue
+		}
+		if task.FeatureID != "" {
+			featureIDSet[task.FeatureID] = true
+		}
+	}
+
+	features := make([]string, 0, len(featureIDSet))
+	for featureID := range featureIDSet {
+		features = append(features, featureID)
+	}
+	sort.Strings(features)
+	return features
+}
+
+func (m Model) runnerAssignmentsForProject(projectID string) []types.FeatureAssignmentResponse {
+	assignmentsByFeature := make(map[string]types.FeatureAssignmentResponse)
+	for _, runnerInfo := range m.runnerPanel.runners {
+		for _, assignment := range runnerInfo.FeatureAssignments {
+			if assignment.ProjectID == projectID && assignment.FeatureID != "" {
+				assignmentsByFeature[assignment.FeatureID] = assignment
+			}
+		}
+	}
+
+	featureIDs := make([]string, 0, len(assignmentsByFeature))
+	for featureID := range assignmentsByFeature {
+		featureIDs = append(featureIDs, featureID)
+	}
+	sort.Strings(featureIDs)
+
+	assignments := make([]types.FeatureAssignmentResponse, 0, len(featureIDs))
+	for _, featureID := range featureIDs {
+		assignments = append(assignments, assignmentsByFeature[featureID])
+	}
+	return assignments
 }
 
 // syncActiveProjectView switches between aggregate view (all projects) and project-specific view.

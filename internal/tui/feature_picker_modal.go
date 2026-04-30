@@ -8,38 +8,43 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
-// featureAffinityResultMsg is sent when affinity update completes.
-type featureAffinityResultMsg struct {
-	runnerID string
-	features []string
-	err      error
+// featureAssignmentResultMsg is sent when a manual assignment action completes.
+type featureAssignmentResultMsg struct {
+	runnerID  string
+	projectID string
+	featureID string
+	action    string
+	response  *types.FeatureAssignmentResponse
+	err       error
 }
 
-// FeaturePickerModal displays a list of features for multi-selection.
-// User can select/deselect features to assign to a runner.
+// FeaturePickerModal displays project features for manual runner assignment.
 type FeaturePickerModal struct {
 	runnerID      string
-	features      []string        // all available features
-	selectedIndex int             // cursor position
-	selectedSet   map[string]bool // selected features
+	projectID     string
+	features      []string
+	selectedIndex int
+	assignments   map[string]types.FeatureAssignmentResponse
 	apiClient     *runner.APIClient
 }
 
 // NewFeaturePickerModal creates a feature picker for a runner.
-func NewFeaturePickerModal(runnerID string, currentFeatures []string, allFeatures []string, apiClient *runner.APIClient) *FeaturePickerModal {
-	// Build selected set from current features
-	selectedSet := make(map[string]bool)
-	for _, f := range currentFeatures {
-		selectedSet[f] = true
+func NewFeaturePickerModal(runnerID, projectID string, allFeatures []string, assignments []types.FeatureAssignmentResponse, apiClient *runner.APIClient) *FeaturePickerModal {
+	assignmentMap := make(map[string]types.FeatureAssignmentResponse, len(assignments))
+	for _, assignment := range assignments {
+		if assignment.FeatureID != "" {
+			assignmentMap[assignment.FeatureID] = assignment
+		}
 	}
-
 	return &FeaturePickerModal{
 		runnerID:      runnerID,
+		projectID:     projectID,
 		features:      allFeatures,
 		selectedIndex: 0,
-		selectedSet:   selectedSet,
+		assignments:   assignmentMap,
 		apiClient:     apiClient,
 	}
 }
@@ -73,7 +78,11 @@ func (m *FeaturePickerModal) View() string {
 	titleStyle := lipgloss.NewStyle().
 		Foreground(ColorCyan).
 		Bold(true)
-	b.WriteString(titleStyle.Render(fmt.Sprintf("Feature Affinity: %s", m.runnerID)))
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Assign Feature: %s", m.runnerID)))
+	if m.projectID != "" {
+		b.WriteString("\n")
+		b.WriteString(dimStyle.Render(fmt.Sprintf("Project: %s", m.projectID)))
+	}
 	b.WriteString("\n\n")
 
 	// Feature list
@@ -82,12 +91,29 @@ func (m *FeaturePickerModal) View() string {
 		b.WriteString("\n")
 	} else {
 		for i, feature := range m.features {
-			checkbox := "[ ]"
-			if m.selectedSet[feature] {
-				checkbox = checkedStyle.Render("[✓]")
+			marker := "[ ]"
+			suffix := ""
+			if assignment, ok := m.assignments[feature]; ok {
+				if assignment.RunnerID == m.runnerID {
+					marker = checkedStyle.Render("[*]")
+				} else {
+					marker = lipgloss.NewStyle().Foreground(ColorWaiting).Bold(true).Render("[!]")
+				}
+				source := assignment.Source
+				if source == "" {
+					source = "unknown"
+				}
+				target := assignment.RunnerID
+				if target == "" {
+					target = "none"
+				}
+				suffix = fmt.Sprintf(" -> %s (%s)", target, source)
+				if assignment.Status != "" && assignment.Status != "active" {
+					suffix += fmt.Sprintf(" %s", assignment.Status)
+				}
 			}
 
-			line := fmt.Sprintf("%s %s", checkbox, feature)
+			line := fmt.Sprintf("%s %s%s", marker, feature, suffix)
 
 			if i == m.selectedIndex {
 				b.WriteString(selectedStyle.Render("→ " + line))
@@ -103,7 +129,7 @@ func (m *FeaturePickerModal) View() string {
 	footerStyle := lipgloss.NewStyle().
 		Foreground(ColorDim).
 		Italic(true)
-	b.WriteString(footerStyle.Render("j/k: navigate  Space: toggle  Enter: save  Esc: cancel"))
+	b.WriteString(footerStyle.Render("j/k: navigate  Enter: assign/reassign  c: clear  Esc: cancel"))
 
 	return b.String()
 }
@@ -129,28 +155,26 @@ func (m *FeaturePickerModal) HandleKey(key string) (bool, tea.Cmd) {
 		}
 		return true, nil
 
-	case " ": // space to toggle
-		if len(m.features) > 0 {
-			feature := m.features[m.selectedIndex]
-			if m.selectedSet[feature] {
-				delete(m.selectedSet, feature)
-			} else {
-				m.selectedSet[feature] = true
-			}
-		}
-		return true, nil
-
 	case "enter", "return":
-		// Collect selected features
-		selectedFeatures := []string{}
-		for _, f := range m.features {
-			if m.selectedSet[f] {
-				selectedFeatures = append(selectedFeatures, f)
-			}
+		if len(m.features) == 0 {
+			return true, nil
 		}
+		featureID := m.features[m.selectedIndex]
+		intent := "assign"
+		if assignment, ok := m.assignments[featureID]; ok && assignment.RunnerID != "" && assignment.RunnerID != m.runnerID {
+			intent = "reassign"
+		}
+		return true, m.assignFeatureCmd(featureID, intent)
 
-		// Call API to update affinity
-		return true, m.updateAffinityCmd(selectedFeatures)
+	case "c":
+		if len(m.features) == 0 {
+			return true, nil
+		}
+		featureID := m.features[m.selectedIndex]
+		if _, ok := m.assignments[featureID]; !ok {
+			return true, nil
+		}
+		return true, m.clearAssignmentCmd(featureID)
 
 	case "esc", "q":
 		return false, nil // close modal without saving
@@ -160,28 +184,58 @@ func (m *FeaturePickerModal) HandleKey(key string) (bool, tea.Cmd) {
 	}
 }
 
-// updateAffinityCmd calls the API to update runner affinity.
-func (m *FeaturePickerModal) updateAffinityCmd(features []string) tea.Cmd {
+// assignFeatureCmd calls the API to assign or reassign a feature to the runner.
+func (m *FeaturePickerModal) assignFeatureCmd(featureID, intent string) tea.Cmd {
 	return func() tea.Msg {
-		err := m.apiClient.UpdateRunnerAffinity(context.Background(), m.runnerID, features)
+		resp, err := m.apiClient.AssignFeatureToRunner(context.Background(), m.projectID, featureID, types.FeatureAssignmentRequest{
+			RunnerID: m.runnerID,
+			Intent:   intent,
+		})
 		if err != nil {
-			return featureAffinityResultMsg{
-				runnerID: m.runnerID,
-				features: features,
-				err:      err,
+			return featureAssignmentResultMsg{
+				runnerID:  m.runnerID,
+				projectID: m.projectID,
+				featureID: featureID,
+				action:    intent,
+				err:       err,
 			}
 		}
-		return featureAffinityResultMsg{
-			runnerID: m.runnerID,
-			features: features,
-			err:      nil,
+		return featureAssignmentResultMsg{
+			runnerID:  m.runnerID,
+			projectID: m.projectID,
+			featureID: featureID,
+			action:    intent,
+			response:  resp,
+		}
+	}
+}
+
+// clearAssignmentCmd calls the API to clear the selected feature assignment.
+func (m *FeaturePickerModal) clearAssignmentCmd(featureID string) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := m.apiClient.ClearFeatureAssignment(context.Background(), m.projectID, featureID)
+		if err != nil {
+			return featureAssignmentResultMsg{
+				runnerID:  m.runnerID,
+				projectID: m.projectID,
+				featureID: featureID,
+				action:    "clear",
+				err:       err,
+			}
+		}
+		return featureAssignmentResultMsg{
+			runnerID:  m.runnerID,
+			projectID: m.projectID,
+			featureID: featureID,
+			action:    "clear",
+			response:  resp,
 		}
 	}
 }
 
 // Title implements Modal (optional, for modal manager).
 func (m *FeaturePickerModal) Title() string {
-	return "Feature Affinity"
+	return "Feature Assignment"
 }
 
 // Height returns the approximate height of the modal content.

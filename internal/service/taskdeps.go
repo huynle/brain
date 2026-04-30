@@ -214,6 +214,7 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		Model:               task.Model,
 		Executor:            task.Executor,
 		Extensions:          task.Extensions,
+		RequiresCapability:  task.RequiresCapability,
 		Sessions:            task.Sessions,
 		Schedule:            task.Schedule,
 		ScheduleEnabled:     task.ScheduleEnabled,

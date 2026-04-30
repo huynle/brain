@@ -80,6 +80,7 @@ type mockClient struct {
 type nextTaskCall struct {
 	ProjectID  string
 	FeatureIDs []string
+	RunnerID   string
 	Opts       *TaskFetchOptions
 }
 
@@ -151,10 +152,12 @@ func (m *mockClient) GetNextTask(ctx context.Context, projectID string, opts *Ta
 	defer m.mu.Unlock()
 	// Record the call with options for verification
 	var featureIDs []string
+	var runnerID string
 	if opts != nil {
 		featureIDs = opts.FeatureIDs
+		runnerID = opts.RunnerID
 	}
-	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: featureIDs, Opts: opts})
+	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: featureIDs, RunnerID: runnerID, Opts: opts})
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
@@ -2988,6 +2991,32 @@ func TestNewTaskRunner_BackwardCompat_SingleExecutor(t *testing.T) {
 	}
 	if tr.executors["opencode"] != exec1 {
 		t.Error("single Executor should be registered as 'opencode'")
+	}
+}
+
+func TestTaskRunner_BuildFetchOptionsUsesRegisteredExecutorNames(t *testing.T) {
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": newMockExecutor(),
+			"pi":       newMockExecutor(),
+		},
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
+	})
+
+	opts := tr.buildFetchOptions()
+	if opts == nil {
+		t.Fatal("expected fetch options")
+	}
+	if !reflect.DeepEqual(opts.Executors, []string{"opencode", "pi"}) {
+		t.Fatalf("Executors = %#v, want [opencode pi]", opts.Executors)
+	}
+	if opts.RunnerID != tr.runnerID {
+		t.Fatalf("RunnerID = %q, want %q", opts.RunnerID, tr.runnerID)
 	}
 }
 

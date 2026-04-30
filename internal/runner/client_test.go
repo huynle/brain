@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -236,6 +237,56 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	if tasks[0].ID != "abc123" {
 		t.Errorf("task ID = %q, want %q", tasks[0].ID, "abc123")
 	}
+}
+
+func TestBuildTaskQueryParams_IncludesRunnerID(t *testing.T) {
+	opts := &TaskFetchOptions{RunnerID: "runner-abc"}
+
+	query := buildTaskQueryParams(opts)
+	values := parseTaskQuery(t, query)
+
+	if got := values.Get("runner_id"); got != "runner-abc" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-abc")
+	}
+	if got := values.Get("feature_id"); got != "" {
+		t.Fatalf("feature_id = %q, want empty", got)
+	}
+	if got := values.Get("executors"); got != "" {
+		t.Fatalf("executors = %q, want empty", got)
+	}
+}
+
+func TestBuildTaskQueryParams_PreservesRunnerFeatureAndExecutors(t *testing.T) {
+	opts := &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1", "feat-2"},
+		Executors:  []string{"opencode", "pi"},
+		RunnerID:   "runner-xyz",
+	}
+
+	query := buildTaskQueryParams(opts)
+	values := parseTaskQuery(t, query)
+
+	if got := values.Get("runner_id"); got != "runner-xyz" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-xyz")
+	}
+	if got := values["feature_id"]; len(got) != 2 || got[0] != "feat-1" || got[1] != "feat-2" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1", "feat-2"})
+	}
+	if got := values.Get("executors"); got != "opencode,pi" {
+		t.Fatalf("executors = %q, want %q", got, "opencode,pi")
+	}
+}
+
+func parseTaskQuery(t *testing.T, query string) url.Values {
+	t.Helper()
+	if query == "" || query[0] != '?' {
+		t.Fatalf("query = %q, want non-empty query prefixed with ?", query)
+	}
+	values, err := url.ParseQuery(query[1:])
+	if err != nil {
+		t.Fatalf("parse query %q: %v", query, err)
+	}
+	return values
 }
 
 // ---------------------------------------------------------------------------

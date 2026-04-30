@@ -259,7 +259,6 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 			r.Get("/features/ready", h.HandleGetReadyFeatures)
 			r.Get("/features/{featureId}", h.HandleGetFeature)
 			r.Post("/features/{featureId}/checkout", h.HandleCheckoutFeature)
-
 			r.Get("/stream", h.HandleSSEStream)
 
 			r.Get("/{taskId}", h.HandleGetTask)
@@ -506,6 +505,9 @@ func TestHandleGetTask_ReturnsTaskWithDefaults(t *testing.T) {
 func TestHandleGetReady(t *testing.T) {
 	taskMock := &mockTaskService{
 		getReadyFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
+			if opts != nil {
+				return nil, fmt.Errorf("opts = %+v, want nil for no filters", opts)
+			}
 			return []types.ResolvedTask{
 				{ID: "task1", Classification: "ready"},
 			}, nil
@@ -531,6 +533,35 @@ func TestHandleGetReady(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&body)
 	if len(body.Tasks) != 1 {
 		t.Errorf("tasks count = %d, want 1", len(body.Tasks))
+	}
+}
+
+func TestHandleGetReadyPassesRunnerIDFilter(t *testing.T) {
+	taskMock := &mockTaskService{
+		getReadyFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
+			if projectId != "my-project" {
+				return nil, fmt.Errorf("projectId = %q, want %q", projectId, "my-project")
+			}
+			if err := validateTaskFilterRunnerID(opts, "runner-123"); err != nil {
+				return nil, err
+			}
+			return []types.ResolvedTask{
+				{ID: "task1", Classification: "ready"},
+			}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/ready?runner_id=runner-123")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
 
@@ -592,6 +623,9 @@ func TestHandleGetNext(t *testing.T) {
 		{
 			name: "success",
 			mockFn: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+				if opts != nil {
+					return nil, fmt.Errorf("opts = %+v, want nil for no filters", opts)
+				}
 				return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -632,6 +666,70 @@ func TestHandleGetNext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleGetNextPassesRunnerIDWithExecutorFilters(t *testing.T) {
+	taskMock := &mockTaskService{
+		getNextFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+			if projectId != "my-project" {
+				return nil, fmt.Errorf("projectId = %q, want %q", projectId, "my-project")
+			}
+			if err := validateTaskFilterRunnerID(opts, "runner-456"); err != nil {
+				return nil, err
+			}
+			if len(opts.Executors) != 2 || opts.Executors[0] != "pi" || opts.Executors[1] != "opencode" {
+				return nil, fmt.Errorf("executors = %#v, want %#v", opts.Executors, []string{"pi", "opencode"})
+			}
+			return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/next?runner_id=runner-456&executors=pi,opencode")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestHandleGetNextPassesCamelCaseRunnerIDFilter(t *testing.T) {
+	taskMock := &mockTaskService{
+		getNextFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+			if err := validateTaskFilterRunnerID(opts, "runner-camel"); err != nil {
+				return nil, err
+			}
+			return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/next?runnerId=runner-camel")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func validateTaskFilterRunnerID(opts *TaskFilterOptions, want string) error {
+	if opts == nil {
+		return fmt.Errorf("opts = nil, want non-nil options with runner_id")
+	}
+	if opts.RunnerID != want {
+		return fmt.Errorf("RunnerID = %q, want %q", opts.RunnerID, want)
+	}
+	return nil
 }
 
 // =============================================================================

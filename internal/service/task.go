@@ -235,15 +235,7 @@ func (s *TaskServiceImpl) GetReady(ctx context.Context, projectId string, opts *
 		return nil, err
 	}
 	ready := GetReadyTasks(result)
-	if opts != nil {
-		if len(opts.FeatureIDs) > 0 {
-			ready = filterByFeatureIDs(ready, opts.FeatureIDs)
-		}
-		if len(opts.Executors) > 0 {
-			ready = filterByExecutors(ready, opts.Executors)
-		}
-	}
-	return ready, nil
+	return s.applyTaskFilterOptions(ctx, projectId, ready, opts)
 }
 
 // GetWaiting returns tasks waiting on dependencies.
@@ -272,25 +264,77 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 	if err != nil {
 		return nil, err
 	}
-	next := GetNextTask(result)
-	if next == nil {
-		return nil, nil
+	ready := GetReadyTasks(result)
+	if opts != nil {
+		ready, err = s.applyTaskFilterOptions(ctx, projectId, ready, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if opts != nil && (len(opts.FeatureIDs) > 0 || len(opts.Executors) > 0) {
-		// Apply filters to ready tasks, then pick the best from the filtered set
-		ready := GetReadyTasks(result)
-		if len(opts.FeatureIDs) > 0 {
-			ready = filterByFeatureIDs(ready, opts.FeatureIDs)
-		}
-		if len(opts.Executors) > 0 {
-			ready = filterByExecutors(ready, opts.Executors)
-		}
-		if len(ready) == 0 {
-			return nil, nil
-		}
-		return pickHighestPriority(ready), nil
+	return pickHighestPriority(ready), nil
+}
+
+func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID string, tasks []types.ResolvedTask, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
+	if opts == nil {
+		return tasks, nil
 	}
-	return next, nil
+	if len(opts.FeatureIDs) > 0 {
+		tasks = filterByFeatureIDs(tasks, opts.FeatureIDs)
+	}
+	if len(opts.Executors) > 0 {
+		tasks = filterByExecutors(tasks, opts.Executors)
+	}
+	if opts.RunnerID == "" {
+		return tasks, nil
+	}
+
+	runner, err := s.storage.GetRunner(ctx, opts.RunnerID)
+	if err != nil {
+		return nil, fmt.Errorf("get runner %q: %w", opts.RunnerID, err)
+	}
+	if runner == nil {
+		return tasks, nil
+	}
+
+	return s.filterByRunnerEligibility(ctx, projectID, tasks, runner)
+}
+
+func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, projectID string, tasks []types.ResolvedTask, runner *storage.RunnerRow) ([]types.ResolvedTask, error) {
+	if len(runner.Executors) > 0 {
+		tasks = filterByExecutors(tasks, runner.Executors)
+	}
+
+	capabilities := make(map[string]bool, len(runner.Capabilities))
+	for _, capability := range runner.Capabilities {
+		capabilities[capability] = true
+	}
+
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if !runnerHasRequiredCapabilities(task, capabilities) {
+			continue
+		}
+		if task.FeatureID != "" {
+			assignment, err := s.storage.GetFeatureAssignment(ctx, projectID, task.FeatureID)
+			if err != nil {
+				return nil, fmt.Errorf("get feature assignment %q/%q: %w", projectID, task.FeatureID, err)
+			}
+			if assignment != nil && assignment.RunnerID != runner.RunnerID {
+				continue
+			}
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered, nil
+}
+
+func runnerHasRequiredCapabilities(task types.ResolvedTask, capabilities map[string]bool) bool {
+	for _, required := range task.RequiresCapability {
+		if !capabilities[required] {
+			return false
+		}
+	}
+	return true
 }
 
 // ClaimTask claims a task for a runner. Returns ErrConflict if already claimed by another runner.
@@ -1184,6 +1228,11 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaStringSlice(meta, "extensions"); ok {
 		entry.Extensions = v
+	}
+	if v, ok := metaStringSlice(meta, "requires_capability"); ok {
+		entry.RequiresCapability = v
+	} else if v, ok := metaString(meta, "requires_capability"); ok {
+		entry.RequiresCapability = []string{v}
 	}
 
 	// Feature grouping (feature_id from metadata as fallback)

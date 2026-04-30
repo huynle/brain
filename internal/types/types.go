@@ -171,6 +171,7 @@ type BrainEntry struct {
 	Model               string   `json:"model,omitempty"`
 	Executor            string   `json:"executor,omitempty"`
 	Extensions          []string `json:"extensions,omitempty"`
+	RequiresCapability  []string `json:"requires_capability,omitempty"`
 	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 

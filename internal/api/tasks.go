@@ -19,16 +19,22 @@ import (
 // Supported query params:
 //   - feature_id: filter by feature ID (repeatable)
 //   - executors: comma-separated list of executor types (e.g., "opencode,pi")
+//   - runner_id or runnerId: runner requesting task selection
 func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
 	featureIDs := r.URL.Query()["feature_id"]
 	executors := parseExecutors(r)
+	runnerID := r.URL.Query().Get("runner_id")
+	if runnerID == "" {
+		runnerID = r.URL.Query().Get("runnerId")
+	}
 
-	if len(featureIDs) == 0 && len(executors) == 0 {
+	if len(featureIDs) == 0 && len(executors) == 0 && runnerID == "" {
 		return nil
 	}
 	return &TaskFilterOptions{
 		FeatureIDs: featureIDs,
 		Executors:  executors,
+		RunnerID:   runnerID,
 	}
 }
 

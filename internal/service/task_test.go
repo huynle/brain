@@ -78,6 +78,44 @@ func insertTaskNote(t *testing.T, store *storage.StorageLayer, shortID, title, s
 	}
 }
 
+func insertRunnerForTaskSelectionTest(t *testing.T, store *storage.StorageLayer, runnerID string, executors, capabilities []string) {
+	t.Helper()
+	now := time.Now().UnixMilli()
+	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{
+		RunnerID:      runnerID,
+		Hostname:      runnerID + "-host",
+		Labels:        map[string]string{},
+		Executors:     executors,
+		Capabilities:  capabilities,
+		MaxParallel:   1,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        string(types.RunnerStatusOnline),
+	}); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+}
+
+func assertTaskIDs(t *testing.T, tasks []types.ResolvedTask, expected ...string) {
+	t.Helper()
+	if len(tasks) != len(expected) {
+		t.Fatalf("expected %d tasks %v, got %d: %v", len(expected), expected, len(tasks), taskIDs(tasks))
+	}
+	for i, id := range expected {
+		if tasks[i].ID != id {
+			t.Fatalf("task[%d].ID = %q, want %q (all: %v)", i, tasks[i].ID, id, taskIDs(tasks))
+		}
+	}
+}
+
+func taskIDs(tasks []types.ResolvedTask) []string {
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		ids = append(ids, task.ID)
+	}
+	return ids
+}
+
 // createProjectDir creates the projects/<name>/task/ directory structure.
 func createProjectDir(t *testing.T, brainDir, projectName string) {
 	t.Helper()
@@ -469,6 +507,157 @@ func TestGetReady(t *testing.T) {
 	}
 	if ready[0].ID != "aaa11111" {
 		t.Errorf("ready task ID = %q, want %q", ready[0].ID, "aaa11111")
+	}
+}
+
+func TestGetReady_WithRunnerIDExcludesTasksMissingCapabilities(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", []string{"opencode"}, []string{"docker"})
+	insertTaskNote(t, store, "needgpu1", "Needs GPU", "pending", "high", "proj", map[string]interface{}{
+		"requires_capability": []interface{}{"gpu"},
+	})
+	insertTaskNote(t, store, "plain111", "No Capability Required", "pending", "medium", "proj", map[string]interface{}{})
+
+	ready, err := svc.GetReady(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-1"})
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "plain111")
+}
+
+func TestGetReady_WithRunnerIDIncludesTasksWhenCapabilitiesSatisfied(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", []string{"opencode"}, []string{"docker", "gpu"})
+	insertTaskNote(t, store, "capok111", "Needs Docker And GPU", "pending", "high", "proj", map[string]interface{}{
+		"requires_capability": []interface{}{"docker", "gpu"},
+	})
+
+	ready, err := svc.GetReady(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-1"})
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "capok111")
+}
+
+func TestGetReady_ExplicitExecutorsCombineWithRunnerEligibility(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", []string{"pi"}, []string{"gpu"})
+	insertTaskNote(t, store, "piok1111", "Pi GPU Task", "pending", "high", "proj", map[string]interface{}{
+		"executor":            "pi",
+		"requires_capability": []interface{}{"gpu"},
+	})
+	insertTaskNote(t, store, "opencode", "OpenCode GPU Task", "pending", "medium", "proj", map[string]interface{}{
+		"executor":            "opencode",
+		"requires_capability": []interface{}{"gpu"},
+	})
+	insertTaskNote(t, store, "pimiss11", "Pi CPU Missing Capability", "pending", "low", "proj", map[string]interface{}{
+		"executor":            "pi",
+		"requires_capability": []interface{}{"docker"},
+	})
+
+	ready, err := svc.GetReady(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-1", Executors: []string{"pi"}})
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "piok1111")
+}
+
+func TestGetReady_NoRunnerContextPreservesCapabilityAgnosticBehavior(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "needgpu1", "Needs GPU", "pending", "high", "proj", map[string]interface{}{
+		"requires_capability": []interface{}{"gpu"},
+	})
+	insertTaskNote(t, store, "plain111", "No Capability Required", "pending", "medium", "proj", map[string]interface{}{})
+
+	ready, err := svc.GetReady(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "needgpu1", "plain111")
+
+	next, err := svc.GetNext(ctx, "proj", nil)
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil || next.ID != "needgpu1" {
+		t.Fatalf("GetNext returned %v, want needgpu1", next)
+	}
+}
+
+func TestGetReady_MissingRunnerIDPreservesOldBehavior(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "needgpu1", "Needs GPU", "pending", "high", "proj", map[string]interface{}{
+		"requires_capability": []interface{}{"gpu"},
+	})
+
+	ready, err := svc.GetReady(ctx, "proj", &api.TaskFilterOptions{RunnerID: "missing-runner"})
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "needgpu1")
+}
+
+func TestGetReady_WithRunnerIDExcludesFeaturesAssignedToOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", []string{"opencode"}, nil)
+	insertRunnerForTaskSelectionTest(t, store, "runner-2", []string{"opencode"}, nil)
+	if _, err := store.ForceAssignFeature(ctx, "proj", "feature-other", "runner-2", "test", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature other failed: %v", err)
+	}
+	if _, err := store.ForceAssignFeature(ctx, "proj", "feature-own", "runner-1", "test", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature own failed: %v", err)
+	}
+	insertTaskNote(t, store, "other111", "Other Runner Feature", "pending", "high", "proj", map[string]interface{}{
+		"feature_id": "feature-other",
+	})
+	insertTaskNote(t, store, "own11111", "Own Runner Feature", "pending", "medium", "proj", map[string]interface{}{
+		"feature_id": "feature-own",
+	})
+	insertTaskNote(t, store, "free1111", "Unassigned Feature", "pending", "low", "proj", map[string]interface{}{
+		"feature_id": "feature-free",
+	})
+
+	ready, err := svc.GetReady(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-1"})
+	if err != nil {
+		t.Fatalf("GetReady failed: %v", err)
+	}
+	assertTaskIDs(t, ready, "own11111", "free1111")
+}
+
+func TestGetNext_WithRunnerIDSkipsHigherPriorityFeatureAssignedToOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", []string{"opencode"}, nil)
+	insertRunnerForTaskSelectionTest(t, store, "runner-2", []string{"opencode"}, nil)
+	if _, err := store.ForceAssignFeature(ctx, "proj", "feature-other", "runner-2", "test", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature other failed: %v", err)
+	}
+	insertTaskNote(t, store, "other111", "Other Runner Feature", "pending", "high", "proj", map[string]interface{}{
+		"feature_id": "feature-other",
+	})
+	insertTaskNote(t, store, "free1111", "Unassigned Feature", "pending", "medium", "proj", map[string]interface{}{
+		"feature_id": "feature-free",
+	})
+
+	next, err := svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-1"})
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil || next.ID != "free1111" {
+		t.Fatalf("GetNext returned %v, want free1111", next)
 	}
 }
 

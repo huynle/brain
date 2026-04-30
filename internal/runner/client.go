@@ -133,6 +133,9 @@ func buildTaskQueryParams(opts *TaskFetchOptions) string {
 	if len(opts.Executors) > 0 {
 		params.Set("executors", strings.Join(opts.Executors, ","))
 	}
+	if opts.RunnerID != "" {
+		params.Set("runner_id", opts.RunnerID)
+	}
 	if encoded := params.Encode(); encoded != "" {
 		return "?" + encoded
 	}

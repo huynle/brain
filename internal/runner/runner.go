@@ -32,6 +32,7 @@ const DefaultRenewInterval = 5 * time.Minute
 type TaskFetchOptions struct {
 	FeatureIDs []string // Filter by feature ID
 	Executors  []string // Filter by executor type (e.g., "opencode", "pi")
+	RunnerID   string   // Runner identity for server-side eligibility checks
 }
 
 // Client abstracts the Brain API client for testability.
@@ -645,7 +646,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			// Paused but features enabled: poll only enabled features
 			task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 				FeatureIDs: projEnabledIDs,
-				Executors:  tr.config.Executors,
+				Executors:  tr.executorNames(),
+				RunnerID:   tr.runnerID,
 			})
 			if err != nil || task == nil {
 				continue
@@ -704,7 +706,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 // buildFetchOptions creates TaskFetchOptions from the runner's current configuration.
 func (tr *TaskRunner) buildFetchOptions() *TaskFetchOptions {
 	opts := &TaskFetchOptions{
-		Executors: tr.config.Executors,
+		Executors: tr.executorNames(),
+		RunnerID:  tr.runnerID,
 	}
 	if len(tr.config.FeatureIDs) > 0 {
 		opts.FeatureIDs = tr.config.FeatureIDs

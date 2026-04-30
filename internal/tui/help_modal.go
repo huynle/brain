@@ -100,6 +100,16 @@ func (m *HelpModal) View() string {
 	b.WriteString(formatShortcut("D", "Deselect all"))
 	b.WriteString("\n")
 
+	// Runner shortcuts
+	b.WriteString(categoryStyle.Render("Runners Panel:"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("Space", "Select runner"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("A/D", "Select/deselect all runners"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("X", "Shutdown selected/current runner"))
+	b.WriteString("\n")
+
 	// Views shortcuts
 	b.WriteString(categoryStyle.Render("Views:"))
 	b.WriteString("\n")
@@ -168,9 +178,9 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
-	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Runners (3), Views (4), Other (2)
+	// Plus category headers (6 or 7) and footer (2)
+	baseLines := 5 + 10 + 3 + 3 + 4 + 2 + 6 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

@@ -67,6 +67,9 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	if h.ActiveContentTab == ContentTabRunners {
 		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Select  ", bold("Space"))
+		shortcuts += fmt.Sprintf("%s All/None  ", bold("A/D"))
+		shortcuts += fmt.Sprintf("%s Shutdown  ", bold("X"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))

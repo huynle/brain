@@ -116,3 +116,15 @@ func TestHelpBar_View_ShowsProjectAll_MultiProject(t *testing.T) {
 		t.Errorf("expected help bar to contain 'Pause (project/all)' in multi-project mode, got:\n%s", view)
 	}
 }
+
+func TestHelpBar_View_ShowsRunnerShortcuts(t *testing.T) {
+	h := NewHelpBar()
+	h.ActiveContentTab = ContentTabRunners
+
+	view := h.View(160, false, "test-project")
+	for _, want := range []string{"Select", "All/None", "Shutdown"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected runners help bar to contain %q, got:\n%s", want, view)
+		}
+	}
+}

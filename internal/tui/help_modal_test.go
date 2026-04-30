@@ -172,6 +172,17 @@ func TestHelpModal_View_ContainsPauseShortcuts(t *testing.T) {
 	}
 }
 
+func TestHelpModal_View_ContainsRunnerShortcuts(t *testing.T) {
+	modal := NewHelpModal(false)
+	view := modal.View()
+
+	for _, want := range []string{"Runners Panel:", "Select runner", "Select/deselect all runners", "Shutdown selected/current runner"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("View() missing runner shortcut %q\nGot:\n%s", want, view)
+		}
+	}
+}
+
 func TestHelpModal_Height_IncludesPauseLines(t *testing.T) {
 	// Height should account for the 2 new pause shortcut lines
 	modal := NewHelpModal(false)

@@ -1,8 +1,12 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -3569,5 +3573,107 @@ func TestUpdate_BackspaceKey_NoOp_WhenNotInTasksPanel(t *testing.T) {
 	// Should return nil command
 	if cmd != nil {
 		t.Error("expected nil command when not in tasks panel")
+	}
+}
+
+func TestUpdate_RunnersSpaceTogglesSelection(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "online"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(Model)
+	if !m.selectedRunners["runner-1"] {
+		t.Fatalf("expected runner-1 to be selected")
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	m = updated.(Model)
+	if len(m.selectedRunners) != 0 {
+		t.Fatalf("expected runner selection to be cleared, got %v", m.selectedRunners)
+	}
+}
+
+func TestUpdate_RunnersXKey_OpensConfirmForSelectedRunners(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "online"},
+		{RunnerID: "runner-2", Hostname: "host-2", Status: "online"},
+	})
+	m.selectedRunners = map[string]bool{"runner-1": true, "runner-2": true}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	m = updated.(Model)
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected shutdown confirmation modal to open")
+	}
+	view := m.modalManager.activeModal.View()
+	for _, want := range []string{"Shutdown 2 runner(s)?", "runner-1 (host-1)", "runner-2 (host-2)"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected modal to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestUpdate_RunnersXKey_ShutdownsCurrentRunnerThroughAPI(t *testing.T) {
+	var calls int32
+	var gotReason string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/runners/runner-1/shutdown" {
+			t.Errorf("path = %s, want /api/v1/runners/runner-1/shutdown", r.URL.Path)
+		}
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		gotReason = body.Reason
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	m := NewModel(Config{APIURL: srv.URL, Project: "test-project"})
+	m.activeContentTab = ContentTabRunners
+	m.runnersPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host-1", Status: "online"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'X'}})
+	m = updated.(Model)
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected shutdown confirmation modal to open")
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected confirmation to return shutdown command")
+	}
+	result := cmd()
+	updated, refreshCmd := m.Update(result)
+	m = updated.(Model)
+
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected 1 shutdown API call, got %d", calls)
+	}
+	if gotReason != "operator requested shutdown from TUI" {
+		t.Fatalf("reason = %q, want TUI shutdown reason", gotReason)
+	}
+	if m.modalManager.IsOpen() {
+		t.Fatal("expected modal to close after shutdown result")
+	}
+	if !strings.Contains(m.statusMessage, "1 runner(s) shutdown") {
+		t.Fatalf("expected success status message, got %q", m.statusMessage)
+	}
+	if refreshCmd == nil {
+		t.Fatal("expected successful shutdown to refresh runner list")
 	}
 }

@@ -523,6 +523,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pruneRunnerSelection()
 		return m, nil
 
+	case batchRunnersShutdownMsg:
+		m.modalManager.Close()
+		if msg.failedCount > 0 {
+			m.setStatusMessage("info", fmt.Sprintf("✓ %d shutdown, ✗ %d failed", msg.successCount, msg.failedCount))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("✓ %d runner(s) shutdown", msg.successCount))
+		m.clearRunnerSelection()
+		return m, fetchRunnersListCmd(m.apiRunnerConfig())
+
 	case featureExecutedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Feature execute error: %v", msg.err))
@@ -940,6 +950,20 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "D":
 			m.clearRunnerSelection()
 			return m, nil
+		case "X":
+			runnerIDs, runnerTitles := m.runnerShutdownTargets()
+			if len(runnerIDs) == 0 {
+				return m, nil
+			}
+			cfg := m.apiRunnerConfig()
+			message := fmt.Sprintf("Shutdown %d runner(s)?", len(runnerIDs))
+			modal := NewConfirmModal("Shutdown Runners", message).
+				WithTaskTitles(runnerTitles).
+				WithDestructive(true).
+				WithOnConfirm(func() tea.Msg {
+					return batchShutdownRunnersCmd(cfg, runnerIDs)()
+				})
+			return m, m.modalManager.Open(modal)
 		case "q":
 			m.sseClient.Stop()
 			return m, tea.Quit
@@ -2532,6 +2556,34 @@ func (m *Model) pruneRunnerSelection() {
 	}
 }
 
+// runnerShutdownTargets returns selected online runners, or the focused runner when none are selected.
+func (m *Model) runnerShutdownTargets() ([]string, []string) {
+	ids := []string{}
+	titles := []string{}
+	if len(m.selectedRunners) > 0 {
+		for _, runner := range m.runnersPanel.runners {
+			if runner.Status == "online" && m.selectedRunners[runner.RunnerID] {
+				ids = append(ids, runner.RunnerID)
+				titles = append(titles, runnerDisplayTitle(runner))
+			}
+		}
+		return ids, titles
+	}
+
+	runner := m.runnersPanel.SelectedRunner()
+	if runner == nil || runner.Status != "online" {
+		return nil, nil
+	}
+	return []string{runner.RunnerID}, []string{runnerDisplayTitle(*runner)}
+}
+
+func runnerDisplayTitle(runner types.RunnerInfo) string {
+	if runner.Hostname == "" {
+		return runner.RunnerID
+	}
+	return fmt.Sprintf("%s (%s)", runner.RunnerID, runner.Hostname)
+}
+
 // View implements tea.Model. Renders the TUI layout.
 func (m Model) View() string {
 	// Don't block rendering when dimensions are unset - components handle zero dimensions gracefully
@@ -3241,6 +3293,12 @@ type batchTasksDeletedMsg struct {
 	errors       []error
 }
 
+type batchRunnersShutdownMsg struct {
+	successCount int
+	failedCount  int
+	errors       []error
+}
+
 type editorClosedMsg struct {
 	taskID          string
 	taskPath        string
@@ -3491,6 +3549,47 @@ func batchDeleteTasksCmd(client *runner.APIClient, taskPaths, taskIDs []string) 
 		}
 
 		return batchTasksDeletedMsg{
+			successCount: successCount,
+			failedCount:  failedCount,
+			errors:       errors,
+		}
+	}
+}
+
+// batchShutdownRunnersCmd requests graceful shutdown for multiple runners in parallel.
+func batchShutdownRunnersCmd(cfg runner.RunnerConfig, runnerIDs []string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+
+		type result struct {
+			runnerID string
+			err      error
+		}
+
+		results := make(chan result, len(runnerIDs))
+		ctx := context.Background()
+
+		for _, runnerID := range runnerIDs {
+			go func(id string) {
+				err := apiClient.ShutdownRunner(ctx, id, "operator requested shutdown from TUI")
+				results <- result{runnerID: id, err: err}
+			}(runnerID)
+		}
+
+		var errors []error
+		successCount := 0
+		failedCount := 0
+		for range runnerIDs {
+			res := <-results
+			if res.err != nil {
+				errors = append(errors, fmt.Errorf("%s: %w", res.runnerID, res.err))
+				failedCount++
+			} else {
+				successCount++
+			}
+		}
+
+		return batchRunnersShutdownMsg{
 			successCount: successCount,
 			failedCount:  failedCount,
 			errors:       errors,

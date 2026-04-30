@@ -4,11 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+const defaultRunnerShutdownReason = "remote shutdown requested"
 
 // HandleRegisterRunner handles POST /runners/register.
 func (h *Handler) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +93,51 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleShutdownRunner handles POST /runners/{runnerId}/shutdown.
+func (h *Handler) HandleShutdownRunner(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	reason := defaultRunnerShutdownReason
+
+	var req struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+	if trimmed := strings.TrimSpace(req.Reason); trimmed != "" {
+		reason = trimmed
+	}
+
+	resp, err := h.runners.List(r.Context())
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	for _, runner := range resp.Runners {
+		if runner.RunnerID != runnerID {
+			continue
+		}
+		if runner.Status != "online" {
+			WriteError(w, http.StatusConflict, "Conflict", "runner is not online: "+runnerID)
+			return
+		}
+		if h.hub == nil {
+			WriteError(w, http.StatusInternalServerError, "Internal Server Error", "realtime hub not configured")
+			return
+		}
+
+		h.hub.PublishRunnerCommand(runnerID, "shutdown", map[string]string{"reason": reason})
+		WriteJSON(w, http.StatusAccepted, map[string]any{"success": true})
+		return
+	}
+
+	WriteError(w, http.StatusNotFound, "Not Found", "runner not found: "+runnerID)
 }
 
 // containsStr is a simple substring check for error messages.

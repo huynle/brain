@@ -205,10 +205,12 @@ func NewRouter(cfg config.Config, opts ...func(*routerOptions)) *chi.Mux {
 				if o.handler != nil && o.handler.runners != nil {
 					r.Post("/register", o.handler.HandleRegisterRunner)
 					r.Post("/heartbeat", o.handler.HandleHeartbeatRunner)
+					r.Post("/{runnerId}/shutdown", o.handler.HandleShutdownRunner)
 					r.Get("/", o.handler.HandleListRunners)
 				} else {
 					r.Post("/register", notImplemented)
 					r.Post("/heartbeat", notImplemented)
+					r.Post("/{runnerId}/shutdown", notImplemented)
 					r.Get("/", notImplemented)
 				}
 			})

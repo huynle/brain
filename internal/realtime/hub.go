@@ -108,3 +108,11 @@ func (h *Hub) PublishRunnersUpdate(data interface{}) {
 		h.publish(pid, msg)
 	}
 }
+
+// PublishRunnerCommand sends a command event to subscribers for one runner.
+func (h *Hub) PublishRunnerCommand(runnerID, command string, payload interface{}) {
+	h.publish(runnerID, SSEMessage{
+		Event: command,
+		Data:  payload,
+	})
+}

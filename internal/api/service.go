@@ -140,6 +140,12 @@ type TaskService interface {
 	// CheckoutFeature marks a feature for checkout.
 	CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
 
+	// AssignFeatureToRunner manually assigns or reassigns a feature to a runner.
+	AssignFeatureToRunner(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+
+	// ClearFeatureAssignment manually clears a feature assignment.
+	ClearFeatureAssignment(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+
 	// GetTask returns a single task by ID with dependency resolution applied.
 	GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 

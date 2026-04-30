@@ -563,6 +563,72 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 	WriteJSON(w, http.StatusOK, result)
 }
 
+// HandleAssignFeatureToRunner handles PUT /tasks/{projectId}/features/{featureId}/assignment.
+func (h *Handler) HandleAssignFeatureToRunner(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	var req types.FeatureAssignmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.RunnerID) == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "runner_id", Message: "runner_id is required"},
+		})
+		return
+	}
+
+	resp, err := h.tasks.AssignFeatureToRunner(r.Context(), projectId, featureId, req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", "feature assignment conflict")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleClearFeatureAssignment handles POST /tasks/{projectId}/features/{featureId}/assignment/clear.
+func (h *Handler) HandleClearFeatureAssignment(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	var req types.ClearFeatureAssignmentRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.Intent) != "clear" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "intent", Message: "intent must be clear"},
+		})
+		return
+	}
+
+	resp, err := h.tasks.ClearFeatureAssignment(r.Context(), projectId, featureId, req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "feature assignment not found")
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", "feature assignment conflict")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleTriggerTask handles POST /tasks/{projectId}/{taskId}/trigger.
 func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

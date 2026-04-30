@@ -1001,6 +1001,185 @@ func TestHandleToggleRunnerFeature(t *testing.T) {
 	}
 }
 
+func newFeatureAssignmentAPITestRouter(taskSvc TaskService) *chi.Mux {
+	h := NewHandler(&mockBrainService{}, WithTaskService(taskSvc), WithHub(realtime.NewHub()))
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}/features/{featureId}", func(r chi.Router) {
+		r.Put("/assignment", h.HandleAssignFeatureToRunner)
+		r.Post("/assignment/clear", h.HandleClearFeatureAssignment)
+	})
+	return r
+}
+
+func TestFeatureAssignmentAPI_AssignReassignAndClear(t *testing.T) {
+	assignedRunner := ""
+	taskSvc := &mockTaskService{}
+	taskSvc.assignFeatureFunc = func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+		if assignedRunner != "" && assignedRunner != req.RunnerID && req.Intent != "reassign" {
+			return nil, ErrConflict
+		}
+		previousRunner := ""
+		if assignedRunner != "" && assignedRunner != req.RunnerID {
+			previousRunner = assignedRunner
+		}
+		assignedRunner = req.RunnerID
+		return &types.FeatureAssignmentResponse{
+			ProjectID:      projectId,
+			FeatureID:      featureId,
+			RunnerID:       req.RunnerID,
+			PreviousRunner: previousRunner,
+			Source:         "manual",
+			Status:         "active",
+			AssignedAt:     "2026-04-29T10:00:00Z",
+			UpdatedAt:      "2026-04-29T10:00:00Z",
+		}, nil
+	}
+	taskSvc.clearFeatureFunc = func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+		previousRunner := assignedRunner
+		assignedRunner = ""
+		return &types.FeatureAssignmentResponse{
+			ProjectID:      projectId,
+			FeatureID:      featureId,
+			PreviousRunner: previousRunner,
+			Source:         "manual",
+			Status:         "cleared",
+			AssignedAt:     "2026-04-29T10:00:00Z",
+			UpdatedAt:      "2026-04-29T10:01:00Z",
+		}, nil
+	}
+	router := newFeatureAssignmentAPITestRouter(taskSvc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"runner-1","intent":"assign"}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("assign request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("assign status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON[types.FeatureAssignmentResponse](t, resp)
+	if body.RunnerID != "runner-1" || body.Source != "manual" || body.Status != "active" || body.AssignedAt == "" || body.UpdatedAt == "" {
+		t.Fatalf("unexpected assign response: %+v", body)
+	}
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"runner-2","intent":"assign"}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("reassign without intent request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("reassign without intent status = %d, want 409", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"runner-2","intent":"reassign"}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("reassign request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reassign status = %d, want 200", resp.StatusCode)
+	}
+	body = decodeJSON[types.FeatureAssignmentResponse](t, resp)
+	if body.RunnerID != "runner-2" || body.PreviousRunner != "runner-1" || body.Status != "active" {
+		t.Fatalf("unexpected reassign response: %+v", body)
+	}
+	resp.Body.Close()
+
+	resp, err = http.Post(srv.URL+"/tasks/brain-api/features/auth/assignment/clear", "application/json", strings.NewReader(`{"intent":"clear"}`))
+	if err != nil {
+		t.Fatalf("clear request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("clear status = %d, want 200", resp.StatusCode)
+	}
+	body = decodeJSON[types.FeatureAssignmentResponse](t, resp)
+	if body.Status != "cleared" || body.PreviousRunner != "runner-2" || body.Source != "manual" || body.UpdatedAt == "" {
+		t.Fatalf("unexpected clear response: %+v", body)
+	}
+	resp.Body.Close()
+}
+
+func TestFeatureAssignmentAPI_RunnerValidationAndForce(t *testing.T) {
+	taskSvc := &mockTaskService{}
+	taskSvc.assignFeatureFunc = func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+		switch {
+		case req.RunnerID == "missing-runner":
+			return nil, ErrNotFound
+		case req.RunnerID == "offline-runner" && !req.Force:
+			return nil, ErrConflict
+		default:
+			return &types.FeatureAssignmentResponse{
+				ProjectID:  projectId,
+				FeatureID:  featureId,
+				RunnerID:   req.RunnerID,
+				Source:     "manual",
+				Status:     "active",
+				AssignedAt: "2026-04-29T10:00:00Z",
+				UpdatedAt:  "2026-04-29T10:00:00Z",
+			}, nil
+		}
+	}
+	router := newFeatureAssignmentAPITestRouter(taskSvc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"missing-runner","intent":"assign"}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("missing runner request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("missing runner status = %d, want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"offline-runner","intent":"assign"}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("offline runner request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("offline runner status = %d, want 409", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, err = http.NewRequest(http.MethodPut, srv.URL+"/tasks/brain-api/features/auth/assignment", strings.NewReader(`{"runner_id":"offline-runner","intent":"assign","force":true}`))
+	if err != nil {
+		t.Fatalf("NewRequest failed: %v", err)
+	}
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("forced offline runner request failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("forced offline runner status = %d, want 200", resp.StatusCode)
+	}
+	body := decodeJSON[types.FeatureAssignmentResponse](t, resp)
+	if body.RunnerID != "offline-runner" || body.Status != "active" {
+		t.Fatalf("unexpected forced response: %+v", body)
+	}
+	resp.Body.Close()
+}
+
 // =============================================================================
 // Tests: PUT /runners/{runnerId}/pause
 // =============================================================================

@@ -34,6 +34,8 @@ type mockTaskService struct {
 	getReadyFeaturesFunc func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getFeatureFunc       func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
 	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
+	assignFeatureFunc    func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+	clearFeatureFunc     func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
 	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
@@ -141,6 +143,20 @@ func (m *mockTaskService) CheckoutFeature(ctx context.Context, projectId, featur
 		return m.checkoutFeatureFunc(ctx, projectId, featureId, opts)
 	}
 	return nil, fmt.Errorf("checkoutFeatureFunc not set")
+}
+
+func (m *mockTaskService) AssignFeatureToRunner(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	if m.assignFeatureFunc != nil {
+		return m.assignFeatureFunc(ctx, projectId, featureId, req)
+	}
+	return nil, fmt.Errorf("assignFeatureFunc not set")
+}
+
+func (m *mockTaskService) ClearFeatureAssignment(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	if m.clearFeatureFunc != nil {
+		return m.clearFeatureFunc(ctx, projectId, featureId, req)
+	}
+	return nil, fmt.Errorf("clearFeatureFunc not set")
 }
 
 func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {

@@ -1,8 +1,13 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"testing"
+	"time"
 
+	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -418,5 +423,140 @@ func TestComputeAndResolveFeatures_Integration(t *testing.T) {
 	}
 	if featureMap["feat-b"].Classification != "waiting" {
 		t.Errorf("feat-b classification = %q, want 'waiting'", featureMap["feat-b"].Classification)
+	}
+}
+
+func insertFeatureAssignmentRunnerForFeatureTest(t *testing.T, store *storage.StorageLayer, runnerID string, lastHeartbeat int64) {
+	t.Helper()
+	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{
+		RunnerID:      runnerID,
+		Hostname:      runnerID + "-host",
+		Labels:        map[string]string{},
+		Executors:     []string{"opencode"},
+		Capabilities:  []string{},
+		MaxParallel:   1,
+		RegisteredAt:  time.Now().UnixMilli(),
+		LastHeartbeat: lastHeartbeat,
+		Status:        string(types.RunnerStatusOnline),
+	}); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+}
+
+func TestAssignFeatureToRunner_AssignsOnlineRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	now := time.Now().UnixMilli()
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-1", now)
+
+	resp, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{
+		RunnerID: "runner-1",
+		Intent:   "assign",
+	})
+	if err != nil {
+		t.Fatalf("AssignFeatureToRunner failed: %v", err)
+	}
+	if resp.ProjectID != "brain-api" || resp.FeatureID != "feature-1" || resp.RunnerID != "runner-1" {
+		t.Fatalf("unexpected assignment response: %+v", resp)
+	}
+	if resp.Source != "manual" || resp.Status != "active" {
+		t.Fatalf("source/status = %q/%q, want manual/active", resp.Source, resp.Status)
+	}
+	if resp.AssignedAt == "" || resp.UpdatedAt == "" {
+		t.Fatalf("expected timestamps in response: %+v", resp)
+	}
+
+	row, err := store.GetFeatureAssignment(context.Background(), "brain-api", "feature-1")
+	if err != nil {
+		t.Fatalf("GetFeatureAssignment failed: %v", err)
+	}
+	if row == nil || row.RunnerID != "runner-1" || row.Source != "manual" || row.Status != "active" {
+		t.Fatalf("unexpected stored assignment: %+v", row)
+	}
+}
+
+func TestAssignFeatureToRunner_ReassignRequiresExplicitIntent(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	now := time.Now().UnixMilli()
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-1", now)
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-2", now)
+
+	_, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "runner-1", Intent: "assign"})
+	if err != nil {
+		t.Fatalf("initial assignment failed: %v", err)
+	}
+
+	_, err = svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "runner-2", Intent: "assign"})
+	if !errors.Is(err, api.ErrConflict) {
+		t.Fatalf("reassign without explicit intent error = %v, want ErrConflict", err)
+	}
+
+	resp, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "runner-2", Intent: "reassign"})
+	if err != nil {
+		t.Fatalf("explicit reassign failed: %v", err)
+	}
+	if resp.RunnerID != "runner-2" || resp.PreviousRunner != "runner-1" {
+		t.Fatalf("unexpected reassign response: %+v", resp)
+	}
+}
+
+func TestAssignFeatureToRunner_MissingRunner(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+
+	_, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "missing-runner", Intent: "assign"})
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Fatalf("AssignFeatureToRunner error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestAssignFeatureToRunner_OfflineRunnerRequiresForce(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	offlineHeartbeat := time.Now().Add(-RunnerStaleThreshold - time.Minute).UnixMilli()
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "offline-runner", offlineHeartbeat)
+
+	_, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "offline-runner", Intent: "assign"})
+	if !errors.Is(err, api.ErrConflict) {
+		t.Fatalf("offline assignment error = %v, want ErrConflict", err)
+	}
+
+	resp, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "offline-runner", Intent: "assign", Force: true})
+	if err != nil {
+		t.Fatalf("forced offline assignment failed: %v", err)
+	}
+	if resp.RunnerID != "offline-runner" || resp.Status != "active" {
+		t.Fatalf("unexpected forced assignment response: %+v", resp)
+	}
+}
+
+func TestClearFeatureAssignment_RequiresExplicitIntent(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	now := time.Now().UnixMilli()
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-1", now)
+	_, err := svc.AssignFeatureToRunner(context.Background(), "brain-api", "feature-1", types.FeatureAssignmentRequest{RunnerID: "runner-1", Intent: "assign"})
+	if err != nil {
+		t.Fatalf("initial assignment failed: %v", err)
+	}
+
+	_, err = svc.ClearFeatureAssignment(context.Background(), "brain-api", "feature-1", types.ClearFeatureAssignmentRequest{})
+	if !errors.Is(err, api.ErrConflict) {
+		t.Fatalf("clear without intent error = %v, want ErrConflict", err)
+	}
+
+	resp, err := svc.ClearFeatureAssignment(context.Background(), "brain-api", "feature-1", types.ClearFeatureAssignmentRequest{Intent: "clear"})
+	if err != nil {
+		t.Fatalf("ClearFeatureAssignment failed: %v", err)
+	}
+	if resp.Status != "cleared" || resp.PreviousRunner != "runner-1" || resp.Source != "manual" {
+		t.Fatalf("unexpected clear response: %+v", resp)
+	}
+	if resp.AssignedAt == "" || resp.UpdatedAt == "" {
+		t.Fatalf("expected timestamps in clear response: %+v", resp)
+	}
+
+	row, err := store.GetFeatureAssignment(context.Background(), "brain-api", "feature-1")
+	if err != nil {
+		t.Fatalf("GetFeatureAssignment failed: %v", err)
+	}
+	if row != nil {
+		t.Fatalf("assignment should be cleared, got %+v", row)
 	}
 }

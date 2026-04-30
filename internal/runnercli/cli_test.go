@@ -2,10 +2,16 @@ package runnercli
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // TestRunTaskRunner_BasicStartStop tests basic runner lifecycle.
@@ -47,6 +53,70 @@ func TestRunTaskRunner_InvalidProject(t *testing.T) {
 	err := RunTaskRunner(ctx, opts)
 	if err == nil {
 		t.Fatal("expected error for empty projects, got nil")
+	}
+}
+
+func TestRunTaskRunner_RemoteShutdownRunsCleanup(t *testing.T) {
+	stateDir := t.TempDir()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/health":
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+		case "/api/v1/events/emit":
+			w.WriteHeader(http.StatusAccepted)
+		case "/api/v1/runners/register":
+			var req types.RegisterRunnerRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode register request: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(types.RunnerInfo{RunnerID: req.RunnerID, Hostname: req.Hostname})
+		case "/api/v1/runners/heartbeat":
+			_ = json.NewEncoder(w).Encode(map[string]bool{"success": true})
+		case "/api/v1/tasks/proj-a":
+			_ = json.NewEncoder(w).Encode(map[string]any{"tasks": []types.ResolvedTask{}})
+		case "/api/v1/tasks/proj-a/next":
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			if len(r.URL.Path) > len("/api/v1/tasks//stream") && r.URL.Path != "/api/v1/tasks/proj-a/stream" {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.WriteHeader(http.StatusOK)
+				if flusher, ok := w.(http.Flusher); ok {
+					_, _ = w.Write([]byte("event: shutdown\ndata: {\"reason\":\"test remote shutdown\"}\n\n"))
+					flusher.Flush()
+				}
+				<-r.Context().Done()
+				return
+			}
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			<-r.Context().Done()
+		}
+	}))
+	defer srv.Close()
+
+	opts := RunnerOptions{
+		Projects: []string{"proj-a"},
+		Mode:     "headless",
+		Config: runner.RunnerConfig{
+			BrainAPIURL:  srv.URL,
+			MaxParallel:  1,
+			PollInterval: 1,
+			StateDir:     stateDir,
+			WorkDir:      t.TempDir(),
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := RunTaskRunner(ctx, opts); err != nil {
+		t.Fatalf("RunTaskRunner returned error: %v", err)
+	}
+
+	pidFile := filepath.Join(stateDir, "runner-proj-a.pid")
+	if _, err := os.Stat(pidFile); !os.IsNotExist(err) {
+		t.Fatalf("PID file should be cleared after remote shutdown cleanup, stat err = %v", err)
 	}
 }
 

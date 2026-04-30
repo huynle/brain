@@ -647,6 +647,9 @@ func (m *schedMockClient) RegisterRunner(ctx context.Context, req types.Register
 func (m *schedMockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
 	return nil
 }
+func (m *schedMockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	return nil
+}
 
 func (m *schedMockClient) getUpdateMetadataCalls() []updateMetadataCall {
 	m.mu2.Lock()

@@ -110,6 +110,11 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	// Wire event logging for headless mode so task lifecycle events
 	// are visible via slog instead of silently discarded.
 	runner.RegisterEventLogger(tr)
+	defer func() {
+		if stopErr := tr.Stop(); stopErr != nil {
+			slog.Error("error during runner cleanup", "error", stopErr)
+		}
+	}()
 
 	// Start the runner (blocks until context cancelled or Stop called)
 	if err := tr.Start(runCtx); err != nil {
@@ -361,6 +366,11 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 
 	// Start the runner in background
 	go func() {
+		defer func() {
+			if stopErr := tr.Stop(); stopErr != nil {
+				slog.Error("error during runner cleanup", "error", stopErr)
+			}
+		}()
 		if startErr := tr.Start(runCtx); startErr != nil {
 			slog.Error("runner failed", "error", startErr)
 		}

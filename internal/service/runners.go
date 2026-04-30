@@ -66,6 +66,11 @@ func (s *RunnersServiceImpl) Heartbeat(ctx context.Context, req types.HeartbeatR
 	return s.store.HeartbeatRunner(ctx, req.RunnerID, req.ActiveTasks, req.Version)
 }
 
+// Delete removes a runner registration.
+func (s *RunnersServiceImpl) Delete(ctx context.Context, runnerID string) error {
+	return s.store.DeleteRunner(ctx, runnerID)
+}
+
 // List returns all registered runners with computed status.
 func (s *RunnersServiceImpl) List(ctx context.Context) (*types.RunnerListResponse, error) {
 	rows, err := s.store.ListRunners(ctx, staleDuration)

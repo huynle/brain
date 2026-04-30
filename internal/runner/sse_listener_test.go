@@ -16,7 +16,7 @@ import (
 
 func TestNewSSEListener(t *testing.T) {
 	wakeCh := make(chan struct{}, 1)
-	listener := NewSSEListener("http://localhost:3333", "token", []string{"proj-a", "proj-b"}, wakeCh)
+	listener := NewSSEListener("http://localhost:3333", "token", "runner-1", []string{"proj-a", "proj-b"}, wakeCh, nil)
 
 	if listener == nil {
 		t.Fatal("expected non-nil listener")
@@ -59,7 +59,7 @@ func TestSSEListener_WakesOnTasksSnapshot(t *testing.T) {
 	defer server.Close()
 
 	wakeCh := make(chan struct{}, 10)
-	listener := NewSSEListener(server.URL, "", []string{"proj-a"}, wakeCh)
+	listener := NewSSEListener(server.URL, "", "", []string{"proj-a"}, wakeCh, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -110,7 +110,7 @@ func TestSSEListener_NonBlockingWake(t *testing.T) {
 
 	// Buffered to 1 — should not deadlock even with multiple snapshots
 	wakeCh := make(chan struct{}, 1)
-	listener := NewSSEListener(server.URL, "", []string{"proj-a"}, wakeCh)
+	listener := NewSSEListener(server.URL, "", "", []string{"proj-a"}, wakeCh, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -159,7 +159,7 @@ func TestSSEListener_HeartbeatDoesNotWake(t *testing.T) {
 	defer server.Close()
 
 	wakeCh := make(chan struct{}, 10)
-	listener := NewSSEListener(server.URL, "", []string{"proj-a"}, wakeCh)
+	listener := NewSSEListener(server.URL, "", "", []string{"proj-a"}, wakeCh, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
@@ -186,7 +186,7 @@ func TestSSEListener_StopClosesConnections(t *testing.T) {
 	defer server.Close()
 
 	wakeCh := make(chan struct{}, 1)
-	listener := NewSSEListener(server.URL, "", []string{"proj-a"}, wakeCh)
+	listener := NewSSEListener(server.URL, "", "", []string{"proj-a"}, wakeCh, nil)
 
 	ctx := context.Background()
 	go listener.Start(ctx)

@@ -95,6 +95,27 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleDeleteRunner handles DELETE /runners/{runnerId}.
+func (h *Handler) HandleDeleteRunner(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	if runnerID == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "runnerId is required")
+		return
+	}
+
+	if err := h.runners.Delete(r.Context(), runnerID); err != nil {
+		if errors.Is(err, ErrNotFound) || containsStr(err.Error(), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "runner not found: "+runnerID)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	h.publishRunnersUpdate(r.Context())
+	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
 // HandleShutdownRunner handles POST /runners/{runnerId}/shutdown.
 func (h *Handler) HandleShutdownRunner(w http.ResponseWriter, r *http.Request) {
 	runnerID := chi.URLParam(r, "runnerId")

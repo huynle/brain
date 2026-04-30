@@ -725,6 +725,21 @@ func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID, reason string)
 	return nil
 }
 
+// DeregisterRunner removes this runner from the brain API registry.
+func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s", url.PathEscape(runnerID))
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("deregister runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ListRunners returns all registered runners from the brain API.
 func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)

@@ -17,6 +17,7 @@ var knownEventTypes = map[string]bool{
 	"connected":      true,
 	"tasks_snapshot": true,
 	"error":          true,
+	"shutdown":       true,
 }
 
 // Ignored event types (returned as nil, nil).

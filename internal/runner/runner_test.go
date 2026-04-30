@@ -59,6 +59,8 @@ type mockClient struct {
 	appendErr   error
 	appendCalls []appendCall
 
+	deregisterCalls []string
+
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
 }
@@ -197,6 +199,13 @@ func (m *mockClient) RegisterRunner(ctx context.Context, req types.RegisterRunne
 }
 
 func (m *mockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+	return nil
+}
+
+func (m *mockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deregisterCalls = append(m.deregisterCalls, runnerID)
 	return nil
 }
 
@@ -762,6 +771,38 @@ func TestTaskRunner_Stop_KillsProcesses(t *testing.T) {
 	}
 	if !stateMgr.isPidCleared() {
 		t.Error("Stop should clear PID")
+	}
+}
+
+func TestTaskRunner_Stop_CleansUpOnlyOnce(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- tr.Start(ctx)
+	}()
+
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	if err := <-errCh; err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	if err := tr.Stop(); err != nil {
+		t.Fatalf("first Stop returned error: %v", err)
+	}
+	if err := tr.Stop(); err != nil {
+		t.Fatalf("second Stop returned error: %v", err)
+	}
+
+	if got := processMgr.getKillAllCalls(); got != 1 {
+		t.Fatalf("KillAll calls = %d, want 1", got)
 	}
 }
 

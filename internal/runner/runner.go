@@ -39,6 +39,7 @@ type Client interface {
 	EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error
 	RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error)
 	HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error
+	DeregisterRunner(ctx context.Context, runnerID string) error
 }
 
 // TaskExecutor abstracts the Executor for testability.
@@ -159,11 +160,14 @@ type TaskRunner struct {
 
 	// SSE reactive polling
 	wakeCh      chan struct{}
+	shutdownCh  chan string
 	sseListener *SSEListener
 
 	// Lifecycle
-	cancel context.CancelFunc
-	done   chan struct{}
+	cancel      context.CancelFunc
+	done        chan struct{}
+	doneOnce    sync.Once
+	cleanupOnce sync.Once
 }
 
 // NewTaskRunner creates a new TaskRunner with the given options.
@@ -205,6 +209,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		pauseCache:      make(map[string]bool),
 		enabledFeatures: make(map[string]bool),
 		wakeCh:          make(chan struct{}, 1),
+		shutdownCh:      make(chan string, 1),
 		done:            make(chan struct{}),
 	}
 
@@ -271,8 +276,10 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		tr.sseListener = NewSSEListener(
 			tr.config.BrainAPIURL,
 			tr.config.APIToken,
+			tr.runnerID,
 			tr.projects,
 			tr.wakeCh,
+			tr.shutdownCh,
 		)
 		go tr.sseListener.Start(ctx)
 		slog.Info("SSE listener started for reactive polling", "projects", len(tr.projects))
@@ -292,12 +299,17 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.status = RunnerStatusStopped
 			tr.mu.Unlock()
 			tr.saveState()
-			close(tr.done)
+			tr.doneOnce.Do(func() { close(tr.done) })
 			return nil
 		case <-ticker.C:
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
+		case reason := <-tr.shutdownCh:
+			slog.Info("remote shutdown requested", "runner_id", tr.runnerID, "reason", reason)
+			if tr.cancel != nil {
+				tr.cancel()
+			}
 		case <-heartbeatTicker.C:
 			tr.sendHeartbeat(ctx)
 		}
@@ -308,39 +320,43 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 func (tr *TaskRunner) Stop() error {
 	if tr.cancel != nil {
 		tr.cancel()
+
+		// Wait for the poll loop to exit.
+		<-tr.done
 	}
 
-	// Wait for the poll loop to exit
-	<-tr.done
-
-	// Stop SSE listener
-	if tr.sseListener != nil {
-		tr.sseListener.Stop()
-		slog.Info("SSE listener stopped")
-	}
-
-	// Clean up tmux windows for all running tasks, then kill processes
-	if tr.processMgr != nil {
-		for _, info := range tr.processMgr.GetAll() {
-			tr.cleanupTaskTmux(info.Task)
+	tr.cleanupOnce.Do(func() {
+		// Stop SSE listener
+		if tr.sseListener != nil {
+			tr.sseListener.Stop()
+			slog.Info("SSE listener stopped")
 		}
-		ctx := context.Background()
-		tr.processMgr.KillAll(ctx)
-	}
 
-	// Clear PID
-	if tr.stateMgr != nil {
-		tr.stateMgr.ClearPid()
-	}
+		// Clean up tmux windows for all running tasks, then kill processes
+		if tr.processMgr != nil {
+			for _, info := range tr.processMgr.GetAll() {
+				tr.cleanupTaskTmux(info.Task)
+			}
+			ctx := context.Background()
+			tr.processMgr.KillAll(ctx)
+		}
 
-	// Emit shutdown event
-	tr.emitEvent(RunnerEvent{
-		Type:   EventShutdown,
-		Reason: "graceful shutdown",
+		// Clear PID
+		if tr.stateMgr != nil {
+			tr.stateMgr.ClearPid()
+		}
+
+		tr.deregisterRunner()
+
+		// Emit shutdown event
+		tr.emitEvent(RunnerEvent{
+			Type:   EventShutdown,
+			Reason: "graceful shutdown",
+		})
+
+		// Save final state
+		tr.saveState()
 	})
-
-	// Save final state
-	tr.saveState()
 
 	return nil
 }
@@ -1303,6 +1319,20 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 
 	if err := tr.client.HeartbeatRunner(hbCtx, req); err != nil {
 		slog.Debug("heartbeat failed", "runner_id", tr.runnerID, "error", err)
+	}
+}
+
+// deregisterRunner removes this runner from distributed discovery during local cleanup.
+func (tr *TaskRunner) deregisterRunner() {
+	if tr.client == nil || tr.runnerID == "" {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := tr.client.DeregisterRunner(ctx, tr.runnerID); err != nil {
+		slog.Debug("runner deregister failed", "runner_id", tr.runnerID, "error", err)
 	}
 }
 

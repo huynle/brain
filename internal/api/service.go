@@ -169,6 +169,9 @@ type RunnersService interface {
 
 	// MarkStaleAndRelease detects stale runners and releases their claimed tasks.
 	MarkStaleAndRelease(ctx context.Context) ([]string, error)
+
+	// Delete removes a runner registration.
+	Delete(ctx context.Context, runnerID string) error
 }
 
 // MonitorService defines the interface for monitor operations.

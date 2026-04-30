@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"sync"
 	"time"
@@ -11,23 +12,27 @@ import (
 
 // SSEListener watches SSE streams for task changes and signals the runner to poll.
 type SSEListener struct {
-	apiURL   string
-	apiToken string
-	projects []string
-	wakeCh   chan<- struct{}
-	clients  []*sse.Client
+	apiURL     string
+	apiToken   string
+	runnerID   string
+	projects   []string
+	wakeCh     chan<- struct{}
+	shutdownCh chan<- string
+	clients    []*sse.Client
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
 // NewSSEListener creates a new SSE listener.
-func NewSSEListener(apiURL, apiToken string, projects []string, wakeCh chan<- struct{}) *SSEListener {
+func NewSSEListener(apiURL, apiToken, runnerID string, projects []string, wakeCh chan<- struct{}, shutdownCh chan<- string) *SSEListener {
 	return &SSEListener{
-		apiURL:   apiURL,
-		apiToken: apiToken,
-		projects: projects,
-		wakeCh:   wakeCh,
+		apiURL:     apiURL,
+		apiToken:   apiToken,
+		runnerID:   runnerID,
+		projects:   projects,
+		wakeCh:     wakeCh,
+		shutdownCh: shutdownCh,
 	}
 }
 
@@ -41,8 +46,13 @@ func (l *SSEListener) Start(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
-	for _, projectID := range l.projects {
-		client := sse.NewClient(l.apiURL, l.apiToken, projectID)
+	subscriptions := append([]string{}, l.projects...)
+	if l.runnerID != "" {
+		subscriptions = append(subscriptions, l.runnerID)
+	}
+
+	for _, subscriptionID := range subscriptions {
+		client := sse.NewClient(l.apiURL, l.apiToken, subscriptionID)
 		l.mu.Lock()
 		l.clients = append(l.clients, client)
 		l.mu.Unlock()
@@ -51,7 +61,7 @@ func (l *SSEListener) Start(ctx context.Context) {
 		go func(c *sse.Client, pid string) {
 			defer wg.Done()
 			l.listenProject(ctx, c, pid)
-		}(client, projectID)
+		}(client, subscriptionID)
 	}
 
 	wg.Wait()
@@ -82,6 +92,22 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 					slog.Debug("SSE wake signal sent", "project", projectID)
 				default:
 					slog.Debug("SSE wake signal dropped (channel full)", "project", projectID)
+				}
+			}
+
+			if event.Type == "shutdown" {
+				reason := "remote shutdown requested"
+				var payload struct {
+					Reason string `json:"reason"`
+				}
+				if err := json.Unmarshal(event.Data, &payload); err == nil && payload.Reason != "" {
+					reason = payload.Reason
+				}
+				select {
+				case l.shutdownCh <- reason:
+					slog.Info("SSE shutdown command received", "runner", projectID)
+				default:
+					slog.Debug("SSE shutdown command dropped (channel full)", "runner", projectID)
 				}
 			}
 

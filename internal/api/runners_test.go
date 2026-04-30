@@ -19,6 +19,7 @@ type mockRunnersService struct {
 	heartbeatFunc           func(ctx context.Context, req types.HeartbeatRequest) error
 	listFunc                func(ctx context.Context) (*types.RunnerListResponse, error)
 	markStaleAndReleaseFunc func(ctx context.Context) ([]string, error)
+	deleteFunc              func(ctx context.Context, runnerID string) error
 }
 
 func (m *mockRunnersService) Register(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
@@ -47,6 +48,13 @@ func (m *mockRunnersService) MarkStaleAndRelease(ctx context.Context) ([]string,
 		return m.markStaleAndReleaseFunc(ctx)
 	}
 	return nil, fmt.Errorf("markStaleAndReleaseFunc not set")
+}
+
+func (m *mockRunnersService) Delete(ctx context.Context, runnerID string) error {
+	if m.deleteFunc != nil {
+		return m.deleteFunc(ctx, runnerID)
+	}
+	return nil
 }
 
 func newRunnerShutdownTestServer(runners RunnersService, hub *realtime.Hub) *httptest.Server {

@@ -590,6 +590,45 @@ func TestCheckFeatureCompletion_DoesNotClearManualAssignmentWhenFeatureIncomplet
 	}
 }
 
+func TestCheckFeatureCompletion_WithTaskServiceClearsAssignmentOnlyWhenAllFeatureTasksDone(t *testing.T) {
+	taskSvc, store, _ := newTestTaskService(t)
+	eventSvc, _ := newTestEventService()
+	ctx := context.Background()
+
+	if _, err := store.ForceAssignFeature(ctx, "proj", "feature-auth", "runner-a", "manual", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature failed: %v", err)
+	}
+	insertTaskNote(t, store, "done1111", "Done task", "completed", "high", "proj", map[string]interface{}{
+		"feature_id": "feature-auth",
+	})
+	insertTaskNote(t, store, "todo2222", "Todo task", "pending", "medium", "proj", map[string]interface{}{
+		"feature_id": "feature-auth",
+	})
+	eventSvc.SetFeatureTaskLister(taskSvc)
+	eventSvc.SetFeatureAssignmentCleaner(store)
+
+	eventSvc.CheckFeatureCompletion(ctx, "proj", "feature-auth", "done1111")
+	assignment, err := store.GetFeatureAssignment(ctx, "proj", "feature-auth")
+	if err != nil {
+		t.Fatalf("GetFeatureAssignment failed: %v", err)
+	}
+	if assignment == nil || assignment.RunnerID != "runner-a" {
+		t.Fatalf("assignment should remain while feature is incomplete, got %+v", assignment)
+	}
+
+	if _, err := store.UpdateNote(ctx, "projects/proj/task/todo2222.md", map[string]interface{}{"status": "validated"}); err != nil {
+		t.Fatalf("UpdateNote status failed: %v", err)
+	}
+	eventSvc.CheckFeatureCompletion(ctx, "proj", "feature-auth", "todo2222")
+	assignment, err = store.GetFeatureAssignment(ctx, "proj", "feature-auth")
+	if err != nil {
+		t.Fatalf("GetFeatureAssignment after completion failed: %v", err)
+	}
+	if assignment != nil {
+		t.Fatalf("assignment should clear after all feature tasks are completed or validated, got %+v", assignment)
+	}
+}
+
 func TestCheckFeatureCompletion_NoEventWhenNoFeatureID(t *testing.T) {
 	svc, hub := newTestEventService()
 	ctx := context.Background()

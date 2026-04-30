@@ -346,6 +346,11 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 // ClaimTaskWithDuration claims a task with a custom lease duration.
 // Used for pre-claims (dispatch) with shorter expiry.
 func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, taskId, runnerId string, leaseDuration time.Duration) (*types.ClaimResponse, error) {
+	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, err
+	}
+
 	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, leaseDuration)
 	if err != nil {
 		return nil, fmt.Errorf("storage claim task: %w", err)
@@ -372,6 +377,37 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 			IsStale:   &stale,
 		}, api.ErrConflict
 	}
+	if featureID != "" {
+		assigned, assignment, err := s.storage.AssignFeatureIfEmpty(ctx, projectId, featureID, runnerId, "auto", "active")
+		if err != nil {
+			if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+				slog.Warn("failed to release task after feature assignment error", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+			}
+			return nil, fmt.Errorf("assign feature for claimed task: %w", err)
+		}
+		if !assigned {
+			if assignment == nil {
+				if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+					slog.Warn("failed to release task after missing feature assignment", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+				}
+				return nil, fmt.Errorf("feature %q assignment disappeared", featureID)
+			}
+			if assignment.RunnerID != runnerId {
+				if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+					slog.Warn("failed to release task after feature assignment conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+				}
+				slog.Warn("feature assignment conflict", "project", projectId, "feature_id", featureID, "runner_id", runnerId, "assigned_to", assignment.RunnerID)
+				return &types.ClaimResponse{
+					Success:   false,
+					TaskID:    taskId,
+					RunnerID:  runnerId,
+					Error:     "feature assigned to another runner",
+					Message:   fmt.Sprintf("feature %s is assigned to %s", featureID, assignment.RunnerID),
+					ClaimedBy: assignment.RunnerID,
+				}, api.ErrConflict
+			}
+		}
+	}
 
 	claimedAt := time.Now().UTC().Format(time.RFC3339)
 	slog.Info("task claimed", "project", projectId, "task_id", taskId, "runner_id", runnerId)
@@ -381,6 +417,17 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 		RunnerID:  runnerId,
 		ClaimedAt: claimedAt,
 	}, nil
+}
+
+func (s *TaskServiceImpl) featureIDForTaskClaim(ctx context.Context, projectID, taskID string) (string, error) {
+	note, err := s.storage.GetNoteByPath(ctx, fmt.Sprintf("projects/%s/task/%s.md", projectID, taskID))
+	if err != nil {
+		return "", fmt.Errorf("get task note for claim: %w", err)
+	}
+	if note == nil {
+		return "", nil
+	}
+	return NoteRowToBrainEntry(note).FeatureID, nil
 }
 
 // ReleaseTask releases a task claim. Returns ErrNotFound if not claimed,

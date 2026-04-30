@@ -661,6 +661,112 @@ func TestGetNext_WithRunnerIDSkipsHigherPriorityFeatureAssignedToOtherRunner(t *
 	}
 }
 
+func TestClaimTask_AssignsFeatureToFirstRunnerAndBlocksOtherFeatureTasks(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	insertTaskNote(t, store, "task1111", "First feature task", "pending", "high", "proj", map[string]interface{}{
+		"feature_id": "feature-auth",
+	})
+	insertTaskNote(t, store, "task2222", "Second feature task", "pending", "medium", "proj", map[string]interface{}{
+		"feature_id": "feature-auth",
+	})
+
+	first, err := svc.ClaimTask(ctx, "proj", "task1111", "runner-a")
+	if err != nil {
+		t.Fatalf("runner-a first claim failed: %v", err)
+	}
+	if !first.Success {
+		t.Fatalf("runner-a first claim success = false: %+v", first)
+	}
+
+	assignment, err := store.GetFeatureAssignment(ctx, "proj", "feature-auth")
+	if err != nil {
+		t.Fatalf("GetFeatureAssignment failed: %v", err)
+	}
+	if assignment == nil || assignment.RunnerID != "runner-a" || assignment.Source != "auto" || assignment.Status != "active" {
+		t.Fatalf("feature assignment = %+v, want runner-a auto active", assignment)
+	}
+
+	second, err := svc.ClaimTask(ctx, "proj", "task2222", "runner-b")
+	if err != api.ErrConflict {
+		t.Fatalf("runner-b second task claim error = %v, want ErrConflict", err)
+	}
+	if second == nil || second.Success || second.ClaimedBy != "runner-a" {
+		t.Fatalf("runner-b conflict response = %+v, want claimed_by runner-a", second)
+	}
+	status, err := svc.GetClaimStatus(ctx, "proj", "task2222")
+	if err != nil {
+		t.Fatalf("GetClaimStatus task2222 failed: %v", err)
+	}
+	if status.Claimed {
+		t.Fatalf("runner-b feature conflict should release task2222 claim, got %+v", status)
+	}
+
+	second, err = svc.ClaimTask(ctx, "proj", "task2222", "runner-a")
+	if err != nil {
+		t.Fatalf("assigned runner should claim remaining feature task: %v", err)
+	}
+	if !second.Success {
+		t.Fatalf("runner-a second claim success = false: %+v", second)
+	}
+}
+
+func TestManualFeatureAssignmentRoutesTasksToSelectedRunnerAndReassignment(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-a", now)
+	insertFeatureAssignmentRunnerForFeatureTest(t, store, "runner-b", now)
+	insertTaskNote(t, store, "auth1111", "Auth task", "pending", "high", "proj", map[string]interface{}{
+		"feature_id": "feature-auth",
+	})
+
+	if _, err := svc.AssignFeatureToRunner(ctx, "proj", "feature-auth", types.FeatureAssignmentRequest{RunnerID: "runner-a", Intent: "assign"}); err != nil {
+		t.Fatalf("assign feature to runner-a failed: %v", err)
+	}
+
+	next, err := svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-a"})
+	if err != nil {
+		t.Fatalf("runner-a GetNext failed: %v", err)
+	}
+	if next == nil || next.ID != "auth1111" {
+		t.Fatalf("runner-a GetNext = %v, want auth1111", next)
+	}
+
+	next, err = svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-b"})
+	if err != nil {
+		t.Fatalf("runner-b GetNext failed: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("runner-b should not receive runner-a assignment, got %v", next)
+	}
+
+	resp, err := svc.AssignFeatureToRunner(ctx, "proj", "feature-auth", types.FeatureAssignmentRequest{RunnerID: "runner-b", Intent: "reassign"})
+	if err != nil {
+		t.Fatalf("reassign feature to runner-b failed: %v", err)
+	}
+	if resp.RunnerID != "runner-b" || resp.PreviousRunner != "runner-a" {
+		t.Fatalf("reassign response = %+v, want runner-b previous runner-a", resp)
+	}
+
+	next, err = svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-a"})
+	if err != nil {
+		t.Fatalf("runner-a GetNext after reassign failed: %v", err)
+	}
+	if next != nil {
+		t.Fatalf("runner-a should not receive reassigned feature, got %v", next)
+	}
+
+	next, err = svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-b"})
+	if err != nil {
+		t.Fatalf("runner-b GetNext after reassign failed: %v", err)
+	}
+	if next == nil || next.ID != "auth1111" {
+		t.Fatalf("runner-b GetNext after reassign = %v, want auth1111", next)
+	}
+}
+
 func TestGetWaiting(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()

@@ -708,6 +708,23 @@ func (c *APIClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequ
 	return nil
 }
 
+// ShutdownRunner requests graceful shutdown for a registered runner.
+func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID, reason string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/shutdown", url.PathEscape(runnerID))
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, map[string]string{
+		"reason": reason,
+	})
+	if err != nil {
+		return fmt.Errorf("shutdown runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ListRunners returns all registered runners from the brain API.
 func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)

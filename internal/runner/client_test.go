@@ -1211,6 +1211,64 @@ func TestAPIClient_GetRunnerStatus_NotPaused(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// ShutdownRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ShutdownRunner(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody struct {
+		Reason string `json:"reason"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ShutdownRunner(context.Background(), "runner-1", "operator requested shutdown")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner-1/shutdown" {
+		t.Errorf("path = %q, want /api/v1/runners/runner-1/shutdown", gotPath)
+	}
+	if gotBody.Reason != "operator requested shutdown" {
+		t.Errorf("reason = %q, want operator requested shutdown", gotBody.Reason)
+	}
+}
+
+func TestAPIClient_ShutdownRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"error":"runner not found"}`, http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ShutdownRunner(context.Background(), "missing-runner", "operator requested shutdown")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, http.StatusNotFound)
+	}
+	if apiErr.Body == "" {
+		t.Error("expected error body to be preserved")
+	}
+}
+
+// ---------------------------------------------------------------------------
 // CreateEntry
 // ---------------------------------------------------------------------------
 

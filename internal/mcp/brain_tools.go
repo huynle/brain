@@ -278,6 +278,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
 				"limit":      {Type: "number", Description: "Maximum results (default: 10)"},
 				"global":     {Type: "boolean", Description: "Search only global entries"},
+				"strategy":   {Type: "string", Enum: []string{"fts", "exact", "like", "semantic", "hybrid"}, Description: "Search strategy: 'fts' (default), 'exact', 'like', 'semantic' (embedding), or 'hybrid' (combined)"},
 			},
 			Required: []string{"query"},
 		},

@@ -993,9 +993,9 @@ ${response.content}`;
             .optional()
             .describe("Filter by priority level"),
           strategy: tool.schema
-            .enum(["fts", "exact", "like"])
+            .enum(["fts", "exact", "like", "semantic", "hybrid"])
             .optional()
-            .describe("Search strategy: 'fts' (full-text, default), 'exact' (exact phrase), 'like' (substring/wildcard)"),
+            .describe("Search strategy: 'fts' (full-text, default), 'exact' (exact phrase), 'like' (substring/wildcard), 'semantic' (embedding-based), or 'hybrid' (combined FTS + semantic)"),
         },
         async execute(args) {
           try {

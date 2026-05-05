@@ -35,7 +35,8 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
 		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
-		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments"}
+		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
+		"note_embeddings", "note_embeddings_meta"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -73,6 +74,11 @@ func TestSchemaCreation_IndexesExist(t *testing.T) {
 		{"idx_links_target_path", "links"},
 		{"idx_tags_note", "tags"},
 		{"idx_tags_tag", "tags"},
+		{"idx_note_embeddings_meta_project", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_type", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_status", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_feature", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_priority", "note_embeddings_meta"},
 	}
 
 	for _, idx := range indexes {
@@ -684,8 +690,8 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 }
 
 func TestSchemaVersion_IncludesFeatureAssignments(t *testing.T) {
-	if CurrentSchemaVersion != 11 {
-		t.Errorf("CurrentSchemaVersion = %d, want 11", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 12 {
+		t.Errorf("CurrentSchemaVersion = %d, want 12", CurrentSchemaVersion)
 	}
 }
 

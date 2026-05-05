@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 11
+const CurrentSchemaVersion = 12
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -209,6 +209,29 @@ CREATE TABLE IF NOT EXISTS webhook_deliveries (
   FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
 );`
 
+const createNoteEmbeddingsTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  embedding BLOB NOT NULL,
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);`
+
+const createNoteEmbeddingsMetaTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings_meta (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  project_id TEXT,
+  type TEXT,
+  status TEXT,
+  feature_id TEXT,
+  priority TEXT,
+  embedding_indexed_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -246,6 +269,12 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled);",
 	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);",
 	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);",
+	// Note embeddings indexes
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority);",
 }
 
 // ---------------------------------------------------------------------------
@@ -484,6 +513,33 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 12 {
+		// v12: add note_embeddings and note_embeddings_meta tables for embedding-based search.
+		embeddingTables := []string{
+			createNoteEmbeddingsTable,
+			createNoteEmbeddingsMetaTable,
+		}
+		for _, ddl := range embeddingTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v12 (embedding tables): %w", err)
+				}
+			}
+		}
+		embeddingIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority)",
+		}
+		for _, stmt := range embeddingIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v12 (embedding indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -537,6 +593,8 @@ func InitSchema(db *sql.DB) error {
 		createRunnersTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
+		createNoteEmbeddingsTable,
+		createNoteEmbeddingsMetaTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

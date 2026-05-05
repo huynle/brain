@@ -363,6 +363,163 @@ Brain API supports OAuth 2.1 with PKCE for secure MCP client authentication. Thi
 
 **Supported Scopes:** `mcp`, `mcp:read`, `mcp:write`
 
+## Embedding-Based Semantic Search
+
+Brain API supports optional embedding-based semantic search for more intelligent knowledge retrieval. When enabled, you can search by meaning rather than just keywords.
+
+### Features
+
+- **Multiple search strategies**: Choose between `fts` (full-text), `semantic` (embedding-based), or `hybrid` (combined)
+- **Automatic fallback**: Gracefully falls back to FTS when embeddings are unavailable or failing
+- **Incremental indexing**: Generate embeddings on-demand via the `backfill` command
+- **Configurable providers**: Supports any OpenAI-compatible embedding API (OpenAI, AI Factory, etc.)
+
+### Configuration
+
+Add an `embedding` block to your `config.yaml`:
+
+```yaml
+server:
+  embedding:
+    enabled: true                                     # Enable semantic search
+    provider: "ai-factory"                            # Provider name (for logging)
+    base_url: "https://ai-factory.example.com/v1"    # Embedding API endpoint
+    api_key_env: "AI_FACTORY_API_KEY"                # Environment variable for API key
+    model: "text-embedding-3-small"                   # Embedding model name
+    dim: 1536                                         # Embedding dimension (must match model)
+    batch_size: 100                                   # Batch size for embedding generation
+    timeout_ms: 30000                                 # Request timeout in milliseconds
+```
+
+**Configuration via environment variables:**
+
+```bash
+export AI_FACTORY_API_KEY="your-api-key-here"
+export EMBEDDING_ENABLED=true
+export EMBEDDING_BASE_URL="https://ai-factory.example.com/v1"
+export EMBEDDING_MODEL="text-embedding-3-small"
+```
+
+Environment variables override `config.yaml` values.
+
+### Search Strategies
+
+Brain API supports three search strategies:
+
+#### 1. FTS (Full-Text Search) - Default
+
+Traditional keyword-based search using SQLite's FTS5 with BM25 ranking.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "authentication JWT", "strategy": "fts"}'
+```
+
+**Best for:** Exact keyword matches, technical terms, code snippets
+
+#### 2. Semantic Search
+
+Embedding-based search that finds results by semantic similarity. Understands synonyms and related concepts.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "how to secure user logins", "strategy": "semantic"}'
+```
+
+**Best for:** Conceptual queries, natural language questions, finding related ideas
+
+#### 3. Hybrid Search
+
+Combines both FTS and semantic search, merging results by relevance score.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "JWT token validation", "strategy": "hybrid"}'
+```
+
+**Best for:** General-purpose search when you want both keyword precision and semantic understanding
+
+### Generating Embeddings
+
+After enabling embeddings in your config, run the backfill command to generate embeddings for existing notes:
+
+```bash
+# Generate embeddings for all notes
+brain embeddings backfill
+
+# Dry run to see what would be done
+brain embeddings backfill --dry-run
+
+# Filter by project
+brain embeddings backfill --project my-project
+
+# Filter by path prefix
+brain embeddings backfill --path projects/opencode/
+
+# Verbose output
+brain embeddings backfill --verbose
+```
+
+**How it works:**
+- Scans all notes in the brain
+- Identifies notes missing embeddings or with stale embeddings (content changed since last indexing)
+- Generates embeddings in batches (configurable via `batch_size`)
+- Stores embeddings with metadata (project, type, status, feature, priority) for filtered searches
+- Updates `embedding_indexed_at` timestamp to track freshness
+
+**When to run:**
+- After enabling embeddings for the first time
+- Periodically to update stale embeddings (e.g., weekly)
+- After bulk imports or large content updates
+- When changing embedding models (requires re-indexing all notes)
+
+### Fallback Behavior
+
+Brain API is designed to work reliably even when embeddings are unavailable:
+
+| Scenario | Behavior |
+|----------|----------|
+| `enabled: false` | All searches use FTS, semantic/hybrid strategies fall back to FTS |
+| Missing API key | Logs warning, falls back to FTS |
+| Embedding API unreachable | Logs error, falls back to FTS |
+| No embeddings indexed yet | Falls back to FTS (run `brain embeddings backfill`) |
+| Query embedding generation fails | Logs error, falls back to FTS |
+
+**No search failures:** Embedding issues never break search — users always get results via FTS fallback.
+
+### Storage Overhead
+
+Embeddings are stored in separate SQLite tables (`note_embeddings`, `note_embeddings_meta`):
+
+- **Typical size**: ~3 MB for a moderate brain with 100-200 notes (using 1536-dim embeddings)
+- **Scaling**: Roughly 6-10 KB per note (depends on note length and chunking)
+- **Tables**:
+  - `note_embeddings`: Stores packed float32 vectors as BLOBs
+  - `note_embeddings_meta`: Tracks indexing timestamps and metadata for filtering
+
+### MCP Client Usage
+
+When using the MCP server (Claude Code, OpenCode), the search strategy is automatically determined:
+
+- `brain_search` tool: Uses configured default strategy (usually FTS for compatibility)
+- `brain_inject` tool: Uses semantic/hybrid search when embeddings are enabled (better for context retrieval)
+
+Configure strategy preference in client tools by setting the `strategy` parameter:
+
+```typescript
+// In MCP tool call
+await callTool('brain_search', {
+  query: 'authentication patterns',
+  strategy: 'hybrid'  // or 'semantic', 'fts'
+})
+```
+
 ## Task Runner
 
 The built-in task runner (`brain-runner`) processes tasks with dependency tracking and parallel execution.

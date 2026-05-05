@@ -32,6 +32,7 @@ type ServerOptions struct {
 	CORSOrigin   string
 	OAuthPIN     string
 	TaskDefaults config.TaskDefaultsConfig
+	Embedding    config.EmbeddingConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -102,6 +103,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		CORSOrigin:   corsOrigin,
 		OAuthPIN:     opts.OAuthPIN,
 		TaskDefaults: opts.TaskDefaults,
+		Embedding:    opts.Embedding,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────

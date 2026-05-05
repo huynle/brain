@@ -39,6 +39,7 @@ type Config struct {
 	LogLevel     string
 	OAuthPIN     string // Optional PIN for consent page protection
 	TaskDefaults TaskDefaultsConfig
+	Embedding    EmbeddingConfig
 
 	// Rate limiting (0 = disabled)
 	RateLimitPerMinute int // Per-IP requests per minute (default: 100)
@@ -101,6 +102,7 @@ func Load() Config {
 		}
 		// Thread task defaults from unified config
 		cfg.TaskDefaults = s.TaskDefaults
+		cfg.Embedding = s.Embedding
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)

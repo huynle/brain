@@ -151,6 +151,7 @@ func (c *StartCommand) startForeground(pidFile string) error {
 		CORSOrigin:   c.Config.Server.CORSOrigin,
 		OAuthPIN:     c.Config.Server.OAuthPIN,
 		TaskDefaults: c.Config.Server.TaskDefaults,
+		Embedding:    c.Config.Server.Embedding,
 	}
 
 	// Create context with signal handling for graceful shutdown

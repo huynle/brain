@@ -73,6 +73,18 @@ type UnifiedConfig struct {
 }
 
 // ServerConfig holds API server configuration.
+// EmbeddingConfig holds embedding service configuration for semantic search.
+type EmbeddingConfig struct {
+	Enabled    bool   `yaml:"enabled"`
+	Provider   string `yaml:"provider"`
+	BaseURL    string `yaml:"base_url"`
+	APIKeyEnv  string `yaml:"api_key_env"`
+	Model      string `yaml:"model"`
+	Dim        int    `yaml:"dim"`
+	BatchSize  int    `yaml:"batch_size"`
+	TimeoutMs  int    `yaml:"timeout_ms"`
+}
+
 type ServerConfig struct {
 	Port         int                `yaml:"port"`
 	Host         string             `yaml:"host"`
@@ -86,6 +98,7 @@ type ServerConfig struct {
 	PIDFile      string             `yaml:"pid_file"`
 	LogFile      string             `yaml:"log_file"`
 	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
+	Embedding    EmbeddingConfig    `yaml:"embedding"`
 }
 
 // RunnerConfig holds task runner configuration.

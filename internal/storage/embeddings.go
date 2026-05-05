@@ -170,3 +170,254 @@ func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) e
 
 	return nil
 }
+
+// unpackFloat32s converts a binary BLOB back into a slice of float32 values (little-endian).
+func unpackFloat32s(blob []byte) ([]float32, error) {
+	if len(blob)%4 != 0 {
+		return nil, fmt.Errorf("invalid embedding blob size: %d (not divisible by 4)", len(blob))
+	}
+
+	vec := make([]float32, len(blob)/4)
+	for i := range vec {
+		bits := binary.LittleEndian.Uint32(blob[i*4 : (i+1)*4])
+		vec[i] = math.Float32frombits(bits)
+	}
+	return vec, nil
+}
+
+// cosineSimilarity computes the cosine similarity between two vectors.
+// Returns a value in [-1, 1] where 1 means identical direction.
+func cosineSimilarity(a, b []float32) float64 {
+	if len(a) != len(b) {
+		return 0.0
+	}
+
+	var dotProduct, normA, normB float64
+	for i := range a {
+		dotProduct += float64(a[i]) * float64(b[i])
+		normA += float64(a[i]) * float64(a[i])
+		normB += float64(b[i]) * float64(b[i])
+	}
+
+	if normA == 0 || normB == 0 {
+		return 0.0
+	}
+
+	return dotProduct / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+// embeddingMatch represents a candidate match with its similarity score.
+type embeddingMatch struct {
+	noteID     int64
+	chunkIndex int
+	score      float64
+}
+
+// SearchByEmbedding finds similar notes using cosine similarity over stored embeddings.
+// It pre-filters candidates using note_embeddings_meta, loads candidate embeddings,
+// computes cosine similarity, and returns the top-K matches deduplicated by note_id.
+func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32, opts *EmbeddingSearchOptions) ([]*NoteRow, error) {
+	if len(queryVec) == 0 {
+		return []*NoteRow{}, nil
+	}
+
+	// Apply defaults
+	limit := 20
+	if opts != nil && opts.Limit > 0 {
+		limit = opts.Limit
+	}
+
+	// Build query to get candidate note_ids from note_embeddings_meta with filters
+	sql := "SELECT DISTINCT m.note_id FROM note_embeddings_meta m"
+	var params []interface{}
+	var whereClauses []string
+
+	if opts != nil {
+		if opts.ProjectID != "" {
+			whereClauses = append(whereClauses, "m.project_id = ?")
+			params = append(params, opts.ProjectID)
+		}
+		if opts.Type != "" {
+			whereClauses = append(whereClauses, "m.type = ?")
+			params = append(params, opts.Type)
+		}
+		if opts.Status != "" {
+			whereClauses = append(whereClauses, "m.status = ?")
+			params = append(params, opts.Status)
+		}
+		if opts.FeatureID != "" {
+			whereClauses = append(whereClauses, "m.feature_id = ?")
+			params = append(params, opts.FeatureID)
+		}
+		if opts.Priority != "" {
+			whereClauses = append(whereClauses, "m.priority = ?")
+			params = append(params, opts.Priority)
+		}
+		if len(opts.Tags) > 0 {
+			// Join with tags table to filter by tags
+			sql = "SELECT DISTINCT m.note_id FROM note_embeddings_meta m INNER JOIN tags t ON m.note_id = t.note_id"
+			placeholders := make([]string, len(opts.Tags))
+			for i, tag := range opts.Tags {
+				placeholders[i] = "?"
+				params = append(params, tag)
+			}
+			whereClauses = append(whereClauses, fmt.Sprintf("t.tag IN (%s)", joinStrings(placeholders, ",")))
+		}
+	}
+
+	if len(whereClauses) > 0 {
+		sql += " WHERE " + joinStrings(whereClauses, " AND ")
+	}
+
+	// Get candidate note IDs
+	rows, err := s.db.QueryContext(ctx, sql, params...)
+	if err != nil {
+		return nil, fmt.Errorf("query candidate notes: %w", err)
+	}
+
+	var candidateNoteIDs []int64
+	for rows.Next() {
+		var noteID int64
+		if err := rows.Scan(&noteID); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("scan candidate note_id: %w", err)
+		}
+		candidateNoteIDs = append(candidateNoteIDs, noteID)
+	}
+	rows.Close()
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate candidate notes: %w", err)
+	}
+
+	if len(candidateNoteIDs) == 0 {
+		return []*NoteRow{}, nil
+	}
+
+	// Load embeddings for all candidate notes and compute similarity
+	var matches []embeddingMatch
+
+	for _, noteID := range candidateNoteIDs {
+		// Get all chunks for this note
+		chunkRows, err := s.db.QueryContext(ctx,
+			"SELECT chunk_index, embedding FROM note_embeddings WHERE note_id = ?",
+			noteID,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("query embeddings for note_id=%d: %w", noteID, err)
+		}
+
+		for chunkRows.Next() {
+			var chunkIndex int
+			var blob []byte
+			if err := chunkRows.Scan(&chunkIndex, &blob); err != nil {
+				chunkRows.Close()
+				return nil, fmt.Errorf("scan embedding for note_id=%d: %w", noteID, err)
+			}
+
+			// Unpack embedding vector
+			vec, err := unpackFloat32s(blob)
+			if err != nil {
+				chunkRows.Close()
+				return nil, fmt.Errorf("unpack embedding for note_id=%d chunk_index=%d: %w", noteID, chunkIndex, err)
+			}
+
+			// Compute cosine similarity
+			score := cosineSimilarity(queryVec, vec)
+			matches = append(matches, embeddingMatch{
+				noteID:     noteID,
+				chunkIndex: chunkIndex,
+				score:      score,
+			})
+		}
+		chunkRows.Close()
+
+		if err := chunkRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate embeddings for note_id=%d: %w", noteID, err)
+		}
+	}
+
+	// Deduplicate by note_id, keeping the best score per note
+	bestScores := make(map[int64]float64)
+	for _, match := range matches {
+		if existing, ok := bestScores[match.noteID]; !ok || match.score > existing {
+			bestScores[match.noteID] = match.score
+		}
+	}
+
+	// Convert to sorted list
+	type noteScore struct {
+		noteID int64
+		score  float64
+	}
+	var sortedNotes []noteScore
+	for noteID, score := range bestScores {
+		sortedNotes = append(sortedNotes, noteScore{noteID: noteID, score: score})
+	}
+
+	// Sort by score descending
+	for i := 0; i < len(sortedNotes); i++ {
+		for j := i + 1; j < len(sortedNotes); j++ {
+			if sortedNotes[j].score > sortedNotes[i].score {
+				sortedNotes[i], sortedNotes[j] = sortedNotes[j], sortedNotes[i]
+			}
+		}
+	}
+
+	// Limit results
+	if len(sortedNotes) > limit {
+		sortedNotes = sortedNotes[:limit]
+	}
+
+	// Fetch full note records
+	if len(sortedNotes) == 0 {
+		return []*NoteRow{}, nil
+	}
+
+	// Build IN clause for note IDs
+	placeholders := make([]string, len(sortedNotes))
+	noteIDParams := make([]interface{}, len(sortedNotes))
+	for i, ns := range sortedNotes {
+		placeholders[i] = "?"
+		noteIDParams[i] = ns.noteID
+	}
+
+	noteSQL := fmt.Sprintf("SELECT %s FROM notes WHERE id IN (%s)", noteColumns, joinStrings(placeholders, ","))
+	noteRows, err := s.db.QueryContext(ctx, noteSQL, noteIDParams...)
+	if err != nil {
+		return nil, fmt.Errorf("query notes: %w", err)
+	}
+	defer noteRows.Close()
+
+	notes, err := scanNoteRows(noteRows)
+	if err != nil {
+		return nil, fmt.Errorf("scan notes: %w", err)
+	}
+
+	// Preserve sort order by score
+	noteMap := make(map[int64]*NoteRow)
+	for _, note := range notes {
+		noteMap[note.ID] = note
+	}
+
+	result := make([]*NoteRow, 0, len(sortedNotes))
+	for _, ns := range sortedNotes {
+		if note, ok := noteMap[ns.noteID]; ok {
+			result = append(result, note)
+		}
+	}
+
+	return result, nil
+}
+
+// joinStrings joins a slice of strings with a separator.
+func joinStrings(strs []string, sep string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	result := strs[0]
+	for i := 1; i < len(strs); i++ {
+		result += sep + strs[i]
+	}
+	return result
+}

@@ -89,6 +89,17 @@ type ListOptions struct {
 	Offset     int
 }
 
+// EmbeddingSearchOptions configures embedding-based semantic search.
+type EmbeddingSearchOptions struct {
+	Limit      int
+	ProjectID  string
+	Type       string
+	Status     string
+	FeatureID  string
+	Priority   string
+	Tags       []string
+}
+
 // OrphanOptions configures the GetOrphans query.
 type OrphanOptions struct {
 	Type  string

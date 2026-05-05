@@ -33,6 +33,7 @@ type LogViewer struct {
 	autoFollow bool
 	width      int
 	height     int
+	scrollTop  int
 	logFile    string
 
 	// Filtering: when IsFiltering is true, only show entries matching FilterTaskID
@@ -109,11 +110,68 @@ func (lv *LogViewer) View() string {
 
 	// Truncate to height if needed
 	if lv.height > 0 && len(lines) > lv.height {
-		// Show most recent entries (auto-follow behavior)
-		lines = lines[len(lines)-lv.height:]
+		maxScrollTop := len(lines) - lv.height
+		if lv.autoFollow {
+			lv.scrollTop = maxScrollTop
+		}
+		if lv.scrollTop > maxScrollTop {
+			lv.scrollTop = maxScrollTop
+		}
+		if lv.scrollTop < 0 {
+			lv.scrollTop = 0
+		}
+		lines = lines[lv.scrollTop : lv.scrollTop+lv.height]
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+// ScrollUp moves the log viewport toward older entries and pauses auto-follow.
+func (lv *LogViewer) ScrollUp() {
+	maxScrollTop := lv.maxScrollTop()
+	if maxScrollTop == 0 {
+		lv.scrollTop = 0
+		lv.autoFollow = true
+		return
+	}
+	if lv.autoFollow {
+		lv.scrollTop = maxScrollTop
+		lv.autoFollow = false
+	}
+	if lv.scrollTop > 0 {
+		lv.scrollTop--
+	}
+}
+
+// ScrollDown moves the log viewport toward newer entries and resumes auto-follow at bottom.
+func (lv *LogViewer) ScrollDown() {
+	maxScrollTop := lv.maxScrollTop()
+	if maxScrollTop == 0 {
+		lv.scrollTop = 0
+		lv.autoFollow = true
+		return
+	}
+	if lv.autoFollow {
+		return
+	}
+	if lv.scrollTop < maxScrollTop {
+		lv.scrollTop++
+	}
+	if lv.scrollTop >= maxScrollTop {
+		lv.scrollTop = maxScrollTop
+		lv.autoFollow = true
+	}
+}
+
+func (lv *LogViewer) maxScrollTop() int {
+	if lv.height <= 0 {
+		return 0
+	}
+	totalLines := len(lv.visibleEntries()) + 1 // header + entries
+	if totalLines <= lv.height {
+		return 0
+	}
+	return totalLines - lv.height
 }
 
 // visibleEntries returns the entries to display, filtered by task if filtering is active.

@@ -20,14 +20,18 @@ const (
 
 // DreamViewer displays dream content in a scrollable viewport.
 type DreamViewer struct {
-	content  string
-	viewport viewport.Model
-	loading  bool
-	errMsg   string
-	ready    bool
-	width    int
-	height   int
-	fetched  bool // true if content has been fetched at least once
+	content       string
+	viewport      viewport.Model
+	loading       bool
+	errMsg        string
+	ready         bool
+	width         int
+	height        int
+	fetched       bool // true if content has been fetched at least once
+	dreamConfig   DreamConfigInfo
+	configFetched bool
+	configLoading bool
+	configErrMsg  string
 
 	// Search state
 	searchMode    DreamSearchMode
@@ -45,19 +49,31 @@ func NewDreamViewer() DreamViewer {
 // SetContent sets the dream content and resets the viewport.
 func (d *DreamViewer) SetContent(content string) {
 	d.content = content
-	d.originalLines = strings.Split(content, "\n")
 	d.loading = false
 	d.errMsg = ""
 	d.fetched = true
+	d.setViewportContent(d.scrollableContent())
+	d.GotoTop()
 	// Reset search state
 	d.searchMode = DreamSearchOff
 	d.searchQuery = ""
 	d.matchLines = nil
 	d.currentMatch = 0
-	if d.ready {
-		d.viewport.SetContent(content)
-		d.viewport.GotoTop()
-	}
+}
+
+// SetDreamConfig sets the fetched Dream monitor configuration.
+func (d *DreamViewer) SetDreamConfig(config DreamConfigInfo) {
+	d.dreamConfig = config
+	d.configLoading = false
+	d.configErrMsg = ""
+	d.configFetched = true
+	d.setViewportContent(d.scrollableContent())
+	d.GotoTop()
+	// Reset search state
+	d.searchMode = DreamSearchOff
+	d.searchQuery = ""
+	d.matchLines = nil
+	d.currentMatch = 0
 }
 
 // SetSize updates the viewport dimensions.
@@ -66,7 +82,7 @@ func (d *DreamViewer) SetSize(w, h int) {
 	d.height = h
 	if !d.ready {
 		d.viewport = viewport.New(w, h)
-		d.viewport.SetContent(d.content)
+		d.viewport.SetContent(d.scrollableContent())
 		d.ready = true
 	} else {
 		d.viewport.Width = w
@@ -281,6 +297,23 @@ func (d *DreamViewer) SetLoading(loading bool) {
 	}
 }
 
+// SetDreamConfigLoading sets the Dream config loading state.
+func (d *DreamViewer) SetDreamConfigLoading(loading bool) {
+	d.configLoading = loading
+	if loading {
+		d.configErrMsg = ""
+	}
+	d.setViewportContent(d.scrollableContent())
+}
+
+// SetDreamConfigError sets the Dream config error message without failing content rendering.
+func (d *DreamViewer) SetDreamConfigError(msg string) {
+	d.configErrMsg = msg
+	d.configLoading = false
+	d.configFetched = true
+	d.setViewportContent(d.scrollableContent())
+}
+
 // SetError sets the error message.
 func (d *DreamViewer) SetError(msg string) {
 	d.errMsg = msg
@@ -293,6 +326,11 @@ func (d *DreamViewer) HasContent() bool {
 	return d.fetched
 }
 
+// HasConfig returns true if dream configuration has been fetched.
+func (d *DreamViewer) HasConfig() bool {
+	return d.configFetched
+}
+
 // Update delegates key messages to the viewport for scrolling.
 func (d *DreamViewer) Update(msg tea.Msg) tea.Cmd {
 	if !d.ready {
@@ -301,6 +339,83 @@ func (d *DreamViewer) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	d.viewport, cmd = d.viewport.Update(msg)
 	return cmd
+}
+
+func (d *DreamViewer) setViewportContent(content string) {
+	d.originalLines = strings.Split(content, "\n")
+	if d.ready {
+		d.viewport.SetContent(content)
+	}
+}
+
+func (d *DreamViewer) scrollableContent() string {
+	config := d.renderConfigBlock()
+	if d.content == "" {
+		if config != "" && d.fetched {
+			project := d.dreamConfig.Project
+			if project == "" {
+				project = "<project>"
+			}
+			return config + "\n\nNo dream found.\n\nRun: brain dream " + project + " --now"
+		}
+		return config
+	}
+	if config == "" {
+		return d.content
+	}
+	return config + "\n\n" + d.content
+}
+
+func (d *DreamViewer) renderConfigBlock() string {
+	if !d.configFetched && !d.configLoading && d.configErrMsg == "" {
+		return ""
+	}
+
+	var lines []string
+	lines = append(lines, "Dream Config")
+	if d.configLoading {
+		lines = append(lines, "Status: Loading...")
+		return strings.Join(lines, "\n")
+	}
+	if d.configErrMsg != "" {
+		lines = append(lines, "Status: Config unavailable: "+d.configErrMsg)
+		return strings.Join(lines, "\n")
+	}
+
+	label := d.dreamConfig.TemplateLabel
+	if label == "" {
+		label = "Dream Consolidation"
+	}
+	lines = append(lines, "Template: "+label)
+	if d.dreamConfig.TemplateDescription != "" {
+		lines = append(lines, "Description: "+d.dreamConfig.TemplateDescription)
+	}
+	if d.dreamConfig.DefaultSchedule != "" {
+		lines = append(lines, "Default schedule: "+d.dreamConfig.DefaultSchedule)
+	}
+
+	if d.dreamConfig.Monitor == nil {
+		project := d.dreamConfig.Project
+		if project == "" {
+			project = "<project>"
+		}
+		lines = append(lines, "Status: Not configured")
+		lines = append(lines, "Enable: brain dream "+project+" --enable")
+		return strings.Join(lines, "\n")
+	}
+
+	status := "Disabled"
+	if d.dreamConfig.Monitor.Enabled {
+		status = "Enabled"
+	}
+	lines = append(lines, "Status: "+status)
+	if d.dreamConfig.Monitor.Schedule != "" {
+		lines = append(lines, "Schedule: "+d.dreamConfig.Monitor.Schedule)
+	}
+	if d.dreamConfig.Monitor.Scope != "" {
+		lines = append(lines, "Scope: "+d.dreamConfig.Monitor.Scope)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // View renders the dream viewer panel.
@@ -322,8 +437,12 @@ func (d *DreamViewer) View(width, height int) string {
 		content = d.centeredMessage(width, height,
 			"Switch to Dream tab to load content")
 	case d.content == "":
-		content = d.centeredMessage(width, height,
-			"No dream found.\n\nRun: brain dream <project> --now")
+		if d.configFetched || d.configLoading || d.configErrMsg != "" {
+			content = d.viewport.View()
+		} else {
+			content = d.centeredMessage(width, height,
+				"No dream found.\n\nRun: brain dream <project> --now")
+		}
 	default:
 		// Render scrollable viewport
 		if d.ready {

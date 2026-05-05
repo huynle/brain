@@ -53,7 +53,8 @@ type BrainEntryType =
   | "exploration"
   | "execution"
   | "task"
-  | "dream";
+  | "dream"
+  | "automation";
 
 type BrainEntryStatus =
   | "draft"
@@ -355,6 +356,7 @@ const ENTRY_TYPES: BrainEntryType[] = [
   "execution",
   "task",
   "dream",
+  "automation",
 ];
 
 const ENTRY_STATUSES: BrainEntryStatus[] = [
@@ -499,7 +501,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 - ideas: Ideas for future exploration
 - scratch: Temporary working notes
 - decision: Architectural decisions, ADRs
-- exploration: Investigation notes, research findings`,
+- exploration: Investigation notes, research findings
+
+Feature orchestration:
+- Use feature_id to group tasks into a feature.
+- Use feature_depends_on to make a feature wait for one or more other features before starting.
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
         args: {
           type: tool.schema
             .enum(ENTRY_TYPES)
@@ -548,8 +555,51 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .array(tool.schema.string())
             .optional()
             .describe(
-              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."
+              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."
             ),
+          trigger: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Trigger type for automation entries: event, cron, webhook, or session"),
+              event: tool.schema.string().optional().describe("Event pattern to match, e.g. 'feature.completed', 'task.completed', or 'task.*'"),
+              schedule: tool.schema.string().optional().describe("Cron schedule for cron automation triggers"),
+              webhook: tool.schema.string().optional().describe("Webhook path/name for webhook-triggered automations"),
+              filter: tool.schema.object({
+                feature_id: tool.schema.string().optional().describe("Only match events for this feature ID"),
+                project_id: tool.schema.string().optional().describe("Only match events for this project ID"),
+                task_id: tool.schema.string().optional().describe("Only match events for this task ID"),
+                runner_id: tool.schema.string().optional().describe("Only match events from this runner ID"),
+                from_status: tool.schema.string().optional().describe("Only match status-change events from this status"),
+                to_status: tool.schema.string().optional().describe("Only match status-change events to this status"),
+              }).optional().describe("Event field filters. For post-feature tasks use {feature_id:'main-feature', project_id:'my-project'}."),
+              once_per: tool.schema.string().optional().describe("Dedup key for automations, e.g. feature_id, session, or day"),
+              cooldown: tool.schema.string().optional().describe("Minimum interval between automation firings, e.g. '5m' or '1h'"),
+              max_concurrent: tool.schema.number().optional().describe("Maximum concurrent executions for this trigger"),
+              ignore_automation_events: tool.schema.boolean().optional().describe("Whether to ignore events emitted by automations"),
+            })
+            .optional()
+            .describe("Event trigger for inactive/active tasks or automation entries. For post-feature tasks use event='feature.completed' and filter.feature_id=<completed feature>."),
+          action: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Automation action type, e.g. create_task or script"),
+              title_template: tool.schema.string().optional().describe("Template for generated task title"),
+              prompt_template: tool.schema.string().optional().describe("Template for generated task prompt/content"),
+              direct_prompt: tool.schema.string().optional().describe("Direct prompt for generated tasks"),
+              command: tool.schema.string().optional().describe("Script command for script actions"),
+              agent: tool.schema.string().optional().describe("Agent override for generated tasks"),
+              model: tool.schema.string().optional().describe("Model override for generated tasks"),
+              executor: tool.schema.string().optional().describe("Executor override for generated tasks"),
+              target_workdir: tool.schema.string().optional().describe("Target workdir for generated tasks"),
+            })
+            .optional()
+            .describe("Automation action config for automation entries."),
+          retry: tool.schema
+            .object({
+              max_attempts: tool.schema.number().optional().describe("Maximum retry attempts"),
+              backoff: tool.schema.string().optional().describe("Backoff policy or duration"),
+              timeout: tool.schema.string().optional().describe("Action timeout"),
+            })
+            .optional()
+            .describe("Automation retry policy for automation entries."),
           global: tool.schema
             .boolean()
             .optional()
@@ -632,6 +682,14 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Override the default model for this task (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"
             ),
+          executor: tool.schema
+            .enum(["opencode", "pi", "script"])
+            .optional()
+            .describe("Executor backend for this task. Runner must advertise the selected executor."),
+          extensions: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Additional executor extensions to load for this task."),
           schedule: tool.schema
             .string()
             .optional()
@@ -754,10 +812,15 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               feature_id: args.type === "task" ? args.feature_id : undefined,
               feature_priority: args.type === "task" ? args.feature_priority : undefined,
               feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
+              trigger: args.type === "task" || args.type === "automation" ? args.trigger : undefined,
+              action: args.type === "automation" ? args.action : undefined,
+              retry: args.type === "automation" ? args.retry : undefined,
               // OpenCode execution options for tasks
               direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
               agent: args.type === "task" ? args.agent : undefined,
               model: args.type === "task" ? args.model : undefined,
+              executor: args.type === "task" ? args.executor : undefined,
+              extensions: args.type === "task" ? args.extensions : undefined,
               // Cron scheduling for tasks
               schedule: args.type === "task" ? args.schedule : undefined,
               schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
@@ -1477,7 +1540,7 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
       // brain_update
       // ========================================
       brain_update: tool({
-        description: `Update an existing brain entry's status, title, dependencies, or append content.
+        description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
 - Mark a plan as completed: brain_update(path: "...", status: "completed")
@@ -1486,6 +1549,8 @@ Use cases:
 - Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
 - Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update feature dependencies: brain_update(path: "...", feature_depends_on: ["pre-feature"])
+- Add a post-feature trigger: brain_update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
 - Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
 - Update priority: brain_update(path: "...", priority: "high")
 
@@ -1531,7 +1596,50 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
           feature_depends_on: tool.schema
             .array(tool.schema.string())
             .optional()
-            .describe("Feature IDs this feature depends on"),
+            .describe("Feature IDs this feature depends on. Use this for feature-to-feature ordering."),
+          trigger: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Trigger type for automation entries: event, cron, webhook, or session"),
+              event: tool.schema.string().optional().describe("Event pattern to match, e.g. 'feature.completed', 'task.completed', or 'task.*'"),
+              schedule: tool.schema.string().optional().describe("Cron schedule for cron automation triggers"),
+              webhook: tool.schema.string().optional().describe("Webhook path/name for webhook-triggered automations"),
+              filter: tool.schema.object({
+                feature_id: tool.schema.string().optional().describe("Only match events for this feature ID"),
+                project_id: tool.schema.string().optional().describe("Only match events for this project ID"),
+                task_id: tool.schema.string().optional().describe("Only match events for this task ID"),
+                runner_id: tool.schema.string().optional().describe("Only match events from this runner ID"),
+                from_status: tool.schema.string().optional().describe("Only match status-change events from this status"),
+                to_status: tool.schema.string().optional().describe("Only match status-change events to this status"),
+              }).optional().describe("Event field filters. For post-feature tasks use {feature_id:'main-feature', project_id:'my-project'}."),
+              once_per: tool.schema.string().optional().describe("Dedup key for automations, e.g. feature_id, session, or day"),
+              cooldown: tool.schema.string().optional().describe("Minimum interval between automation firings, e.g. '5m' or '1h'"),
+              max_concurrent: tool.schema.number().optional().describe("Maximum concurrent executions for this trigger"),
+              ignore_automation_events: tool.schema.boolean().optional().describe("Whether to ignore events emitted by automations"),
+            })
+            .optional()
+            .describe("Event trigger for inactive/active tasks or automation entries. For post-feature tasks use event='feature.completed' and filter.feature_id=<completed feature>."),
+          action: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Automation action type, e.g. create_task or script"),
+              title_template: tool.schema.string().optional().describe("Template for generated task title"),
+              prompt_template: tool.schema.string().optional().describe("Template for generated task prompt/content"),
+              direct_prompt: tool.schema.string().optional().describe("Direct prompt for generated tasks"),
+              command: tool.schema.string().optional().describe("Script command for script actions"),
+              agent: tool.schema.string().optional().describe("Agent override for generated tasks"),
+              model: tool.schema.string().optional().describe("Model override for generated tasks"),
+              executor: tool.schema.string().optional().describe("Executor override for generated tasks"),
+              target_workdir: tool.schema.string().optional().describe("Target workdir for generated tasks"),
+            })
+            .optional()
+            .describe("Automation action config for automation entries."),
+          retry: tool.schema
+            .object({
+              max_attempts: tool.schema.number().optional().describe("Maximum retry attempts"),
+              backoff: tool.schema.string().optional().describe("Backoff policy or duration"),
+              timeout: tool.schema.string().optional().describe("Action timeout"),
+            })
+            .optional()
+            .describe("Automation retry policy for automation entries."),
           target_workdir: tool.schema
             .string()
             .optional()
@@ -1628,10 +1736,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Override model (format: 'provider/model-id')"),
+          executor: tool.schema
+            .enum(["opencode", "pi", "script"])
+            .optional()
+            .describe("Executor backend for this task. Runner must advertise the selected executor."),
+          extensions: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Additional executor extensions to load for this task."),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.run_once_at === undefined && args.timezone === undefined && args.starts_at === undefined && args.expires_at === undefined && args.feature_schedule === undefined && args.feature_starts_at === undefined && args.feature_expires_at === undefined && args.feature_run_once_at === undefined && args.feature_timezone === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model`;
+          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.trigger === undefined && args.action === undefined && args.retry === undefined && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.run_once_at === undefined && args.timezone === undefined && args.starts_at === undefined && args.expires_at === undefined && args.feature_schedule === undefined && args.feature_starts_at === undefined && args.feature_expires_at === undefined && args.feature_run_once_at === undefined && args.feature_timezone === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined && args.executor === undefined && args.extensions === undefined) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, trigger, action, retry, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model, executor, extensions`;
           }
 
           try {
@@ -1651,6 +1767,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               feature_id: args.feature_id,
               feature_priority: args.feature_priority,
               feature_depends_on: args.feature_depends_on,
+              trigger: args.trigger,
+              action: args.action,
+              retry: args.retry,
               target_workdir: args.target_workdir,
               git_branch: args.git_branch,
               merge_target_branch: args.merge_target_branch,
@@ -1678,6 +1797,8 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               direct_prompt: args.direct_prompt,
               agent: args.agent,
               model: args.model,
+              executor: args.executor,
+              extensions: args.extensions,
             });
 
             const changes: string[] = [];
@@ -1698,6 +1819,12 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Feature Priority: ${args.feature_priority}`);
             if (args.feature_depends_on)
               changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
+            if (args.trigger !== undefined)
+              changes.push(`Trigger: set`);
+            if (args.action !== undefined)
+              changes.push(`Action: set`);
+            if (args.retry !== undefined)
+              changes.push(`Retry: set`);
             if (args.target_workdir)
               changes.push(`Target Workdir: ${args.target_workdir}`);
             if (args.git_branch)
@@ -1747,6 +1874,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               changes.push(`Agent: ${args.agent}`);
             if (args.model)
               changes.push(`Model: ${args.model}`);
+            if (args.executor)
+              changes.push(`Executor: ${args.executor}`);
+            if (args.extensions)
+              changes.push(`Extensions: ${args.extensions.length} extension(s)`);
 
             return `Updated: ${args.path}
 

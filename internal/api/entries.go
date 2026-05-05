@@ -482,7 +482,8 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 
 	// Emit entry.updated event for metadata change
 	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
-	evt.ProjectID = extractProjectID(entry.Path)
+	projectID := extractProjectID(entry.Path)
+	evt.ProjectID = projectID
 	evt.TaskPath = entry.Path
 	evt.TaskID = entry.ID
 	evt.FeatureID = entry.FeatureID
@@ -491,6 +492,12 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		"action":     "metadata_update",
 	}
 	h.emitEvent(r.Context(), evt)
+
+	if h.events != nil && entry.Type == "task" && entry.FeatureID != "" {
+		if _, ok := fields["status"]; ok {
+			h.events.CheckFeatureCompletion(r.Context(), projectID, entry.FeatureID, entry.ID)
+		}
+	}
 
 	WriteJSON(w, http.StatusOK, entry)
 }

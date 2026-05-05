@@ -262,6 +262,24 @@ func (l *SSEListener) handleCommandEvent(event sse.Event, runnerID string) {
 		slog.Warn("failed to parse runner command", "error", err, "runner_id", runnerID)
 		return
 	}
+	if cmd.Type == "" {
+		var envelope struct {
+			Command RunnerCommandType `json:"command"`
+			Payload json.RawMessage   `json:"payload"`
+		}
+		if err := json.Unmarshal(event.Data, &envelope); err != nil {
+			slog.Warn("failed to parse runner command envelope", "error", err, "runner_id", runnerID)
+			return
+		}
+		cmd.Type = envelope.Command
+		if len(envelope.Payload) > 0 && string(envelope.Payload) != "null" {
+			if err := json.Unmarshal(envelope.Payload, &cmd); err != nil {
+				slog.Warn("failed to parse runner command payload", "error", err, "runner_id", runnerID)
+				return
+			}
+			cmd.Type = envelope.Command
+		}
+	}
 
 	// Non-blocking send to command channel
 	select {

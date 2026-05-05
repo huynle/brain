@@ -126,6 +126,8 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	eventSvc := service.NewEventService(eventHub)
 	eventSvc.SetFeatureTaskLister(taskSvc)
 	eventSvc.SetFeatureAssignmentCleaner(store)
+	automationSvc := service.NewAutomationService(brainSvc)
+	go automationSvc.Start(ctx, eventHub)
 
 	// ─── Webhook Dispatcher ────────────────────────────────────────
 	// Subscribe to all EventHub events and deliver to matching webhooks.

@@ -694,7 +694,7 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		"direct_prompt", "agent", "model", "schedule", "schedule_enabled",
 		"git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
 		"remote_branch_policy", "open_pr_before_merge", "execution_mode",
-		"complete_on_idle", "relatedEntries",
+		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "relatedEntries",
 	}
 
 	for _, prop := range expectedProps {
@@ -718,12 +718,71 @@ func TestBrainUpdate_SchemaProperties(t *testing.T) {
 		"open_pr_before_merge", "execution_mode", "complete_on_idle",
 		"schedule", "schedule_enabled", "feature_id", "feature_priority",
 		"feature_depends_on", "direct_prompt", "agent", "model",
+		"executor", "extensions", "trigger", "action", "retry",
 	}
 
 	for _, prop := range expectedProps {
 		if _, ok := updateTool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("brain_update missing property %q", prop)
 		}
+	}
+}
+
+func TestBrainSave_ForwardsFeatureCompletionTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		trigger, ok := body["trigger"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger was not forwarded as an object: %#v", body["trigger"])
+		}
+		if trigger["event"] != "feature.completed" {
+			t.Errorf("trigger.event = %v, want feature.completed", trigger["event"])
+		}
+		filter, ok := trigger["filter"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger.filter was not forwarded as an object: %#v", trigger["filter"])
+		}
+		if filter["feature_id"] != "chain-main" {
+			t.Errorf("trigger.filter.feature_id = %v, want chain-main", filter["feature_id"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":     "post1234",
+			"path":   "projects/test/task/post1234.md",
+			"title":  "Post task",
+			"type":   "task",
+			"status": "active",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+		"type":    "task",
+		"title":   "Post task",
+		"content": "Triggered after feature completion",
+		"trigger": map[string]any{
+			"event": "feature.completed",
+			"filter": map[string]any{
+				"feature_id": "chain-main",
+				"project_id": "test",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
 	}
 }
 

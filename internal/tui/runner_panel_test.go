@@ -83,6 +83,29 @@ func TestRunnerPanel_Navigation(t *testing.T) {
 	}
 }
 
+func TestRunnerPanel_NavigationUsesRenderedViewportHeight(t *testing.T) {
+	rp := NewRunnerPanel()
+	runners := []types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host1", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-2", Hostname: "host2", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-3", Hostname: "host3", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-4", Hostname: "host4", Status: types.RunnerStatusOnline},
+	}
+	rp.SetRunners(runners)
+
+	// Match live TUI usage: the panel is rendered with a viewport height, but
+	// SetSize is not called separately before j/k navigation.
+	_ = rp.View(80, 5)
+	rp.MoveDown()
+
+	if rp.cursor != 1 {
+		t.Fatalf("expected cursor 1 after MoveDown, got %d", rp.cursor)
+	}
+	if rp.scrollTop != 0 {
+		t.Fatalf("expected scrollTop to stay 0 while cursor remains visible, got %d", rp.scrollTop)
+	}
+}
+
 func TestRunnerPanel_SelectedRunner(t *testing.T) {
 	rp := NewRunnerPanel()
 

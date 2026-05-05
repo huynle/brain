@@ -9,11 +9,9 @@ import (
 
 // makeKeyMsg creates a tea.KeyMsg for a given key string.
 // For simple rune keys like "H", "L", "T", "D" it creates a KeyRunes message.
-// For special keys like "ctrl+l", "ctrl+o" it creates the appropriate KeyMsg.
+// For special keys like "ctrl+o" it creates the appropriate KeyMsg.
 func makeKeyMsg(k string) tea.KeyMsg {
 	switch k {
-	case "ctrl+l":
-		return tea.KeyMsg{Type: tea.KeyCtrlL}
 	case "ctrl+o":
 		return tea.KeyMsg{Type: tea.KeyCtrlO}
 	default:
@@ -34,6 +32,9 @@ func TestKeyMapFromConfig_NoOverrides(t *testing.T) {
 	}
 	if !key.Matches(makeKeyMsg("l"), result.ToggleLogs) {
 		t.Error("ToggleLogs should default to l")
+	}
+	if !key.Matches(makeKeyMsg("z"), result.ToggleLogs) {
+		t.Error("ToggleLogs should default to z")
 	}
 	if !key.Matches(makeKeyMsg("T"), result.ToggleDetail) {
 		t.Error("ToggleDetail should default to T")
@@ -118,6 +119,9 @@ func TestDefaultKeyMap_HasContentTabBindings(t *testing.T) {
 	}
 	if !key.Matches(makeKeyMsg("l"), km.ToggleLogs) {
 		t.Error("DefaultKeyMap should have ToggleLogs bound to l")
+	}
+	if !key.Matches(makeKeyMsg("z"), km.ToggleLogs) {
+		t.Error("DefaultKeyMap should have ToggleLogs bound to z")
 	}
 	if !key.Matches(makeKeyMsg("T"), km.ToggleDetail) {
 		t.Error("DefaultKeyMap should have ToggleDetail bound to T")

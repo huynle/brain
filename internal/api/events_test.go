@@ -24,10 +24,17 @@ import (
 type mockEventService struct {
 	mu       sync.Mutex
 	ingested []types.Event
+	checks   []featureCompletionCheck
 
 	ingestFunc    func(ctx context.Context, events []types.Event) error
 	recentFunc    func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
 	subscribeFunc func(ctx context.Context, filters map[string]string) (<-chan types.Event, func())
+}
+
+type featureCompletionCheck struct {
+	ProjectID string
+	FeatureID string
+	TaskID    string
 }
 
 func (m *mockEventService) Ingest(ctx context.Context, events []types.Event) error {
@@ -69,7 +76,9 @@ func (m *mockEventService) Subscribe(ctx context.Context, filters map[string]str
 }
 
 func (m *mockEventService) CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string) {
-	// no-op for tests
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checks = append(m.checks, featureCompletionCheck{ProjectID: projectID, FeatureID: featureID, TaskID: taskID})
 }
 
 // =============================================================================

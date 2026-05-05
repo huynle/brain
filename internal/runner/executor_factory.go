@@ -46,6 +46,9 @@ func NewExecutorRegistry(cfg RunnerConfig) *ExecutorRegistry {
 	reg.executors["opencode"] = NewExecutor(cfg)
 	// Always register the pi executor
 	reg.executors["pi"] = NewPiExecutor(cfg)
+	if cfg.Script.Enabled {
+		reg.executors["script"] = NewExecutor(cfg)
+	}
 	return reg
 }
 

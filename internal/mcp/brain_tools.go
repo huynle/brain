@@ -53,7 +53,12 @@ func registerBrainSave(s *Server, client *APIClient) {
 - ideas: Ideas for future exploration
 - scratch: Temporary working notes
 - decision: Architectural decisions, ADRs
-- exploration: Investigation notes, research findings`,
+- exploration: Investigation notes, research findings
+
+Feature orchestration:
+- Use feature_id to group tasks into a feature.
+- Use feature_depends_on to make one feature wait for another feature to complete.
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -70,11 +75,14 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory."},
 				"feature_id":            {Type: "string", Description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."},
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
-				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."},
+				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
+				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type, event, schedule, webhook, filter, once_per, cooldown, max_concurrent."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
-				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi"}, Description: "Executor backend for this task: 'opencode' (HTTP API-based) or 'pi' (RPC mode). Empty = use runner default."},
+				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode' (HTTP API-based), 'pi' (RPC mode), or 'script'. Empty = use runner default."},
 				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
@@ -127,6 +135,9 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["feature_id"] = args["feature_id"]
 			body["feature_priority"] = args["feature_priority"]
 			body["feature_depends_on"] = args["feature_depends_on"]
+			body["trigger"] = args["trigger"]
+			body["action"] = args["action"]
+			body["retry"] = args["retry"]
 			body["direct_prompt"] = args["direct_prompt"]
 			body["agent"] = args["agent"]
 			body["model"] = args["model"]
@@ -426,7 +437,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 func registerBrainUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "brain_update",
-		Description: `Update an existing brain entry's status, title, dependencies, or append content.
+		Description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
 - Mark a plan as completed: brain_update(path: "...", status: "completed")
@@ -435,6 +446,8 @@ Use cases:
 - Append progress notes: brain_update(path: "...", append: "## Progress\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
 - Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update feature dependencies: brain_update(path: "...", feature_depends_on: ["pre-feature"])
+- Add a post-feature trigger: brain_update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
 - Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
 - Update priority: brain_update(path: "...", priority: "high")
 
@@ -468,7 +481,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
-				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on"},
+				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
+				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}."},
+				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
 				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
 				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
@@ -477,7 +493,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
-				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi"}, Description: "Executor backend for this task: 'opencode' or 'pi'. Empty = use runner default."},
+				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
 				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 			},
 			Required: []string{"path"},
@@ -512,6 +528,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			"feature_id":           args["feature_id"],
 			"feature_priority":     args["feature_priority"],
 			"feature_depends_on":   args["feature_depends_on"],
+			"trigger":              args["trigger"],
+			"action":               args["action"],
+			"retry":                args["retry"],
 			"feature_schedule":     args["feature_schedule"],
 			"feature_starts_at":    args["feature_starts_at"],
 			"feature_expires_at":   args["feature_expires_at"],

@@ -1293,9 +1293,8 @@ func (m *MetadataModal) HandleKey(key string) (bool, tea.Cmd) {
 // x, y are relative to the content origin (0,0 = top-left of scrollable content).
 // Implements the MouseModal interface.
 func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) {
-	// Don't handle mouse during edit modes
 	if m.interactionMode != ModeNavigate {
-		return false, nil
+		return m.handleEditMouse(x, y)
 	}
 
 	// Line 0: tab header
@@ -1319,9 +1318,16 @@ func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) 
 
 	// Click on a field row
 	if fieldRow >= 0 && fieldRow < len(m.fieldList) {
+		wasFocused := fieldRow == m.focusedIndex && !m.inMonitorZone()
 		m.focusedMonitorIndex = -1
 		m.focusedIndex = fieldRow
 		m.focusedField = m.fieldList[fieldRow]
+		if wasFocused {
+			if cmd := m.enterEditModeCmd(); cmd != nil {
+				return true, cmd
+			}
+			m.enterEditMode()
+		}
 		return true, nil
 	}
 
@@ -1340,6 +1346,46 @@ func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) 
 		if monitorRow >= 0 && monitorRow < len(m.monitorTemplates) {
 			m.focusedMonitorIndex = monitorRow
 			m.focusedIndex = len(m.fieldList) // move past fields
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
+// handleEditMouse handles clicks inside popups shown by metadata edit modes.
+func (m *MetadataModal) handleEditMouse(x, y int) (bool, tea.Cmd) {
+	_ = x
+	fieldStartY := 2
+	dropdownStartY := fieldStartY + m.focusedIndex + 2 // field row + blank separator
+
+	switch m.interactionMode {
+	case ModeEditDropdown:
+		optionIdx := y - dropdownStartY
+		if optionIdx >= 0 && optionIdx < len(m.dropdownOptions) {
+			m.dropdownIndex = optionIdx
+			return true, nil
+		}
+	case ModeEditFilterDropdown:
+		// First dropdown line is the match count.
+		optionIdx := y - (dropdownStartY + 1)
+		if optionIdx >= 0 && optionIdx < len(m.filteredOptions) {
+			m.dropdownIndex = optionIdx
+			return true, nil
+		}
+	case ModeEditMultiFilterDropdown:
+		// First dropdown line is the match count.
+		optionIdx := y - (dropdownStartY + 1)
+		if optionIdx >= 0 && optionIdx < len(m.filteredOptions) {
+			m.dropdownIndex = optionIdx
+			item := m.filteredOptions[optionIdx]
+			if m.selectedItems == nil {
+				m.selectedItems = make(map[string]bool)
+			}
+			m.selectedItems[item] = !m.selectedItems[item]
+			if !m.selectedItems[item] {
+				delete(m.selectedItems, item)
+			}
 			return true, nil
 		}
 	}

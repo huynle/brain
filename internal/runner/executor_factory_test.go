@@ -108,6 +108,20 @@ func TestNewExecutorRegistry_DefaultOpencode(t *testing.T) {
 	}
 }
 
+func TestNewExecutorRegistry_RegistersScriptWhenEnabled(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.Script.Enabled = true
+	reg := NewExecutorRegistry(cfg)
+
+	exec, ok := reg.Get("script")
+	if !ok {
+		t.Fatal("expected script executor to be registered when script execution is enabled")
+	}
+	if exec == nil {
+		t.Fatal("expected non-nil script executor")
+	}
+}
+
 func TestExecutorRegistry_RegisterAndGet(t *testing.T) {
 	cfg := testExecutorConfig()
 	reg := NewExecutorRegistry(cfg)

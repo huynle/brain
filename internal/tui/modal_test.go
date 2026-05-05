@@ -24,6 +24,13 @@ type testModal struct {
 	updateCount int
 }
 
+type mouseTestModal struct {
+	*testModal
+	clicked bool
+	lastX   int
+	lastY   int
+}
+
 func newTestModal(title, content string) *testModal {
 	return &testModal{
 		title:   title,
@@ -66,6 +73,13 @@ func (m *testModal) Width() int {
 
 func (m *testModal) Height() int {
 	return m.height
+}
+
+func (m *mouseTestModal) HandleMouse(_ tea.MouseMsg, x, y int) (bool, tea.Cmd) {
+	m.clicked = true
+	m.lastX = x
+	m.lastY = y
+	return y == 0, nil
 }
 
 // ============================================================================
@@ -262,6 +276,57 @@ func TestModalManager_HandleKey_WhenClosed(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Error("HandleKey should return nil cmd when no modal is open")
+	}
+}
+
+func TestModalManager_HandleMouse_ComputesLayoutBeforeViewPersists(t *testing.T) {
+	mgr := NewModalManager()
+	modal := &mouseTestModal{testModal: newTestModal("Mouse", "one\ntwo\nthree")}
+	mgr.Open(modal)
+
+	// Model.View has a value receiver, so rendered content measurements are not
+	// guaranteed to persist back to ModalManager before mouse hit testing.
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 31, Y: 14}, 100, 30)
+
+	if !handled {
+		t.Fatal("expected click on modal content line to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if !modal.clicked {
+		t.Fatal("expected mouse modal to receive click")
+	}
+	if modal.lastX != 1 || modal.lastY != 0 {
+		t.Fatalf("expected relative click (1,0), got (%d,%d)", modal.lastX, modal.lastY)
+	}
+}
+
+func TestModalManager_HandleMouseWheelRoutesToJK(t *testing.T) {
+	mgr := NewModalManager()
+	modal := newFocusableTestModal(5)
+	mgr.Open(modal)
+
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelDown, X: 1, Y: 1}, 100, 30)
+	if !handled {
+		t.Fatal("expected mouse wheel down to be handled by modal j navigation")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if modal.focusedIdx != 1 {
+		t.Fatalf("expected wheel down to move focus like j to 1, got %d", modal.focusedIdx)
+	}
+
+	handled, cmd = mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelUp, X: 1, Y: 1}, 100, 30)
+	if !handled {
+		t.Fatal("expected mouse wheel up to be handled by modal k navigation")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if modal.focusedIdx != 0 {
+		t.Fatalf("expected wheel up to move focus like k to 0, got %d", modal.focusedIdx)
 	}
 }
 

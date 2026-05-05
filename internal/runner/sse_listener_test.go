@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/sse"
 )
 
 // =============================================================================
@@ -302,6 +304,38 @@ func TestSSEListener_RunnerStream_CommandEvents(t *testing.T) {
 	}
 	if len(commands[1].FeatureIDs) != 2 {
 		t.Errorf("affinity featureIds len = %d, want 2", len(commands[1].FeatureIDs))
+	}
+}
+
+func TestSSEListener_RunnerStream_CommandEnvelope(t *testing.T) {
+	wakeCh := make(chan struct{}, 10)
+	commandCh := make(chan RunnerCommand, 10)
+	listener := NewSSEListener("http://example.invalid", "", nil, wakeCh)
+	listener.SetRunnerStream("runner_test", commandCh)
+
+	data, err := json.Marshal(map[string]interface{}{
+		"command": "dispatch",
+		"payload": map[string]string{
+			"taskId":    "task-123",
+			"projectId": "proj-a",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal command envelope: %v", err)
+	}
+
+	listener.handleCommandEvent(sse.Event{Data: data}, "runner_test")
+
+	select {
+	case cmd := <-commandCh:
+		if cmd.Type != CommandDispatch {
+			t.Fatalf("command type = %q, want %q", cmd.Type, CommandDispatch)
+		}
+		if cmd.TaskID != "task-123" || cmd.ProjectID != "proj-a" {
+			t.Fatalf("command payload = task:%q project:%q", cmd.TaskID, cmd.ProjectID)
+		}
+	default:
+		t.Fatal("expected command from envelope")
 	}
 }
 

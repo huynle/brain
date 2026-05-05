@@ -167,6 +167,34 @@ func TestSettings_AutoMonitorsFalseRoundTrip(t *testing.T) {
 	}
 }
 
+func TestSettings_PanelHeightsJSONRoundTrip(t *testing.T) {
+	settings := Settings{
+		GroupCollapsed:       make(map[string]bool),
+		GroupVisible:         getDefaultGroupVisible(),
+		FeatureCollapsed:     make(map[string]bool),
+		ProjectLimits:        make(map[string]int),
+		GlobalMaxParallel:    4,
+		TaskPanelHeight:      24,
+		BottomTopPanelHeight: 12,
+	}
+
+	data, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatalf("Failed to marshal settings: %v", err)
+	}
+
+	var loaded Settings
+	if err := json.Unmarshal(data, &loaded); err != nil {
+		t.Fatalf("Failed to unmarshal settings: %v", err)
+	}
+	if loaded.TaskPanelHeight != 24 {
+		t.Fatalf("expected TaskPanelHeight 24 after round-trip, got %d", loaded.TaskPanelHeight)
+	}
+	if loaded.BottomTopPanelHeight != 12 {
+		t.Fatalf("expected BottomTopPanelHeight 12 after round-trip, got %d", loaded.BottomTopPanelHeight)
+	}
+}
+
 // TestSettings_SaveAndLoadGroupVisible tests round-trip persistence of GroupVisible
 func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 	// Test JSON round-trip (this tests the JSON marshaling behavior)

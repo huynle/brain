@@ -19,26 +19,27 @@ import (
 // =============================================================================
 
 type mockBrainService struct {
-	saveFunc         func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
-	recallFunc       func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
-	recallFullFunc   func(ctx context.Context, pathOrID string) (string, error)
-	updateFunc       func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
-	deleteFunc       func(ctx context.Context, pathOrID string) error
-	listFunc         func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
-	moveFunc         func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
-	searchFunc       func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
-	injectFunc       func(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error)
-	getBacklinksFunc func(ctx context.Context, path string) ([]types.BrainEntry, error)
-	getOutlinksFunc  func(ctx context.Context, path string) ([]types.BrainEntry, error)
-	getRelatedFunc   func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
-	getSectionsFunc  func(ctx context.Context, path string) (*types.SectionsResponse, error)
-	getSectionFunc   func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
-	getStatsFunc     func(ctx context.Context, global bool) (*types.StatsResponse, error)
-	getOrphansFunc   func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
-	getStaleFunc     func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
-	verifyFunc       func(ctx context.Context, path string) (*types.VerifyResponse, error)
-	generateLinkFunc func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
-	bulkUpdateFunc   func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+	saveFunc           func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
+	recallFunc         func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	recallFullFunc     func(ctx context.Context, pathOrID string) (string, error)
+	updateFunc         func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
+	deleteFunc         func(ctx context.Context, pathOrID string) error
+	listFunc           func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
+	moveFunc           func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
+	searchFunc         func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
+	injectFunc         func(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error)
+	getBacklinksFunc   func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getOutlinksFunc    func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getRelatedFunc     func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
+	getSectionsFunc    func(ctx context.Context, path string) (*types.SectionsResponse, error)
+	getSectionFunc     func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
+	getStatsFunc       func(ctx context.Context, global bool) (*types.StatsResponse, error)
+	getOrphansFunc     func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
+	getStaleFunc       func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+	verifyFunc         func(ctx context.Context, path string) (*types.VerifyResponse, error)
+	generateLinkFunc   func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
+	bulkUpdateFunc     func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+	updateMetadataFunc func(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
@@ -182,6 +183,9 @@ func (m *mockBrainService) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 }
 
 func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	if m.updateMetadataFunc != nil {
+		return m.updateMetadataFunc(ctx, pathOrID, fields)
+	}
 	return nil, fmt.Errorf("updateMetadataFunc not set")
 }
 
@@ -2503,6 +2507,56 @@ func TestHandleDeleteEntry_EmitsEvent(t *testing.T) {
 	}
 	if evt.TaskID != "abc12def" {
 		t.Errorf("task_id = %q, want %q", evt.TaskID, "abc12def")
+	}
+}
+
+func TestHandleUpdateMetadata_ChecksFeatureCompletionOnTaskStatusChange(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		updateMetadataFunc: func(_ context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+			if pathOrID != "projects/myproj/task/abc12def.md" {
+				t.Fatalf("pathOrID = %q, want task path", pathOrID)
+			}
+			if fields["status"] != "completed" {
+				t.Fatalf("status field = %v, want completed", fields["status"])
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.checks) != 1 {
+		t.Fatalf("feature completion checks = %d, want 1", len(es.checks))
+	}
+	check := es.checks[0]
+	if check.ProjectID != "myproj" || check.FeatureID != "feat-1" || check.TaskID != "abc12def" {
+		t.Fatalf("feature completion check = %+v, want myproj/feat-1/abc12def", check)
 	}
 }
 

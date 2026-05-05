@@ -1565,6 +1565,44 @@ func TestMetadataModal_HandleMouse_FieldClick(t *testing.T) {
 	}
 }
 
+func TestMetadataModal_HandleMouse_FocusedFieldClickEntersEditMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+	modal.loading = false
+
+	// Click the already-focused Status field row.
+	handled, cmd := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 2)
+	if !handled {
+		t.Fatal("expected focused field click to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected status dropdown to open synchronously, got command")
+	}
+	if modal.interactionMode != ModeEditDropdown {
+		t.Fatalf("expected click on focused dropdown field to enter edit mode, got %v", modal.interactionMode)
+	}
+}
+
+func TestMetadataModal_HandleMouse_DropdownOptionClickSelectsOption(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+	modal.loading = false
+	modal.focusedField = FieldStatus
+	modal.focusedIndex = 0
+	modal.enterEditMode()
+
+	// Dropdown rows start after the focused field line and blank separator.
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 5)
+	if !handled {
+		t.Fatal("expected dropdown option click to be handled")
+	}
+	if modal.dropdownIndex != 1 {
+		t.Fatalf("expected dropdownIndex 1 after clicking second option, got %d", modal.dropdownIndex)
+	}
+}
+
 func TestMetadataModal_HandleMouse_NotInEditMode(t *testing.T) {
 	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
 	apiClient := runner.NewAPIClient(cfg)

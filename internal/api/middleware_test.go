@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -404,6 +406,45 @@ func TestAuthMiddleware_TokenSanitizationInLogs(t *testing.T) {
 				t.Errorf("sanitize(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestLogger_SuccessRequestLogsOnlyAtDebugLevel(t *testing.T) {
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+
+	var infoBuf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&infoBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	handler := Logger(okHandler)
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil))
+
+	if strings.Contains(infoBuf.String(), "msg=request") {
+		t.Fatalf("expected successful request to be hidden at info level, got %q", infoBuf.String())
+	}
+
+	var debugBuf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&debugBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/runners", nil))
+
+	if !strings.Contains(debugBuf.String(), "level=DEBUG") || !strings.Contains(debugBuf.String(), "msg=request") {
+		t.Fatalf("expected successful request at debug level, got %q", debugBuf.String())
+	}
+}
+
+func TestLogger_ErrorRequestRemainsVisibleAtInfoLevel(t *testing.T) {
+	oldLogger := slog.Default()
+	defer slog.SetDefault(oldLogger)
+
+	errorHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	var buf bytes.Buffer
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+
+	Logger(errorHandler).ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/v1/tasks/runner/status", nil))
+
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "msg=request") {
+		t.Fatalf("expected failed request to remain visible at info level, got %q", buf.String())
 	}
 }
 

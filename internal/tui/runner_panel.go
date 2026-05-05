@@ -48,7 +48,6 @@ func (rp *RunnerPanel) SetSize(width, height int) {
 func (rp *RunnerPanel) MoveDown() {
 	if rp.cursor < len(rp.runners)-1 {
 		rp.cursor++
-		rp.ensureVisible()
 	}
 }
 
@@ -56,8 +55,15 @@ func (rp *RunnerPanel) MoveDown() {
 func (rp *RunnerPanel) MoveUp() {
 	if rp.cursor > 0 {
 		rp.cursor--
-		rp.ensureVisible()
 	}
+}
+
+// SelectIndex moves the cursor to a runner by visible row index.
+func (rp *RunnerPanel) SelectIndex(idx int) {
+	if idx < 0 || idx >= len(rp.runners) {
+		return
+	}
+	rp.cursor = idx
 }
 
 // ensureVisible scrolls viewport to keep cursor visible.
@@ -85,13 +91,15 @@ func (rp *RunnerPanel) SelectedRunner() *types.RunnerInfo {
 }
 
 // View renders the runner panel.
-func (rp RunnerPanel) View(width, height int) string {
+func (rp *RunnerPanel) View(width, height int) string {
 	if width < 10 {
 		width = 10
 	}
 	if height < 3 {
 		height = 3
 	}
+	rp.width = width
+	rp.height = height
 
 	var b strings.Builder
 
@@ -115,6 +123,11 @@ func (rp RunnerPanel) View(width, height int) string {
 	listHeight := height - 2 // minus header + column header
 	if listHeight < 1 {
 		listHeight = 1
+	}
+	if len(rp.runners) > listHeight {
+		rp.scrollTop = computeViewportStart("runners", rp.scrollTop, rp.cursor, len(rp.runners), listHeight)
+	} else {
+		rp.scrollTop = 0
 	}
 
 	endIdx := rp.scrollTop + listHeight

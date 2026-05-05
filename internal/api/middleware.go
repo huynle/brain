@@ -113,11 +113,17 @@ func Logger(next http.Handler) http.Handler {
 			path += "?" + tokenPattern.ReplaceAllString(r.URL.RawQuery, "${1}token=***")
 		}
 
-		slog.Info("request",
-			"method", r.Method,
-			"path", path,
-			"status", sw.status,
-			"duration", duration.String(),
+		level := slog.LevelDebug
+		if sw.status >= http.StatusInternalServerError {
+			level = slog.LevelError
+		} else if sw.status >= http.StatusBadRequest {
+			level = slog.LevelWarn
+		}
+		slog.LogAttrs(r.Context(), level, "request",
+			slog.String("method", r.Method),
+			slog.String("path", path),
+			slog.Int("status", sw.status),
+			slog.String("duration", duration.String()),
 		)
 	})
 }

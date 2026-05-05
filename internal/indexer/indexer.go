@@ -601,3 +601,9 @@ func strPtr(s string) *string {
 	}
 	return &s
 }
+
+// DB returns the underlying database connection for direct queries.
+// This is exposed for use cases like dry-run queries in CLI commands.
+func (idx *Indexer) DB() *sql.DB {
+	return idx.storage.DB()
+}

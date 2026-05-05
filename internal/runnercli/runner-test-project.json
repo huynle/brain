@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-04-28T07:27:18.192945-06:00",
-  "updatedAt": "2026-04-28T07:27:18.29518-06:00",
+  "startedAt": "2026-05-05T13:17:33.17511-06:00",
+  "updatedAt": "2026-05-05T13:17:33.302395-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,
@@ -18,6 +18,11 @@
     "state_dir": "",
     "log_dir": "",
     "work_dir": "",
+    "repo_cache_dir": "",
+    "git_token": "",
+    "git_token_env": "",
+    "require_https": false,
+    "allow_unauthenticated_https": false,
     "api_timeout": 0,
     "task_timeout": 0,
     "idle_detection_threshold": 0,

@@ -91,6 +91,7 @@ var builtinCommands = map[string]bool{
 	"list":          true,
 	"automation":    true,
 	"migrate":       true,
+	"embeddings":    true,
 	"help":          true,
 }
 
@@ -267,6 +268,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "migrate"}, nil
 		}
 		return parseMigrateCommand(cmdArgs)
+	case "embeddings":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "embeddings"}, nil
+		}
+		return parseEmbeddingsCommand(cmdArgs)
 	case "run", "runner":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
@@ -1096,3 +1102,39 @@ func parseAutomationCommand(args []string) (Command, error) {
 		Flags:      convertToCommandsAutomationFlags(flags),
 	}, nil
 }
+
+// parseEmbeddingsCommand creates an EmbeddingsCommand from args.
+// Usage: brain embeddings <subcommand> [flags]
+func parseEmbeddingsCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		cfg := defaultConfig()
+		return &commands.EmbeddingsCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      &commands.EmbeddingsFlags{},
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "embeddings"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "embeddings " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseEmbeddingsFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.EmbeddingsCommand{
+		Subcommand: subcommand,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsEmbeddingsFlags(flags),
+	}, nil
+}
+

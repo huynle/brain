@@ -107,7 +107,18 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
-	brainSvc := service.NewBrainService(&cfg, store, idx, nil)
+	// Create embedding client if enabled
+	var embeddingClient service.EmbeddingClient
+	if cfg.Embedding.Enabled {
+		var err error
+		embeddingClient, err = service.NewAiFactoryEmbeddingClient(cfg.Embedding)
+		if err != nil {
+			slog.Warn("Failed to create embedding client, semantic search disabled", "error", err)
+			embeddingClient = nil
+		}
+	}
+
+	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)

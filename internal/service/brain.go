@@ -25,20 +25,23 @@ var _ api.BrainService = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
-	config  *config.Config
-	storage *storage.StorageLayer
-	indexer *indexer.Indexer
-	bus     events.Bus
+	config          *config.Config
+	storage         *storage.StorageLayer
+	indexer         *indexer.Indexer
+	bus             events.Bus
+	embeddingClient EmbeddingClient
 }
 
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
+// The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
-		config:  cfg,
-		storage: store,
-		indexer: idx,
-		bus:     bus,
+		config:          cfg,
+		storage:         store,
+		indexer:         idx,
+		bus:             bus,
+		embeddingClient: embeddingClient,
 	}
 }
 

@@ -363,17 +363,30 @@ EXAMPLES:
   brain doctor --fix --dry-run
 `
 
-const configHelp = `brain config - Show resolved runtime configuration
+const configHelp = `brain config - Show or initialize configuration
 
 USAGE:
   brain config
+  brain config defaults
+  brain config init [--print] [--force]
+
+SUBCOMMANDS:
+  defaults                       Print full default config YAML to stdout
+  init                           Write default config.yaml if it does not exist
+
+FLAGS:
+  --print                        Print default config YAML instead of writing
+  -f, --force                    Overwrite existing config.yaml with init
 
 DESCRIPTION:
-  Prints resolved server, runner, and MCP settings from defaults,
-  config files, environment, and CLI overrides.
+  Without a subcommand, prints resolved server, runner, and MCP settings.
+  Use defaults/init to inspect or create ~/.config/brain/config.yaml safely.
 
 EXAMPLES:
   brain config
+  brain config defaults
+  brain config init --print
+  brain config init
 `
 
 const installHelp = `brain install - Install brain plugin integration

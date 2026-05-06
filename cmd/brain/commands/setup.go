@@ -209,10 +209,18 @@ func fileExists(path string) bool {
 	return err == nil
 }
 
+// ConfigFlags holds flags for the config command.
+type ConfigFlags struct {
+	Print bool
+	Force bool
+}
+
 // ConfigCommand implements the config command.
 type ConfigCommand struct {
-	Config *UnifiedConfig
-	Out    io.Writer
+	Config     *UnifiedConfig
+	Subcommand string
+	Flags      *ConfigFlags
+	Out        io.Writer
 }
 
 // Type returns the command type.
@@ -220,12 +228,48 @@ func (c *ConfigCommand) Type() string {
 	return "config"
 }
 
-// Execute displays the current configuration.
+// Execute runs the config command.
 func (c *ConfigCommand) Execute() error {
 	out := c.Out
 	if out == nil {
 		out = os.Stdout
 	}
+	flags := c.Flags
+	if flags == nil {
+		flags = &ConfigFlags{}
+	}
+
+	switch c.Subcommand {
+	case "", "show":
+		return c.executeShow(out)
+	case "defaults":
+		return printDefaultConfigYAML(out)
+	case "init":
+		if flags.Print {
+			return printDefaultConfigYAML(out)
+		}
+		path, err := config.WriteDefaultConfig(flags.Force)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "Wrote config file: %s\n", path)
+		return nil
+	default:
+		return fmt.Errorf("unknown config subcommand: %q", c.Subcommand)
+	}
+}
+
+func printDefaultConfigYAML(out io.Writer) error {
+	data, err := config.DefaultConfigYAML()
+	if err != nil {
+		return fmt.Errorf("generate default config: %w", err)
+	}
+	_, err = out.Write(data)
+	return err
+}
+
+// executeShow displays the current configuration.
+func (c *ConfigCommand) executeShow(out io.Writer) error {
 
 	cfg := c.Config
 
@@ -242,6 +286,19 @@ func (c *ConfigCommand) Execute() error {
 	}
 	if cfg.Server.LogFile != "" {
 		fmt.Fprintf(out, "  LogFile:     %s\n", cfg.Server.LogFile)
+	}
+	if cfg.Server.Embedding.Provider != "" || cfg.Server.Embedding.Model != "" {
+		fmt.Fprintf(out, "  Embedding:\n")
+		fmt.Fprintf(out, "    Enabled:   %v\n", cfg.Server.Embedding.Enabled)
+		if cfg.Server.Embedding.Provider != "" {
+			fmt.Fprintf(out, "    Provider:  %s\n", cfg.Server.Embedding.Provider)
+		}
+		if cfg.Server.Embedding.Model != "" {
+			fmt.Fprintf(out, "    Model:     %s\n", cfg.Server.Embedding.Model)
+		}
+		if cfg.Server.Embedding.BaseURL != "" {
+			fmt.Fprintf(out, "    BaseURL:   %s\n", cfg.Server.Embedding.BaseURL)
+		}
 	}
 
 	// Display TLS if enabled

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/service"
@@ -87,7 +88,8 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 	}
 
 	// Initialize storage layer
-	dbPath := filepath.Join(brainDir, "brain.db")
+	dataDir := config.MigrateDataDir(brainDir)
+	dbPath := filepath.Join(dataDir, "brain.db")
 	store, err := storage.New(dbPath)
 	if err != nil {
 		return fmt.Errorf("initialize storage: %w", err)

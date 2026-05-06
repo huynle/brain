@@ -518,6 +518,7 @@ func defaultConfig() *UnifiedConfig {
 		}
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
+		cfg.Server.Embedding = ucfg.Server.Embedding
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -597,6 +598,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
+	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 
@@ -818,10 +820,31 @@ func parseDoctorCommand(args []string) (Command, error) {
 // parseConfigCommand creates a ConfigCommand from args.
 func parseConfigCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
+	flags := &commands.ConfigFlags{}
+	subcommand := ""
+
+	for _, arg := range args {
+		switch arg {
+		case "--print":
+			flags.Print = true
+		case "--force", "-f":
+			flags.Force = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, fmt.Errorf("unknown config flag: %s", arg)
+			}
+			if subcommand != "" {
+				return nil, fmt.Errorf("unexpected config argument: %s", arg)
+			}
+			subcommand = arg
+		}
+	}
 
 	return &commands.ConfigCommand{
-		Config: convertToCommandsConfig(cfg),
-		Out:    nil, // Will use os.Stdout in Execute if nil
+		Config:     convertToCommandsConfig(cfg),
+		Subcommand: subcommand,
+		Flags:      flags,
+		Out:        nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }
 
@@ -1137,4 +1160,3 @@ func parseEmbeddingsCommand(args []string) (Command, error) {
 		Flags:      convertToCommandsEmbeddingsFlags(flags),
 	}, nil
 }
-

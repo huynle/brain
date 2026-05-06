@@ -56,9 +56,9 @@ func TestNewAiFactoryEmbeddingClient(t *testing.T) {
 			wantErrMsg: "API key not found",
 		},
 		{
-			name: "default API key env var",
-			cfg:  config.EmbeddingConfig{},
-			envKey:   "ORION_SW_IPT_AIF_TOKEN",
+			name:     "default OpenAI API key env var",
+			cfg:      config.EmbeddingConfig{},
+			envKey:   "OPENAI_API_KEY",
 			envValue: "default-key",
 			wantErr:  false,
 		},
@@ -92,10 +92,10 @@ func TestNewAiFactoryEmbeddingClient(t *testing.T) {
 			}
 
 			// Verify defaults were applied
-			if tt.cfg.BaseURL == "" && client.baseURL != "https://api.ai.us.lmco.com/v1" {
+			if tt.cfg.BaseURL == "" && client.baseURL != "https://api.openai.com/v1" {
 				t.Errorf("expected default baseURL, got %q", client.baseURL)
 			}
-			if tt.cfg.Model == "" && client.model != "all-minilm-l6-v2" {
+			if tt.cfg.Model == "" && client.model != "text-embedding-3-small" {
 				t.Errorf("expected default model, got %q", client.model)
 			}
 			if tt.cfg.BatchSize == 0 && client.batchSize != 32 {
@@ -146,7 +146,7 @@ func TestAiFactoryEmbeddingClient_Embed_Success(t *testing.T) {
 		resp := embeddingResponse{
 			Object: "list",
 			Model:  req.Model,
-			Data:   make([]struct {
+			Data: make([]struct {
 				Object    string    `json:"object"`
 				Embedding []float32 `json:"embedding"`
 				Index     int       `json:"index"`
@@ -236,7 +236,7 @@ func TestAiFactoryEmbeddingClient_Embed_Batching(t *testing.T) {
 		resp := embeddingResponse{
 			Object: "list",
 			Model:  req.Model,
-			Data:   make([]struct {
+			Data: make([]struct {
 				Object    string    `json:"object"`
 				Embedding []float32 `json:"embedding"`
 				Index     int       `json:"index"`

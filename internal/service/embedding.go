@@ -52,28 +52,28 @@ type embeddingResponse struct {
 	} `json:"usage"`
 }
 
-// NewAiFactoryEmbeddingClient creates a new AiFactory embedding client using the provided config.
+// NewAiFactoryEmbeddingClient creates a new OpenAI-compatible embedding client using the provided config.
 // If config values are not set, it uses sensible defaults:
-// - baseURL: https://api.ai.us.lmco.com/v1
-// - apiKeyEnv: ORION_SW_IPT_AIF_TOKEN
-// - model: all-minilm-l6-v2
+// - baseURL: https://api.openai.com/v1
+// - apiKeyEnv: OPENAI_API_KEY
+// - model: text-embedding-3-small
 // - batchSize: 32
 // - timeout: 30s
 func NewAiFactoryEmbeddingClient(cfg config.EmbeddingConfig) (*AiFactoryEmbeddingClient, error) {
 	// Apply defaults
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.ai.us.lmco.com/v1"
+		baseURL = "https://api.openai.com/v1"
 	}
 
 	apiKeyEnv := cfg.APIKeyEnv
 	if apiKeyEnv == "" {
-		apiKeyEnv = "ORION_SW_IPT_AIF_TOKEN"
+		apiKeyEnv = "OPENAI_API_KEY"
 	}
 
 	model := cfg.Model
 	if model == "" {
-		model = "all-minilm-l6-v2"
+		model = "text-embedding-3-small"
 	}
 
 	batchSize := cfg.BatchSize

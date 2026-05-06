@@ -241,6 +241,7 @@ type UnifiedConfig struct {
 		PIDFile      string
 		LogFile      string
 		TaskDefaults uconfig.TaskDefaultsConfig
+		Embedding    uconfig.EmbeddingConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

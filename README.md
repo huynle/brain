@@ -382,25 +382,31 @@ Add an `embedding` block to your `config.yaml`:
 server:
   embedding:
     enabled: true                                     # Enable semantic search
-    provider: "ai-factory"                            # Provider name (for logging)
-    base_url: "https://ai-factory.example.com/v1"    # Embedding API endpoint
-    api_key_env: "AI_FACTORY_API_KEY"                # Environment variable for API key
+    provider: "openai"                                # Provider name (for logging)
+    base_url: "https://api.openai.com/v1"             # OpenAI-compatible API endpoint
+    api_key_env: "OPENAI_API_KEY"                     # Environment variable for API key
     model: "text-embedding-3-small"                   # Embedding model name
     dim: 1536                                         # Embedding dimension (must match model)
-    batch_size: 100                                   # Batch size for embedding generation
+    batch_size: 32                                    # Batch size for embedding generation
     timeout_ms: 30000                                 # Request timeout in milliseconds
 ```
 
-**Configuration via environment variables:**
+Generate a full default config safely:
 
 ```bash
-export AI_FACTORY_API_KEY="your-api-key-here"
-export EMBEDDING_ENABLED=true
-export EMBEDDING_BASE_URL="https://ai-factory.example.com/v1"
-export EMBEDDING_MODEL="text-embedding-3-small"
+brain config defaults       # print default YAML
+brain config init --print   # print the config that would be written
+brain config init           # write ~/.config/brain/config.yaml if missing
 ```
 
-Environment variables override `config.yaml` values.
+Runner API tokens can also be kept out of `config.yaml` by pointing at an environment variable:
+
+```yaml
+runner:
+  api_token_env: "BRAIN_API_TOKEN"
+```
+
+Set `OPENAI_API_KEY` in the environment before running semantic search or backfill.
 
 ### Search Strategies
 

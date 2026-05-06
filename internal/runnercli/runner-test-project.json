@@ -12,6 +12,7 @@
   "config": {
     "brain_api_url": "",
     "api_token": "",
+    "api_token_env": "",
     "poll_interval": 0,
     "task_poll_interval": 0,
     "max_parallel": 0,

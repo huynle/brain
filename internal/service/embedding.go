@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -152,11 +153,23 @@ func (c *AiFactoryEmbeddingClient) embedBatch(ctx context.Context, inputs []stri
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 
+	// Debug-level trace for outbound embedding call (no sensitive payload)
+	slog.Debug("embedding API request",
+		"url", url,
+		"model", c.model,
+		"inputs", len(inputs),
+	)
+
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to send request: %w", err)
 	}
 	defer resp.Body.Close()
+
+	slog.Debug("embedding API response",
+		"model", c.model,
+		"status", resp.StatusCode,
+	)
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

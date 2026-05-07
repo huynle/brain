@@ -255,6 +255,70 @@ func TestIndexFileEmbedsSemanticTextWithoutRawFrontmatter(t *testing.T) {
 	}
 }
 
+func TestIndexFileSkipsEmbeddingWhenOnlyMetadataChanges(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": "---\ntitle: Semantic Title\ntags:\n  - alpha\n---\n\nSemantic body.\n",
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("initial IndexFile failed: %v", err)
+	}
+	embedder.reset()
+
+	updated := "---\ntitle: Semantic Title\ntags:\n  - beta\nstatus: active\n---\n\nSemantic body.\n"
+	if err := os.WriteFile(filepath.Join(brainDir, "note1.md"), []byte(updated), 0o644); err != nil {
+		t.Fatalf("write metadata-only update: %v", err)
+	}
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("metadata-only IndexFile failed: %v", err)
+	}
+
+	if embedder.textCount() != 0 {
+		t.Fatalf("embedded text count after metadata-only change = %d, want 0", embedder.textCount())
+	}
+}
+
+func TestIndexFileReembedsWhenModelDimensionsMismatch(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("IndexFile failed: %v", err)
+	}
+	current, err := store.GetEntryEmbedding(context.Background(), "note1.md", 0, "test-model")
+	if err != nil {
+		t.Fatalf("GetEntryEmbedding failed: %v", err)
+	}
+	if current == nil {
+		t.Fatal("expected initial embedding")
+	}
+	if _, err := store.UpsertEntryEmbedding(context.Background(), &storage.EntryEmbeddingRow{
+		Path:        "note1.md",
+		ChunkIndex:  0,
+		ContentHash: current.ContentHash,
+		Model:       "test-model",
+		Dimensions:  99,
+		Embedding:   []byte{9},
+	}); err != nil {
+		t.Fatalf("force stale dimension embedding failed: %v", err)
+	}
+	embedder.reset()
+
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("IndexFile with stale dimensions failed: %v", err)
+	}
+	if embedder.textCount() != 1 {
+		t.Fatalf("embedded text count after dimension mismatch = %d, want 1", embedder.textCount())
+	}
+}
+
 func TestIndexFileReturnsEmbeddingFailureWhenConfigured(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{

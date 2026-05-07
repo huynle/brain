@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -146,43 +148,90 @@ func (s *StorageLayer) DeleteStaleEntryEmbeddingChunks(ctx context.Context, path
 	return count, nil
 }
 
-// FindMissingOrStaleEntryEmbeddings returns notes whose checksum lacks a matching embedding for a model.
-func (s *StorageLayer) FindMissingOrStaleEntryEmbeddings(ctx context.Context, model string, limit int) ([]*EmbeddingCandidate, error) {
-	query := `
-		SELECT n.path, COALESCE(n.checksum, '')
-		FROM notes n
-		WHERE NOT EXISTS (
-			SELECT 1 FROM entry_embeddings e
-			WHERE e.path = n.path
-			  AND e.model = ?
-			  AND e.content_hash = COALESCE(n.checksum, '')
-		)
-		ORDER BY n.path
-	`
-	args := []interface{}{model}
-	if limit > 0 {
-		query += " LIMIT ?"
-		args = append(args, limit)
+// SemanticEmbeddingContentHash returns a stable hash of text sent to the embedding provider.
+func SemanticEmbeddingContentHash(title, lead, body string) string {
+	text := strings.TrimSpace(strings.Join([]string{title, lead, body}, "\n\n"))
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])
+}
+
+// FindMissingOrStaleEntryEmbeddings returns notes without a current semantic embedding for a model.
+func (s *StorageLayer) FindMissingOrStaleEntryEmbeddings(ctx context.Context, model string, args ...int) ([]*EmbeddingCandidate, error) {
+	dimensions := 0
+	limit := 0
+	if len(args) == 1 {
+		limit = args[0]
+	} else if len(args) >= 2 {
+		dimensions = args[0]
+		limit = args[1]
 	}
 
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	query := `
+		SELECT n.path, n.title, COALESCE(n.lead, ''), COALESCE(n.body, '')
+		FROM notes n
+		ORDER BY n.path
+	`
+	queryArgs := []interface{}{}
+	if limit > 0 {
+		query += " LIMIT ?"
+		queryArgs = append(queryArgs, limit)
+	}
+
+	rows, err := s.db.QueryContext(ctx, query, queryArgs...)
 	if err != nil {
 		return nil, fmt.Errorf("find missing or stale entry embeddings: %w", err)
 	}
 	defer rows.Close()
 
-	var candidates []*EmbeddingCandidate
+	type noteEmbeddingCandidate struct {
+		path        string
+		contentHash string
+	}
+	var notes []noteEmbeddingCandidate
+
 	for rows.Next() {
-		var candidate EmbeddingCandidate
-		if err := rows.Scan(&candidate.Path, &candidate.ContentHash); err != nil {
+		var path, title, lead, body string
+		if err := rows.Scan(&path, &title, &lead, &body); err != nil {
 			return nil, fmt.Errorf("scan embedding candidate: %w", err)
 		}
-		candidates = append(candidates, &candidate)
+		notes = append(notes, noteEmbeddingCandidate{
+			path:        path,
+			contentHash: SemanticEmbeddingContentHash(title, lead, body),
+		})
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate embedding candidates: %w", err)
 	}
+
+	var candidates []*EmbeddingCandidate
+	for _, note := range notes {
+		current, err := s.hasCurrentEntryEmbedding(ctx, note.path, model, note.contentHash, dimensions)
+		if err != nil {
+			return nil, err
+		}
+		if !current {
+			candidates = append(candidates, &EmbeddingCandidate{Path: note.path, ContentHash: note.contentHash})
+		}
+	}
 	return candidates, nil
+}
+
+func (s *StorageLayer) hasCurrentEntryEmbedding(ctx context.Context, path, model, contentHash string, dimensions int) (bool, error) {
+	query := "SELECT 1 FROM entry_embeddings WHERE path = ? AND chunk_index = 0 AND model = ? AND content_hash = ?"
+	args := []interface{}{path, model, contentHash}
+	if dimensions > 0 {
+		query += " AND dimensions = ?"
+		args = append(args, dimensions)
+	}
+	var exists int
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("check current entry embedding: %w", err)
+	}
+	return true, nil
 }
 
 // ListEntryEmbeddingsForSearch loads vectors for semantic search, ordered by path and chunk.

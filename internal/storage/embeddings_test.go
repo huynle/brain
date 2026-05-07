@@ -132,8 +132,11 @@ func TestFindMissingOrStaleEntryEmbeddings(t *testing.T) {
 	insertNoteForEmbeddingTest(t, ctx, s, "projects/test/a.md", "hash-a")
 	insertNoteForEmbeddingTest(t, ctx, s, "projects/test/b.md", "hash-b")
 	insertNoteForEmbeddingTest(t, ctx, s, "projects/test/c.md", "hash-c")
+	semanticHashA := SemanticEmbeddingContentHash("projects/test/a.md", "A lead paragraph", "The body content of the note")
+	semanticHashB := SemanticEmbeddingContentHash("projects/test/b.md", "A lead paragraph", "The body content of the note")
+	semanticHashC := SemanticEmbeddingContentHash("projects/test/c.md", "A lead paragraph", "The body content of the note")
 
-	if _, err := s.UpsertEntryEmbedding(ctx, &EntryEmbeddingRow{Path: "projects/test/a.md", ChunkIndex: 0, ContentHash: "hash-a", Model: "test-model", Dimensions: 3, Embedding: []byte{1}}); err != nil {
+	if _, err := s.UpsertEntryEmbedding(ctx, &EntryEmbeddingRow{Path: "projects/test/a.md", ChunkIndex: 0, ContentHash: semanticHashA, Model: "test-model", Dimensions: 3, Embedding: []byte{1}}); err != nil {
 		t.Fatalf("upsert current embedding: %v", err)
 	}
 	if _, err := s.UpsertEntryEmbedding(ctx, &EntryEmbeddingRow{Path: "projects/test/b.md", ChunkIndex: 0, ContentHash: "old-hash", Model: "test-model", Dimensions: 3, Embedding: []byte{2}}); err != nil {
@@ -147,11 +150,41 @@ func TestFindMissingOrStaleEntryEmbeddings(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("candidates count = %d, want 2: %+v", len(got), got)
 	}
-	if got[0].Path != "projects/test/b.md" || got[0].ContentHash != "hash-b" {
+	if got[0].Path != "projects/test/b.md" || got[0].ContentHash != semanticHashB {
 		t.Errorf("first candidate = %+v, want stale note b", got[0])
 	}
-	if got[1].Path != "projects/test/c.md" || got[1].ContentHash != "hash-c" {
+	if got[1].Path != "projects/test/c.md" || got[1].ContentHash != semanticHashC {
 		t.Errorf("second candidate = %+v, want missing note c", got[1])
+	}
+}
+
+func TestFindMissingOrStaleEntryEmbeddingsUsesSemanticHashAndDimensions(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	insertNoteForEmbeddingTest(t, ctx, s, "projects/test/a.md", "checksum-before")
+	insertNoteForEmbeddingTest(t, ctx, s, "projects/test/b.md", "checksum-b")
+
+	semanticHashA := SemanticEmbeddingContentHash("projects/test/a.md", "A lead paragraph", "The body content of the note")
+	semanticHashB := SemanticEmbeddingContentHash("projects/test/b.md", "A lead paragraph", "The body content of the note")
+	if _, err := s.UpsertEntryEmbedding(ctx, &EntryEmbeddingRow{Path: "projects/test/a.md", ChunkIndex: 0, ContentHash: semanticHashA, Model: "test-model", Dimensions: 3, Embedding: []byte{1}}); err != nil {
+		t.Fatalf("upsert semantic embedding: %v", err)
+	}
+	if _, err := s.UpsertEntryEmbedding(ctx, &EntryEmbeddingRow{Path: "projects/test/b.md", ChunkIndex: 0, ContentHash: semanticHashB, Model: "test-model", Dimensions: 2, Embedding: []byte{2}}); err != nil {
+		t.Fatalf("upsert wrong-dimension embedding: %v", err)
+	}
+	if _, err := s.UpdateNote(ctx, "projects/test/a.md", map[string]interface{}{"checksum": "checksum-after"}); err != nil {
+		t.Fatalf("metadata-only checksum update failed: %v", err)
+	}
+
+	got, err := s.FindMissingOrStaleEntryEmbeddings(ctx, "test-model", 3, 0)
+	if err != nil {
+		t.Fatalf("FindMissingOrStaleEntryEmbeddings failed: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("candidates count = %d, want 1: %+v", len(got), got)
+	}
+	if got[0].Path != "projects/test/b.md" || got[0].ContentHash != semanticHashB {
+		t.Fatalf("candidate = %+v, want dimension-stale note b", got[0])
 	}
 }
 

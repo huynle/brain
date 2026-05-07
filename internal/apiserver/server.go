@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/embeddings"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
@@ -72,9 +73,9 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	// ─── Indexer ────────────────────────────────────────────────────
 	embeddingCfg := opts.Embeddings.Normalize()
-	if err := embeddingCfg.Validate(); err != nil {
-		slog.Warn("semantic embeddings disabled due to invalid configuration", "error", err)
-		embeddingCfg.Enabled = false
+	indexerOptions, err := indexerOptionsFromEmbeddingConfig(embeddingCfg)
+	if err != nil {
+		return err
 	}
 	if embeddingCfg.Enabled {
 		slog.Info("semantic embeddings configured",
@@ -84,7 +85,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			"batch_size", embeddingCfg.BatchSize,
 		)
 	}
-	idx := indexer.NewIndexer(opts.BrainDir, store)
+	idx := indexer.NewIndexer(opts.BrainDir, store, indexerOptions...)
 
 	// Run incremental index on startup (fast for unchanged files)
 	slog.Info("indexing brain directory", "dir", opts.BrainDir)
@@ -248,4 +249,29 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+func indexerOptionsFromEmbeddingConfig(cfg config.EmbeddingConfig) ([]indexer.Option, error) {
+	cfg = cfg.Normalize()
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
+	if !cfg.Enabled {
+		return nil, nil
+	}
+
+	switch cfg.Provider {
+	case "ollama":
+		embedder, err := embeddings.NewOllamaEmbedder(embeddings.OllamaConfig{
+			BaseURL: cfg.BaseURL,
+			Model:   cfg.Model,
+			Timeout: time.Duration(cfg.TimeoutMS) * time.Millisecond,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("initialize ollama embedder: %w", err)
+		}
+		return []indexer.Option{indexer.WithEmbeddings(embedder, cfg.Model, cfg.BatchSize)}, nil
+	default:
+		return nil, fmt.Errorf("unsupported embedding provider %q", cfg.Provider)
+	}
 }

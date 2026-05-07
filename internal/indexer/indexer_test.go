@@ -8,8 +8,17 @@ import (
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
+	"github.com/huynle/brain-api/internal/embeddings"
 	"github.com/huynle/brain-api/internal/storage"
 )
+
+type fakeEmbedder struct {
+	vectors [][]float32
+}
+
+func (f fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	return f.vectors[:len(texts)], nil
+}
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -108,10 +117,58 @@ func TestRebuildAll_IndexesAllFiles(t *testing.T) {
 	}
 }
 
+func TestNewIndexerWithEmbeddingsStoresOptions(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, nil)
+	embedder := fakeEmbedder{vectors: [][]float32{{1, 2, 3}}}
+
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 32))
+
+	if idx.embedder == nil {
+		t.Fatal("embedder was not configured")
+	}
+	if idx.embeddingModel != "test-model" {
+		t.Fatalf("embeddingModel = %q, want test-model", idx.embeddingModel)
+	}
+	if idx.embeddingBatchSize != 32 {
+		t.Fatalf("embeddingBatchSize = %d, want 32", idx.embeddingBatchSize)
+	}
+}
+
+func TestIndexFileStoresEmbeddingWhenConfigured(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	idx := NewIndexer(brainDir, store, WithEmbeddings(fakeEmbedder{vectors: [][]float32{{1, 2, 3}}}, "test-model", 16))
+
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("IndexFile failed: %v", err)
+	}
+
+	got, err := store.GetEntryEmbedding(context.Background(), "note1.md", 0, "test-model")
+	if err != nil {
+		t.Fatalf("GetEntryEmbedding failed: %v", err)
+	}
+	if got == nil {
+		t.Fatal("expected embedding row, got nil")
+	}
+	if got.Dimensions != 3 {
+		t.Fatalf("Dimensions = %d, want 3", got.Dimensions)
+	}
+	decoded, err := embeddings.DecodeFloat32Vector(got.Embedding)
+	if err != nil {
+		t.Fatalf("DecodeFloat32Vector failed: %v", err)
+	}
+	if len(decoded) != 3 || decoded[0] != 1 || decoded[1] != 2 || decoded[2] != 3 {
+		t.Fatalf("decoded embedding = %+v, want [1 2 3]", decoded)
+	}
+}
+
 func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md":      noteContent("Note One"),
+		"note1.md":              noteContent("Note One"),
 		".brain-data/config.md": noteContent("ZK Config"),
 	})
 

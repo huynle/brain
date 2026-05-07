@@ -11,22 +11,42 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/embeddings"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
 
 // Indexer synchronizes markdown files on disk with the SQLite database.
 type Indexer struct {
-	brainDir string
-	storage  *storage.StorageLayer
+	brainDir           string
+	storage            *storage.StorageLayer
+	embedder           embeddings.Embedder
+	embeddingModel     string
+	embeddingBatchSize int
+}
+
+// Option configures optional Indexer dependencies.
+type Option func(*Indexer)
+
+// WithEmbeddings enables embedding writes during indexing.
+func WithEmbeddings(embedder embeddings.Embedder, model string, batchSize int) Option {
+	return func(idx *Indexer) {
+		idx.embedder = embedder
+		idx.embeddingModel = strings.TrimSpace(model)
+		idx.embeddingBatchSize = batchSize
+	}
 }
 
 // NewIndexer creates a new Indexer for the given brain directory and storage layer.
-func NewIndexer(brainDir string, store *storage.StorageLayer) *Indexer {
-	return &Indexer{
+func NewIndexer(brainDir string, store *storage.StorageLayer, opts ...Option) *Indexer {
+	idx := &Indexer{
 		brainDir: brainDir,
 		storage:  store,
 	}
+	for _, opt := range opts {
+		opt(idx)
+	}
+	return idx
 }
 
 // RebuildAll performs a full rebuild: deletes all existing data and re-indexes
@@ -88,6 +108,10 @@ func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 			if err := idx.storage.SetLinks(ctx, pf.Path, toLinkInputs(pf.Links)); err != nil {
 				return nil, fmt.Errorf("set links for %q: %w", pf.Path, err)
 			}
+		}
+
+		if err := idx.indexEmbeddings(ctx, pf); err != nil {
+			return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
 		}
 	}
 
@@ -163,6 +187,9 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 			if err := idx.storage.SetLinks(ctx, pf.Path, toLinkInputs(pf.Links)); err != nil {
 				return nil, fmt.Errorf("set links for %q: %w", pf.Path, err)
 			}
+			if err := idx.indexEmbeddings(ctx, pf); err != nil {
+				return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
+			}
 			added++
 		} else if existingChecksum == nil || *existingChecksum != pf.Checksum {
 			// Modified file — checksum differs
@@ -175,6 +202,9 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 			}
 			if err := idx.storage.SetLinks(ctx, pf.Path, toLinkInputs(pf.Links)); err != nil {
 				return nil, fmt.Errorf("set links for %q: %w", pf.Path, err)
+			}
+			if err := idx.indexEmbeddings(ctx, pf); err != nil {
+				return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
 			}
 			updated++
 		} else {
@@ -237,6 +267,9 @@ func (idx *Indexer) IndexFile(relativePath string) error {
 	if err := idx.storage.SetLinks(ctx, relativePath, toLinkInputs(pf.Links)); err != nil {
 		return fmt.Errorf("set links for %q: %w", relativePath, err)
 	}
+	if err := idx.indexEmbeddings(ctx, pf); err != nil {
+		return fmt.Errorf("index embeddings for %q: %w", relativePath, err)
+	}
 
 	return nil
 }
@@ -247,6 +280,11 @@ func (idx *Indexer) RemoveFile(relativePath string) error {
 	_, err := idx.storage.DeleteNote(ctx, relativePath)
 	if err != nil {
 		return fmt.Errorf("delete note %q: %w", relativePath, err)
+	}
+	if idx.embedder != nil && idx.embeddingModel != "" {
+		if _, err := idx.storage.DeleteEntryEmbeddings(ctx, relativePath, idx.embeddingModel); err != nil {
+			return fmt.Errorf("delete embeddings for %q: %w", relativePath, err)
+		}
 	}
 	return nil
 }
@@ -370,6 +408,42 @@ func toLinkInputs(links []markdown.ExtractedLink) []storage.LinkInput {
 		}
 	}
 	return inputs
+}
+
+func (idx *Indexer) indexEmbeddings(ctx context.Context, pf *markdown.ParsedFile) error {
+	if idx.embedder == nil || idx.embeddingModel == "" {
+		return nil
+	}
+
+	text := strings.TrimSpace(strings.Join([]string{pf.Title, pf.Lead, pf.Body}, "\n\n"))
+	if text == "" {
+		_, err := idx.storage.DeleteEntryEmbeddings(ctx, pf.Path, idx.embeddingModel)
+		return err
+	}
+
+	vectors, err := idx.embedder.Embed(ctx, []string{text})
+	if err != nil {
+		return err
+	}
+	if len(vectors) != 1 {
+		return fmt.Errorf("embedder returned %d vectors for 1 input", len(vectors))
+	}
+	if len(vectors[0]) == 0 {
+		return fmt.Errorf("embedder returned empty vector")
+	}
+
+	if err := idx.storage.UpsertEntryEmbeddings(ctx, []*storage.EntryEmbeddingRow{{
+		Path:        pf.Path,
+		ChunkIndex:  0,
+		ContentHash: pf.Checksum,
+		Model:       idx.embeddingModel,
+		Dimensions:  len(vectors[0]),
+		Embedding:   embeddings.EncodeFloat32Vector(vectors[0]),
+	}}); err != nil {
+		return err
+	}
+	_, err = idx.storage.DeleteStaleEntryEmbeddingChunks(ctx, pf.Path, idx.embeddingModel, []int{0})
+	return err
 }
 
 // globMarkdownFiles walks brainDir and returns relative paths of all .md files,

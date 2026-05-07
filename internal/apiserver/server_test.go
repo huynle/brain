@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/config"
 )
 
 // TestRunServer_BasicStartup tests that RunServer can start and stop gracefully.
@@ -139,5 +142,41 @@ func TestRunServer_PortAlreadyInUse(t *testing.T) {
 	err = RunServer(ctx, opts)
 	if err == nil {
 		t.Fatal("expected error for port already in use, got nil")
+	}
+}
+
+func TestIndexerOptionsFromEmbeddingConfigDisabledIgnoresInvalidProvider(t *testing.T) {
+	options, err := indexerOptionsFromEmbeddingConfig(config.EmbeddingConfig{Provider: "unknown"})
+	if err != nil {
+		t.Fatalf("indexerOptionsFromEmbeddingConfig returned error for disabled config: %v", err)
+	}
+	if len(options) != 0 {
+		t.Fatalf("options length = %d, want 0", len(options))
+	}
+}
+
+func TestIndexerOptionsFromEmbeddingConfigEnabledRequiresValidProvider(t *testing.T) {
+	_, err := indexerOptionsFromEmbeddingConfig(config.EmbeddingConfig{
+		Enabled:  true,
+		Provider: "unknown",
+		Model:    "test-model",
+	})
+	if err == nil || !strings.Contains(err.Error(), "unsupported embedding provider") {
+		t.Fatalf("error = %v, want unsupported provider", err)
+	}
+}
+
+func TestIndexerOptionsFromEmbeddingConfigEnabledBuildsOllamaOption(t *testing.T) {
+	options, err := indexerOptionsFromEmbeddingConfig(config.EmbeddingConfig{
+		Enabled:   true,
+		Provider:  "ollama",
+		Model:     "test-model",
+		TimeoutMS: 1000,
+	})
+	if err != nil {
+		t.Fatalf("indexerOptionsFromEmbeddingConfig returned error: %v", err)
+	}
+	if len(options) != 1 {
+		t.Fatalf("options length = %d, want 1", len(options))
 	}
 }

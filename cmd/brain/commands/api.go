@@ -20,15 +20,16 @@ import (
 // without lossy field-by-field copying.
 type UnifiedConfig struct {
 	Server struct {
-		Port       int
-		Host       string
-		BrainDir   string
-		EnableAuth bool
-		LogLevel   string
-		CORSOrigin string
-		OAuthPIN   string
-		Embeddings config.EmbeddingConfig
-		TLS        struct {
+		Port        int
+		Host        string
+		BrainDir    string
+		EnableAuth  bool
+		LogLevel    string
+		CORSOrigin  string
+		OAuthPIN    string
+		Embeddings  config.EmbeddingConfig
+		FileWatcher config.FileWatcherConfig
+		TLS         struct {
 			Enabled  bool
 			CertPath string
 			KeyPath  string
@@ -74,14 +75,15 @@ func (c *APICommand) Type() string {
 func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
-		Embeddings: c.Config.Server.Embeddings,
+		Port:        c.Config.Server.Port,
+		Host:        c.Config.Server.Host,
+		BrainDir:    c.Config.Server.BrainDir,
+		EnableAuth:  c.Config.Server.EnableAuth,
+		LogLevel:    c.Config.Server.LogLevel,
+		CORSOrigin:  c.Config.Server.CORSOrigin,
+		OAuthPIN:    c.Config.Server.OAuthPIN,
+		Embeddings:  c.Config.Server.Embeddings,
+		FileWatcher: c.Config.Server.FileWatcher,
 	}
 
 	// Flags override config

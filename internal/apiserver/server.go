@@ -25,14 +25,15 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host       string
-	Port       int
-	BrainDir   string
-	EnableAuth bool
-	LogLevel   string
-	CORSOrigin string
-	OAuthPIN   string
-	Embeddings config.EmbeddingConfig
+	Host        string
+	Port        int
+	BrainDir    string
+	EnableAuth  bool
+	LogLevel    string
+	CORSOrigin  string
+	OAuthPIN    string
+	Embeddings  config.EmbeddingConfig
+	FileWatcher config.FileWatcherConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -103,19 +104,28 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		)
 	}
 
+	fileWatcher, err := startConfiguredFileWatcher(opts.BrainDir, idx, opts.FileWatcher)
+	if err != nil {
+		return err
+	}
+	if fileWatcher != nil {
+		defer fileWatcher.Stop()
+	}
+
 	// ─── Build Config ───────────────────────────────────────────────
 	corsOrigin := opts.CORSOrigin
 	if corsOrigin == "" {
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:   opts.BrainDir,
-		Host:       opts.Host,
-		Port:       opts.Port,
-		EnableAuth: opts.EnableAuth,
-		CORSOrigin: corsOrigin,
-		OAuthPIN:   opts.OAuthPIN,
-		Embeddings: embeddingCfg,
+		BrainDir:    opts.BrainDir,
+		Host:        opts.Host,
+		Port:        opts.Port,
+		EnableAuth:  opts.EnableAuth,
+		CORSOrigin:  corsOrigin,
+		OAuthPIN:    opts.OAuthPIN,
+		Embeddings:  embeddingCfg,
+		FileWatcher: opts.FileWatcher.Normalize(),
 	}
 
 	// ─── Event Bus ──────────────────────────────────────────────────
@@ -249,6 +259,26 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	slog.Info("server stopped")
 	return nil
+}
+
+func startConfiguredFileWatcher(brainDir string, idx *indexer.Indexer, cfg config.FileWatcherConfig) (*indexer.FileWatcher, error) {
+	cfg = cfg.Normalize()
+	if !cfg.Enabled {
+		return nil, nil
+	}
+
+	fw, err := indexer.NewFileWatcher(brainDir, idx, &indexer.FileWatcherOptions{
+		DebounceMs:     cfg.DebounceMS,
+		IgnorePatterns: cfg.IgnorePatterns,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("initialize file watcher: %w", err)
+	}
+	if err := fw.Start(); err != nil {
+		return nil, fmt.Errorf("start file watcher: %w", err)
+	}
+	slog.Info("file watcher started", "dir", brainDir)
+	return fw, nil
 }
 
 func indexerOptionsFromEmbeddingConfig(cfg config.EmbeddingConfig) ([]indexer.Option, error) {

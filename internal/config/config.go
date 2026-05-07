@@ -32,14 +32,15 @@ var (
 
 // Config holds all Brain API configuration.
 type Config struct {
-	BrainDir   string
-	Port       int
-	Host       string
-	EnableAuth bool
-	CORSOrigin string
-	LogLevel   string
-	OAuthPIN   string // Optional PIN for consent page protection
-	Embeddings EmbeddingConfig
+	BrainDir    string
+	Port        int
+	Host        string
+	EnableAuth  bool
+	CORSOrigin  string
+	LogLevel    string
+	OAuthPIN    string // Optional PIN for consent page protection
+	Embeddings  EmbeddingConfig
+	FileWatcher FileWatcherConfig
 }
 
 // EmbeddingConfig holds optional semantic search embedding settings.
@@ -50,6 +51,13 @@ type EmbeddingConfig struct {
 	BaseURL   string `yaml:"base_url"`
 	TimeoutMS int    `yaml:"timeout_ms"`
 	BatchSize int    `yaml:"batch_size"`
+}
+
+// FileWatcherConfig holds optional markdown filesystem watcher settings.
+type FileWatcherConfig struct {
+	Enabled        bool     `yaml:"enabled"`
+	DebounceMS     int      `yaml:"debounce_ms"`
+	IgnorePatterns []string `yaml:"ignore_patterns"`
 }
 
 const (
@@ -95,6 +103,14 @@ func (e EmbeddingConfig) Validate() error {
 	return nil
 }
 
+// Normalize applies safe defaults without enabling the watcher.
+func (f FileWatcherConfig) Normalize() FileWatcherConfig {
+	if f.DebounceMS < 0 {
+		f.DebounceMS = 0
+	}
+	return f
+}
+
 // Load reads configuration with the following priority (highest wins):
 //  1. Environment variables
 //  2. Config file (~/.config/brain/config.yaml)
@@ -119,6 +135,7 @@ func Load() Config {
 			TimeoutMS: DefaultEmbeddingTimeoutMS,
 			BatchSize: DefaultEmbeddingBatchSize,
 		},
+		FileWatcher: FileWatcherConfig{},
 	}
 
 	// Layer 2: Config file overrides
@@ -147,6 +164,7 @@ func Load() Config {
 			cfg.OAuthPIN = s.OAuthPIN
 		}
 		cfg.Embeddings = s.Embeddings.Normalize()
+		cfg.FileWatcher = s.FileWatcher.Normalize()
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)
@@ -198,6 +216,19 @@ func Load() Config {
 		}
 	}
 	cfg.Embeddings = cfg.Embeddings.Normalize()
+	if v := os.Getenv("BRAIN_FILE_WATCHER_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.FileWatcher.Enabled = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("BRAIN_FILE_WATCHER_DEBOUNCE_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.FileWatcher.DebounceMS = n
+		}
+	}
+	if v := os.Getenv("BRAIN_FILE_WATCHER_IGNORE_PATTERNS"); v != "" {
+		cfg.FileWatcher.IgnorePatterns = SplitCommaList(v)
+	}
+	cfg.FileWatcher = cfg.FileWatcher.Normalize()
 
 	return cfg
 }
@@ -205,4 +236,17 @@ func Load() Config {
 // Addr returns the listen address as "host:port".
 func (c Config) Addr() string {
 	return c.Host + ":" + strconv.Itoa(c.Port)
+}
+
+// SplitCommaList splits a comma-separated environment value into trimmed items.
+func SplitCommaList(value string) []string {
+	parts := strings.Split(value, ",")
+	items := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			items = append(items, part)
+		}
+	}
+	return items
 }

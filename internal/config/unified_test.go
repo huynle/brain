@@ -38,6 +38,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.Embeddings.BatchSize != DefaultEmbeddingBatchSize {
 		t.Errorf("Server.Embeddings.BatchSize = %d, want %d", cfg.Server.Embeddings.BatchSize, DefaultEmbeddingBatchSize)
 	}
+	if cfg.Server.FileWatcher.Enabled {
+		t.Error("Server.FileWatcher.Enabled should default to false")
+	}
 
 	// Runner defaults
 	if cfg.Runner.MaxParallel != 3 {
@@ -225,6 +228,11 @@ func TestLoadConfigWithValidFile(t *testing.T) {
     base_url: http://localhost:11434
     timeout_ms: 45000
     batch_size: 32
+  file_watcher:
+    enabled: true
+    debounce_ms: 250
+    ignore_patterns:
+      - drafts/
 runner:
   max_parallel: 5
   poll_interval: 10
@@ -270,6 +278,15 @@ mcp:
 	}
 	if cfg.Server.Embeddings.BatchSize != 32 {
 		t.Errorf("LoadConfig() Server.Embeddings.BatchSize = %d, want 32", cfg.Server.Embeddings.BatchSize)
+	}
+	if !cfg.Server.FileWatcher.Enabled {
+		t.Error("LoadConfig() Server.FileWatcher.Enabled = false, want true")
+	}
+	if cfg.Server.FileWatcher.DebounceMS != 250 {
+		t.Errorf("LoadConfig() Server.FileWatcher.DebounceMS = %d, want 250", cfg.Server.FileWatcher.DebounceMS)
+	}
+	if len(cfg.Server.FileWatcher.IgnorePatterns) != 1 || cfg.Server.FileWatcher.IgnorePatterns[0] != "drafts/" {
+		t.Errorf("LoadConfig() Server.FileWatcher.IgnorePatterns = %v, want [drafts/]", cfg.Server.FileWatcher.IgnorePatterns)
 	}
 	if cfg.MCP.APIURL != "http://custom:9999" {
 		t.Errorf("LoadConfig() MCP.APIURL = %q, want %q", cfg.MCP.APIURL, "http://custom:9999")

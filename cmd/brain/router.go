@@ -497,6 +497,7 @@ func defaultConfig() *UnifiedConfig {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
 		cfg.Server.Embeddings = ucfg.Server.Embeddings.Normalize()
+		cfg.Server.FileWatcher = ucfg.Server.FileWatcher.Normalize()
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -553,6 +554,19 @@ func defaultConfig() *UnifiedConfig {
 		}
 	}
 	cfg.Server.Embeddings = cfg.Server.Embeddings.Normalize()
+	if v := os.Getenv("BRAIN_FILE_WATCHER_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.FileWatcher.Enabled = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("BRAIN_FILE_WATCHER_DEBOUNCE_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Server.FileWatcher.DebounceMS = n
+		}
+	}
+	if v := os.Getenv("BRAIN_FILE_WATCHER_IGNORE_PATTERNS"); v != "" {
+		cfg.Server.FileWatcher.IgnorePatterns = uconfig.SplitCommaList(v)
+	}
+	cfg.Server.FileWatcher = cfg.Server.FileWatcher.Normalize()
 
 	// Load runner config from config file + env vars
 	runnerCfg, err := runner.LoadConfig()
@@ -588,6 +602,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
 	cmdCfg.Server.Embeddings = cfg.Server.Embeddings
+	cmdCfg.Server.FileWatcher = cfg.Server.FileWatcher
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled

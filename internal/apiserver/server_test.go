@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/storage"
 )
 
 // TestRunServer_BasicStartup tests that RunServer can start and stop gracefully.
@@ -145,6 +147,49 @@ func TestRunServer_PortAlreadyInUse(t *testing.T) {
 	}
 }
 
+func TestStartConfiguredFileWatcherDisabled(t *testing.T) {
+	store, idx, brainDir := newTestIndexer(t)
+	defer store.Close()
+
+	fw, err := startConfiguredFileWatcher(brainDir, idx, config.FileWatcherConfig{})
+	if err != nil {
+		t.Fatalf("startConfiguredFileWatcher returned error: %v", err)
+	}
+	if fw != nil {
+		t.Fatal("watcher = non-nil, want nil when disabled")
+	}
+}
+
+func TestStartConfiguredFileWatcherEnabledIndexesDirectFileAndStops(t *testing.T) {
+	store, idx, brainDir := newTestIndexer(t)
+	defer store.Close()
+
+	fw, err := startConfiguredFileWatcher(brainDir, idx, config.FileWatcherConfig{
+		Enabled:    true,
+		DebounceMS: 10,
+	})
+	if err != nil {
+		t.Fatalf("startConfiguredFileWatcher returned error: %v", err)
+	}
+	if fw == nil || !fw.IsRunning() {
+		t.Fatal("watcher should be running when enabled")
+	}
+
+	if err := os.WriteFile(filepath.Join(brainDir, "direct.md"), []byte("---\ntitle: Direct\n---\n\nBody"), 0o644); err != nil {
+		t.Fatalf("write direct file: %v", err)
+	}
+
+	waitFor(t, 2*time.Second, func() bool {
+		note, err := store.GetNoteByPath(t.Context(), "direct.md")
+		return err == nil && note != nil && note.Title == "Direct"
+	})
+
+	fw.Stop()
+	if fw.IsRunning() {
+		t.Fatal("watcher should stop cleanly")
+	}
+}
+
 func TestIndexerOptionsFromEmbeddingConfigDisabledIgnoresInvalidProvider(t *testing.T) {
 	options, err := indexerOptionsFromEmbeddingConfig(config.EmbeddingConfig{Provider: "unknown"})
 	if err != nil {
@@ -153,6 +198,33 @@ func TestIndexerOptionsFromEmbeddingConfigDisabledIgnoresInvalidProvider(t *test
 	if len(options) != 0 {
 		t.Fatalf("options length = %d, want 0", len(options))
 	}
+}
+
+func newTestIndexer(t *testing.T) (*storage.StorageLayer, *indexer.Indexer, string) {
+	t.Helper()
+	tempDir := t.TempDir()
+	brainDir := filepath.Join(tempDir, "brain")
+	if err := os.MkdirAll(brainDir, 0o755); err != nil {
+		t.Fatalf("create brain dir: %v", err)
+	}
+	store, err := storage.New(filepath.Join(tempDir, "brain.db"))
+	if err != nil {
+		t.Fatalf("open storage: %v", err)
+	}
+	idx := indexer.NewIndexer(brainDir, store)
+	return store, idx, brainDir
+}
+
+func waitFor(t *testing.T, timeout time.Duration, condition func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if condition() {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("condition was not met before timeout")
 }
 
 func TestIndexerOptionsFromEmbeddingConfigEnabledRequiresValidProvider(t *testing.T) {

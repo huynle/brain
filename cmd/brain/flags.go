@@ -214,15 +214,16 @@ func ParsePluginFlags(args []string) (*PluginFlags, error) {
 // without lossy field-by-field copying.
 type UnifiedConfig struct {
 	Server struct {
-		Port       int
-		Host       string
-		BrainDir   string
-		EnableAuth bool
-		LogLevel   string
-		CORSOrigin string
-		OAuthPIN   string
-		Embeddings uconfig.EmbeddingConfig
-		TLS        struct {
+		Port        int
+		Host        string
+		BrainDir    string
+		EnableAuth  bool
+		LogLevel    string
+		CORSOrigin  string
+		OAuthPIN    string
+		Embeddings  uconfig.EmbeddingConfig
+		FileWatcher uconfig.FileWatcherConfig
+		TLS         struct {
 			Enabled  bool
 			CertPath string
 			KeyPath  string

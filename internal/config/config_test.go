@@ -8,7 +8,7 @@ import (
 
 func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	// Clear env vars that might affect config
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_EMBEDDINGS_ENABLED", "BRAIN_EMBEDDINGS_PROVIDER", "BRAIN_EMBEDDINGS_MODEL", "BRAIN_EMBEDDINGS_BASE_URL", "BRAIN_EMBEDDINGS_TIMEOUT_MS", "BRAIN_EMBEDDINGS_BATCH_SIZE"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_EMBEDDINGS_ENABLED", "BRAIN_EMBEDDINGS_PROVIDER", "BRAIN_EMBEDDINGS_MODEL", "BRAIN_EMBEDDINGS_BASE_URL", "BRAIN_EMBEDDINGS_TIMEOUT_MS", "BRAIN_EMBEDDINGS_BATCH_SIZE", "BRAIN_FILE_WATCHER_ENABLED", "BRAIN_FILE_WATCHER_DEBOUNCE_MS", "BRAIN_FILE_WATCHER_IGNORE_PATTERNS"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -65,6 +65,9 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	}
 	if cfg.Embeddings.BatchSize != DefaultEmbeddingBatchSize {
 		t.Errorf("Embeddings.BatchSize = %d, want %d", cfg.Embeddings.BatchSize, DefaultEmbeddingBatchSize)
+	}
+	if cfg.FileWatcher.Enabled {
+		t.Error("FileWatcher.Enabled should default to false")
 	}
 }
 
@@ -130,6 +133,30 @@ func TestLoadEmbeddingEnvVars(t *testing.T) {
 	}
 	if cfg.Embeddings.BatchSize != 32 {
 		t.Errorf("Embeddings.BatchSize = %d, want 32", cfg.Embeddings.BatchSize)
+	}
+}
+
+func TestLoadFileWatcherEnvVars(t *testing.T) {
+	t.Setenv("BRAIN_FILE_WATCHER_ENABLED", "true")
+	t.Setenv("BRAIN_FILE_WATCHER_DEBOUNCE_MS", "250")
+	t.Setenv("BRAIN_FILE_WATCHER_IGNORE_PATTERNS", "drafts/, tmp/ ,")
+
+	cfg := Load()
+
+	if !cfg.FileWatcher.Enabled {
+		t.Error("FileWatcher.Enabled = false, want true")
+	}
+	if cfg.FileWatcher.DebounceMS != 250 {
+		t.Errorf("FileWatcher.DebounceMS = %d, want 250", cfg.FileWatcher.DebounceMS)
+	}
+	wantPatterns := []string{"drafts/", "tmp/"}
+	if len(cfg.FileWatcher.IgnorePatterns) != len(wantPatterns) {
+		t.Fatalf("FileWatcher.IgnorePatterns = %v, want %v", cfg.FileWatcher.IgnorePatterns, wantPatterns)
+	}
+	for i, want := range wantPatterns {
+		if cfg.FileWatcher.IgnorePatterns[i] != want {
+			t.Errorf("FileWatcher.IgnorePatterns[%d] = %q, want %q", i, cfg.FileWatcher.IgnorePatterns[i], want)
+		}
 	}
 }
 

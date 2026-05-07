@@ -74,18 +74,19 @@ type UnifiedConfig struct {
 
 // ServerConfig holds API server configuration.
 type ServerConfig struct {
-	Port       int             `yaml:"port"`
-	Host       string          `yaml:"host"`
-	BrainDir   string          `yaml:"brain_dir"`
-	EnableAuth bool            `yaml:"enable_auth"`
-	CORSOrigin string          `yaml:"cors_origin"`
-	LogLevel   string          `yaml:"log_level"`
-	OAuthPIN   string          `yaml:"oauth_pin"`
-	TLSCert    string          `yaml:"tls_cert"`
-	TLSKey     string          `yaml:"tls_key"`
-	PIDFile    string          `yaml:"pid_file"`
-	LogFile    string          `yaml:"log_file"`
-	Embeddings EmbeddingConfig `yaml:"embeddings"`
+	Port        int               `yaml:"port"`
+	Host        string            `yaml:"host"`
+	BrainDir    string            `yaml:"brain_dir"`
+	EnableAuth  bool              `yaml:"enable_auth"`
+	CORSOrigin  string            `yaml:"cors_origin"`
+	LogLevel    string            `yaml:"log_level"`
+	OAuthPIN    string            `yaml:"oauth_pin"`
+	TLSCert     string            `yaml:"tls_cert"`
+	TLSKey      string            `yaml:"tls_key"`
+	PIDFile     string            `yaml:"pid_file"`
+	LogFile     string            `yaml:"log_file"`
+	Embeddings  EmbeddingConfig   `yaml:"embeddings"`
+	FileWatcher FileWatcherConfig `yaml:"file_watcher"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -148,6 +149,7 @@ func defaultConfig() UnifiedConfig {
 				TimeoutMS: DefaultEmbeddingTimeoutMS,
 				BatchSize: DefaultEmbeddingBatchSize,
 			},
+			FileWatcher: FileWatcherConfig{},
 		},
 		Runner: RunnerConfig{
 			MaxParallel:            3, // Max concurrent tasks
@@ -250,6 +252,7 @@ func loadConfigFile(path string, cfg *UnifiedConfig) error {
 		return err
 	}
 	cfg.Server.Embeddings = cfg.Server.Embeddings.Normalize()
+	cfg.Server.FileWatcher = cfg.Server.FileWatcher.Normalize()
 	return nil
 }
 

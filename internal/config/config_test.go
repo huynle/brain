@@ -8,7 +8,7 @@ import (
 
 func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	// Clear env vars that might affect config
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_EMBEDDINGS_ENABLED", "BRAIN_EMBEDDINGS_PROVIDER", "BRAIN_EMBEDDINGS_MODEL", "BRAIN_EMBEDDINGS_BASE_URL", "BRAIN_EMBEDDINGS_TIMEOUT_MS", "BRAIN_EMBEDDINGS_BATCH_SIZE"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -57,6 +57,15 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
+	if cfg.Embeddings.Enabled {
+		t.Error("Embeddings.Enabled should default to false")
+	}
+	if cfg.Embeddings.TimeoutMS != DefaultEmbeddingTimeoutMS {
+		t.Errorf("Embeddings.TimeoutMS = %d, want %d", cfg.Embeddings.TimeoutMS, DefaultEmbeddingTimeoutMS)
+	}
+	if cfg.Embeddings.BatchSize != DefaultEmbeddingBatchSize {
+		t.Errorf("Embeddings.BatchSize = %d, want %d", cfg.Embeddings.BatchSize, DefaultEmbeddingBatchSize)
+	}
 }
 
 func TestLoadEnvVarsOverrideAll(t *testing.T) {
@@ -91,6 +100,51 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	}
 	if cfg.OAuthPIN != "test-pin-123" {
 		t.Errorf("OAuthPIN = %q, want %q", cfg.OAuthPIN, "test-pin-123")
+	}
+}
+
+func TestLoadEmbeddingEnvVars(t *testing.T) {
+	t.Setenv("BRAIN_EMBEDDINGS_ENABLED", "true")
+	t.Setenv("BRAIN_EMBEDDINGS_PROVIDER", "Ollama")
+	t.Setenv("BRAIN_EMBEDDINGS_MODEL", "nomic-embed-text")
+	t.Setenv("BRAIN_EMBEDDINGS_BASE_URL", "http://localhost:11434/")
+	t.Setenv("BRAIN_EMBEDDINGS_TIMEOUT_MS", "45000")
+	t.Setenv("BRAIN_EMBEDDINGS_BATCH_SIZE", "32")
+
+	cfg := Load()
+
+	if !cfg.Embeddings.Enabled {
+		t.Error("Embeddings.Enabled = false, want true")
+	}
+	if cfg.Embeddings.Provider != "ollama" {
+		t.Errorf("Embeddings.Provider = %q, want %q", cfg.Embeddings.Provider, "ollama")
+	}
+	if cfg.Embeddings.Model != "nomic-embed-text" {
+		t.Errorf("Embeddings.Model = %q, want %q", cfg.Embeddings.Model, "nomic-embed-text")
+	}
+	if cfg.Embeddings.BaseURL != "http://localhost:11434" {
+		t.Errorf("Embeddings.BaseURL = %q, want %q", cfg.Embeddings.BaseURL, "http://localhost:11434")
+	}
+	if cfg.Embeddings.TimeoutMS != 45000 {
+		t.Errorf("Embeddings.TimeoutMS = %d, want 45000", cfg.Embeddings.TimeoutMS)
+	}
+	if cfg.Embeddings.BatchSize != 32 {
+		t.Errorf("Embeddings.BatchSize = %d, want 32", cfg.Embeddings.BatchSize)
+	}
+}
+
+func TestEmbeddingConfigValidate(t *testing.T) {
+	if err := (EmbeddingConfig{}).Validate(); err != nil {
+		t.Fatalf("disabled embeddings should validate, got %v", err)
+	}
+	if err := (EmbeddingConfig{Enabled: true, Model: "m"}).Normalize().Validate(); err == nil {
+		t.Fatal("enabled embeddings without provider should fail validation")
+	}
+	if err := (EmbeddingConfig{Enabled: true, Provider: "ollama"}).Normalize().Validate(); err == nil {
+		t.Fatal("enabled embeddings without model should fail validation")
+	}
+	if err := (EmbeddingConfig{Enabled: true, Provider: "ollama", Model: "m"}).Normalize().Validate(); err != nil {
+		t.Fatalf("valid ollama embeddings should validate, got %v", err)
 	}
 }
 

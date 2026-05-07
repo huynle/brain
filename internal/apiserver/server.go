@@ -31,6 +31,7 @@ type ServerOptions struct {
 	LogLevel   string
 	CORSOrigin string
 	OAuthPIN   string
+	Embeddings config.EmbeddingConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -70,6 +71,19 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	defer store.Close()
 
 	// ─── Indexer ────────────────────────────────────────────────────
+	embeddingCfg := opts.Embeddings.Normalize()
+	if err := embeddingCfg.Validate(); err != nil {
+		slog.Warn("semantic embeddings disabled due to invalid configuration", "error", err)
+		embeddingCfg.Enabled = false
+	}
+	if embeddingCfg.Enabled {
+		slog.Info("semantic embeddings configured",
+			"provider", embeddingCfg.Provider,
+			"model", embeddingCfg.Model,
+			"base_url", embeddingCfg.BaseURL,
+			"batch_size", embeddingCfg.BatchSize,
+		)
+	}
 	idx := indexer.NewIndexer(opts.BrainDir, store)
 
 	// Run incremental index on startup (fast for unchanged files)
@@ -100,6 +114,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		EnableAuth: opts.EnableAuth,
 		CORSOrigin: corsOrigin,
 		OAuthPIN:   opts.OAuthPIN,
+		Embeddings: embeddingCfg,
 	}
 
 	// ─── Event Bus ──────────────────────────────────────────────────

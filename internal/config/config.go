@@ -8,6 +8,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,60 @@ type Config struct {
 	CORSOrigin string
 	LogLevel   string
 	OAuthPIN   string // Optional PIN for consent page protection
+	Embeddings EmbeddingConfig
+}
+
+// EmbeddingConfig holds optional semantic search embedding settings.
+type EmbeddingConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	Model     string `yaml:"model"`
+	BaseURL   string `yaml:"base_url"`
+	TimeoutMS int    `yaml:"timeout_ms"`
+	BatchSize int    `yaml:"batch_size"`
+}
+
+const (
+	DefaultEmbeddingTimeoutMS = 30000
+	DefaultEmbeddingBatchSize = 16
+	DefaultOllamaBaseURL      = "http://localhost:11434"
+)
+
+// Normalize applies safe defaults without enabling embeddings.
+func (e EmbeddingConfig) Normalize() EmbeddingConfig {
+	e.Provider = strings.ToLower(strings.TrimSpace(e.Provider))
+	e.Model = strings.TrimSpace(e.Model)
+	e.BaseURL = strings.TrimRight(strings.TrimSpace(e.BaseURL), "/")
+	if e.TimeoutMS == 0 {
+		e.TimeoutMS = DefaultEmbeddingTimeoutMS
+	}
+	if e.BatchSize == 0 {
+		e.BatchSize = DefaultEmbeddingBatchSize
+	}
+	if e.Enabled && e.Provider == "ollama" && e.BaseURL == "" {
+		e.BaseURL = DefaultOllamaBaseURL
+	}
+	return e
+}
+
+// Validate returns clear configuration errors when embeddings are enabled.
+func (e EmbeddingConfig) Validate() error {
+	if !e.Enabled {
+		return nil
+	}
+	if e.Provider == "" {
+		return fmt.Errorf("embeddings enabled but provider is not configured")
+	}
+	if e.Model == "" {
+		return fmt.Errorf("embeddings enabled but model is not configured")
+	}
+	if e.TimeoutMS <= 0 {
+		return fmt.Errorf("embeddings timeout_ms must be positive")
+	}
+	if e.BatchSize <= 0 {
+		return fmt.Errorf("embeddings batch_size must be positive")
+	}
+	return nil
 }
 
 // Load reads configuration with the following priority (highest wins):
@@ -60,6 +115,10 @@ func Load() Config {
 		CORSOrigin: "*",
 		LogLevel:   "info",
 		OAuthPIN:   "",
+		Embeddings: EmbeddingConfig{
+			TimeoutMS: DefaultEmbeddingTimeoutMS,
+			BatchSize: DefaultEmbeddingBatchSize,
+		},
 	}
 
 	// Layer 2: Config file overrides
@@ -87,6 +146,7 @@ func Load() Config {
 		if s.OAuthPIN != "" {
 			cfg.OAuthPIN = s.OAuthPIN
 		}
+		cfg.Embeddings = s.Embeddings.Normalize()
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)
@@ -114,6 +174,30 @@ func Load() Config {
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.OAuthPIN = v
 	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Embeddings.Enabled = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_PROVIDER"); v != "" {
+		cfg.Embeddings.Provider = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_MODEL"); v != "" {
+		cfg.Embeddings.Model = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_BASE_URL"); v != "" {
+		cfg.Embeddings.BaseURL = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Embeddings.TimeoutMS = n
+		}
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Embeddings.BatchSize = n
+		}
+	}
+	cfg.Embeddings = cfg.Embeddings.Normalize()
 
 	return cfg
 }

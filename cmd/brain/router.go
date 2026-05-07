@@ -456,6 +456,8 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = pathutil.ExpandTilde("~/brain")
 	cfg.Server.LogLevel = "info"
+	cfg.Server.Embeddings.TimeoutMS = uconfig.DefaultEmbeddingTimeoutMS
+	cfg.Server.Embeddings.BatchSize = uconfig.DefaultEmbeddingBatchSize
 
 	homeDir, _ := os.UserHomeDir()
 	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
@@ -494,6 +496,7 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+		cfg.Server.Embeddings = ucfg.Server.Embeddings.Normalize()
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -526,6 +529,30 @@ func defaultConfig() *UnifiedConfig {
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
 	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.Embeddings.Enabled = lower == "true" || lower == "1"
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_PROVIDER"); v != "" {
+		cfg.Server.Embeddings.Provider = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_MODEL"); v != "" {
+		cfg.Server.Embeddings.Model = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_BASE_URL"); v != "" {
+		cfg.Server.Embeddings.BaseURL = v
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_TIMEOUT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Embeddings.TimeoutMS = n
+		}
+	}
+	if v := os.Getenv("BRAIN_EMBEDDINGS_BATCH_SIZE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Server.Embeddings.BatchSize = n
+		}
+	}
+	cfg.Server.Embeddings = cfg.Server.Embeddings.Normalize()
 
 	// Load runner config from config file + env vars
 	runnerCfg, err := runner.LoadConfig()
@@ -560,6 +587,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
+	cmdCfg.Server.Embeddings = cfg.Server.Embeddings
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled

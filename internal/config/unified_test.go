@@ -29,6 +29,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.EnableAuth != false {
 		t.Errorf("Server.EnableAuth = %v, want false", cfg.Server.EnableAuth)
 	}
+	if cfg.Server.Embeddings.Enabled {
+		t.Error("Server.Embeddings.Enabled should default to false")
+	}
+	if cfg.Server.Embeddings.TimeoutMS != DefaultEmbeddingTimeoutMS {
+		t.Errorf("Server.Embeddings.TimeoutMS = %d, want %d", cfg.Server.Embeddings.TimeoutMS, DefaultEmbeddingTimeoutMS)
+	}
+	if cfg.Server.Embeddings.BatchSize != DefaultEmbeddingBatchSize {
+		t.Errorf("Server.Embeddings.BatchSize = %d, want %d", cfg.Server.Embeddings.BatchSize, DefaultEmbeddingBatchSize)
+	}
 
 	// Runner defaults
 	if cfg.Runner.MaxParallel != 3 {
@@ -209,6 +218,13 @@ func TestLoadConfigWithValidFile(t *testing.T) {
   port: 8080
   host: "0.0.0.0"
   log_level: "debug"
+  embeddings:
+    enabled: true
+    provider: ollama
+    model: nomic-embed-text
+    base_url: http://localhost:11434
+    timeout_ms: 45000
+    batch_size: 32
 runner:
   max_parallel: 5
   poll_interval: 10
@@ -236,6 +252,24 @@ mcp:
 	}
 	if cfg.Runner.MaxParallel != 5 {
 		t.Errorf("LoadConfig() Runner.MaxParallel = %d, want 5", cfg.Runner.MaxParallel)
+	}
+	if !cfg.Server.Embeddings.Enabled {
+		t.Error("LoadConfig() Server.Embeddings.Enabled = false, want true")
+	}
+	if cfg.Server.Embeddings.Provider != "ollama" {
+		t.Errorf("LoadConfig() Server.Embeddings.Provider = %q, want %q", cfg.Server.Embeddings.Provider, "ollama")
+	}
+	if cfg.Server.Embeddings.Model != "nomic-embed-text" {
+		t.Errorf("LoadConfig() Server.Embeddings.Model = %q, want %q", cfg.Server.Embeddings.Model, "nomic-embed-text")
+	}
+	if cfg.Server.Embeddings.BaseURL != "http://localhost:11434" {
+		t.Errorf("LoadConfig() Server.Embeddings.BaseURL = %q, want %q", cfg.Server.Embeddings.BaseURL, "http://localhost:11434")
+	}
+	if cfg.Server.Embeddings.TimeoutMS != 45000 {
+		t.Errorf("LoadConfig() Server.Embeddings.TimeoutMS = %d, want 45000", cfg.Server.Embeddings.TimeoutMS)
+	}
+	if cfg.Server.Embeddings.BatchSize != 32 {
+		t.Errorf("LoadConfig() Server.Embeddings.BatchSize = %d, want 32", cfg.Server.Embeddings.BatchSize)
 	}
 	if cfg.MCP.APIURL != "http://custom:9999" {
 		t.Errorf("LoadConfig() MCP.APIURL = %q, want %q", cfg.MCP.APIURL, "http://custom:9999")

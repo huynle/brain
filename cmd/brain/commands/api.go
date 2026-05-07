@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 )
@@ -26,6 +27,7 @@ type UnifiedConfig struct {
 		LogLevel   string
 		CORSOrigin string
 		OAuthPIN   string
+		Embeddings config.EmbeddingConfig
 		TLS        struct {
 			Enabled  bool
 			CertPath string
@@ -79,6 +81,7 @@ func (c *APICommand) Execute() error {
 		LogLevel:   c.Config.Server.LogLevel,
 		CORSOrigin: c.Config.Server.CORSOrigin,
 		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Embeddings: c.Config.Server.Embeddings,
 	}
 
 	// Flags override config

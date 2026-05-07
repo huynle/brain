@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
 )
 
@@ -220,6 +221,7 @@ type UnifiedConfig struct {
 		LogLevel   string
 		CORSOrigin string
 		OAuthPIN   string
+		Embeddings uconfig.EmbeddingConfig
 		TLS        struct {
 			Enabled  bool
 			CertPath string

@@ -7,7 +7,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
+
+	"github.com/huynle/brain-api/internal/embeddings"
 )
 
 const embeddingColumns = `id, path, chunk_index, content_hash, model, dimensions, embedding, created_at, updated_at`
@@ -250,6 +253,106 @@ func (s *StorageLayer) ListEntryEmbeddingsForSearch(ctx context.Context, model s
 	}
 	defer rows.Close()
 	return scanEntryEmbeddings(rows)
+}
+
+func (s *StorageLayer) searchSemantic(ctx context.Context, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	if opts == nil || opts.SemanticModel == "" {
+		return nil, errors.New("semantic search requires an embedding model")
+	}
+	if len(opts.SemanticVector) == 0 {
+		return nil, errors.New("semantic search requires a query embedding")
+	}
+
+	sql := "SELECT " + noteColumnsAliased + ", e.embedding FROM entry_embeddings e JOIN notes n ON n.path = e.path WHERE e.model = ? AND e.dimensions = ?"
+	params := []interface{}{opts.SemanticModel, len(opts.SemanticVector)}
+	sql, params = appendFilters(sql, params, "n", opts)
+	sql += " ORDER BY n.path, e.chunk_index"
+
+	rows, err := s.db.QueryContext(ctx, sql, params...)
+	if err != nil {
+		return nil, fmt.Errorf("semantic search query embeddings: %w", err)
+	}
+	defer rows.Close()
+
+	type semanticHit struct {
+		note  *NoteRow
+		score float32
+	}
+	bestByPath := map[string]semanticHit{}
+	for rows.Next() {
+		note, encoded, err := scanNoteRowWithEmbedding(rows)
+		if err != nil {
+			return nil, err
+		}
+		vector, err := embeddings.DecodeFloat32Vector(encoded)
+		if err != nil {
+			return nil, fmt.Errorf("semantic search decode embedding for %q: %w", note.Path, err)
+		}
+		score, err := embeddings.CosineSimilarity(opts.SemanticVector, vector)
+		if err != nil {
+			return nil, fmt.Errorf("semantic search compare embedding for %q: %w", note.Path, err)
+		}
+		current, ok := bestByPath[note.Path]
+		if !ok || score > current.score {
+			bestByPath[note.Path] = semanticHit{note: note, score: score}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("semantic search iterate embeddings: %w", err)
+	}
+	if len(bestByPath) == 0 {
+		return []*NoteRow{}, nil
+	}
+
+	hits := make([]semanticHit, 0, len(bestByPath))
+	for _, hit := range bestByPath {
+		hits = append(hits, hit)
+	}
+	sort.SliceStable(hits, func(i, j int) bool {
+		if hits[i].score == hits[j].score {
+			return hits[i].note.Path < hits[j].note.Path
+		}
+		return hits[i].score > hits[j].score
+	})
+	if limit > 0 && len(hits) > limit {
+		hits = hits[:limit]
+	}
+
+	notes := make([]*NoteRow, 0, len(hits))
+	for _, hit := range hits {
+		notes = append(notes, hit.note)
+	}
+	return notes, nil
+}
+
+func scanNoteRowWithEmbedding(rows *sql.Rows) (*NoteRow, []byte, error) {
+	var note NoteRow
+	var embedding []byte
+	err := rows.Scan(
+		&note.ID,
+		&note.Path,
+		&note.ShortID,
+		&note.Title,
+		&note.Lead,
+		&note.Body,
+		&note.RawContent,
+		&note.WordCount,
+		&note.Checksum,
+		&note.Metadata,
+		&note.Type,
+		&note.Status,
+		&note.Priority,
+		&note.ProjectID,
+		&note.FeatureID,
+		&note.Created,
+		&note.Modified,
+		&note.IndexedAt,
+		&embedding,
+	)
+	if err != nil {
+		return nil, nil, fmt.Errorf("scan semantic search row: %w", err)
+	}
+	return &note, embedding, nil
 }
 
 func scanEntryEmbedding(row *sql.Row) (*EntryEmbeddingRow, error) {

@@ -32,6 +32,8 @@ func (s *StorageLayer) SearchNotes(ctx context.Context, query string, opts *Sear
 	}
 
 	switch strategy {
+	case "semantic":
+		return s.searchSemantic(ctx, limit, opts)
 	case "exact":
 		return s.searchExact(ctx, query, limit, opts)
 	case "like":

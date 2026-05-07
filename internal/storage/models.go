@@ -81,15 +81,17 @@ type EmbeddingCandidate struct {
 
 // SearchOptions configures search behavior.
 type SearchOptions struct {
-	Strategy   string // "fts", "exact", "like" (default: "fts")
-	Limit      int
-	PathPrefix string
-	Type       string
-	Status     string
-	ProjectID  string
-	FeatureID  string
-	Tags       []string
-	Priority   string
+	Strategy       string // "fts", "exact", "like", "semantic" (default: "fts")
+	Limit          int
+	PathPrefix     string
+	Type           string
+	Status         string
+	ProjectID      string
+	FeatureID      string
+	Tags           []string
+	Priority       string
+	SemanticModel  string
+	SemanticVector []float32
 }
 
 // ListOptions configures list/filter behavior.

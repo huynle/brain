@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/embeddings"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
@@ -1528,7 +1530,7 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		opts.PathPrefix = "global/"
 	}
 
-	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
+	rows, err := s.searchRows(ctx, req.Query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("search notes: %w", err)
 	}
@@ -1553,6 +1555,52 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		Results: results,
 		Total:   len(results),
 	}, nil
+}
+
+func (s *BrainServiceImpl) searchRows(ctx context.Context, query string, opts *storage.SearchOptions) ([]*storage.NoteRow, error) {
+	if opts == nil || opts.Strategy != "semantic" {
+		return s.storage.SearchNotes(ctx, query, opts)
+	}
+
+	cfg := s.config.Embeddings.Normalize()
+	if !cfg.Enabled {
+		return nil, errors.New("semantic search requires embeddings to be enabled and configured")
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, fmt.Errorf("semantic search requires embeddings: %w", err)
+	}
+
+	var embedder embeddings.Embedder
+	switch cfg.Provider {
+	case "ollama":
+		ollamaEmbedder, err := embeddings.NewOllamaEmbedder(embeddings.OllamaConfig{
+			BaseURL: cfg.BaseURL,
+			Model:   cfg.Model,
+			Timeout: time.Duration(cfg.TimeoutMS) * time.Millisecond,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("semantic search initialize ollama embedder: %w", err)
+		}
+		embedder = ollamaEmbedder
+	default:
+		return nil, fmt.Errorf("semantic search unsupported embedding provider %q", cfg.Provider)
+	}
+
+	vectors, err := embedder.Embed(ctx, []string{query})
+	if err != nil {
+		return nil, fmt.Errorf("semantic search embed query: %w", err)
+	}
+	if len(vectors) != 1 {
+		return nil, fmt.Errorf("semantic search embed query returned %d vectors for 1 input", len(vectors))
+	}
+	if len(vectors[0]) == 0 {
+		return nil, errors.New("semantic search embed query returned empty vector")
+	}
+
+	semanticOpts := *opts
+	semanticOpts.SemanticModel = cfg.Model
+	semanticOpts.SemanticVector = vectors[0]
+	return s.storage.SearchNotes(ctx, query, &semanticOpts)
 }
 
 // =============================================================================

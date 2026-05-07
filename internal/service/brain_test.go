@@ -3,6 +3,9 @@ package service
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +13,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/embeddings"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
@@ -934,6 +938,78 @@ func TestSearch_WithTypeFilter(t *testing.T) {
 		if r.Type != "plan" {
 			t.Errorf("expected type 'plan', got %q", r.Type)
 		}
+	}
+}
+
+func TestSearch_SemanticEmbedsQueryScoresStoredVectorsAndCollapsesChunks(t *testing.T) {
+	svc, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/embed" {
+			t.Fatalf("unexpected embed path %q", r.URL.Path)
+		}
+		var req struct {
+			Model string   `json:"model"`
+			Input []string `json:"input"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode embed request: %v", err)
+		}
+		if req.Model != "test-model" {
+			t.Fatalf("embed model = %q, want test-model", req.Model)
+		}
+		if len(req.Input) != 1 || req.Input[0] != "semantic query" {
+			t.Fatalf("embed input = %#v, want semantic query", req.Input)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"embeddings": [][]float32{{1, 0}}})
+	}))
+	t.Cleanup(provider.Close)
+	svc.config.Embeddings = config.EmbeddingConfig{Enabled: true, Provider: "ollama", Model: "test-model", BaseURL: provider.URL}
+
+	active := "active"
+	taskType := "task"
+	planType := "plan"
+	a, err := store.InsertNote(ctx, &storage.NoteRow{Path: "projects/proj/task/a.md", ShortID: "sem00001", Title: "Alpha", Lead: strPtr("alpha lead"), Body: strPtr("alpha body"), Type: &taskType, Status: &active})
+	if err != nil {
+		t.Fatalf("insert alpha: %v", err)
+	}
+	b, err := store.InsertNote(ctx, &storage.NoteRow{Path: "projects/proj/plan/b.md", ShortID: "sem00002", Title: "Beta", Body: strPtr("beta body"), Type: &planType, Status: &active})
+	if err != nil {
+		t.Fatalf("insert beta: %v", err)
+	}
+	if err := store.UpsertEntryEmbeddings(ctx, []*storage.EntryEmbeddingRow{
+		{Path: a.Path, ChunkIndex: 0, ContentHash: "a0", Model: "test-model", Dimensions: 2, Embedding: embeddings.EncodeFloat32Vector([]float32{0.7, 0.7})},
+		{Path: a.Path, ChunkIndex: 1, ContentHash: "a1", Model: "test-model", Dimensions: 2, Embedding: embeddings.EncodeFloat32Vector([]float32{1, 0})},
+		{Path: b.Path, ChunkIndex: 0, ContentHash: "b0", Model: "test-model", Dimensions: 2, Embedding: embeddings.EncodeFloat32Vector([]float32{0, 1})},
+	}); err != nil {
+		t.Fatalf("upsert embeddings: %v", err)
+	}
+
+	limit := 10
+	resp, err := svc.Search(ctx, types.SearchRequest{Query: "semantic query", Strategy: "semantic", Type: "task", Limit: &limit})
+	if err != nil {
+		t.Fatalf("Search semantic failed: %v", err)
+	}
+	if resp.Total != 1 {
+		t.Fatalf("semantic result total = %d, want 1: %+v", resp.Total, resp.Results)
+	}
+	if resp.Results[0].ID != "sem00001" {
+		t.Fatalf("semantic result ID = %q, want sem00001", resp.Results[0].ID)
+	}
+	if resp.Results[0].Snippet != "alpha lead" {
+		t.Fatalf("semantic result snippet = %q, want alpha lead", resp.Results[0].Snippet)
+	}
+}
+
+func TestSearch_SemanticRequiresConfiguredEmbeddings(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	_, err := svc.Search(context.Background(), types.SearchRequest{Query: "semantic query", Strategy: "semantic"})
+	if err == nil {
+		t.Fatal("expected semantic search to require configured embeddings")
+	}
+	if !strings.Contains(err.Error(), "semantic search requires embeddings") {
+		t.Fatalf("semantic search error = %v, want configuration-specific error", err)
 	}
 }
 

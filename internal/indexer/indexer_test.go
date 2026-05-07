@@ -3,8 +3,10 @@ package indexer
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -18,6 +20,35 @@ type fakeEmbedder struct {
 
 func (f fakeEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	return f.vectors[:len(texts)], nil
+}
+
+type recordingEmbedder struct {
+	texts [][]string
+	err   error
+}
+
+func (r *recordingEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	r.texts = append(r.texts, append([]string(nil), texts...))
+	if r.err != nil {
+		return nil, r.err
+	}
+	vectors := make([][]float32, len(texts))
+	for i := range texts {
+		vectors[i] = []float32{float32(len(r.texts)), float32(i + 1)}
+	}
+	return vectors, nil
+}
+
+func (r *recordingEmbedder) reset() {
+	r.texts = nil
+}
+
+func (r *recordingEmbedder) textCount() int {
+	count := 0
+	for _, batch := range r.texts {
+		count += len(batch)
+	}
+	return count
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +148,37 @@ func TestRebuildAll_IndexesAllFiles(t *testing.T) {
 	}
 }
 
+func TestRebuildAll_StoresEmbeddingsWhenConfigured(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+		"note2.md": noteContent("Note Two"),
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	result, err := idx.RebuildAll()
+	if err != nil {
+		t.Fatalf("RebuildAll failed: %v", err)
+	}
+
+	if result.Added != 2 {
+		t.Fatalf("Added = %d, want 2", result.Added)
+	}
+	if embedder.textCount() != 2 {
+		t.Fatalf("embedded text count = %d, want 2", embedder.textCount())
+	}
+	for _, path := range []string{"note1.md", "note2.md"} {
+		got, err := store.GetEntryEmbedding(context.Background(), path, 0, "test-model")
+		if err != nil {
+			t.Fatalf("GetEntryEmbedding(%q) failed: %v", path, err)
+		}
+		if got == nil {
+			t.Fatalf("expected embedding row for %q", path)
+		}
+	}
+}
+
 func TestNewIndexerWithEmbeddingsStoresOptions(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, nil)
@@ -162,6 +224,48 @@ func TestIndexFileStoresEmbeddingWhenConfigured(t *testing.T) {
 	}
 	if len(decoded) != 3 || decoded[0] != 1 || decoded[1] != 2 || decoded[2] != 3 {
 		t.Fatalf("decoded embedding = %+v, want [1 2 3]", decoded)
+	}
+}
+
+func TestIndexFileEmbedsSemanticTextWithoutRawFrontmatter(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": "---\ntitle: Semantic Title\nsecret: do-not-embed\ntags:\n  - internal\n---\n\nLead paragraph.\n\nBody details here.\n",
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("IndexFile failed: %v", err)
+	}
+
+	if embedder.textCount() != 1 {
+		t.Fatalf("embedded text count = %d, want 1", embedder.textCount())
+	}
+	text := embedder.texts[0][0]
+	for _, want := range []string{"Semantic Title", "Lead paragraph.", "Body details here."} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("embedded text %q missing %q", text, want)
+		}
+	}
+	for _, unwanted := range []string{"secret", "do-not-embed", "tags:", "internal", "---"} {
+		if strings.Contains(text, unwanted) {
+			t.Fatalf("embedded text %q includes raw frontmatter value %q", text, unwanted)
+		}
+	}
+}
+
+func TestIndexFileReturnsEmbeddingFailureWhenConfigured(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	wantErr := errors.New("provider unavailable")
+	idx := NewIndexer(brainDir, store, WithEmbeddings(&recordingEmbedder{err: wantErr}, "test-model", 16))
+
+	err := idx.IndexFile("note1.md")
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("IndexFile error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -443,6 +547,56 @@ func TestIndexChanged_SkipsUnchangedFiles(t *testing.T) {
 	}
 	if result.Deleted != 0 {
 		t.Errorf("Deleted = %d, want 0", result.Deleted)
+	}
+}
+
+func TestIndexChanged_EmbedsOnlyNewAndModifiedFilesWhenConfigured(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+		"note2.md": noteContent("Note Two"),
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	if _, err := idx.RebuildAll(); err != nil {
+		t.Fatalf("RebuildAll failed: %v", err)
+	}
+	embedder.reset()
+
+	if err := os.WriteFile(filepath.Join(brainDir, "note1.md"), []byte(noteContent("Note One Updated")), 0o644); err != nil {
+		t.Fatalf("write modified note: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(brainDir, "note3.md"), []byte(noteContent("Note Three")), 0o644); err != nil {
+		t.Fatalf("write new note: %v", err)
+	}
+
+	result, err := idx.IndexChanged()
+	if err != nil {
+		t.Fatalf("IndexChanged failed: %v", err)
+	}
+
+	if result.Added != 1 {
+		t.Fatalf("Added = %d, want 1", result.Added)
+	}
+	if result.Updated != 1 {
+		t.Fatalf("Updated = %d, want 1", result.Updated)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1", result.Skipped)
+	}
+	if embedder.textCount() != 2 {
+		t.Fatalf("embedded text count = %d, want 2", embedder.textCount())
+	}
+
+	embedded := strings.Join([]string{embedder.texts[0][0], embedder.texts[1][0]}, "\n")
+	for _, want := range []string{"Note One Updated", "Note Three"} {
+		if !strings.Contains(embedded, want) {
+			t.Fatalf("embedded text %q missing %q", embedded, want)
+		}
+	}
+	if strings.Contains(embedded, "Note Two") {
+		t.Fatalf("embedded text %q includes unchanged note", embedded)
 	}
 }
 

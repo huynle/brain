@@ -333,6 +333,75 @@ func TestIndexFileReturnsEmbeddingFailureWhenConfigured(t *testing.T) {
 	}
 }
 
+func TestBackfillMissingOrStaleEmbeddingsIndexesOnlyCandidates(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"current.md": noteContent("Current Note"),
+		"missing.md": noteContent("Missing Note"),
+		"stale.md":   noteContent("Stale Note"),
+	})
+	embedder := &recordingEmbedder{}
+	idx := NewIndexer(brainDir, store, WithEmbeddings(embedder, "test-model", 16))
+
+	if _, err := idx.IndexChanged(); err != nil {
+		t.Fatalf("IndexChanged failed: %v", err)
+	}
+	embedder.reset()
+	if _, err := store.DeleteEntryEmbeddings(context.Background(), "missing.md", "test-model"); err != nil {
+		t.Fatalf("delete missing embedding: %v", err)
+	}
+	if _, err := store.UpsertEntryEmbedding(context.Background(), &storage.EntryEmbeddingRow{
+		Path:        "stale.md",
+		ChunkIndex:  0,
+		ContentHash: "old-hash",
+		Model:       "test-model",
+		Dimensions:  2,
+		Embedding:   embeddings.EncodeFloat32Vector([]float32{9, 9}),
+	}); err != nil {
+		t.Fatalf("force stale embedding: %v", err)
+	}
+
+	count, err := idx.BackfillMissingOrStaleEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("BackfillMissingOrStaleEmbeddings failed: %v", err)
+	}
+
+	if count != 2 {
+		t.Fatalf("backfilled count = %d, want 2", count)
+	}
+	if embedder.textCount() != 2 {
+		t.Fatalf("embedded text count = %d, want 2", embedder.textCount())
+	}
+	for _, path := range []string{"current.md", "missing.md", "stale.md"} {
+		got, err := store.GetEntryEmbedding(context.Background(), path, 0, "test-model")
+		if err != nil {
+			t.Fatalf("GetEntryEmbedding(%q) failed: %v", path, err)
+		}
+		if got == nil {
+			t.Fatalf("expected embedding row for %q", path)
+		}
+	}
+}
+
+func TestBackfillMissingOrStaleEmbeddingsNoopsWithoutEmbedder(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	idx := NewIndexer(brainDir, store)
+
+	if _, err := idx.IndexChanged(); err != nil {
+		t.Fatalf("IndexChanged failed: %v", err)
+	}
+	count, err := idx.BackfillMissingOrStaleEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("BackfillMissingOrStaleEmbeddings failed: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("backfilled count = %d, want 0", count)
+	}
+}
+
 func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{

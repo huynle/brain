@@ -2,6 +2,7 @@ package indexer
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,6 +10,35 @@ import (
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
+
+// BackfillMissingOrStaleEmbeddings refreshes embeddings for indexed notes that
+// are missing an embedding for the configured model or have stale semantic text.
+func (idx *Indexer) BackfillMissingOrStaleEmbeddings(ctx context.Context) (int, error) {
+	if idx.embedder == nil || idx.embeddingModel == "" {
+		return 0, nil
+	}
+
+	candidates, err := idx.storage.FindMissingOrStaleEntryEmbeddings(ctx, idx.embeddingModel, 0)
+	if err != nil {
+		return 0, err
+	}
+
+	var backfilled int
+	var errs []error
+	for _, candidate := range candidates {
+		pf, err := markdown.ParseFile(candidate.Path, idx.brainDir)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("parse backfill candidate %q: %w", candidate.Path, err))
+			continue
+		}
+		if err := idx.indexEmbeddings(ctx, pf); err != nil {
+			errs = append(errs, fmt.Errorf("backfill embedding for %q: %w", candidate.Path, err))
+			continue
+		}
+		backfilled++
+	}
+	return backfilled, errors.Join(errs...)
+}
 
 func (idx *Indexer) indexEmbeddings(ctx context.Context, pf *markdown.ParsedFile) error {
 	if idx.embedder == nil || idx.embeddingModel == "" {

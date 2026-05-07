@@ -103,6 +103,14 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			"duration", result.Duration,
 		)
 	}
+	if embeddingCfg.Enabled && err == nil {
+		backfilled, err := idx.BackfillMissingOrStaleEmbeddings(ctx)
+		if err != nil {
+			slog.Warn("embedding backfill failed, continuing startup", "backfilled", backfilled, "error", err)
+		} else if backfilled > 0 {
+			slog.Info("embedding backfill complete", "backfilled", backfilled)
+		}
+	}
 
 	fileWatcher, err := startConfiguredFileWatcher(opts.BrainDir, idx, opts.FileWatcher)
 	if err != nil {

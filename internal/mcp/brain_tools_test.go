@@ -368,6 +368,234 @@ func TestBrainUpdate_Handler(t *testing.T) {
 	if !strings.Contains(result, "completed") {
 		t.Errorf("result should contain status, got: %s", result)
 	}
+	if strings.Contains(result, "Status: ->") {
+		t.Errorf("result should not use ambiguous empty-arrow status audit, got: %s", result)
+	}
+	if !strings.Contains(result, "Status: completed") {
+		t.Errorf("result should show new status clearly, got: %s", result)
+	}
+}
+
+func TestBrainUpdate_HandlerOmitsEmptyDefaultFields(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":   "projects/test/task/abc.md",
+			"title":  "Original Task",
+			"status": "pending",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"path":                 "projects/test/task/abc.md",
+		"status":               "pending",
+		"title":                "",
+		"append":               "",
+		"note":                 "",
+		"depends_on":           []any{},
+		"tags":                 []any{},
+		"priority":             "",
+		"target_workdir":       "",
+		"git_branch":           "",
+		"merge_target_branch":  "",
+		"merge_policy":         "",
+		"merge_strategy":       "",
+		"remote_branch_policy": "",
+		"execution_mode":       "",
+		"schedule":             "",
+		"run_once_at":          "",
+		"timezone":             "",
+		"starts_at":            "",
+		"expires_at":           "",
+		"feature_id":           "",
+		"feature_priority":     "",
+		"feature_depends_on":   []any{},
+		"feature_schedule":     "",
+		"feature_starts_at":    "",
+		"feature_expires_at":   "",
+		"feature_run_once_at":  "",
+		"feature_timezone":     "",
+		"direct_prompt":        "",
+		"agent":                "",
+		"model":                "",
+		"executor":             "",
+		"extensions":           []any{},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if capturedBody["status"] != "pending" {
+		t.Fatalf("body.status = %v, want pending", capturedBody["status"])
+	}
+	for _, key := range []string{"title", "depends_on", "tags", "feature_id", "feature_depends_on", "direct_prompt", "extensions"} {
+		if _, ok := capturedBody[key]; ok {
+			t.Errorf("body should omit empty default field %q, got %#v", key, capturedBody[key])
+		}
+	}
+}
+
+func TestBrainUpdate_HandlerSupportsExplicitDirectPromptClear(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":   "projects/test/task/abc.md",
+			"title":  "Original Task",
+			"status": "pending",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_update"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"path":                "projects/test/task/abc.md",
+		"clear_direct_prompt": true,
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	value, ok := capturedBody["direct_prompt"]
+	if !ok {
+		t.Fatalf("body should include direct_prompt for explicit clear, got %#v", capturedBody)
+	}
+	if value != "" {
+		t.Fatalf("body.direct_prompt = %#v, want empty string", value)
+	}
+	if !strings.Contains(result, "Direct Prompt: cleared") {
+		t.Fatalf("result should audit direct prompt clear, got: %s", result)
+	}
+}
+
+func TestBrainBulkUpdate_HandlerOmitsEmptyDefaultUpdateFields(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/entries/bulk-update" {
+			t.Errorf("path = %q, want /api/v1/entries/bulk-update", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"updated": 1,
+			"failed":  0,
+			"total":   1,
+			"dry_run": false,
+			"results": []map[string]any{{
+				"path":   "projects/test/task/abc.md",
+				"id":     "abc",
+				"title":  "Original Task",
+				"status": "ok",
+			}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"filter": map[string]any{"feature_id": "feature-a", "type": "task"},
+		"updates": map[string]any{
+			"status":             "pending",
+			"title":              "",
+			"depends_on":         []any{},
+			"tags":               []any{},
+			"feature_id":         "",
+			"feature_depends_on": []any{},
+			"direct_prompt":      "",
+			"agent":              "",
+			"model":              "",
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	updates, ok := capturedBody["updates"].(map[string]any)
+	if !ok {
+		t.Fatalf("captured updates = %#v, want object", capturedBody["updates"])
+	}
+	if updates["status"] != "pending" {
+		t.Fatalf("updates.status = %v, want pending", updates["status"])
+	}
+	for _, key := range []string{"title", "depends_on", "tags", "feature_id", "feature_depends_on", "direct_prompt", "agent", "model"} {
+		if _, ok := updates[key]; ok {
+			t.Errorf("updates should omit empty/default field %q, got %#v", key, updates[key])
+		}
+	}
+}
+
+func TestBrainBulkUpdate_HandlerReportsPartialFailureRecovery(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"updated": 1,
+			"failed":  1,
+			"total":   2,
+			"dry_run": false,
+			"results": []map[string]any{
+				{"path": "projects/test/task/ok.md", "id": "ok", "title": "Updated Task", "status": "ok"},
+				{"path": "projects/test/task/missing.md", "title": "Missing Task", "status": "error", "error": "entry not found"},
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	result, err := handler(context.Background(), map[string]any{
+		"entries": []any{
+			map[string]any{"path": "projects/test/task/ok.md", "updates": map[string]any{"status": "pending"}},
+			map[string]any{"path": "projects/test/task/missing.md", "updates": map[string]any{"status": "pending"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if !strings.Contains(result, "Partial failure") {
+		t.Fatalf("result should clearly report partial failure, got: %s", result)
+	}
+	if !strings.Contains(result, "successful updates were not rolled back") {
+		t.Fatalf("result should explain non-atomic recovery behavior, got: %s", result)
+	}
+	if !strings.Contains(result, "Re-run with `dry_run: true`") {
+		t.Fatalf("result should include safe recovery instructions, got: %s", result)
+	}
 }
 
 func TestBrainDelete_Handler(t *testing.T) {

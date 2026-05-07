@@ -710,6 +710,41 @@ func TestUpdate_Priority(t *testing.T) {
 	}
 }
 
+func TestUpdate_DirectPromptCanBeReplacedAndCleared(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:         "task",
+		Title:        "Prompt Update",
+		Project:      "prompt-proj",
+		DirectPrompt: "old prompt",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: strPtr("new prompt"),
+	})
+	if err != nil {
+		t.Fatalf("Update replace failed: %v", err)
+	}
+	if updated.DirectPrompt != "new prompt" {
+		t.Fatalf("DirectPrompt after replace = %q, want %q", updated.DirectPrompt, "new prompt")
+	}
+
+	cleared, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: strPtr(""),
+	})
+	if err != nil {
+		t.Fatalf("Update clear failed: %v", err)
+	}
+	if cleared.DirectPrompt != "" {
+		t.Fatalf("DirectPrompt after clear = %q, want empty", cleared.DirectPrompt)
+	}
+}
+
 // =============================================================================
 // Delete tests
 // =============================================================================
@@ -1822,6 +1857,80 @@ func TestBulkUpdate_FilterMode(t *testing.T) {
 	}
 	if result.Failed != 0 {
 		t.Errorf("expected 0 failed, got %d", result.Failed)
+	}
+}
+
+func TestBulkUpdate_StatusOnlyPreservesTaskMetadata(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	deps := []string{"Upstream Task"}
+	featureDeps := []string{"foundation"}
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:              "task",
+		Title:             "Preserve Metadata",
+		Content:           "Task content",
+		Project:           "preserve-proj",
+		Status:            "draft",
+		Priority:          "medium",
+		Tags:              []string{"alpha", "beta"},
+		DependsOn:         deps,
+		FeatureID:         "feature-a",
+		FeaturePriority:   "high",
+		FeatureDependsOn:  featureDeps,
+		DirectPrompt:      "keep this prompt",
+		Agent:             "tdd-dev",
+		Model:             "provider/model",
+		TargetWorkdir:     "/tmp/work",
+		GitBranch:         "feature/preserve",
+		MergeTargetBranch: "main",
+		MergePolicy:       "auto_merge",
+		MergeStrategy:     "squash",
+		ExecutionMode:     "worktree",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	result, err := svc.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: []types.BulkUpdateEntry{
+			{Path: saved.Path, Updates: types.UpdateEntryRequest{Status: strPtr("pending")}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BulkUpdate failed: %v", err)
+	}
+	if result.Updated != 1 || result.Failed != 0 {
+		t.Fatalf("BulkUpdate updated=%d failed=%d, want 1/0", result.Updated, result.Failed)
+	}
+
+	entry, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if entry.Status != "pending" {
+		t.Fatalf("Status = %q, want pending", entry.Status)
+	}
+	if entry.Title != "Preserve Metadata" {
+		t.Errorf("Title = %q, want Preserve Metadata", entry.Title)
+	}
+	if !containsString(entry.Tags, "alpha") || !containsString(entry.Tags, "beta") {
+		t.Errorf("Tags = %v, want to include alpha and beta", entry.Tags)
+	}
+	if got := strings.Join(entry.DependsOn, ","); got != "Upstream Task" {
+		t.Errorf("DependsOn = %v, want [Upstream Task]", entry.DependsOn)
+	}
+	if entry.FeatureID != "feature-a" || entry.FeaturePriority != "high" {
+		t.Errorf("Feature metadata = (%q, %q), want (feature-a, high)", entry.FeatureID, entry.FeaturePriority)
+	}
+	if got := strings.Join(entry.FeatureDependsOn, ","); got != "foundation" {
+		t.Errorf("FeatureDependsOn = %v, want [foundation]", entry.FeatureDependsOn)
+	}
+	if entry.DirectPrompt != "keep this prompt" || entry.Agent != "tdd-dev" || entry.Model != "provider/model" {
+		t.Errorf("Execution metadata = prompt %q agent %q model %q", entry.DirectPrompt, entry.Agent, entry.Model)
+	}
+	if entry.TargetWorkdir != "/tmp/work" || entry.GitBranch != "feature/preserve" || entry.MergeTargetBranch != "main" || entry.MergePolicy != "auto_merge" || entry.MergeStrategy != "squash" || entry.ExecutionMode != "worktree" {
+		t.Errorf("Git/merge metadata not preserved: %+v", entry)
 	}
 }
 

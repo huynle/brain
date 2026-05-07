@@ -815,11 +815,51 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
+	updatedRuntimeKeys := map[string]bool{}
+	if req.Sessions != nil {
+		updatedRuntimeKeys["sessions"] = true
+	}
+	if req.NextRun != nil {
+		updatedRuntimeKeys["next_run"] = true
+	}
+	if req.Schedule != nil {
+		updatedRuntimeKeys["schedule"] = true
+	}
+	if req.ScheduleEnabled != nil {
+		updatedRuntimeKeys["schedule_enabled"] = true
+	}
+	if req.CompleteOnIdle != nil {
+		updatedRuntimeKeys["complete_on_idle"] = true
+	}
+	if req.DirectPrompt != nil {
+		updatedRuntimeKeys["direct_prompt"] = true
+	}
+	if req.Runs != nil {
+		updatedRuntimeKeys["runs"] = true
+	}
+	if req.MaxRuns != nil {
+		updatedRuntimeKeys["max_runs"] = true
+	}
+	if req.StartsAt != nil {
+		updatedRuntimeKeys["starts_at"] = true
+	}
+	if req.ExpiresAt != nil {
+		updatedRuntimeKeys["expires_at"] = true
+	}
+	if req.RunOnceAt != nil {
+		updatedRuntimeKeys["run_once_at"] = true
+	}
+	if req.Timezone != nil {
+		updatedRuntimeKeys["timezone"] = true
+	}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
 			preservedFields = make(map[string]interface{})
 			for _, key := range runtimeKeys {
+				if updatedRuntimeKeys[key] {
+					continue
+				}
 				if val, ok := existingMeta[key]; ok {
 					preservedFields[key] = val
 				}

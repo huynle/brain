@@ -109,6 +109,55 @@ func TestResolveDep(t *testing.T) {
 	}
 }
 
+func TestResolveDependencies_UnresolvedDependencyIsNotReady(t *testing.T) {
+	tasks := []types.BrainEntry{
+		makeTask("depender", "Dependent Task", "pending", "high", []string{"Future Task"}),
+	}
+
+	result := ResolveDependencies(tasks)
+	if result.Stats.Ready != 0 {
+		t.Fatalf("ready count = %d, want 0", result.Stats.Ready)
+	}
+	if result.Stats.Waiting != 1 {
+		t.Fatalf("waiting count = %d, want 1", result.Stats.Waiting)
+	}
+	if len(result.Tasks) != 1 {
+		t.Fatalf("task count = %d, want 1", len(result.Tasks))
+	}
+	task := result.Tasks[0]
+	if task.Classification != "waiting" {
+		t.Fatalf("classification = %q, want waiting", task.Classification)
+	}
+	if len(task.UnresolvedDeps) != 1 || task.UnresolvedDeps[0] != "Future Task" {
+		t.Fatalf("unresolved_deps = %v, want [Future Task]", task.UnresolvedDeps)
+	}
+}
+
+func TestResolveDependencies_TitleDependencyResolvesAfterReferencedTaskExists(t *testing.T) {
+	tasks := []types.BrainEntry{
+		makeTask("depender", "Dependent Task", "pending", "high", []string{"Future Task"}),
+		makeTask("future", "Future Task", "pending", "medium", nil),
+	}
+
+	result := ResolveDependencies(tasks)
+	var dependent types.ResolvedTask
+	for _, task := range result.Tasks {
+		if task.ID == "depender" {
+			dependent = task
+			break
+		}
+	}
+	if len(dependent.UnresolvedDeps) != 0 {
+		t.Fatalf("unresolved_deps = %v, want empty", dependent.UnresolvedDeps)
+	}
+	if len(dependent.ResolvedDeps) != 1 || dependent.ResolvedDeps[0] != "future" {
+		t.Fatalf("resolved_deps = %v, want [future]", dependent.ResolvedDeps)
+	}
+	if dependent.Classification != "waiting" {
+		t.Fatalf("classification = %q, want waiting while Future Task is pending", dependent.Classification)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // BuildAdjacencyList
 // ---------------------------------------------------------------------------
@@ -430,8 +479,8 @@ func TestResolveDependencies_UnresolvedDeps(t *testing.T) {
 	if result.Tasks[0].UnresolvedDeps[0] != "nonexistent" {
 		t.Errorf("unresolved dep = %q, want 'nonexistent'", result.Tasks[0].UnresolvedDeps[0])
 	}
-	if result.Tasks[0].Classification != "ready" {
-		t.Errorf("classification = %q, want 'ready'", result.Tasks[0].Classification)
+	if result.Tasks[0].Classification != "waiting" {
+		t.Errorf("classification = %q, want 'waiting'", result.Tasks[0].Classification)
 	}
 }
 

@@ -283,6 +283,9 @@ func ResolveDependencies(tasks []types.BrainEntry) *types.TaskListResponse {
 
 		// Classify
 		classification, blockedBy, waitingOn := ClassifyTask(task, resolvedDeps, effectiveStatus, inCycle)
+		if classification == "ready" && len(unresolvedDeps) > 0 {
+			classification = "waiting"
+		}
 
 		// Determine blocked_by_reason
 		var blockedByReason string

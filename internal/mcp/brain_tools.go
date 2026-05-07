@@ -471,6 +471,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
 				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
+				"clear_direct_prompt":  {Type: "boolean", Description: "Explicitly clear the direct prompt override"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
 				"executor":             {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi')"},
@@ -481,44 +482,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
 
-		body := map[string]any{
-			"status":               args["status"],
-			"title":                args["title"],
-			"append":               args["append"],
-			"note":                 args["note"],
-			"depends_on":           args["depends_on"],
-			"tags":                 args["tags"],
-			"priority":             args["priority"],
-			"target_workdir":       args["target_workdir"],
-			"git_branch":           args["git_branch"],
-			"merge_target_branch":  args["merge_target_branch"],
-			"merge_policy":         args["merge_policy"],
-			"merge_strategy":       args["merge_strategy"],
-			"remote_branch_policy": args["remote_branch_policy"],
-			"open_pr_before_merge": args["open_pr_before_merge"],
-			"execution_mode":       args["execution_mode"],
-			"complete_on_idle":     args["complete_on_idle"],
-			"schedule":             args["schedule"],
-			"schedule_enabled":     args["schedule_enabled"],
-			"max_runs":             args["max_runs"],
-			"run_once_at":          args["run_once_at"],
-			"timezone":             args["timezone"],
-			"starts_at":            args["starts_at"],
-			"expires_at":           args["expires_at"],
-			"feature_id":           args["feature_id"],
-			"feature_priority":     args["feature_priority"],
-			"feature_depends_on":   args["feature_depends_on"],
-			"feature_schedule":     args["feature_schedule"],
-			"feature_starts_at":    args["feature_starts_at"],
-			"feature_expires_at":   args["feature_expires_at"],
-			"feature_run_once_at":  args["feature_run_once_at"],
-			"feature_timezone":     args["feature_timezone"],
-			"direct_prompt":        args["direct_prompt"],
-			"agent":                args["agent"],
-			"model":                args["model"],
-			"executor":             args["executor"],
-			"extensions":           args["extensions"],
-		}
+		body := updateArgsBody(args)
 
 		var resp struct {
 			Path   string `json:"path"`
@@ -531,10 +495,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 
 		var changes []string
 		if v := StringArg(args, "status", ""); v != "" {
-			changes = append(changes, fmt.Sprintf("Status: -> %s", v))
+			changes = append(changes, fmt.Sprintf("Status: %s", v))
 		}
 		if v := StringArg(args, "title", ""); v != "" {
-			changes = append(changes, fmt.Sprintf("Title: -> %q", v))
+			changes = append(changes, fmt.Sprintf("Title: %q", v))
 		}
 		if v := StringArg(args, "note", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Note: %q", v))
@@ -627,7 +591,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		if v := StringArg(args, "feature_timezone", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Timezone: %s", v))
 		}
-		if v := StringArg(args, "direct_prompt", ""); v != "" {
+		if BoolArg(args, "clear_direct_prompt", false) {
+			changes = append(changes, "Direct Prompt: cleared")
+		} else if v := StringArg(args, "direct_prompt", ""); v != "" {
 			changes = append(changes, "Direct Prompt: set")
 		}
 		if v := StringArg(args, "agent", ""); v != "" {
@@ -645,6 +611,44 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
 			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
 	})
+}
+
+func updateArgsBody(args map[string]any) map[string]any {
+	body := make(map[string]any)
+	stringFields := []string{
+		"status", "title", "append", "note", "priority", "target_workdir",
+		"git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
+		"remote_branch_policy", "execution_mode", "schedule", "run_once_at",
+		"timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
+		"feature_schedule", "feature_starts_at", "feature_expires_at",
+		"feature_run_once_at", "feature_timezone", "direct_prompt", "agent", "model",
+		"executor",
+	}
+	for _, field := range stringFields {
+		if v := StringArg(args, field, ""); v != "" {
+			body[field] = v
+		}
+	}
+	if BoolArg(args, "clear_direct_prompt", false) {
+		body["direct_prompt"] = ""
+	}
+
+	for _, field := range []string{"depends_on", "tags", "feature_depends_on", "extensions"} {
+		if values := StringSliceArg(args, field); len(values) > 0 {
+			body[field] = values
+		}
+	}
+
+	for _, field := range []string{"open_pr_before_merge", "complete_on_idle", "schedule_enabled"} {
+		if _, ok := args[field]; ok {
+			body[field] = BoolArg(args, field, false)
+		}
+	}
+	if _, ok := args["max_runs"]; ok {
+		body["max_runs"] = args["max_runs"]
+	}
+
+	return body
 }
 
 // =============================================================================
@@ -698,10 +702,10 @@ Examples:
 		body := make(map[string]any)
 		if hasFilter {
 			body["filter"] = args["filter"]
-			body["updates"] = args["updates"]
+			body["updates"] = sanitizeBulkUpdateFields(args["updates"])
 		}
 		if hasEntries {
-			body["entries"] = args["entries"]
+			body["entries"] = sanitizeBulkUpdateEntries(args["entries"])
 		}
 		body["dry_run"] = BoolArg(args, "dry_run", false)
 
@@ -736,6 +740,14 @@ Examples:
 			fmt.Sprintf("- Failed: %d", resp.Failed),
 			"",
 		}
+		if resp.Failed > 0 && !resp.DryRun {
+			lines = append(lines,
+				"### Partial failure",
+				"Some entries failed and successful updates were not rolled back.",
+				"Safe recovery: inspect the error rows below, fix invalid paths or update fields, then Re-run with `dry_run: true` before applying the corrected bulk update.",
+				"",
+			)
+		}
 
 		if len(resp.Results) > 0 {
 			lines = append(lines, "### Results")
@@ -750,6 +762,38 @@ Examples:
 
 		return strings.Join(lines, "\n"), nil
 	})
+}
+
+func sanitizeBulkUpdateFields(raw any) map[string]any {
+	updates, ok := raw.(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return updateArgsBody(updates)
+}
+
+func sanitizeBulkUpdateEntries(raw any) any {
+	entries, ok := raw.([]any)
+	if !ok {
+		return raw
+	}
+	sanitized := make([]any, 0, len(entries))
+	for _, item := range entries {
+		entry, ok := item.(map[string]any)
+		if !ok {
+			sanitized = append(sanitized, item)
+			continue
+		}
+		copyEntry := make(map[string]any, len(entry))
+		for key, value := range entry {
+			copyEntry[key] = value
+		}
+		if updates, ok := entry["updates"]; ok {
+			copyEntry["updates"] = sanitizeBulkUpdateFields(updates)
+		}
+		sanitized = append(sanitized, copyEntry)
+	}
+	return sanitized
 }
 
 // =============================================================================

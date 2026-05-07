@@ -60,6 +60,25 @@ type EntryMetaRow struct {
 	CreatedAt    string
 }
 
+// EntryEmbeddingRow represents one embedded chunk for a note.
+type EntryEmbeddingRow struct {
+	ID          int64
+	Path        string
+	ChunkIndex  int
+	ContentHash string
+	Model       string
+	Dimensions  int
+	Embedding   []byte
+	CreatedAt   string
+	UpdatedAt   string
+}
+
+// EmbeddingCandidate identifies a note that needs embeddings for a model.
+type EmbeddingCandidate struct {
+	Path        string
+	ContentHash string
+}
+
 // SearchOptions configures search behavior.
 type SearchOptions struct {
 	Strategy   string // "fts", "exact", "like" (default: "fts")

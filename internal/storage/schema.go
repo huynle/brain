@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 7
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -160,6 +160,20 @@ CREATE TABLE IF NOT EXISTS runners (
   last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
 );`
 
+const createEntryEmbeddingsTable = `
+CREATE TABLE IF NOT EXISTS entry_embeddings (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  path TEXT NOT NULL REFERENCES notes(path) ON DELETE CASCADE,
+  chunk_index INTEGER NOT NULL,
+  content_hash TEXT NOT NULL,
+  model TEXT NOT NULL,
+  dimensions INTEGER NOT NULL,
+  embedding BLOB NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(path, chunk_index, model)
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -181,6 +195,10 @@ var createIndexes = []string{
 	// Runner indexes
 	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
 	"CREATE INDEX IF NOT EXISTS idx_runners_last_heartbeat ON runners(last_heartbeat);",
+	// Embedding indexes
+	"CREATE INDEX IF NOT EXISTS idx_entry_embeddings_path ON entry_embeddings(path);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_embeddings_model ON entry_embeddings(model);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_embeddings_content_hash ON entry_embeddings(content_hash);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -322,6 +340,15 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 7 {
+		// v7: add per-entry semantic embedding chunks.
+		if _, err := db.Exec(createEntryEmbeddingsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v7 (entry_embeddings table): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -361,6 +388,7 @@ func InitSchema(db *sql.DB) error {
 		createNotesTable,
 		createLinksTable,
 		createTagsTable,
+		createEntryEmbeddingsTable,
 		createEntryMetaTable,
 		createGeneratedTasksTable,
 		createSchemaVersionTable,

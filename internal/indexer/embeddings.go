@@ -32,6 +32,9 @@ func (idx *Indexer) BackfillMissingOrStaleEmbeddings(ctx context.Context) (int, 
 			continue
 		}
 		if err := idx.indexEmbeddings(ctx, pf); err != nil {
+			if isEmbeddingProviderError(err) {
+				continue
+			}
 			errs = append(errs, fmt.Errorf("backfill embedding for %q: %w", candidate.Path, err))
 			continue
 		}
@@ -91,4 +94,9 @@ func existingEmbeddingIsCurrent(existing *storage.EntryEmbeddingRow, contentHash
 	}
 	vector, err := embeddings.DecodeFloat32Vector(existing.Embedding)
 	return err == nil && len(vector) == existing.Dimensions
+}
+
+func isEmbeddingProviderError(err error) bool {
+	var providerErr *embeddings.ProviderError
+	return errors.As(err, &providerErr)
 }

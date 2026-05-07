@@ -1013,6 +1013,23 @@ func TestSearch_SemanticRequiresConfiguredEmbeddings(t *testing.T) {
 	}
 }
 
+func TestSearch_SemanticReturnsUsefulProviderError(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "model unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(provider.Close)
+	svc.config.Embeddings = config.EmbeddingConfig{Enabled: true, Provider: "ollama", Model: "test-model", BaseURL: provider.URL}
+
+	_, err := svc.Search(context.Background(), types.SearchRequest{Query: "semantic query", Strategy: "semantic"})
+	if err == nil {
+		t.Fatal("expected semantic search to return provider error")
+	}
+	if !strings.Contains(err.Error(), "semantic search embed query") || !strings.Contains(err.Error(), "model unavailable") {
+		t.Fatalf("semantic search error = %v, want useful provider context", err)
+	}
+}
+
 // =============================================================================
 // Inject tests
 // =============================================================================

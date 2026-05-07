@@ -110,7 +110,7 @@ func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 			}
 		}
 
-		if err := idx.indexEmbeddings(ctx, pf); err != nil {
+		if err := idx.indexEmbeddings(ctx, pf); err != nil && !isEmbeddingProviderError(err) {
 			return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
 		}
 	}
@@ -187,7 +187,7 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 			if err := idx.storage.SetLinks(ctx, pf.Path, toLinkInputs(pf.Links)); err != nil {
 				return nil, fmt.Errorf("set links for %q: %w", pf.Path, err)
 			}
-			if err := idx.indexEmbeddings(ctx, pf); err != nil {
+			if err := idx.indexEmbeddings(ctx, pf); err != nil && !isEmbeddingProviderError(err) {
 				return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
 			}
 			added++
@@ -203,7 +203,7 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 			if err := idx.storage.SetLinks(ctx, pf.Path, toLinkInputs(pf.Links)); err != nil {
 				return nil, fmt.Errorf("set links for %q: %w", pf.Path, err)
 			}
-			if err := idx.indexEmbeddings(ctx, pf); err != nil {
+			if err := idx.indexEmbeddings(ctx, pf); err != nil && !isEmbeddingProviderError(err) {
 				return nil, fmt.Errorf("index embeddings for %q: %w", pf.Path, err)
 			}
 			updated++
@@ -267,7 +267,7 @@ func (idx *Indexer) IndexFile(relativePath string) error {
 	if err := idx.storage.SetLinks(ctx, relativePath, toLinkInputs(pf.Links)); err != nil {
 		return fmt.Errorf("set links for %q: %w", relativePath, err)
 	}
-	if err := idx.indexEmbeddings(ctx, pf); err != nil {
+	if err := idx.indexEmbeddings(ctx, pf); err != nil && !isEmbeddingProviderError(err) {
 		return fmt.Errorf("index embeddings for %q: %w", relativePath, err)
 	}
 

@@ -319,17 +319,44 @@ func TestIndexFileReembedsWhenModelDimensionsMismatch(t *testing.T) {
 	}
 }
 
-func TestIndexFileReturnsEmbeddingFailureWhenConfigured(t *testing.T) {
+func TestIndexFileContinuesWhenEmbeddingProviderUnavailable(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
 		"note1.md": noteContent("Note One"),
 	})
-	wantErr := errors.New("provider unavailable")
+	wantErr := &embeddings.ProviderError{Provider: "test", Err: errors.New("provider unavailable")}
 	idx := NewIndexer(brainDir, store, WithEmbeddings(&recordingEmbedder{err: wantErr}, "test-model", 16))
 
-	err := idx.IndexFile("note1.md")
-	if !errors.Is(err, wantErr) {
-		t.Fatalf("IndexFile error = %v, want %v", err, wantErr)
+	if err := idx.IndexFile("note1.md"); err != nil {
+		t.Fatalf("IndexFile should continue when embedding provider fails, got %v", err)
+	}
+	note, err := store.GetNoteByPath(context.Background(), "note1.md")
+	if err != nil {
+		t.Fatalf("GetNoteByPath failed: %v", err)
+	}
+	if note == nil {
+		t.Fatal("note should still be indexed when embedding provider fails")
+	}
+}
+
+func TestBackfillMissingOrStaleEmbeddingsContinuesWhenProviderUnavailable(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	idx := NewIndexer(brainDir, store)
+	if _, err := idx.IndexChanged(); err != nil {
+		t.Fatalf("IndexChanged failed: %v", err)
+	}
+
+	wantErr := &embeddings.ProviderError{Provider: "test", Err: errors.New("provider unavailable")}
+	idx = NewIndexer(brainDir, store, WithEmbeddings(&recordingEmbedder{err: wantErr}, "test-model", 16))
+	count, err := idx.BackfillMissingOrStaleEmbeddings(context.Background())
+	if err != nil {
+		t.Fatalf("BackfillMissingOrStaleEmbeddings should continue when provider fails, got %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("backfilled count = %d, want 0 when provider is unavailable", count)
 	}
 }
 

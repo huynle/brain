@@ -91,6 +91,7 @@ var builtinCommands = map[string]bool{
 	"list":          true,
 	"automation":    true,
 	"migrate":       true,
+	"embeddings":    true,
 	"help":          true,
 }
 
@@ -267,6 +268,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "migrate"}, nil
 		}
 		return parseMigrateCommand(cmdArgs)
+	case "embeddings":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "embeddings"}, nil
+		}
+		return parseEmbeddingsCommand(cmdArgs)
 	case "run", "runner":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
@@ -512,6 +518,7 @@ func defaultConfig() *UnifiedConfig {
 		}
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
+		cfg.Server.Embedding = ucfg.Server.Embedding
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -591,6 +598,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
+	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 
@@ -812,10 +820,31 @@ func parseDoctorCommand(args []string) (Command, error) {
 // parseConfigCommand creates a ConfigCommand from args.
 func parseConfigCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
+	flags := &commands.ConfigFlags{}
+	subcommand := ""
+
+	for _, arg := range args {
+		switch arg {
+		case "--print":
+			flags.Print = true
+		case "--force", "-f":
+			flags.Force = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, fmt.Errorf("unknown config flag: %s", arg)
+			}
+			if subcommand != "" {
+				return nil, fmt.Errorf("unexpected config argument: %s", arg)
+			}
+			subcommand = arg
+		}
+	}
 
 	return &commands.ConfigCommand{
-		Config: convertToCommandsConfig(cfg),
-		Out:    nil, // Will use os.Stdout in Execute if nil
+		Config:     convertToCommandsConfig(cfg),
+		Subcommand: subcommand,
+		Flags:      flags,
+		Out:        nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }
 
@@ -1094,5 +1123,40 @@ func parseAutomationCommand(args []string) (Command, error) {
 		IDOrName:   idOrName,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsAutomationFlags(flags),
+	}, nil
+}
+
+// parseEmbeddingsCommand creates an EmbeddingsCommand from args.
+// Usage: brain embeddings <subcommand> [flags]
+func parseEmbeddingsCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		cfg := defaultConfig()
+		return &commands.EmbeddingsCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      &commands.EmbeddingsFlags{},
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "embeddings"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "embeddings " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseEmbeddingsFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.EmbeddingsCommand{
+		Subcommand: subcommand,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsEmbeddingsFlags(flags),
 	}, nil
 }

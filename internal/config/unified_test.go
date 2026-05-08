@@ -35,6 +35,15 @@ func TestDefaultConfig(t *testing.T) {
 	}
 
 	// Runner defaults
+	if cfg.Runner.BrainAPIURL != "http://localhost:3333" {
+		t.Errorf("Runner.BrainAPIURL = %q, want %q", cfg.Runner.BrainAPIURL, "http://localhost:3333")
+	}
+	if cfg.Runner.APIToken != "" {
+		t.Errorf("Runner.APIToken = %q, want empty", cfg.Runner.APIToken)
+	}
+	if cfg.Runner.APITokenEnv != "BRAIN_API_TOKEN" {
+		t.Errorf("Runner.APITokenEnv = %q, want %q", cfg.Runner.APITokenEnv, "BRAIN_API_TOKEN")
+	}
 	if cfg.Runner.MaxParallel != 3 {
 		t.Errorf("Runner.MaxParallel = %d, want 3", cfg.Runner.MaxParallel)
 	}
@@ -1652,6 +1661,30 @@ func TestDefaultConfigIncludesEmptyTaskDefaults(t *testing.T) {
 	}
 	if td.TargetWorkdir != "" {
 		t.Errorf("defaultConfig() TaskDefaults.TargetWorkdir = %q, want empty", td.TargetWorkdir)
+	}
+}
+
+func TestDefaultConfigIncludesOpenAIEmbeddingDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	emb := cfg.Server.Embedding
+
+	if emb.Enabled {
+		t.Error("default embedding enabled = true, want false")
+	}
+	if emb.Provider != "openai" {
+		t.Errorf("default embedding provider = %q, want %q", emb.Provider, "openai")
+	}
+	if emb.BaseURL != "https://api.openai.com/v1" {
+		t.Errorf("default embedding base_url = %q, want OpenAI API", emb.BaseURL)
+	}
+	if emb.APIKeyEnv != "OPENAI_API_KEY" {
+		t.Errorf("default embedding api_key_env = %q, want OPENAI_API_KEY", emb.APIKeyEnv)
+	}
+	if emb.Model != "text-embedding-3-small" {
+		t.Errorf("default embedding model = %q, want text-embedding-3-small", emb.Model)
+	}
+	if emb.Dim != 1536 {
+		t.Errorf("default embedding dim = %d, want 1536", emb.Dim)
 	}
 }
 

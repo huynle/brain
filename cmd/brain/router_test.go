@@ -98,6 +98,46 @@ func TestRoute_ConfigCommand_ReturnsConfigCommand(t *testing.T) {
 	}
 }
 
+func TestRoute_ConfigCommand_ParsesConfigSubcommands(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		subcommand string
+		wantPrint  bool
+		wantForce  bool
+	}{
+		{name: "defaults", args: []string{"config", "defaults"}, subcommand: "defaults"},
+		{name: "init", args: []string{"config", "init"}, subcommand: "init"},
+		{name: "init print", args: []string{"config", "init", "--print"}, subcommand: "init", wantPrint: true},
+		{name: "init force", args: []string{"config", "init", "--force"}, subcommand: "init", wantForce: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			configCmd, ok := cmd.(*commands.ConfigCommand)
+			if !ok {
+				t.Fatalf("expected *commands.ConfigCommand, got %T", cmd)
+			}
+			if configCmd.Subcommand != tt.subcommand {
+				t.Fatalf("Subcommand = %q, want %q", configCmd.Subcommand, tt.subcommand)
+			}
+			if configCmd.Flags == nil {
+				t.Fatal("expected config flags")
+			}
+			if configCmd.Flags.Print != tt.wantPrint {
+				t.Fatalf("Print = %v, want %v", configCmd.Flags.Print, tt.wantPrint)
+			}
+			if configCmd.Flags.Force != tt.wantForce {
+				t.Fatalf("Force = %v, want %v", configCmd.Flags.Force, tt.wantForce)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test: Unknown command routes to help
 // ---------------------------------------------------------------------------

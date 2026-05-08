@@ -331,6 +331,77 @@ func TestLoadConfig_GitTokenEnvFallback(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_APITokenEnvFallback(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `api_token_env: "CUSTOM_BRAIN_API_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("CUSTOM_BRAIN_API_TOKEN", "fallback-api-token")
+	os.Unsetenv("BRAIN_API_TOKEN")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.APIToken != "fallback-api-token" {
+		t.Errorf("APIToken = %q, want fallback token from CUSTOM_BRAIN_API_TOKEN", cfg.APIToken)
+	}
+	if cfg.APITokenEnv != "CUSTOM_BRAIN_API_TOKEN" {
+		t.Errorf("APITokenEnv = %q, want %q", cfg.APITokenEnv, "CUSTOM_BRAIN_API_TOKEN")
+	}
+}
+
+func TestLoadConfig_ExplicitAPITokenPrecedenceOverTokenEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `api_token: "explicit-file-token"
+api_token_env: "CUSTOM_BRAIN_API_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("CUSTOM_BRAIN_API_TOKEN", "fallback-api-token")
+	os.Unsetenv("BRAIN_API_TOKEN")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.APIToken != "explicit-file-token" {
+		t.Errorf("APIToken = %q, want explicit file token", cfg.APIToken)
+	}
+}
+
+func TestLoadConfig_EnvAPITokenPrecedenceOverTokenEnv(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `api_token: "explicit-file-token"
+api_token_env: "CUSTOM_BRAIN_API_TOKEN"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("BRAIN_API_TOKEN", "explicit-env-token")
+	t.Setenv("CUSTOM_BRAIN_API_TOKEN", "fallback-api-token")
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.APIToken != "explicit-env-token" {
+		t.Errorf("APIToken = %q, want explicit env token", cfg.APIToken)
+	}
+}
+
 func TestLoadConfig_ExplicitGitTokenPrecedenceOverTokenEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")

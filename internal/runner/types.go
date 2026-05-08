@@ -12,6 +12,7 @@ import "time"
 type RunnerConfig struct {
 	BrainAPIURL               string             `yaml:"brain_api_url" json:"brain_api_url"`
 	APIToken                  string             `yaml:"api_token" json:"api_token"`
+	APITokenEnv               string             `yaml:"api_token_env" json:"api_token_env"`
 	PollInterval              int                `yaml:"poll_interval" json:"poll_interval"`           // seconds
 	TaskPollInterval          int                `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
 	MaxParallel               int                `yaml:"max_parallel" json:"max_parallel"`

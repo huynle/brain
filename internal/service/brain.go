@@ -25,20 +25,23 @@ var _ api.BrainService = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
-	config  *config.Config
-	storage *storage.StorageLayer
-	indexer *indexer.Indexer
-	bus     events.Bus
+	config          *config.Config
+	storage         *storage.StorageLayer
+	indexer         *indexer.Indexer
+	bus             events.Bus
+	embeddingClient EmbeddingClient
 }
 
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
+// The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
-		config:  cfg,
-		storage: store,
-		indexer: idx,
-		bus:     bus,
+		config:          cfg,
+		storage:         store,
+		indexer:         idx,
+		bus:             bus,
+		embeddingClient: embeddingClient,
 	}
 }
 
@@ -1512,7 +1515,15 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 // Search
 // =============================================================================
 
-// Search performs full-text search across brain entries.
+// Search performs search across brain entries with support for FTS, semantic, and hybrid strategies.
+//
+// Strategy behavior:
+//   - "fts" / empty → existing FTS5 behavior
+//   - "semantic" → use query embedding + SearchByEmbedding when embeddings enabled, falls back to FTS
+//   - "hybrid" → run both FTS and embedding search and merge results, falls back to FTS if embeddings unavailable
+//
+// Fallback semantics: on any embedding error (client or storage), logs the error and returns FTS results
+// instead of failing the request. This ensures the API remains responsive even when embeddings are disabled.
 func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	if req.Query == "" {
 		return &types.SearchResponse{
@@ -1521,13 +1532,20 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		}, nil
 	}
 
+	// Determine strategy: default to "fts" if not specified
+	strategy := req.Strategy
+	if strategy == "" {
+		strategy = "fts"
+	}
+
+	// Build filter options shared across all strategies
 	opts := &storage.SearchOptions{
 		Type:      req.Type,
 		Status:    req.Status,
 		ProjectID: req.Project,
 		FeatureID: req.FeatureID,
 		Tags:      req.Tags,
-		Strategy:  req.Strategy,
+		Strategy:  "fts", // Always use FTS for the underlying storage call
 		Priority:  req.Priority,
 	}
 	if req.Limit != nil {
@@ -1537,11 +1555,161 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		opts.PathPrefix = "global/"
 	}
 
+	switch strategy {
+	case "semantic":
+		return s.searchSemantic(ctx, req, opts)
+	case "hybrid":
+		return s.searchHybrid(ctx, req, opts)
+	default:
+		// "fts" or unknown → use existing FTS behavior
+		return s.searchFTS(ctx, req, opts)
+	}
+}
+
+// searchFTS performs standard FTS5 full-text search.
+func (s *BrainServiceImpl) searchFTS(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("search notes: %w", err)
 	}
 
+	return s.buildSearchResponse(rows), nil
+}
+
+// searchSemantic performs embedding-based semantic search.
+// Falls back to FTS if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchSemantic(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("semantic search requested but embedding client is nil, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options from filter options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	rows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	return s.buildSearchResponse(rows), nil
+}
+
+// searchHybrid combines FTS and semantic search results.
+// Falls back to FTS-only if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Always run FTS search first
+	ftsRows, err := s.storage.SearchNotes(ctx, req.Query, opts)
+	if err != nil {
+		return nil, fmt.Errorf("FTS search failed in hybrid mode: %w", err)
+	}
+
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("hybrid search requested but embedding client is nil, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query in hybrid mode, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	embRows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	// Merge results: deduplicate by path, FTS results take precedence for ordering
+	merged := s.mergeSearchResults(ftsRows, embRows, opts.Limit)
+
+	return s.buildSearchResponse(merged), nil
+}
+
+// mergeSearchResults combines FTS and embedding search results, deduplicating by path.
+// FTS results appear first (to preserve BM25 ranking), followed by unique embedding results.
+// The final result is limited to the specified limit.
+func (s *BrainServiceImpl) mergeSearchResults(ftsRows, embRows []*storage.NoteRow, limit int) []*storage.NoteRow {
+	if limit <= 0 {
+		limit = 20 // default limit
+	}
+
+	// Track seen paths to deduplicate
+	seen := make(map[string]bool)
+	var merged []*storage.NoteRow
+
+	// Add FTS results first
+	for _, row := range ftsRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	// Add unique embedding results
+	for _, row := range embRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	return merged
+}
+
+// buildSearchResponse converts NoteRow slice to SearchResponse.
+func (s *BrainServiceImpl) buildSearchResponse(rows []*storage.NoteRow) *types.SearchResponse {
 	results := make([]types.SearchResult, 0, len(rows))
 	for _, row := range rows {
 		snippet := ""
@@ -1561,7 +1729,7 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 	return &types.SearchResponse{
 		Results: results,
 		Total:   len(results),
-	}, nil
+	}
 }
 
 // =============================================================================

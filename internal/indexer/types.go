@@ -27,3 +27,19 @@ type IndexHealth struct {
 	TotalIndexed int
 	StaleCount   int
 }
+
+// EmbeddingIndexResult holds statistics from an embedding indexing operation.
+type EmbeddingIndexResult struct {
+	Processed int           // Notes successfully processed
+	Skipped   int           // Notes skipped (empty body)
+	Failed    int           // Notes that failed to generate embeddings
+	Duration  time.Duration // Total time taken
+}
+
+// EmbeddingHealth reports the health of the embedding index.
+type EmbeddingHealth struct {
+	TotalNotes             int // Total notes in database
+	NotesWithEmbeddings    int // Notes that have embeddings
+	NotesWithoutEmbeddings int // Notes without any embeddings
+	StaleEmbeddings        int // Notes with outdated embeddings
+}

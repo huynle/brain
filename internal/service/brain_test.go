@@ -42,7 +42,7 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
-	svc := NewBrainService(cfg, store, idx, nil)
+	svc := NewBrainService(cfg, store, idx, nil, nil)
 	return svc, store, brainDir
 }
 
@@ -67,7 +67,7 @@ func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.Stora
 	bus := events.NewMemoryBus()
 	t.Cleanup(func() { bus.Close() })
 
-	svc := NewBrainService(cfg, store, idx, bus)
+	svc := NewBrainService(cfg, store, idx, bus, nil)
 	return svc, store, brainDir, bus
 }
 

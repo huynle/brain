@@ -241,6 +241,7 @@ type UnifiedConfig struct {
 		PIDFile      string
 		LogFile      string
 		TaskDefaults uconfig.TaskDefaultsConfig
+		Embedding    uconfig.EmbeddingConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -1141,4 +1142,49 @@ func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListF
 		f.Output.Delimiter = "\n"
 	}
 	return f
+}
+
+// EmbeddingsFlags for embeddings command
+type EmbeddingsFlags struct {
+	Project string
+	Path    string
+	DryRun  bool
+	Verbose bool
+}
+
+// ParseEmbeddingsFlags parses embeddings command flags from args.
+func ParseEmbeddingsFlags(args []string) (*EmbeddingsFlags, error) {
+	flags := &EmbeddingsFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		case "--path":
+			if i+1 < len(args) {
+				flags.Path = args[i+1]
+				i++
+			}
+		case "--dry-run":
+			flags.DryRun = true
+		case "-v", "--verbose":
+			flags.Verbose = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsEmbeddingsFlags converts main.EmbeddingsFlags to commands.EmbeddingsFlags.
+func convertToCommandsEmbeddingsFlags(flags *EmbeddingsFlags) *commands.EmbeddingsFlags {
+	return &commands.EmbeddingsFlags{
+		Project: flags.Project,
+		Path:    flags.Path,
+		DryRun:  flags.DryRun,
+		Verbose: flags.Verbose,
+	}
 }

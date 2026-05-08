@@ -122,6 +122,11 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	// Resolve hook timeout: legacy HookTimeout > env > default (30s)
 	resolvedHookTimeout := getEnvIntOrDefault("RUNNER_HOOK_TIMEOUT",
 		firstNonZero(fileCfg.HookTimeout, 30))
+	resolvedAPITokenEnv := firstNonEmpty(fileCfg.APITokenEnv, "BRAIN_API_TOKEN")
+	resolvedAPIToken := getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken)
+	if resolvedAPIToken == "" && resolvedAPITokenEnv != "" {
+		resolvedAPIToken = os.Getenv(resolvedAPITokenEnv)
+	}
 	resolvedGitTokenEnv := getEnvOrDefault("RUNNER_GIT_TOKEN_ENV", firstNonEmpty(fileCfg.GitTokenEnv, "GITHUB_TOKEN"))
 	resolvedGitToken := getEnvOrDefault("RUNNER_GIT_TOKEN", fileCfg.GitToken)
 	if resolvedGitToken == "" && resolvedGitTokenEnv != "" {
@@ -140,7 +145,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	cfg := RunnerConfig{
 		BrainAPIURL:               getEnvOrDefault("BRAIN_API_URL", firstNonEmpty(fileCfg.BrainAPIURL, "http://localhost:3333")),
-		APIToken:                  getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken),
+		APIToken:                  resolvedAPIToken,
+		APITokenEnv:               resolvedAPITokenEnv,
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
 		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),

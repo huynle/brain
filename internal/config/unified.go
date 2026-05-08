@@ -56,6 +56,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -73,6 +74,18 @@ type UnifiedConfig struct {
 }
 
 // ServerConfig holds API server configuration.
+// EmbeddingConfig holds embedding service configuration for semantic search.
+type EmbeddingConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
+	Dim       int    `yaml:"dim"`
+	BatchSize int    `yaml:"batch_size"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+}
+
 type ServerConfig struct {
 	Port         int                `yaml:"port"`
 	Host         string             `yaml:"host"`
@@ -86,10 +99,14 @@ type ServerConfig struct {
 	PIDFile      string             `yaml:"pid_file"`
 	LogFile      string             `yaml:"log_file"`
 	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
+	Embedding    EmbeddingConfig    `yaml:"embedding"`
 }
 
 // RunnerConfig holds task runner configuration.
 type RunnerConfig struct {
+	BrainAPIURL            string           `yaml:"brain_api_url"`
+	APIToken               string           `yaml:"api_token"`
+	APITokenEnv            string           `yaml:"api_token_env"`
 	MaxParallel            int              `yaml:"max_parallel"`
 	PollInterval           int              `yaml:"poll_interval"`
 	TaskPollInterval       int              `yaml:"task_poll_interval"`
@@ -172,8 +189,21 @@ func defaultConfig() UnifiedConfig {
 			LogFile:    filepath.Join(stateHome, "brain-api", "brain-api.log"),
 			EnableAuth: false,
 			CORSOrigin: "*",
+			Embedding: EmbeddingConfig{
+				Enabled:   false,
+				Provider:  "openai",
+				BaseURL:   "https://api.openai.com/v1",
+				APIKeyEnv: "OPENAI_API_KEY",
+				Model:     "text-embedding-3-small",
+				Dim:       1536,
+				BatchSize: 32,
+				TimeoutMs: 30000,
+			},
 		},
 		Runner: RunnerConfig{
+			BrainAPIURL:            "http://localhost:3333",
+			APIToken:               "",
+			APITokenEnv:            "BRAIN_API_TOKEN",
 			MaxParallel:            3, // Max concurrent tasks
 			PollInterval:           5, // Seconds between task queue polls
 			TaskPollInterval:       5, // Seconds between task status polls
@@ -202,6 +232,28 @@ func defaultConfig() UnifiedConfig {
 			ClaudeCodePath: "",
 		},
 	}
+}
+
+// DefaultConfig returns a fully-populated default configuration.
+func DefaultConfig() UnifiedConfig {
+	return defaultConfig()
+}
+
+// DefaultConfigYAML returns the default configuration as YAML.
+func DefaultConfigYAML() ([]byte, error) {
+	cfg := defaultConfig()
+	return yaml.Marshal(&cfg)
+}
+
+// WriteDefaultConfig writes the default configuration to the unified config path.
+// It refuses to overwrite an existing file unless force is true.
+func WriteDefaultConfig(force bool) (string, error) {
+	path := getUnifiedConfigPath()
+	if fileExists(path) && !force {
+		return path, fmt.Errorf("config file already exists: %s", path)
+	}
+	cfg := defaultConfig()
+	return path, writeConfig(path, &cfg)
 }
 
 // getConfigHome returns the XDG config directory, with fallback to ~/.config.

@@ -31,6 +31,152 @@ func TestNewModel_Init_ReturnsSSEConnectCmd(t *testing.T) {
 	}
 }
 
+func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "task1", Title: "Task 1", Classification: "ready"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainStart, initialTopHeight, _ := m.computeTaskPanelMetrics()
+	pressY := mainStart + initialTopHeight - 1
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected splitter press to be local-only, got command")
+	}
+	if !m.splitDragActive {
+		t.Fatal("expected splitter drag to start")
+	}
+
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected splitter drag to be local-only, got command")
+	}
+	if m.taskPanelHeight <= initialTopHeight {
+		t.Fatalf("expected task panel height to grow beyond %d, got %d", initialTopHeight, m.taskPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	if m.splitDragActive {
+		t.Fatal("expected splitter drag to stop after release")
+	}
+}
+
+func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 50
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "task1", Title: "Task 1", Classification: "ready"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	pressY := bottomStart + initialDetailHeight - 1
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected bottom splitter press to be local-only, got command")
+	}
+	if !m.bottomSplitDragActive {
+		t.Fatal("expected bottom splitter drag to start")
+	}
+
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 3})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected bottom splitter drag to be local-only, got command")
+	}
+	if m.bottomTopPanelHeight <= initialDetailHeight {
+		t.Fatalf("expected detail panel height to grow beyond %d, got %d", initialDetailHeight, m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseWheelOverLogPaneScrollsLogsWithoutChangingTaskFocus(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 24
+	m.detailVisible = true
+	m.logsVisible = true
+	m.taskPanelHeight = 6
+	m.bottomTopPanelHeight = 5
+	m.activePanel = PanelTasks
+	m.tasks = []types.ResolvedTask{
+		{ID: "task1", Title: "Task 1", Classification: "ready", FeatureID: "feat"},
+		{ID: "task2", Title: "Task 2", Classification: "ready", FeatureID: "feat"},
+	}
+	m.taskTree.SetTasks(m.tasks)
+	m.taskTree.Cursor = 0
+	m.taskTree.SelectedID = "task1"
+
+	for i := 0; i < 8; i++ {
+		m.logViewer.AddEntry(LogEntry{Level: "info", Message: fmt.Sprintf("log %02d", i)})
+	}
+	m.syncPanelSizes()
+
+	if !strings.Contains(m.logViewer.View(), "log 07") {
+		t.Fatalf("expected initial view to follow latest logs, got:\n%s", m.logViewer.View())
+	}
+	if strings.Contains(m.logViewer.View(), "log 03") {
+		t.Fatalf("expected initial log view not to show older logs before scrolling, got:\n%s", m.logViewer.View())
+	}
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	logY := bottomStart + detailHeight + 1
+	updated, cmd := m.handleMouseWheelUp(tea.MouseMsg{Type: tea.MouseWheelUp, X: 10, Y: logY})
+	m = updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected log wheel to be local-only, got command")
+	}
+	if m.activePanel != PanelTasks {
+		t.Fatalf("expected wheel over logs not to change active panel, got %v", m.activePanel)
+	}
+	if m.taskTree.Cursor != 0 {
+		t.Fatalf("expected task cursor to stay at 0, got %d", m.taskTree.Cursor)
+	}
+	if !strings.Contains(m.logViewer.View(), "log 03") {
+		t.Fatalf("expected wheel over log pane to reveal older logs, got:\n%s", m.logViewer.View())
+	}
+}
+
+func TestMouseWheelOverGlobalLogsTabScrollsLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 16
+	m.activeContentTab = ContentTabLogs
+	m.activePanel = PanelTasks
+
+	for i := 0; i < 12; i++ {
+		m.logViewer.AddEntry(LogEntry{Level: "info", Message: fmt.Sprintf("global log %02d", i)})
+	}
+
+	mainStart := m.computeMainContentStartY()
+	logY := mainStart + 3
+	updated, cmd := m.handleMouseWheelUp(tea.MouseMsg{Type: tea.MouseWheelUp, X: 10, Y: logY})
+	m = updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected global log wheel to be local-only, got command")
+	}
+	if m.logViewer.height <= 0 {
+		t.Fatalf("expected global log wheel to size log viewer before scrolling, got height %d", m.logViewer.height)
+	}
+	if m.logViewer.scrollTop == 0 {
+		t.Fatalf("expected global log wheel to move scrollTop away from zero")
+	}
+	if m.taskTree.Cursor != 0 {
+		t.Fatalf("expected global log wheel not to move task cursor, got %d", m.taskTree.Cursor)
+	}
+}
+
 func TestNewModel_DefaultState(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
@@ -2405,6 +2551,119 @@ func TestViewMode_String(t *testing.T) {
 		t.Run(tt.expected, func(t *testing.T) {
 			if got := tt.mode.String(); got != tt.expected {
 				t.Errorf("ViewMode(%d).String() = %q, want %q", tt.mode, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestContentTab_String_IncludesLogs(t *testing.T) {
+	tests := []struct {
+		tab      ContentTab
+		expected string
+	}{
+		{ContentTabTasks, "Tasks"},
+		{ContentTabDream, "Dream"},
+		{ContentTabRunners, "Runners"},
+		{ContentTabLogs, "Logs"},
+		{ContentTab(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			if got := tt.tab.String(); got != tt.expected {
+				t.Errorf("ContentTab(%d).String() = %q, want %q", tt.tab, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 120
+	m.height = 40
+
+	view := m.View()
+
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Dream"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Project", "Global"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected tab bar not to contain group label %q, got:\n%s", unwanted, view)
+		}
+	}
+	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
+		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
+	}
+}
+
+func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabDream {
+		t.Fatalf("after first L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabRunners {
+		t.Fatalf("after second L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabLogs {
+		t.Fatalf("after third L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabTasks {
+		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+	}
+}
+
+func TestMouseClickContentTabsAcceptsAdjacentReportedRow(t *testing.T) {
+	tests := []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabDream}
+
+	for _, tab := range tests {
+		t.Run(tab.String(), func(t *testing.T) {
+			m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+			m.width = 120
+			m.height = 40
+			m.activeContentTab = ContentTabLogs
+			if tab == ContentTabLogs {
+				m.activeContentTab = ContentTabTasks
+			}
+			if tab == ContentTabDream {
+				m.dreamViewer.SetContent("dream content")
+				m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "test-project"})
+			}
+
+			x := -1
+			for i := 0; i < 80; i++ {
+				if got, ok := m.contentTabAtX(i); ok && got == tab {
+					x = i
+					break
+				}
+			}
+			if x < 0 {
+				t.Fatalf("could not find click target for %s", tab)
+			}
+
+			mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+			updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY})
+			model := updated.(Model)
+
+			if model.activeContentTab != tab {
+				t.Fatalf("expected adjacent-row click on %s to activate it, got %v", tab, model.activeContentTab)
+			}
+			if model.helpBar.ActiveContentTab != tab {
+				t.Fatalf("expected help bar active tab %s, got %v", tab, model.helpBar.ActiveContentTab)
 			}
 		})
 	}

@@ -115,6 +115,7 @@ const (
 	ContentTabTasks ContentTab = iota
 	ContentTabDream
 	ContentTabRunners
+	ContentTabLogs
 )
 
 // String returns the display name for a content tab.
@@ -126,6 +127,8 @@ func (ct ContentTab) String() string {
 		return "Dream"
 	case ContentTabRunners:
 		return "Runners"
+	case ContentTabLogs:
+		return "Logs"
 	default:
 		return "unknown"
 	}

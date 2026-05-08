@@ -72,6 +72,12 @@ type DreamContentMsg struct {
 	Error   error
 }
 
+// DreamConfigMsg is sent when dream monitor configuration has been fetched from the API.
+type DreamConfigMsg struct {
+	Config *DreamConfigInfo
+	Error  error
+}
+
 // RunnersUpdatedMsg is sent when the runner list is refreshed (via SSE or polling).
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo

@@ -41,6 +41,12 @@ const DefaultReconnectDelay = 3 * time.Second
 // DefaultMaxLogEntries is the default maximum number of log entries to keep.
 const DefaultMaxLogEntries = 500
 
+const (
+	minTaskPanelHeight   = 8
+	minBottomPanelHeight = 6
+	minSubPanelHeight    = 4
+)
+
 // Model is the root Bubble Tea model for the TUI dashboard.
 type Model struct {
 	config Config
@@ -121,10 +127,16 @@ type Model struct {
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
 
-	// Content tab state (Tasks / Dream / Runners)
+	// Content tab state (Project: Tasks/Dream, Global: Runners/Logs)
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
 	runnersPanel     RunnersPanel
+
+	// User-resizable vertical split between the task pane and visible bottom panes.
+	taskPanelHeight       int
+	bottomTopPanelHeight  int
+	splitDragActive       bool
+	bottomSplitDragActive bool
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -153,32 +165,34 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:           cfg,
-		keymap:           KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:        NewStatusBar(cfg.Project),
-		helpBar:          NewHelpBar(),
-		taskTree:         NewTaskTree(),
-		taskDetail:       NewTaskDetail(),
-		logViewer:        NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:     NewScheduleList(),
-		scheduleDetail:   NewScheduleDetail(),
-		modalManager:     NewModalManager(),
-		settings:         settings,
-		activePanel:      PanelTasks,
-		sseClient:        NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:              context.Background(),
-		selectedTasks:    make(map[string]bool),
-		selectedRunners:  make(map[string]bool),
-		pausedProjects:   make(map[string]bool),
-		runnerController: cfg.Runner,
-		tasksByProject:   make(map[string][]types.ResolvedTask),
-		sseClients:       make(map[string]*SSEClient),
-		metricsCollector: NewMetricsCollector(),
-		seenFeatureIDs:   make(map[string]bool),
-		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:  make(map[string]bool),
-		dreamViewer:      NewDreamViewer(),
-		runnersPanel:     NewRunnersPanel(),
+		config:               cfg,
+		keymap:               KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:            NewStatusBar(cfg.Project),
+		helpBar:              NewHelpBar(),
+		taskTree:             NewTaskTree(),
+		taskDetail:           NewTaskDetail(),
+		logViewer:            NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:         NewScheduleList(),
+		scheduleDetail:       NewScheduleDetail(),
+		modalManager:         NewModalManager(),
+		settings:             settings,
+		activePanel:          PanelTasks,
+		sseClient:            NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                  context.Background(),
+		selectedTasks:        make(map[string]bool),
+		selectedRunners:      make(map[string]bool),
+		pausedProjects:       make(map[string]bool),
+		runnerController:     cfg.Runner,
+		tasksByProject:       make(map[string][]types.ResolvedTask),
+		sseClients:           make(map[string]*SSEClient),
+		metricsCollector:     NewMetricsCollector(),
+		seenFeatureIDs:       make(map[string]bool),
+		monitorClient:        NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:      make(map[string]bool),
+		dreamViewer:          NewDreamViewer(),
+		runnersPanel:         NewRunnersPanel(),
+		taskPanelHeight:      settings.TaskPanelHeight,
+		bottomTopPanelHeight: settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -515,6 +529,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dreamViewer.SetError(msg.Error.Error())
 		} else {
 			m.dreamViewer.SetContent(msg.Content)
+		}
+		return m, nil
+
+	case DreamConfigMsg:
+		if msg.Error != nil {
+			m.dreamViewer.SetDreamConfigError(msg.Error.Error())
+		} else if msg.Config != nil {
+			m.dreamViewer.SetDreamConfig(*msg.Config)
 		}
 		return m, nil
 
@@ -863,20 +885,16 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.NextContentTab) {
-		if m.activeContentTab < ContentTabRunners {
+		if m.activeContentTab < ContentTabLogs {
 			m.activeContentTab++
 		} else {
 			m.activeContentTab = ContentTabTasks
 		}
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-			m.dreamViewer.SetLoading(true)
-			project := m.config.Project
-			if m.activeProjectID != "" && m.activeProjectID != "all" {
-				project = m.activeProjectID
-			}
-			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		// Fetch dream content/config lazily when switching to Dream tab.
+		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+			m.prepareDreamFetch()
+			return m, m.fetchDreamTabCmd()
 		}
 		// Fetch runners lazily when switching to Runners tab
 		if m.activeContentTab == ContentTabRunners {
@@ -888,17 +906,13 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activeContentTab > ContentTabTasks {
 			m.activeContentTab--
 		} else {
-			m.activeContentTab = ContentTabRunners
+			m.activeContentTab = ContentTabLogs
 		}
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-			m.dreamViewer.SetLoading(true)
-			project := m.config.Project
-			if m.activeProjectID != "" && m.activeProjectID != "all" {
-				project = m.activeProjectID
-			}
-			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+		// Fetch dream content/config lazily when switching to Dream tab.
+		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+			m.prepareDreamFetch()
+			return m, m.fetchDreamTabCmd()
 		}
 		// Fetch runners lazily when switching to Runners tab
 		if m.activeContentTab == ContentTabRunners {
@@ -964,6 +978,31 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return batchShutdownRunnersCmd(cfg, runnerIDs)()
 				})
 			return m, m.modalManager.Open(modal)
+		case "q":
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case "?":
+			m.modalManager.Open(NewHelpModal(m.config.IsMultiProject()))
+			return m, nil
+		}
+		return m, nil
+	}
+
+	// Logs is a global tab, so keep its keys scoped to log-view actions.
+	if m.activeContentTab == ContentTabLogs {
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.sseClient.Stop()
+			return m, tea.Quit
+		case tea.KeyEsc:
+			m.activeContentTab = ContentTabTasks
+			m.helpBar.ActiveContentTab = m.activeContentTab
+			return m, nil
+		}
+		switch string(msg.Runes) {
+		case "f":
+			m.filterLogsByTask = !m.filterLogsByTask
+			return m, nil
 		case "q":
 			m.sseClient.Stop()
 			return m, tea.Quit
@@ -1125,13 +1164,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dreamViewer.GotoBottom()
 				return m, nil
 			case "r":
-				// Re-fetch dream content
-				m.dreamViewer.SetLoading(true)
-				project := m.config.Project
-				if m.activeProjectID != "" && m.activeProjectID != "all" {
-					project = m.activeProjectID
-				}
-				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+				// Re-fetch dream content and monitor configuration.
+				m.prepareDreamFetch()
+				return m, m.fetchDreamTabCmd()
 			case "q":
 				m.sseClient.Stop()
 				return m, tea.Quit
@@ -1694,9 +1729,50 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.splitDragActive {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.splitDragActive = false
+			m.persistPanelHeights()
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+			m.resizeMainSplitToY(msg.Y)
+			return m, nil
+		}
+	}
+	if m.bottomSplitDragActive {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.bottomSplitDragActive = false
+			m.persistPanelHeights()
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+			m.resizeBottomSplitToY(msg.Y)
+			return m, nil
+		}
+	}
+
 	switch msg.Type {
 	case tea.MouseLeft:
+		if m.isBottomSplitterY(msg.Y) {
+			m.bottomSplitDragActive = true
+			m.resizeBottomSplitToY(msg.Y)
+			return m, nil
+		}
+		if m.isMainSplitterY(msg.Y) {
+			m.splitDragActive = true
+			m.resizeMainSplitToY(msg.Y)
+			return m, nil
+		}
 		return m.handleMouseClick(msg)
+	case tea.MouseRelease:
+		wasDragging := m.splitDragActive || m.bottomSplitDragActive
+		m.splitDragActive = false
+		m.bottomSplitDragActive = false
+		if wasDragging {
+			m.persistPanelHeights()
+		}
+		return m, nil
 	case tea.MouseWheelUp:
 		return m.handleMouseWheelUp(msg)
 	case tea.MouseWheelDown:
@@ -1708,6 +1784,68 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *Model) persistPanelHeights() {
+	m.settings.TaskPanelHeight = m.taskPanelHeight
+	m.settings.BottomTopPanelHeight = m.bottomTopPanelHeight
+	_ = SaveSettings(m.settings)
+}
+
+func (m Model) isMainSplitterY(y int) bool {
+	if m.activeContentTab != ContentTabTasks || !m.hasBottomPanel() {
+		return false
+	}
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	return absInt(y-(mainContentStartY+taskPanelOuterHeight-1)) <= 1
+}
+
+func (m Model) isBottomSplitterY(y int) bool {
+	if m.activeContentTab != ContentTabTasks || !(m.detailVisible && m.logsVisible) {
+		return false
+	}
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 {
+		return false
+	}
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	return absInt(y-(bottomStart+detailHeight-1)) <= 1
+}
+
+func (m *Model) resizeMainSplitToY(y int) {
+	if !m.hasBottomPanel() {
+		return
+	}
+	mainContentStartY := m.computeMainContentStartY()
+	mainHeight := m.mainContentHeight()
+	m.taskPanelHeight = clampTaskPanelHeight(y-mainContentStartY+1, mainHeight)
+	m.syncPanelSizes()
+}
+
+func (m *Model) resizeBottomSplitToY(y int) {
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 {
+		return
+	}
+	m.bottomTopPanelHeight = clampBottomTopPanelHeight(y-bottomStart+1, bottomHeight)
+	m.syncPanelSizes()
+}
+
+func (m Model) bottomPanelBounds() (start, height int) {
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	start = mainContentStartY + taskPanelOuterHeight
+	height = m.mainContentHeight() - taskPanelOuterHeight
+	if height < 0 {
+		height = 0
+	}
+	return start, height
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // handleMouseClick handles left mouse button clicks.
 func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
@@ -1715,41 +1853,13 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	// Click on content tab bar (the row just above mainContentStartY)
 	contentTabBarY := mainContentStartY - 1
-	if y == contentTabBarY {
-		// Layout: " " + " Tasks " + "  " + " Dream " + "  " + " Runners "
-		// Calculate hit zones from actual text widths
-		const tabPadding = 1 // leading " "
-		const tabGap = 2     // "  " between tabs
-		tasksText := " Tasks "
-		dreamText := " Dream "
-		runnersText := " Runners "
-
-		tasksStart := tabPadding
-		tasksEnd := tasksStart + len(tasksText)
-		dreamStart := tasksEnd + tabGap
-		dreamEnd := dreamStart + len(dreamText)
-		runnersStart := dreamEnd + tabGap
-		runnersEnd := runnersStart + len(runnersText)
-
-		var newTab ContentTab = m.activeContentTab
-		if x >= tasksStart && x < tasksEnd {
-			newTab = ContentTabTasks
-		} else if x >= dreamStart && x < dreamEnd {
-			newTab = ContentTabDream
-		} else if x >= runnersStart && x < runnersEnd {
-			newTab = ContentTabRunners
-		}
-
-		if newTab != m.activeContentTab {
+	if y == contentTabBarY || y == contentTabBarY+1 {
+		if newTab, ok := m.contentTabAtX(x); ok && newTab != m.activeContentTab {
 			m.activeContentTab = newTab
 			m.helpBar.ActiveContentTab = m.activeContentTab
-			if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-				m.dreamViewer.SetLoading(true)
-				project := m.config.Project
-				if m.activeProjectID != "" && m.activeProjectID != "all" {
-					project = m.activeProjectID
-				}
-				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+			if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+				m.prepareDreamFetch()
+				return m, m.fetchDreamTabCmd()
 			}
 			if m.activeContentTab == ContentTabRunners {
 				return m, fetchRunnersListCmd(m.apiRunnerConfig())
@@ -1771,10 +1881,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.detailVisible && m.logsVisible {
 			bottomStart := mainContentStartY + taskPanelOuterHeight
 			bottomOuterHeight := m.height - bottomStart - 1 // reserve footer line
-			detailHeight := bottomOuterHeight * 60 / 100
-			if detailHeight < 4 {
-				detailHeight = 4
-			}
+			detailHeight := m.computeBottomTopPanelHeight(bottomOuterHeight)
 			if y < bottomStart+detailHeight {
 				m.activePanel = PanelDetails
 			} else {
@@ -1861,33 +1968,7 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		mainHeight = 3
 	}
 
-	hasBottomPanel := m.detailVisible || m.logsVisible
-	topHeight := mainHeight
-	if hasBottomPanel {
-		taskContentLines := 0
-		if m.viewMode == ViewModeSchedules {
-			taskContentLines = m.scheduleList.ContentHeight()
-		} else {
-			taskContentLines = m.taskTree.ContentHeight()
-		}
-
-		desiredTaskHeight := taskContentLines + 3
-		minTaskHeight := 8
-		maxTaskRatio := mainHeight * 60 / 100
-		topHeight = desiredTaskHeight
-		if topHeight < minTaskHeight {
-			topHeight = minTaskHeight
-		}
-		if topHeight > maxTaskRatio {
-			topHeight = maxTaskRatio
-		}
-
-		bottomHeight := mainHeight - topHeight
-		if bottomHeight < 6 {
-			bottomHeight = 6
-			topHeight = mainHeight - bottomHeight
-		}
-	}
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
 
 	mainContentStartY = statusBarHeight + projectTabsHeight + contentTabBarHeight
 	taskPanelOuterHeight = topHeight
@@ -1896,6 +1977,155 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		taskInnerHeight = 1
 	}
 	return mainContentStartY, taskPanelOuterHeight, taskInnerHeight
+}
+
+func (m Model) mainContentHeight() int {
+	_, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	if !m.hasBottomPanel() {
+		return taskPanelOuterHeight
+	}
+	return taskPanelOuterHeight + (m.height - 1 - (m.computeMainContentStartY() + taskPanelOuterHeight))
+}
+
+func (m Model) computeMainContentStartY() int {
+	projectTabsHeight := 0
+	if m.config.IsMultiProject() {
+		if projectTabsView := m.projectTabs.View(m.width); projectTabsView != "" {
+			projectTabsHeight = lipgloss.Height(projectTabsView)
+		}
+	}
+	return lipgloss.Height(m.statusBar.View(m.width)) + projectTabsHeight + 1
+}
+
+func (m Model) hasBottomPanel() bool {
+	return m.activeContentTab == ContentTabTasks && (m.detailVisible || m.logsVisible)
+}
+
+func (m Model) isLogPaneY(y int) bool {
+	if m.activeContentTab == ContentTabLogs {
+		mainStart := m.computeMainContentStartY()
+		return y >= mainStart && y < mainStart+m.mainContentHeight()
+	}
+	if m.activeContentTab != ContentTabTasks || !m.logsVisible {
+		return false
+	}
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 || y < bottomStart || y >= m.height-1 {
+		return false
+	}
+	if !m.detailVisible {
+		return true
+	}
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	return y >= bottomStart+detailHeight
+}
+
+func (m Model) isDetailPaneY(y int) bool {
+	if m.activeContentTab != ContentTabTasks || !m.detailVisible {
+		return false
+	}
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 || y < bottomStart || y >= m.height-1 {
+		return false
+	}
+	if !m.logsVisible {
+		return true
+	}
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	return y < bottomStart+detailHeight
+}
+
+func (m Model) isTaskPaneY(y int) bool {
+	if m.activeContentTab != ContentTabTasks {
+		return false
+	}
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	return y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight
+}
+
+func (m *Model) syncLogViewerSizeForActiveTab() {
+	innerWidth := m.width - 4
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if m.activeContentTab == ContentTabLogs {
+		innerHeight := m.mainContentHeight() - 2
+		if innerHeight < 1 {
+			innerHeight = 1
+		}
+		m.logViewer.SetSize(innerWidth, innerHeight)
+		return
+	}
+	m.syncPanelSizes()
+}
+
+func (m Model) computeTaskPanelOuterHeight(mainHeight int) int {
+	if !m.hasBottomPanel() {
+		return mainHeight
+	}
+	if m.taskPanelHeight > 0 {
+		return clampTaskPanelHeight(m.taskPanelHeight, mainHeight)
+	}
+
+	taskContentLines := 0
+	if m.viewMode == ViewModeSchedules {
+		taskContentLines = m.scheduleList.ContentHeight()
+	} else {
+		taskContentLines = m.taskTree.ContentHeight()
+	}
+	desiredTaskHeight := taskContentLines + 3
+	maxTaskRatio := mainHeight * 60 / 100
+	topHeight := desiredTaskHeight
+	if topHeight < minTaskPanelHeight {
+		topHeight = minTaskPanelHeight
+	}
+	if topHeight > maxTaskRatio {
+		topHeight = maxTaskRatio
+	}
+	return clampTaskPanelHeight(topHeight, mainHeight)
+}
+
+func clampTaskPanelHeight(height, mainHeight int) int {
+	if mainHeight <= minTaskPanelHeight+minBottomPanelHeight {
+		if mainHeight-minBottomPanelHeight > 1 {
+			return mainHeight - minBottomPanelHeight
+		}
+		return 1
+	}
+	minHeight := minTaskPanelHeight
+	maxHeight := mainHeight - minBottomPanelHeight
+	if height < minHeight {
+		return minHeight
+	}
+	if height > maxHeight {
+		return maxHeight
+	}
+	return height
+}
+
+func (m Model) computeBottomTopPanelHeight(bottomHeight int) int {
+	if m.bottomTopPanelHeight > 0 {
+		return clampBottomTopPanelHeight(m.bottomTopPanelHeight, bottomHeight)
+	}
+	return clampBottomTopPanelHeight(bottomHeight*60/100, bottomHeight)
+}
+
+func clampBottomTopPanelHeight(height, bottomHeight int) int {
+	if bottomHeight <= minSubPanelHeight*2 {
+		if bottomHeight-minSubPanelHeight > 1 {
+			return bottomHeight - minSubPanelHeight
+		}
+		return 1
+	}
+	minHeight := minSubPanelHeight
+	maxHeight := bottomHeight - minSubPanelHeight
+	if height < minHeight {
+		return minHeight
+	}
+	if height > maxHeight {
+		return maxHeight
+	}
+	return height
 }
 
 // handleTaskPanelClick handles clicks within the task panel.
@@ -2304,11 +2534,23 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.dreamViewer.ScrollUp(3)
 		return m, nil
 	}
-	if m.activePanel == PanelTasks {
+	if m.isLogPaneY(msg.Y) {
+		m.syncLogViewerSizeForActiveTab()
+		m.logViewer.ScrollUp()
+		return m, nil
+	}
+	if m.isDetailPaneY(msg.Y) {
+		m.taskDetail.ScrollUp()
+		return m, nil
+	}
+	if m.isTaskPaneY(msg.Y) || m.activePanel == PanelTasks {
 		m.taskTree.MoveUp()
 		m.syncTaskDetail()
 	} else if m.activePanel == PanelDetails {
 		m.taskDetail.ScrollUp()
+	} else if m.activePanel == PanelLogs {
+		m.syncLogViewerSizeForActiveTab()
+		m.logViewer.ScrollUp()
 	}
 	return m, nil
 }
@@ -2319,11 +2561,23 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.dreamViewer.ScrollDown(3)
 		return m, nil
 	}
-	if m.activePanel == PanelTasks {
+	if m.isLogPaneY(msg.Y) {
+		m.syncLogViewerSizeForActiveTab()
+		m.logViewer.ScrollDown()
+		return m, nil
+	}
+	if m.isDetailPaneY(msg.Y) {
+		m.taskDetail.ScrollDown()
+		return m, nil
+	}
+	if m.isTaskPaneY(msg.Y) || m.activePanel == PanelTasks {
 		m.taskTree.MoveDown()
 		m.syncTaskDetail()
 	} else if m.activePanel == PanelDetails {
 		m.taskDetail.ScrollDown()
+	} else if m.activePanel == PanelLogs {
+		m.syncLogViewerSizeForActiveTab()
+		m.logViewer.ScrollDown()
 	}
 	return m, nil
 }
@@ -2370,31 +2624,13 @@ func (m *Model) syncPanelSizes() {
 		return
 	}
 
-	// Replicate the height calculation from renderBaseView
-	// We need approximate fixed heights; use conservative estimates
-	statusBarHeight := 4 // 2 content + 2 border
-	helpBarHeight := 1   // single line: "? Help ... Focus: tasks"
+	mainHeight := m.mainContentHeight()
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
+	bottomHeight := mainHeight - topHeight
 
-	fixedUIHeight := statusBarHeight + helpBarHeight
-	mainHeight := m.height - fixedUIHeight
-	if mainHeight < 3 {
-		mainHeight = 3
-	}
-
-	hasBottomPanel := m.detailVisible || m.logsVisible
+	hasBottomPanel := m.hasBottomPanel()
 	if !hasBottomPanel {
 		return
-	}
-
-	// Split: 60% tasks, 40% bottom
-	topHeight := mainHeight * 60 / 100
-	if topHeight < 10 {
-		topHeight = 10
-	}
-	bottomHeight := mainHeight - topHeight
-	if bottomHeight < 3 {
-		bottomHeight = 3
-		topHeight = mainHeight - bottomHeight
 	}
 
 	innerWidth := m.width - 4
@@ -2403,16 +2639,8 @@ func (m *Model) syncPanelSizes() {
 	}
 
 	if m.detailVisible && m.logsVisible {
-		// Bottom split: 60% detail, 40% logs
-		detailHeight := bottomHeight * 60 / 100
-		if detailHeight < 4 {
-			detailHeight = 4
-		}
+		detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
 		logHeight := bottomHeight - detailHeight
-		if logHeight < 4 {
-			logHeight = 4
-			detailHeight = bottomHeight - logHeight
-		}
 		detailInner := detailHeight - 2
 		logInner := logHeight - 2
 		if detailInner < 1 {
@@ -2609,6 +2837,87 @@ func (m Model) View() string {
 	return baseView
 }
 
+func (m Model) renderContentTabBar() string {
+	activeStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("0")).
+		Background(ColorCyan).
+		Padding(0, 1)
+	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
+	globalInactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Padding(0, 1)
+	globalActiveStyle := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("0")).
+		Background(lipgloss.Color("6")).
+		Padding(0, 1)
+	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
+	tab := func(ct ContentTab) string {
+		isGlobal := ct == ContentTabRunners || ct == ContentTabLogs
+		if m.activeContentTab == ct {
+			if isGlobal {
+				return globalActiveStyle.Render(ct.String())
+			}
+			return activeStyle.Render(ct.String())
+		}
+		if isGlobal {
+			return globalInactiveStyle.Render(ct.String())
+		}
+		return inactiveStyle.Render(ct.String())
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		" ",
+		tab(ContentTabRunners),
+		" ",
+		tab(ContentTabLogs),
+		"   ",
+		dividerStyle.Render("│"),
+		" ",
+		tab(ContentTabTasks),
+		" ",
+		tab(ContentTabDream),
+	)
+}
+
+func (m Model) contentTabAtX(x int) (ContentTab, bool) {
+	plain := " "
+	for _, zone := range []struct {
+		tab   ContentTab
+		label string
+	}{
+		{ContentTabRunners, "Runners"},
+		{ContentTabLogs, "Logs"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+
+	plain += "  │ "
+	for _, zone := range []struct {
+		tab   ContentTab
+		label string
+	}{
+		{ContentTabTasks, "Tasks"},
+		{ContentTabDream, "Dream"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+
+	return m.activeContentTab, false
+}
+
 // renderBaseView renders the main TUI layout (without modal)
 func (m Model) renderBaseView() string {
 	// Safety check: ensure we have valid dimensions before rendering
@@ -2648,30 +2957,8 @@ func (m Model) renderBaseView() string {
 		projectTabsView = m.projectTabs.View(m.width)
 	}
 
-	// Render content tab bar (Tasks / Dream / Runners)
-	var contentTabBarView string
-	{
-		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorCyan)
-
-		tasksLabel := " Tasks "
-		dreamLabel := " Dream "
-		runnersLabel := " Runners "
-		switch m.activeContentTab {
-		case ContentTabTasks:
-			tasksLabel = activeStyle.Render(tasksLabel)
-			dreamLabel = DimStyle.Render(dreamLabel)
-			runnersLabel = DimStyle.Render(runnersLabel)
-		case ContentTabDream:
-			tasksLabel = DimStyle.Render(tasksLabel)
-			dreamLabel = activeStyle.Render(dreamLabel)
-			runnersLabel = DimStyle.Render(runnersLabel)
-		case ContentTabRunners:
-			tasksLabel = DimStyle.Render(tasksLabel)
-			dreamLabel = DimStyle.Render(dreamLabel)
-			runnersLabel = activeStyle.Render(runnersLabel)
-		}
-		contentTabBarView = " " + tasksLabel + "  " + dreamLabel + "  " + runnersLabel
-	}
+	// Render content tab bar grouped by scope: project-local views first, global views second.
+	contentTabBarView := m.renderContentTabBar()
 
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
@@ -2776,43 +3063,14 @@ func (m Model) renderBaseView() string {
 		mainHeight = 3
 	}
 
-	// Determine if right panels are visible
-	hasBottomPanel := m.detailVisible || m.logsVisible
+	// Determine if bottom panels are visible.
+	hasBottomPanel := m.hasBottomPanel()
 
 	// Calculate heights - ensure total equals mainHeight exactly
-	var topHeight, bottomHeight int
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
+	bottomHeight := 0
 	if hasBottomPanel {
-		// Calculate task panel height based on content, not fixed ratio.
-		// This avoids huge empty space when there are few tasks.
-		taskContentLines := 0
-		if m.viewMode == ViewModeSchedules {
-			taskContentLines = m.scheduleList.ContentHeight()
-		} else {
-			taskContentLines = m.taskTree.ContentHeight()
-		}
-		// Add 2 for border, 1 for header ("Tasks (N)")
-		desiredTaskHeight := taskContentLines + 3
-		minTaskHeight := 8                    // minimum for usability
-		maxTaskRatio := mainHeight * 60 / 100 // cap at 60%
-
-		topHeight = desiredTaskHeight
-		if topHeight < minTaskHeight {
-			topHeight = minTaskHeight
-		}
-		if topHeight > maxTaskRatio {
-			topHeight = maxTaskRatio
-		}
-
-		// Give the rest to bottom panels
 		bottomHeight = mainHeight - topHeight
-		if bottomHeight < 6 {
-			bottomHeight = 6
-			topHeight = mainHeight - bottomHeight
-		}
-	} else {
-		// No bottom panels — task panel fills all available space
-		topHeight = mainHeight
-		bottomHeight = 0
 	}
 
 	// Top panel: task tree
@@ -2858,6 +3116,9 @@ func (m Model) renderBaseView() string {
 			Height(mainHeight - 2).
 			Render(runnersView)
 		mainContent = runnersPanel
+	} else if m.activeContentTab == ContentTabLogs {
+		// Logs tab: global full-height log stream.
+		mainContent = m.renderLogPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabDream {
 		// Dream tab: full-width dream viewer, no task/detail/log panels
 		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
@@ -2901,17 +3162,9 @@ func (m Model) renderBaseView() string {
 // height is the total outer height for the bottom section.
 func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
-		// Stack vertically: detail on top (60%), logs on bottom (40%)
-		// Each sub-panel height includes its own border (2 lines each)
-		detailHeight := height * 60 / 100
-		if detailHeight < 4 {
-			detailHeight = 4 // minimum: 2 border + 2 content
-		}
+		// Stack vertically: detail on top, logs on bottom.
+		detailHeight := m.computeBottomTopPanelHeight(height)
 		logHeight := height - detailHeight
-		if logHeight < 4 {
-			logHeight = 4
-			detailHeight = height - logHeight
-		}
 		detailPanel := m.renderDetailPanel(width, detailHeight)
 		logPanel := m.renderLogPanel(width, logHeight)
 		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
@@ -3180,6 +3433,27 @@ func (m *Model) syncActiveProjectView() {
 	}
 }
 
+func (m *Model) activeDreamProject() string {
+	project := m.config.Project
+	if m.activeProjectID != "" && m.activeProjectID != "all" {
+		project = m.activeProjectID
+	}
+	return project
+}
+
+func (m *Model) prepareDreamFetch() {
+	m.dreamViewer.SetLoading(true)
+	m.dreamViewer.SetDreamConfigLoading(true)
+}
+
+func (m *Model) fetchDreamTabCmd() tea.Cmd {
+	project := m.activeDreamProject()
+	return tea.Batch(
+		fetchDreamContentCmd(m.apiRunnerConfig(), project),
+		fetchDreamConfigCmd(m.monitorClient, project),
+	)
+}
+
 // getAllTasks merges all tasks from all projects into a single slice.
 // Returns an empty slice if tasksByProject is empty.
 func (m *Model) getAllTasks() []types.ResolvedTask {
@@ -3363,6 +3637,20 @@ func fetchDreamContentCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 		}
 
 		return DreamContentMsg{Content: entry.Content}
+	}
+}
+
+// fetchDreamConfigCmd fetches Dream monitor configuration for a project from the API.
+func fetchDreamConfigCmd(client *MonitorClient, project string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return DreamConfigMsg{Error: fmt.Errorf("monitor client unavailable")}
+		}
+		config, err := client.FetchDreamConfig(context.Background(), project)
+		if err != nil {
+			return DreamConfigMsg{Error: err}
+		}
+		return DreamConfigMsg{Config: config}
 	}
 }
 

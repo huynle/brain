@@ -15,7 +15,7 @@ type HelpBar struct {
 	AllPaused        bool
 	HasTaskSessions  bool       // whether selected task has sessions (shows o/O shortcuts)
 	HasSelectedTasks bool       // whether tasks are currently selected (shows delete shortcut)
-	ActiveContentTab ContentTab // which content tab is active (Tasks/Dream)
+	ActiveContentTab ContentTab // which content tab is active
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -48,6 +48,30 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		// Focus indicator on the right
 		focusLabel := dim("Tab: ") +
 			lipgloss.NewStyle().Foreground(ColorCyan).Render("Dream")
+
+		leftStyle := lipgloss.NewStyle().
+			PaddingLeft(1).
+			Width(width - 20)
+
+		rightStyle := lipgloss.NewStyle().
+			Align(lipgloss.Right).
+			Width(18)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			leftStyle.Render(dim(shortcuts)),
+			rightStyle.Render(focusLabel),
+		)
+	}
+
+	// Global Logs tab has log-specific help
+	if h.ActiveContentTab == ContentTabLogs {
+		shortcuts += fmt.Sprintf("%s Filter task  ", bold("f"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
+		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
+
+		focusLabel := dim("Tab: ") +
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Logs")
 
 		leftStyle := lipgloss.NewStyle().
 			PaddingLeft(1).

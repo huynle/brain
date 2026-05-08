@@ -58,6 +58,19 @@ func (rp *RunnerPanel) MoveUp() {
 	}
 }
 
+// GotoTop moves the cursor to the first runner.
+func (rp *RunnerPanel) GotoTop() {
+	rp.cursor = 0
+	rp.scrollTop = 0
+}
+
+// GotoBottom moves the cursor to the last runner.
+func (rp *RunnerPanel) GotoBottom() {
+	if len(rp.runners) > 0 {
+		rp.cursor = len(rp.runners) - 1
+	}
+}
+
 // SelectIndex moves the cursor to a runner by visible row index.
 func (rp *RunnerPanel) SelectIndex(idx int) {
 	if idx < 0 || idx >= len(rp.runners) {

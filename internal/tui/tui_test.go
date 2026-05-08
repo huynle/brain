@@ -113,8 +113,12 @@ func TestMouseClickContentTabSwitchesToDream(t *testing.T) {
 	m.height = 30
 	m.activeContentTab = ContentTabTasks
 
+	x, ok := contentTabCenterX(ContentTabDream)
+	if !ok {
+		t.Fatal("expected Dream tab to have a click target")
+	}
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 11, Y: mainContentStartY - 1})
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
 	model := updated.(Model)
 
 	if model.activeContentTab != ContentTabDream {
@@ -125,6 +129,58 @@ func TestMouseClickContentTabSwitchesToDream(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("expected dream content fetch command when switching to empty Dream tab")
+	}
+}
+
+func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 120
+	m.height = 40
+
+	view := m.View()
+
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Dream"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Project", "Global"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected tab bar not to contain group label %q, got:\n%s", unwanted, view)
+		}
+	}
+	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
+		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
+	}
+}
+
+func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.dreamViewer.SetContent("dream content")
+	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "brain-api"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabDream {
+		t.Fatalf("after first L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabRunners {
+		t.Fatalf("after second L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabLogs {
+		t.Fatalf("after third L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabTasks {
+		t.Fatalf("after fourth L, got %v", m.activeContentTab)
 	}
 }
 
@@ -537,6 +593,35 @@ func TestMouseWheelUpOverLogsPaneScrollsLogsWithoutClickFocus(t *testing.T) {
 	}
 }
 
+func TestMouseWheelOverGlobalLogsTabScrollsLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 16
+	m.activeContentTab = ContentTabLogs
+	m.activePanel = PanelTasks
+
+	for i := 0; i < 12; i++ {
+		m.logViewer.AddEntry(LogEntry{Level: "info", Message: fmt.Sprintf("global log %02d", i)})
+	}
+
+	mainStart := m.computeMainContentStartY()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelUp, X: 10, Y: mainStart + 3})
+	m = updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected global log wheel to be local-only, got command")
+	}
+	if m.logViewer.height <= 0 {
+		t.Fatalf("expected global log wheel to size log viewer before scrolling, got height %d", m.logViewer.height)
+	}
+	if m.logViewer.scrollTop == 0 {
+		t.Fatalf("expected global log wheel to move scrollTop away from zero")
+	}
+	if m.taskTree.Cursor != 0 {
+		t.Fatalf("expected global log wheel not to move task cursor, got %d", m.taskTree.Cursor)
+	}
+}
+
 func TestMouseWheelOverDreamTabScrollsLikeJK(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
@@ -595,6 +680,36 @@ func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
 	}
 }
 
+func TestMouseDragMainSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainContentStartY, initialTaskHeight, _ := m.computeTaskPanelMetrics()
+	splitterY := mainContentStartY + initialTaskHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.splitDragActive {
+		t.Fatal("expected splitter drag to start")
+	}
+	if m.taskPanelHeight != 0 {
+		t.Fatalf("expected press to leave task panel height unchanged, got %d", m.taskPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialTaskHeight + 5
+	if m.taskPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.taskPanelHeight)
+	}
+}
+
 func TestMouseDragMainSplitterClampsPanelHeights(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
@@ -638,6 +753,38 @@ func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
 	}
 	if m.bottomTopPanelHeight != initialDetailHeight+3 {
 		t.Fatalf("expected detail panel height %d, got %d", initialDetailHeight+3, m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseDragBottomSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	splitterY := bottomStart + initialDetailHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.bottomSplitDragActive {
+		t.Fatal("expected bottom splitter drag to start")
+	}
+	if m.bottomTopPanelHeight != 0 {
+		t.Fatalf("expected press to leave bottom split height unchanged, got %d", m.bottomTopPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialDetailHeight + 5
+	if m.bottomTopPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.bottomTopPanelHeight)
 	}
 }
 

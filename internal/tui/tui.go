@@ -133,10 +133,12 @@ type Model struct {
 	runnersPanel     RunnersPanel
 
 	// User-resizable vertical split between the task pane and visible bottom panes.
-	taskPanelHeight       int
-	bottomTopPanelHeight  int
-	splitDragActive       bool
-	bottomSplitDragActive bool
+	taskPanelHeight        int
+	bottomTopPanelHeight   int
+	splitDragActive        bool
+	bottomSplitDragActive  bool
+	splitDragOffsetY       int
+	bottomSplitDragOffsetY int
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -1732,22 +1734,24 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.splitDragActive {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
 			m.splitDragActive = false
+			m.splitDragOffsetY = 0
 			m.persistPanelHeights()
 			return m, nil
 		}
 		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
-			m.resizeMainSplitToY(msg.Y)
+			m.resizeMainSplitToY(msg.Y - m.splitDragOffsetY)
 			return m, nil
 		}
 	}
 	if m.bottomSplitDragActive {
 		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
 			m.bottomSplitDragActive = false
+			m.bottomSplitDragOffsetY = 0
 			m.persistPanelHeights()
 			return m, nil
 		}
 		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
-			m.resizeBottomSplitToY(msg.Y)
+			m.resizeBottomSplitToY(msg.Y - m.bottomSplitDragOffsetY)
 			return m, nil
 		}
 	}
@@ -1755,13 +1759,16 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.MouseLeft:
 		if m.isBottomSplitterY(msg.Y) {
+			bottomStart, bottomHeight := m.bottomPanelBounds()
+			detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+			m.bottomSplitDragOffsetY = msg.Y - (bottomStart + detailHeight - 1)
 			m.bottomSplitDragActive = true
-			m.resizeBottomSplitToY(msg.Y)
 			return m, nil
 		}
 		if m.isMainSplitterY(msg.Y) {
+			mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+			m.splitDragOffsetY = msg.Y - (mainContentStartY + taskPanelOuterHeight - 1)
 			m.splitDragActive = true
-			m.resizeMainSplitToY(msg.Y)
 			return m, nil
 		}
 		return m.handleMouseClick(msg)
@@ -1769,6 +1776,8 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		wasDragging := m.splitDragActive || m.bottomSplitDragActive
 		m.splitDragActive = false
 		m.bottomSplitDragActive = false
+		m.splitDragOffsetY = 0
+		m.bottomSplitDragOffsetY = 0
 		if wasDragging {
 			m.persistPanelHeights()
 		}

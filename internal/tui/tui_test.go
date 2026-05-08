@@ -32,6 +32,7 @@ func TestNewModel_Init_ReturnsSSEConnectCmd(t *testing.T) {
 }
 
 func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.width = 100
 	m.height = 40
@@ -67,7 +68,39 @@ func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
 	}
 }
 
+func TestMouseDragMainSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "task1", Title: "Task 1", Classification: "ready"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainStart, initialTopHeight, _ := m.computeTaskPanelMetrics()
+	splitterY := mainStart + initialTopHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.splitDragActive {
+		t.Fatal("expected splitter drag to start")
+	}
+	if m.taskPanelHeight != 0 {
+		t.Fatalf("expected press to leave task panel height unchanged, got %d", m.taskPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialTopHeight + 5
+	if m.taskPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.taskPanelHeight)
+	}
+}
+
 func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.width = 100
 	m.height = 50
@@ -95,6 +128,76 @@ func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
 	}
 	if m.bottomTopPanelHeight <= initialDetailHeight {
 		t.Fatalf("expected detail panel height to grow beyond %d, got %d", initialDetailHeight, m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseDragBottomSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 50
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "task1", Title: "Task 1", Classification: "ready"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	splitterY := bottomStart + initialDetailHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.bottomSplitDragActive {
+		t.Fatal("expected bottom splitter drag to start")
+	}
+	if m.bottomTopPanelHeight != 0 {
+		t.Fatalf("expected press to leave bottom split height unchanged, got %d", m.bottomTopPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialDetailHeight + 5
+	if m.bottomTopPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseDragPaneSizesPersistAcrossModelRestart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 50
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "task1", Title: "Task 1", Classification: "ready"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainStart, initialTopHeight, _ := m.computeTaskPanelMetrics()
+	mainPressY := mainStart + initialTopHeight - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: mainPressY})
+	m = updated.(Model)
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: mainPressY + 4})
+	m = updated.(Model)
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: mainPressY + 4})
+	m = updated.(Model)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	bottomPressY := bottomStart + detailHeight - 1
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: bottomPressY})
+	m = updated.(Model)
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: bottomPressY + 2})
+	m = updated.(Model)
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: bottomPressY + 2})
+	m = updated.(Model)
+
+	restarted := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	if restarted.taskPanelHeight != m.taskPanelHeight {
+		t.Fatalf("expected restarted task panel height %d, got %d", m.taskPanelHeight, restarted.taskPanelHeight)
+	}
+	if restarted.bottomTopPanelHeight != m.bottomTopPanelHeight {
+		t.Fatalf("expected restarted bottom top panel height %d, got %d", m.bottomTopPanelHeight, restarted.bottomTopPanelHeight)
 	}
 }
 

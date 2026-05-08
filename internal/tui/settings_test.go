@@ -205,3 +205,32 @@ func TestSettings_SaveAndLoadGroupVisible(t *testing.T) {
 		t.Error("Expected 'Inactive' to be true after load")
 	}
 }
+
+func TestSettings_SaveAndLoadPaneHeights(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	originalSettings := Settings{
+		GroupCollapsed:       make(map[string]bool),
+		GroupVisible:         getDefaultGroupVisible(),
+		FeatureCollapsed:     make(map[string]bool),
+		ProjectLimits:        make(map[string]int),
+		GlobalMaxParallel:    4,
+		TaskPanelHeight:      17,
+		BottomTopPanelHeight: 9,
+	}
+	if err := SaveSettings(originalSettings); err != nil {
+		t.Fatalf("SaveSettings failed: %v", err)
+	}
+
+	loadedSettings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("LoadSettings failed: %v", err)
+	}
+
+	if loadedSettings.TaskPanelHeight != originalSettings.TaskPanelHeight {
+		t.Fatalf("expected task panel height %d, got %d", originalSettings.TaskPanelHeight, loadedSettings.TaskPanelHeight)
+	}
+	if loadedSettings.BottomTopPanelHeight != originalSettings.BottomTopPanelHeight {
+		t.Fatalf("expected bottom top panel height %d, got %d", originalSettings.BottomTopPanelHeight, loadedSettings.BottomTopPanelHeight)
+	}
+}

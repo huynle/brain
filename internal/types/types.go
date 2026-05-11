@@ -850,8 +850,17 @@ type RunnerListResponse struct {
 
 // HealthResponse is the response for GET /health.
 type HealthResponse struct {
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
+	Status    string                `json:"status"`
+	Timestamp string                `json:"timestamp"`
+	Embedding EmbeddingHealthStatus `json:"embedding"`
+}
+
+// EmbeddingHealthStatus reports whether semantic-search embeddings are usable.
+type EmbeddingHealthStatus struct {
+	Enabled  bool   `json:"enabled"`
+	Status   string `json:"status"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // StatsResponse is the response for GET /stats.

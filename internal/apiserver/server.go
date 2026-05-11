@@ -198,6 +198,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	routerOpts := []api.RouterOption{
 		api.WithHandler(handler),
 		api.WithDualAuth(store, store),
+		api.WithEmbeddingReady(!cfg.Embedding.Enabled || embeddingClient != nil),
 	}
 	if rateLimiter != nil {
 		routerOpts = append(routerOpts, api.WithRateLimiter(rateLimiter))

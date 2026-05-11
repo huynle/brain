@@ -131,6 +131,10 @@ type Model struct {
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
 	entryTree        EntryTree
+	brainEntries     []types.BrainEntry
+	brainSearchState FilterMode
+	brainSearchQuery string
+	brainSearchLabel string
 
 	// Runner panel state
 	runnerPanel        RunnerPanel
@@ -383,6 +387,7 @@ func (m Model) Init() tea.Cmd {
 		cmds := []tea.Cmd{
 			tea.EnableMouseAllMotion,
 			tickCmd(),
+			fetchAPIHealthCmd(m.apiRunnerConfig()),
 		}
 		for _, client := range m.sseClients {
 			cmds = append(cmds, client.Connect(m.ctx))
@@ -394,6 +399,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnableMouseAllMotion,
 		m.sseClient.Connect(m.ctx),
+		fetchAPIHealthCmd(m.apiRunnerConfig()),
 		tickCmd(),
 	)
 }
@@ -534,7 +540,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
+		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()), fetchAPIHealthCmd(m.apiRunnerConfig())}
 		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
 		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
 		return m, tea.Batch(cmds...)
@@ -547,11 +553,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case apiHealthMsg:
+		if msg.err != nil || msg.health.Status == "unhealthy" {
+			m.statusBar.EmbeddingReady = false
+			return m, nil
+		}
+		m.statusBar.EmbeddingReady = msg.health.Embedding.Enabled && msg.health.Embedding.Status == "ready"
+		return m, nil
+
 	case BrainEntriesMsg:
 		if msg.Err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Failed to fetch brain entries: %v", msg.Err))
 			return m, nil
 		}
+		m.brainEntries = append([]types.BrainEntry(nil), msg.Entries...)
+		m.entryTree.SetEntries(msg.Entries)
+		m.clearBrainSearch()
+		return m, nil
+
+	case BrainSearchMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Brain search failed: %v", msg.Err))
+			return m, nil
+		}
+		m.brainSearchState = FilterLocked
+		m.brainSearchQuery = msg.Query
+		m.brainSearchLabel = msg.Strategy
 		m.entryTree.SetEntries(msg.Entries)
 		return m, nil
 
@@ -1005,6 +1032,21 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
 		return m.handleDreamSearchInput(msg)
 	}
+	if m.activeContentTab == ContentTabBrain && m.brainSearchState == FilterTyping {
+		return m.handleBrainSearchInput(msg)
+	}
+	if m.activeContentTab == ContentTabBrain && m.brainSearchState == FilterLocked {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.clearBrainSearch()
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "/" {
+				m.brainSearchState = FilterTyping
+				return m, nil
+			}
+		}
+	}
 
 	// If in filter typing mode, handle filter input first
 	if m.filterState == FilterTyping {
@@ -1300,6 +1342,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		if m.activeContentTab == ContentTabBrain {
 			switch string(msg.Runes) {
+			case "/":
+				m.brainSearchState = FilterTyping
+				m.brainSearchQuery = ""
+				m.brainSearchLabel = ""
+				return m, nil
 			case "j":
 				m.entryTree.MoveDown()
 				return m, nil
@@ -3346,7 +3393,15 @@ func (m Model) renderBaseView() string {
 		mainContent = m.renderLogPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabBrain {
 		// Brain tab: project entry tree for understanding stored memory.
-		entryView := m.entryTree.View(m.width-4, mainHeight-2)
+		entryHeight := mainHeight - 2
+		entryView := m.entryTree.View(m.width-4, entryHeight)
+		if searchBar := m.renderBrainSearchBar(m.width - 4); searchBar != "" {
+			entryHeight--
+			if entryHeight < 1 {
+				entryHeight = 1
+			}
+			entryView = searchBar + "\n" + m.entryTree.View(m.width-4, entryHeight)
+		}
 		entryPanel := InactiveBorder.
 			Width(m.width - 2).
 			Height(mainHeight - 2).
@@ -3605,6 +3660,62 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleBrainSearchInput processes Brain tab search input.
+func (m Model) handleBrainSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		if m.brainSearchQuery == "" {
+			m.clearBrainSearch()
+			return m, nil
+		}
+		m.brainSearchState = FilterLocked
+		return m, fetchBrainSearchCmd(m.apiRunnerConfig(), m.currentProjectID(), m.brainSearchQuery, m.statusBar.EmbeddingReady)
+
+	case tea.KeyEsc:
+		m.clearBrainSearch()
+		return m, nil
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		if len(m.brainSearchQuery) > 0 {
+			m.brainSearchQuery = m.brainSearchQuery[:len(m.brainSearchQuery)-1]
+		}
+		return m, nil
+
+	case tea.KeyCtrlU:
+		m.brainSearchQuery = ""
+		return m, nil
+
+	case tea.KeyRunes:
+		m.brainSearchQuery += string(msg.Runes)
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) clearBrainSearch() {
+	m.brainSearchState = FilterOff
+	m.brainSearchQuery = ""
+	m.brainSearchLabel = ""
+	if m.brainEntries != nil {
+		m.entryTree.SetEntries(m.brainEntries)
+	}
+}
+
+func (m Model) renderBrainSearchBar(width int) string {
+	switch m.brainSearchState {
+	case FilterTyping:
+		return FilterTypingStyle.Width(width).Render(fmt.Sprintf(" / %s_ ", m.brainSearchQuery))
+	case FilterLocked:
+		strategy := m.brainSearchLabel
+		if strategy == "" {
+			strategy = "search"
+		}
+		return FilterLockedStyle.Render(fmt.Sprintf(" Brain %s: %s (%d) ", strategy, m.brainSearchQuery, len(m.entryTree.entries))) + DimStyle.Render("  Esc: clear")
+	default:
+		return ""
+	}
+}
+
 // applyFilter applies the current filter query to the task list.
 func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
@@ -3792,6 +3903,38 @@ func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 	}
 }
 
+func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string, embeddingReady bool) tea.Cmd {
+	return func() tea.Msg {
+		strategy := "fts"
+		if embeddingReady {
+			strategy = "semantic"
+		}
+		limit := 500
+		client := runner.NewAPIClient(cfg)
+		resp, err := client.SearchEntries(context.Background(), types.SearchRequest{
+			Query:    query,
+			Project:  project,
+			Strategy: strategy,
+			Limit:    &limit,
+		})
+		if err != nil {
+			return BrainSearchMsg{Query: query, Strategy: strategy, Err: err}
+		}
+		entries := make([]types.BrainEntry, 0, len(resp.Results))
+		for _, result := range resp.Results {
+			entries = append(entries, types.BrainEntry{
+				ID:        result.ID,
+				Path:      result.Path,
+				Title:     result.Title,
+				Type:      result.Type,
+				Status:    result.Status,
+				ProjectID: project,
+			})
+		}
+		return BrainSearchMsg{Entries: entries, Query: query, Strategy: strategy}
+	}
+}
+
 // getAllTasks merges all tasks from all projects into a single slice.
 // Returns an empty slice if tasksByProject is empty.
 func (m *Model) getAllTasks() []types.ResolvedTask {
@@ -3935,6 +4078,11 @@ type runnerStatusMsg struct {
 	paused         bool
 	pausedProjects []string
 	err            error
+}
+
+type apiHealthMsg struct {
+	health runner.APIHealth
+	err    error
 }
 
 type runnerShutdownRequestedMsg struct {
@@ -4268,6 +4416,15 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 			return runnerStatusMsg{err: err}
 		}
 		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
+	}
+}
+
+// fetchAPIHealthCmd fetches server and embedding readiness for the status bar.
+func fetchAPIHealthCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		health, err := apiClient.CheckHealth(context.Background())
+		return apiHealthMsg{health: health, err: err}
 	}
 }
 

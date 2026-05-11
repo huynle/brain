@@ -393,9 +393,18 @@ type EventHandler func(event RunnerEvent)
 
 // APIHealth represents the health status of the Brain API.
 type APIHealth struct {
-	Status      string `json:"status"`
-	ZKAvailable bool   `json:"zkAvailable"`
-	DBAvailable bool   `json:"dbAvailable"`
+	Status      string             `json:"status"`
+	ZKAvailable bool               `json:"zkAvailable"`
+	DBAvailable bool               `json:"dbAvailable"`
+	Embedding   APIEmbeddingHealth `json:"embedding"`
+}
+
+// APIEmbeddingHealth represents embedding model availability from /health.
+type APIEmbeddingHealth struct {
+	Enabled  bool   `json:"enabled"`
+	Status   string `json:"status"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // ClaimResult represents the outcome of a task claim attempt.

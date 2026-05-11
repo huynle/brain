@@ -90,6 +90,14 @@ type BrainEntriesMsg struct {
 	Err     error
 }
 
+// BrainSearchMsg is sent when a Brain tab search completes.
+type BrainSearchMsg struct {
+	Entries  []types.BrainEntry
+	Query    string
+	Strategy string
+	Err      error
+}
+
 // RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo

@@ -137,7 +137,7 @@ func TestHelpBar_View_BrainTabShowsEntryShortcuts(t *testing.T) {
 
 	view := h.View(120, false, "brain-api")
 
-	for _, want := range []string{"Navigate", "Edit", "Refresh", "Brain"} {
+	for _, want := range []string{"Navigate", "Search", "Clear", "Edit", "Refresh", "Brain"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected Brain help to contain %q, got:\n%s", want, view)
 		}

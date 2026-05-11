@@ -59,6 +59,12 @@ func TestAPIClient_CheckHealth(t *testing.T) {
 			Status:      "healthy",
 			ZKAvailable: true,
 			DBAvailable: true,
+			Embedding: APIEmbeddingHealth{
+				Enabled:  true,
+				Status:   "ready",
+				Provider: "openrouter",
+				Model:    "text-embedding-3-small",
+			},
 		})
 	}))
 	defer srv.Close()
@@ -76,6 +82,12 @@ func TestAPIClient_CheckHealth(t *testing.T) {
 	}
 	if !health.DBAvailable {
 		t.Error("expected DBAvailable to be true")
+	}
+	if health.Embedding.Status != "ready" {
+		t.Errorf("Embedding.Status = %q, want ready", health.Embedding.Status)
+	}
+	if health.Embedding.Provider != "openrouter" {
+		t.Errorf("Embedding.Provider = %q, want openrouter", health.Embedding.Provider)
 	}
 }
 

@@ -39,7 +39,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 	// API v1 routes
 	r.Route("/api/v1", func(r chi.Router) {
 		// Health check — unauthenticated (before auth middleware)
-		r.Get("/health", HealthHandler())
+		r.Get("/health", HealthHandler(cfg, o.embeddingReady))
 
 		// Token bootstrap — unauthenticated (only works when zero tokens exist)
 		// Solves the chicken-and-egg problem: need a token to create a token.
@@ -417,9 +417,10 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 // routerOptions holds optional dependencies for the router.
 type routerOptions struct {
-	handler     *Handler
-	validator   TokenValidator
-	rateLimiter *RateLimiter
+	handler        *Handler
+	validator      TokenValidator
+	rateLimiter    *RateLimiter
+	embeddingReady bool
 }
 
 // WithHandler returns a router option that wires the given Handler.
@@ -453,5 +454,12 @@ func WithDualAuth(apiValidator TokenValidator, oauthValidator OAuthAccessTokenVa
 func WithRateLimiter(rl *RateLimiter) func(*routerOptions) {
 	return func(o *routerOptions) {
 		o.rateLimiter = rl
+	}
+}
+
+// WithEmbeddingReady reports whether the configured embedding client is usable.
+func WithEmbeddingReady(ready bool) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.embeddingReady = ready
 	}
 }

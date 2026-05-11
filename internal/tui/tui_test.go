@@ -289,6 +289,80 @@ func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
 	}
 }
 
+func TestBrainTabSlashSearchAndEscClearsResults(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	allEntries := []types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/idea/a.md", Title: "Alpha", Type: "idea"},
+		{ID: "b", Path: "projects/brain-api/idea/b.md", Title: "Beta", Type: "idea"},
+	}
+	updated, _ := m.Update(BrainEntriesMsg{Entries: allEntries})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = updated.(Model)
+	if m.brainSearchState != FilterTyping {
+		t.Fatalf("expected slash to start Brain search typing, got %v", m.brainSearchState)
+	}
+
+	updated, _ = m.Update(BrainSearchMsg{Entries: []types.BrainEntry{allEntries[1]}, Query: "beta", Strategy: "semantic"})
+	m = updated.(Model)
+	if len(m.entryTree.entries) != 1 || m.entryTree.entries[0].ID != "b" {
+		t.Fatalf("expected Brain search results to replace tree entries, got %#v", m.entryTree.entries)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.brainSearchState != FilterOff {
+		t.Fatalf("expected Esc to clear Brain search state, got %v", m.brainSearchState)
+	}
+	if len(m.entryTree.entries) != len(allEntries) {
+		t.Fatalf("expected Esc to restore all entries, got %#v", m.entryTree.entries)
+	}
+}
+
+func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
+	var got types.SearchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(types.SearchResponse{Results: []types.SearchResult{{ID: "x", Path: "projects/brain-api/idea/x.md", Title: "Vector", Type: "idea", Status: "active"}}})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "vector", true)().(BrainSearchMsg)
+	if msg.Err != nil {
+		t.Fatalf("search failed: %v", msg.Err)
+	}
+	if got.Strategy != "semantic" {
+		t.Fatalf("strategy = %q, want semantic", got.Strategy)
+	}
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != "x" {
+		t.Fatalf("unexpected entries: %#v", msg.Entries)
+	}
+}
+
+func TestBrainSearchCmdUsesFTSWhenEmbeddingUnavailable(t *testing.T) {
+	var got types.SearchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(types.SearchResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "plain", false)().(BrainSearchMsg)
+	if msg.Err != nil {
+		t.Fatalf("search failed: %v", msg.Err)
+	}
+	if got.Strategy != "fts" {
+		t.Fatalf("strategy = %q, want fts", got.Strategy)
+	}
+}
+
 func TestMouseClickProjectTabSwitchesActiveProject(t *testing.T) {
 	m := NewModel(Config{
 		APIURL:   "http://localhost:3333",
@@ -1411,6 +1485,35 @@ func TestStatusBarView_ShowsConnectionDot(t *testing.T) {
 	view = sb.View(80)
 	if !strings.Contains(view, "●") {
 		t.Errorf("expected connected dot '●', got:\n%s", view)
+	}
+}
+
+func TestUpdate_HealthStatusUpdatesEmbeddingReadiness(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.statusBar.Connected = true
+
+	updated, _ := m.Update(apiHealthMsg{health: runner.APIHealth{
+		Status: "healthy",
+		Embedding: runner.APIEmbeddingHealth{
+			Enabled: true,
+			Status:  "ready",
+		},
+	}})
+	m = updated.(Model)
+	if !m.statusBar.EmbeddingReady {
+		t.Fatal("expected embedding to be ready when health reports ready")
+	}
+
+	updated, _ = m.Update(apiHealthMsg{health: runner.APIHealth{
+		Status: "healthy",
+		Embedding: runner.APIEmbeddingHealth{
+			Enabled: true,
+			Status:  "unavailable",
+		},
+	}})
+	m = updated.(Model)
+	if m.statusBar.EmbeddingReady {
+		t.Fatal("expected embedding to be not ready when health reports unavailable")
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 type StatusBar struct {
 	Project             string
 	Connected           bool
+	EmbeddingReady      bool
 	Stats               TaskStats
 	SelectedCount       int
 	Metrics             *ResourceMetrics
@@ -138,11 +139,20 @@ func (s StatusBar) renderFirstRow(width int) string {
 		stats += lipgloss.NewStyle().Foreground(ColorDim).Render(runnerStats)
 	}
 
-	// Right side: connection indicator
-	connDot := lipgloss.NewStyle().Foreground(ColorBlocked).Render(IndicatorDisconn)
+	// Right side: brain server and embedding model indicators.
+	brainDot := lipgloss.NewStyle().Foreground(ColorBlocked).Render(IndicatorDisconn)
 	if s.Connected {
-		connDot = lipgloss.NewStyle().Foreground(ColorReady).Render(IndicatorConnected)
+		brainDot = lipgloss.NewStyle().Foreground(ColorReady).Render(IndicatorConnected)
 	}
+	embColor := ColorBlocked
+	if s.Connected {
+		embColor = ColorWaiting
+		if s.EmbeddingReady {
+			embColor = ColorReady
+		}
+	}
+	embDot := lipgloss.NewStyle().Foreground(embColor).Render(IndicatorConnected)
+	connectionStatus := fmt.Sprintf("%s %s", brainDot, embDot)
 
 	// Compose first row
 	leftContent := projectName + "  " + indicators + stats
@@ -153,12 +163,21 @@ func (s StatusBar) renderFirstRow(width int) string {
 		innerWidth = 10
 	}
 
-	leftStyle := lipgloss.NewStyle().Width(innerWidth - 2)
-	rightStyle := lipgloss.NewStyle().Align(lipgloss.Right).Width(2)
+	rightWidth := 4
+	if innerWidth >= 90 {
+		connectionStatus = fmt.Sprintf("%s brain  %s emb", brainDot, embDot)
+		rightWidth = 15
+	}
+	if innerWidth <= rightWidth+2 {
+		rightWidth = 4
+		connectionStatus = fmt.Sprintf("%s %s", brainDot, embDot)
+	}
+	leftStyle := lipgloss.NewStyle().Width(innerWidth - rightWidth)
+	rightStyle := lipgloss.NewStyle().Align(lipgloss.Right).Width(rightWidth)
 
 	row := lipgloss.JoinHorizontal(lipgloss.Top,
 		leftStyle.Render(leftContent),
-		rightStyle.Render(connDot),
+		rightStyle.Render(connectionStatus),
 	)
 
 	return row

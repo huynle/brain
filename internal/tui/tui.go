@@ -993,8 +993,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectSelectedMsg:
 		m.modalManager.Close()
-		m.selectProject(msg.projectID)
-		return m, nil
+		return m.selectProject(msg.projectID)
 	}
 
 	// Route unhandled messages to the active modal (e.g., metadataFetchedMsg,
@@ -1294,20 +1293,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch string(msg.Runes) {
 			case "h", "[":
 				m.projectTabs.PrevTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
+				return m.selectProject(m.projectTabs.ActiveProject())
 			case "l", "]":
 				m.projectTabs.NextTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
+				return m.selectProject(m.projectTabs.ActiveProject())
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 				tabNum := int(msg.Runes[0] - '0')
 				if m.projectTabs.JumpToTab(tabNum) {
-					m.activeProjectID = m.projectTabs.ActiveProject()
-					m.syncActiveProjectView()
-					return m, nil
+					return m.selectProject(m.projectTabs.ActiveProject())
 				}
 			}
 		}
@@ -2132,8 +2125,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 					m.modalManager.Open(NewProjectPickerModal(m.projectTabs.Projects, m.activeProjectID))
 					return m, nil
 				}
-				m.selectProject(m.projectTabs.Projects[tabIndex-1])
-				return m, nil
+				return m.selectProject(m.projectTabs.Projects[tabIndex-1])
 			}
 			if isAdjacentProjectRow {
 				if _, ok := m.contentTabAtX(x); ok {
@@ -3882,13 +3874,24 @@ func (m *Model) syncActiveProjectView() {
 	}
 }
 
-func (m *Model) selectProject(projectID string) {
+func (m Model) selectProject(projectID string) (tea.Model, tea.Cmd) {
 	if projectID == "" {
 		projectID = "all"
 	}
 	m.projectTabs.SetActiveProject(projectID)
 	m.activeProjectID = m.projectTabs.ActiveProject()
 	m.syncActiveProjectView()
+	return m, m.refreshBrainOnProjectSwitch()
+}
+
+func (m *Model) refreshBrainOnProjectSwitch() tea.Cmd {
+	if m.activeContentTab != ContentTabBrain {
+		return nil
+	}
+	m.clearBrainSearch()
+	m.brainEntries = nil
+	m.entryTree.SetEntries(nil)
+	return fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
 }
 
 func (m *Model) activeDreamProject() string {

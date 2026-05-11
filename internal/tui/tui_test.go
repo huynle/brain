@@ -1831,6 +1831,46 @@ func TestUpdate_LKeyStillNavigatesProjectsInMultiProjectMode(t *testing.T) {
 	}
 }
 
+func TestUpdate_ProjectSwitchFetchesBrainEntriesWhenBrainTabActive(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{{ID: "old", Path: "projects/old/idea/old.md", Title: "Old"}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	model := updated.(Model)
+	if model.activeProjectID != "alpha" {
+		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+	}
+	if cmd == nil {
+		t.Fatal("expected project switch on Brain tab to fetch entries for active project")
+	}
+	if len(model.entryTree.entries) != 0 {
+		t.Fatalf("expected stale Brain entries to clear while fetching, got %#v", model.entryTree.entries)
+	}
+}
+
+func TestProjectSelectedFetchesBrainEntriesWhenBrainTabActive(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.activeContentTab = ContentTabBrain
+
+	updated, cmd := m.Update(projectSelectedMsg{projectID: "beta"})
+	model := updated.(Model)
+	if model.activeProjectID != "beta" {
+		t.Fatalf("expected selected project beta, got %q", model.activeProjectID)
+	}
+	if cmd == nil {
+		t.Fatal("expected picker project switch on Brain tab to fetch entries")
+	}
+}
+
 func TestUpdate_TKey_TogglesDetailVisibility(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",

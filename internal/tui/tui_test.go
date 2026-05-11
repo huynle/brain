@@ -289,6 +289,44 @@ func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
 	}
 }
 
+func TestMouseClickBrainGroupHeaderTogglesCollapse(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 2})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if strings.Contains(view, "A [decision]") {
+		t.Fatalf("expected mouse click on group header to collapse entry, got:\n%s", view)
+	}
+	if !strings.Contains(view, "▸ decision/") {
+		t.Fatalf("expected collapsed group marker, got:\n%s", view)
+	}
+}
+
+func TestMouseHoverBrainGroupHeaderSelectsHeader(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 2})
+	model := updated.(Model)
+	if !model.entryTree.IsOnGroupHeader() {
+		t.Fatal("expected hover over group header to select it")
+	}
+}
+
 func TestBrainTabSlashSearchAndEscClearsResults(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabBrain

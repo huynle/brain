@@ -2047,6 +2047,8 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m.handleMouseWheelDown(msg)
 	case tea.MouseRight:
 		return m.handleRightClick(msg)
+	case tea.MouseMotion:
+		return m.handleMouseHover(msg)
 	}
 
 	return m, nil
@@ -2112,6 +2114,15 @@ func absInt(v int) int {
 		return -v
 	}
 	return v
+}
+
+func (m Model) handleMouseHover(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	if m.activeContentTab == ContentTabBrain && msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+		m.entryTree.SelectVisibleLine(msg.Y - mainContentStartY - 1)
+		return m, nil
+	}
+	return m, nil
 }
 
 // handleMouseClick handles left mouse button clicks.

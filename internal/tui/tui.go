@@ -582,6 +582,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.entryTree.SetEntries(msg.Entries)
 		return m, nil
 
+	case BrainEmbeddingBackfillMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Embedding backfill failed: %v", msg.Err))
+			return m, nil
+		}
+		scope := msg.Project
+		if msg.All || scope == "" {
+			scope = "all entries"
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Embedded %s: %d processed, %d skipped, %d failed", scope, msg.Result.Processed, msg.Result.Skipped, msg.Result.Failed))
+		return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+
 	case runnerShutdownRequestedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Failed to shutdown runner %s: %v", msg.runnerID, msg.err))
@@ -1361,6 +1373,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "r":
 				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+			case "b":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), m.currentProjectID(), false, false)
+			case "B":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), "", true, false)
+			case "F":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), m.currentProjectID(), false, true)
+			case "A":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), "", true, true)
 			case "e":
 				return m.editSelectedBrainEntry()
 			case "q":
@@ -3936,6 +3956,18 @@ func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string, embeddi
 			})
 		}
 		return BrainSearchMsg{Entries: entries, Query: query, Strategy: strategy}
+	}
+}
+
+func fetchBrainEmbeddingBackfillCmd(cfg runner.RunnerConfig, project string, all, force bool) tea.Cmd {
+	return func() tea.Msg {
+		client := runner.NewAPIClient(cfg)
+		req := types.EmbeddingBackfillRequest{Force: force}
+		if !all {
+			req.Project = project
+		}
+		resp, err := client.BackfillEmbeddings(context.Background(), req)
+		return BrainEmbeddingBackfillMsg{Project: req.Project, All: all, Force: force, Result: resp, Err: err}
 	}
 }
 

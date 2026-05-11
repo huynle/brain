@@ -1148,6 +1148,8 @@ func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListF
 type EmbeddingsFlags struct {
 	Project string
 	Path    string
+	All     bool
+	Force   bool
 	DryRun  bool
 	Verbose bool
 }
@@ -1169,6 +1171,10 @@ func ParseEmbeddingsFlags(args []string) (*EmbeddingsFlags, error) {
 				flags.Path = args[i+1]
 				i++
 			}
+		case "--all":
+			flags.All = true
+		case "--force":
+			flags.Force = true
 		case "--dry-run":
 			flags.DryRun = true
 		case "-v", "--verbose":
@@ -1184,6 +1190,8 @@ func convertToCommandsEmbeddingsFlags(flags *EmbeddingsFlags) *commands.Embeddin
 	return &commands.EmbeddingsFlags{
 		Project: flags.Project,
 		Path:    flags.Path,
+		All:     flags.All,
+		Force:   flags.Force,
 		DryRun:  flags.DryRun,
 		Verbose: flags.Verbose,
 	}

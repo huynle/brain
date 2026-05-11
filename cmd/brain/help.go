@@ -51,6 +51,7 @@ ENTRIES:
   edit <id-or-path>              Open entry in $EDITOR for editing
   search <query>                 Search brain entries
   list                           List brain entries with filters
+  embeddings backfill            Generate missing/stale embeddings
 
 AUTOMATIONS:
   automation                     List automations
@@ -84,6 +85,30 @@ EXAMPLES:
   brain edit abc12def
   brain edit -i --type task
   brain help run
+`
+
+const embeddingsHelp = `brain embeddings - Generate semantic-search embeddings
+
+USAGE:
+  brain embeddings backfill [flags]
+
+SUBCOMMANDS:
+  backfill                       Embed matching notes that are missing or stale
+
+FLAGS:
+  --project <id>                 Only embed entries in a project
+  --all                          Embed entries across all brains/projects (default)
+  --path <prefix>                Only embed entries with this path prefix
+  --force                        Re-embed matching entries even if already current
+  --dry-run                      Show entries that would be embedded
+  -v, --verbose                  Show configuration and detailed entries
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain embeddings backfill --project brain-api
+  brain embeddings backfill --all
+  brain embeddings backfill --project brain-api --force
+  brain embeddings backfill --dry-run --verbose
 `
 
 const apiHelp = `brain api - API server operations
@@ -984,6 +1009,8 @@ func ShowHelp(command string) {
 		fmt.Print(searchHelp)
 	case "list":
 		fmt.Print(listHelp)
+	case "embeddings", "embeddings backfill":
+		fmt.Print(embeddingsHelp)
 	case "stop":
 		fmt.Print(stopHelp)
 	default:

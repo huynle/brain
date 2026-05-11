@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/huynle/brain-api/internal/config"
@@ -23,6 +24,8 @@ import (
 type EmbeddingsFlags struct {
 	Project string // --project (filter by project ID)
 	Path    string // --path (filter by path prefix)
+	All     bool   // --all (all projects; default when --project is omitted)
+	Force   bool   // --force (re-embed even if current)
 	DryRun  bool   // --dry-run (show what would be done without doing it)
 	Verbose bool   // --verbose (show detailed progress)
 }
@@ -115,6 +118,7 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 		if c.Flags.Path != "" {
 			fmt.Fprintf(out, "  Path:       %s\n", c.Flags.Path)
 		}
+		fmt.Fprintf(out, "  Mode:       %s\n", c.embeddingMode())
 		fmt.Fprintln(out)
 	}
 
@@ -128,7 +132,11 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	result, err := idx.IndexEmbeddings(ctx, embeddingClient)
+	result, err := idx.IndexEmbeddingsWithOptions(ctx, embeddingClient, indexer.EmbeddingIndexOptions{
+		Project: c.Flags.Project,
+		Path:    c.Flags.Path,
+		Force:   c.Flags.Force,
+	})
 	if err != nil {
 		return fmt.Errorf("backfill embeddings: %w", err)
 	}
@@ -156,6 +164,13 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 	return nil
 }
 
+func (c *EmbeddingsCommand) embeddingMode() string {
+	if c.Flags.Force {
+		return "force re-embed matching notes"
+	}
+	return "embed missing or stale matching notes"
+}
+
 // executeDryRun shows what would be done without actually generating embeddings.
 func (c *EmbeddingsCommand) executeDryRun(out io.Writer, idx *indexer.Indexer) error {
 	// Query notes that need embedding (re)generation
@@ -168,10 +183,25 @@ func (c *EmbeddingsCommand) executeDryRun(out io.Writer, idx *indexer.Indexer) e
 			FROM note_embeddings_meta
 			GROUP BY note_id
 		) m ON n.id = m.note_id
-		WHERE m.note_id IS NULL OR n.indexed_at > m.latest_indexed
 	`
+	var conditions []string
+	var args []interface{}
+	if !c.Flags.Force {
+		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+	}
+	if c.Flags.Project != "" {
+		conditions = append(conditions, "n.project_id = ?")
+		args = append(args, c.Flags.Project)
+	}
+	if c.Flags.Path != "" {
+		conditions = append(conditions, "n.path LIKE ?")
+		args = append(args, c.Flags.Path+"%")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
 
-	rows, err := idx.DB().Query(query)
+	rows, err := idx.DB().Query(query, args...)
 	if err != nil {
 		return fmt.Errorf("query stale notes: %w", err)
 	}

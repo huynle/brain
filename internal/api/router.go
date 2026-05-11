@@ -93,6 +93,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Embeddings (admin:* scope) ─────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil {
+					r.Post("/embeddings/backfill", o.handler.HandleEmbeddingBackfill)
+				} else {
+					r.Post("/embeddings/backfill", notImplemented)
+				}
+			})
+
 			// ─── Entries CRUD ─────────────────────────────────────
 			r.Route("/entries", func(r chi.Router) {
 				// Read operations — read:* scope

@@ -580,6 +580,23 @@ func (c *APIClient) SearchEntries(ctx context.Context, req types.SearchRequest) 
 	return &result, nil
 }
 
+// BackfillEmbeddings generates embeddings for matching entries via POST /api/v1/embeddings/backfill.
+func (c *APIClient) BackfillEmbeddings(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/embeddings/backfill", req)
+	if err != nil {
+		return nil, fmt.Errorf("backfill embeddings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.EmbeddingBackfillResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode embedding backfill response: %w", err)
+	}
+	return &result, nil
+}
+
 // ListEntries lists entries with optional filters via GET /api/v1/entries.
 func (c *APIClient) ListEntries(ctx context.Context, params map[string]string) (*types.ListEntriesResponse, error) {
 	path := "/api/v1/entries"

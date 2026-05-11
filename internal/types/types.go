@@ -863,6 +863,21 @@ type EmbeddingHealthStatus struct {
 	Model    string `json:"model,omitempty"`
 }
 
+// EmbeddingBackfillRequest requests embedding generation for matching notes.
+type EmbeddingBackfillRequest struct {
+	Project string `json:"project,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Force   bool   `json:"force,omitempty"`
+}
+
+// EmbeddingBackfillResponse reports embedding generation results.
+type EmbeddingBackfillResponse struct {
+	Processed int    `json:"processed"`
+	Skipped   int    `json:"skipped"`
+	Failed    int    `json:"failed"`
+	Duration  string `json:"duration"`
+}
+
 // StatsResponse is the response for GET /stats.
 type StatsResponse struct {
 	BrainDir       string         `json:"brainDir"`

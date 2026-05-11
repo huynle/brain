@@ -98,6 +98,15 @@ type BrainSearchMsg struct {
 	Err      error
 }
 
+// BrainEmbeddingBackfillMsg is sent when embedding generation completes.
+type BrainEmbeddingBackfillMsg struct {
+	Project string
+	All     bool
+	Force   bool
+	Result  *types.EmbeddingBackfillResponse
+	Err     error
+}
+
 // RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo

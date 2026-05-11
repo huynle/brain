@@ -71,3 +71,46 @@ func TestEmbeddingsBackfillDryRunUsesServerDataDirDatabase(t *testing.T) {
 		t.Fatalf("expected backfill not to create root-level brain.db, stat error: %v", err)
 	}
 }
+
+func TestEmbeddingsBackfillDryRunFiltersByProject(t *testing.T) {
+	t.Setenv("TEST_EMBEDDING_API_KEY", "test-key")
+	brainDir := t.TempDir()
+	dataDir := filepath.Join(brainDir, config.DataDir)
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatalf("create data dir: %v", err)
+	}
+	store, err := storage.New(filepath.Join(dataDir, "brain.db"))
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	body := "Project-scoped embedding content."
+	status := "active"
+	for _, tc := range []struct{ path, project string }{
+		{"projects/alpha/plan/a.md", "alpha"},
+		{"projects/beta/plan/b.md", "beta"},
+	} {
+		typ := "plan"
+		_, err = store.InsertNote(context.Background(), &storage.NoteRow{
+			Path: tc.path, ShortID: tc.project, Title: tc.project, Body: &body, RawContent: &body,
+			WordCount: 4, Metadata: `{}`, Type: &typ, Status: &status, ProjectID: &tc.project,
+		})
+		if err != nil {
+			t.Fatalf("insert note: %v", err)
+		}
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close database: %v", err)
+	}
+	cfg := &UnifiedConfig{}
+	cfg.Server.BrainDir = brainDir
+	cfg.Server.Embedding.APIKeyEnv = "TEST_EMBEDDING_API_KEY"
+	var out bytes.Buffer
+	cmd := &EmbeddingsCommand{Subcommand: "backfill", Config: cfg, Flags: &EmbeddingsFlags{DryRun: true, Project: "alpha"}, Out: &out}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "projects/alpha/plan/a.md") || strings.Contains(got, "projects/beta/plan/b.md") {
+		t.Fatalf("expected dry-run to include only alpha, got:\n%s", got)
+	}
+}

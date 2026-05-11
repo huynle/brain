@@ -82,6 +82,11 @@ type BrainService interface {
 	GenerateLink(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 }
 
+// EmbeddingService is optionally implemented by BrainService implementations that can generate embeddings.
+type EmbeddingService interface {
+	EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs []string

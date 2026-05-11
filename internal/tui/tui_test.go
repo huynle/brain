@@ -340,6 +340,24 @@ func TestBrainSearchInputAcceptsSpaces(t *testing.T) {
 	}
 }
 
+func TestBrainTabEmbedKeysRequestExpectedScope(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if cmd == nil {
+		t.Fatal("expected b to request current project embedding backfill")
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'B'}})
+	if cmd == nil {
+		t.Fatal("expected B to request all-project embedding backfill")
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd == nil {
+		t.Fatal("expected F to request force embedding backfill")
+	}
+}
+
 func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	var got types.SearchRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

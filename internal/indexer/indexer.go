@@ -309,6 +309,18 @@ func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 // It uses staleness checks to avoid re-embedding unchanged notes.
 // Embedding generation is best-effort: errors are logged but do not break the process.
 func (idx *Indexer) IndexEmbeddings(ctx context.Context, embeddingClient EmbeddingClient) (*EmbeddingIndexResult, error) {
+	return idx.IndexEmbeddingsWithOptions(ctx, embeddingClient, EmbeddingIndexOptions{})
+}
+
+// EmbeddingIndexOptions filters and controls embedding generation.
+type EmbeddingIndexOptions struct {
+	Project string
+	Path    string
+	Force   bool
+}
+
+// IndexEmbeddingsWithOptions generates and stores embeddings for matching notes.
+func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingClient EmbeddingClient, opts EmbeddingIndexOptions) (*EmbeddingIndexResult, error) {
 	if embeddingClient == nil {
 		return nil, fmt.Errorf("embedding client is nil")
 	}
@@ -328,10 +340,25 @@ func (idx *Indexer) IndexEmbeddings(ctx context.Context, embeddingClient Embeddi
 			FROM note_embeddings_meta
 			GROUP BY note_id
 		) m ON n.id = m.note_id
-		WHERE m.note_id IS NULL OR n.indexed_at > m.latest_indexed
 	`
+	var conditions []string
+	var args []interface{}
+	if !opts.Force {
+		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+	}
+	if opts.Project != "" {
+		conditions = append(conditions, "n.project_id = ?")
+		args = append(args, opts.Project)
+	}
+	if opts.Path != "" {
+		conditions = append(conditions, "n.path LIKE ?")
+		args = append(args, opts.Path+"%")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
 
-	rows, err := idx.storage.DB().QueryContext(ctx, query)
+	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query stale notes: %w", err)
 	}
@@ -364,6 +391,13 @@ func (idx *Indexer) IndexEmbeddings(ctx context.Context, embeddingClient Embeddi
 
 	// Process each note
 	for _, note := range notes {
+		if opts.Force {
+			if err := idx.storage.DeleteNoteEmbeddings(ctx, note.id); err != nil {
+				slog.Warn("failed to delete existing embeddings for note", "note_id", note.id, "error", err)
+				failed++
+				continue
+			}
+		}
 		// Skip notes with empty body
 		if note.body == "" {
 			skipped++

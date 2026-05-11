@@ -1466,6 +1466,27 @@ func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path str
 	return err
 }
 
+// EmbedEntries generates embeddings for matching entries.
+func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
+	if s.embeddingClient == nil {
+		return nil, fmt.Errorf("embedding client is not available")
+	}
+	result, err := s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{
+		Project: req.Project,
+		Path:    req.Path,
+		Force:   req.Force,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &types.EmbeddingBackfillResponse{
+		Processed: result.Processed,
+		Skipped:   result.Skipped,
+		Failed:    result.Failed,
+		Duration:  result.Duration.Round(time.Millisecond).String(),
+	}, nil
+}
+
 // =============================================================================
 // List
 // =============================================================================

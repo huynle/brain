@@ -579,7 +579,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.brainSearchState = FilterLocked
 		m.brainSearchQuery = msg.Query
 		m.brainSearchLabel = msg.Strategy
-		m.entryTree.SetEntries(msg.Entries)
+		m.entryTree.SetEntriesInOrder(msg.Entries)
 		return m, nil
 
 	case BrainEmbeddingBackfillMsg:
@@ -3930,7 +3930,7 @@ func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd {
 	return func() tea.Msg {
 		strategy := "semantic"
-		limit := 500
+		limit := 25
 		client := runner.NewAPIClient(cfg)
 		resp, err := client.SearchEntries(context.Background(), types.SearchRequest{
 			Query:    query,

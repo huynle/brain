@@ -34,8 +34,19 @@ func NewEntryTree() EntryTree {
 
 // SetEntries replaces the displayed entries and rebuilds the flattened tree.
 func (t *EntryTree) SetEntries(entries []types.BrainEntry) {
+	t.setEntries(entries, true)
+}
+
+// SetEntriesInOrder replaces entries without sorting, preserving API relevance order.
+func (t *EntryTree) SetEntriesInOrder(entries []types.BrainEntry) {
+	t.setEntries(entries, false)
+}
+
+func (t *EntryTree) setEntries(entries []types.BrainEntry, sortEntries bool) {
 	t.entries = append([]types.BrainEntry(nil), entries...)
-	sort.Slice(t.entries, func(i, j int) bool { return t.entries[i].Path < t.entries[j].Path })
+	if sortEntries {
+		sort.Slice(t.entries, func(i, j int) bool { return t.entries[i].Path < t.entries[j].Path })
+	}
 	t.rebuildRows()
 	t.clampCursor()
 }

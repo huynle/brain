@@ -75,3 +75,22 @@ func TestEntryTree_KeepsSelectionVisibleWhenScrolling(t *testing.T) {
 		t.Fatalf("expected early entries to scroll out of view, got:\n%s", view)
 	}
 }
+
+func TestEntryTree_SetEntriesInOrderPreservesSearchRelevance(t *testing.T) {
+	tree := NewEntryTree()
+	tree.SetEntriesInOrder([]types.BrainEntry{
+		{ID: "semantic", Path: "projects/test/idea/semantic.md", Title: "Semantic Top", Type: "idea"},
+		{ID: "automation", Path: "projects/test/automation/automation.md", Title: "Automation Later", Type: "automation"},
+	})
+
+	selected := tree.SelectedEntry()
+	if selected == nil || selected.ID != "semantic" {
+		t.Fatalf("expected first semantic result to remain selected, got %#v", selected)
+	}
+	view := tree.View(80, 8)
+	semanticIndex := strings.Index(view, "Semantic Top")
+	automationIndex := strings.Index(view, "Automation Later")
+	if semanticIndex < 0 || automationIndex < 0 || semanticIndex > automationIndex {
+		t.Fatalf("expected semantic result before automation result, got:\n%s", view)
+	}
+}

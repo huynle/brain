@@ -398,6 +398,9 @@ func TestBrainSearchCmdUsesSemanticEvenWhenEmbeddingHealthUnknown(t *testing.T) 
 	if got.Strategy != "semantic" {
 		t.Fatalf("strategy = %q, want semantic", got.Strategy)
 	}
+	if got.Limit == nil || *got.Limit != 25 {
+		t.Fatalf("limit = %v, want 25", got.Limit)
+	}
 }
 
 func TestMouseClickProjectTabSwitchesActiveProject(t *testing.T) {

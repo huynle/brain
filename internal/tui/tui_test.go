@@ -371,7 +371,7 @@ func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "vector", true)().(BrainSearchMsg)
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "vector")().(BrainSearchMsg)
 	if msg.Err != nil {
 		t.Fatalf("search failed: %v", msg.Err)
 	}
@@ -383,7 +383,7 @@ func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	}
 }
 
-func TestBrainSearchCmdUsesFTSWhenEmbeddingUnavailable(t *testing.T) {
+func TestBrainSearchCmdUsesSemanticEvenWhenEmbeddingHealthUnknown(t *testing.T) {
 	var got types.SearchRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewDecoder(r.Body).Decode(&got)
@@ -391,12 +391,12 @@ func TestBrainSearchCmdUsesFTSWhenEmbeddingUnavailable(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "plain", false)().(BrainSearchMsg)
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "plain")().(BrainSearchMsg)
 	if msg.Err != nil {
 		t.Fatalf("search failed: %v", msg.Err)
 	}
-	if got.Strategy != "fts" {
-		t.Fatalf("strategy = %q, want fts", got.Strategy)
+	if got.Strategy != "semantic" {
+		t.Fatalf("strategy = %q, want semantic", got.Strategy)
 	}
 }
 

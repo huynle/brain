@@ -3689,7 +3689,7 @@ func (m Model) handleBrainSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.brainSearchState = FilterLocked
-		return m, fetchBrainSearchCmd(m.apiRunnerConfig(), m.currentProjectID(), m.brainSearchQuery, m.statusBar.EmbeddingReady)
+		return m, fetchBrainSearchCmd(m.apiRunnerConfig(), m.currentProjectID(), m.brainSearchQuery)
 
 	case tea.KeyEsc:
 		m.clearBrainSearch()
@@ -3927,12 +3927,9 @@ func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 	}
 }
 
-func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string, embeddingReady bool) tea.Cmd {
+func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd {
 	return func() tea.Msg {
-		strategy := "fts"
-		if embeddingReady {
-			strategy = "semantic"
-		}
+		strategy := "semantic"
 		limit := 500
 		client := runner.NewAPIClient(cfg)
 		resp, err := client.SearchEntries(context.Background(), types.SearchRequest{

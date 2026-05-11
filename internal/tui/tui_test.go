@@ -358,6 +358,20 @@ func TestBrainTabEmbedKeysRequestExpectedScope(t *testing.T) {
 	}
 }
 
+func TestBrainTabEnterTogglesGroupCollapse(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Task One", Type: "task"}})
+	m.entryTree.GotoTop()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if strings.Contains(view, "Task One") {
+		t.Fatalf("expected Enter on Brain group header to collapse entries, got:\n%s", view)
+	}
+}
+
 func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	var got types.SearchRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

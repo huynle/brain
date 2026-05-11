@@ -94,3 +94,51 @@ func TestEntryTree_SetEntriesInOrderPreservesSearchRelevance(t *testing.T) {
 		t.Fatalf("expected semantic result before automation result, got:\n%s", view)
 	}
 }
+
+func TestEntryTree_ToggleCollapseHidesAndShowsGroupEntries(t *testing.T) {
+	tree := NewEntryTree()
+	tree.SetEntries([]types.BrainEntry{
+		{ID: "report1", Path: "projects/brain-api/report/report1.md", Title: "Report One", Type: "report"},
+		{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Task One", Type: "task"},
+	})
+
+	if !tree.SelectVisibleLine(1) {
+		t.Fatal("expected selecting report group header to succeed")
+	}
+	if !tree.IsOnGroupHeader() {
+		t.Fatal("expected top row to be a group header")
+	}
+	if !tree.ToggleCollapse() {
+		t.Fatal("expected ToggleCollapse on group header to succeed")
+	}
+	view := tree.View(100, 20)
+	if !strings.Contains(view, "▸ report/") {
+		t.Fatalf("expected collapsed report group marker, got:\n%s", view)
+	}
+	if strings.Contains(view, "Report One") {
+		t.Fatalf("expected collapsed report entry to be hidden, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Task One") {
+		t.Fatalf("expected other groups to remain visible, got:\n%s", view)
+	}
+
+	if !tree.ToggleCollapse() {
+		t.Fatal("expected ToggleCollapse to expand group")
+	}
+	view = tree.View(100, 20)
+	if !strings.Contains(view, "▾ report/") || !strings.Contains(view, "Report One") {
+		t.Fatalf("expected expanded report group and entry, got:\n%s", view)
+	}
+}
+
+func TestEntryTree_SelectVisibleGroupHeader(t *testing.T) {
+	tree := NewEntryTree()
+	tree.SetEntries([]types.BrainEntry{{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Task One", Type: "task"}})
+
+	if !tree.SelectVisibleLine(1) {
+		t.Fatal("expected selecting visible group header to succeed")
+	}
+	if !tree.IsOnGroupHeader() {
+		t.Fatal("expected selected row to be group header")
+	}
+}

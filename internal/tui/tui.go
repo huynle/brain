@@ -1268,6 +1268,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
+		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
+			return m, nil
+		}
 		// Enter toggles group collapse when on a group header
 		if m.activePanel == PanelTasks && m.taskTree.IsOnGroupHeader() {
 			m.taskTree.ToggleCollapse()
@@ -1275,6 +1278,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeySpace:
+		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
+			return m, nil
+		}
 		// Space toggles group collapse when on group header, selection when on task.
 		// NOTE: Bubbletea sends Space as KeySpace (not KeyRunes with ' '), so this
 		// must be handled separately from the KeyRunes switch below.
@@ -2156,7 +2162,9 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activeContentTab == ContentTabBrain && y >= mainContentStartY && y < m.height-1 {
 		m.activePanel = PanelTasks
 		m.helpBar.ActivePanel = m.activePanel
-		m.entryTree.SelectVisibleLine(y - mainContentStartY - 1)
+		if m.entryTree.SelectVisibleLine(y-mainContentStartY-1) && m.entryTree.IsOnGroupHeader() {
+			m.entryTree.ToggleCollapse()
+		}
 		return m, nil
 	}
 

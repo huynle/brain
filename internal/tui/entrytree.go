@@ -12,24 +12,26 @@ import (
 
 // EntryTree displays brain entries grouped by directory for the active project.
 type EntryTree struct {
-	entries []types.BrainEntry
-	visible []entryTreeRow
-	cursor  int
-	offset  int
-	width   int
-	height  int
+	entries   []types.BrainEntry
+	visible   []entryTreeRow
+	collapsed map[string]bool
+	cursor    int
+	offset    int
+	width     int
+	height    int
 }
 
 type entryTreeRow struct {
 	entry *types.BrainEntry
 	label string
+	key   string
 	depth int
 	isDir bool
 }
 
 // NewEntryTree creates an entry tree component.
 func NewEntryTree() EntryTree {
-	return EntryTree{}
+	return EntryTree{collapsed: make(map[string]bool)}
 }
 
 // SetEntries replaces the displayed entries and rebuilds the flattened tree.
@@ -43,6 +45,9 @@ func (t *EntryTree) SetEntriesInOrder(entries []types.BrainEntry) {
 }
 
 func (t *EntryTree) setEntries(entries []types.BrainEntry, sortEntries bool) {
+	if t.collapsed == nil {
+		t.collapsed = make(map[string]bool)
+	}
 	t.entries = append([]types.BrainEntry(nil), entries...)
 	if sortEntries {
 		sort.Slice(t.entries, func(i, j int) bool { return t.entries[i].Path < t.entries[j].Path })
@@ -105,10 +110,46 @@ func (t *EntryTree) GotoBottom() {
 // SelectVisibleLine selects an entry by rendered content line, excluding the title line.
 func (t *EntryTree) SelectVisibleLine(line int) bool {
 	row := t.offset + line - 1 // title line is above the flattened rows
-	if row < 0 || row >= len(t.visible) || t.visible[row].entry == nil {
+	if row < 0 || row >= len(t.visible) || (t.visible[row].entry == nil && !t.visible[row].isDir) {
 		return false
 	}
 	t.cursor = row
+	t.ensureCursorVisible()
+	return true
+}
+
+// IsOnGroupHeader reports whether the current selection is a group header.
+func (t EntryTree) IsOnGroupHeader() bool {
+	return t.cursor >= 0 && t.cursor < len(t.visible) && t.visible[t.cursor].isDir
+}
+
+// ToggleCollapse toggles the current group header.
+func (t *EntryTree) ToggleCollapse() bool {
+	if t.collapsed == nil {
+		t.collapsed = make(map[string]bool)
+	}
+	if t.cursor < 0 || t.cursor >= len(t.visible) {
+		return false
+	}
+	key := t.visible[t.cursor].key
+	if !t.visible[t.cursor].isDir {
+		entry := t.visible[t.cursor].entry
+		if entry == nil {
+			return false
+		}
+		key = entryGroupKey(*entry)
+	}
+	if key == "" {
+		return false
+	}
+	t.collapsed[key] = !t.collapsed[key]
+	t.rebuildRows()
+	for i, row := range t.visible {
+		if row.isDir && row.key == key {
+			t.cursor = i
+			break
+		}
+	}
 	t.ensureCursorVisible()
 	return true
 }
@@ -119,6 +160,17 @@ func (t EntryTree) SelectedEntry() *types.BrainEntry {
 		return nil
 	}
 	return t.visible[t.cursor].entry
+}
+
+func entryGroupKey(entry types.BrainEntry) string {
+	parts := strings.Split(filepath.ToSlash(entry.Path), "/")
+	if len(parts) >= 4 && parts[0] == "projects" {
+		parts = parts[2:]
+	}
+	if len(parts) <= 1 {
+		return ""
+	}
+	return strings.Join(parts[:len(parts)-1], "/")
 }
 
 // View renders the entry tree.
@@ -150,7 +202,7 @@ func (t *EntryTree) View(width, height int) string {
 	for i := t.offset; i < end; i++ {
 		row := t.visible[i]
 		line := t.renderRow(row)
-		if i == t.cursor && row.entry != nil {
+		if i == t.cursor && (row.entry != nil || row.isDir) {
 			line = SelectedRowStyle.Width(width).Render(line)
 		}
 		lines = append(lines, line)
@@ -175,7 +227,10 @@ func (t *EntryTree) rebuildRows() {
 			dir := strings.Join(parts[:len(parts)-1], "/")
 			if !seenDirs[dir] {
 				seenDirs[dir] = true
-				t.visible = append(t.visible, entryTreeRow{label: dir + "/", depth: 0, isDir: true})
+				t.visible = append(t.visible, entryTreeRow{label: dir + "/", key: dir, depth: 0, isDir: true})
+			}
+			if t.collapsed != nil && t.collapsed[dir] {
+				continue
 			}
 		}
 		t.visible = append(t.visible, entryTreeRow{entry: entry, label: t.entryLabel(*entry), depth: 1})
@@ -199,7 +254,11 @@ func (t *EntryTree) entryLabel(entry types.BrainEntry) string {
 func (t EntryTree) renderRow(row entryTreeRow) string {
 	indent := strings.Repeat("  ", row.depth)
 	if row.isDir {
-		return indent + lipgloss.NewStyle().Foreground(ColorCyan).Render("▾ "+row.label)
+		marker := "▾"
+		if t.collapsed != nil && t.collapsed[row.key] {
+			marker = "▸"
+		}
+		return indent + lipgloss.NewStyle().Foreground(ColorCyan).Render(marker+" "+row.label)
 	}
 	return indent + "├─ " + row.label
 }

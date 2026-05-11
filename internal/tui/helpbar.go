@@ -116,6 +116,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Brain tab has entry-tree navigation help.
 	if h.ActiveContentTab == ContentTabBrain {
 		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Collapse  ", bold("Enter"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
 		shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
 		shortcuts += fmt.Sprintf("%s Clear  ", bold("Esc"))

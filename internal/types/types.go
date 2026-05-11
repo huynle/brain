@@ -133,6 +133,10 @@ type BrainEntry struct {
 	Tags     []string `json:"tags"`
 	Priority string   `json:"priority,omitempty"`
 
+	// EmbeddingStatus is optional semantic-search index state when reported by the API.
+	// Expected values include current, missing, stale, and unknown.
+	EmbeddingStatus string `json:"embedding_status,omitempty"`
+
 	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	ProjectID string   `json:"project_id,omitempty"`

@@ -1671,14 +1671,14 @@ func TestDefaultConfigIncludesOpenAIEmbeddingDefaults(t *testing.T) {
 	if emb.Enabled {
 		t.Error("default embedding enabled = true, want false")
 	}
-	if emb.Provider != "openai" {
-		t.Errorf("default embedding provider = %q, want %q", emb.Provider, "openai")
+	if emb.Provider != "openrouter" {
+		t.Errorf("default embedding provider = %q, want %q", emb.Provider, "openrouter")
 	}
-	if emb.BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("default embedding base_url = %q, want OpenAI API", emb.BaseURL)
+	if emb.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("default embedding base_url = %q, want OpenRouter API", emb.BaseURL)
 	}
-	if emb.APIKeyEnv != "OPENAI_API_KEY" {
-		t.Errorf("default embedding api_key_env = %q, want OPENAI_API_KEY", emb.APIKeyEnv)
+	if emb.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Errorf("default embedding api_key_env = %q, want OPENROUTER_API_KEY", emb.APIKeyEnv)
 	}
 	if emb.Model != "text-embedding-3-small" {
 		t.Errorf("default embedding model = %q, want text-embedding-3-small", emb.Model)

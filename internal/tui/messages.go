@@ -84,6 +84,12 @@ type RunnerListMsg struct {
 	Err     error
 }
 
+// BrainEntriesMsg is sent when project brain entries have been fetched.
+type BrainEntriesMsg struct {
+	Entries []types.BrainEntry
+	Err     error
+}
+
 // RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo

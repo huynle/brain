@@ -321,7 +321,7 @@ func (idx *Indexer) IndexEmbeddings(ctx context.Context, embeddingClient Embeddi
 	// 1. It has no embeddings at all, OR
 	// 2. Its indexed_at is newer than its most recent embedding_indexed_at
 	query := `
-		SELECT DISTINCT n.id, n.body, n.project_id, n.type, n.status, n.feature_id, n.priority
+		SELECT DISTINCT n.id, COALESCE(n.body, ''), n.project_id, n.type, n.status, n.feature_id, n.priority
 		FROM notes n
 		LEFT JOIN (
 			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed

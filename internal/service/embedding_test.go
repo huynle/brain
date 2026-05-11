@@ -56,9 +56,9 @@ func TestNewAiFactoryEmbeddingClient(t *testing.T) {
 			wantErrMsg: "API key not found",
 		},
 		{
-			name:     "default OpenAI API key env var",
+			name:     "default OpenRouter API key env var",
 			cfg:      config.EmbeddingConfig{},
-			envKey:   "OPENAI_API_KEY",
+			envKey:   "OPENROUTER_API_KEY",
 			envValue: "default-key",
 			wantErr:  false,
 		},
@@ -92,7 +92,7 @@ func TestNewAiFactoryEmbeddingClient(t *testing.T) {
 			}
 
 			// Verify defaults were applied
-			if tt.cfg.BaseURL == "" && client.baseURL != "https://api.openai.com/v1" {
+			if tt.cfg.BaseURL == "" && client.baseURL != "https://openrouter.ai/api/v1" {
 				t.Errorf("expected default baseURL, got %q", client.baseURL)
 			}
 			if tt.cfg.Model == "" && client.model != "text-embedding-3-small" {

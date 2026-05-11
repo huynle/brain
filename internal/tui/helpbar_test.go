@@ -131,6 +131,24 @@ func TestHelpBar_View_RunnersTabShowsShutdownShortcut(t *testing.T) {
 	}
 }
 
+func TestHelpBar_View_BrainTabShowsEntryShortcuts(t *testing.T) {
+	h := NewHelpBar()
+	h.ActiveContentTab = ContentTabBrain
+
+	view := h.View(120, false, "brain-api")
+
+	for _, want := range []string{"Navigate", "Edit", "Refresh", "Brain"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected Brain help to contain %q, got:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Execute", "Checkout", "Pause"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected Brain help to omit task shortcut %q, got:\n%s", unwanted, view)
+		}
+	}
+}
+
 func TestHelpBar_View_RunnersPanelShowsShutdownShortcut(t *testing.T) {
 	h := NewHelpBar()
 	h.ActivePanel = PanelRunners

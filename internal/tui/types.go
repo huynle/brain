@@ -140,6 +140,7 @@ type ContentTab int
 
 const (
 	ContentTabTasks ContentTab = iota
+	ContentTabBrain
 	ContentTabDream
 	ContentTabRunners
 	ContentTabLogs
@@ -150,6 +151,8 @@ func (ct ContentTab) String() string {
 	switch ct {
 	case ContentTabTasks:
 		return "Tasks"
+	case ContentTabBrain:
+		return "Brain"
 	case ContentTabDream:
 		return "Dream"
 	case ContentTabRunners:

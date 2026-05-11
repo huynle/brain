@@ -310,7 +310,7 @@ func TestConfigCommand_Execute_DefaultConfig(t *testing.T) {
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = "~/brain"
 	cfg.Server.LogLevel = "info"
-	cfg.Server.Embedding.Provider = "openai"
+	cfg.Server.Embedding.Provider = "openrouter"
 	cfg.Server.Embedding.Model = "text-embedding-3-small"
 	cfg.Runner.MaxParallel = 3
 	cfg.Runner.PollInterval = 5000
@@ -440,9 +440,9 @@ func TestConfigCommand_DefaultsPrintsFullYAMLWithOpenAIEmbeddingDefaults(t *test
 	for _, want := range []string{
 		"server:",
 		"embedding:",
-		"provider: openai",
-		"base_url: https://api.openai.com/v1",
-		"api_key_env: OPENAI_API_KEY",
+		"provider: openrouter",
+		"base_url: https://openrouter.ai/api/v1",
+		"api_key_env: OPENROUTER_API_KEY",
 		"model: text-embedding-3-small",
 		"dim: 1536",
 	} {

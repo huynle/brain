@@ -191,9 +191,9 @@ func defaultConfig() UnifiedConfig {
 			CORSOrigin: "*",
 			Embedding: EmbeddingConfig{
 				Enabled:   false,
-				Provider:  "openai",
-				BaseURL:   "https://api.openai.com/v1",
-				APIKeyEnv: "OPENAI_API_KEY",
+				Provider:  "openrouter",
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
 				Model:     "text-embedding-3-small",
 				Dim:       1536,
 				BatchSize: 32,

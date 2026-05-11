@@ -133,6 +133,61 @@ func TestSearch_Semantic_WithEmbeddings(t *testing.T) {
 	}
 }
 
+func TestSaveAndUpdate_ReembedChangedEntry(t *testing.T) {
+	var calls int
+	mockClient := &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			calls += len(inputs)
+			result := make([][]float32, len(inputs))
+			for i := range inputs {
+				result[i] = []float32{float32(calls), 0, 0}
+			}
+			return result, nil
+		},
+	}
+	svc, store, _ := newTestBrainServiceWithEmbedding(t, mockClient)
+	ctx := context.Background()
+
+	entry, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Embedding Refresh",
+		Content: "First semantic body.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	note, err := store.GetNoteByPath(ctx, entry.Path)
+	if err != nil || note == nil {
+		t.Fatalf("expected saved note, got %#v err=%v", note, err)
+	}
+	status, err := store.EmbeddingStatus(ctx, note)
+	if err != nil {
+		t.Fatalf("EmbeddingStatus failed: %v", err)
+	}
+	if status != "current" {
+		t.Fatalf("expected embedding status current after save, got %q", status)
+	}
+	if calls == 0 {
+		t.Fatal("expected save to generate embeddings")
+	}
+	saveCalls := calls
+
+	newContent := "Second semantic body requiring a fresh embedding."
+	if _, err := svc.Update(ctx, entry.ID, types.UpdateEntryRequest{Content: &newContent}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	status, err = store.EmbeddingStatus(ctx, note)
+	if err != nil {
+		t.Fatalf("EmbeddingStatus after update failed: %v", err)
+	}
+	if status != "current" {
+		t.Fatalf("expected embedding status current after update, got %q", status)
+	}
+	if calls <= saveCalls {
+		t.Fatalf("expected update to re-generate embeddings, calls before=%d after=%d", saveCalls, calls)
+	}
+}
+
 func TestSearch_Semantic_FallbackToFTS_NoClient(t *testing.T) {
 	// Create service with nil embedding client
 	svc, _, _ := newTestBrainServiceWithEmbedding(t, nil)
@@ -391,7 +446,7 @@ func TestSearch_Hybrid_Deduplication(t *testing.T) {
 
 	// Get note ID
 	note, _ := store.GetNoteByPath(ctx, entry.Path)
-	
+
 	planType := "plan"
 	_ = store.UpsertNoteEmbeddings(ctx, []storage.EmbeddingRecord{
 		{

@@ -142,6 +142,29 @@ func (s *StorageLayer) GetNoteEmbedding(ctx context.Context, noteID int64, chunk
 	return vec, nil
 }
 
+// EmbeddingStatus reports whether a note has current embeddings.
+func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (string, error) {
+	if note == nil {
+		return "unknown", nil
+	}
+	var latest string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(embedding_indexed_at), '')
+		FROM note_embeddings_meta
+		WHERE note_id = ?
+	`, note.ID).Scan(&latest)
+	if err != nil {
+		return "", fmt.Errorf("query embedding status: %w", err)
+	}
+	if latest == "" {
+		return "missing", nil
+	}
+	if note.IndexedAt != "" && note.IndexedAt > latest {
+		return "stale", nil
+	}
+	return "current", nil
+}
+
 // DeleteNoteEmbeddings deletes all embeddings and metadata for a given note_id.
 // Both tables must be explicitly deleted since they reference notes, not each other.
 func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) error {

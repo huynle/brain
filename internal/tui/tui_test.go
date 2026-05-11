@@ -139,7 +139,7 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 
 	view := m.View()
 
-	for _, want := range []string{"Runners", "Logs", "Tasks", "Dream"} {
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Dream"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
 		}
@@ -152,6 +152,9 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
 		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
 	}
+	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Dream") {
+		t.Fatalf("expected Brain tab between Tasks and Dream, got:\n%s", view)
+	}
 }
 
 func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
@@ -161,26 +164,32 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabDream {
+	if m.activeContentTab != ContentTabBrain {
 		t.Fatalf("after first L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabRunners {
+	if m.activeContentTab != ContentTabDream {
 		t.Fatalf("after second L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabLogs {
+	if m.activeContentTab != ContentTabRunners {
 		t.Fatalf("after third L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabTasks {
+	if m.activeContentTab != ContentTabLogs {
 		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabTasks {
+		t.Fatalf("after fifth L, got %v", m.activeContentTab)
 	}
 }
 
@@ -254,6 +263,29 @@ func TestMouseClickContentTabAcceptsAdjacentReportedRow(t *testing.T) {
 
 	if model.activeContentTab != ContentTabDream {
 		t.Fatalf("expected adjacent-row click on Dream label to activate Dream, got %v", model.activeContentTab)
+	}
+}
+
+func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+		{ID: "b", Path: "projects/brain-api/decision/b.md", Title: "B", Type: "decision"},
+		{ID: "c", Path: "projects/brain-api/decision/c.md", Title: "C", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	// Panel border is at mainContentStartY, title is the next row, then the
+	// directory header, then the first entry row.
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 3})
+	model := updated.(Model)
+
+	selected := model.entryTree.SelectedEntry()
+	if selected == nil || selected.ID != "a" {
+		t.Fatalf("expected click on first rendered entry row to select a, got %#v", selected)
 	}
 }
 

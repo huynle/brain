@@ -372,7 +372,7 @@ Brain API supports optional embedding-based semantic search for more intelligent
 - **Multiple search strategies**: Choose between `fts` (full-text), `semantic` (embedding-based), or `hybrid` (combined)
 - **Automatic fallback**: Gracefully falls back to FTS when embeddings are unavailable or failing
 - **Incremental indexing**: Generate embeddings on-demand via the `backfill` command
-- **Configurable providers**: Supports any OpenAI-compatible embedding API (OpenAI, AI Factory, etc.)
+- **Configurable providers**: Supports any OpenAI-compatible embedding API (OpenRouter, OpenAI, AI Factory, etc.)
 
 ### Configuration
 
@@ -382,9 +382,9 @@ Add an `embedding` block to your `config.yaml`:
 server:
   embedding:
     enabled: true                                     # Enable semantic search
-    provider: "openai"                                # Provider name (for logging)
-    base_url: "https://api.openai.com/v1"             # OpenAI-compatible API endpoint
-    api_key_env: "OPENAI_API_KEY"                     # Environment variable for API key
+    provider: "openrouter"                            # Provider name (for logging)
+    base_url: "https://openrouter.ai/api/v1"          # OpenAI-compatible API endpoint
+    api_key_env: "OPENROUTER_API_KEY"                 # Environment variable for API key
     model: "text-embedding-3-small"                   # Embedding model name
     dim: 1536                                         # Embedding dimension (must match model)
     batch_size: 32                                    # Batch size for embedding generation
@@ -406,7 +406,7 @@ runner:
   api_token_env: "BRAIN_API_TOKEN"
 ```
 
-Set `OPENAI_API_KEY` in the environment before running semantic search or backfill.
+Set `OPENROUTER_API_KEY` in the environment before running semantic search or backfill.
 
 ### Search Strategies
 

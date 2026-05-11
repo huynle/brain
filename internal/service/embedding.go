@@ -54,8 +54,8 @@ type embeddingResponse struct {
 
 // NewAiFactoryEmbeddingClient creates a new OpenAI-compatible embedding client using the provided config.
 // If config values are not set, it uses sensible defaults:
-// - baseURL: https://api.openai.com/v1
-// - apiKeyEnv: OPENAI_API_KEY
+// - baseURL: https://openrouter.ai/api/v1
+// - apiKeyEnv: OPENROUTER_API_KEY
 // - model: text-embedding-3-small
 // - batchSize: 32
 // - timeout: 30s
@@ -63,12 +63,12 @@ func NewAiFactoryEmbeddingClient(cfg config.EmbeddingConfig) (*AiFactoryEmbeddin
 	// Apply defaults
 	baseURL := cfg.BaseURL
 	if baseURL == "" {
-		baseURL = "https://api.openai.com/v1"
+		baseURL = "https://openrouter.ai/api/v1"
 	}
 
 	apiKeyEnv := cfg.APIKeyEnv
 	if apiKeyEnv == "" {
-		apiKeyEnv = "OPENAI_API_KEY"
+		apiKeyEnv = "OPENROUTER_API_KEY"
 	}
 
 	model := cfg.Model

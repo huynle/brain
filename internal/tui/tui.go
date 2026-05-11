@@ -130,6 +130,7 @@ type Model struct {
 	// Content tab state (global Runners/Logs, project Tasks/Dream)
 	activeContentTab ContentTab
 	dreamViewer      DreamViewer
+	entryTree        EntryTree
 
 	// Runner panel state
 	runnerPanel        RunnerPanel
@@ -179,6 +180,8 @@ func (m Model) renderContentTabBar() string {
 		" ",
 		tab(ContentTabTasks),
 		" ",
+		tab(ContentTabBrain),
+		" ",
 		tab(ContentTabDream),
 	)
 }
@@ -207,6 +210,7 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 		label string
 	}{
 		{ContentTabTasks, "Tasks"},
+		{ContentTabBrain, "Brain"},
 		{ContentTabDream, "Dream"},
 	} {
 		start := len(plain)
@@ -281,6 +285,7 @@ func NewModel(cfg Config) Model {
 		monitorClient:        NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:      make(map[string]bool),
 		dreamViewer:          NewDreamViewer(),
+		entryTree:            NewEntryTree(),
 		runnerPanel:          NewRunnerPanel(),
 		taskPanelHeight:      settings.TaskPanelHeight,
 		bottomTopPanelHeight: settings.BottomTopPanelHeight,
@@ -540,6 +545,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Compute runner metrics for status bar
 			m.statusBar.RunnerMetrics = computeRunnerMetrics(msg.Runners)
 		}
+		return m, nil
+
+	case BrainEntriesMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to fetch brain entries: %v", msg.Err))
+			return m, nil
+		}
+		m.entryTree.SetEntries(msg.Entries)
 		return m, nil
 
 	case runnerShutdownRequestedMsg:
@@ -817,14 +830,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Sync changes back to API
 			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-			_, err = apiClient.UpdateEntry(context.Background(), msg.taskPath, map[string]interface{}{
-				"content": string(newContent),
-			})
+			if msg.fullContent {
+				err = apiClient.UpdateEntryFull(context.Background(), msg.taskPath, string(newContent))
+			} else {
+				_, err = apiClient.UpdateEntry(context.Background(), msg.taskPath, map[string]interface{}{
+					"content": string(newContent),
+				})
+			}
 			if err != nil {
 				m.setStatusMessage("error", fmt.Sprintf("✗ Failed to sync changes: %v", err))
 				return m, nil
 			}
 
+			if msg.fullContent {
+				m.setStatusMessage("success", "✓ Entry updated from editor")
+				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+			}
 			m.setStatusMessage("success", "✓ Task updated from editor")
 		} else {
 			m.setStatusMessage("success", "✓ File saved - refreshing...")
@@ -1054,6 +1075,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.syncPanelSizes()
 			return m, nil
 		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+		}
 		if m.activeContentTab == ContentTabTasks {
 			m.activePanel = PanelTasks
 			m.helpBar.ActivePanel = m.activePanel
@@ -1082,6 +1108,11 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
 			return m, nil
+		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
 		}
 		if m.activeContentTab == ContentTabTasks {
 			m.activePanel = PanelTasks
@@ -1265,6 +1296,30 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// (j/k, g/G, ctrl+d/u, ctrl+f/b, d/u, f/b, pgup/pgdn, space, arrow keys)
 			cmd := m.dreamViewer.Update(msg)
 			return m, cmd
+		}
+
+		if m.activeContentTab == ContentTabBrain {
+			switch string(msg.Runes) {
+			case "j":
+				m.entryTree.MoveDown()
+				return m, nil
+			case "k":
+				m.entryTree.MoveUp()
+				return m, nil
+			case "g":
+				m.entryTree.GotoTop()
+				return m, nil
+			case "G":
+				m.entryTree.GotoBottom()
+				return m, nil
+			case "r":
+				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+			case "e":
+				return m.editSelectedBrainEntry()
+			case "q":
+				m.sseClient.Stop()
+				return m, tea.Quit
+			}
 		}
 
 		switch string(msg.Runes) {
@@ -2039,6 +2094,12 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.helpBar.ActivePanel = m.activePanel
 		return m, nil
 	}
+	if m.activeContentTab == ContentTabBrain && y >= mainContentStartY && y < m.height-1 {
+		m.activePanel = PanelTasks
+		m.helpBar.ActivePanel = m.activePanel
+		m.entryTree.SelectVisibleLine(y - mainContentStartY - 1)
+		return m, nil
+	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
 		// Click in top task panel (full-width in current layout)
@@ -2098,6 +2159,11 @@ func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
 			return m, nil
+		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
 		}
 		if m.activeContentTab == ContentTabTasks {
 			m.activePanel = PanelTasks
@@ -2723,6 +2789,18 @@ func (m Model) handleMouseWheel(msg tea.MouseMsg, direction int) (tea.Model, tea
 		}
 		return m, nil
 	}
+	if m.activeContentTab == ContentTabBrain {
+		mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			m.entryTree.SetSize(m.width-4, m.height-mainContentStartY-1)
+			if direction < 0 {
+				m.entryTree.MoveUp()
+			} else {
+				m.entryTree.MoveDown()
+			}
+		}
+		return m, nil
+	}
 
 	targetPanel, ok := m.panelAtMouseY(msg.Y)
 	if !ok {
@@ -2784,6 +2862,9 @@ func (m Model) panelAtMouseY(y int) (Panel, bool) {
 	}
 	if m.activeContentTab == ContentTabLogs {
 		return PanelLogs, y >= mainContentStartY && y < m.height-1
+	}
+	if m.activeContentTab == ContentTabBrain {
+		return PanelTasks, y >= mainContentStartY && y < m.height-1
 	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
@@ -2881,6 +2962,14 @@ func (m *Model) syncPanelSizes() {
 		m.logViewer.SetSize(innerWidth, logInner)
 		return
 	}
+	if m.activeContentTab == ContentTabBrain {
+		entryInner := mainHeight - 2
+		if entryInner < 1 {
+			entryInner = 1
+		}
+		m.entryTree.SetSize(innerWidth, entryInner)
+		return
+	}
 
 	hasBottomPanel := m.detailVisible || m.logsVisible || m.runnerPanelVisible
 	if !hasBottomPanel {
@@ -2924,6 +3013,47 @@ func (m *Model) syncPanelSizes() {
 // syncScheduleDetail updates the schedule detail panel with the currently selected scheduled task.
 func (m *Model) syncScheduleDetail() {
 	m.scheduleDetail.SetTask(m.scheduleList.SelectedTask())
+}
+
+func (m Model) currentProjectID() string {
+	if m.activeProjectID != "" && m.activeProjectID != "all" {
+		return m.activeProjectID
+	}
+	return m.config.Project
+}
+
+func (m Model) editSelectedBrainEntry() (tea.Model, tea.Cmd) {
+	entry := m.entryTree.SelectedEntry()
+	if entry == nil {
+		return m, nil
+	}
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	content, err := apiClient.GetEntryFull(context.Background(), entry.Path)
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to fetch entry: %v", err))
+		return m, nil
+	}
+	tempDir, err := os.MkdirTemp("", "brain-entry-")
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+		return m, nil
+	}
+	tempFile := filepath.Join(tempDir, entry.ID+".md")
+	if err := os.WriteFile(tempFile, []byte(content), 0o644); err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+		return m, nil
+	}
+
+	return m, tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+		return editorClosedMsg{
+			taskID:          entry.ID,
+			taskPath:        entry.Path,
+			tempFile:        tempFile,
+			originalContent: content,
+			fullContent:     true,
+			err:             err,
+		}
+	})
 }
 
 // syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
@@ -3214,6 +3344,14 @@ func (m Model) renderBaseView() string {
 	} else if m.activeContentTab == ContentTabLogs {
 		// Logs tab: global full-height log stream.
 		mainContent = m.renderLogPanel(m.width, mainHeight)
+	} else if m.activeContentTab == ContentTabBrain {
+		// Brain tab: project entry tree for understanding stored memory.
+		entryView := m.entryTree.View(m.width-4, mainHeight-2)
+		entryPanel := InactiveBorder.
+			Width(m.width - 2).
+			Height(mainHeight - 2).
+			Render(entryView)
+		mainContent = entryPanel
 	} else if m.activeContentTab == ContentTabDream {
 		// Dream tab: full-width dream viewer, no task/detail/log panels
 		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
@@ -3639,6 +3777,21 @@ func (m *Model) fetchDreamTabCmd() tea.Cmd {
 	)
 }
 
+func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		client := runner.NewAPIClient(cfg)
+		params := map[string]string{"sortBy": "modified", "sortOrder": "desc", "limit": "500"}
+		if project != "" && project != "all" {
+			params["project"] = project
+		}
+		resp, err := client.ListEntries(context.Background(), params)
+		if err != nil {
+			return BrainEntriesMsg{Err: err}
+		}
+		return BrainEntriesMsg{Entries: resp.Entries}
+	}
+}
+
 // getAllTasks merges all tasks from all projects into a single slice.
 // Returns an empty slice if tasksByProject is empty.
 func (m *Model) getAllTasks() []types.ResolvedTask {
@@ -3757,6 +3910,7 @@ type editorClosedMsg struct {
 	taskPath        string
 	tempFile        string
 	originalContent string
+	fullContent     bool
 	err             error
 }
 

@@ -237,6 +237,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	if err := s.indexer.IndexFile(relPath); err != nil {
 		return nil, fmt.Errorf("index file %q: %w", relPath, err)
 	}
+	if err := s.indexEmbeddingsForEntry(ctx, relPath); err != nil {
+		return nil, fmt.Errorf("embed file %q: %w", relPath, err)
+	}
 
 	// Generate markdown link
 	link := markdown.GenerateMarkdownLink(shortID, title)
@@ -844,6 +847,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return nil, fmt.Errorf("re-embed file %q: %w", row.Path, err)
+	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
 	if preservedFields != nil {
@@ -1381,6 +1387,9 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return fmt.Errorf("re-embed file %q: %w", row.Path, err)
+	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
 	if preservedFields != nil {
@@ -1438,6 +1447,23 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	})
 
 	return nil
+}
+
+func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path string) error {
+	if s.embeddingClient == nil {
+		return nil
+	}
+	row, err := s.storage.GetNoteByPath(ctx, path)
+	if err != nil {
+		return err
+	}
+	if row != nil {
+		if err := s.storage.DeleteNoteEmbeddings(ctx, row.ID); err != nil {
+			return err
+		}
+	}
+	_, err = s.indexer.IndexEmbeddings(ctx, s.embeddingClient)
+	return err
 }
 
 // =============================================================================
@@ -1498,7 +1524,11 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
-		entries = append(entries, NoteRowToBrainEntry(row))
+		entry := NoteRowToBrainEntry(row)
+		if status, err := s.storage.EmbeddingStatus(ctx, row); err == nil {
+			entry.EmbeddingStatus = status
+		}
+		entries = append(entries, entry)
 	}
 
 	total := len(entries)

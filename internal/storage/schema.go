@@ -515,15 +515,12 @@ func migrateSchema(db *sql.DB) error {
 
 	if ver < 12 {
 		// v12: add note_embeddings and note_embeddings_meta tables for embedding-based search.
-		embeddingTables := []string{
-			createNoteEmbeddingsTable,
-			createNoteEmbeddingsMetaTable,
+		if err := ensureNoteEmbeddingsTable(db); err != nil {
+			return fmt.Errorf("migrate v12 (note_embeddings table): %w", err)
 		}
-		for _, ddl := range embeddingTables {
-			if _, err := db.Exec(ddl); err != nil {
-				if !isTableExistsError(err) {
-					return fmt.Errorf("migrate v12 (embedding tables): %w", err)
-				}
+		if _, err := db.Exec(createNoteEmbeddingsMetaTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v12 (embedding meta table): %w", err)
 			}
 		}
 		embeddingIndexes := []string{
@@ -551,6 +548,65 @@ func isDuplicateColumnError(err error) bool {
 // isTableExistsError checks if an error is SQLite's "table already exists".
 func isTableExistsError(err error) bool {
 	return err != nil && contains(err.Error(), "already exists")
+}
+
+func ensureNoteEmbeddingsTable(db *sql.DB) error {
+	if exists, err := tableExists(db, "note_embeddings"); err != nil {
+		return fmt.Errorf("inspect note_embeddings: %w", err)
+	} else if exists {
+		hasPath, err := tableColumnExists(db, "note_embeddings", "path")
+		if err != nil {
+			return fmt.Errorf("inspect note_embeddings.path: %w", err)
+		}
+		if hasPath {
+			if _, err := db.Exec("DROP TABLE note_embeddings"); err != nil {
+				return fmt.Errorf("drop legacy note_embeddings: %w", err)
+			}
+		}
+	}
+	if _, err := db.Exec(createNoteEmbeddingsTable); err != nil {
+		if !isTableExistsError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tableColumnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // contains is a simple substring check (avoids importing strings).
@@ -593,7 +649,6 @@ func InitSchema(db *sql.DB) error {
 		createRunnersTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
-		createNoteEmbeddingsTable,
 		createNoteEmbeddingsMetaTable,
 	}
 	for _, ddl := range tables {
@@ -622,6 +677,9 @@ func InitSchema(db *sql.DB) error {
 	// Run migrations for existing databases (may drop/recreate tables).
 	if err := migrateSchema(db); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+	if err := ensureNoteEmbeddingsTable(db); err != nil {
+		return fmt.Errorf("ensure note embeddings table: %w", err)
 	}
 
 	// Indexes (after migrations, so they apply to final table state)

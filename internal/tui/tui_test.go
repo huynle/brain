@@ -321,6 +321,25 @@ func TestBrainTabSlashSearchAndEscClearsResults(t *testing.T) {
 	}
 }
 
+func TestBrainSearchInputAcceptsSpaces(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	m.brainSearchState = FilterTyping
+
+	for _, msg := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'s', 'e', 'm', 'a', 'n', 't', 'i', 'c'}},
+		{Type: tea.KeySpace, Runes: []rune{' '}},
+		{Type: tea.KeyRunes, Runes: []rune{'s', 'e', 'a', 'r', 'c', 'h'}},
+	} {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if m.brainSearchQuery != "semantic search" {
+		t.Fatalf("brainSearchQuery = %q, want semantic search", m.brainSearchQuery)
+	}
+}
+
 func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	var got types.SearchRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

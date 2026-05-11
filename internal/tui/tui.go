@@ -3685,6 +3685,10 @@ func (m Model) handleBrainSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.brainSearchQuery = ""
 		return m, nil
 
+	case tea.KeySpace:
+		m.brainSearchQuery += " "
+		return m, nil
+
 	case tea.KeyRunes:
 		m.brainSearchQuery += string(msg.Runes)
 		return m, nil

@@ -700,7 +700,7 @@ func (c *APIClient) UpdateEntryRaw(ctx context.Context, entryPath string, conten
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
 
-	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(content), map[string]string{
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPatch, apiPath, strings.NewReader(content), map[string]string{
 		"Content-Type": "text/markdown",
 	})
 	if err != nil {
@@ -720,7 +720,7 @@ func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullC
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
 
-	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(fullContent), map[string]string{
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPatch, apiPath, strings.NewReader(fullContent), map[string]string{
 		"Content-Type": "text/x-brain-full",
 	})
 	if err != nil {

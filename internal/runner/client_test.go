@@ -1868,8 +1868,8 @@ func TestAPIClient_UpdateEntryRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotMethod != http.MethodPut {
-		t.Errorf("method = %q, want PUT", gotMethod)
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %q, want PATCH", gotMethod)
 	}
 	if gotContentType != "text/markdown" {
 		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/markdown")
@@ -1915,8 +1915,8 @@ func TestAPIClient_UpdateEntryFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotMethod != http.MethodPut {
-		t.Errorf("method = %q, want PUT", gotMethod)
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %q, want PATCH", gotMethod)
 	}
 	if gotContentType != "text/x-brain-full" {
 		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/x-brain-full")

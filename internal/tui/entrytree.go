@@ -15,6 +15,7 @@ type EntryTree struct {
 	entries   []types.BrainEntry
 	visible   []entryTreeRow
 	collapsed map[string]bool
+	title     string
 	cursor    int
 	offset    int
 	width     int
@@ -31,16 +32,24 @@ type entryTreeRow struct {
 
 // NewEntryTree creates an entry tree component.
 func NewEntryTree() EntryTree {
-	return EntryTree{collapsed: make(map[string]bool)}
+	return EntryTree{collapsed: make(map[string]bool), title: "Brain Entries"}
 }
 
 // SetEntries replaces the displayed entries and rebuilds the flattened tree.
 func (t *EntryTree) SetEntries(entries []types.BrainEntry) {
+	t.title = "Brain Entries"
 	t.setEntries(entries, true)
 }
 
 // SetEntriesInOrder replaces entries without sorting, preserving API relevance order.
 func (t *EntryTree) SetEntriesInOrder(entries []types.BrainEntry) {
+	t.title = "Brain Entries"
+	t.setEntries(entries, false)
+}
+
+// SetSearchResults replaces entries with relevance-ordered search results.
+func (t *EntryTree) SetSearchResults(entries []types.BrainEntry) {
+	t.title = "Brain Search Results"
 	t.setEntries(entries, false)
 }
 
@@ -184,7 +193,11 @@ func (t *EntryTree) View(width, height int) string {
 	}
 
 	var lines []string
-	lines = append(lines, TitleStyle.Render(fmt.Sprintf("Brain Entries (%d)", len(t.entries))))
+	title := t.title
+	if title == "" {
+		title = "Brain Entries"
+	}
+	lines = append(lines, TitleStyle.Render(fmt.Sprintf("%s (%d)", title, len(t.entries))))
 	if len(t.entries) == 0 {
 		lines = append(lines, DimStyle.Render("No entries found"))
 		return strings.Join(lines, "\n")

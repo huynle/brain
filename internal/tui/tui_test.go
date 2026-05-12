@@ -280,7 +280,7 @@ func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
 
 	// Panel border is at mainContentStartY, title is the next row, then the
 	// directory header, then the first entry row.
-	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 3})
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 4})
 	model := updated.(Model)
 
 	selected := model.entryTree.SelectedEntry()
@@ -299,7 +299,7 @@ func TestMouseClickBrainGroupHeaderTogglesCollapse(t *testing.T) {
 	})
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 
-	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 2})
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 3})
 	model := updated.(Model)
 	view := model.entryTree.View(100, 10)
 	if strings.Contains(view, "A [decision]") {
@@ -320,7 +320,7 @@ func TestMouseHoverBrainGroupHeaderSelectsHeader(t *testing.T) {
 	})
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 2})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 3})
 	model := updated.(Model)
 	if !model.entryTree.IsOnGroupHeader() {
 		t.Fatal("expected hover over group header to select it")
@@ -450,8 +450,23 @@ func TestBrainSearchCmdUsesSemanticEvenWhenEmbeddingHealthUnknown(t *testing.T) 
 	if got.Strategy != "semantic" {
 		t.Fatalf("strategy = %q, want semantic", got.Strategy)
 	}
-	if got.Limit == nil || *got.Limit != 25 {
-		t.Fatalf("limit = %v, want 25", got.Limit)
+	if got.Limit == nil || *got.Limit != 10 {
+		t.Fatalf("limit = %v, want 10", got.Limit)
+	}
+}
+
+func TestBrainSearchResultsUseSearchTitleAndResultCount(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	updated, _ := m.Update(BrainSearchMsg{
+		Entries:  []types.BrainEntry{{ID: "hit", Path: "projects/brain-api/idea/hit.md", Title: "Hit", Type: "idea"}},
+		Query:    "needle",
+		Strategy: "semantic",
+	})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if !strings.Contains(view, "Brain Search Results (1)") {
+		t.Fatalf("expected search result title/count, got:\n%s", view)
 	}
 }
 

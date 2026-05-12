@@ -579,7 +579,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.brainSearchState = FilterLocked
 		m.brainSearchQuery = msg.Query
 		m.brainSearchLabel = msg.Strategy
-		m.entryTree.SetEntriesInOrder(msg.Entries)
+		m.entryTree.SetSearchResults(msg.Entries)
 		return m, nil
 
 	case BrainEmbeddingBackfillMsg:
@@ -2119,10 +2119,16 @@ func absInt(v int) int {
 func (m Model) handleMouseHover(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 	if m.activeContentTab == ContentTabBrain && msg.Y >= mainContentStartY && msg.Y < m.height-1 {
-		m.entryTree.SelectVisibleLine(msg.Y - mainContentStartY - 1)
+		m.entryTree.SelectVisibleLine(m.brainMouseLine(msg.Y, mainContentStartY))
 		return m, nil
 	}
 	return m, nil
+}
+
+func (m Model) brainMouseLine(mouseY, mainContentStartY int) int {
+	// Terminal mouse coordinates track the cursor cell under the body of the
+	// pointer; subtract one extra row so the arrow tip selects the intended row.
+	return mouseY - mainContentStartY - 2
 }
 
 // handleMouseClick handles left mouse button clicks.
@@ -2173,7 +2179,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.activeContentTab == ContentTabBrain && y >= mainContentStartY && y < m.height-1 {
 		m.activePanel = PanelTasks
 		m.helpBar.ActivePanel = m.activePanel
-		if m.entryTree.SelectVisibleLine(y-mainContentStartY-1) && m.entryTree.IsOnGroupHeader() {
+		if m.entryTree.SelectVisibleLine(m.brainMouseLine(y, mainContentStartY)) && m.entryTree.IsOnGroupHeader() {
 			m.entryTree.ToggleCollapse()
 		}
 		return m, nil
@@ -3952,7 +3958,7 @@ func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd {
 	return func() tea.Msg {
 		strategy := "semantic"
-		limit := 25
+		limit := 10
 		client := runner.NewAPIClient(cfg)
 		resp, err := client.SearchEntries(context.Background(), types.SearchRequest{
 			Query:    query,

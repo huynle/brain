@@ -78,7 +78,7 @@ func TestEntryTree_KeepsSelectionVisibleWhenScrolling(t *testing.T) {
 
 func TestEntryTree_SetEntriesInOrderPreservesSearchRelevance(t *testing.T) {
 	tree := NewEntryTree()
-	tree.SetEntriesInOrder([]types.BrainEntry{
+	tree.SetSearchResults([]types.BrainEntry{
 		{ID: "semantic", Path: "projects/test/idea/semantic.md", Title: "Semantic Top", Type: "idea"},
 		{ID: "automation", Path: "projects/test/automation/automation.md", Title: "Automation Later", Type: "automation"},
 	})
@@ -92,6 +92,9 @@ func TestEntryTree_SetEntriesInOrderPreservesSearchRelevance(t *testing.T) {
 	automationIndex := strings.Index(view, "Automation Later")
 	if semanticIndex < 0 || automationIndex < 0 || semanticIndex > automationIndex {
 		t.Fatalf("expected semantic result before automation result, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Brain Search Results (2)") {
+		t.Fatalf("expected search-specific title, got:\n%s", view)
 	}
 }
 

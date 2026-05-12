@@ -107,28 +107,28 @@ func TestUpdate_RunnersTabSKey_WithoutSelectionDoesNothing(t *testing.T) {
 	}
 }
 
-func TestMouseClickContentTabSwitchesToDream(t *testing.T) {
+func TestMouseClickContentTabSwitchesToAutomation(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
 	m.height = 30
 	m.activeContentTab = ContentTabTasks
 
-	x, ok := contentTabCenterX(ContentTabDream)
+	x, ok := contentTabCenterX(ContentTabAutomation)
 	if !ok {
-		t.Fatal("expected Dream tab to have a click target")
+		t.Fatal("expected Automation tab to have a click target")
 	}
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
 	model := updated.(Model)
 
-	if model.activeContentTab != ContentTabDream {
-		t.Fatalf("expected click on Dream tab to switch active tab, got %v", model.activeContentTab)
+	if model.activeContentTab != ContentTabAutomation {
+		t.Fatalf("expected click on Automation tab to switch active tab, got %v", model.activeContentTab)
 	}
-	if model.helpBar.ActiveContentTab != ContentTabDream {
-		t.Fatalf("expected help bar active tab to be Dream, got %v", model.helpBar.ActiveContentTab)
+	if model.helpBar.ActiveContentTab != ContentTabAutomation {
+		t.Fatalf("expected help bar active tab to be Automation, got %v", model.helpBar.ActiveContentTab)
 	}
 	if cmd == nil {
-		t.Fatal("expected dream content fetch command when switching to empty Dream tab")
+		t.Fatal("expected automation fetch command when switching to empty Automation tab")
 	}
 }
 
@@ -139,7 +139,7 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 
 	view := m.View()
 
-	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Dream"} {
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Automation"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
 		}
@@ -152,8 +152,8 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
 		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
 	}
-	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Dream") {
-		t.Fatalf("expected Brain tab between Tasks and Dream, got:\n%s", view)
+	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automation") {
+		t.Fatalf("expected Brain tab between Tasks and Automation, got:\n%s", view)
 	}
 }
 
@@ -170,7 +170,7 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabDream {
+	if m.activeContentTab != ContentTabAutomation {
 		t.Fatalf("after second L, got %v", m.activeContentTab)
 	}
 
@@ -225,7 +225,7 @@ func TestMouseClickEveryRenderedContentTabSwitchesTab(t *testing.T) {
 			m.height = 30
 			m.activeContentTab = ContentTabTasks
 			if tab == ContentTabTasks {
-				m.activeContentTab = ContentTabDream
+				m.activeContentTab = ContentTabAutomation
 				m.dreamViewer.SetContent("dream content")
 			}
 
@@ -253,16 +253,16 @@ func TestMouseClickContentTabAcceptsAdjacentReportedRow(t *testing.T) {
 	m.height = 30
 	m.activeContentTab = ContentTabTasks
 
-	x, ok := contentTabCenterX(ContentTabDream)
+	x, ok := contentTabCenterX(ContentTabAutomation)
 	if !ok {
-		t.Fatal("expected Dream tab to have a click target")
+		t.Fatal("expected Automation tab to have a click target")
 	}
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY})
 	model := updated.(Model)
 
-	if model.activeContentTab != ContentTabDream {
-		t.Fatalf("expected adjacent-row click on Dream label to activate Dream, got %v", model.activeContentTab)
+	if model.activeContentTab != ContentTabAutomation {
+		t.Fatalf("expected adjacent-row click on Automation label to activate Automation, got %v", model.activeContentTab)
 	}
 }
 
@@ -839,7 +839,8 @@ func TestMouseWheelOverDreamTabScrollsLikeJK(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
 	m.height = 30
-	m.activeContentTab = ContentTabDream
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabDream
 	m.dreamViewer.SetSize(80, 5)
 	m.dreamViewer.SetContent(strings.Repeat("line\n", 30))
 

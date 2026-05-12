@@ -8,15 +8,16 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel        Panel
-	ViewMode           ViewMode
-	TextWrap           bool
-	IsPaused           bool
-	AllPaused          bool
-	HasTaskSessions    bool       // whether selected task has sessions (shows o/O shortcuts)
-	HasSelectedTasks   bool       // whether tasks are currently selected (shows delete shortcut)
-	ActiveContentTab   ContentTab // which content tab is active (Tasks/Dream)
-	RunnerPanelVisible bool       // whether the runner panel is shown
+	ActivePanel            Panel
+	ViewMode               ViewMode
+	TextWrap               bool
+	IsPaused               bool
+	AllPaused              bool
+	HasTaskSessions        bool       // whether selected task has sessions (shows o/O shortcuts)
+	HasSelectedTasks       bool       // whether tasks are currently selected (shows delete shortcut)
+	ActiveContentTab       ContentTab // which content tab is active
+	ActiveAutomationSubTab AutomationSubTab
+	RunnerPanelVisible     bool // whether the runner panel is shown
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -36,19 +37,25 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Content tab indicator
 	shortcuts += fmt.Sprintf("%s Tab  ", bold("H/L"))
 
-	// Dream tab has vim-style navigation help
-	if h.ActiveContentTab == ContentTabDream {
-		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
-		shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
+	// Automation tab has subtab-specific navigation help.
+	if h.ActiveContentTab == ContentTabAutomation {
+		shortcuts += fmt.Sprintf("%s Subtab  ", bold("C"))
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
-		shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+		if h.ActiveAutomationSubTab == AutomationSubTabAutomations {
+			shortcuts += fmt.Sprintf("%s Toggle  ", bold("Space"))
+			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+		} else {
+			shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+			shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
+		}
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
 
 		// Focus indicator on the right
 		focusLabel := dim("Tab: ") +
-			lipgloss.NewStyle().Foreground(ColorCyan).Render("Dream")
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Automation > "+h.ActiveAutomationSubTab.String())
 
 		leftStyle := lipgloss.NewStyle().
 			PaddingLeft(1).

@@ -127,14 +127,16 @@ type Model struct {
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
 
-	// Content tab state (global Runners/Logs, project Tasks/Dream)
-	activeContentTab ContentTab
-	dreamViewer      DreamViewer
-	entryTree        EntryTree
-	brainEntries     []types.BrainEntry
-	brainSearchState FilterMode
-	brainSearchQuery string
-	brainSearchLabel string
+	// Content tab state (global Runners/Logs, project Tasks/Brain/Automation)
+	activeContentTab       ContentTab
+	activeAutomationSubTab AutomationSubTab
+	automationList         AutomationList
+	dreamViewer            DreamViewer
+	entryTree              EntryTree
+	brainEntries           []types.BrainEntry
+	brainSearchState       FilterMode
+	brainSearchQuery       string
+	brainSearchLabel       string
 
 	// Runner panel state
 	runnerPanel        RunnerPanel
@@ -150,7 +152,27 @@ type Model struct {
 }
 
 func visibleContentTabs() []ContentTab {
-	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabDream}
+	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabBrain, ContentTabAutomation}
+}
+
+func nextContentTab(current ContentTab) ContentTab {
+	tabs := visibleContentTabs()
+	for i, tab := range tabs {
+		if tab == current {
+			return tabs[(i+1)%len(tabs)]
+		}
+	}
+	return ContentTabTasks
+}
+
+func prevContentTab(current ContentTab) ContentTab {
+	tabs := visibleContentTabs()
+	for i, tab := range tabs {
+		if tab == current {
+			return tabs[(i+len(tabs)-1)%len(tabs)]
+		}
+	}
+	return ContentTabTasks
 }
 
 func (m Model) renderContentTabBar() string {
@@ -186,7 +208,7 @@ func (m Model) renderContentTabBar() string {
 		" ",
 		tab(ContentTabBrain),
 		" ",
-		tab(ContentTabDream),
+		tab(ContentTabAutomation),
 	)
 }
 
@@ -215,7 +237,7 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 	}{
 		{ContentTabTasks, "Tasks"},
 		{ContentTabBrain, "Brain"},
-		{ContentTabDream, "Dream"},
+		{ContentTabAutomation, "Automation"},
 	} {
 		start := len(plain)
 		plain += " " + zone.label + " "
@@ -227,6 +249,26 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 	}
 
 	return m.activeContentTab, false
+}
+
+func (m Model) automationSubTabAtX(x int) (AutomationSubTab, bool) {
+	plain := " "
+	for _, zone := range []struct {
+		tab   AutomationSubTab
+		label string
+	}{
+		{AutomationSubTabAutomations, "Automations"},
+		{AutomationSubTabDream, "Dream"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+	return m.activeAutomationSubTab, false
 }
 
 func contentTabCenterX(tab ContentTab) (int, bool) {
@@ -265,39 +307,42 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:               cfg,
-		keymap:               KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:            NewStatusBar(cfg.Project),
-		helpBar:              NewHelpBar(),
-		taskTree:             NewTaskTree(),
-		taskDetail:           NewTaskDetail(),
-		logViewer:            NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:         NewScheduleList(),
-		scheduleDetail:       NewScheduleDetail(),
-		modalManager:         NewModalManager(),
-		settings:             settings,
-		activePanel:          PanelTasks,
-		sseClient:            NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:                  context.Background(),
-		selectedTasks:        make(map[string]bool),
-		pausedProjects:       make(map[string]bool),
-		runnerController:     cfg.Runner,
-		tasksByProject:       make(map[string][]types.ResolvedTask),
-		sseClients:           make(map[string]*SSEClient),
-		metricsCollector:     NewMetricsCollector(),
-		seenFeatureIDs:       make(map[string]bool),
-		monitorClient:        NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:      make(map[string]bool),
-		dreamViewer:          NewDreamViewer(),
-		entryTree:            NewEntryTree(),
-		runnerPanel:          NewRunnerPanel(),
-		taskPanelHeight:      settings.TaskPanelHeight,
-		bottomTopPanelHeight: settings.BottomTopPanelHeight,
+		config:                 cfg,
+		keymap:                 KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:              NewStatusBar(cfg.Project),
+		helpBar:                NewHelpBar(),
+		taskTree:               NewTaskTree(),
+		taskDetail:             NewTaskDetail(),
+		logViewer:              NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:           NewScheduleList(),
+		scheduleDetail:         NewScheduleDetail(),
+		modalManager:           NewModalManager(),
+		settings:               settings,
+		activePanel:            PanelTasks,
+		sseClient:              NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                    context.Background(),
+		selectedTasks:          make(map[string]bool),
+		pausedProjects:         make(map[string]bool),
+		runnerController:       cfg.Runner,
+		tasksByProject:         make(map[string][]types.ResolvedTask),
+		sseClients:             make(map[string]*SSEClient),
+		metricsCollector:       NewMetricsCollector(),
+		seenFeatureIDs:         make(map[string]bool),
+		monitorClient:          NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:        make(map[string]bool),
+		activeAutomationSubTab: AutomationSubTabAutomations,
+		automationList:         NewAutomationList(),
+		dreamViewer:            NewDreamViewer(),
+		entryTree:              NewEntryTree(),
+		runnerPanel:            NewRunnerPanel(),
+		taskPanelHeight:        settings.TaskPanelHeight,
+		bottomTopPanelHeight:   settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
 	m.taskTree.TextWrap = settings.TextWrap
 	m.helpBar.TextWrap = settings.TextWrap
+	m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 
 	// Propagate max parallel setting to the runner on startup
 	if cfg.Runner != nil && settings.GlobalMaxParallel > 0 {
@@ -751,6 +796,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case AutomationDataMsg:
+		if msg.Error != nil {
+			m.automationList.SetError(msg.Error.Error())
+			return m, nil
+		}
+		m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks)
+		return m, nil
+
+	case AutomationToggleMsg:
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Automation updated")
+		return m, m.refreshActiveAutomationSubTab()
+
 	case featureExecutedMsg:
 		if msg.err != nil {
 			m.setStatusMessage("error", fmt.Sprintf("Feature execute error: %v", msg.err))
@@ -1039,8 +1100,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If on Dream tab with search typing mode, handle search input first
-	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
+	// If on Automation > Dream with search typing mode, handle search input first
+	if m.isAutomationDreamActive() && m.dreamViewer.SearchMode() == DreamSearchTyping {
 		return m.handleDreamSearchInput(msg)
 	}
 	if m.activeContentTab == ContentTabBrain && m.brainSearchState == FilterTyping {
@@ -1111,12 +1172,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.NextContentTab) {
-		if m.activeContentTab < ContentTabLogs {
-			m.activeContentTab++
-		} else {
-			m.activeContentTab = ContentTabTasks
-		}
+		m.activeContentTab = nextContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
+		m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 		if m.activeContentTab == ContentTabRunners {
 			m.activePanel = PanelRunners
 			m.helpBar.ActivePanel = m.activePanel
@@ -1137,20 +1195,17 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 			m.helpBar.ActivePanel = m.activePanel
 		}
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-			m.prepareDreamFetch()
-			return m, m.fetchDreamTabCmd()
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
 		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.PrevContentTab) {
-		if m.activeContentTab > ContentTabTasks {
-			m.activeContentTab--
-		} else {
-			m.activeContentTab = ContentTabLogs
-		}
+		m.activeContentTab = prevContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
+		m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 		if m.activeContentTab == ContentTabRunners {
 			m.activePanel = PanelRunners
 			m.helpBar.ActivePanel = m.activePanel
@@ -1171,17 +1226,17 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 			m.helpBar.ActivePanel = m.activePanel
 		}
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-			m.prepareDreamFetch()
-			return m, m.fetchDreamTabCmd()
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
 		}
 		return m, nil
 	}
 
-	// When on Dream tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
+	// When on Automation > Dream, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
 	// to the viewport for vim-style scrolling. Only intercept quit keys.
-	if m.activeContentTab == ContentTabDream {
+	if m.isAutomationDreamActive() {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.sseClient.Stop()
@@ -1311,8 +1366,40 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// When on Dream tab, handle dream-specific keys then forward the rest to the viewport
-		if m.activeContentTab == ContentTabDream {
+		// When on Automation tab, handle active-subtab keys.
+		if m.activeContentTab == ContentTabAutomation {
+			switch string(msg.Runes) {
+			case "C":
+				return m, m.cycleAutomationSubTab()
+			case "h", "[":
+				return m, m.setAutomationSubTab(AutomationSubTabAutomations)
+			case "l", "]":
+				return m, m.setAutomationSubTab(AutomationSubTabDream)
+			}
+
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				switch string(msg.Runes) {
+				case "j", "k", "g", "G":
+					m.automationList.Update(msg)
+					return m, nil
+				case "e":
+					return m, m.editSelectedAutomationRow()
+				case "r":
+					return m, m.refreshActiveAutomationSubTab()
+				case "x", " ":
+					return m, m.toggleSelectedAutomationRow()
+				case "q":
+					m.sseClient.Stop()
+					return m, tea.Quit
+				case "?":
+					modal := NewHelpModal(m.config.IsMultiProject())
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+				return m, nil
+			}
+
+			// Automation > Dream: handle dream-specific keys then forward the rest to the viewport.
 			switch string(msg.Runes) {
 			case "/":
 				m.dreamViewer.StartSearch()
@@ -1334,9 +1421,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dreamViewer.GotoBottom()
 				return m, nil
 			case "r":
-				// Re-fetch dream content
-				m.prepareDreamFetch()
-				return m, m.fetchDreamTabCmd()
+				return m, m.refreshActiveAutomationSubTab()
 			case "q":
 				m.sseClient.Stop()
 				return m, tea.Quit
@@ -2061,7 +2146,7 @@ func (m *Model) persistPanelHeights() {
 }
 
 func (m Model) isMainSplitterY(y int) bool {
-	if m.activeContentTab == ContentTabDream || !m.hasBottomPanel() {
+	if m.activeContentTab == ContentTabAutomation || !m.hasBottomPanel() {
 		return false
 	}
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
@@ -2069,7 +2154,7 @@ func (m Model) isMainSplitterY(y int) bool {
 }
 
 func (m Model) isBottomSplitterY(y int) bool {
-	if m.activeContentTab == ContentTabDream || m.runnerPanelVisible || !(m.detailVisible && m.logsVisible) {
+	if m.activeContentTab == ContentTabAutomation || m.runnerPanelVisible || !(m.detailVisible && m.logsVisible) {
 		return false
 	}
 	bottomStart, bottomHeight := m.bottomPanelBounds()
@@ -2184,6 +2269,11 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.activeContentTab == ContentTabAutomation && y >= mainContentStartY && y < m.height-1 {
+		m.activePanel = PanelTasks
+		m.helpBar.ActivePanel = m.activePanel
+		return m.handleAutomationPanelClick(y-mainContentStartY, x)
+	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
 		// Click in top task panel (full-width in current layout)
@@ -2253,9 +2343,10 @@ func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 			m.helpBar.ActivePanel = m.activePanel
 		}
-		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-			m.prepareDreamFetch()
-			return m, m.fetchDreamTabCmd()
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
 		}
 	}
 	return m, nil
@@ -2472,6 +2563,33 @@ func (m Model) handleTaskPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 		m.taskTree.SelectedID = m.taskTree.order[lineInList]
 		m.syncTaskDetail()
 	}
+	return m, nil
+}
+
+func (m Model) handleAutomationPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	contentLine := lineInPanel - 1 // account for top border
+	if contentLine < 0 {
+		return m, nil
+	}
+
+	if contentLine == 0 || contentLine == 1 {
+		if tab, ok := m.automationSubTabAtX(x - 1); ok && tab != m.activeAutomationSubTab {
+			return m, m.setAutomationSubTab(tab)
+		}
+		if contentLine == 0 {
+			return m, nil
+		}
+	}
+
+	if contentLine < 2 || m.activeAutomationSubTab != AutomationSubTabAutomations {
+		return m, nil
+	}
+
+	rowLine := contentLine - 3 // terminal reports the cursor body row; use the pointer tip row
+	if rowLine < 0 {
+		return m, nil
+	}
+	m.automationList.SelectVisibleRow(rowLine)
 	return m, nil
 }
 
@@ -2861,9 +2979,17 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleMouseWheel(msg tea.MouseMsg, direction int) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabDream {
+	if m.activeContentTab == ContentTabAutomation {
 		mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				if direction < 0 {
+					m.automationList.ScrollUp(3)
+				} else {
+					m.automationList.ScrollDown(3)
+				}
+				return m, nil
+			}
 			key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
 			if direction < 0 {
 				key = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
@@ -3300,8 +3426,8 @@ func (m Model) renderBaseView() string {
 
 	// Filter/Search bar (based on context)
 	var filterBarView string
-	if m.activeContentTab == ContentTabDream {
-		// Dream tab: show search bar
+	if m.isAutomationDreamActive() {
+		// Automation > Dream: show search bar
 		switch m.dreamViewer.SearchMode() {
 		case DreamSearchTyping:
 			matchCount := m.dreamViewer.MatchCount()
@@ -3444,14 +3570,24 @@ func (m Model) renderBaseView() string {
 			Height(mainHeight - 2).
 			Render(entryView)
 		mainContent = entryPanel
-	} else if m.activeContentTab == ContentTabDream {
-		// Dream tab: full-width dream viewer, no task/detail/log panels
-		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
-		dreamPanel := InactiveBorder.
+	} else if m.activeContentTab == ContentTabAutomation {
+		// Automation tab: full-width automation list or Dream subtab.
+		contentHeight := mainHeight - 2
+		if contentHeight < 1 {
+			contentHeight = 1
+		}
+		var content string
+		if m.activeAutomationSubTab == AutomationSubTabDream {
+			content = m.dreamViewer.View(m.width-4, contentHeight-1)
+		} else {
+			content = m.automationList.View(m.width-4, contentHeight-1)
+		}
+		automationView := m.renderAutomationSubTabBar(m.width-4) + "\n" + content
+		automationPanel := InactiveBorder.
 			Width(m.width - 2).
-			Height(mainHeight - 2).
-			Render(dreamView)
-		mainContent = dreamPanel
+			Height(contentHeight).
+			Render(automationView)
+		mainContent = automationPanel
 	} else if m.runnerPanelVisible {
 		// Runner panel visible: split into task panel (top) + runner panel (bottom)
 		// Use the same bottom panel area for the runner panel
@@ -3757,6 +3893,29 @@ func (m Model) renderBrainSearchBar(width int) string {
 	}
 }
 
+func (m Model) renderAutomationSubTabBar(width int) string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(ColorCyan).Padding(0, 1)
+	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
+	render := func(tab AutomationSubTab) string {
+		if m.activeAutomationSubTab == tab {
+			return activeStyle.Render(tab.String())
+		}
+		return inactiveStyle.Render(tab.String())
+	}
+	bar := lipgloss.JoinHorizontal(lipgloss.Center,
+		" ",
+		render(AutomationSubTabAutomations),
+		" ",
+		render(AutomationSubTabDream),
+		" ",
+		DimStyle.Render("h/l switch  r refresh  x toggle  e edit"),
+	)
+	if width > 0 && lipgloss.Width(bar) > width {
+		return lipgloss.NewStyle().MaxWidth(width).Render(bar)
+	}
+	return bar
+}
+
 // applyFilter applies the current filter query to the task list.
 func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
@@ -3906,6 +4065,9 @@ func (m Model) selectProject(projectID string) (tea.Model, tea.Cmd) {
 	m.projectTabs.SetActiveProject(projectID)
 	m.activeProjectID = m.projectTabs.ActiveProject()
 	m.syncActiveProjectView()
+	if m.activeContentTab == ContentTabAutomation {
+		return m, m.refreshActiveAutomationSubTab()
+	}
 	return m, m.refreshBrainOnProjectSwitch()
 }
 
@@ -3925,6 +4087,112 @@ func (m *Model) activeDreamProject() string {
 		project = m.activeProjectID
 	}
 	return project
+}
+
+func (m *Model) activeAutomationProject() string {
+	return m.activeDreamProject()
+}
+
+func (m Model) isAutomationDreamActive() bool {
+	return m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabDream
+}
+
+func (m *Model) cycleAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabAutomations {
+		return m.setAutomationSubTab(AutomationSubTabDream)
+	}
+	return m.setAutomationSubTab(AutomationSubTabAutomations)
+}
+
+func (m *Model) setAutomationSubTab(tab AutomationSubTab) tea.Cmd {
+	m.activeAutomationSubTab = tab
+	m.helpBar.ActiveAutomationSubTab = tab
+	return m.prepareActiveAutomationFetch()
+}
+
+func (m *Model) prepareActiveAutomationFetch() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
+			m.prepareDreamFetch()
+			return m.fetchDreamTabCmd()
+		}
+		return nil
+	}
+	if len(m.automationList.rows) == 0 {
+		m.prepareAutomationFetch()
+		return m.fetchAutomationListCmd()
+	}
+	return nil
+}
+
+func (m *Model) refreshActiveAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		m.prepareDreamFetch()
+		return m.fetchDreamTabCmd()
+	}
+	m.prepareAutomationFetch()
+	return m.fetchAutomationListCmd()
+}
+
+func (m *Model) prepareAutomationFetch() {
+	m.automationList.SetLoading(true)
+}
+
+func (m *Model) fetchAutomationListCmd() tea.Cmd {
+	return fetchAutomationDataCmd(m.apiRunnerConfig(), m.activeAutomationProject())
+}
+
+func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+}
+
+func (m *Model) editSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	path := row.Path
+	if path == "" {
+		path = row.ID
+	}
+	if path == "" {
+		m.setStatusMessage("error", "Selected automation has no path")
+		return nil
+	}
+
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	entry, err := apiClient.GetEntry(context.Background(), path)
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to fetch automation: %v", err))
+		return nil
+	}
+
+	tempDir, err := os.MkdirTemp("", "brain-automation-")
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+		return nil
+	}
+	tempFile := filepath.Join(tempDir, row.ID+".md")
+	if err := os.WriteFile(tempFile, []byte(entry.Content), 0o644); err != nil {
+		os.RemoveAll(tempDir)
+		m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+		return nil
+	}
+
+	originalContent := entry.Content
+	return tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+		return editorClosedMsg{
+			taskID:          row.ID,
+			taskPath:        path,
+			tempFile:        tempFile,
+			originalContent: originalContent,
+			err:             err,
+		}
+	})
 }
 
 func (m *Model) prepareDreamFetch() {
@@ -4198,6 +4466,68 @@ func fetchDreamConfigCmd(client *MonitorClient, project string) tea.Cmd {
 			return DreamConfigMsg{Error: err}
 		}
 		return DreamConfigMsg{Config: config}
+	}
+}
+
+func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+
+		automationParams := map[string]string{"type": "automation"}
+		taskParams := map[string]string{"type": "task"}
+		if project != "" {
+			automationParams["project"] = project
+			taskParams["project"] = project
+		}
+
+		automations, err := apiClient.ListEntries(ctx, automationParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch automation entries: %w", err)}
+		}
+		tasks, err := apiClient.ListEntries(ctx, taskParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch scheduled task entries: %w", err)}
+		}
+
+		scheduledTasks := make([]types.BrainEntry, 0, len(tasks.Entries))
+		for _, task := range tasks.Entries {
+			if task.Schedule != "" || task.RunOnceAt != "" {
+				scheduledTasks = append(scheduledTasks, task)
+			}
+		}
+
+		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks}
+	}
+}
+
+func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+
+		updates := map[string]interface{}{}
+		switch row.Source {
+		case "automation":
+			newStatus := "active"
+			if row.Enabled || row.Status == "active" {
+				newStatus = "archived"
+			}
+			updates["status"] = newStatus
+		case "task":
+			updates["schedule_enabled"] = !row.Enabled
+		default:
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("unknown automation row source %q", row.Source)}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
+		return AutomationToggleMsg{RowID: row.ID, Error: err}
 	}
 }
 

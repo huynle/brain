@@ -142,8 +142,17 @@ const (
 	ContentTabTasks ContentTab = iota
 	ContentTabBrain
 	ContentTabDream
+	ContentTabAutomation
 	ContentTabRunners
 	ContentTabLogs
+)
+
+// AutomationSubTab identifies which subtab is active within Automation.
+type AutomationSubTab int
+
+const (
+	AutomationSubTabAutomations AutomationSubTab = iota
+	AutomationSubTabDream
 )
 
 // String returns the display name for a content tab.
@@ -155,10 +164,24 @@ func (ct ContentTab) String() string {
 		return "Brain"
 	case ContentTabDream:
 		return "Dream"
+	case ContentTabAutomation:
+		return "Automation"
 	case ContentTabRunners:
 		return "Runners"
 	case ContentTabLogs:
 		return "Logs"
+	default:
+		return "unknown"
+	}
+}
+
+// String returns the display name for an automation subtab.
+func (ast AutomationSubTab) String() string {
+	switch ast {
+	case AutomationSubTabAutomations:
+		return "Automations"
+	case AutomationSubTabDream:
+		return "Dream"
 	default:
 		return "unknown"
 	}

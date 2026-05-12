@@ -78,6 +78,19 @@ type DreamConfigMsg struct {
 	Error  error
 }
 
+// AutomationDataMsg is sent when automation entries and scheduled task entries are fetched.
+type AutomationDataMsg struct {
+	Automations    []types.BrainEntry
+	ScheduledTasks []types.BrainEntry
+	Error          error
+}
+
+// AutomationToggleMsg is sent when a selected automation row has been toggled.
+type AutomationToggleMsg struct {
+	RowID string
+	Error error
+}
+
 // RunnerListMsg is sent when the runner list has been fetched from the API.
 type RunnerListMsg struct {
 	Runners []types.RunnerInfo

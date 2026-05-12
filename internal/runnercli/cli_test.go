@@ -23,6 +23,7 @@ func TestRunTaskRunner_BasicStartStop(t *testing.T) {
 		Config: runner.RunnerConfig{
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
+			StateDir:    t.TempDir(),
 			WorkDir:     t.TempDir(),
 		},
 	}
@@ -129,6 +130,7 @@ func TestRunTUI_BasicStartStop(t *testing.T) {
 		Config: runner.RunnerConfig{
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
+			StateDir:    t.TempDir(),
 			WorkDir:     t.TempDir(),
 		},
 	}

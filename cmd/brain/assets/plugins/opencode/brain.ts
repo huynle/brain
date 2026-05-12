@@ -475,6 +475,32 @@ async function apiRequest<T>(
   }
 }
 
+function addNonEmptyStringFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  keys: string[]
+) {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value !== "") {
+      target[key] = value;
+    }
+  }
+}
+
+function addPresentFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  keys: string[]
+) {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null) {
+      target[key] = value;
+    }
+  }
+}
+
 
 
 // ============================================================================
@@ -1746,7 +1772,20 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Additional executor extensions to load for this task."),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.trigger === undefined && args.action === undefined && args.retry === undefined && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.run_once_at === undefined && args.timezone === undefined && args.starts_at === undefined && args.expires_at === undefined && args.feature_schedule === undefined && args.feature_starts_at === undefined && args.feature_expires_at === undefined && args.feature_run_once_at === undefined && args.feature_timezone === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined && args.executor === undefined && args.extensions === undefined) {
+          const updates: Record<string, unknown> = {};
+          addNonEmptyStringFields(updates, args, [
+            "status", "title", "append", "note", "priority", "feature_id", "feature_priority",
+            "target_workdir", "git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
+            "execution_mode", "remote_branch_policy", "schedule", "run_once_at", "timezone",
+            "starts_at", "expires_at", "feature_schedule", "feature_starts_at", "feature_expires_at",
+            "feature_run_once_at", "feature_timezone", "direct_prompt", "agent", "model", "executor",
+          ]);
+          addPresentFields(updates, args, [
+            "depends_on", "tags", "feature_depends_on", "trigger", "action", "retry",
+            "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs", "extensions",
+          ]);
+
+          if (Object.keys(updates).length === 0) {
             return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, trigger, action, retry, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model, executor, extensions`;
           }
 
@@ -1756,50 +1795,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               title: string;
               status: string;
               changes: string[];
-            }>("PATCH", `/entries/${args.path}`, {
-              status: args.status,
-              title: args.title,
-              append: args.append,
-              note: args.note,
-              depends_on: args.depends_on,
-              tags: args.tags,
-              priority: args.priority,
-              feature_id: args.feature_id,
-              feature_priority: args.feature_priority,
-              feature_depends_on: args.feature_depends_on,
-              trigger: args.trigger,
-              action: args.action,
-              retry: args.retry,
-              target_workdir: args.target_workdir,
-              git_branch: args.git_branch,
-              merge_target_branch: args.merge_target_branch,
-              merge_policy: args.merge_policy,
-              merge_strategy: args.merge_strategy,
-              open_pr_before_merge: args.open_pr_before_merge,
-              execution_mode: args.execution_mode,
-
-              complete_on_idle: args.complete_on_idle,
-              remote_branch_policy: args.remote_branch_policy,
-              schedule: args.schedule,
-              schedule_enabled: args.schedule_enabled,
-              max_runs: args.max_runs,
-              // Time-based scheduling fields
-              run_once_at: args.run_once_at,
-              timezone: args.timezone,
-              starts_at: args.starts_at,
-              expires_at: args.expires_at,
-              // Feature schedule fields
-              feature_schedule: args.feature_schedule,
-              feature_starts_at: args.feature_starts_at,
-              feature_expires_at: args.feature_expires_at,
-              feature_run_once_at: args.feature_run_once_at,
-              feature_timezone: args.feature_timezone,
-              direct_prompt: args.direct_prompt,
-              agent: args.agent,
-              model: args.model,
-              executor: args.executor,
-              extensions: args.extensions,
-            });
+            }>("PATCH", `/entries/${args.path}`, updates);
 
             const changes: string[] = [];
             if (args.status) changes.push(`Status: -> ${args.status}`);

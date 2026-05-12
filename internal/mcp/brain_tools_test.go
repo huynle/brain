@@ -370,6 +370,50 @@ func TestBrainUpdate_Handler(t *testing.T) {
 	}
 }
 
+func TestBrainUpdate_HandlerOmitsEmptyOptionalStringDefaults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["status"] != "draft" {
+			t.Errorf("body.status = %v, want %q", body["status"], "draft")
+		}
+		if _, ok := body["title"]; ok {
+			t.Fatalf("body should not include empty title default: %#v", body)
+		}
+		if _, ok := body["feature_id"]; ok {
+			t.Fatalf("body should not include empty feature_id default: %#v", body)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":   "projects/test/task/abc.md",
+			"title":  "Test Task",
+			"status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"path":       "projects/test/task/abc.md",
+		"status":     "draft",
+		"title":      "",
+		"feature_id": "",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
 func TestBrainDelete_Handler(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "DELETE" {

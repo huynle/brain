@@ -502,53 +502,18 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
 
-		body := map[string]any{
-			"status":               args["status"],
-			"title":                args["title"],
-			"append":               args["append"],
-			"note":                 args["note"],
-			"depends_on":           args["depends_on"],
-			"tags":                 args["tags"],
-			"priority":             args["priority"],
-			"target_workdir":       args["target_workdir"],
-			"git_branch":           args["git_branch"],
-			"merge_target_branch":  args["merge_target_branch"],
-			"merge_policy":         args["merge_policy"],
-			"merge_strategy":       args["merge_strategy"],
-			"remote_branch_policy": args["remote_branch_policy"],
-			"open_pr_before_merge": args["open_pr_before_merge"],
-			"execution_mode":       args["execution_mode"],
-			"complete_on_idle":     args["complete_on_idle"],
-			"schedule":             args["schedule"],
-			"schedule_enabled":     args["schedule_enabled"],
-			"max_runs":             args["max_runs"],
-			"run_once_at":          args["run_once_at"],
-			"timezone":             args["timezone"],
-			"starts_at":            args["starts_at"],
-			"expires_at":           args["expires_at"],
-			"feature_id":           args["feature_id"],
-			"feature_priority":     args["feature_priority"],
-			"feature_depends_on":   args["feature_depends_on"],
-			"trigger":              args["trigger"],
-			"action":               args["action"],
-			"retry":                args["retry"],
-			"feature_schedule":     args["feature_schedule"],
-			"feature_starts_at":    args["feature_starts_at"],
-			"feature_expires_at":   args["feature_expires_at"],
-			"feature_run_once_at":  args["feature_run_once_at"],
-			"feature_timezone":     args["feature_timezone"],
-			"direct_prompt":        args["direct_prompt"],
-			"agent":                args["agent"],
-			"model":                args["model"],
-			"executor":             args["executor"],
-			"extensions":           args["extensions"],
-		}
-		if v, ok := args["executor"].(string); ok && v != "" {
-			body["executor"] = v
-		}
-		if v, ok := args["extensions"]; ok {
-			body["extensions"] = v
-		}
+		body := map[string]any{}
+		addStringUpdateFields(body, args,
+			"status", "title", "append", "note", "priority", "target_workdir", "git_branch",
+			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
+			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
+			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
+			"direct_prompt", "agent", "model", "executor",
+		)
+		addPresentUpdateFields(body, args,
+			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",
+			"feature_depends_on", "trigger", "action", "retry", "extensions",
+		)
 
 		var resp struct {
 			Path   string `json:"path"`
@@ -681,6 +646,22 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
 			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
 	})
+}
+
+func addStringUpdateFields(body, args map[string]any, keys ...string) {
+	for _, key := range keys {
+		if v, ok := args[key].(string); ok && v != "" {
+			body[key] = v
+		}
+	}
+}
+
+func addPresentUpdateFields(body, args map[string]any, keys ...string) {
+	for _, key := range keys {
+		if v, ok := args[key]; ok && v != nil {
+			body[key] = v
+		}
+	}
 }
 
 // =============================================================================

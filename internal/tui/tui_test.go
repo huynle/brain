@@ -2745,6 +2745,77 @@ func TestUpdate_AutomationTabCCyclesAutomationSubTabs(t *testing.T) {
 	}
 }
 
+func TestUpdate_AutomationDreamSearchInputScopedToDreamSubTab(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.dreamViewer.StartSearch()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	if got := m.dreamViewer.SearchQuery(); got != "" {
+		t.Fatalf("expected Automations subtab not to capture Dream search input, got query %q", got)
+	}
+
+	m.activeAutomationSubTab = AutomationSubTabDream
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	m = updated.(Model)
+
+	if got := m.dreamViewer.SearchQuery(); got != "x" {
+		t.Fatalf("expected Dream subtab to capture Dream search input, got query %q", got)
+	}
+}
+
+func TestView_AutomationDreamSearchBarOnlyRendersForDreamSubTab(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 120
+	m.height = 40
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.dreamViewer.SetContent("alpha beta")
+	m.dreamViewer.StartSearch()
+	m.dreamViewer.SetSearchQuery("alpha")
+	m.dreamViewer.LockSearch()
+
+	if view := m.View(); strings.Contains(view, "Search: alpha") {
+		t.Fatalf("expected Automations subtab not to render Dream search bar, got:\n%s", view)
+	}
+
+	m.activeAutomationSubTab = AutomationSubTabDream
+	if view := m.View(); !strings.Contains(view, "Search: alpha") {
+		t.Fatalf("expected Dream subtab to render Dream search bar, got:\n%s", view)
+	}
+}
+
+func TestMouseWheel_AutomationSubTabsUseActiveSubTab(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto1", Title: "One"}, {ID: "auto2", Title: "Two"}})
+	m.dreamViewer.SetContent(strings.Repeat("dream line\n", 20))
+	m.dreamViewer.SetSize(80, 5)
+
+	updated, _ := m.handleMouseWheelDown(tea.MouseMsg{Type: tea.MouseWheelDown})
+	m = updated.(Model)
+	if got := m.automationList.SelectedID; got != "auto2" {
+		t.Fatalf("expected Automations wheel down to move automation selection, got %q", got)
+	}
+	if got := m.dreamViewer.viewport.YOffset; got != 0 {
+		t.Fatalf("expected Automations wheel down not to scroll Dream viewport, got offset %d", got)
+	}
+
+	m.activeAutomationSubTab = AutomationSubTabDream
+	updated, _ = m.handleMouseWheelDown(tea.MouseMsg{Type: tea.MouseWheelDown})
+	m = updated.(Model)
+	if got := m.automationList.SelectedID; got != "auto2" {
+		t.Fatalf("expected Dream wheel down not to move automation selection, got %q", got)
+	}
+	if got := m.dreamViewer.viewport.YOffset; got == 0 {
+		t.Fatal("expected Dream wheel down to scroll Dream viewport")
+	}
+}
+
 func TestFetchAutomationDataCmd_FetchesAutomationsAndScheduledTasks(t *testing.T) {
 	requests := make([]string, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

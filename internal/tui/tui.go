@@ -850,8 +850,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If on Automation tab with search typing mode, handle search input first
-	if m.activeContentTab == ContentTabAutomation && m.dreamViewer.SearchMode() == DreamSearchTyping {
+	// If on Automation > Dream with search typing mode, handle search input first.
+	if m.isAutomationDreamActive() && m.dreamViewer.SearchMode() == DreamSearchTyping {
 		return m.handleDreamSearchInput(msg)
 	}
 
@@ -1036,8 +1036,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.toggleSelectedAutomationRow()
 			}
 		case tea.KeyEsc:
-			// If search is locked, Esc cancels search
-			if m.dreamViewer.SearchMode() == DreamSearchLocked {
+			// If Dream search is locked, Esc cancels search.
+			if m.activeAutomationSubTab == AutomationSubTabDream && m.dreamViewer.SearchMode() == DreamSearchLocked {
 				m.dreamViewer.CancelSearch()
 				return m, nil
 			}
@@ -2585,8 +2585,12 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
 func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabAutomation {
+	if m.isAutomationDreamActive() {
 		m.dreamViewer.ScrollUp(3)
+		return m, nil
+	}
+	if m.activeContentTab == ContentTabAutomation {
+		m.automationList.Update(tea.KeyMsg{Type: tea.KeyUp})
 		return m, nil
 	}
 	if m.isLogPaneY(msg.Y) {
@@ -2612,8 +2616,12 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
 func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabAutomation {
+	if m.isAutomationDreamActive() {
 		m.dreamViewer.ScrollDown(3)
+		return m, nil
+	}
+	if m.activeContentTab == ContentTabAutomation {
+		m.automationList.Update(tea.KeyMsg{Type: tea.KeyDown})
 		return m, nil
 	}
 	if m.isLogPaneY(msg.Y) {
@@ -3102,8 +3110,7 @@ func (m Model) renderBaseView() string {
 
 	// Filter/Search bar (based on context)
 	var filterBarView string
-	if m.activeContentTab == ContentTabAutomation {
-		// Automation tab currently reuses the dream search bar until subtab rendering lands.
+	if m.isAutomationDreamActive() {
 		switch m.dreamViewer.SearchMode() {
 		case DreamSearchTyping:
 			matchCount := m.dreamViewer.MatchCount()
@@ -3558,6 +3565,10 @@ func (m *Model) activeDreamProject() string {
 
 func (m *Model) activeAutomationProject() string {
 	return m.activeDreamProject()
+}
+
+func (m Model) isAutomationDreamActive() bool {
+	return m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabDream
 }
 
 func (m *Model) cycleAutomationSubTab() tea.Cmd {

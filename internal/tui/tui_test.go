@@ -2894,13 +2894,13 @@ func TestMouseWheel_AutomationSubTabsUseActiveSubTab(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.activeContentTab = ContentTabAutomation
 	m.activeAutomationSubTab = AutomationSubTabAutomations
-	m.automationList.SetRows([]AutomationListRow{{ID: "auto1", Title: "One"}, {ID: "auto2", Title: "Two"}})
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto1", Title: "One"}, {ID: "auto2", Title: "Two"}, {ID: "auto3", Title: "Three"}, {ID: "auto4", Title: "Four"}})
 	m.dreamViewer.SetContent(strings.Repeat("dream line\n", 20))
 	m.dreamViewer.SetSize(80, 5)
 
 	updated, _ := m.handleMouseWheelDown(tea.MouseMsg{Type: tea.MouseWheelDown})
 	m = updated.(Model)
-	if got := m.automationList.SelectedID; got != "auto2" {
+	if got := m.automationList.SelectedID; got != "auto4" {
 		t.Fatalf("expected Automations wheel down to move automation selection, got %q", got)
 	}
 	if got := m.dreamViewer.viewport.YOffset; got != 0 {
@@ -2910,11 +2910,72 @@ func TestMouseWheel_AutomationSubTabsUseActiveSubTab(t *testing.T) {
 	m.activeAutomationSubTab = AutomationSubTabDream
 	updated, _ = m.handleMouseWheelDown(tea.MouseMsg{Type: tea.MouseWheelDown})
 	m = updated.(Model)
-	if got := m.automationList.SelectedID; got != "auto2" {
+	if got := m.automationList.SelectedID; got != "auto4" {
 		t.Fatalf("expected Dream wheel down not to move automation selection, got %q", got)
 	}
 	if got := m.dreamViewer.viewport.YOffset; got == 0 {
 		t.Fatal("expected Dream wheel down to scroll Dream viewport")
+	}
+}
+
+func TestMouseClickAutomationPanelSelectsRowsAndSubTabs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 120
+	m.height = 40
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetRows([]AutomationListRow{
+		{ID: "auto1", Title: "One"},
+		{ID: "auto2", Title: "Two"},
+	})
+	m.dreamViewer.SetContent("dream")
+	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "test-project"})
+
+	mainStart := m.computeMainContentStartY()
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 10, Y: mainStart + 5})
+	m = updated.(Model)
+	if got := m.automationList.SelectedID; got != "auto2" {
+		t.Fatalf("expected click reported below second automation row to select auto2, got %q", got)
+	}
+
+	updated, _ = m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 18, Y: mainStart + 2})
+	m = updated.(Model)
+	if m.activeAutomationSubTab != AutomationSubTabDream {
+		t.Fatalf("expected click reported below Dream subtab to activate Dream, got %v", m.activeAutomationSubTab)
+	}
+}
+
+func TestUpdate_AutomationEditOpensSelectedRowInEditor(t *testing.T) {
+	t.Setenv("EDITOR", "true")
+	var fetchCount atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/entries/projects/test/automation/auto1.md" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		fetchCount.Add(1)
+		json.NewEncoder(w).Encode(types.BrainEntry{
+			ID:      "auto1",
+			Path:    "projects/test/automation/auto1.md",
+			Title:   "Auto",
+			Type:    "automation",
+			Status:  "active",
+			Content: "# Auto\n",
+		})
+	}))
+	defer server.Close()
+
+	m := NewModel(Config{APIURL: server.URL, Project: "test-project"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto1", Path: "projects/test/automation/auto1.md", Title: "Auto", Source: "automation"}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	_ = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected edit command for selected automation row")
+	}
+	if got := fetchCount.Load(); got != 1 {
+		t.Fatalf("expected selected automation entry to be fetched once, got %d", got)
 	}
 }
 

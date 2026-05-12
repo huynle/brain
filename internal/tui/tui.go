@@ -1185,6 +1185,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				case "j", "k", "g", "G":
 					m.automationList.Update(msg)
 					return m, nil
+				case "e":
+					return m, m.editSelectedAutomationRow()
 				case "r":
 					return m, m.refreshActiveAutomationSubTab()
 				case "x", " ":
@@ -1507,6 +1509,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				})
 			return m, m.modalManager.Open(modal)
 		case "e":
+			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+				return m, m.editSelectedAutomationRow()
+			}
+
 			// Edit task in $EDITOR (tasks view only)
 			// Fetches content from API, writes to temp file, opens editor,
 			// then syncs changes back on close.
@@ -1929,6 +1935,10 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.activeContentTab == ContentTabAutomation && y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+		return m.handleAutomationPanelClick(y-mainContentStartY, x)
+	}
+
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
 		// Click in top task panel (full-width in current layout)
 		m.activePanel = PanelTasks
@@ -2210,6 +2220,39 @@ func (m Model) handleTaskPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 		m.taskTree.Cursor = lineInList
 		m.taskTree.SelectedID = m.taskTree.order[lineInList]
 		m.syncTaskDetail()
+	}
+	return m, nil
+}
+
+func (m Model) handleAutomationPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	contentLine := lineInPanel - 1 // account for top border
+	if contentLine < 0 {
+		return m, nil
+	}
+
+	if contentLine == 0 || contentLine == 1 {
+		if tab, ok := m.automationSubTabAtX(x - 1); ok && tab != m.activeAutomationSubTab {
+			return m, m.setAutomationSubTab(tab)
+		}
+		if contentLine == 0 {
+			return m, nil
+		}
+	}
+
+	if contentLine < 2 {
+		return m, nil
+	}
+
+	if m.activeAutomationSubTab != AutomationSubTabAutomations {
+		return m, nil
+	}
+
+	rowLine := contentLine - 3 // terminal reports the cell under the cursor body; use the pointer tip row
+	if rowLine < 0 {
+		return m, nil
+	}
+	if m.automationList.SelectVisibleRow(rowLine) {
+		return m, nil
 	}
 	return m, nil
 }
@@ -2596,7 +2639,7 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.activeContentTab == ContentTabAutomation {
-		m.automationList.Update(tea.KeyMsg{Type: tea.KeyUp})
+		m.automationList.ScrollUp(3)
 		return m, nil
 	}
 	if m.isLogPaneY(msg.Y) {
@@ -2627,7 +2670,7 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.activeContentTab == ContentTabAutomation {
-		m.automationList.Update(tea.KeyMsg{Type: tea.KeyDown})
+		m.automationList.ScrollDown(3)
 		return m, nil
 	}
 	if m.isLogPaneY(msg.Y) {
@@ -2966,7 +3009,7 @@ func (m Model) renderAutomationSubTabBar(width int) string {
 		" ",
 		render(AutomationSubTabDream),
 		" ",
-		DimStyle.Render("h/l switch  r refresh  x toggle"),
+		DimStyle.Render("h/l switch  r refresh  x toggle  e edit"),
 	)
 	if width > 0 && lipgloss.Width(bar) > width {
 		return lipgloss.NewStyle().MaxWidth(width).Render(bar)
@@ -3041,6 +3084,26 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 	}
 
 	return m.activeContentTab, false
+}
+
+func (m Model) automationSubTabAtX(x int) (AutomationSubTab, bool) {
+	plain := " "
+	for _, zone := range []struct {
+		tab   AutomationSubTab
+		label string
+	}{
+		{AutomationSubTabAutomations, "Automations"},
+		{AutomationSubTabDream, "Dream"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+	return m.activeAutomationSubTab, false
 }
 
 // renderBaseView renders the main TUI layout (without modal)
@@ -3628,6 +3691,51 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 		return nil
 	}
 	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+}
+
+func (m *Model) editSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	path := row.Path
+	if path == "" {
+		path = row.ID
+	}
+	if path == "" {
+		m.setStatusMessage("error", "Selected automation has no path")
+		return nil
+	}
+
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	entry, err := apiClient.GetEntry(context.Background(), path)
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to fetch automation: %v", err))
+		return nil
+	}
+
+	tempDir, err := os.MkdirTemp("", "brain-automation-")
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+		return nil
+	}
+	tempFile := filepath.Join(tempDir, row.ID+".md")
+	if err := os.WriteFile(tempFile, []byte(entry.Content), 0o644); err != nil {
+		os.RemoveAll(tempDir)
+		m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+		return nil
+	}
+
+	originalContent := entry.Content
+	return tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+		return editorClosedMsg{
+			taskID:          row.ID,
+			taskPath:        path,
+			tempFile:        tempFile,
+			originalContent: originalContent,
+			err:             err,
+		}
+	})
 }
 
 func (m *Model) prepareDreamFetch() {

@@ -97,6 +97,44 @@ func TestAutomationList_NavigationAndSelectedRow(t *testing.T) {
 	}
 }
 
+func TestAutomationList_SelectVisibleRowUsesScrollOffset(t *testing.T) {
+	al := NewAutomationList()
+	al.SetRows([]AutomationListRow{
+		{ID: "r1", Title: "First"},
+		{ID: "r2", Title: "Second"},
+		{ID: "r3", Title: "Third"},
+		{ID: "r4", Title: "Fourth"},
+	})
+	al.ScrollDown(2)
+	al.View(80, 3)
+
+	if ok := al.SelectVisibleRow(1); !ok {
+		t.Fatal("expected visible row to be selectable")
+	}
+	if selected := al.SelectedRow(); selected == nil || selected.ID != "r3" {
+		t.Fatalf("expected visible row selection to account for scroll offset, got %+v", selected)
+	}
+}
+
+func TestAutomationList_ScrollMovesMultipleRows(t *testing.T) {
+	al := NewAutomationList()
+	al.SetRows([]AutomationListRow{
+		{ID: "r1", Title: "First"},
+		{ID: "r2", Title: "Second"},
+		{ID: "r3", Title: "Third"},
+		{ID: "r4", Title: "Fourth"},
+	})
+
+	al.ScrollDown(3)
+	if selected := al.SelectedRow(); selected == nil || selected.ID != "r4" {
+		t.Fatalf("expected scroll down to move multiple rows, got %+v", selected)
+	}
+	al.ScrollUp(2)
+	if selected := al.SelectedRow(); selected == nil || selected.ID != "r2" {
+		t.Fatalf("expected scroll up to move multiple rows, got %+v", selected)
+	}
+}
+
 func TestAutomationList_States(t *testing.T) {
 	al := NewAutomationList()
 

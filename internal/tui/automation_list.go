@@ -166,6 +166,37 @@ func (al *AutomationList) MoveToBottom() {
 	al.SelectedID = al.rows[al.Cursor].ID
 }
 
+// SelectVisibleRow selects a rendered row by its zero-based visible index.
+func (al *AutomationList) SelectVisibleRow(visibleIndex int) bool {
+	idx := al.scrollOffset + visibleIndex
+	if idx < 0 || idx >= len(al.rows) {
+		return false
+	}
+	al.Cursor = idx
+	al.SelectedID = al.rows[idx].ID
+	return true
+}
+
+// ScrollUp moves the selection up by n rows.
+func (al *AutomationList) ScrollUp(n int) {
+	if n < 1 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		al.MoveUp()
+	}
+}
+
+// ScrollDown moves the selection down by n rows.
+func (al *AutomationList) ScrollDown(n int) {
+	if n < 1 {
+		n = 1
+	}
+	for i := 0; i < n; i++ {
+		al.MoveDown()
+	}
+}
+
 // SelectedRow returns the selected normalized row, or nil when the list is empty.
 func (al *AutomationList) SelectedRow() *AutomationListRow {
 	if al.SelectedID == "" || len(al.rows) == 0 {

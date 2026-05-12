@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -87,8 +88,7 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			header := generateHeader(relPath)
 			content = append([]byte(header), content...)
 		} else if isMarkdownFile(relPath) {
-			header := generateMarkdownHeader(relPath)
-			content = append([]byte(header), content...)
+			content = addMarkdownHeader(content, relPath)
 		}
 
 		// Check for existing file if not Force mode
@@ -158,6 +158,53 @@ func isCodeFile(path string) bool {
 
 func isMarkdownFile(path string) bool {
 	return filepath.Ext(path) == ".md"
+}
+
+// addMarkdownHeader inserts the generated header without hiding YAML frontmatter.
+// OpenCode requires component markdown files such as SKILL.md to start with
+// frontmatter, so generated comments must be placed after the closing delimiter
+// when frontmatter is present.
+func addMarkdownHeader(content []byte, filename string) []byte {
+	header := []byte(generateMarkdownHeader(filename))
+	frontmatterEnd := yamlFrontmatterEnd(content)
+	if frontmatterEnd == 0 {
+		return append(header, content...)
+	}
+
+	result := make([]byte, 0, len(content)+len(header))
+	result = append(result, content[:frontmatterEnd]...)
+	result = append(result, header...)
+	result = append(result, content[frontmatterEnd:]...)
+	return result
+}
+
+// yamlFrontmatterEnd returns the byte offset immediately after the closing
+// frontmatter delimiter line, or 0 when the file does not start with YAML
+// frontmatter.
+func yamlFrontmatterEnd(content []byte) int {
+	if !bytes.HasPrefix(content, []byte("---\n")) && !bytes.HasPrefix(content, []byte("---\r\n")) {
+		return 0
+	}
+
+	lineStart := 0
+	for lineStart < len(content) {
+		lineEndRel := bytes.IndexByte(content[lineStart:], '\n')
+		lineEnd := len(content)
+		nextLineStart := len(content)
+		if lineEndRel >= 0 {
+			lineEnd = lineStart + lineEndRel
+			nextLineStart = lineEnd + 1
+		}
+
+		line := bytes.TrimRight(content[lineStart:lineEnd], "\r")
+		if lineStart != 0 && bytes.Equal(line, []byte("---")) {
+			return nextLineStart
+		}
+
+		lineStart = nextLineStart
+	}
+
+	return 0
 }
 
 // generateMarkdownHeader creates auto-generated header for markdown files

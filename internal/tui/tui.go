@@ -130,6 +130,7 @@ type Model struct {
 	// Content tab state (Project: Tasks/Brain/Automation, Global: Runners/Logs)
 	activeContentTab       ContentTab
 	activeAutomationSubTab AutomationSubTab
+	automationList         AutomationList
 	dreamViewer            DreamViewer
 	runnersPanel           RunnersPanel
 
@@ -193,6 +194,7 @@ func NewModel(cfg Config) Model {
 		monitorClient:          NewMonitorClient(cfg.APIURL, cfg.APIToken),
 		enabledFeatures:        make(map[string]bool),
 		activeAutomationSubTab: AutomationSubTabAutomations,
+		automationList:         NewAutomationList(),
 		dreamViewer:            NewDreamViewer(),
 		runnersPanel:           NewRunnersPanel(),
 		taskPanelHeight:        settings.TaskPanelHeight,
@@ -544,6 +546,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case AutomationDataMsg:
+		if msg.Error != nil {
+			m.automationList.SetError(msg.Error.Error())
+			m.setStatusMessage("error", fmt.Sprintf("Failed to fetch automations: %v", msg.Error))
+		} else {
+			m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks)
+		}
+		return m, nil
+
+	case AutomationToggleMsg:
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Automation toggled")
+		m.prepareAutomationFetch()
+		return m, m.fetchAutomationListCmd()
+
 	case RunnersUpdatedMsg:
 		m.runnersPanel.SetRunners(msg.Runners)
 		m.pruneRunnerSelection()
@@ -891,10 +911,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keymap.NextContentTab) {
 		m.activeContentTab = nextContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content/config lazily when switching to Automation tab.
-		if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-			m.prepareDreamFetch()
-			return m, m.fetchDreamTabCmd()
+		if m.activeContentTab == ContentTabAutomation {
+			return m, m.prepareActiveAutomationFetch()
 		}
 		// Fetch runners lazily when switching to Runners tab
 		if m.activeContentTab == ContentTabRunners {
@@ -905,10 +923,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if key.Matches(msg, m.keymap.PrevContentTab) {
 		m.activeContentTab = prevContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content/config lazily when switching to Automation tab.
-		if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-			m.prepareDreamFetch()
-			return m, m.fetchDreamTabCmd()
+		if m.activeContentTab == ContentTabAutomation {
+			return m, m.prepareActiveAutomationFetch()
 		}
 		// Fetch runners lazily when switching to Runners tab
 		if m.activeContentTab == ContentTabRunners {
@@ -1009,13 +1025,16 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// When on Automation tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
-	// to the viewport for vim-style scrolling. Only intercept quit keys.
+	// When on Automation tab, route keys to the active automation subtab.
 	if m.activeContentTab == ContentTabAutomation {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.sseClient.Stop()
 			return m, tea.Quit
+		case tea.KeySpace, tea.KeyEnter:
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				return m, m.toggleSelectedAutomationRow()
+			}
 		case tea.KeyEsc:
 			// If search is locked, Esc cancels search
 			if m.dreamViewer.SearchMode() == DreamSearchLocked {
@@ -1026,6 +1045,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case tea.KeyRunes:
 			// Fall through to rune handling below
 		default:
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				m.automationList.Update(msg)
+				return m, nil
+			}
 			// Forward ctrl+d, ctrl+u, ctrl+f, ctrl+b, arrows, pgup, pgdn, etc.
 			cmd := m.dreamViewer.Update(msg)
 			return m, cmd
@@ -1137,8 +1160,46 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// When on Automation tab, handle dream-specific keys then forward the rest to the viewport
+		// When on Automation tab, handle active-subtab keys.
 		if m.activeContentTab == ContentTabAutomation {
+			switch string(msg.Runes) {
+			case "h", "[":
+				m.activeAutomationSubTab = AutomationSubTabAutomations
+				if len(m.automationList.rows) == 0 {
+					m.prepareAutomationFetch()
+					return m, m.fetchAutomationListCmd()
+				}
+				return m, nil
+			case "l", "]":
+				m.activeAutomationSubTab = AutomationSubTabDream
+				if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
+					m.prepareDreamFetch()
+					return m, m.fetchDreamTabCmd()
+				}
+				return m, nil
+			}
+
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				switch string(msg.Runes) {
+				case "j", "k", "g", "G":
+					m.automationList.Update(msg)
+					return m, nil
+				case "r":
+					m.prepareAutomationFetch()
+					return m, m.fetchAutomationListCmd()
+				case "x", " ":
+					return m, m.toggleSelectedAutomationRow()
+				case "q":
+					m.sseClient.Stop()
+					return m, tea.Quit
+				case "?":
+					modal := NewHelpModal(m.config.IsMultiProject())
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+				return m, nil
+			}
+
 			switch string(msg.Runes) {
 			case "/":
 				m.dreamViewer.StartSearch()
@@ -1860,9 +1921,8 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if newTab, ok := m.contentTabAtX(x); ok && newTab != m.activeContentTab {
 			m.activeContentTab = newTab
 			m.helpBar.ActiveContentTab = m.activeContentTab
-			if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
-				m.prepareDreamFetch()
-				return m, m.fetchDreamTabCmd()
+			if m.activeContentTab == ContentTabAutomation {
+				return m, m.prepareActiveAutomationFetch()
 			}
 			if m.activeContentTab == ContentTabRunners {
 				return m, fetchRunnersListCmd(m.apiRunnerConfig())
@@ -2885,6 +2945,29 @@ func (m Model) renderContentTabBar() string {
 	)
 }
 
+func (m Model) renderAutomationSubTabBar(width int) string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(ColorCyan).Padding(0, 1)
+	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
+	render := func(tab AutomationSubTab) string {
+		if m.activeAutomationSubTab == tab {
+			return activeStyle.Render(tab.String())
+		}
+		return inactiveStyle.Render(tab.String())
+	}
+	bar := lipgloss.JoinHorizontal(lipgloss.Left,
+		" ",
+		render(AutomationSubTabAutomations),
+		" ",
+		render(AutomationSubTabDream),
+		" ",
+		DimStyle.Render("h/l switch  r refresh  x toggle"),
+	)
+	if width > 0 && lipgloss.Width(bar) > width {
+		return lipgloss.NewStyle().MaxWidth(width).Render(bar)
+	}
+	return bar
+}
+
 func contentTabOrder() []ContentTab {
 	return []ContentTab{
 		ContentTabRunners,
@@ -3156,13 +3239,17 @@ func (m Model) renderBaseView() string {
 		// Logs tab: global full-height log stream.
 		mainContent = m.renderLogPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabAutomation {
-		// Automation tab currently reuses the dream viewer until subtab rendering lands.
-		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
-		dreamPanel := InactiveBorder.
+		var automationView string
+		if m.activeAutomationSubTab == AutomationSubTabDream {
+			automationView = m.renderAutomationSubTabBar(m.width-4) + "\n" + m.dreamViewer.View(m.width-4, mainHeight-3)
+		} else {
+			automationView = m.renderAutomationSubTabBar(m.width-4) + "\n" + m.automationList.View(m.width-4, mainHeight-3)
+		}
+		automationPanel := InactiveBorder.
 			Width(m.width - 2).
 			Height(mainHeight - 2).
-			Render(dreamView)
-		mainContent = dreamPanel
+			Render(automationView)
+		mainContent = automationPanel
 	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
@@ -3477,6 +3564,41 @@ func (m *Model) activeDreamProject() string {
 	return project
 }
 
+func (m *Model) activeAutomationProject() string {
+	return m.activeDreamProject()
+}
+
+func (m *Model) prepareActiveAutomationFetch() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
+			m.prepareDreamFetch()
+			return m.fetchDreamTabCmd()
+		}
+		return nil
+	}
+	if len(m.automationList.rows) == 0 {
+		m.prepareAutomationFetch()
+		return m.fetchAutomationListCmd()
+	}
+	return nil
+}
+
+func (m *Model) prepareAutomationFetch() {
+	m.automationList.SetLoading(true)
+}
+
+func (m *Model) fetchAutomationListCmd() tea.Cmd {
+	return fetchAutomationDataCmd(m.apiRunnerConfig(), m.activeAutomationProject())
+}
+
+func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+}
+
 func (m *Model) prepareDreamFetch() {
 	m.dreamViewer.SetLoading(true)
 	m.dreamViewer.SetDreamConfigLoading(true)
@@ -3687,6 +3809,68 @@ func fetchDreamConfigCmd(client *MonitorClient, project string) tea.Cmd {
 			return DreamConfigMsg{Error: err}
 		}
 		return DreamConfigMsg{Config: config}
+	}
+}
+
+func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+
+		automationParams := map[string]string{"type": "automation"}
+		taskParams := map[string]string{"type": "task"}
+		if project != "" {
+			automationParams["project"] = project
+			taskParams["project"] = project
+		}
+
+		automations, err := apiClient.ListEntries(ctx, automationParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch automation entries: %w", err)}
+		}
+		tasks, err := apiClient.ListEntries(ctx, taskParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch scheduled task entries: %w", err)}
+		}
+
+		scheduledTasks := make([]types.BrainEntry, 0, len(tasks.Entries))
+		for _, task := range tasks.Entries {
+			if task.Schedule != "" || task.RunOnceAt != "" {
+				scheduledTasks = append(scheduledTasks, task)
+			}
+		}
+
+		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks}
+	}
+}
+
+func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+
+		updates := map[string]interface{}{}
+		switch row.Source {
+		case "automation":
+			newStatus := "active"
+			if row.Enabled || row.Status == "active" {
+				newStatus = "archived"
+			}
+			updates["status"] = newStatus
+		case "task":
+			updates["schedule_enabled"] = !row.Enabled
+		default:
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("unknown automation row source %q", row.Source)}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
+		return AutomationToggleMsg{RowID: row.ID, Error: err}
 	}
 }
 

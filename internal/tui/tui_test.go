@@ -2708,6 +2708,107 @@ func TestNewModel_InitializesAutomationSubTab(t *testing.T) {
 	}
 }
 
+func TestFetchAutomationDataCmd_FetchesAutomationsAndScheduledTasks(t *testing.T) {
+	requests := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("expected /api/v1/entries, got %s", r.URL.Path)
+		}
+		switch r.URL.Query().Get("type") {
+		case "automation":
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{
+				{ID: "auto1", Path: "projects/test/automation/auto1.md", Title: "Auto", Type: "automation", Status: "active"},
+			}})
+		case "task":
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{
+				{ID: "task1", Path: "projects/test/task/task1.md", Title: "Cron", Type: "task", Schedule: "0 * * * *"},
+				{ID: "task2", Path: "projects/test/task/task2.md", Title: "Run Once", Type: "task", RunOnceAt: "2099-01-01T00:00:00Z"},
+				{ID: "task3", Path: "projects/test/task/task3.md", Title: "Plain", Type: "task"},
+			}})
+		default:
+			t.Fatalf("unexpected type query %q", r.URL.Query().Get("type"))
+		}
+	}))
+	defer server.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: server.URL}, "test")()
+	got, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("expected AutomationDataMsg, got %T", msg)
+	}
+	if got.Error != nil {
+		t.Fatalf("expected no error, got %v", got.Error)
+	}
+	if len(got.Automations) != 1 {
+		t.Fatalf("expected 1 automation, got %d", len(got.Automations))
+	}
+	if len(got.ScheduledTasks) != 2 {
+		t.Fatalf("expected only 2 scheduled/run-once tasks, got %d", len(got.ScheduledTasks))
+	}
+	for _, raw := range requests {
+		if !strings.Contains(raw, "project=test") {
+			t.Fatalf("expected project query in %q", raw)
+		}
+	}
+}
+
+func TestToggleAutomationRowCmd_UsesPathAndCorrectPatchBody(t *testing.T) {
+	var patchPath string
+	var patchBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		patchPath = r.RequestURI
+		if r.Method != http.MethodPatch {
+			t.Fatalf("expected PATCH, got %s", r.Method)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&patchBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(types.BrainEntry{ID: "auto1", Path: "projects/test/automation/auto1.md"})
+	}))
+	defer server.Close()
+
+	row := AutomationListRow{ID: "auto1", Path: "projects/test/automation/auto1.md", Source: "automation", Enabled: true}
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: server.URL}, row)()
+	got, ok := msg.(AutomationToggleMsg)
+	if !ok {
+		t.Fatalf("expected AutomationToggleMsg, got %T", msg)
+	}
+	if got.Error != nil {
+		t.Fatalf("expected no error, got %v", got.Error)
+	}
+	if !strings.Contains(patchPath, "projects/test/automation/auto1.md") {
+		t.Fatalf("expected entry path in request path, got %s", patchPath)
+	}
+	if patchBody["status"] != "archived" {
+		t.Fatalf("expected status archived, got %#v", patchBody)
+	}
+}
+
+func TestToggleAutomationRowCmd_TogglesScheduledTaskEnabled(t *testing.T) {
+	var patchBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&patchBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		json.NewEncoder(w).Encode(types.BrainEntry{ID: "task1", Path: "projects/test/task/task1.md"})
+	}))
+	defer server.Close()
+
+	row := AutomationListRow{ID: "task1", Path: "projects/test/task/task1.md", Source: "task", Enabled: false}
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: server.URL}, row)()
+	got, ok := msg.(AutomationToggleMsg)
+	if !ok {
+		t.Fatalf("expected AutomationToggleMsg, got %T", msg)
+	}
+	if got.Error != nil {
+		t.Fatalf("expected no error, got %v", got.Error)
+	}
+	if patchBody["schedule_enabled"] != true {
+		t.Fatalf("expected schedule_enabled true, got %#v", patchBody)
+	}
+}
+
 func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.width = 120

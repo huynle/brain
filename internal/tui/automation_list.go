@@ -13,6 +13,7 @@ import (
 // scheduled task entries shown together in the automation tab.
 type AutomationListRow struct {
 	ID            string
+	Path          string
 	Title         string
 	Source        string
 	Status        string
@@ -66,6 +67,24 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 			continue
 		}
 		rows = append(rows, AutomationRowFromTask(task))
+	}
+	al.SetRows(rows)
+}
+
+// SetEntryRows normalizes automation entries and scheduled task entries into one list.
+func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry) {
+	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
+	for _, entry := range entries {
+		if entry.Type != "automation" {
+			continue
+		}
+		rows = append(rows, AutomationRowFromEntry(entry))
+	}
+	for _, task := range tasks {
+		if task.Type != "task" || (task.Schedule == "" && task.RunOnceAt == "") {
+			continue
+		}
+		rows = append(rows, AutomationRowFromTaskEntry(task))
 	}
 	al.SetRows(rows)
 }
@@ -267,6 +286,7 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 func AutomationRowFromEntry(entry types.BrainEntry) AutomationListRow {
 	row := AutomationListRow{
 		ID:      entry.ID,
+		Path:    entry.Path,
 		Title:   entry.Title,
 		Source:  "automation",
 		Status:  entry.Status,
@@ -295,6 +315,35 @@ func AutomationRowFromTask(task types.ResolvedTask) AutomationListRow {
 
 	row := AutomationListRow{
 		ID:       task.ID,
+		Path:     task.Path,
+		Title:    task.Title,
+		Source:   "task",
+		Status:   task.Status,
+		Enabled:  enabled,
+		Priority: task.Priority,
+	}
+
+	if task.RunOnceAt != "" && task.Schedule == "" {
+		row.TriggerKind = "run_once"
+		row.TriggerDetail = task.RunOnceAt
+	} else {
+		row.TriggerKind = "cron"
+		row.TriggerDetail = task.Schedule
+	}
+
+	return row
+}
+
+// AutomationRowFromTaskEntry converts a scheduled/run-once task entry into a row.
+func AutomationRowFromTaskEntry(task types.BrainEntry) AutomationListRow {
+	enabled := true
+	if task.ScheduleEnabled != nil {
+		enabled = *task.ScheduleEnabled
+	}
+
+	row := AutomationListRow{
+		ID:       task.ID,
+		Path:     task.Path,
 		Title:    task.Title,
 		Source:   "task",
 		Status:   task.Status,

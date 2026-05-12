@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/config"
@@ -185,6 +186,57 @@ func TestSaveAndUpdate_ReembedChangedEntry(t *testing.T) {
 	}
 	if calls <= saveCalls {
 		t.Fatalf("expected update to re-generate embeddings, calls before=%d after=%d", saveCalls, calls)
+	}
+}
+
+func TestSave_EmbedsOnlySavedEntryWhenOtherNotesMissingEmbeddings(t *testing.T) {
+	svc, _, _ := newTestBrainServiceWithEmbedding(t, nil)
+	ctx := context.Background()
+
+	preexistingContent := "preexisting semantic body must not be embedded by later save"
+	if _, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "scratch",
+		Title:   "Missing Embedding Before Enable",
+		Content: preexistingContent,
+	}); err != nil {
+		t.Fatalf("Save preexisting entry failed: %v", err)
+	}
+
+	var embeddedInputs []string
+	svc.embeddingClient = &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			embeddedInputs = append(embeddedInputs, inputs...)
+			result := make([][]float32, len(inputs))
+			for i := range inputs {
+				result[i] = []float32{0.1, 0.2, 0.3, 0.4, 0.5}
+			}
+			return result, nil
+		},
+	}
+
+	savedContent := "new saved entry semantic body should be embedded"
+	if _, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "scratch",
+		Title:   "Saved After Enable",
+		Content: savedContent,
+	}); err != nil {
+		t.Fatalf("Save after enabling embeddings failed: %v", err)
+	}
+
+	if len(embeddedInputs) == 0 {
+		t.Fatal("expected saved entry to be embedded")
+	}
+	foundSavedEntry := false
+	for _, input := range embeddedInputs {
+		if strings.Contains(input, savedContent) {
+			foundSavedEntry = true
+		}
+		if strings.Contains(input, preexistingContent) {
+			t.Fatalf("save-time embedding indexed preexisting missing note; inputs=%q", embeddedInputs)
+		}
+	}
+	if !foundSavedEntry {
+		t.Fatalf("expected save-time embedding to include saved entry content; inputs=%q", embeddedInputs)
 	}
 }
 

@@ -1462,7 +1462,7 @@ func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path str
 			return err
 		}
 	}
-	_, err = s.indexer.IndexEmbeddings(ctx, s.embeddingClient)
+	_, err = s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{Path: path})
 	return err
 }
 

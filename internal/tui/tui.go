@@ -1163,20 +1163,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// When on Automation tab, handle active-subtab keys.
 		if m.activeContentTab == ContentTabAutomation {
 			switch string(msg.Runes) {
+			case "C":
+				return m, m.cycleAutomationSubTab()
 			case "h", "[":
-				m.activeAutomationSubTab = AutomationSubTabAutomations
-				if len(m.automationList.rows) == 0 {
-					m.prepareAutomationFetch()
-					return m, m.fetchAutomationListCmd()
-				}
-				return m, nil
+				return m, m.setAutomationSubTab(AutomationSubTabAutomations)
 			case "l", "]":
-				m.activeAutomationSubTab = AutomationSubTabDream
-				if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
-					m.prepareDreamFetch()
-					return m, m.fetchDreamTabCmd()
-				}
-				return m, nil
+				return m, m.setAutomationSubTab(AutomationSubTabDream)
 			}
 
 			if m.activeAutomationSubTab == AutomationSubTabAutomations {
@@ -3566,6 +3558,19 @@ func (m *Model) activeDreamProject() string {
 
 func (m *Model) activeAutomationProject() string {
 	return m.activeDreamProject()
+}
+
+func (m *Model) cycleAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabAutomations {
+		return m.setAutomationSubTab(AutomationSubTabDream)
+	}
+	return m.setAutomationSubTab(AutomationSubTabAutomations)
+}
+
+func (m *Model) setAutomationSubTab(tab AutomationSubTab) tea.Cmd {
+	m.activeAutomationSubTab = tab
+	m.helpBar.ActiveAutomationSubTab = tab
+	return m.prepareActiveAutomationFetch()
 }
 
 func (m *Model) prepareActiveAutomationFetch() tea.Cmd {

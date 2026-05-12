@@ -934,6 +934,20 @@ func TestHelpBarView_MultiProjectShowsTabShortcuts(t *testing.T) {
 	}
 }
 
+func TestHelpBarView_AutomationAutomationsShowsSubtabAndToggleShortcuts(t *testing.T) {
+	hb := NewHelpBar()
+	hb.ActiveContentTab = ContentTabAutomation
+	hb.ActiveAutomationSubTab = AutomationSubTabAutomations
+
+	view := hb.View(120, false, "test-project")
+
+	for _, want := range []string{"C", "Subtab", "Space", "Toggle", "Automation", "Automations"} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected automation help bar to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
 // =============================================================================
 // Update Tests - Task Navigation (j/k/g/G)
 // =============================================================================
@@ -2708,6 +2722,29 @@ func TestNewModel_InitializesAutomationSubTab(t *testing.T) {
 	}
 }
 
+func TestUpdate_AutomationTabCCyclesAutomationSubTabs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.activeContentTab = ContentTabAutomation
+	m.dreamViewer.SetContent("dream content")
+	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "test-project"})
+	m.automationList.SetEntryRows([]types.BrainEntry{{ID: "auto1", Path: "projects/test/automation/auto1.md", Title: "Auto", Type: "automation", Status: "active"}}, nil)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	m = updated.(Model)
+	if m.activeAutomationSubTab != AutomationSubTabDream {
+		t.Fatalf("expected C to switch to Dream subtab, got %v", m.activeAutomationSubTab)
+	}
+	if m.viewMode != ViewModeTasks {
+		t.Fatalf("expected C on Automation tab not to toggle task view mode, got %v", m.viewMode)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'C'}})
+	m = updated.(Model)
+	if m.activeAutomationSubTab != AutomationSubTabAutomations {
+		t.Fatalf("expected C to cycle back to Automations subtab, got %v", m.activeAutomationSubTab)
+	}
+}
+
 func TestFetchAutomationDataCmd_FetchesAutomationsAndScheduledTasks(t *testing.T) {
 	requests := make([]string, 0, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -2820,6 +2857,9 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, " Dream ") {
+		t.Fatalf("expected top-level tab bar not to contain Dream, got:\n%s", view)
 	}
 	for _, unwanted := range []string{"Project", "Global"} {
 		if strings.Contains(view, unwanted) {

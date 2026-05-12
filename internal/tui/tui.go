@@ -1144,17 +1144,26 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.projectTabs.PrevTab()
 				m.activeProjectID = m.projectTabs.ActiveProject()
 				m.syncActiveProjectView()
+				if m.activeContentTab == ContentTabAutomation {
+					return m, m.refreshActiveAutomationSubTab()
+				}
 				return m, nil
 			case "l", "]":
 				m.projectTabs.NextTab()
 				m.activeProjectID = m.projectTabs.ActiveProject()
 				m.syncActiveProjectView()
+				if m.activeContentTab == ContentTabAutomation {
+					return m, m.refreshActiveAutomationSubTab()
+				}
 				return m, nil
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 				tabNum := int(msg.Runes[0] - '0')
 				if m.projectTabs.JumpToTab(tabNum) {
 					m.activeProjectID = m.projectTabs.ActiveProject()
 					m.syncActiveProjectView()
+					if m.activeContentTab == ContentTabAutomation {
+						return m, m.refreshActiveAutomationSubTab()
+					}
 					return m, nil
 				}
 			}
@@ -1177,8 +1186,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.automationList.Update(msg)
 					return m, nil
 				case "r":
-					m.prepareAutomationFetch()
-					return m, m.fetchAutomationListCmd()
+					return m, m.refreshActiveAutomationSubTab()
 				case "x", " ":
 					return m, m.toggleSelectedAutomationRow()
 				case "q":
@@ -1213,9 +1221,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dreamViewer.GotoBottom()
 				return m, nil
 			case "r":
-				// Re-fetch dream content and monitor configuration.
-				m.prepareDreamFetch()
-				return m, m.fetchDreamTabCmd()
+				return m, m.refreshActiveAutomationSubTab()
 			case "q":
 				m.sseClient.Stop()
 				return m, tea.Quit
@@ -3597,6 +3603,15 @@ func (m *Model) prepareActiveAutomationFetch() tea.Cmd {
 		return m.fetchAutomationListCmd()
 	}
 	return nil
+}
+
+func (m *Model) refreshActiveAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		m.prepareDreamFetch()
+		return m.fetchDreamTabCmd()
+	}
+	m.prepareAutomationFetch()
+	return m.fetchAutomationListCmd()
 }
 
 func (m *Model) prepareAutomationFetch() {

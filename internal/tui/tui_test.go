@@ -2745,6 +2745,108 @@ func TestUpdate_AutomationTabCCyclesAutomationSubTabs(t *testing.T) {
 	}
 }
 
+func TestUpdate_ProjectSwitchRefreshesAutomationListForActiveProject(t *testing.T) {
+	projectsSeen := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("expected /api/v1/entries, got %s", r.URL.Path)
+		}
+		projectsSeen = append(projectsSeen, r.URL.Query().Get("project"))
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+	}))
+	defer server.Close()
+
+	m := NewModel(Config{APIURL: server.URL, Project: "default-project", Projects: []string{"proj-a", "proj-b"}})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetEntryRows([]types.BrainEntry{{ID: "old", Type: "automation", Title: "Old"}}, nil)
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected project switch to refresh active Automation subtab")
+	}
+	if got := m.activeProjectID; got != "proj-a" {
+		t.Fatalf("expected active project proj-a, got %q", got)
+	}
+	if !m.automationList.loading {
+		t.Fatal("expected automation list to enter loading state")
+	}
+
+	msg := cmd()
+	if _, ok := msg.(AutomationDataMsg); !ok {
+		t.Fatalf("expected AutomationDataMsg, got %T", msg)
+	}
+	if len(projectsSeen) != 2 {
+		t.Fatalf("expected automation and task requests, got %d", len(projectsSeen))
+	}
+	for _, project := range projectsSeen {
+		if project != "proj-a" {
+			t.Fatalf("expected requests for proj-a, got %q in %v", project, projectsSeen)
+		}
+	}
+}
+
+func TestUpdate_ProjectSwitchRefreshesAutomationDreamForActiveProject(t *testing.T) {
+	projectsSeen := make([]string, 0, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/search":
+			var req types.SearchRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode search request: %v", err)
+			}
+			projectsSeen = append(projectsSeen, req.Project)
+			json.NewEncoder(w).Encode(types.SearchResponse{})
+		case "/api/v1/monitors/templates":
+			json.NewEncoder(w).Encode(struct {
+				Templates []MonitorTemplateInfo `json:"templates"`
+			}{Templates: []MonitorTemplateInfo{{ID: "dream", Label: "Dream"}}})
+		case "/api/v1/monitors":
+			projectsSeen = append(projectsSeen, r.URL.Query().Get("project"))
+			json.NewEncoder(w).Encode(types.MonitorListResponse{})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	m := NewModel(Config{APIURL: server.URL, Project: "default-project", Projects: []string{"proj-a", "proj-b"}})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabDream
+	m.dreamViewer.SetContent("old dream")
+	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "old-project"})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected project switch to refresh active Dream subtab")
+	}
+	if got := m.activeProjectID; got != "proj-a" {
+		t.Fatalf("expected active project proj-a, got %q", got)
+	}
+	if !m.dreamViewer.loading || !m.dreamViewer.configLoading {
+		t.Fatal("expected Dream content and config to enter loading state")
+	}
+
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	if !ok {
+		t.Fatalf("expected tea.BatchMsg, got %T", msg)
+	}
+	for _, batchCmd := range batch {
+		batchCmd()
+	}
+	if len(projectsSeen) != 2 {
+		t.Fatalf("expected search and monitor requests, got %d", len(projectsSeen))
+	}
+	for _, project := range projectsSeen {
+		if project != "proj-a" {
+			t.Fatalf("expected requests for proj-a, got %q in %v", project, projectsSeen)
+		}
+	}
+}
+
 func TestUpdate_AutomationDreamSearchInputScopedToDreamSubTab(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.activeContentTab = ContentTabAutomation

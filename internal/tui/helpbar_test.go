@@ -128,3 +128,19 @@ func TestHelpBar_View_ShowsRunnerShortcuts(t *testing.T) {
 		}
 	}
 }
+
+func TestHelpBar_View_ShowsAutomationDreamShortcuts(t *testing.T) {
+	h := NewHelpBar()
+	h.ActiveContentTab = ContentTabAutomation
+	h.ActiveAutomationSubTab = AutomationSubTabDream
+
+	view := h.View(160, false, "test-project")
+	for _, want := range []string{"C", "Subtab", "/", "Search", "ctrl+d/u", "Page", "Automation", "Dream"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected Automation > Dream help bar to contain %q, got:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "Toggle") {
+		t.Fatalf("expected Automation > Dream help bar not to show automation toggle shortcut, got:\n%s", view)
+	}
+}

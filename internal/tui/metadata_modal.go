@@ -1029,7 +1029,7 @@ func (m *MetadataModal) Update(msg tea.Msg) (Modal, tea.Cmd) {
 }
 
 // renderTabHeader renders the tab selection header matching the main TUI's
-// Tasks/Dream tab bar style: space-padded labels, bold+cyan active, dim inactive.
+// Content tab bar style: space-padded labels, bold+cyan active, dim inactive.
 // If all tabs don't fit in the modal width, a sliding window is shown with
 // ◀/▶ overflow indicators, always keeping the active tab visible.
 func (m *MetadataModal) renderTabHeader() string {

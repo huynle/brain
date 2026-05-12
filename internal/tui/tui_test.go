@@ -2665,9 +2665,10 @@ func TestContentTab_String_IncludesLogs(t *testing.T) {
 		expected string
 	}{
 		{ContentTabTasks, "Tasks"},
-		{ContentTabDream, "Dream"},
 		{ContentTabRunners, "Runners"},
 		{ContentTabLogs, "Logs"},
+		{ContentTabBrain, "Brain"},
+		{ContentTabAutomation, "Automation"},
 		{ContentTab(99), "unknown"},
 	}
 
@@ -2680,6 +2681,33 @@ func TestContentTab_String_IncludesLogs(t *testing.T) {
 	}
 }
 
+func TestAutomationSubTab_String(t *testing.T) {
+	tests := []struct {
+		tab      AutomationSubTab
+		expected string
+	}{
+		{AutomationSubTabAutomations, "Automations"},
+		{AutomationSubTabDream, "Dream"},
+		{AutomationSubTab(99), "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			if got := tt.tab.String(); got != tt.expected {
+				t.Errorf("AutomationSubTab(%d).String() = %q, want %q", tt.tab, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewModel_InitializesAutomationSubTab(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+
+	if m.activeAutomationSubTab != AutomationSubTabAutomations {
+		t.Fatalf("expected Automation subtab to initialize to Automations, got %v", m.activeAutomationSubTab)
+	}
+}
+
 func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
 	m.width = 120
@@ -2687,7 +2715,7 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 
 	view := m.View()
 
-	for _, want := range []string{"Runners", "Logs", "Tasks", "Dream"} {
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Automation"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
 		}
@@ -2707,31 +2735,37 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabDream {
+	if m.activeContentTab != ContentTabBrain {
 		t.Fatalf("after first L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabRunners {
+	if m.activeContentTab != ContentTabAutomation {
 		t.Fatalf("after second L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabLogs {
+	if m.activeContentTab != ContentTabRunners {
 		t.Fatalf("after third L, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabTasks {
+	if m.activeContentTab != ContentTabLogs {
 		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabTasks {
+		t.Fatalf("after fifth L, got %v", m.activeContentTab)
 	}
 }
 
 func TestMouseClickContentTabsAcceptsAdjacentReportedRow(t *testing.T) {
-	tests := []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabDream}
+	tests := []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabBrain, ContentTabAutomation}
 
 	for _, tab := range tests {
 		t.Run(tab.String(), func(t *testing.T) {
@@ -2742,7 +2776,7 @@ func TestMouseClickContentTabsAcceptsAdjacentReportedRow(t *testing.T) {
 			if tab == ContentTabLogs {
 				m.activeContentTab = ContentTabTasks
 			}
-			if tab == ContentTabDream {
+			if tab == ContentTabAutomation {
 				m.dreamViewer.SetContent("dream content")
 				m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "test-project"})
 			}

@@ -127,10 +127,11 @@ type Model struct {
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
 
-	// Content tab state (Project: Tasks/Dream, Global: Runners/Logs)
-	activeContentTab ContentTab
-	dreamViewer      DreamViewer
-	runnersPanel     RunnersPanel
+	// Content tab state (Project: Tasks/Brain/Automation, Global: Runners/Logs)
+	activeContentTab       ContentTab
+	activeAutomationSubTab AutomationSubTab
+	dreamViewer            DreamViewer
+	runnersPanel           RunnersPanel
 
 	// User-resizable vertical split between the task pane and visible bottom panes.
 	taskPanelHeight        int
@@ -167,34 +168,35 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:               cfg,
-		keymap:               KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:            NewStatusBar(cfg.Project),
-		helpBar:              NewHelpBar(),
-		taskTree:             NewTaskTree(),
-		taskDetail:           NewTaskDetail(),
-		logViewer:            NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:         NewScheduleList(),
-		scheduleDetail:       NewScheduleDetail(),
-		modalManager:         NewModalManager(),
-		settings:             settings,
-		activePanel:          PanelTasks,
-		sseClient:            NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:                  context.Background(),
-		selectedTasks:        make(map[string]bool),
-		selectedRunners:      make(map[string]bool),
-		pausedProjects:       make(map[string]bool),
-		runnerController:     cfg.Runner,
-		tasksByProject:       make(map[string][]types.ResolvedTask),
-		sseClients:           make(map[string]*SSEClient),
-		metricsCollector:     NewMetricsCollector(),
-		seenFeatureIDs:       make(map[string]bool),
-		monitorClient:        NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:      make(map[string]bool),
-		dreamViewer:          NewDreamViewer(),
-		runnersPanel:         NewRunnersPanel(),
-		taskPanelHeight:      settings.TaskPanelHeight,
-		bottomTopPanelHeight: settings.BottomTopPanelHeight,
+		config:                 cfg,
+		keymap:                 KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:              NewStatusBar(cfg.Project),
+		helpBar:                NewHelpBar(),
+		taskTree:               NewTaskTree(),
+		taskDetail:             NewTaskDetail(),
+		logViewer:              NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:           NewScheduleList(),
+		scheduleDetail:         NewScheduleDetail(),
+		modalManager:           NewModalManager(),
+		settings:               settings,
+		activePanel:            PanelTasks,
+		sseClient:              NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                    context.Background(),
+		selectedTasks:          make(map[string]bool),
+		selectedRunners:        make(map[string]bool),
+		pausedProjects:         make(map[string]bool),
+		runnerController:       cfg.Runner,
+		tasksByProject:         make(map[string][]types.ResolvedTask),
+		sseClients:             make(map[string]*SSEClient),
+		metricsCollector:       NewMetricsCollector(),
+		seenFeatureIDs:         make(map[string]bool),
+		monitorClient:          NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:        make(map[string]bool),
+		activeAutomationSubTab: AutomationSubTabAutomations,
+		dreamViewer:            NewDreamViewer(),
+		runnersPanel:           NewRunnersPanel(),
+		taskPanelHeight:        settings.TaskPanelHeight,
+		bottomTopPanelHeight:   settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -828,8 +830,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If on Dream tab with search typing mode, handle search input first
-	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
+	// If on Automation tab with search typing mode, handle search input first
+	if m.activeContentTab == ContentTabAutomation && m.dreamViewer.SearchMode() == DreamSearchTyping {
 		return m.handleDreamSearchInput(msg)
 	}
 
@@ -887,14 +889,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.NextContentTab) {
-		if m.activeContentTab < ContentTabLogs {
-			m.activeContentTab++
-		} else {
-			m.activeContentTab = ContentTabTasks
-		}
+		m.activeContentTab = nextContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content/config lazily when switching to Dream tab.
-		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+		// Fetch dream content/config lazily when switching to Automation tab.
+		if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
 			m.prepareDreamFetch()
 			return m, m.fetchDreamTabCmd()
 		}
@@ -905,14 +903,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.PrevContentTab) {
-		if m.activeContentTab > ContentTabTasks {
-			m.activeContentTab--
-		} else {
-			m.activeContentTab = ContentTabLogs
-		}
+		m.activeContentTab = prevContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content/config lazily when switching to Dream tab.
-		if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+		// Fetch dream content/config lazily when switching to Automation tab.
+		if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
 			m.prepareDreamFetch()
 			return m, m.fetchDreamTabCmd()
 		}
@@ -1015,9 +1009,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// When on Dream tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
+	// When on Automation tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
 	// to the viewport for vim-style scrolling. Only intercept quit keys.
-	if m.activeContentTab == ContentTabDream {
+	if m.activeContentTab == ContentTabAutomation {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.sseClient.Stop()
@@ -1143,8 +1137,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// When on Dream tab, handle dream-specific keys then forward the rest to the viewport
-		if m.activeContentTab == ContentTabDream {
+		// When on Automation tab, handle dream-specific keys then forward the rest to the viewport
+		if m.activeContentTab == ContentTabAutomation {
 			switch string(msg.Runes) {
 			case "/":
 				m.dreamViewer.StartSearch()
@@ -1866,7 +1860,7 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if newTab, ok := m.contentTabAtX(x); ok && newTab != m.activeContentTab {
 			m.activeContentTab = newTab
 			m.helpBar.ActiveContentTab = m.activeContentTab
-			if m.activeContentTab == ContentTabDream && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
+			if m.activeContentTab == ContentTabAutomation && (!m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig()) {
 				m.prepareDreamFetch()
 				return m, m.fetchDreamTabCmd()
 			}
@@ -2539,7 +2533,7 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
 func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabDream {
+	if m.activeContentTab == ContentTabAutomation {
 		m.dreamViewer.ScrollUp(3)
 		return m, nil
 	}
@@ -2566,7 +2560,7 @@ func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
 func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabDream {
+	if m.activeContentTab == ContentTabAutomation {
 		m.dreamViewer.ScrollDown(3)
 		return m, nil
 	}
@@ -2885,8 +2879,40 @@ func (m Model) renderContentTabBar() string {
 		" ",
 		tab(ContentTabTasks),
 		" ",
-		tab(ContentTabDream),
+		tab(ContentTabBrain),
+		" ",
+		tab(ContentTabAutomation),
 	)
+}
+
+func contentTabOrder() []ContentTab {
+	return []ContentTab{
+		ContentTabRunners,
+		ContentTabLogs,
+		ContentTabTasks,
+		ContentTabBrain,
+		ContentTabAutomation,
+	}
+}
+
+func nextContentTab(current ContentTab) ContentTab {
+	order := contentTabOrder()
+	for i, tab := range order {
+		if tab == current {
+			return order[(i+1)%len(order)]
+		}
+	}
+	return order[0]
+}
+
+func prevContentTab(current ContentTab) ContentTab {
+	order := contentTabOrder()
+	for i, tab := range order {
+		if tab == current {
+			return order[(i+len(order)-1)%len(order)]
+		}
+	}
+	return order[len(order)-1]
 }
 
 func (m Model) contentTabAtX(x int) (ContentTab, bool) {
@@ -2913,7 +2939,8 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 		label string
 	}{
 		{ContentTabTasks, "Tasks"},
-		{ContentTabDream, "Dream"},
+		{ContentTabBrain, "Brain"},
+		{ContentTabAutomation, "Automation"},
 	} {
 		start := len(plain)
 		plain += " " + zone.label + " "
@@ -3000,8 +3027,8 @@ func (m Model) renderBaseView() string {
 
 	// Filter/Search bar (based on context)
 	var filterBarView string
-	if m.activeContentTab == ContentTabDream {
-		// Dream tab: show search bar
+	if m.activeContentTab == ContentTabAutomation {
+		// Automation tab currently reuses the dream search bar until subtab rendering lands.
 		switch m.dreamViewer.SearchMode() {
 		case DreamSearchTyping:
 			matchCount := m.dreamViewer.MatchCount()
@@ -3128,8 +3155,8 @@ func (m Model) renderBaseView() string {
 	} else if m.activeContentTab == ContentTabLogs {
 		// Logs tab: global full-height log stream.
 		mainContent = m.renderLogPanel(m.width, mainHeight)
-	} else if m.activeContentTab == ContentTabDream {
-		// Dream tab: full-width dream viewer, no task/detail/log panels
+	} else if m.activeContentTab == ContentTabAutomation {
+		// Automation tab currently reuses the dream viewer until subtab rendering lands.
 		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
 		dreamPanel := InactiveBorder.
 			Width(m.width - 2).
@@ -3279,7 +3306,7 @@ func (m Model) renderLogPanel(width, height int) string {
 // Filter Methods
 // =============================================================================
 
-// handleDreamSearchInput processes keyboard input when searching in the Dream tab.
+// handleDreamSearchInput processes keyboard input when searching in the Automation tab.
 func (m Model) handleDreamSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:

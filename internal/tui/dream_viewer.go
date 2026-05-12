@@ -435,7 +435,7 @@ func (d *DreamViewer) View(width, height int) string {
 			fmt.Sprintf("❌ %s", d.errMsg))
 	case !d.fetched:
 		content = d.centeredMessage(width, height,
-			"Switch to Dream tab to load content")
+			"Switch to Automation tab to load content")
 	case d.content == "":
 		if d.configFetched || d.configLoading || d.configErrMsg != "" {
 			content = d.viewport.View()

@@ -35,8 +35,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Content tab indicator
 	shortcuts += fmt.Sprintf("%s Tab  ", bold("H/L"))
 
-	// Dream tab has vim-style navigation help
-	if h.ActiveContentTab == ContentTabDream {
+	// Automation tab currently has vim-style navigation help for the dream viewer.
+	if h.ActiveContentTab == ContentTabAutomation {
 		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
@@ -47,7 +47,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 
 		// Focus indicator on the right
 		focusLabel := dim("Tab: ") +
-			lipgloss.NewStyle().Foreground(ColorCyan).Render("Dream")
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Automation")
 
 		leftStyle := lipgloss.NewStyle().
 			PaddingLeft(1).

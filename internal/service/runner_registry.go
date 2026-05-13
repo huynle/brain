@@ -92,12 +92,15 @@ func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID stri
 	return nil
 }
 
-// Deregister removes a runner and releases all its task claims.
+// Deregister removes a runner and releases all runtime ownership held by it.
 func (s *RunnerRegistryServiceImpl) Deregister(ctx context.Context, runnerID string) error {
 	// Release all claims held by this runner first
 	_, err := s.storage.ReleaseAllByRunner(ctx, runnerID)
 	if err != nil {
 		return fmt.Errorf("release claims on deregister: %w", err)
+	}
+	if _, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, runnerID); err != nil {
+		return fmt.Errorf("clear feature assignments on deregister: %w", err)
 	}
 
 	// Delete the runner record
@@ -180,7 +183,7 @@ const DefaultLifecycleInterval = 60 * time.Second
 // StartLifecycleManager launches a background goroutine that periodically sweeps
 // all runners and transitions their status based on heartbeat age. Stale runners
 // (heartbeat > 90s) get marked "stale". Offline runners (heartbeat > 5min) get
-// marked "offline" and have all their claims released. Respects context cancellation.
+// marked "offline" and have their runtime ownership released. Respects context cancellation.
 func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, interval time.Duration) {
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -200,7 +203,7 @@ func (s *RunnerRegistryServiceImpl) StartLifecycleManager(ctx context.Context, i
 
 // RunLifecycleSweep performs a single lifecycle sweep across all runners.
 // For each runner that is not already "offline":
-//   - heartbeat age >= RunnerStaleThreshold (5min): transition to "offline", release all claims
+//   - heartbeat age >= RunnerStaleThreshold (5min): transition to "offline", release runtime ownership
 //   - heartbeat age >= RunnerOnlineThreshold (90s): transition to "stale"
 //   - otherwise: ensure status is "online"
 //
@@ -224,7 +227,7 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 		newStatus := computeRunnerStatus(row.LastHeartbeat)
 
 		if newStatus == types.RunnerStatusOffline {
-			// Transition to offline: update status and release all claims
+			// Transition to offline: update status and release all runtime ownership
 			if err := s.storage.SetRunnerStatus(ctx, row.RunnerID, string(types.RunnerStatusOffline)); err != nil {
 				slog.Error("lifecycle sweep: set offline failed",
 					"runner_id", row.RunnerID, "error", err)
@@ -236,10 +239,17 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 					"runner_id", row.RunnerID, "error", err)
 				continue
 			}
+			featuresReleased, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, row.RunnerID)
+			if err != nil {
+				slog.Error("lifecycle sweep: clear feature assignments failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
 			slog.Info("runner transitioned to offline",
 				"runner_id", row.RunnerID,
 				"heartbeat_age", age.Round(time.Second),
-				"claims_released", released)
+				"claims_released", released,
+				"feature_assignments_released", featuresReleased)
 
 			// Publish runner_offline SSE event
 			if s.hub != nil {

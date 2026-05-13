@@ -103,6 +103,21 @@ func (s *StorageLayer) ClearFeatureAssignment(ctx context.Context, projectID, fe
 	return rows > 0, nil
 }
 
+func (s *StorageLayer) ClearFeatureAssignmentsByRunner(ctx context.Context, runnerID string) (int64, error) {
+	result, err := s.db.ExecContext(ctx,
+		"DELETE FROM feature_assignments WHERE runner_id = ?",
+		runnerID,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("clear feature assignments by runner: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("clear feature assignments by runner rows affected: %w", err)
+	}
+	return rows, nil
+}
+
 func (s *StorageLayer) ListFeatureAssignmentsByRunner(ctx context.Context, runnerID string) ([]FeatureAssignmentRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at

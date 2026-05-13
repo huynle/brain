@@ -330,6 +330,37 @@ func TestRunnerRegistry_Deregister_Nonexistent(t *testing.T) {
 	}
 }
 
+func TestRunnerRegistry_Deregister_ReleasesFeatureAssignments(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	_, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID: "runner-1",
+		Hostname: "host-a",
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	if _, err := store.ForceAssignFeature(ctx, "proj1", "feature-a", "runner-1", "auto", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature feature-a failed: %v", err)
+	}
+	if _, err := store.ForceAssignFeature(ctx, "proj2", "feature-b", "runner-1", "manual", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature feature-b failed: %v", err)
+	}
+
+	if err := svc.Deregister(ctx, "runner-1"); err != nil {
+		t.Fatalf("Deregister failed: %v", err)
+	}
+
+	assignments, err := store.ListFeatureAssignmentsByRunner(ctx, "runner-1")
+	if err != nil {
+		t.Fatalf("ListFeatureAssignmentsByRunner failed: %v", err)
+	}
+	if len(assignments) != 0 {
+		t.Fatalf("expected feature assignments to be released after deregister, got %+v", assignments)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListRunners
 // ---------------------------------------------------------------------------
@@ -633,6 +664,39 @@ func TestLifecycleManager_MarksOfflineAndReleasesClaims(t *testing.T) {
 	}
 	if claim != nil {
 		t.Error("expected claim to be released for offline runner")
+	}
+}
+
+func TestLifecycleManager_MarksOfflineAndReleasesFeatureAssignments(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
+
+	err := store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-dead",
+		Hostname:      "host-a",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 600000,
+		LastHeartbeat: now - 600000,
+		Status:        "online",
+	})
+	if err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+	if _, err := store.ForceAssignFeature(ctx, "proj1", "feature-a", "runner-dead", "auto", "active"); err != nil {
+		t.Fatalf("ForceAssignFeature failed: %v", err)
+	}
+
+	svc.RunLifecycleSweep(ctx)
+
+	assignments, err := store.ListFeatureAssignmentsByRunner(ctx, "runner-dead")
+	if err != nil {
+		t.Fatalf("ListFeatureAssignmentsByRunner failed: %v", err)
+	}
+	if len(assignments) != 0 {
+		t.Fatalf("expected feature assignments to be released for offline runner, got %+v", assignments)
 	}
 }
 

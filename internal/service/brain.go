@@ -1468,14 +1468,32 @@ func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path str
 
 // EmbedEntries generates embeddings for matching entries.
 func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
-	if s.embeddingClient == nil {
-		return nil, fmt.Errorf("embedding client is not available")
-	}
-	result, err := s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{
+	opts := indexer.EmbeddingIndexOptions{
 		Project: req.Project,
 		Path:    req.Path,
 		Force:   req.Force,
-	})
+	}
+	if req.DryRun {
+		candidates, err := s.indexer.ListEmbeddingBackfillCandidates(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]types.EmbeddingBackfillEntry, 0, len(candidates))
+		for _, candidate := range candidates {
+			entries = append(entries, types.EmbeddingBackfillEntry{
+				ID:      candidate.ID,
+				Path:    candidate.Path,
+				Title:   candidate.Title,
+				Project: candidate.Project,
+				Type:    candidate.Type,
+			})
+		}
+		return &types.EmbeddingBackfillResponse{Processed: len(entries), DryRun: true, Entries: entries}, nil
+	}
+	if s.embeddingClient == nil {
+		return nil, fmt.Errorf("embedding client is not available")
+	}
+	result, err := s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, opts)
 	if err != nil {
 		return nil, err
 	}

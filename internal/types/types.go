@@ -868,14 +868,26 @@ type EmbeddingBackfillRequest struct {
 	Project string `json:"project,omitempty"`
 	Path    string `json:"path,omitempty"`
 	Force   bool   `json:"force,omitempty"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+}
+
+// EmbeddingBackfillEntry describes a note that matches an embedding backfill request.
+type EmbeddingBackfillEntry struct {
+	ID      int64   `json:"id"`
+	Path    string  `json:"path"`
+	Title   string  `json:"title"`
+	Project *string `json:"project,omitempty"`
+	Type    *string `json:"type,omitempty"`
 }
 
 // EmbeddingBackfillResponse reports embedding generation results.
 type EmbeddingBackfillResponse struct {
-	Processed int    `json:"processed"`
-	Skipped   int    `json:"skipped"`
-	Failed    int    `json:"failed"`
-	Duration  string `json:"duration"`
+	Processed int                      `json:"processed"`
+	Skipped   int                      `json:"skipped"`
+	Failed    int                      `json:"failed"`
+	Duration  string                   `json:"duration"`
+	DryRun    bool                     `json:"dry_run,omitempty"`
+	Entries   []EmbeddingBackfillEntry `json:"entries,omitempty"`
 }
 
 // StatsResponse is the response for GET /stats.

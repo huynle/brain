@@ -5,15 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/huynle/brain-api/internal/config"
-	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/runner"
-	"github.com/huynle/brain-api/internal/service"
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -79,8 +76,6 @@ func (c *EmbeddingsCommand) getAPIClient() *runner.APIClient {
 
 // executeBackfill generates embeddings for existing notes that are missing embeddings or have stale embeddings.
 func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
-	brainDir := expandPath(c.Config.Server.BrainDir)
-
 	fmt.Fprintln(out, "Embeddings Backfill")
 	fmt.Fprintln(out, "═══════════════════")
 	fmt.Fprintln(out)
@@ -90,28 +85,9 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 		fmt.Fprintln(out)
 	}
 
-	// Initialize storage layer
-	dataDir := config.MigrateDataDir(brainDir)
-	dbPath := filepath.Join(dataDir, "brain.db")
-	store, err := storage.New(dbPath)
-	if err != nil {
-		return fmt.Errorf("initialize storage: %w", err)
-	}
-	defer store.Close()
-
-	// Initialize embedding client
-	embeddingClient, err := service.NewAiFactoryEmbeddingClient(c.Config.Server.Embedding)
-	if err != nil {
-		return fmt.Errorf("initialize embedding client: %w", err)
-	}
-
-	// Initialize indexer
-	idx := indexer.NewIndexer(brainDir, store)
-
 	if c.Flags.Verbose {
 		fmt.Fprintln(out, "Configuration:")
-		fmt.Fprintf(out, "  Brain Dir:  %s\n", brainDir)
-		fmt.Fprintf(out, "  Model:      %s\n", c.Config.Server.Embedding.Model)
+		fmt.Fprintf(out, "  API URL:    %s\n", c.Config.Runner.BrainAPIURL)
 		if c.Flags.Project != "" {
 			fmt.Fprintf(out, "  Project:    %s\n", c.Flags.Project)
 		}
@@ -122,8 +98,15 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 		fmt.Fprintln(out)
 	}
 
+	req := types.EmbeddingBackfillRequest{
+		Project: c.Flags.Project,
+		Path:    c.Flags.Path,
+		Force:   c.Flags.Force,
+		DryRun:  c.Flags.DryRun,
+	}
+
 	if c.Flags.DryRun {
-		return c.executeDryRun(out, idx)
+		return c.executeDryRun(out)
 	}
 
 	// Run the backfill
@@ -132,11 +115,7 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 
-	result, err := idx.IndexEmbeddingsWithOptions(ctx, embeddingClient, indexer.EmbeddingIndexOptions{
-		Project: c.Flags.Project,
-		Path:    c.Flags.Path,
-		Force:   c.Flags.Force,
-	})
+	result, err := c.getAPIClient().BackfillEmbeddings(ctx, req)
 	if err != nil {
 		return fmt.Errorf("backfill embeddings: %w", err)
 	}
@@ -151,7 +130,7 @@ func (c *EmbeddingsCommand) executeBackfill(out io.Writer) error {
 	if result.Failed > 0 {
 		fmt.Fprintf(out, "  ❌ Failed:    %d notes\n", result.Failed)
 	}
-	fmt.Fprintf(out, "  ⏱  Duration:  %s\n", result.Duration.Round(time.Millisecond))
+	fmt.Fprintf(out, "  ⏱  Duration:  %s\n", result.Duration)
 	fmt.Fprintln(out)
 
 	if result.Failed > 0 {
@@ -172,79 +151,80 @@ func (c *EmbeddingsCommand) embeddingMode() string {
 }
 
 // executeDryRun shows what would be done without actually generating embeddings.
-func (c *EmbeddingsCommand) executeDryRun(out io.Writer, idx *indexer.Indexer) error {
-	// Query notes that need embedding (re)generation
-	// This duplicates the query from IndexEmbeddings, but allows us to show what would be done
-	query := `
-		SELECT DISTINCT n.id, n.path, n.title, n.project_id, n.type
-		FROM notes n
-		LEFT JOIN (
-			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
-			FROM note_embeddings_meta
-			GROUP BY note_id
-		) m ON n.id = m.note_id
-	`
-	var conditions []string
-	var args []interface{}
-	if !c.Flags.Force {
-		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
-	}
-	if c.Flags.Project != "" {
-		conditions = append(conditions, "n.project_id = ?")
-		args = append(args, c.Flags.Project)
-	}
-	if c.Flags.Path != "" {
-		conditions = append(conditions, "n.path LIKE ?")
-		args = append(args, c.Flags.Path+"%")
-	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	rows, err := idx.DB().Query(query, args...)
+func (c *EmbeddingsCommand) executeDryRun(out io.Writer) error {
+	entries, err := c.listDryRunCandidates()
 	if err != nil {
-		return fmt.Errorf("query stale notes: %w", err)
+		return err
 	}
-	defer rows.Close()
 
-	count := 0
 	fmt.Fprintln(out, "Notes that would be processed:")
 	fmt.Fprintln(out)
 
-	for rows.Next() {
-		var id int64
-		var path, title string
-		var projectID, noteType *string
-
-		if err := rows.Scan(&id, &path, &title, &projectID, &noteType); err != nil {
-			fmt.Fprintf(out, "  ⚠️  Error scanning row: %v\n", err)
-			continue
-		}
-
-		count++
+	for _, entry := range entries {
 		if c.Flags.Verbose {
-			fmt.Fprintf(out, "  [%d] %s\n", id, path)
-			fmt.Fprintf(out, "      Title: %s\n", title)
-			if projectID != nil {
-				fmt.Fprintf(out, "      Project: %s\n", *projectID)
+			fmt.Fprintf(out, "  [%s] %s\n", entry.ID, entry.Path)
+			fmt.Fprintf(out, "      Title: %s\n", entry.Title)
+			if entry.ProjectID != "" {
+				fmt.Fprintf(out, "      Project: %s\n", entry.ProjectID)
 			}
-			if noteType != nil {
-				fmt.Fprintf(out, "      Type: %s\n", *noteType)
+			if entry.Type != "" {
+				fmt.Fprintf(out, "      Type: %s\n", entry.Type)
 			}
 			fmt.Fprintln(out)
 		} else {
-			fmt.Fprintf(out, "  • %s\n", path)
+			fmt.Fprintf(out, "  • %s\n", entry.Path)
 		}
 	}
 
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("iterate rows: %w", err)
-	}
-
 	fmt.Fprintln(out)
-	fmt.Fprintf(out, "Total notes to process: %d\n", count)
+	fmt.Fprintf(out, "Total notes to process: %d\n", len(entries))
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Run without --dry-run to generate embeddings.")
 
 	return nil
+}
+
+func (c *EmbeddingsCommand) listDryRunCandidates() ([]types.BrainEntry, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	const pageSize = 500
+	var candidates []types.BrainEntry
+	for offset := 0; ; offset += pageSize {
+		params := map[string]string{
+			"limit":     strconv.Itoa(pageSize),
+			"offset":    strconv.Itoa(offset),
+			"sortBy":    "modified",
+			"sortOrder": "desc",
+		}
+		if c.Flags.Project != "" {
+			params["project"] = c.Flags.Project
+		}
+
+		resp, err := c.getAPIClient().ListEntries(ctx, params)
+		if err != nil {
+			return nil, fmt.Errorf("list entries for embedding dry-run: %w", err)
+		}
+		for _, entry := range resp.Entries {
+			if c.Flags.Path != "" && !strings.HasPrefix(entry.Path, c.Flags.Path) {
+				continue
+			}
+			if c.Flags.Force || embeddingBackfillNeeded(entry.EmbeddingStatus) {
+				candidates = append(candidates, entry)
+			}
+		}
+		if len(resp.Entries) < pageSize {
+			break
+		}
+	}
+	return candidates, nil
+}
+
+func embeddingBackfillNeeded(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "missing", "not_embedded", "not-embedded", "none", "stale", "needs_embedding", "needs-embedding", "outdated":
+		return true
+	default:
+		return false
+	}
 }

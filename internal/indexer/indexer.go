@@ -319,6 +319,54 @@ type EmbeddingIndexOptions struct {
 	Force   bool
 }
 
+// ListEmbeddingBackfillCandidates returns notes matching an embedding backfill request.
+func (idx *Indexer) ListEmbeddingBackfillCandidates(ctx context.Context, opts EmbeddingIndexOptions) ([]EmbeddingBackfillCandidate, error) {
+	query := `
+		SELECT DISTINCT n.id, n.path, n.title, n.project_id, n.type
+		FROM notes n
+		LEFT JOIN (
+			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
+			FROM note_embeddings_meta
+			GROUP BY note_id
+		) m ON n.id = m.note_id
+	`
+	var conditions []string
+	var args []interface{}
+	if !opts.Force {
+		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+	}
+	if opts.Project != "" {
+		conditions = append(conditions, "n.project_id = ?")
+		args = append(args, opts.Project)
+	}
+	if opts.Path != "" {
+		conditions = append(conditions, "n.path LIKE ?")
+		args = append(args, opts.Path+"%")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query embedding backfill candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []EmbeddingBackfillCandidate
+	for rows.Next() {
+		var c EmbeddingBackfillCandidate
+		if err := rows.Scan(&c.ID, &c.Path, &c.Title, &c.Project, &c.Type); err != nil {
+			return nil, fmt.Errorf("scan embedding backfill candidate: %w", err)
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate embedding backfill candidates: %w", err)
+	}
+	return candidates, nil
+}
+
 // IndexEmbeddingsWithOptions generates and stores embeddings for matching notes.
 func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingClient EmbeddingClient, opts EmbeddingIndexOptions) (*EmbeddingIndexResult, error) {
 	if embeddingClient == nil {

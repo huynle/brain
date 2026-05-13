@@ -582,7 +582,11 @@ func (c *APIClient) SearchEntries(ctx context.Context, req types.SearchRequest) 
 
 // BackfillEmbeddings generates embeddings for matching entries via POST /api/v1/embeddings/backfill.
 func (c *APIClient) BackfillEmbeddings(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
-	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/embeddings/backfill", req)
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal embedding backfill request: %w", err)
+	}
+	resp, err := c.doRequestWithClient(ctx, c.longRunningClient(), http.MethodPost, "/api/v1/embeddings/backfill", strings.NewReader(string(data)))
 	if err != nil {
 		return nil, fmt.Errorf("backfill embeddings: %w", err)
 	}
@@ -595,6 +599,14 @@ func (c *APIClient) BackfillEmbeddings(ctx context.Context, req types.EmbeddingB
 		return nil, fmt.Errorf("decode embedding backfill response: %w", err)
 	}
 	return &result, nil
+}
+
+func (c *APIClient) longRunningClient() *http.Client {
+	timeout := time.Duration(c.cfg.APITimeout) * time.Millisecond
+	if timeout < 30*time.Minute {
+		timeout = 30 * time.Minute
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 // ListEntries lists entries with optional filters via GET /api/v1/entries.
@@ -1090,6 +1102,10 @@ func (c *APIClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusRes
 
 // doRequest performs an HTTP request with auth headers and context.
 func (c *APIClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWithClient(ctx, c.client, method, path, body)
+}
+
+func (c *APIClient) doRequestWithClient(ctx context.Context, client *http.Client, method, path string, body io.Reader) (*http.Response, error) {
 	reqURL := c.cfg.BrainAPIURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -1103,7 +1119,7 @@ func (c *APIClient) doRequest(ctx context.Context, method, path string, body io.
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
 	}
 
-	return c.client.Do(req)
+	return client.Do(req)
 }
 
 // doRequestWithHeaders performs an HTTP request with custom headers, overriding defaults.

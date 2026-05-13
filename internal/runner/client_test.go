@@ -1668,6 +1668,34 @@ func TestAPIClient_SearchEntries_ServerError(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// BackfillEmbeddings
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_BackfillEmbeddings_UsesLongRunningTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/embeddings/backfill" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.EmbeddingBackfillResponse{Processed: 1, Duration: "100ms"})
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.APITimeout = 50
+	client := NewAPIClient(cfg)
+
+	result, err := client.BackfillEmbeddings(context.Background(), types.EmbeddingBackfillRequest{Project: "brain-api"})
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings() error = %v", err)
+	}
+	if result.Processed != 1 {
+		t.Fatalf("Processed = %d, want 1", result.Processed)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // ListEntries
 // ---------------------------------------------------------------------------
 

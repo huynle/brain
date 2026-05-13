@@ -36,6 +36,15 @@ type EmbeddingIndexResult struct {
 	Duration  time.Duration // Total time taken
 }
 
+// EmbeddingBackfillCandidate describes a note that needs embedding generation.
+type EmbeddingBackfillCandidate struct {
+	ID      int64
+	Path    string
+	Title   string
+	Project *string
+	Type    *string
+}
+
 // EmbeddingHealth reports the health of the embedding index.
 type EmbeddingHealth struct {
 	TotalNotes             int // Total notes in database

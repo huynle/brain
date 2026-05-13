@@ -2,60 +2,49 @@ package commands
 
 import (
 	"bytes"
-	"context"
-	"os"
-	"path/filepath"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/huynle/brain-api/internal/config"
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/types"
 )
 
-func TestEmbeddingsBackfillDryRunUsesServerDataDirDatabase(t *testing.T) {
-	t.Setenv("TEST_EMBEDDING_API_KEY", "test-key")
+func TestEmbeddingsBackfillDryRunUsesConfiguredAPI(t *testing.T) {
+	project := "brain-api"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.Method != http.MethodGet {
+			t.Fatalf("unexpected method: %s", r.Method)
+		}
+		if got := r.URL.Query().Get("project"); got != project {
+			t.Fatalf("project = %q, want %q", got, project)
+		}
 
-	brainDir := t.TempDir()
-	dataDir := filepath.Join(brainDir, config.DataDir)
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatalf("create data dir: %v", err)
-	}
-
-	store, err := storage.New(filepath.Join(dataDir, "brain.db"))
-	if err != nil {
-		t.Fatalf("open server database: %v", err)
-	}
-
-	body := "Existing note content that needs an embedding."
-	typ := "plan"
-	status := "active"
-	_, err = store.InsertNote(context.Background(), &storage.NoteRow{
-		Path:       "projects/test/plan/existing.md",
-		ShortID:    "embed01",
-		Title:      "Existing Note",
-		Body:       &body,
-		RawContent: &body,
-		WordCount:  7,
-		Metadata:   `{}`,
-		Type:       &typ,
-		Status:     &status,
-	})
-	if err != nil {
-		t.Fatalf("insert note: %v", err)
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close server database: %v", err)
-	}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{
+			Entries: []types.BrainEntry{
+				{ID: "42", Path: "projects/brain-api/plan/dream-tab.md", Title: "Dream Tab + Configurable Keybindings for TUI", ProjectID: project, Type: "plan", EmbeddingStatus: "missing"},
+				{ID: "43", Path: "projects/brain-api/plan/current.md", Title: "Current", ProjectID: project, Type: "plan", EmbeddingStatus: "current"},
+			},
+			Total: 2,
+			Limit: 500,
+		})
+	}))
+	defer server.Close()
 
 	cfg := &UnifiedConfig{}
-	cfg.Server.BrainDir = brainDir
-	cfg.Server.Embedding.APIKeyEnv = "TEST_EMBEDDING_API_KEY"
+	cfg.Runner = runner.RunnerConfig{BrainAPIURL: server.URL, APITimeout: 5000}
 
 	var out bytes.Buffer
 	cmd := &EmbeddingsCommand{
 		Subcommand: "backfill",
 		Config:     cfg,
-		Flags:      &EmbeddingsFlags{DryRun: true},
+		Flags:      &EmbeddingsFlags{DryRun: true, Verbose: true, Project: project},
 		Out:        &out,
 	}
 
@@ -63,54 +52,50 @@ func TestEmbeddingsBackfillDryRunUsesServerDataDirDatabase(t *testing.T) {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if got := out.String(); !strings.Contains(got, "Total notes to process: 1") {
-		t.Fatalf("expected dry-run to read server data-dir database, got output:\n%s", got)
-	}
-
-	if _, err := os.Stat(filepath.Join(brainDir, "brain.db")); !os.IsNotExist(err) {
-		t.Fatalf("expected backfill not to create root-level brain.db, stat error: %v", err)
+	got := out.String()
+	for _, want := range []string{server.URL, "Total notes to process: 1", "projects/brain-api/plan/dream-tab.md"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, got)
+		}
 	}
 }
 
-func TestEmbeddingsBackfillDryRunFiltersByProject(t *testing.T) {
-	t.Setenv("TEST_EMBEDDING_API_KEY", "test-key")
-	brainDir := t.TempDir()
-	dataDir := filepath.Join(brainDir, config.DataDir)
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
-		t.Fatalf("create data dir: %v", err)
-	}
-	store, err := storage.New(filepath.Join(dataDir, "brain.db"))
-	if err != nil {
-		t.Fatalf("open database: %v", err)
-	}
-	body := "Project-scoped embedding content."
-	status := "active"
-	for _, tc := range []struct{ path, project string }{
-		{"projects/alpha/plan/a.md", "alpha"},
-		{"projects/beta/plan/b.md", "beta"},
-	} {
-		typ := "plan"
-		_, err = store.InsertNote(context.Background(), &storage.NoteRow{
-			Path: tc.path, ShortID: tc.project, Title: tc.project, Body: &body, RawContent: &body,
-			WordCount: 4, Metadata: `{}`, Type: &typ, Status: &status, ProjectID: &tc.project,
-		})
-		if err != nil {
-			t.Fatalf("insert note: %v", err)
+func TestEmbeddingsBackfillUsesConfiguredAPI(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/embeddings/backfill" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
 		}
-	}
-	if err := store.Close(); err != nil {
-		t.Fatalf("close database: %v", err)
-	}
+		var req types.EmbeddingBackfillRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		if req.DryRun {
+			t.Fatalf("did not expect dry_run request")
+		}
+		if !req.Force {
+			t.Fatalf("expected force request")
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.EmbeddingBackfillResponse{Processed: 2, Duration: "12ms"})
+	}))
+	defer server.Close()
+
 	cfg := &UnifiedConfig{}
-	cfg.Server.BrainDir = brainDir
-	cfg.Server.Embedding.APIKeyEnv = "TEST_EMBEDDING_API_KEY"
+	cfg.Runner = runner.RunnerConfig{BrainAPIURL: server.URL, APITimeout: 5000}
+
 	var out bytes.Buffer
-	cmd := &EmbeddingsCommand{Subcommand: "backfill", Config: cfg, Flags: &EmbeddingsFlags{DryRun: true, Project: "alpha"}, Out: &out}
+	cmd := &EmbeddingsCommand{
+		Subcommand: "backfill",
+		Config:     cfg,
+		Flags:      &EmbeddingsFlags{Force: true},
+		Out:        &out,
+	}
+
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
-	got := out.String()
-	if !strings.Contains(got, "projects/alpha/plan/a.md") || strings.Contains(got, "projects/beta/plan/b.md") {
-		t.Fatalf("expected dry-run to include only alpha, got:\n%s", got)
+	if got := out.String(); !strings.Contains(got, "Processed: 2 notes") {
+		t.Fatalf("expected processed count in output, got:\n%s", got)
 	}
 }

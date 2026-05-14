@@ -120,6 +120,15 @@ type BrainEmbeddingBackfillMsg struct {
 	Err     error
 }
 
+// BrainEntryContentMsg is sent when a selected brain entry's full content has been fetched.
+type BrainEntryContentMsg struct {
+	Path    string
+	Title   string
+	Type    string
+	Content string
+	Err     error
+}
+
 // RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo

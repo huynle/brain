@@ -614,6 +614,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.brainEntries = append([]types.BrainEntry(nil), msg.Entries...)
 		m.entryTree.SetEntries(msg.Entries)
 		m.clearBrainSearch()
+		if m.activeContentTab == ContentTabBrain && m.detailVisible {
+			return m, m.syncBrainEntryDetail()
+		}
 		return m, nil
 
 	case BrainSearchMsg:
@@ -625,6 +628,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.brainSearchQuery = msg.Query
 		m.brainSearchLabel = msg.Strategy
 		m.entryTree.SetSearchResults(msg.Entries)
+		if m.activeContentTab == ContentTabBrain && m.detailVisible {
+			return m, m.syncBrainEntryDetail()
+		}
 		return m, nil
 
 	case BrainEmbeddingBackfillMsg:
@@ -786,6 +792,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.dreamViewer.SetContent(msg.Content)
 		}
+		if m.detailVisible && m.selectedAutomationRowIsDream() {
+			return m, m.syncAutomationEntryDetail()
+		}
 		return m, nil
 
 	case DreamConfigMsg:
@@ -793,6 +802,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dreamViewer.SetDreamConfigError(msg.Error.Error())
 		} else if msg.Config != nil {
 			m.dreamViewer.SetDreamConfig(*msg.Config)
+		}
+		if m.detailVisible && m.selectedAutomationRowIsDream() {
+			return m, m.syncAutomationEntryDetail()
 		}
 		return m, nil
 
@@ -802,6 +814,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks)
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations && m.detailVisible {
+			return m, m.syncAutomationEntryDetail()
+		}
+		return m, nil
+
+	case BrainEntryContentMsg:
+		if !m.detailVisible || msg.Path == "" || msg.Path != m.taskDetail.entryPath {
+			return m, nil
+		}
+		header := "Entry Detail"
+		if m.activeContentTab == ContentTabAutomation {
+			header = "Automation Detail"
+		}
+		if msg.Err != nil {
+			m.taskDetail.SetEntryError(msg.Path, msg.Title, msg.Type, msg.Err, header)
+			return m, nil
+		}
+		m.taskDetail.SetEntryContent(msg.Path, msg.Title, msg.Type, msg.Content, header)
 		return m, nil
 
 	case AutomationToggleMsg:
@@ -1165,6 +1195,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 		}
 		if m.detailVisible {
+			if m.activeContentTab == ContentTabBrain {
+				return m, m.syncBrainEntryDetail()
+			}
+			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+				return m, m.syncAutomationEntryDetail()
+			}
 			m.syncTaskDetail()
 		} else {
 			m.syncPanelSizes()
@@ -1368,19 +1404,29 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// When on Automation tab, handle active-subtab keys.
 		if m.activeContentTab == ContentTabAutomation {
-			switch string(msg.Runes) {
-			case "C":
-				return m, m.cycleAutomationSubTab()
-			case "h", "[":
-				return m, m.setAutomationSubTab(AutomationSubTabAutomations)
-			case "l", "]":
-				return m, m.setAutomationSubTab(AutomationSubTabDream)
+			if m.activePanel == PanelDetails {
+				switch string(msg.Runes) {
+				case "j":
+					m.taskDetail.ScrollDown()
+					return m, nil
+				case "k":
+					m.taskDetail.ScrollUp()
+					return m, nil
+				case "g":
+					m.taskDetail.ScrollToTop()
+					return m, nil
+				case "G":
+					m.taskDetail.ScrollToBottom()
+					return m, nil
+				}
 			}
-
 			if m.activeAutomationSubTab == AutomationSubTabAutomations {
 				switch string(msg.Runes) {
 				case "j", "k", "g", "G":
 					m.automationList.Update(msg)
+					if m.detailVisible {
+						return m, m.syncAutomationEntryDetail()
+					}
 					return m, nil
 				case "e":
 					return m, m.editSelectedAutomationRow()
@@ -1437,6 +1483,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 		if m.activeContentTab == ContentTabBrain {
+			if m.activePanel == PanelDetails {
+				switch string(msg.Runes) {
+				case "j":
+					m.taskDetail.ScrollDown()
+					return m, nil
+				case "k":
+					m.taskDetail.ScrollUp()
+					return m, nil
+				case "g":
+					m.taskDetail.ScrollToTop()
+					return m, nil
+				case "G":
+					m.taskDetail.ScrollToBottom()
+					return m, nil
+				}
+			}
 			switch string(msg.Runes) {
 			case "/":
 				m.brainSearchState = FilterTyping
@@ -1445,15 +1507,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "j":
 				m.entryTree.MoveDown()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
 				return m, nil
 			case "k":
 				m.entryTree.MoveUp()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
 				return m, nil
 			case "g":
 				m.entryTree.GotoTop()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
 				return m, nil
 			case "G":
 				m.entryTree.GotoBottom()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
 				return m, nil
 			case "r":
 				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
@@ -2146,7 +2220,7 @@ func (m *Model) persistPanelHeights() {
 }
 
 func (m Model) isMainSplitterY(y int) bool {
-	if m.activeContentTab == ContentTabAutomation || !m.hasBottomPanel() {
+	if !m.hasBottomPanel() {
 		return false
 	}
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
@@ -2201,12 +2275,7 @@ func absInt(v int) int {
 	return v
 }
 
-func (m Model) handleMouseHover(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	if m.activeContentTab == ContentTabBrain && msg.Y >= mainContentStartY && msg.Y < m.height-1 {
-		m.entryTree.SelectVisibleLine(m.brainMouseLine(msg.Y, mainContentStartY))
-		return m, nil
-	}
+func (m Model) handleMouseHover(_ tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
@@ -2262,14 +2331,27 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.activeContentTab == ContentTabBrain && y >= mainContentStartY && y < m.height-1 {
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight {
+			m.activePanel = PanelDetails
+			m.helpBar.ActivePanel = m.activePanel
+			return m, nil
+		}
 		m.activePanel = PanelTasks
 		m.helpBar.ActivePanel = m.activePanel
 		if m.entryTree.SelectVisibleLine(m.brainMouseLine(y, mainContentStartY)) && m.entryTree.IsOnGroupHeader() {
 			m.entryTree.ToggleCollapse()
 		}
+		if m.detailVisible {
+			return m, m.syncBrainEntryDetail()
+		}
 		return m, nil
 	}
 	if m.activeContentTab == ContentTabAutomation && y >= mainContentStartY && y < m.height-1 {
+		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations && y >= mainContentStartY+taskPanelOuterHeight {
+			m.activePanel = PanelDetails
+			m.helpBar.ActivePanel = m.activePanel
+			return m, nil
+		}
 		m.activePanel = PanelTasks
 		m.helpBar.ActivePanel = m.activePanel
 		return m.handleAutomationPanelClick(y-mainContentStartY, x)
@@ -2469,7 +2551,16 @@ func (m Model) computeMainContentStartY() int {
 }
 
 func (m Model) hasBottomPanel() bool {
-	return m.activeContentTab == ContentTabTasks && (m.detailVisible || m.logsVisible || m.runnerPanelVisible)
+	if m.activeContentTab == ContentTabTasks {
+		return m.detailVisible || m.logsVisible || m.runnerPanelVisible
+	}
+	if m.activeContentTab == ContentTabBrain {
+		return m.detailVisible
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		return m.detailVisible
+	}
+	return false
 }
 
 func (m Model) computeTaskPanelOuterHeight(mainHeight int) int {
@@ -2481,7 +2572,11 @@ func (m Model) computeTaskPanelOuterHeight(mainHeight int) int {
 	}
 
 	taskContentLines := 0
-	if m.viewMode == ViewModeSchedules {
+	if m.activeContentTab == ContentTabBrain {
+		taskContentLines = len(m.entryTree.visible) + 1
+	} else if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		taskContentLines = len(m.automationList.rows) + 2
+	} else if m.viewMode == ViewModeSchedules {
 		taskContentLines = m.scheduleList.ContentHeight()
 	} else {
 		taskContentLines = m.taskTree.ContentHeight()
@@ -2572,24 +2667,17 @@ func (m Model) handleAutomationPanelClick(lineInPanel, x int) (tea.Model, tea.Cm
 		return m, nil
 	}
 
-	if contentLine == 0 || contentLine == 1 {
-		if tab, ok := m.automationSubTabAtX(x - 1); ok && tab != m.activeAutomationSubTab {
-			return m, m.setAutomationSubTab(tab)
-		}
-		if contentLine == 0 {
-			return m, nil
-		}
-	}
-
-	if contentLine < 2 || m.activeAutomationSubTab != AutomationSubTabAutomations {
+	if m.activeAutomationSubTab != AutomationSubTabAutomations {
 		return m, nil
 	}
 
-	rowLine := contentLine - 3 // terminal reports the cursor body row; use the pointer tip row
+	rowLine := contentLine - 1 // terminal reports the cursor body row; use the pointer tip row
 	if rowLine < 0 {
 		return m, nil
 	}
-	m.automationList.SelectVisibleRow(rowLine)
+	if m.automationList.SelectVisibleRow(rowLine) && m.detailVisible {
+		return m, m.syncAutomationEntryDetail()
+	}
 	return m, nil
 }
 
@@ -2980,13 +3068,24 @@ func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleMouseWheel(msg tea.MouseMsg, direction int) (tea.Model, tea.Cmd) {
 	if m.activeContentTab == ContentTabAutomation {
-		mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+		mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
 		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations && msg.Y >= mainContentStartY+taskPanelOuterHeight {
+				if direction < 0 {
+					m.taskDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
+				return m, nil
+			}
 			if m.activeAutomationSubTab == AutomationSubTabAutomations {
 				if direction < 0 {
 					m.automationList.ScrollUp(3)
 				} else {
 					m.automationList.ScrollDown(3)
+				}
+				if m.detailVisible {
+					return m, m.syncAutomationEntryDetail()
 				}
 				return m, nil
 			}
@@ -3000,13 +3099,24 @@ func (m Model) handleMouseWheel(msg tea.MouseMsg, direction int) (tea.Model, tea
 		return m, nil
 	}
 	if m.activeContentTab == ContentTabBrain {
-		mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+		mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
 		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			if m.detailVisible && msg.Y >= mainContentStartY+taskPanelOuterHeight {
+				if direction < 0 {
+					m.taskDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
+				return m, nil
+			}
 			m.entryTree.SetSize(m.width-4, m.height-mainContentStartY-1)
 			if direction < 0 {
 				m.entryTree.MoveUp()
 			} else {
 				m.entryTree.MoveDown()
+			}
+			if m.detailVisible {
+				return m, m.syncBrainEntryDetail()
 			}
 		}
 		return m, nil
@@ -3074,7 +3184,22 @@ func (m Model) panelAtMouseY(y int) (Panel, bool) {
 		return PanelLogs, y >= mainContentStartY && y < m.height-1
 	}
 	if m.activeContentTab == ContentTabBrain {
-		return PanelTasks, y >= mainContentStartY && y < m.height-1
+		if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+			return PanelTasks, true
+		}
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+			return PanelDetails, true
+		}
+		return PanelTasks, false
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+			return PanelTasks, true
+		}
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+			return PanelDetails, true
+		}
+		return PanelTasks, false
 	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
@@ -3140,6 +3265,50 @@ func (m *Model) syncTaskDetail() {
 	m.syncHelpBarSessionState()
 }
 
+func (m *Model) syncBrainEntryDetail() tea.Cmd {
+	entry := m.entryTree.SelectedEntry()
+	if entry == nil {
+		m.taskDetail.SetTask(nil)
+		m.syncPanelSizes()
+		return nil
+	}
+	m.taskDetail.SetEntryLoading(*entry)
+	m.syncPanelSizes()
+	return fetchBrainEntryContentCmd(m.apiRunnerConfig(), *entry)
+}
+
+func (m *Model) syncAutomationEntryDetail() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || row.Path == "" {
+		if row != nil && row.Source == "dream" {
+			entry := types.BrainEntry{ID: row.ID, Path: row.ID, Title: row.Title, Type: row.Source}
+			if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
+				m.taskDetail.SetEntryLoading(entry, "Automation Detail")
+				m.syncPanelSizes()
+				return m.fetchDreamTabCmd()
+			}
+			m.taskDetail.SetEntryContent(row.ID, row.Title, row.Source, m.dreamViewer.scrollableContent(), "Automation Detail")
+			m.syncPanelSizes()
+			return nil
+		}
+		m.taskDetail.SetTask(nil)
+		m.syncPanelSizes()
+		return nil
+	}
+	entry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Type: row.Source}
+	m.taskDetail.SetEntryLoading(entry, "Automation Detail")
+	m.syncPanelSizes()
+	return fetchBrainEntryContentCmd(m.apiRunnerConfig(), entry)
+}
+
+func (m Model) selectedAutomationRowIsDream() bool {
+	if m.activeContentTab != ContentTabAutomation || m.activeAutomationSubTab != AutomationSubTabAutomations {
+		return false
+	}
+	row := m.automationList.SelectedRow()
+	return row != nil && row.Source == "dream"
+}
+
 // syncPanelSizes computes and sets the inner dimensions for detail/log panels.
 // This must be called whenever panel visibility, window size, or selected task changes,
 // so that ScrollDown/ScrollUp have accurate height and totalLines for scroll bounds.
@@ -3173,11 +3342,30 @@ func (m *Model) syncPanelSizes() {
 		return
 	}
 	if m.activeContentTab == ContentTabBrain {
-		entryInner := mainHeight - 2
+		entryOuter := mainHeight
+		if m.detailVisible {
+			entryOuter = topHeight
+		}
+		entryInner := entryOuter - 2
 		if entryInner < 1 {
 			entryInner = 1
 		}
 		m.entryTree.SetSize(innerWidth, entryInner)
+		if m.detailVisible {
+			detailInner := bottomHeight - 2
+			if detailInner < 1 {
+				detailInner = 1
+			}
+			m.taskDetail.SetSize(innerWidth, detailInner)
+		}
+		return
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations && m.detailVisible {
+		detailInner := bottomHeight - 2
+		if detailInner < 1 {
+			detailInner = 1
+		}
+		m.taskDetail.SetSize(innerWidth, detailInner)
 		return
 	}
 
@@ -3556,7 +3744,11 @@ func (m Model) renderBaseView() string {
 		mainContent = m.renderLogPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabBrain {
 		// Brain tab: project entry tree for understanding stored memory.
-		entryHeight := mainHeight - 2
+		entryOuterHeight := mainHeight
+		if m.detailVisible {
+			entryOuterHeight = topHeight
+		}
+		entryHeight := entryOuterHeight - 2
 		entryView := m.entryTree.View(m.width-4, entryHeight)
 		if searchBar := m.renderBrainSearchBar(m.width - 4); searchBar != "" {
 			entryHeight--
@@ -3565,14 +3757,28 @@ func (m Model) renderBaseView() string {
 			}
 			entryView = searchBar + "\n" + m.entryTree.View(m.width-4, entryHeight)
 		}
-		entryPanel := InactiveBorder.
+		entryPanelStyle := InactiveBorder
+		if m.activePanel == PanelTasks {
+			entryPanelStyle = ActiveBorder
+		}
+		entryPanel := entryPanelStyle.
 			Width(m.width - 2).
-			Height(mainHeight - 2).
+			Height(entryHeight).
+			MaxHeight(entryOuterHeight).
 			Render(entryView)
-		mainContent = entryPanel
+		if m.detailVisible {
+			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+			mainContent = lipgloss.JoinVertical(lipgloss.Left, entryPanel, bottomPanel)
+		} else {
+			mainContent = entryPanel
+		}
 	} else if m.activeContentTab == ContentTabAutomation {
 		// Automation tab: full-width automation list or Dream subtab.
-		contentHeight := mainHeight - 2
+		contentOuterHeight := mainHeight
+		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			contentOuterHeight = topHeight
+		}
+		contentHeight := contentOuterHeight - 2
 		if contentHeight < 1 {
 			contentHeight = 1
 		}
@@ -3580,14 +3786,23 @@ func (m Model) renderBaseView() string {
 		if m.activeAutomationSubTab == AutomationSubTabDream {
 			content = m.dreamViewer.View(m.width-4, contentHeight-1)
 		} else {
-			content = m.automationList.View(m.width-4, contentHeight-1)
+			content = m.automationList.View(m.width-4, contentHeight)
 		}
-		automationView := m.renderAutomationSubTabBar(m.width-4) + "\n" + content
-		automationPanel := InactiveBorder.
+		automationPanelStyle := InactiveBorder
+		if m.activePanel == PanelTasks {
+			automationPanelStyle = ActiveBorder
+		}
+		automationPanel := automationPanelStyle.
 			Width(m.width - 2).
 			Height(contentHeight).
-			Render(automationView)
-		mainContent = automationPanel
+			MaxHeight(contentOuterHeight).
+			Render(content)
+		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+			mainContent = lipgloss.JoinVertical(lipgloss.Left, automationPanel, bottomPanel)
+		} else {
+			mainContent = automationPanel
+		}
 	} else if m.runnerPanelVisible {
 		// Runner panel visible: split into task panel (top) + runner panel (bottom)
 		// Use the same bottom panel area for the runner panel
@@ -3893,29 +4108,6 @@ func (m Model) renderBrainSearchBar(width int) string {
 	}
 }
 
-func (m Model) renderAutomationSubTabBar(width int) string {
-	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(ColorCyan).Padding(0, 1)
-	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
-	render := func(tab AutomationSubTab) string {
-		if m.activeAutomationSubTab == tab {
-			return activeStyle.Render(tab.String())
-		}
-		return inactiveStyle.Render(tab.String())
-	}
-	bar := lipgloss.JoinHorizontal(lipgloss.Center,
-		" ",
-		render(AutomationSubTabAutomations),
-		" ",
-		render(AutomationSubTabDream),
-		" ",
-		DimStyle.Render("h/l switch  r refresh  x toggle  e edit"),
-	)
-	if width > 0 && lipgloss.Width(bar) > width {
-		return lipgloss.NewStyle().MaxWidth(width).Render(bar)
-	}
-	return bar
-}
-
 // applyFilter applies the current filter query to the task list.
 func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
@@ -4147,12 +4339,20 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 	if row == nil {
 		return nil
 	}
+	if row.Source == "dream" {
+		m.setStatusMessage("info", "Dream is configured from the Dream detail")
+		return nil
+	}
 	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
 }
 
 func (m *Model) editSelectedAutomationRow() tea.Cmd {
 	row := m.automationList.SelectedRow()
 	if row == nil {
+		return nil
+	}
+	if row.Source == "dream" {
+		m.setStatusMessage("info", "Dream has no editable entry file")
 		return nil
 	}
 	path := row.Path
@@ -4220,6 +4420,17 @@ func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 			return BrainEntriesMsg{Err: err}
 		}
 		return BrainEntriesMsg{Entries: resp.Entries}
+	}
+}
+
+func fetchBrainEntryContentCmd(cfg runner.RunnerConfig, entry types.BrainEntry) tea.Cmd {
+	return func() tea.Msg {
+		if entry.Path == "" {
+			return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Err: fmt.Errorf("entry has no path")}
+		}
+		client := runner.NewAPIClient(cfg)
+		content, err := client.GetEntryFull(context.Background(), entry.Path)
+		return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Content: content, Err: err}
 	}
 }
 

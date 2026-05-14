@@ -310,7 +310,7 @@ func TestMouseClickBrainGroupHeaderTogglesCollapse(t *testing.T) {
 	}
 }
 
-func TestMouseHoverBrainGroupHeaderSelectsHeader(t *testing.T) {
+func TestMouseHoverBrainTabDoesNotChangeSelection(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
 	m.height = 30
@@ -322,8 +322,73 @@ func TestMouseHoverBrainGroupHeaderSelectsHeader(t *testing.T) {
 
 	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 3})
 	model := updated.(Model)
-	if !model.entryTree.IsOnGroupHeader() {
-		t.Fatal("expected hover over group header to select it")
+	if model.entryTree.IsOnGroupHeader() {
+		t.Fatal("expected hover over Brain tab to leave selection unchanged")
+	}
+}
+
+func TestBrainTabToggleDetailShowsSelectedEntryContent(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected T in Brain tab to fetch selected entry content")
+	}
+	if !model.detailVisible || !model.taskDetail.entryMode || !model.taskDetail.entryLoading {
+		t.Fatalf("expected Brain entry detail loading state, got visible=%v entryMode=%v loading=%v", model.detailVisible, model.taskDetail.entryMode, model.taskDetail.entryLoading)
+	}
+
+	updated, _ = model.Update(BrainEntryContentMsg{Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision", Content: "# A\nbody"})
+	model = updated.(Model)
+	view := model.taskDetail.View()
+	if !strings.Contains(view, "Entry Detail: A [decision]") || !strings.Contains(view, "# A") {
+		t.Fatalf("expected entry content in detail view, got:\n%s", view)
+	}
+}
+
+func TestAutomationTabToggleDetailShowsSelectedRowContent(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected T in Automations tab to fetch selected row content")
+	}
+	if !model.detailVisible || !model.taskDetail.entryMode || !model.taskDetail.entryLoading {
+		t.Fatalf("expected Automation entry detail loading state, got visible=%v entryMode=%v loading=%v", model.detailVisible, model.taskDetail.entryMode, model.taskDetail.entryLoading)
+	}
+
+	updated, _ = model.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model = updated.(Model)
+	view := model.taskDetail.View()
+	if !strings.Contains(view, "Automation Detail: Auto [automation]") || !strings.Contains(view, "trigger: cron") {
+		t.Fatalf("expected automation content in detail view, got:\n%s", view)
+	}
+}
+
+func TestAutomationListIncludesDreamRowWhenEmpty(t *testing.T) {
+	list := NewAutomationList()
+	list.SetEntryRows(nil, nil)
+
+	row := list.SelectedRow()
+	if row == nil || row.Source != "dream" || row.Title != "Dream" {
+		t.Fatalf("expected Dream row to be selected by default, got %#v", row)
+	}
+	view := list.View(100, 10)
+	if !strings.Contains(view, "Dream") || strings.Contains(view, "No automations found") {
+		t.Fatalf("expected Dream row instead of empty automation state, got:\n%s", view)
 	}
 }
 

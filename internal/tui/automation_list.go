@@ -9,6 +9,8 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+const dreamAutomationRowID = "__dream__"
+
 // AutomationListRow is the normalized row model for automation entries and
 // scheduled task entries shown together in the automation tab.
 type AutomationListRow struct {
@@ -55,7 +57,8 @@ func (al *AutomationList) SetError(msg string) {
 
 // SetEntriesAndTasks normalizes automation entries and scheduled tasks into one list.
 func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks []types.ResolvedTask) {
-	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
+	rows := make([]AutomationListRow, 0, len(entries)+len(tasks)+1)
+	rows = append(rows, DreamAutomationRow())
 	for _, entry := range entries {
 		if entry.Type != "automation" {
 			continue
@@ -73,7 +76,8 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
 func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry) {
-	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
+	rows := make([]AutomationListRow, 0, len(entries)+len(tasks)+1)
+	rows = append(rows, DreamAutomationRow())
 	for _, entry := range entries {
 		if entry.Type != "automation" {
 			continue
@@ -274,6 +278,9 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 
 	state := "enabled"
 	stateStyle := lipgloss.NewStyle().Foreground(ColorReady)
+	if row.Source == "dream" {
+		state = "available"
+	}
 	if !row.Enabled {
 		state = "disabled"
 		stateStyle = lipgloss.NewStyle().Foreground(ColorDim)
@@ -311,6 +318,19 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 		return lipgloss.NewStyle().MaxWidth(width).Render(line)
 	}
 	return line
+}
+
+// DreamAutomationRow returns the built-in Dream automation row.
+func DreamAutomationRow() AutomationListRow {
+	return AutomationListRow{
+		ID:            dreamAutomationRowID,
+		Title:         "Dream",
+		Source:        "dream",
+		Status:        "active",
+		Enabled:       true,
+		TriggerKind:   "built-in",
+		TriggerDetail: "memory consolidation",
+	}
 }
 
 // AutomationRowFromEntry converts a type=automation brain entry into a row.

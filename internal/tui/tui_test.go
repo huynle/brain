@@ -139,7 +139,7 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 
 	view := m.View()
 
-	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Automation"} {
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Automations"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
 		}
@@ -152,8 +152,8 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
 		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
 	}
-	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automation") {
-		t.Fatalf("expected Brain tab between Tasks and Automation, got:\n%s", view)
+	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automations") {
+		t.Fatalf("expected Brain tab between Tasks and Automations, got:\n%s", view)
 	}
 }
 
@@ -1826,10 +1826,10 @@ func TestConfig_IsMultiProject(t *testing.T) {
 }
 
 // =============================================================================
-// Panel Toggle Tests - 'L' toggles logs, 'T' toggles detail
+// Panel Toggle Tests - 'T' toggles detail; logs are only configurable.
 // =============================================================================
 
-func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
+func TestUpdate_LKey_DoesNotToggleLogVisibility(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
@@ -1840,25 +1840,16 @@ func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
 		t.Fatal("expected logsVisible to be false initially")
 	}
 
-	// Press 'l' to toggle logs on
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
-	if !model.logsVisible {
-		t.Error("expected logsVisible to be true after 'l' press")
-	}
-
-	// Press 'l' again to toggle logs off
-	updated, _ = model.Update(msg)
-	model = updated.(Model)
-
 	if model.logsVisible {
-		t.Error("expected logsVisible to be false after second 'l' press")
+		t.Error("expected logsVisible to remain false after 'l' press")
 	}
 }
 
-func TestUpdate_ZKey_TogglesLogVisibilityInMultiProjectMode(t *testing.T) {
+func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
 	m := NewModel(Config{
 		APIURL:   "http://localhost:3333",
 		Project:  "all",
@@ -1871,14 +1862,8 @@ func TestUpdate_ZKey_TogglesLogVisibilityInMultiProjectMode(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	model := updated.(Model)
-	if !model.logsVisible {
-		t.Fatal("expected logsVisible to be true after z press")
-	}
-
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
-	model = updated.(Model)
 	if model.logsVisible {
-		t.Fatal("expected logsVisible to be false after second z press")
+		t.Fatal("expected logsVisible to remain false after z press")
 	}
 }
 

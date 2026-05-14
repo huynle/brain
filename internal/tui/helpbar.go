@@ -227,9 +227,6 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Tab Panel
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
 
-	// l Logs
-	shortcuts += fmt.Sprintf("%s Logs  ", bold("l"))
-
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
 

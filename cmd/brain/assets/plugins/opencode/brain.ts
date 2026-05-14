@@ -501,6 +501,83 @@ function addPresentFields(
   }
 }
 
+const OPENCODE_OPTIONAL_DEFAULTS: Record<string, unknown> = {
+  priority: "medium",
+  feature_priority: "high",
+  merge_policy: "prompt_only",
+  merge_strategy: "squash",
+  remote_branch_policy: "keep",
+  execution_mode: "worktree",
+  executor: "opencode",
+  open_pr_before_merge: false,
+  complete_on_idle: false,
+  schedule_enabled: false,
+  max_runs: 0,
+};
+
+function isOpenCodeOptionalDefault(key: string, value: unknown): boolean {
+  if (!(key in OPENCODE_OPTIONAL_DEFAULTS)) return false;
+  return OPENCODE_OPTIONAL_DEFAULTS[key] === value;
+}
+
+function sanitizeUpdateArgs(source: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  let defaultCount = 0;
+
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value === "") continue;
+    if (isOpenCodeOptionalDefault(key, value)) defaultCount++;
+    clean[key] = value;
+  }
+
+  // OpenCode can materialize optional schema fields with defaults. Treat a
+  // cluster of those sentinel values as tool noise, while preserving intentional
+  // single-field updates such as priority="medium".
+  if (defaultCount >= 3) {
+    for (const [key, value] of Object.entries(clean)) {
+      if (isOpenCodeOptionalDefault(key, value)) {
+        delete clean[key];
+      }
+    }
+  }
+
+  return clean;
+}
+
+function sanitizeObjectArg(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+
+  const clean: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(value as Record<string, unknown>)) {
+    if (field === undefined || field === null) continue;
+    if (typeof field === "string" && field === "") continue;
+    if (Array.isArray(field) && field.length === 0) continue;
+    clean[key] = field;
+  }
+  return clean;
+}
+
+function hasFields(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value !== undefined && value !== null;
+  }
+  return Object.keys(value as Record<string, unknown>).length > 0;
+}
+
+function sanitizeBulkUpdateEntries(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const clean: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+    if (clean.updates && typeof clean.updates === "object" && !Array.isArray(clean.updates)) {
+      clean.updates = sanitizeUpdateArgs(clean.updates as Record<string, unknown>);
+    }
+    return clean;
+  });
+}
+
 
 
 // ============================================================================
@@ -1772,15 +1849,16 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .describe("Additional executor extensions to load for this task."),
         },
         async execute(args) {
+          const cleanArgs = sanitizeUpdateArgs(args as Record<string, unknown>);
           const updates: Record<string, unknown> = {};
-          addNonEmptyStringFields(updates, args, [
+          addNonEmptyStringFields(updates, cleanArgs, [
             "status", "title", "append", "note", "priority", "feature_id", "feature_priority",
             "target_workdir", "git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
             "execution_mode", "remote_branch_policy", "schedule", "run_once_at", "timezone",
             "starts_at", "expires_at", "feature_schedule", "feature_starts_at", "feature_expires_at",
             "feature_run_once_at", "feature_timezone", "direct_prompt", "agent", "model", "executor",
           ]);
-          addPresentFields(updates, args, [
+          addPresentFields(updates, cleanArgs, [
             "depends_on", "tags", "feature_depends_on", "trigger", "action", "retry",
             "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs", "extensions",
           ]);
@@ -1798,82 +1876,82 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             }>("PATCH", `/entries/${args.path}`, updates);
 
             const changes: string[] = [];
-            if (args.status) changes.push(`Status: -> ${args.status}`);
-            if (args.title) changes.push(`Title: -> "${args.title}"`);
-            if (args.note) changes.push(`Note: "${args.note}"`);
-            if (args.append)
-              changes.push(`Appended ${args.append.length} characters`);
-            if (args.depends_on)
-              changes.push(`Dependencies: ${args.depends_on.length} task(s)`);
-            if (args.tags !== undefined)
-              changes.push(`Tags: ${args.tags.length > 0 ? args.tags.join(", ") : "(cleared)"}`);
-            if (args.priority)
-              changes.push(`Priority: ${args.priority}`);
-            if (args.feature_id)
-              changes.push(`Feature ID: ${args.feature_id}`);
-            if (args.feature_priority)
-              changes.push(`Feature Priority: ${args.feature_priority}`);
-            if (args.feature_depends_on)
-              changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
-            if (args.trigger !== undefined)
+            if (cleanArgs.status) changes.push(`Status: -> ${cleanArgs.status}`);
+            if (cleanArgs.title) changes.push(`Title: -> "${cleanArgs.title}"`);
+            if (cleanArgs.note) changes.push(`Note: "${cleanArgs.note}"`);
+            if (cleanArgs.append)
+              changes.push(`Appended ${(cleanArgs.append as string).length} characters`);
+            if (cleanArgs.depends_on)
+              changes.push(`Dependencies: ${(cleanArgs.depends_on as unknown[]).length} task(s)`);
+            if (cleanArgs.tags !== undefined)
+              changes.push(`Tags: ${(cleanArgs.tags as unknown[]).length > 0 ? (cleanArgs.tags as string[]).join(", ") : "(cleared)"}`);
+            if (cleanArgs.priority)
+              changes.push(`Priority: ${cleanArgs.priority}`);
+            if (cleanArgs.feature_id)
+              changes.push(`Feature ID: ${cleanArgs.feature_id}`);
+            if (cleanArgs.feature_priority)
+              changes.push(`Feature Priority: ${cleanArgs.feature_priority}`);
+            if (cleanArgs.feature_depends_on)
+              changes.push(`Feature Dependencies: ${(cleanArgs.feature_depends_on as unknown[]).length} feature(s)`);
+            if (cleanArgs.trigger !== undefined)
               changes.push(`Trigger: set`);
-            if (args.action !== undefined)
+            if (cleanArgs.action !== undefined)
               changes.push(`Action: set`);
-            if (args.retry !== undefined)
+            if (cleanArgs.retry !== undefined)
               changes.push(`Retry: set`);
-            if (args.target_workdir)
-              changes.push(`Target Workdir: ${args.target_workdir}`);
-            if (args.git_branch)
-              changes.push(`Git Branch: ${args.git_branch}`);
-            if (args.merge_target_branch)
-              changes.push(`Merge Target Branch: ${args.merge_target_branch}`);
-            if (args.merge_policy)
-              changes.push(`Merge Policy: ${args.merge_policy}`);
-            if (args.merge_strategy)
-              changes.push(`Merge Strategy: ${args.merge_strategy}`);
-            if (args.open_pr_before_merge !== undefined)
-              changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
-            if (args.execution_mode)
-              changes.push(`Execution Mode: ${args.execution_mode}`);
+            if (cleanArgs.target_workdir)
+              changes.push(`Target Workdir: ${cleanArgs.target_workdir}`);
+            if (cleanArgs.git_branch)
+              changes.push(`Git Branch: ${cleanArgs.git_branch}`);
+            if (cleanArgs.merge_target_branch)
+              changes.push(`Merge Target Branch: ${cleanArgs.merge_target_branch}`);
+            if (cleanArgs.merge_policy)
+              changes.push(`Merge Policy: ${cleanArgs.merge_policy}`);
+            if (cleanArgs.merge_strategy)
+              changes.push(`Merge Strategy: ${cleanArgs.merge_strategy}`);
+            if (cleanArgs.open_pr_before_merge !== undefined)
+              changes.push(`Open PR Before Merge: ${cleanArgs.open_pr_before_merge}`);
+            if (cleanArgs.execution_mode)
+              changes.push(`Execution Mode: ${cleanArgs.execution_mode}`);
 
-            if (args.complete_on_idle !== undefined)
-              changes.push(`Complete On Idle: ${args.complete_on_idle}`);
-            if (args.remote_branch_policy)
-              changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
-            if (args.schedule)
-              changes.push(`Schedule: ${args.schedule}`);
-            if (args.schedule_enabled !== undefined)
-              changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
-            if (args.max_runs !== undefined)
-              changes.push(`Max Runs: ${args.max_runs === 0 ? "unlimited" : args.max_runs}`);
-            if (args.run_once_at)
-              changes.push(`Run Once At: ${args.run_once_at}`);
-            if (args.timezone)
-              changes.push(`Timezone: ${args.timezone}`);
-            if (args.starts_at)
-              changes.push(`Starts At: ${args.starts_at}`);
-            if (args.expires_at)
-              changes.push(`Expires At: ${args.expires_at}`);
-            if (args.feature_schedule)
-              changes.push(`Feature Schedule: ${args.feature_schedule}`);
-            if (args.feature_starts_at)
-              changes.push(`Feature Starts At: ${args.feature_starts_at}`);
-            if (args.feature_expires_at)
-              changes.push(`Feature Expires At: ${args.feature_expires_at}`);
-            if (args.feature_run_once_at)
-              changes.push(`Feature Run Once At: ${args.feature_run_once_at}`);
-            if (args.feature_timezone)
-              changes.push(`Feature Timezone: ${args.feature_timezone}`);
-            if (args.direct_prompt)
+            if (cleanArgs.complete_on_idle !== undefined)
+              changes.push(`Complete On Idle: ${cleanArgs.complete_on_idle}`);
+            if (cleanArgs.remote_branch_policy)
+              changes.push(`Remote Branch Policy: ${cleanArgs.remote_branch_policy}`);
+            if (cleanArgs.schedule)
+              changes.push(`Schedule: ${cleanArgs.schedule}`);
+            if (cleanArgs.schedule_enabled !== undefined)
+              changes.push(`Schedule Enabled: ${cleanArgs.schedule_enabled}`);
+            if (cleanArgs.max_runs !== undefined)
+              changes.push(`Max Runs: ${cleanArgs.max_runs === 0 ? "unlimited" : cleanArgs.max_runs}`);
+            if (cleanArgs.run_once_at)
+              changes.push(`Run Once At: ${cleanArgs.run_once_at}`);
+            if (cleanArgs.timezone)
+              changes.push(`Timezone: ${cleanArgs.timezone}`);
+            if (cleanArgs.starts_at)
+              changes.push(`Starts At: ${cleanArgs.starts_at}`);
+            if (cleanArgs.expires_at)
+              changes.push(`Expires At: ${cleanArgs.expires_at}`);
+            if (cleanArgs.feature_schedule)
+              changes.push(`Feature Schedule: ${cleanArgs.feature_schedule}`);
+            if (cleanArgs.feature_starts_at)
+              changes.push(`Feature Starts At: ${cleanArgs.feature_starts_at}`);
+            if (cleanArgs.feature_expires_at)
+              changes.push(`Feature Expires At: ${cleanArgs.feature_expires_at}`);
+            if (cleanArgs.feature_run_once_at)
+              changes.push(`Feature Run Once At: ${cleanArgs.feature_run_once_at}`);
+            if (cleanArgs.feature_timezone)
+              changes.push(`Feature Timezone: ${cleanArgs.feature_timezone}`);
+            if (cleanArgs.direct_prompt)
               changes.push(`Direct Prompt: set`);
-            if (args.agent)
-              changes.push(`Agent: ${args.agent}`);
-            if (args.model)
-              changes.push(`Model: ${args.model}`);
-            if (args.executor)
-              changes.push(`Executor: ${args.executor}`);
-            if (args.extensions)
-              changes.push(`Extensions: ${args.extensions.length} extension(s)`);
+            if (cleanArgs.agent)
+              changes.push(`Agent: ${cleanArgs.agent}`);
+            if (cleanArgs.model)
+              changes.push(`Model: ${cleanArgs.model}`);
+            if (cleanArgs.executor)
+              changes.push(`Executor: ${cleanArgs.executor}`);
+            if (cleanArgs.extensions)
+              changes.push(`Extensions: ${(cleanArgs.extensions as unknown[]).length} extension(s)`);
 
             return `Updated: ${args.path}
 
@@ -1905,6 +1983,7 @@ Supports two modes:
    - Great for batch status changes on known entries
 
 Primary use case: reassigning tasks across features or projects in bulk.
+Important: omit filter fields you do not want to match. Do not include \`priority\` in the filter unless you intentionally want to update only one priority.
 
 Examples:
 - Reassign all tasks in a feature: filter={feature_id:"old-feature"}, updates={feature_id:"new-feature"}
@@ -1970,8 +2049,12 @@ Examples:
             .describe("Preview changes without applying them (default: false)"),
         },
         async execute(args) {
+          const filter = sanitizeObjectArg(args.filter);
+          const updates = sanitizeUpdateArgs((args.updates ?? {}) as Record<string, unknown>);
+
           // Validate: must have (filter+updates) XOR entries
-          const hasFilter = !!args.filter;
+          const hasFilter = hasFields(filter);
+          const hasUpdates = hasFields(updates);
           const hasEntries = args.entries && args.entries.length > 0;
 
           if (!hasFilter && !hasEntries) {
@@ -1980,7 +2063,7 @@ Examples:
           if (hasFilter && hasEntries) {
             return "Cannot use both 'filter' and 'entries' modes. Choose one: filter-based (filter+updates) or explicit (entries).";
           }
-          if (hasFilter && !args.updates) {
+          if (hasFilter && !hasUpdates) {
             return "When using 'filter' mode, 'updates' is required to specify what changes to apply.";
           }
 
@@ -1990,10 +2073,10 @@ Examples:
             };
 
             if (hasFilter) {
-              body.filter = args.filter;
-              body.updates = args.updates;
+              body.filter = filter;
+              body.updates = updates;
             } else {
-              body.entries = args.entries;
+              body.entries = sanitizeBulkUpdateEntries(args.entries);
             }
 
             const response = await apiRequest<{

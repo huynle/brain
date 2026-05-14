@@ -237,7 +237,7 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 	}{
 		{ContentTabTasks, "Tasks"},
 		{ContentTabBrain, "Brain"},
-		{ContentTabAutomation, "Automation"},
+		{ContentTabAutomation, "Automations"},
 	} {
 		start := len(plain)
 		plain += " " + zone.label + " "

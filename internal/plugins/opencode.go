@@ -65,6 +65,8 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 	}
 
 	installed := 0
+	updated := 0
+	identical := 0
 	for _, relPath := range files {
 		// Skip README.md files
 		if filepath.Base(relPath) == "README.md" {
@@ -91,20 +93,39 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			content = addMarkdownHeader(content, relPath)
 		}
 
+		existingContent, readErr := os.ReadFile(destPath)
+		exists := readErr == nil
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("failed to read existing %s: %w", relPath, readErr)
+		}
+		isIdentical := exists && bytes.Equal(existingContent, content)
+
 		// Check for existing file if not Force mode
-		if !opts.Force {
-			if _, err := os.Stat(destPath); !os.IsNotExist(err) {
-				if opts.DryRun {
-					fmt.Printf("  [DRY RUN] Would skip (exists): %s\n", relPath)
-				}
-				continue // skip silently instead of erroring — install all other files
+		if !opts.Force && exists {
+			if isIdentical {
+				identical++
+				fmt.Printf("  Identical: %s (left untouched)\n", relPath)
+			} else if opts.DryRun {
+				fmt.Printf("  [DRY RUN] Would skip (exists): %s\n", relPath)
 			}
+			continue // skip silently instead of erroring — install all other files
+		}
+
+		if isIdentical {
+			identical++
+			fmt.Printf("  Identical: %s (left untouched)\n", relPath)
+			continue
 		}
 
 		// DryRun mode just prints
 		if opts.DryRun {
-			fmt.Printf("  [DRY RUN] Would install: %s -> %s\n", relPath, destPath)
-			installed++
+			if exists {
+				fmt.Printf("  [DRY RUN] Would update: %s -> %s\n", relPath, destPath)
+				updated++
+			} else {
+				fmt.Printf("  [DRY RUN] Would install: %s -> %s\n", relPath, destPath)
+				installed++
+			}
 			continue
 		}
 
@@ -118,14 +139,19 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			return fmt.Errorf("failed to write %s: %w", relPath, err)
 		}
 
-		installed++
-		fmt.Printf("  Installed: %s\n", relPath)
+		if exists {
+			updated++
+			fmt.Printf("  Updated: %s\n", relPath)
+		} else {
+			installed++
+			fmt.Printf("  Installed: %s\n", relPath)
+		}
 	}
 
 	if opts.DryRun {
-		fmt.Printf("\n  [DRY RUN] Would install %d files\n", installed)
+		fmt.Printf("\n  [DRY RUN] Would install %d files, update %d files, leave %d identical files untouched\n", installed, updated, identical)
 	} else {
-		fmt.Printf("\n  %d files installed to %s\n", installed, t.configPath)
+		fmt.Printf("\n  %d files installed, %d updated, %d identical left untouched in %s\n", installed, updated, identical, t.configPath)
 	}
 
 	return nil

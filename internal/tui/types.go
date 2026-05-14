@@ -165,7 +165,7 @@ func (ct ContentTab) String() string {
 	case ContentTabDream:
 		return "Dream"
 	case ContentTabAutomation:
-		return "Automation"
+		return "Automations"
 	case ContentTabRunners:
 		return "Runners"
 	case ContentTabLogs:

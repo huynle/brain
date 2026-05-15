@@ -174,6 +174,301 @@ func TestAutomationService_HandleEventDeduplicatesOncePerValue(t *testing.T) {
 	}
 }
 
+func TestAutomationService_HandleEventSkipsWhenMaxConcurrentGeneratedTasksReached(t *testing.T) {
+	tests := []struct {
+		name   string
+		status string
+	}{
+		{name: "pending generated task", status: "pending"},
+		{name: "active generated task", status: "active"},
+		{name: "in_progress generated task", status: "in_progress"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, _, _ := newTestBrainService(t)
+			ctx := context.Background()
+
+			automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+				Type:    "automation",
+				Title:   "Limited follow-up",
+				Content: "Creates at most one runnable generated task.",
+				Status:  "active",
+				Project: "automation-max-concurrent-test-" + tt.status,
+				Trigger: &types.TriggerConfig{
+					Type:          "event",
+					Event:         types.EventTaskCompleted,
+					MaxConcurrent: 1,
+				},
+				Action: &types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Create max-concurrent summary.",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Save automation failed: %v", err)
+			}
+
+			generated := true
+			_, err = brain.Save(ctx, types.CreateEntryRequest{
+				Type:        "task",
+				Title:       "Existing generated task",
+				Content:     "Already runnable.",
+				Status:      tt.status,
+				Project:     "automation-max-concurrent-test-" + tt.status,
+				Generated:   &generated,
+				GeneratedBy: "automation:" + automationResp.ID,
+			})
+			if err != nil {
+				t.Fatalf("Save existing generated task failed: %v", err)
+			}
+
+			automation := NewAutomationService(brain)
+			err = automation.HandleEvent(ctx, types.Event{
+				ID:        "evt-max-concurrent-" + tt.status,
+				Type:      types.EventTaskCompleted,
+				Source:    types.EventSourceRunner,
+				ProjectID: "automation-max-concurrent-test-" + tt.status,
+				TaskID:    "source-task",
+			})
+			if err != nil {
+				t.Fatalf("HandleEvent failed: %v", err)
+			}
+
+			resp, err := brain.List(ctx, types.ListEntriesRequest{
+				Type:    "task",
+				Project: "automation-max-concurrent-test-" + tt.status,
+				Limit:   10,
+			})
+			if err != nil {
+				t.Fatalf("List tasks failed: %v", err)
+			}
+			if len(resp.Entries) != 1 {
+				t.Fatalf("expected max_concurrent guard to keep one generated task, got %d", len(resp.Entries))
+			}
+		})
+	}
+}
+
+func TestAutomationService_HandleEventIgnoresCompletedGeneratedTasksForMaxConcurrent(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Limited follow-up after completion",
+		Content: "Completed generated tasks should not count against max_concurrent.",
+		Status:  "active",
+		Project: "automation-max-concurrent-completed-test",
+		Trigger: &types.TriggerConfig{
+			Type:          "event",
+			Event:         types.EventTaskCompleted,
+			MaxConcurrent: 1,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Create another summary.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "task",
+		Title:       "Completed generated task",
+		Content:     "Already done.",
+		Status:      "completed",
+		Project:     "automation-max-concurrent-completed-test",
+		Generated:   &generated,
+		GeneratedBy: "automation:" + automationResp.ID,
+	})
+	if err != nil {
+		t.Fatalf("Save completed generated task failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-max-concurrent-completed",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-max-concurrent-completed-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-max-concurrent-completed-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 2 {
+		t.Fatalf("expected completed generated task not to block creation, got %d tasks", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_HandleEventSkipsDuringCooldownUsingExistingGeneratedTasks(t *testing.T) {
+	tests := []struct {
+		name     string
+		cooldown string
+		created  time.Time
+		now      time.Time
+	}{
+		{
+			name:     "five minute cooldown",
+			cooldown: "5m",
+			created:  time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC),
+			now:      time.Date(2026, 5, 15, 12, 4, 0, 0, time.UTC),
+		},
+		{
+			name:     "one hour cooldown",
+			cooldown: "1h",
+			created:  time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC),
+			now:      time.Date(2026, 5, 15, 12, 30, 0, 0, time.UTC),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, _, _ := newTestBrainService(t)
+			ctx := context.Background()
+			project := "automation-cooldown-test-" + tt.name
+
+			setTestNow(t, tt.created)
+			automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+				Type:    "automation",
+				Title:   "Cooldown follow-up",
+				Content: "Creates only after cooldown expires.",
+				Status:  "active",
+				Project: project,
+				Trigger: &types.TriggerConfig{
+					Type:     "event",
+					Event:    types.EventTaskCompleted,
+					Cooldown: tt.cooldown,
+				},
+				Action: &types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Create cooldown summary.",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Save automation failed: %v", err)
+			}
+
+			generated := true
+			_, err = brain.Save(ctx, types.CreateEntryRequest{
+				Type:        "task",
+				Title:       "Recent generated task",
+				Content:     "Recently created.",
+				Status:      "completed",
+				Project:     project,
+				Generated:   &generated,
+				GeneratedBy: "automation:" + automationResp.ID,
+			})
+			if err != nil {
+				t.Fatalf("Save recent generated task failed: %v", err)
+			}
+
+			setTestNow(t, tt.now)
+			automation := NewAutomationService(brain)
+			err = automation.HandleEvent(ctx, types.Event{
+				ID:        "evt-cooldown-" + tt.cooldown,
+				Type:      types.EventTaskCompleted,
+				Source:    types.EventSourceRunner,
+				ProjectID: project,
+				TaskID:    "source-task",
+			})
+			if err != nil {
+				t.Fatalf("HandleEvent failed: %v", err)
+			}
+
+			resp, err := brain.List(ctx, types.ListEntriesRequest{
+				Type:    "task",
+				Project: project,
+				Limit:   10,
+			})
+			if err != nil {
+				t.Fatalf("List tasks failed: %v", err)
+			}
+			if len(resp.Entries) != 1 {
+				t.Fatalf("expected cooldown guard to skip duplicate generation, got %d tasks", len(resp.Entries))
+			}
+		})
+	}
+}
+
+func TestAutomationService_HandleEventTreatsInvalidCooldownAsNoCooldown(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	setTestNow(t, created)
+
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Invalid cooldown follow-up",
+		Content: "Invalid cooldown should not block generation.",
+		Status:  "active",
+		Project: "automation-invalid-cooldown-test",
+		Trigger: &types.TriggerConfig{
+			Type:     "event",
+			Event:    types.EventTaskCompleted,
+			Cooldown: "not-a-duration",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Create invalid-cooldown summary.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "task",
+		Title:       "Previous generated task",
+		Content:     "Already generated.",
+		Status:      "completed",
+		Project:     "automation-invalid-cooldown-test",
+		Generated:   &generated,
+		GeneratedBy: "automation:" + automationResp.ID,
+	})
+	if err != nil {
+		t.Fatalf("Save previous generated task failed: %v", err)
+	}
+
+	setTestNow(t, created.Add(time.Minute))
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-invalid-cooldown",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-invalid-cooldown-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-invalid-cooldown-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 2 {
+		t.Fatalf("expected invalid cooldown to allow generation, got %d tasks", len(resp.Entries))
+	}
+}
+
 func TestAutomationService_HandleEventSupportsProjectFilterAlias(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
@@ -538,4 +833,11 @@ func waitForGeneratedTask(t *testing.T, brain *BrainServiceImpl, project string)
 	}
 	t.Fatalf("timeout waiting for generated task; last count=%d", lastCount)
 	return types.BrainEntry{}
+}
+
+func setTestNow(t *testing.T, now time.Time) {
+	t.Helper()
+	original := types.TimeNowUTC
+	types.TimeNowUTC = func() time.Time { return now.UTC() }
+	t.Cleanup(func() { types.TimeNowUTC = original })
 }

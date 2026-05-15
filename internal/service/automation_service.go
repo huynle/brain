@@ -190,6 +190,11 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	if project == "" {
 		project = evt.ProjectID
 	}
+	if skip, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
+		return err
+	} else if skip {
+		return nil
+	}
 
 	generated := true
 	generatedKey := automationGeneratedKey(automation, evt)
@@ -233,6 +238,91 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		return fmt.Errorf("create automation task: %w", err)
 	}
 	return nil
+}
+
+func (s *AutomationService) shouldSkipTaskGeneration(ctx context.Context, project string, automation types.BrainEntry) (bool, error) {
+	if automation.Trigger == nil || (automation.Trigger.MaxConcurrent <= 0 && automation.Trigger.Cooldown == "") {
+		return false, nil
+	}
+
+	tasks, err := s.listAutomationGeneratedTasks(ctx, project, automation.ID)
+	if err != nil {
+		return false, err
+	}
+
+	if automation.Trigger.MaxConcurrent > 0 && countRunnableGeneratedTasks(tasks) >= automation.Trigger.MaxConcurrent {
+		return true, nil
+	}
+
+	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, types.TimeNowUTC()) {
+		return true, nil
+	}
+
+	return false, nil
+}
+
+func (s *AutomationService) listAutomationGeneratedTasks(ctx context.Context, project, automationID string) ([]types.BrainEntry, error) {
+	resp, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: project,
+		Limit:   1000,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list automation generated tasks: %w", err)
+	}
+
+	generatedBy := fmt.Sprintf("automation:%s", automationID)
+	tasks := make([]types.BrainEntry, 0)
+	for _, task := range resp.Entries {
+		if task.GeneratedBy == generatedBy {
+			tasks = append(tasks, task)
+		}
+	}
+	return tasks, nil
+}
+
+func countRunnableGeneratedTasks(tasks []types.BrainEntry) int {
+	count := 0
+	for _, task := range tasks {
+		switch task.Status {
+		case "pending", "in_progress", "active":
+			count++
+		}
+	}
+	return count
+}
+
+func cooldownActive(tasks []types.BrainEntry, cooldown string, now time.Time) bool {
+	duration, err := time.ParseDuration(cooldown)
+	if err != nil {
+		return false
+	}
+
+	lastGenerated, ok := latestGeneratedTaskTime(tasks)
+	if !ok {
+		return false
+	}
+
+	return now.UTC().Sub(lastGenerated) < duration
+}
+
+func latestGeneratedTaskTime(tasks []types.BrainEntry) (time.Time, bool) {
+	var latest time.Time
+	found := false
+	for _, task := range tasks {
+		if task.Created == "" {
+			continue
+		}
+		created, err := time.Parse(time.RFC3339, task.Created)
+		if err != nil {
+			continue
+		}
+		if !found || created.After(latest) {
+			latest = created
+			found = true
+		}
+	}
+	return latest, found
 }
 
 func (s *AutomationService) generatedTaskExists(ctx context.Context, project, generatedKey string) (bool, error) {

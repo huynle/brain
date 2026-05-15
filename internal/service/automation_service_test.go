@@ -729,6 +729,238 @@ func TestAutomationService_HandleEventDeduplicatesSessionAutomationOncePerSessio
 	}
 }
 
+func TestAutomationService_HandleEventCreatesTaskForMatchingWebhookAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Deploy webhook",
+		Content: "Creates a task when a matching inbound webhook is received.",
+		Status:  "active",
+		Project: "automation-webhook-test",
+		Trigger: &types.TriggerConfig{
+			Type:    "webhook",
+			Webhook: "hooks/deploy",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Deploy from webhook.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-webhook-1",
+		Type:      "webhook.received",
+		Source:    "webhook",
+		ProjectID: "automation-webhook-test",
+		Metadata: map[string]string{
+			"webhook_path": "/hooks/deploy/",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-webhook-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated webhook task, got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].DirectPrompt != "Deploy from webhook." {
+		t.Errorf("generated task direct_prompt = %q", resp.Entries[0].DirectPrompt)
+	}
+}
+
+func TestAutomationService_HandleEventAppliesGuardsForWebhookAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	project := "automation-webhook-guard-test"
+	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	setTestNow(t, created)
+
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Guarded webhook",
+		Content: "Webhook automation guarded by cooldown and max_concurrent.",
+		Status:  "active",
+		Project: project,
+		Trigger: &types.TriggerConfig{
+			Type:          "webhook",
+			Webhook:       "hooks/deploy",
+			Cooldown:      "10m",
+			MaxConcurrent: 1,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Deploy from guarded webhook.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "task",
+		Title:       "Existing webhook generated task",
+		Content:     "Already runnable.",
+		Status:      "pending",
+		Project:     project,
+		Generated:   &generated,
+		GeneratedBy: "automation:" + automationResp.ID,
+	})
+	if err != nil {
+		t.Fatalf("Save existing generated task failed: %v", err)
+	}
+
+	setTestNow(t, created.Add(5*time.Minute))
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-webhook-guard-1",
+		Type:      "webhook.received",
+		Source:    "webhook",
+		ProjectID: project,
+		Metadata:  map[string]string{"webhook_path": "hooks/deploy"},
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected webhook guards to keep one generated task, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_HandleEventAppliesGuardsForSessionAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	project := "automation-session-guard-test"
+	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	setTestNow(t, created)
+
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Guarded session automation",
+		Content: "Session automation guarded by cooldown and max_concurrent.",
+		Status:  "active",
+		Project: project,
+		Trigger: &types.TriggerConfig{
+			Type:          "session",
+			Cooldown:      "10m",
+			MaxConcurrent: 1,
+		},
+		Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Handle guarded session."},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "task",
+		Title:       "Existing session generated task",
+		Content:     "Already runnable.",
+		Status:      "pending",
+		Project:     project,
+		Generated:   &generated,
+		GeneratedBy: "automation:" + automationResp.ID,
+	})
+	if err != nil {
+		t.Fatalf("Save existing generated task failed: %v", err)
+	}
+
+	setTestNow(t, created.Add(5*time.Minute))
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-session-guard-1",
+		Type:      types.EventRunnerSessionDiscovered,
+		Source:    types.EventSourceRunner,
+		ProjectID: project,
+		Metadata:  map[string]string{"session_id": "ses_guarded"},
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected session guards to keep one generated task, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_CheckScheduledAppliesGuardsForCronAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	project := "automation-cron-guard-test"
+	created := time.Date(2026, 5, 15, 12, 0, 0, 0, time.UTC)
+	setTestNow(t, created)
+
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Guarded cron automation",
+		Content: "Cron automation guarded by cooldown and max_concurrent.",
+		Status:  "active",
+		Project: project,
+		Trigger: &types.TriggerConfig{
+			Type:          "cron",
+			Schedule:      "* * * * *",
+			Cooldown:      "10m",
+			MaxConcurrent: 1,
+		},
+		Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Handle guarded cron."},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "task",
+		Title:       "Existing cron generated task",
+		Content:     "Already runnable.",
+		Status:      "pending",
+		Project:     project,
+		Generated:   &generated,
+		GeneratedBy: "automation:" + automationResp.ID,
+	})
+	if err != nil {
+		t.Fatalf("Save existing generated task failed: %v", err)
+	}
+
+	now := created.Add(5 * time.Minute)
+	setTestNow(t, now)
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected cron guards to keep one generated task, got %d", len(resp.Entries))
+	}
+}
+
 func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()

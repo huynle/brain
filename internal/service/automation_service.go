@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/huynle/brain-api/internal/realtime"
@@ -137,6 +138,8 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 	switch automation.Trigger.Type {
 	case "event":
 		return automationMatchesNamedEvent(automation, evt)
+	case "webhook":
+		return automationMatchesWebhook(automation, evt)
 	case "session":
 		return automationMatchesSession(automation, evt)
 	default:
@@ -154,6 +157,26 @@ func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) b
 		}
 	}
 	return matchAutomationFilters(automation.Trigger.Filter, evt)
+}
+
+func automationMatchesWebhook(automation types.BrainEntry, evt types.Event) bool {
+	if evt.Type != "webhook.received" {
+		return false
+	}
+	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
+		if automation.Trigger.Filter["project"] != "*" && automation.Trigger.Filter["project_id"] != "*" {
+			return false
+		}
+	}
+	incomingPath := getEventField(evt, "webhook_path")
+	if normalizeWebhookPath(incomingPath) != normalizeWebhookPath(automation.Trigger.Webhook) {
+		return false
+	}
+	return matchAutomationFilters(automation.Trigger.Filter, evt)
+}
+
+func normalizeWebhookPath(path string) string {
+	return strings.Trim(path, "/")
 }
 
 func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool {

@@ -223,6 +223,217 @@ func TestAutomationService_HandleEventSupportsProjectFilterAlias(t *testing.T) {
 	}
 }
 
+func TestAutomationService_HandleEventCreatesTaskForSessionAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Summarize discovered session",
+		Content: "Creates a task when the runner discovers an agent session.",
+		Status:  "active",
+		Project: "automation-session-test",
+		Trigger: &types.TriggerConfig{
+			Type: "session",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Summarize the discovered session.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-session-1",
+		Type:      types.EventRunnerSessionDiscovered,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-session-test",
+		Metadata: map[string]string{
+			"session_id": "ses_abc123",
+		},
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-session-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated session task, got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].DirectPrompt != "Summarize the discovered session." {
+		t.Errorf("generated task direct_prompt = %q", resp.Entries[0].DirectPrompt)
+	}
+	if resp.Entries[0].GeneratedBy == "" {
+		t.Error("expected generated_by to identify the automation")
+	}
+}
+
+func TestAutomationService_HandleEventIgnoresNonSessionEventForSessionAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Session-only automation",
+		Content: "Only runner session discovery should trigger this automation.",
+		Status:  "active",
+		Project: "automation-session-ignore-test",
+		Trigger: &types.TriggerConfig{
+			Type: "session",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "This should only run for sessions.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-session-ignore-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-session-ignore-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-session-ignore-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated task for non-session event, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_HandleEventAppliesFiltersForSessionAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Filtered session automation",
+		Content: "Only matching session metadata should trigger this automation.",
+		Status:  "active",
+		Project: "automation-session-filter-test",
+		Trigger: &types.TriggerConfig{
+			Type: "session",
+			Filter: map[string]string{
+				"session_id": "ses_expected",
+			},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Handle the filtered session.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	for _, sessionID := range []string{"ses_other", "ses_expected"} {
+		err = automation.HandleEvent(ctx, types.Event{
+			ID:        "evt-session-filter-" + sessionID,
+			Type:      types.EventRunnerSessionDiscovered,
+			Source:    types.EventSourceRunner,
+			ProjectID: "automation-session-filter-test",
+			Metadata: map[string]string{
+				"session_id": sessionID,
+			},
+		})
+		if err != nil {
+			t.Fatalf("HandleEvent failed: %v", err)
+		}
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-session-filter-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task for matching session filter, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_HandleEventDeduplicatesSessionAutomationOncePerSession(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Once per session automation",
+		Content: "Creates one generated task per discovered session.",
+		Status:  "active",
+		Project: "automation-session-dedup-test",
+		Trigger: &types.TriggerConfig{
+			Type:    "session",
+			OncePer: "session",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Handle one session once.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	for _, eventID := range []string{"evt-session-dedup-1", "evt-session-dedup-2"} {
+		err = automation.HandleEvent(ctx, types.Event{
+			ID:        eventID,
+			Type:      types.EventRunnerSessionDiscovered,
+			Source:    types.EventSourceRunner,
+			ProjectID: "automation-session-dedup-test",
+			Metadata: map[string]string{
+				"session_id": "ses_dedup",
+			},
+		})
+		if err != nil {
+			t.Fatalf("HandleEvent failed: %v", err)
+		}
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-session-dedup-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task after duplicate session events, got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].GeneratedKey == "" {
+		t.Fatal("expected generated_key for once_per session dedup")
+	}
+}
+
 func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()

@@ -134,10 +134,30 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 	if automation.Trigger == nil || automation.Action == nil {
 		return false
 	}
-	if automation.Trigger.Type != "event" {
+	switch automation.Trigger.Type {
+	case "event":
+		return automationMatchesNamedEvent(automation, evt)
+	case "session":
+		return automationMatchesSession(automation, evt)
+	default:
 		return false
 	}
+}
+
+func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) bool {
 	if !types.MatchEventPattern(automation.Trigger.Event, evt.Type) {
+		return false
+	}
+	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
+		if automation.Trigger.Filter["project"] != "*" && automation.Trigger.Filter["project_id"] != "*" {
+			return false
+		}
+	}
+	return matchAutomationFilters(automation.Trigger.Filter, evt)
+}
+
+func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool {
+	if evt.Type != types.EventRunnerSessionDiscovered {
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {

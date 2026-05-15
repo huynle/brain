@@ -230,6 +230,11 @@ func getEventField(evt types.Event, key string) string {
 		return evt.Source
 	case "runner_id":
 		return evt.RunnerID
+	case "session":
+		if evt.Metadata != nil {
+			return evt.Metadata["session_id"]
+		}
+		return ""
 	case "from_status":
 		return evt.FromStatus
 	case "to_status":

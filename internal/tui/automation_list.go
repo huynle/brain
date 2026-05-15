@@ -352,6 +352,11 @@ func AutomationRowFromEntry(entry types.BrainEntry) AutomationListRow {
 			row.TriggerDetail = entry.Trigger.Schedule
 		case "webhook":
 			row.TriggerDetail = entry.Trigger.Webhook
+		case "session":
+			row.TriggerDetail = entry.Trigger.Event
+			if row.TriggerDetail == "" {
+				row.TriggerDetail = types.EventRunnerSessionDiscovered
+			}
 		}
 	}
 	return row

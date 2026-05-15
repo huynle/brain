@@ -124,6 +124,56 @@ func TestAutomationCommand_List_WithEntries(t *testing.T) {
 	}
 }
 
+func TestAutomationCommand_List_SessionTriggerAndGuards(t *testing.T) {
+	entries := []types.BrainEntry{
+		{
+			ID:        "auto9999",
+			Title:     "On Session Discovery",
+			Type:      "automation",
+			Status:    "active",
+			ProjectID: "my-project",
+			Trigger: &types.TriggerConfig{
+				Type:          "session",
+				Event:         types.EventRunnerSessionDiscovered,
+				Cooldown:      "5m",
+				MaxConcurrent: 2,
+			},
+			Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Inspect session"},
+		},
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "GET" && strings.Contains(r.URL.Path, "/api/v1/entries") {
+			resp := types.ListEntriesResponse{Entries: entries, Total: len(entries)}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	var out bytes.Buffer
+	cmd := newTestAutomationCommand(server.URL, "list", "", &AutomationFlags{}, &out)
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "session") {
+		t.Errorf("output should contain trigger type 'session': %q", output)
+	}
+	if !strings.Contains(output, "session:runner.session_discovered") {
+		t.Errorf("output should contain session trigger detail: %q", output)
+	}
+	if !strings.Contains(output, "cooldown=5m") {
+		t.Errorf("output should contain cooldown guard: %q", output)
+	}
+	if !strings.Contains(output, "max_concurrent=2") {
+		t.Errorf("output should contain max_concurrent guard: %q", output)
+	}
+}
+
 func TestAutomationCommand_List_JSON(t *testing.T) {
 	entries := []types.BrainEntry{
 		{ID: "auto1234", Title: "Test", Type: "automation", Status: "active"},
@@ -455,6 +505,56 @@ func TestAutomationCommand_Create(t *testing.T) {
 	}
 	if receivedReq.Action == nil || receivedReq.Action.Type != "prompt" {
 		t.Errorf("expected prompt action, got %+v", receivedReq.Action)
+	}
+
+	output := out.String()
+	if !strings.Contains(output, "Automation created") {
+		t.Errorf("output should contain 'Automation created': %q", output)
+	}
+}
+
+func TestAutomationCommand_Create_SessionTriggerAndGuards(t *testing.T) {
+	var receivedReq types.CreateEntryRequest
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && strings.Contains(r.URL.Path, "/api/v1/entries") {
+			json.NewDecoder(r.Body).Decode(&receivedReq)
+			w.WriteHeader(http.StatusCreated)
+			resp := types.CreateEntryResponse{ID: "newauto2", Path: "projects/test/automation/newauto2.md"}
+			json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	// name, trigger=session, default session event, action=prompt, prompt text,
+	// agent skip, project skip, cooldown, max_concurrent.
+	input := "Session Automation\n4\n\n1\nInspect session\n\n\n5m\n2\n"
+
+	var out bytes.Buffer
+	cmd := newTestAutomationCommand(server.URL, "create", "", &AutomationFlags{}, &out)
+	cmd.In = strings.NewReader(input)
+
+	err := cmd.Execute()
+	if err != nil {
+		t.Fatalf("Execute() error: %v", err)
+	}
+
+	if receivedReq.Trigger == nil {
+		t.Fatal("expected trigger request")
+	}
+	if receivedReq.Trigger.Type != "session" {
+		t.Errorf("expected session trigger, got %q", receivedReq.Trigger.Type)
+	}
+	if receivedReq.Trigger.Event != types.EventRunnerSessionDiscovered {
+		t.Errorf("expected default session event %q, got %q", types.EventRunnerSessionDiscovered, receivedReq.Trigger.Event)
+	}
+	if receivedReq.Trigger.Cooldown != "5m" {
+		t.Errorf("expected cooldown '5m', got %q", receivedReq.Trigger.Cooldown)
+	}
+	if receivedReq.Trigger.MaxConcurrent != 2 {
+		t.Errorf("expected max_concurrent 2, got %d", receivedReq.Trigger.MaxConcurrent)
 	}
 
 	output := out.String()

@@ -865,6 +865,16 @@ FLAGS:
   -q, --quiet                    Suppress summary counts
   -h, --help                     Show this help
 
+TRIGGERS:
+  event                           Fires on a brain event
+  cron                            Fires on a schedule
+  webhook                         Fires from an external webhook
+  session                         Fires on runner session events
+
+GUARDS:
+  cooldown                        Minimum duration between generated tasks (e.g. 5m)
+  max_concurrent                  Maximum active generated tasks allowed at once
+
 EXAMPLES:
   brain automation
   brain automation list
@@ -889,9 +899,20 @@ FLAGS:
 DESCRIPTION:
   Opens an interactive wizard that walks you through:
   1. Automation name
-  2. Trigger type (event, cron, webhook) and configuration
+  2. Trigger type (event, cron, webhook, session) and configuration
   3. Action type (prompt, script) and configuration
   4. Project scope
+  5. Optional guards: cooldown and max_concurrent
+
+TRIGGER TYPES:
+  event                           Brain event name (e.g. task.completed)
+  cron                            Cron schedule (e.g. 0 9 * * *)
+  webhook                         Webhook path (e.g. /hooks/deploy)
+  session                         Runner session event; defaults to runner.session_discovered
+
+GUARDS:
+  cooldown                        Optional Go duration such as 5m or 1h
+  max_concurrent                  Optional positive integer concurrency cap
 
 EXAMPLES:
   brain automation create

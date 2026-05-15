@@ -42,6 +42,77 @@ func TestAutomationList_SetEntriesAndTasks_MergesAutomationAndScheduledRows(t *t
 	}
 }
 
+func TestAutomationList_AutomationRowFromEntry_RendersTriggerDetails(t *testing.T) {
+	tests := []struct {
+		name    string
+		trigger types.TriggerConfig
+		want    string
+	}{
+		{
+			name: "event trigger preserves event detail",
+			trigger: types.TriggerConfig{
+				Type:  "event",
+				Event: "feature.completed",
+			},
+			want: "event:feature.completed",
+		},
+		{
+			name: "cron trigger preserves schedule detail",
+			trigger: types.TriggerConfig{
+				Type:     "cron",
+				Schedule: "0 * * * *",
+			},
+			want: "cron:0 * * * *",
+		},
+		{
+			name: "webhook trigger preserves webhook detail",
+			trigger: types.TriggerConfig{
+				Type:    "webhook",
+				Webhook: "/hooks/feature-review",
+			},
+			want: "webhook:/hooks/feature-review",
+		},
+		{
+			name: "session trigger preserves explicit event detail",
+			trigger: types.TriggerConfig{
+				Type:  "session",
+				Event: types.EventRunnerSessionDiscovered,
+			},
+			want: "session:" + types.EventRunnerSessionDiscovered,
+		},
+		{
+			name: "session trigger renders default detail when event omitted",
+			trigger: types.TriggerConfig{
+				Type: "session",
+			},
+			want: "session:" + types.EventRunnerSessionDiscovered,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			al := NewAutomationList()
+			al.SetEntriesAndTasks(
+				[]types.BrainEntry{
+					{
+						ID:      "auto1",
+						Title:   "Automation",
+						Type:    "automation",
+						Status:  "active",
+						Trigger: &tt.trigger,
+					},
+				},
+				nil,
+			)
+
+			view := al.View(120, 20)
+			if !strings.Contains(view, tt.want) {
+				t.Fatalf("expected view to contain %q, got:\n%s", tt.want, view)
+			}
+		})
+	}
+}
+
 func TestAutomationList_View_ShowsEnabledAndDisabledStates(t *testing.T) {
 	al := NewAutomationList()
 	al.SetEntriesAndTasks(

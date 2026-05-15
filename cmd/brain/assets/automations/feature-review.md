@@ -12,6 +12,7 @@ trigger:
   filter:
     project: "*"
   once_per: feature_id
+  max_concurrent: 1
 action:
   type: prompt
   execution_mode: current_branch
@@ -65,6 +66,7 @@ Automatically performs a two-phase code review when all tasks in a feature compl
 
 - Triggers on `feature.all_completed` event
 - Fires once per feature (dedup by feature_id)
+- Limits generated reviews to one runnable task at a time (`max_concurrent: 1`)
 - Phase 1: Completeness review — checks all original requirements are addressed
 - Phase 2: Code quality review — reviews patterns, testing, error handling, security
 - Saves a structured report as a brain entry

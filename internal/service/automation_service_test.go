@@ -9,6 +9,14 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+type fakeAutomationPauseChecker struct {
+	paused bool
+}
+
+func (f fakeAutomationPauseChecker) IsAutomationsPaused() bool {
+	return f.paused
+}
+
 func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
@@ -119,6 +127,50 @@ func TestAutomationService_StartConsumesEventHubEvents(t *testing.T) {
 	task := waitForGeneratedTask(t, brain, "automation-hub-test")
 	if task.DirectPrompt != "Create the hub follow-up summary." {
 		t.Errorf("generated task direct_prompt = %q", task.DirectPrompt)
+	}
+}
+
+func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Paused event automation",
+		Content: "Should not run while the project is paused.",
+		Status:  "active",
+		Project: "automation-paused-event-test",
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: types.EventTaskCompleted,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "This should not be generated.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	automation.SetPauseChecker(fakeAutomationPauseChecker{paused: true})
+	if err := automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-paused-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-paused-event-test",
+		TaskID:    "source-task",
+	}); err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "automation-paused-event-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated tasks while project paused, got %d", len(resp.Entries))
 	}
 }
 
@@ -1091,6 +1143,45 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] + ":202604291305"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
+	}
+}
+
+func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 29, 13, 5, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Paused cron automation",
+		Content: "Should not create tasks while paused.",
+		Status:  "active",
+		Project: "automation-paused-cron-test",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "* * * * *",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "This should not be generated.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	automation.SetPauseChecker(fakeAutomationPauseChecker{paused: true})
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "automation-paused-cron-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated cron tasks while project paused, got %d", len(resp.Entries))
 	}
 }
 

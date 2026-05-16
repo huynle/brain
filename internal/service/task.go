@@ -284,6 +284,9 @@ func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID 
 	if len(opts.Executors) > 0 {
 		tasks = filterByExecutors(tasks, opts.Executors)
 	}
+	if opts.GeneratedByPrefix != "" {
+		tasks = filterByGeneratedByPrefix(tasks, opts.GeneratedByPrefix)
+	}
 	if opts.RunnerID == "" {
 		return tasks, nil
 	}
@@ -326,6 +329,16 @@ func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, project
 		filtered = append(filtered, task)
 	}
 	return filtered, nil
+}
+
+func filterByGeneratedByPrefix(tasks []types.ResolvedTask, prefix string) []types.ResolvedTask {
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if strings.HasPrefix(task.GeneratedBy, prefix) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
 }
 
 func runnerHasRequiredCapabilities(task types.ResolvedTask, capabilities map[string]bool) bool {

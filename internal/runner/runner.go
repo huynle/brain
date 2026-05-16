@@ -28,6 +28,14 @@ const DefaultRenewInterval = 5 * time.Minute
 // claimed or was assigned the task before this runner could start it.
 var ErrTaskClaimConflict = errors.New("task claim conflict")
 
+func isAutomationGeneratedTask(task *types.ResolvedTask) bool {
+	return task != nil && strings.HasPrefix(task.GeneratedBy, "automation:")
+}
+
+func automationIDFromGeneratedBy(generatedBy string) string {
+	return strings.TrimPrefix(generatedBy, "automation:")
+}
+
 // =============================================================================
 // Interfaces for dependency injection
 // =============================================================================
@@ -35,9 +43,10 @@ var ErrTaskClaimConflict = errors.New("task claim conflict")
 // TaskFetchOptions holds optional filters for fetching tasks from the Brain API.
 // Both fields are optional — nil/empty means no filter (return all).
 type TaskFetchOptions struct {
-	FeatureIDs []string // Filter by feature ID
-	Executors  []string // Filter by executor type (e.g., "opencode", "pi")
-	RunnerID   string   // Runner identity for server-side eligibility checks
+	FeatureIDs        []string // Filter by feature ID
+	Executors         []string // Filter by executor type (e.g., "opencode", "pi")
+	RunnerID          string   // Runner identity for server-side eligibility checks
+	GeneratedByPrefix string   // Filter by generated_by prefix (e.g., "automation:")
 }
 
 // Client abstracts the Brain API client for testability.
@@ -190,10 +199,11 @@ type TaskRunner struct {
 	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu)
-	pauseMu         sync.RWMutex
-	pauseCache      map[string]bool
-	allPaused       bool
-	enabledFeatures map[string]bool // features toggled on via TUI "x" key
+	pauseMu           sync.RWMutex
+	pauseCache        map[string]bool
+	allPaused         bool
+	automationsPaused bool
+	enabledFeatures   map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -297,6 +307,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 
 	if opts.StartPaused {
 		tr.allPaused = true
+		tr.automationsPaused = true
 	}
 
 	// Wire FeatureTracker to emit feature lifecycle events.
@@ -620,12 +631,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 4. Check if all paused
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
-	enabledIDs := tr.getEnabledFeatureIDsLocked()
+	automationsPaused := tr.automationsPaused
 	tr.pauseMu.RUnlock()
-	if allPaused && len(enabledIDs) == 0 {
-		tr.emitPollComplete()
-		return
-	}
 
 	// 5. Fill available slots
 	slotsAvailable := maxParallel - running
@@ -646,6 +653,35 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		tr.pauseMu.RUnlock()
 
 		if paused || allPaused {
+			if !automationsPaused {
+				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
+					GeneratedByPrefix: "automation:",
+					Executors:         tr.executorNames(),
+					RunnerID:          tr.runnerID,
+				})
+				if err == nil && task != nil {
+					if !tr.matchesCapabilities(task) {
+						slog.Debug("skipping automation task: runner lacks required capabilities",
+							"task_id", task.ID,
+							"project", projectID,
+							"requires", task.RequiresCapability,
+							"runner_capabilities", tr.config.Capabilities,
+						)
+					} else if ok, err := tr.canStartAutomationTask(ctx, task); err != nil {
+						tr.logger.Printf("automation max_concurrent check failed for %s/%s: %v", projectID, task.ID, err)
+					} else if !ok {
+						continue
+					} else if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
+						if !errors.Is(err, ErrTaskClaimConflict) {
+							tr.logger.Printf("claim and spawn automation task failed for %s/%s: %v", projectID, task.ID, err)
+						}
+					} else {
+						filled++
+						continue
+					}
+				}
+			}
+
 			if len(projEnabledIDs) == 0 {
 				continue // fully paused, no enabled features
 			}
@@ -683,6 +719,17 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		task, err := tr.client.GetNextTask(ctx, projectID, tr.buildFetchOptions())
 		if err != nil || task == nil {
 			continue
+		}
+		if isAutomationGeneratedTask(task) {
+			if automationsPaused {
+				continue
+			}
+			if ok, err := tr.canStartAutomationTask(ctx, task); err != nil {
+				tr.logger.Printf("automation max_concurrent check failed for %s/%s: %v", projectID, task.ID, err)
+				continue
+			} else if !ok {
+				continue
+			}
 		}
 
 		// Filter by capability match before claiming
@@ -1000,6 +1047,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
+		GeneratedBy:    task.GeneratedBy,
 	}
 
 	// Track in process manager
@@ -1665,6 +1713,60 @@ func (tr *TaskRunner) ResumeAll() {
 	tr.emitEvent(RunnerEvent{
 		Type: EventAllResumed,
 	})
+}
+
+// PauseAutomations pauses automation-generated task processing.
+func (tr *TaskRunner) PauseAutomations() {
+	tr.pauseMu.Lock()
+	tr.automationsPaused = true
+	tr.pauseMu.Unlock()
+	tr.wake()
+}
+
+// ResumeAutomations resumes automation-generated task processing.
+func (tr *TaskRunner) ResumeAutomations() {
+	tr.pauseMu.Lock()
+	tr.automationsPaused = false
+	tr.pauseMu.Unlock()
+	tr.wake()
+}
+
+// IsAutomationsPaused returns whether automation-generated task processing is paused.
+func (tr *TaskRunner) IsAutomationsPaused() bool {
+	tr.pauseMu.RLock()
+	defer tr.pauseMu.RUnlock()
+	return tr.automationsPaused
+}
+
+func (tr *TaskRunner) wake() {
+	select {
+	case tr.wakeCh <- struct{}{}:
+	default:
+	}
+}
+
+func (tr *TaskRunner) canStartAutomationTask(ctx context.Context, task *types.ResolvedTask) (bool, error) {
+	if !isAutomationGeneratedTask(task) {
+		return true, nil
+	}
+	automationID := automationIDFromGeneratedBy(task.GeneratedBy)
+	if automationID == "" {
+		return true, nil
+	}
+	automation, err := tr.client.GetEntry(ctx, automationID)
+	if err != nil {
+		return false, err
+	}
+	if automation.Trigger == nil || automation.Trigger.MaxConcurrent <= 0 {
+		return true, nil
+	}
+	running := 0
+	for _, proc := range tr.processMgr.GetAllRunning() {
+		if proc.Task.GeneratedBy == task.GeneratedBy {
+			running++
+		}
+	}
+	return running < automation.Trigger.MaxConcurrent, nil
 }
 
 // IsPaused returns whether a project is paused.

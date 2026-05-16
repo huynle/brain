@@ -405,6 +405,32 @@ func TestAPIClient_GetNextTask_IncludesRunnerFeatureAndExecutorFilters(t *testin
 	}
 }
 
+func TestAPIClient_GetNextTask_IncludesGeneratedByPrefixFilter(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ResolvedTask{ID: "task-1", Title: "Automation task"})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetNextTask(context.Background(), "brain-api", &TaskFetchOptions{
+		GeneratedByPrefix: "automation:",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if got := parsed.Query().Get("generated_by_prefix"); got != "automation:" {
+		t.Fatalf("generated_by_prefix = %q, want automation:", got)
+	}
+}
+
 func TestAPIClient_GetNextTask_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -1411,6 +1437,48 @@ func TestAPIClient_ResumeAll_ServerError(t *testing.T) {
 	}
 }
 
+func TestAPIClient_PauseAutomations(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.PauseAutomations(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/automations/pause" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/automations/pause", gotPath)
+	}
+}
+
+func TestAPIClient_ResumeAutomations(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.ResumeAutomations(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/automations/resume" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/automations/resume", gotPath)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ShutdownRunner
 // ---------------------------------------------------------------------------
@@ -1471,9 +1539,10 @@ func TestAPIClient_GetRunnerStatus(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"running":        true,
-			"paused":         true,
-			"pausedProjects": []string{"brain-api", "my-project"},
+			"running":           true,
+			"paused":            true,
+			"pausedProjects":    []string{"brain-api", "my-project"},
+			"automationsPaused": true,
 		})
 	}))
 	defer srv.Close()
@@ -1497,6 +1566,9 @@ func TestAPIClient_GetRunnerStatus(t *testing.T) {
 	}
 	if status.PausedProjects[0] != "brain-api" {
 		t.Errorf("PausedProjects[0] = %q, want %q", status.PausedProjects[0], "brain-api")
+	}
+	if !status.AutomationsPaused {
+		t.Error("expected AutomationsPaused to be true")
 	}
 }
 

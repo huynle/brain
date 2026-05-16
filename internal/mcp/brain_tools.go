@@ -76,7 +76,7 @@ Feature orchestration:
 				"feature_id":            {Type: "string", Description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."},
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
 				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
-				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type, event, schedule, webhook, filter, once_per, cooldown, max_concurrent."},
+				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
 				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
 				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
@@ -111,6 +111,7 @@ Feature orchestration:
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		execCtx := GetCachedContext()
 		isTask := StringArg(args, "type", "") == "task"
+		isAutomation := StringArg(args, "type", "") == "automation"
 
 		body := map[string]any{
 			"type":           args["type"],
@@ -166,6 +167,14 @@ Feature orchestration:
 			if v, ok := args["extensions"]; ok {
 				body["extensions"] = v
 			}
+		}
+
+		if isTask || isAutomation {
+			body["trigger"] = args["trigger"]
+		}
+		if isAutomation {
+			body["action"] = args["action"]
+			body["retry"] = args["retry"]
 		}
 
 		var resp struct {
@@ -483,7 +492,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
-				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}."},
+				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
 				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
 				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},

@@ -786,9 +786,10 @@ type CheckoutFeatureResult struct {
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
-	Running        bool     `json:"running"`
-	Paused         bool     `json:"paused"`
-	PausedProjects []string `json:"pausedProjects"`
+	Running           bool     `json:"running"`
+	Paused            bool     `json:"paused"`
+	PausedProjects    []string `json:"pausedProjects"`
+	AutomationsPaused bool     `json:"automationsPaused"`
 }
 
 // =============================================================================

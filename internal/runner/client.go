@@ -137,6 +137,9 @@ func buildTaskQueryParams(opts *TaskFetchOptions) string {
 	if opts.RunnerID != "" {
 		params.Set("runner_id", opts.RunnerID)
 	}
+	if opts.GeneratedByPrefix != "" {
+		params.Set("generated_by_prefix", opts.GeneratedByPrefix)
+	}
 	if encoded := params.Encode(); encoded != "" {
 		return "?" + encoded
 	}
@@ -1049,6 +1052,34 @@ func (c *APIClient) ResumeAll(ctx context.Context) error {
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/resume", nil)
 	if err != nil {
 		return fmt.Errorf("resume all: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// PauseAutomations pauses automation-generated task execution.
+func (c *APIClient) PauseAutomations(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/pause", nil)
+	if err != nil {
+		return fmt.Errorf("pause automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeAutomations resumes automation-generated task execution.
+func (c *APIClient) ResumeAutomations(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/resume", nil)
+	if err != nil {
+		return fmt.Errorf("resume automations: %w", err)
 	}
 	defer resp.Body.Close()
 

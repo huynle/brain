@@ -44,6 +44,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
 		if h.ActiveAutomationSubTab == AutomationSubTabAutomations {
 			shortcuts += fmt.Sprintf("%s Toggle  ", bold("Space"))
+			shortcuts += fmt.Sprintf("%s Run  ", bold("x"))
+			shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
 			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 		} else {
 			shortcuts += fmt.Sprintf("%s Search  ", bold("/"))

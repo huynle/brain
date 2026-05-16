@@ -949,6 +949,13 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 			t.Errorf("brain_save missing property %q", prop)
 		}
 	}
+
+	triggerDesc := saveTool.InputSchema.Properties["trigger"].Description
+	for _, want := range []string{"session", "cooldown", "max_concurrent"} {
+		if !strings.Contains(triggerDesc, want) {
+			t.Errorf("brain_save trigger description should mention %q, got %q", want, triggerDesc)
+		}
+	}
 }
 
 // Verify brain_update schema has all expected properties
@@ -971,6 +978,13 @@ func TestBrainUpdate_SchemaProperties(t *testing.T) {
 	for _, prop := range expectedProps {
 		if _, ok := updateTool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("brain_update missing property %q", prop)
+		}
+	}
+
+	triggerDesc := updateTool.InputSchema.Properties["trigger"].Description
+	for _, want := range []string{"session", "cooldown", "max_concurrent"} {
+		if !strings.Contains(triggerDesc, want) {
+			t.Errorf("brain_update trigger description should mention %q, got %q", want, triggerDesc)
 		}
 	}
 }
@@ -1026,6 +1040,91 @@ func TestBrainSave_ForwardsFeatureCompletionTrigger(t *testing.T) {
 				"feature_id": "chain-main",
 				"project_id": "test",
 			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
+func TestBrainSave_ForwardsAutomationTriggerActionAndRetry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		if body["type"] != "automation" {
+			t.Errorf("type = %v, want automation", body["type"])
+		}
+		trigger, ok := body["trigger"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger was not forwarded as an object: %#v", body["trigger"])
+		}
+		if trigger["type"] != "session" {
+			t.Errorf("trigger.type = %v, want session", trigger["type"])
+		}
+		if trigger["cooldown"] != "5m" {
+			t.Errorf("trigger.cooldown = %v, want 5m", trigger["cooldown"])
+		}
+		if trigger["max_concurrent"] != float64(1) {
+			t.Errorf("trigger.max_concurrent = %v, want 1", trigger["max_concurrent"])
+		}
+
+		action, ok := body["action"].(map[string]any)
+		if !ok {
+			t.Fatalf("action was not forwarded as an object: %#v", body["action"])
+		}
+		if action["type"] != "prompt" {
+			t.Errorf("action.type = %v, want prompt", action["type"])
+		}
+		if action["direct_prompt"] != "Summarize the new session" {
+			t.Errorf("action.direct_prompt = %v, want session prompt", action["direct_prompt"])
+		}
+
+		retry, ok := body["retry"].(map[string]any)
+		if !ok {
+			t.Fatalf("retry was not forwarded as an object: %#v", body["retry"])
+		}
+		if retry["max_attempts"] != float64(2) {
+			t.Errorf("retry.max_attempts = %v, want 2", retry["max_attempts"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":     "auto1234",
+			"path":   "projects/test/automation/auto1234.md",
+			"title":  "Session automation",
+			"type":   "automation",
+			"status": "active",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+		"type":    "automation",
+		"title":   "Session automation",
+		"content": "Runs when a session is discovered",
+		"trigger": map[string]any{
+			"type":           "session",
+			"once_per":       "session",
+			"cooldown":       "5m",
+			"max_concurrent": 1,
+		},
+		"action": map[string]any{
+			"type":          "prompt",
+			"direct_prompt": "Summarize the new session",
+		},
+		"retry": map[string]any{
+			"max_attempts": 2,
 		},
 	})
 	if err != nil {
@@ -1271,8 +1370,17 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 					"trigger":    map[string]any{"type": "cron", "schedule": "0 0 * * *"},
 					"action":     map[string]any{"type": "script", "command": "make build"},
 				},
+				{
+					"id":         "auto9999",
+					"title":      "Session Summary",
+					"type":       "automation",
+					"status":     "active",
+					"project_id": "my-project",
+					"trigger":    map[string]any{"type": "session"},
+					"action":     map[string]any{"type": "prompt", "direct_prompt": "Summarize session"},
+				},
 			},
-			"total": 2,
+			"total": 3,
 		})
 	}))
 	defer server.Close()
@@ -1287,7 +1395,7 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 
-	if !strings.Contains(result, "Automations (2)") {
+	if !strings.Contains(result, "Automations (3)") {
 		t.Errorf("result should show count, got: %s", result)
 	}
 	if !strings.Contains(result, "On Task Complete") {
@@ -1295,6 +1403,12 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 	}
 	if !strings.Contains(result, "auto1234") {
 		t.Errorf("result should contain automation ID, got: %s", result)
+	}
+	if !strings.Contains(result, "Session Summary") {
+		t.Errorf("result should contain session automation title, got: %s", result)
+	}
+	if !strings.Contains(result, "Trigger: session") {
+		t.Errorf("result should show session trigger, got: %s", result)
 	}
 }
 

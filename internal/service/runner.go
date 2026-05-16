@@ -15,9 +15,10 @@ var _ api.RunnerService = (*RunnerServiceImpl)(nil)
 // This is a stub implementation that tracks pause/resume state without
 // actually controlling task execution (that's the runner's job).
 type RunnerServiceImpl struct {
-	mu             sync.RWMutex
-	globalPaused   bool
-	pausedProjects map[string]bool
+	mu                sync.RWMutex
+	globalPaused      bool
+	automationsPaused bool
+	pausedProjects    map[string]bool
 }
 
 // NewRunnerService creates a new RunnerServiceImpl.
@@ -61,6 +62,22 @@ func (s *RunnerServiceImpl) ResumeAll(_ context.Context) error {
 	return nil
 }
 
+// PauseAutomations pauses automation-generated task execution.
+func (s *RunnerServiceImpl) PauseAutomations(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.automationsPaused = true
+	return nil
+}
+
+// ResumeAutomations resumes automation-generated task execution.
+func (s *RunnerServiceImpl) ResumeAutomations(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.automationsPaused = false
+	return nil
+}
+
 // GetStatus returns the current runner status.
 func (s *RunnerServiceImpl) GetStatus(_ context.Context) (*types.RunnerStatusResponse, error) {
 	s.mu.RLock()
@@ -74,10 +91,18 @@ func (s *RunnerServiceImpl) GetStatus(_ context.Context) (*types.RunnerStatusRes
 	}
 
 	return &types.RunnerStatusResponse{
-		Running:        true, // API server is always "running"
-		Paused:         paused,
-		PausedProjects: pausedProjects,
+		Running:           true, // API server is always "running"
+		Paused:            paused,
+		PausedProjects:    pausedProjects,
+		AutomationsPaused: s.automationsPaused,
 	}, nil
+}
+
+// IsAutomationsPaused returns true if automation-generated task execution is paused.
+func (s *RunnerServiceImpl) IsAutomationsPaused() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.automationsPaused
 }
 
 // IsPaused returns true if the given project is paused (either globally or per-project).

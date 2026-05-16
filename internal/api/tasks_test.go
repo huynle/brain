@@ -182,11 +182,13 @@ func (m *mockTaskService) GetTask(ctx context.Context, projectId, taskId string)
 // =============================================================================
 
 type mockRunnerService struct {
-	pauseFunc     func(ctx context.Context, projectId string) error
-	resumeFunc    func(ctx context.Context, projectId string) error
-	pauseAllFunc  func(ctx context.Context) error
-	resumeAllFunc func(ctx context.Context) error
-	getStatusFunc func(ctx context.Context) (*types.RunnerStatusResponse, error)
+	pauseFunc             func(ctx context.Context, projectId string) error
+	resumeFunc            func(ctx context.Context, projectId string) error
+	pauseAllFunc          func(ctx context.Context) error
+	resumeAllFunc         func(ctx context.Context) error
+	pauseAutomationsFunc  func(ctx context.Context) error
+	resumeAutomationsFunc func(ctx context.Context) error
+	getStatusFunc         func(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
 func (m *mockRunnerService) Pause(ctx context.Context, projectId string) error {
@@ -215,6 +217,20 @@ func (m *mockRunnerService) ResumeAll(ctx context.Context) error {
 		return m.resumeAllFunc(ctx)
 	}
 	return fmt.Errorf("resumeAllFunc not set")
+}
+
+func (m *mockRunnerService) PauseAutomations(ctx context.Context) error {
+	if m.pauseAutomationsFunc != nil {
+		return m.pauseAutomationsFunc(ctx)
+	}
+	return fmt.Errorf("pauseAutomationsFunc not set")
+}
+
+func (m *mockRunnerService) ResumeAutomations(ctx context.Context) error {
+	if m.resumeAutomationsFunc != nil {
+		return m.resumeAutomationsFunc(ctx)
+	}
+	return fmt.Errorf("resumeAutomationsFunc not set")
 }
 
 func (m *mockRunnerService) GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {

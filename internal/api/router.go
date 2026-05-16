@@ -194,11 +194,15 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/runner/resume/{projectId}", o.handler.HandleResumeProject)
 						r.Post("/runner/pause", o.handler.HandlePauseAll)
 						r.Post("/runner/resume", o.handler.HandleResumeAll)
+						r.Post("/runner/automations/pause", o.handler.HandlePauseAutomations)
+						r.Post("/runner/automations/resume", o.handler.HandleResumeAutomations)
 					} else {
 						r.Post("/runner/pause/{projectId}", notImplemented)
 						r.Post("/runner/resume/{projectId}", notImplemented)
 						r.Post("/runner/pause", notImplemented)
 						r.Post("/runner/resume", notImplemented)
+						r.Post("/runner/automations/pause", notImplemented)
+						r.Post("/runner/automations/resume", notImplemented)
 					}
 				})
 

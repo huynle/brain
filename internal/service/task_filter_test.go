@@ -251,3 +251,24 @@ func TestFilterByExecutors_PiOnlyRunner(t *testing.T) {
 		t.Errorf("expected tasks t2 and t4, got %v", ids)
 	}
 }
+
+func TestFilterByGeneratedByPrefix(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", GeneratedBy: "automation:auto1234"},
+		{ID: "t2", GeneratedBy: "feature-checkout"},
+		{ID: "t3", GeneratedBy: "automation:auto5678"},
+		{ID: "t4"},
+	}
+
+	result := filterByGeneratedByPrefix(tasks, "automation:")
+	if len(result) != 2 {
+		t.Fatalf("expected 2 automation-generated tasks, got %d", len(result))
+	}
+	ids := make(map[string]bool)
+	for _, task := range result {
+		ids[task.ID] = true
+	}
+	if !ids["t1"] || !ids["t3"] {
+		t.Fatalf("expected t1 and t3, got %v", ids)
+	}
+}

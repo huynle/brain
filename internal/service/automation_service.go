@@ -13,12 +13,25 @@ import (
 
 // AutomationService evaluates automation entries against events.
 type AutomationService struct {
-	brain *BrainServiceImpl
+	brain        *BrainServiceImpl
+	pauseChecker automationPauseChecker
+}
+
+type automationPauseChecker interface {
+	IsAutomationsPaused() bool
 }
 
 // NewAutomationService creates an automation evaluator backed by brain entries.
 func NewAutomationService(brain *BrainServiceImpl) *AutomationService {
 	return &AutomationService{brain: brain}
+}
+
+// SetPauseChecker lets API runner pause state suppress automation task generation.
+func (s *AutomationService) SetPauseChecker(checker automationPauseChecker) {
+	if s == nil {
+		return
+	}
+	s.pauseChecker = checker
 }
 
 // Start subscribes to EventHub events until the context is cancelled.
@@ -82,6 +95,9 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
 			continue
 		}
+		if s.isAutomationPaused(automation, types.Event{}) {
+			continue
+		}
 		if automation.Trigger.Schedule == "" {
 			continue
 		}
@@ -122,6 +138,9 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 		if !automationMatchesEvent(automation, evt) {
 			continue
 		}
+		if s.isAutomationPaused(automation, evt) {
+			continue
+		}
 
 		if err := s.createTask(ctx, automation, evt, ""); err != nil {
 			return err
@@ -129,6 +148,13 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 	}
 
 	return nil
+}
+
+func (s *AutomationService) isAutomationPaused(automation types.BrainEntry, evt types.Event) bool {
+	if s == nil || s.pauseChecker == nil {
+		return false
+	}
+	return s.pauseChecker.IsAutomationsPaused()
 }
 
 func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {

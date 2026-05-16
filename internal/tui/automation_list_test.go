@@ -135,6 +135,26 @@ func TestAutomationList_View_ShowsEnabledAndDisabledStates(t *testing.T) {
 	}
 }
 
+func TestAutomationList_View_ShowsGeneratedTaskLifecycle(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{{ID: "auto1", Title: "Check site", Type: "automation", Status: "active"}},
+		nil,
+		[]types.BrainEntry{
+			{ID: "task1", Type: "task", Status: "pending", GeneratedBy: "automation:auto1"},
+			{ID: "task2", Type: "task", Status: "in_progress", GeneratedBy: "automation:auto1"},
+			{ID: "task3", Type: "task", Status: "completed", GeneratedBy: "automation:auto1"},
+		},
+	)
+
+	view := al.View(140, 20)
+	for _, want := range []string{"run:", "1 queued", "1 running", "1 done"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected view to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
 func TestAutomationList_NavigationAndSelectedRow(t *testing.T) {
 	al := NewAutomationList()
 	al.SetRows([]AutomationListRow{

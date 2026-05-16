@@ -82,8 +82,11 @@ type RunnerController interface {
 	ResumeProject(projectID string)
 	PauseAll()
 	ResumeAll()
+	PauseAutomations()
+	ResumeAutomations()
 	IsPaused(projectID string) bool
 	IsAllPaused() bool
+	IsAutomationsPaused() bool
 	// ExecuteTask manually executes a task (TUI "x" key).
 	// Performs the full claim → status update → workdir resolve → spawn pipeline.
 	ExecuteTask(ctx context.Context, task *types.ResolvedTask, projectID string) error

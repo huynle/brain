@@ -164,7 +164,11 @@ func (m *mockClient) GetNextTask(ctx context.Context, projectID string, opts *Ta
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
-	return m.nextTask[projectID], nil
+	task := m.nextTask[projectID]
+	if task != nil && opts != nil && opts.GeneratedByPrefix != "" && !strings.HasPrefix(task.GeneratedBy, opts.GeneratedByPrefix) {
+		return nil, nil
+	}
+	return task, nil
 }
 
 func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
@@ -792,6 +796,9 @@ func TestNewTaskRunner_StartPaused(t *testing.T) {
 	if !tr.allPaused {
 		t.Error("allPaused should be true when StartPaused is set")
 	}
+	if !tr.IsAutomationsPaused() {
+		t.Error("automations should be paused when StartPaused is set")
+	}
 }
 
 func TestNewTaskRunner_DefaultMode(t *testing.T) {
@@ -1012,6 +1019,124 @@ func TestTaskRunner_Poll_SkipsPausedProjects(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_Poll_RunsAutomationTasksWhenProjectPausedAndAutomationsUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) != 1 {
+		t.Fatalf("paused project with automations unpaused should spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+	calls := client.getNextTaskCalls()
+	if len(calls) == 0 || calls[0].Opts == nil || calls[0].Opts.GeneratedByPrefix != "automation:" {
+		t.Fatalf("paused project should fetch only automation tasks first, calls=%#v", calls)
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+	tr.PauseAutomations()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("automation-paused runner should not spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+	for _, call := range client.getNextTaskCalls() {
+		if call.ProjectID == "proj-a" {
+			t.Fatalf("automation-paused runner should not fetch tasks for paused project, got call: %#v", call)
+		}
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPausedAndProjectUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAutomations()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("automation-paused runner should not spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+func TestTaskRunner_Poll_RespectsAutomationMaxConcurrent(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"auto1234": {ID: "auto1234", Trigger: &types.TriggerConfig{MaxConcurrent: 1}},
+	}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	proc := newMockProcess(100)
+	processMgr.Add("existing", RunningTask{ID: "existing", GeneratedBy: "automation:auto1234"}, proc)
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("expected max_concurrent to prevent second automation task spawn, got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunNormalTasksWhenPollingAutomationWhilePaused(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("should not spawn normal tasks while project is paused")
+	}
+}
+
 func TestTaskRunner_Poll_SkipsAllWhenAllPaused(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
@@ -1029,6 +1154,27 @@ func TestTaskRunner_Poll_SkipsAllWhenAllPaused(t *testing.T) {
 
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn tasks when all paused")
+	}
+}
+
+func TestTaskRunner_Poll_RunsAutomationTasksWhenAllPausedAndAutomationsUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAll()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) != 1 {
+		t.Fatalf("all-paused runner with automations unpaused should spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
 	}
 }
 
@@ -2644,7 +2790,7 @@ func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *t
 	}
 }
 
-func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_ReturnsEarly(t *testing.T) {
+func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_PollsOnlyAutomations(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
 	client.nextTask["proj-a"] = task
@@ -2660,13 +2806,13 @@ func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_ReturnsEarly(t *testing.T) 
 	ctx := context.Background()
 	tr.poll(ctx)
 
-	// Should NOT spawn — existing behavior preserved
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn when all-paused with no enabled features")
 	}
-	// Should NOT even call GetNextTask
-	if len(client.getNextTaskCalls()) > 0 {
-		t.Error("should not call GetNextTask when all-paused with no enabled features")
+	for _, call := range client.getNextTaskCalls() {
+		if call.Opts == nil || call.Opts.GeneratedByPrefix != "automation:" {
+			t.Fatalf("all-paused runner should only fetch automation tasks, got call: %#v", call)
+		}
 	}
 }
 

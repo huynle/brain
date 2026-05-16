@@ -20,6 +20,7 @@ import (
 //   - feature_id: filter by feature ID (repeatable)
 //   - executors: comma-separated list of executor types (e.g., "opencode,pi")
 //   - runner_id or runnerId: runner requesting task selection
+//   - generated_by_prefix: filter by generated_by prefix (e.g., "automation:")
 func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
 	featureIDs := r.URL.Query()["feature_id"]
 	executors := parseExecutors(r)
@@ -27,14 +28,16 @@ func parseTaskFilterOptions(r *http.Request) *TaskFilterOptions {
 	if runnerID == "" {
 		runnerID = r.URL.Query().Get("runnerId")
 	}
+	generatedByPrefix := r.URL.Query().Get("generated_by_prefix")
 
-	if len(featureIDs) == 0 && len(executors) == 0 && runnerID == "" {
+	if len(featureIDs) == 0 && len(executors) == 0 && runnerID == "" && generatedByPrefix == "" {
 		return nil
 	}
 	return &TaskFilterOptions{
-		FeatureIDs: featureIDs,
-		Executors:  executors,
-		RunnerID:   runnerID,
+		FeatureIDs:        featureIDs,
+		Executors:         executors,
+		RunnerID:          runnerID,
+		GeneratedByPrefix: generatedByPrefix,
 	}
 }
 
@@ -692,6 +695,24 @@ func (h *Handler) HandlePauseAll(w http.ResponseWriter, r *http.Request) {
 // HandleResumeAll handles POST /tasks/runner/resume.
 func (h *Handler) HandleResumeAll(w http.ResponseWriter, r *http.Request) {
 	if err := h.runner.ResumeAll(r.Context()); err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// HandlePauseAutomations handles POST /tasks/runner/automations/pause.
+func (h *Handler) HandlePauseAutomations(w http.ResponseWriter, r *http.Request) {
+	if err := h.runner.PauseAutomations(r.Context()); err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// HandleResumeAutomations handles POST /tasks/runner/automations/resume.
+func (h *Handler) HandleResumeAutomations(w http.ResponseWriter, r *http.Request) {
+	if err := h.runner.ResumeAutomations(r.Context()); err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}

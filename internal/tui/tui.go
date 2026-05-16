@@ -100,9 +100,10 @@ type Model struct {
 	selectedTasks map[string]bool
 
 	// Pause/resume state
-	pausedProjects   map[string]bool
-	allPaused        bool
-	runnerController RunnerController // direct reference to embedded runner (nil if standalone)
+	pausedProjects    map[string]bool
+	allPaused         bool
+	automationsPaused bool
+	runnerController  RunnerController // direct reference to embedded runner (nil if standalone)
 
 	// Resource metrics
 	metricsCollector *MetricsCollector
@@ -128,15 +129,16 @@ type Model struct {
 	enabledFeatures map[string]bool // features toggled on via x key
 
 	// Content tab state (global Runners/Logs, project Tasks/Brain/Automation)
-	activeContentTab       ContentTab
-	activeAutomationSubTab AutomationSubTab
-	automationList         AutomationList
-	dreamViewer            DreamViewer
-	entryTree              EntryTree
-	brainEntries           []types.BrainEntry
-	brainSearchState       FilterMode
-	brainSearchQuery       string
-	brainSearchLabel       string
+	activeContentTab         ContentTab
+	activeAutomationSubTab   AutomationSubTab
+	automationList           AutomationList
+	automationGeneratedTasks []types.BrainEntry
+	dreamViewer              DreamViewer
+	entryTree                EntryTree
+	brainEntries             []types.BrainEntry
+	brainSearchState         FilterMode
+	brainSearchQuery         string
+	brainSearchLabel         string
 
 	// Runner panel state
 	runnerPanel        RunnerPanel
@@ -475,13 +477,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TasksUpdatedMsg:
 		// Always store tasks by project if ProjectID is set
 		if msg.ProjectID != "" {
-			m.tasksByProject[msg.ProjectID] = msg.Tasks
+			m.tasksByProject[msg.ProjectID] = visibleTaskRows(msg.Tasks)
 		}
 		// In single-project mode, always update m.tasks directly
 		// (SSE events include ProjectID even for single-project connections,
 		// but syncActiveProjectView is a no-op in single-project mode)
 		if !m.config.IsMultiProject() {
-			m.tasks = msg.Tasks
+			m.tasks = visibleTaskRows(msg.Tasks)
 		}
 
 		// Update stats if provided
@@ -496,7 +498,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusBar.Stats = m.stats
 			} else {
 				// Single-project mode: set stats directly
-				m.stats = tuiStats
+				m.stats = displayStatsForTasks(msg.Tasks, tuiStats)
 				m.statusBar.Stats = m.stats
 			}
 		}
@@ -524,9 +526,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			nextCmd = m.sseClient.WaitForNextMsg()
 		}
 
-		// Batch SSE continuation with any auto-monitor commands
-		if len(autoMonitorCmds) > 0 {
-			allCmds := append([]tea.Cmd{nextCmd}, autoMonitorCmds...)
+		// Batch SSE continuation with any auto-monitor commands and automation refreshes.
+		additionalCmds := autoMonitorCmds
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			additionalCmds = append(additionalCmds, m.fetchAutomationListCmd())
+		}
+		if len(additionalCmds) > 0 {
+			allCmds := append([]tea.Cmd{nextCmd}, additionalCmds...)
 			return m, tea.Batch(allCmds...)
 		}
 		return m, nextCmd
@@ -813,7 +819,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.automationList.SetError(msg.Error.Error())
 			return m, nil
 		}
-		m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks)
+		m.automationGeneratedTasks = msg.GeneratedTasks
+		m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks, msg.GeneratedTasks)
 		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations && m.detailVisible {
 			return m, m.syncAutomationEntryDetail()
 		}
@@ -831,7 +838,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.taskDetail.SetEntryError(msg.Path, msg.Title, msg.Type, msg.Err, header)
 			return m, nil
 		}
-		m.taskDetail.SetEntryContent(msg.Path, msg.Title, msg.Type, msg.Content, header)
+		content := msg.Content
+		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
+			content = m.automationDetailContent(msg.Path, content)
+		}
+		m.taskDetail.SetEntryContent(msg.Path, msg.Title, msg.Type, content, header)
 		return m, nil
 
 	case AutomationToggleMsg:
@@ -840,6 +851,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.setStatusMessage("success", "Automation updated")
+		return m, m.refreshActiveAutomationSubTab()
+
+	case AutomationRunMsg:
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to run automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Automation run queued: %s", msg.TaskID))
 		return m, m.refreshActiveAutomationSubTab()
 
 	case featureExecutedMsg:
@@ -1017,12 +1036,27 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncHelpBarPauseState()
 		return m, nil
 
+	case automationsPauseToggledMsg:
+		if msg.err != nil {
+			m.automationsPaused = !msg.paused
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
+		} else if msg.paused {
+			m.setStatusMessage("success", "Automations paused")
+			m.addLog("info", "Automations paused")
+		} else {
+			m.setStatusMessage("success", "Automations resumed")
+			m.addLog("info", "Automations resumed")
+		}
+		m.syncHelpBarPauseState()
+		return m, nil
+
 	case runnerStatusMsg:
 		if msg.err == nil {
 			// If we have a direct runner controller, get pause state from it
 			// instead of from the API server's separate RunnerService
 			if m.runnerController != nil {
 				m.allPaused = m.runnerController.IsAllPaused()
+				m.automationsPaused = m.runnerController.IsAutomationsPaused()
 				// Per-project pause state from the embedded runner
 				m.pausedProjects = make(map[string]bool)
 				for _, proj := range m.config.Projects {
@@ -1032,6 +1066,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 				m.allPaused = msg.paused
+				m.automationsPaused = msg.automationsPaused
 				m.pausedProjects = make(map[string]bool)
 				for _, id := range msg.pausedProjects {
 					m.pausedProjects[id] = true
@@ -1369,6 +1404,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeySpace:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			return m, m.toggleSelectedAutomationRow()
+		}
 		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
 			return m, nil
 		}
@@ -1432,8 +1470,20 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, m.editSelectedAutomationRow()
 				case "r":
 					return m, m.refreshActiveAutomationSubTab()
-				case "x", " ":
+				case " ":
 					return m, m.toggleSelectedAutomationRow()
+				case "x":
+					return m, m.runSelectedAutomationRow()
+				case "p":
+					currentlyPaused := m.automationsPaused
+					m.automationsPaused = !currentlyPaused
+					if currentlyPaused {
+						m.setStatusMessage("info", "Resuming automations...")
+					} else {
+						m.setStatusMessage("info", "Pausing automations...")
+					}
+					m.syncHelpBarPauseState()
+					return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
 				case "q":
 					m.sseClient.Stop()
 					return m, tea.Quit
@@ -2058,6 +2108,17 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "p":
+			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+				currentlyPaused := m.automationsPaused
+				m.automationsPaused = !currentlyPaused
+				if currentlyPaused {
+					m.setStatusMessage("info", "Resuming automations...")
+				} else {
+					m.setStatusMessage("info", "Pausing automations...")
+				}
+				m.syncHelpBarPauseState()
+				return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+			}
 			// Pause/resume active project.
 			// In single-project mode, if allPaused is true (startup default),
 			// pressing 'p' should toggle allPaused to start execution.
@@ -3301,6 +3362,44 @@ func (m *Model) syncAutomationEntryDetail() tea.Cmd {
 	return fetchBrainEntryContentCmd(m.apiRunnerConfig(), entry)
 }
 
+func (m *Model) automationDetailContent(path, content string) string {
+	row := m.automationList.SelectedRow()
+	if row == nil || row.Path != path {
+		return content
+	}
+	generatedBy := "automation:" + row.ID
+	runs := make([]types.BrainEntry, 0)
+	for _, task := range m.automationGeneratedTasks {
+		if task.GeneratedBy == generatedBy {
+			runs = append(runs, task)
+		}
+	}
+	if len(runs) == 0 {
+		return content + "\n\n## Runs\nNo generated runs."
+	}
+	sort.SliceStable(runs, func(i, j int) bool {
+		return runs[i].Modified > runs[j].Modified
+	})
+	var b strings.Builder
+	b.WriteString(content)
+	b.WriteString("\n\n## Runs\n")
+	for _, task := range runs {
+		status := task.Status
+		if status == "" {
+			status = "unknown"
+		}
+		b.WriteString(fmt.Sprintf("- %s [%s] %s", task.ID, status, task.Title))
+		if task.Modified != "" {
+			b.WriteString(" modified=" + task.Modified)
+		}
+		if task.Path != "" {
+			b.WriteString(" path=" + task.Path)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 func (m Model) selectedAutomationRowIsDream() bool {
 	if m.activeContentTab != ContentTabAutomation || m.activeAutomationSubTab != AutomationSubTabAutomations {
 		return false
@@ -3553,15 +3652,19 @@ func (m Model) renderBaseView() string {
 	m.statusBar.Metrics = &m.resourceMetrics
 
 	// Wire pause state to status bar
-	projectID := m.activeProjectID
-	if projectID == "" || projectID == "all" {
-		projectID = m.config.Project
-	}
-	if m.activeProjectID == "all" && m.config.IsMultiProject() {
-		// In "all" mode, paused only if every project is paused
-		m.statusBar.IsPaused = m.allPaused
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		m.statusBar.IsPaused = m.automationsPaused
 	} else {
-		m.statusBar.IsPaused = m.pausedProjects[projectID]
+		projectID := m.activeProjectID
+		if projectID == "" || projectID == "all" {
+			projectID = m.config.Project
+		}
+		if m.activeProjectID == "all" && m.config.IsMultiProject() {
+			// In "all" mode, paused only if every project is paused
+			m.statusBar.IsPaused = m.allPaused
+		} else {
+			m.statusBar.IsPaused = m.allPaused || m.pausedProjects[projectID]
+		}
 	}
 
 	// EnabledFeatureCount reflects user-toggled features (via x key)
@@ -4138,6 +4241,45 @@ func (m *Model) filteredTasks() []types.ResolvedTask {
 	return FilterTasks(m.tasks, m.filterQuery)
 }
 
+func visibleTaskRows(tasks []types.ResolvedTask) []types.ResolvedTask {
+	visible := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if strings.HasPrefix(task.GeneratedBy, "automation:") {
+			continue
+		}
+		visible = append(visible, task)
+	}
+	return visible
+}
+
+func displayStatsForTasks(tasks []types.ResolvedTask, fallback TaskStats) TaskStats {
+	stats := fallback
+	for _, task := range tasks {
+		if !strings.HasPrefix(task.GeneratedBy, "automation:") {
+			continue
+		}
+		switch task.Status {
+		case "pending":
+			if stats.Ready > 0 {
+				stats.Ready--
+			}
+		case "blocked":
+			if stats.Blocked > 0 {
+				stats.Blocked--
+			}
+		case "active", "in_progress":
+			if stats.InProgress > 0 {
+				stats.InProgress--
+			}
+		default:
+			if stats.Completed > 0 {
+				stats.Completed--
+			}
+		}
+	}
+	return stats
+}
+
 func (m Model) assignmentProjectID() (string, bool) {
 	if m.config.IsMultiProject() {
 		if m.activeProjectID == "" || m.activeProjectID == "all" {
@@ -4223,6 +4365,7 @@ func (m *Model) syncActiveProjectView() {
 		m.tasks = m.getAllTasks()
 		// Gap 3: Set aggregate stats from ProjectTabs
 		m.stats = m.projectTabs.AggregateStats
+		m.stats = displayStatsForTasks(m.tasks, m.stats)
 		m.statusBar.Stats = m.stats
 	} else {
 		// Project-specific view: show only that project's tasks
@@ -4237,6 +4380,7 @@ func (m *Model) syncActiveProjectView() {
 		} else {
 			m.stats = TaskStats{}
 		}
+		m.stats = displayStatsForTasks(m.tasks, m.stats)
 		m.statusBar.Stats = m.stats
 	}
 
@@ -4344,6 +4488,18 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 		return nil
 	}
 	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+}
+
+func (m *Model) runSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	if row.Source == "dream" {
+		m.setStatusMessage("info", "Dream cannot be run manually from this list")
+		return nil
+	}
+	return runAutomationRowCmd(m.apiRunnerConfig(), *row)
 }
 
 func (m *Model) editSelectedAutomationRow() tea.Cmd {
@@ -4614,10 +4770,16 @@ type pauseAllToggledMsg struct {
 	err    error
 }
 
+type automationsPauseToggledMsg struct {
+	paused bool
+	err    error
+}
+
 type runnerStatusMsg struct {
-	paused         bool
-	pausedProjects []string
-	err            error
+	paused            bool
+	pausedProjects    []string
+	automationsPaused bool
+	err               error
 }
 
 type apiHealthMsg struct {
@@ -4702,13 +4864,17 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 		}
 
 		scheduledTasks := make([]types.BrainEntry, 0, len(tasks.Entries))
+		generatedTasks := make([]types.BrainEntry, 0)
 		for _, task := range tasks.Entries {
 			if task.Schedule != "" || task.RunOnceAt != "" {
 				scheduledTasks = append(scheduledTasks, task)
 			}
+			if strings.HasPrefix(task.GeneratedBy, "automation:") {
+				generatedTasks = append(generatedTasks, task)
+			}
 		}
 
-		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks}
+		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks, GeneratedTasks: generatedTasks}
 	}
 }
 
@@ -4739,6 +4905,69 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 		apiClient := runner.NewAPIClient(cfg)
 		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
 		return AutomationToggleMsg{RowID: row.ID, Error: err}
+	}
+}
+
+func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+		if row.Source != "automation" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("manual run only supports automation entries")}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		entry, err := apiClient.GetEntry(context.Background(), path)
+		if err != nil {
+			return AutomationRunMsg{RowID: row.ID, Error: err}
+		}
+		if entry.Action == nil {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation has no action")}
+		}
+
+		project := entry.ProjectID
+		if project == "" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation has no project")}
+		}
+
+		generated := true
+		prompt := entry.Action.DirectPrompt
+		if entry.Action.Type == "script" {
+			prompt = entry.Action.Command
+		}
+		if prompt == "" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation action has no prompt or command")}
+		}
+
+		req := types.CreateEntryRequest{
+			Type:           "task",
+			Title:          fmt.Sprintf("Automation: %s", entry.ID),
+			Content:        prompt,
+			Status:         "pending",
+			Project:        project,
+			Generated:      &generated,
+			GeneratedBy:    fmt.Sprintf("automation:%s", entry.ID),
+			GeneratedKey:   fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano()),
+			DirectPrompt:   prompt,
+			Agent:          entry.Action.Agent,
+			Model:          entry.Action.Model,
+			ExecutionMode:  entry.Action.ExecutionMode,
+			CompleteOnIdle: entry.Action.CompleteOnIdle,
+		}
+		if entry.Action.Type == "script" {
+			req.Executor = "script"
+		}
+
+		created, err := apiClient.CreateEntry(context.Background(), req)
+		if err != nil {
+			return AutomationRunMsg{RowID: row.ID, Error: err}
+		}
+		return AutomationRunMsg{RowID: row.ID, TaskID: created.ID}
 	}
 }
 
@@ -5007,6 +5236,29 @@ func shutdownRunnerCmd(cfg runner.RunnerConfig, runnerID, reason string) tea.Cmd
 	}
 }
 
+// pauseAutomationsCmd toggles pause/resume for automation-generated tasks.
+func pauseAutomationsCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerController) tea.Cmd {
+	return func() tea.Msg {
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeAutomations()
+			} else {
+				rc.PauseAutomations()
+			}
+			return automationsPauseToggledMsg{paused: !currentlyPaused, err: nil}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeAutomations(ctx)
+		} else {
+			err = apiClient.PauseAutomations(ctx)
+		}
+		return automationsPauseToggledMsg{paused: !currentlyPaused, err: err}
+	}
+}
+
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
 func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -5017,7 +5269,7 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 		if err != nil {
 			return runnerStatusMsg{err: err}
 		}
-		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused}
 	}
 }
 

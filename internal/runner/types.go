@@ -244,6 +244,7 @@ type RunningTask struct {
 	ScheduledTaskID string    `json:"scheduledTaskId,omitempty"`
 	RunID           string    `json:"runId,omitempty"`
 	FeatureID       string    `json:"featureId,omitempty"`
+	GeneratedBy     string    `json:"generatedBy,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.

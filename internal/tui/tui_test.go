@@ -378,9 +378,156 @@ func TestAutomationTabToggleDetailShowsSelectedRowContent(t *testing.T) {
 	}
 }
 
+func TestAutomationTabSpaceTogglesSelectedAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: false}})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if cmd == nil {
+		t.Fatal("expected Space in Automations tab to toggle selected automation")
+	}
+}
+
+func TestAutomationTabXRunsSelectedAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: false}})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected x in Automations tab to run selected automation")
+	}
+}
+
+func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.allPaused = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected p in Automations tab to toggle automation pause")
+	}
+	if !model.automationsPaused {
+		t.Fatal("expected automationsPaused to be true after p")
+	}
+	if !model.allPaused {
+		t.Fatal("automation pause toggle should not change normal task allPaused state")
+	}
+}
+
+func TestTasksUpdatedFiltersAutomationGeneratedTasksFromTaskTree(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: []types.ResolvedTask{
+		{ID: "regular", Title: "Regular task", Status: "pending"},
+		{ID: "auto-task", Title: "Automation: auto1", Status: "pending", GeneratedBy: "automation:auto1"},
+	}, Stats: &types.TaskStats{Ready: 2}})
+	model := updated.(Model)
+	view := model.taskTree.View(100, 20)
+	if strings.Contains(view, "Automation: auto1") {
+		t.Fatalf("automation-generated task should be hidden from Tasks tab, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Regular task") {
+		t.Fatalf("regular task should remain visible, got:\n%s", view)
+	}
+	if model.statusBar.Stats.Ready != 1 {
+		t.Fatalf("ready stats should exclude automation-generated task, got %d", model.statusBar.Stats.Ready)
+	}
+}
+
+func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:        "auto1234",
+				Path:      "projects/brain-api/automation/auto1234.md",
+				Title:     "Disabled automation",
+				Type:      "automation",
+				Status:    "archived",
+				ProjectID: "brain-api",
+				Action: &types.AutomationAction{
+					Type:           "prompt",
+					DirectPrompt:   "Run now",
+					Agent:          "assistant",
+					Model:          "test-model",
+					ExecutionMode:  "current_branch",
+					CompleteOnIdle: boolPtr(true),
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/brain-api/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "auto1234",
+		Path:   "projects/brain-api/automation/auto1234.md",
+		Title:  "Disabled automation",
+		Source: "automation",
+		Status: "archived",
+	})
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run automation failed: %v", msg.Error)
+	}
+	if gotCreate.Type != "task" || gotCreate.Status != "pending" {
+		t.Fatalf("created entry type/status = %s/%s, want task/pending", gotCreate.Type, gotCreate.Status)
+	}
+	if gotCreate.Project != "brain-api" {
+		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
+	}
+	if gotCreate.DirectPrompt != "Run now" || gotCreate.Agent != "assistant" || gotCreate.Model != "test-model" {
+		t.Fatalf("created task action fields not copied: %#v", gotCreate)
+	}
+	if gotCreate.Generated == nil || !*gotCreate.Generated || gotCreate.GeneratedBy != "automation:auto1234" {
+		t.Fatalf("created task generated fields invalid: generated=%v generated_by=%q", gotCreate.Generated, gotCreate.GeneratedBy)
+	}
+}
+
+func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.detailVisible = true
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+	m.taskDetail.SetEntryLoading(types.BrainEntry{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation"}, "Automation Detail")
+	m.automationGeneratedTasks = []types.BrainEntry{
+		{ID: "run1", Path: "projects/brain-api/task/run1.md", Title: "Automation: auto", Type: "task", Status: "pending", GeneratedBy: "automation:auto"},
+		{ID: "run2", Path: "projects/brain-api/task/run2.md", Title: "Automation: auto", Type: "task", Status: "completed", GeneratedBy: "automation:auto"},
+	}
+
+	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model := updated.(Model)
+	view := model.taskDetail.View()
+	for _, want := range []string{"## Runs", "run1 [pending]", "run2 [completed]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected automation detail to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
 func TestAutomationListIncludesDreamRowWhenEmpty(t *testing.T) {
 	list := NewAutomationList()
-	list.SetEntryRows(nil, nil)
+	list.SetEntryRows(nil, nil, nil)
 
 	row := list.SelectedRow()
 	if row == nil || row.Source != "dream" || row.Title != "Dream" {

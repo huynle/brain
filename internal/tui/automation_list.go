@@ -23,6 +23,9 @@ type AutomationListRow struct {
 	TriggerKind   string
 	TriggerDetail string
 	Priority      string
+	RunSummary    string
+	RunTaskID     string
+	RunStatus     string
 }
 
 // AutomationList displays automation entries and cron/run-once task entries.
@@ -75,14 +78,21 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 }
 
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
-func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry) {
+func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry, generatedTasks []types.BrainEntry) {
 	rows := make([]AutomationListRow, 0, len(entries)+len(tasks)+1)
 	rows = append(rows, DreamAutomationRow())
+	runsByAutomation := automationRunSummaries(generatedTasks)
 	for _, entry := range entries {
 		if entry.Type != "automation" {
 			continue
 		}
-		rows = append(rows, AutomationRowFromEntry(entry))
+		row := AutomationRowFromEntry(entry)
+		if summary, ok := runsByAutomation[entry.ID]; ok {
+			row.RunSummary = summary.summary()
+			row.RunTaskID = summary.latestID
+			row.RunStatus = summary.latestStatus
+		}
+		rows = append(rows, row)
 	}
 	for _, task := range tasks {
 		if task.Type != "task" || (task.Schedule == "" && task.RunOnceAt == "") {
@@ -248,6 +258,56 @@ func (al *AutomationList) View(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+type automationRunSummary struct {
+	pending      int
+	active       int
+	inactive     int
+	latestID     string
+	latestStatus string
+}
+
+func (s automationRunSummary) summary() string {
+	parts := make([]string, 0, 3)
+	if s.pending > 0 {
+		parts = append(parts, fmt.Sprintf("%d queued", s.pending))
+	}
+	if s.active > 0 {
+		parts = append(parts, fmt.Sprintf("%d running", s.active))
+	}
+	if s.inactive > 0 {
+		parts = append(parts, fmt.Sprintf("%d done", s.inactive))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSummary {
+	summaries := make(map[string]automationRunSummary)
+	for _, task := range tasks {
+		if !strings.HasPrefix(task.GeneratedBy, "automation:") {
+			continue
+		}
+		automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+		if automationID == "" {
+			continue
+		}
+		summary := summaries[automationID]
+		switch task.Status {
+		case "pending":
+			summary.pending++
+		case "active", "in_progress":
+			summary.active++
+		default:
+			summary.inactive++
+		}
+		if summary.latestID == "" || task.Modified > "" {
+			summary.latestID = task.ID
+			summary.latestStatus = task.Status
+		}
+		summaries[automationID] = summary
+	}
+	return summaries
+}
+
 func (al *AutomationList) ensureCursorVisible(viewportHeight int) {
 	if viewportHeight < 1 {
 		viewportHeight = len(al.rows)
@@ -306,13 +366,22 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 		priority = DimStyle.Render("  pri:" + row.Priority)
 	}
 
-	line := fmt.Sprintf("%s%s  %s  %s  %s%s",
+	runs := ""
+	if row.RunSummary != "" {
+		runs = "  " + lipgloss.NewStyle().Foreground(ColorWaiting).Render("run: "+row.RunSummary)
+		if row.RunTaskID != "" {
+			runs += DimStyle.Render(" #" + row.RunTaskID)
+		}
+	}
+
+	line := fmt.Sprintf("%s%s  %s  %s  %s%s%s",
 		marker,
 		DimStyle.Render(fmt.Sprintf("%-10s", row.Source)),
 		title,
 		stateStyle.Render("["+state+"]"),
 		DimStyle.Render(trigger),
 		priority,
+		runs,
 	)
 	if width > 0 && lipgloss.Width(line) > width {
 		return lipgloss.NewStyle().MaxWidth(width).Render(line)

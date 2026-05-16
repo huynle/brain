@@ -89,9 +89,10 @@ type EmbeddingService interface {
 
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
-	FeatureIDs []string
-	Executors  []string // Filter tasks by executor type (e.g., "opencode", "pi")
-	RunnerID   string   // Runner requesting task selection, for server-side eligibility checks.
+	FeatureIDs        []string
+	Executors         []string // Filter tasks by executor type (e.g., "opencode", "pi")
+	RunnerID          string   // Runner requesting task selection, for server-side eligibility checks.
+	GeneratedByPrefix string   // Filter tasks by generated_by prefix (e.g., "automation:").
 }
 
 // TaskService defines the interface for task queue operations.
@@ -172,6 +173,12 @@ type RunnerService interface {
 
 	// ResumeAll resumes task execution for all projects.
 	ResumeAll(ctx context.Context) error
+
+	// PauseAutomations pauses automation-generated task execution.
+	PauseAutomations(ctx context.Context) error
+
+	// ResumeAutomations resumes automation-generated task execution.
+	ResumeAutomations(ctx context.Context) error
 
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
